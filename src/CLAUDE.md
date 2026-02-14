@@ -20,6 +20,7 @@ src/
     ├── TeamPage.tsx            # Team member list and management
     ├── Settings.tsx            # Organization settings
     ├── AuditLogs.tsx           # Audit log viewer with filters
+    ├── ErrorBoundary.tsx        # Error boundary wrapper for tab contents
     └── OrganizationSelector.tsx # Org switcher dropdown
 ```
 
@@ -29,7 +30,7 @@ src/
 ```tsx
 const leads = useQuery(
   api.leads.list,
-  selectedOrgId ? { organizationId: selectedOrgId as Id<"organizations"> } : "skip"
+  selectedOrgId ? { organizationId: selectedOrgId } : "skip"
 );
 ```
 
@@ -65,4 +66,3 @@ if (data === undefined) return <Spinner />;
 - `convex/react` — `useQuery`, `useMutation`, `Authenticated`, `Unauthenticated`
 - `@convex-dev/auth/react` — `ConvexAuthProvider`, `useAuthActions`
 - `sonner` — `toast` for notifications, `<Toaster />` in App.tsx
-- `clsx` + `tailwind-merge` — conditional class merging

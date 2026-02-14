@@ -21,9 +21,9 @@ Multi-tenant CRM with human-AI team collaboration. Convex backend, React + Tailw
 
 **Multi-tenancy:** Every table has `organizationId`. All queries must be scoped to the user's org.
 
-**Auth flow:** `getAuthUserId(ctx)` → lookup teamMember via `by_organization` index → check role (`admin` | `manager` | `agent` | `ai`).
+**Auth flow:** `requireAuth(ctx, organizationId)` from `convex/lib/auth.ts` handles auth + org membership. Returns the team member. A few functions without org context (e.g. `getUserOrganizations`) still use `getAuthUserId` directly.
 
-**Side effects in mutations:** Most mutations insert into `activities` + `auditLogs` and trigger webhooks via `ctx.scheduler.runAfter(0, internal.webhookTrigger.triggerWebhooks, ...)`.
+**Side effects in mutations:** Most mutations insert into `activities` + `auditLogs` and trigger webhooks via `ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, ...)`.
 
 **HTTP API:** `convex/router.ts` has RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. Routes wired in `convex/http.ts`.
 
