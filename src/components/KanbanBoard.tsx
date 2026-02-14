@@ -6,26 +6,26 @@ import { LeadDetailPanel } from "./LeadDetailPanel";
 import { CreateLeadModal } from "./CreateLeadModal";
 
 interface KanbanBoardProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function KanbanBoard({ organizationId }: KanbanBoardProps) {
-  const [selectedBoardId, setSelectedBoardId] = useState<string | null>(null);
-  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [selectedBoardId, setSelectedBoardId] = useState<Id<"boards"> | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   const boards = useQuery(api.boards.getBoards, {
-    organizationId: organizationId as Id<"organizations">
+    organizationId
   });
 
   const stages = useQuery(api.boards.getStages,
-    selectedBoardId ? { boardId: selectedBoardId as Id<"boards"> } : "skip"
+    selectedBoardId ? { boardId: selectedBoardId } : "skip"
   );
 
   const leads = useQuery(api.leads.getLeads,
     selectedBoardId ? {
-      organizationId: organizationId as Id<"organizations">,
-      boardId: selectedBoardId as Id<"boards">,
+      organizationId,
+      boardId: selectedBoardId,
     } : "skip"
   );
 

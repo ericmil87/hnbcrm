@@ -2,10 +2,11 @@ import React, { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface CreateLeadModalProps {
-  organizationId: string;
-  boardId: string;
+  organizationId: Id<"organizations">;
+  boardId: Id<"boards">;
   onClose: () => void;
 }
 
@@ -30,11 +31,11 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
 
   // Queries
   const contacts = useQuery(api.contacts.getContacts, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   // Mutations
@@ -63,7 +64,7 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
         }
 
         contactId = await createContact({
-          organizationId: organizationId as Id<"organizations">,
+          organizationId,
           firstName: firstName.trim() || undefined,
           lastName: lastName.trim() || undefined,
           email: email.trim() || undefined,
@@ -75,8 +76,8 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
       }
 
       await createLead({
-        organizationId: organizationId as Id<"organizations">,
-        boardId: boardId as Id<"boards">,
+        organizationId,
+        boardId,
         title: title.trim(),
         contactId,
         value,
@@ -87,7 +88,7 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
 
       onClose();
     } catch (err) {
-      console.error("Failed to create lead:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to create lead");
       setError(err instanceof Error ? err.message : "Failed to create lead.");
     } finally {
       setSubmitting(false);

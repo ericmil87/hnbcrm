@@ -2,9 +2,10 @@ import React, { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface InboxProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function Inbox({ organizationId }: InboxProps) {
@@ -13,7 +14,7 @@ export function Inbox({ organizationId }: InboxProps) {
   const [isInternal, setIsInternal] = useState(false);
 
   const conversations = useQuery(api.conversations.getConversations, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   const messages = useQuery(api.conversations.getMessages,
@@ -35,7 +36,7 @@ export function Inbox({ organizationId }: InboxProps) {
       });
       setNewMessage("");
     } catch (error) {
-      console.error("Failed to send message:", error);
+      toast.error("Failed to send message");
     }
   };
 
@@ -50,7 +51,7 @@ export function Inbox({ organizationId }: InboxProps) {
   const validConversations = conversations.filter((c): c is NonNullable<typeof c> => c !== null);
 
   // Message bubble styling based on sender type
-  const getMessageStyle = (message: any) => {
+  const getMessageStyle = (message: { isInternal: boolean; direction: string; senderType: string }) => {
     if (message.isInternal) {
       return {
         align: "justify-end" as const,

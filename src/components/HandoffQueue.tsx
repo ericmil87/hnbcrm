@@ -2,14 +2,15 @@ import React from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface HandoffQueueProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function HandoffQueue({ organizationId }: HandoffQueueProps) {
   const handoffs = useQuery(api.handoffs.getHandoffs, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
     status: "pending",
   });
 
@@ -22,7 +23,7 @@ export function HandoffQueue({ organizationId }: HandoffQueueProps) {
         handoffId: handoffId as Id<"handoffs">,
       });
     } catch (error) {
-      console.error("Failed to accept handoff:", error);
+      toast.error("Failed to accept handoff");
     }
   };
 
@@ -32,7 +33,7 @@ export function HandoffQueue({ organizationId }: HandoffQueueProps) {
         handoffId: handoffId as Id<"handoffs">,
       });
     } catch (error) {
-      console.error("Failed to reject handoff:", error);
+      toast.error("Failed to reject handoff");
     }
   };
 

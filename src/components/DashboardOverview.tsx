@@ -4,12 +4,12 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 
 interface DashboardOverviewProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function DashboardOverview({ organizationId }: DashboardOverviewProps) {
   const stats = useQuery(api.dashboard.getDashboardStats, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   if (!stats) {

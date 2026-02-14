@@ -1,22 +1,14 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAuth } from "./lib/auth";
 
 // Get team members for organization
 export const getTeamMembers = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember) throw new Error("Not authorized");
+    await requireAuth(ctx, args.organizationId);
 
     return await ctx.db
       .query("teamMembers")
@@ -28,6 +20,7 @@ export const getTeamMembers = query({
 // Get current user's team member record
 export const getCurrentTeamMember = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
@@ -50,23 +43,15 @@ export const createTeamMember = mutation({
     type: v.union(v.literal("human"), v.literal("ai")),
     capabilities: v.optional(v.array(v.string())),
   },
+  returns: v.id("teamMembers"),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    // Verify user is admin or manager
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember || !["admin", "manager"].includes(userMember.role)) {
+    const userMember = await requireAuth(ctx, args.organizationId);
+    if (!["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
     }
 
     const now = Date.now();
-    
+
     const teamMemberId = await ctx.db.insert("teamMembers", {
       organizationId: args.organizationId,
       userId: args.type === "human" ? undefined : undefined, // Will be set when user joins
@@ -103,21 +88,13 @@ export const updateTeamMemberStatus = mutation({
     teamMemberId: v.id("teamMembers"),
     status: v.union(v.literal("active"), v.literal("inactive"), v.literal("busy")),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
     const teamMember = await ctx.db.get(args.teamMemberId);
     if (!teamMember) throw new Error("Team member not found");
 
-    // Verify user is updating their own status or is admin/manager
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", teamMember.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember || (userMember._id !== args.teamMemberId && !["admin", "manager"].includes(userMember.role))) {
+    const userMember = await requireAuth(ctx, teamMember.organizationId);
+    if (userMember._id !== args.teamMemberId && !["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
     }
 
@@ -143,5 +120,19 @@ export const updateTeamMemberStatus = mutation({
       severity: "low",
       createdAt: now,
     });
+
+    return null;
+  },
+});
+
+// Internal: Get team members for organization (used by HTTP API router)
+export const internalGetTeamMembers = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .collect();
   },
 });

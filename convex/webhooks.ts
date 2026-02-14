@@ -5,6 +5,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 // Get webhooks for organization (admin only)
 export const getWebhooks = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -36,6 +37,7 @@ export const createWebhook = mutation({
     events: v.array(v.string()),
     secret: v.string(),
   },
+  returns: v.id("webhooks"),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -89,6 +91,7 @@ export const updateWebhook = mutation({
     events: v.optional(v.array(v.string())),
     isActive: v.optional(v.boolean()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -128,7 +131,7 @@ export const updateWebhook = mutation({
       before.isActive = webhook.isActive;
     }
 
-    if (Object.keys(changes).length === 0) return;
+    if (Object.keys(changes).length === 0) return null;
 
     await ctx.db.patch(args.webhookId, changes);
 
@@ -144,12 +147,15 @@ export const updateWebhook = mutation({
       severity: "medium",
       createdAt: now,
     });
+
+    return null;
   },
 });
 
 // Delete webhook (admin only)
 export const deleteWebhook = mutation({
   args: { webhookId: v.id("webhooks") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -184,5 +190,7 @@ export const deleteWebhook = mutation({
     });
 
     await ctx.db.delete(args.webhookId);
+
+    return null;
   },
 });

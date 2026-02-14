@@ -4,7 +4,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 
 interface TeamPageProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function TeamPage({ organizationId }: TeamPageProps) {
@@ -17,7 +17,7 @@ export function TeamPage({ organizationId }: TeamPageProps) {
   });
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   const createTeamMember = useMutation(api.teamMembers.createTeamMember);
@@ -29,7 +29,7 @@ export function TeamPage({ organizationId }: TeamPageProps) {
 
     try {
       await createTeamMember({
-        organizationId: organizationId as Id<"organizations">,
+        organizationId,
         name: newMember.name,
         email: newMember.email || undefined,
         role: newMember.role,

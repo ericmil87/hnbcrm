@@ -2,9 +2,10 @@ import React, { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface AuditLogsProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 export function AuditLogs({ organizationId }: AuditLogsProps) {
@@ -12,7 +13,7 @@ export function AuditLogs({ organizationId }: AuditLogsProps) {
   const [selectedEntityType, setSelectedEntityType] = useState<string>("all");
 
   const auditLogs = useQuery(api.auditLogs.getAuditLogs, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
     severity: selectedSeverity !== "all"
       ? (selectedSeverity as "low" | "medium" | "high" | "critical")
       : undefined,
@@ -37,7 +38,7 @@ export function AuditLogs({ organizationId }: AuditLogsProps) {
 
   const handleExportCsv = () => {
     if (!auditLogs || auditLogs.logs.length === 0) {
-      alert("No data to export.");
+      toast.error("No data to export.");
       return;
     }
     const headers = ["Timestamp", "Action", "Entity Type", "Entity ID", "Severity", "Actor", "Actor Type", "Description"];

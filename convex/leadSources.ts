@@ -5,6 +5,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 // Get lead sources for organization
 export const getLeadSources = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -40,6 +41,7 @@ export const createLeadSource = mutation({
       v.literal("other")
     ),
   },
+  returns: v.id("leadSources"),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -98,6 +100,7 @@ export const updateLeadSource = mutation({
     ),
     isActive: v.optional(v.boolean()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -131,7 +134,7 @@ export const updateLeadSource = mutation({
       before.isActive = leadSource.isActive;
     }
 
-    if (Object.keys(changes).length === 0) return;
+    if (Object.keys(changes).length === 0) return null;
 
     await ctx.db.patch(args.leadSourceId, changes);
 
@@ -147,12 +150,15 @@ export const updateLeadSource = mutation({
       severity: "low",
       createdAt: now,
     });
+
+    return null;
   },
 });
 
 // Delete lead source
 export const deleteLeadSource = mutation({
   args: { leadSourceId: v.id("leadSources") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -185,5 +191,7 @@ export const deleteLeadSource = mutation({
     });
 
     await ctx.db.delete(args.leadSourceId);
+
+    return null;
   },
 });

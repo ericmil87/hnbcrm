@@ -1,5 +1,6 @@
 import { Authenticated, Unauthenticated, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
+import { Id } from "../convex/_generated/dataModel";
 import { SignInForm } from "./SignInForm";
 import { SignOutButton } from "./SignOutButton";
 import { Toaster } from "sonner";
@@ -8,7 +9,7 @@ import { Dashboard } from "./components/Dashboard";
 import { OrganizationSelector } from "./components/OrganizationSelector";
 
 export default function App() {
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedOrgId, setSelectedOrgId] = useState<Id<"organizations"> | null>(null);
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
@@ -32,7 +33,7 @@ export default function App() {
   );
 }
 
-function Content({ selectedOrgId }: { selectedOrgId: string | null }) {
+function Content({ selectedOrgId }: { selectedOrgId: Id<"organizations"> | null }) {
   const loggedInUser = useQuery(api.auth.loggedInUser);
 
   if (loggedInUser === undefined) {

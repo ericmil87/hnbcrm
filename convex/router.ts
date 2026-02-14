@@ -1,13 +1,13 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
-import { api, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 
 const http = httpRouter();
 
 // CORS headers
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
 };
@@ -26,7 +26,7 @@ function errorResponse(message: string, status: number = 500) {
 }
 
 // Standard success response
-function jsonResponse(data: any, status: number = 200) {
+function jsonResponse(data: Record<string, unknown>, status: number = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "Content-Type": "application/json", ...corsHeaders },
@@ -40,7 +40,8 @@ async function authenticateApiKey(ctx: any, request: Request) {
     throw new Error("API key required");
   }
 
-  const keyHash = apiKey; // Simplified for demo
+  // Hash the API key before lookup (keys are stored as SHA-256 hashes)
+  const keyHash = await ctx.runAction(internal.nodeActions.hashString, { input: apiKey });
 
   const apiKeyRecord = await ctx.runQuery(internal.apiKeys.getByKeyHash, { keyHash });
   if (!apiKeyRecord) {
@@ -68,7 +69,7 @@ http.route({
       }
 
       // Find or create contact
-      const contactId = await ctx.runMutation(api.contacts.findOrCreateContact, {
+      const contactId = await ctx.runMutation(internal.contacts.internalFindOrCreateContact, {
         organizationId: apiKeyRecord.organizationId,
         email: body.contact?.email,
         phone: body.contact?.phone,
@@ -78,16 +79,16 @@ http.route({
       });
 
       // Get default board and stage
-      const boards = await ctx.runQuery(api.boards.getBoards, {
+      const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
         organizationId: apiKeyRecord.organizationId,
       });
-      const defaultBoard = boards.find((b: any) => b.isDefault) || boards[0];
+      const defaultBoard = boards.find((b: { isDefault: boolean; _id: string }) => b.isDefault) || boards[0];
 
       if (!defaultBoard) {
         return errorResponse("No boards configured", 500);
       }
 
-      const stages = await ctx.runQuery(api.boards.getStages, {
+      const stages = await ctx.runQuery(internal.boards.internalGetStages, {
         boardId: defaultBoard._id,
       });
       const firstStage = stages[0];
@@ -98,20 +99,20 @@ http.route({
 
       // Auto-assign to AI agent if configured
       let assignedTo = undefined;
-      const org = await ctx.runQuery(api.organizations.getOrganizationBySlug, {
-        slug: apiKeyRecord.organizationId,
+      const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
+        organizationId: apiKeyRecord.organizationId,
       });
 
       if (org?.settings.aiConfig?.autoAssign) {
-        const aiAgents = await ctx.runQuery(api.teamMembers.getTeamMembers, {
+        const aiAgents = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
           organizationId: apiKeyRecord.organizationId,
         });
-        const availableAI = aiAgents.find((m: any) => m.type === "ai" && m.status === "active");
+        const availableAI = aiAgents.find((m: { type: string; status: string; _id: string }) => m.type === "ai" && m.status === "active");
         assignedTo = availableAI?._id;
       }
 
       // Create lead
-      const leadId = await ctx.runMutation(api.leads.createLead, {
+      const leadId = await ctx.runMutation(internal.leads.internalCreateLead, {
         organizationId: apiKeyRecord.organizationId,
         title: body.title,
         contactId,
@@ -125,20 +126,22 @@ http.route({
         sourceId: body.sourceId,
         tags: body.tags || [],
         customFields: body.customFields || {},
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       // Create conversation if message provided
       if (body.message) {
-        const conversationId = await ctx.runMutation(api.conversations.createConversation, {
+        const conversationId = await ctx.runMutation(internal.conversations.internalCreateConversation, {
           organizationId: apiKeyRecord.organizationId,
           leadId,
           channel: body.channel || "webchat",
         });
 
-        await ctx.runMutation(api.conversations.sendMessage, {
+        await ctx.runMutation(internal.conversations.internalSendMessage, {
           conversationId,
           content: body.message,
           isInternal: false,
+          teamMemberId: apiKeyRecord.teamMemberId,
         });
       }
 
@@ -162,7 +165,7 @@ http.route({
       const stageId = url.searchParams.get("stageId");
       const assignedTo = url.searchParams.get("assignedTo");
 
-      const leads = await ctx.runQuery(api.leads.getLeads, {
+      const leads = await ctx.runQuery(internal.leads.internalGetLeads, {
         organizationId: apiKeyRecord.organizationId,
         boardId: boardId ? (boardId as Id<"boards">) : undefined,
         stageId: stageId ? (stageId as Id<"stages">) : undefined,
@@ -182,12 +185,12 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const leadId = url.searchParams.get("id");
       if (!leadId) return errorResponse("Lead ID required", 400);
 
-      const lead = await ctx.runQuery(api.leads.getLead, {
+      const lead = await ctx.runQuery(internal.leads.internalGetLead, {
         leadId: leadId as Id<"leads">,
       });
 
@@ -205,11 +208,11 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
-      await ctx.runMutation(api.leads.updateLead, {
+      await ctx.runMutation(internal.leads.internalUpdateLead, {
         leadId: body.leadId as Id<"leads">,
         title: body.title,
         value: body.value,
@@ -218,6 +221,7 @@ http.route({
         tags: body.tags,
         customFields: body.customFields,
         sourceId: body.sourceId,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -233,12 +237,13 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
-      await ctx.runMutation(api.leads.deleteLead, {
+      await ctx.runMutation(internal.leads.internalDeleteLead, {
         leadId: body.leadId as Id<"leads">,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -254,13 +259,14 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.leadId || !body.stageId) return errorResponse("leadId and stageId required", 400);
 
-      await ctx.runMutation(api.leads.moveLeadToStage, {
+      await ctx.runMutation(internal.leads.internalMoveLeadToStage, {
         leadId: body.leadId as Id<"leads">,
         stageId: body.stageId as Id<"stages">,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -276,13 +282,14 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
-      await ctx.runMutation(api.leads.assignLead, {
+      await ctx.runMutation(internal.leads.internalAssignLead, {
         leadId: body.leadId as Id<"leads">,
         assignedTo: body.assignedTo ? (body.assignedTo as Id<"teamMembers">) : undefined,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -298,16 +305,17 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.leadId || !body.reason) return errorResponse("leadId and reason required", 400);
 
-      const handoffId = await ctx.runMutation(api.handoffs.requestHandoff, {
+      const handoffId = await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
         leadId: body.leadId as Id<"leads">,
         toMemberId: body.toMemberId ? (body.toMemberId as Id<"teamMembers">) : undefined,
         reason: body.reason,
         summary: body.summary,
         suggestedActions: body.suggestedActions || [],
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true, handoffId }, 201);
@@ -327,7 +335,7 @@ http.route({
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
 
-      const contacts = await ctx.runQuery(api.contacts.getContacts, {
+      const contacts = await ctx.runQuery(internal.contacts.internalGetContacts, {
         organizationId: apiKeyRecord.organizationId,
       });
 
@@ -347,7 +355,7 @@ http.route({
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
 
-      const contactId = await ctx.runMutation(api.contacts.createContact, {
+      const contactId = await ctx.runMutation(internal.contacts.internalCreateContact, {
         organizationId: apiKeyRecord.organizationId,
         firstName: body.firstName,
         lastName: body.lastName,
@@ -356,6 +364,7 @@ http.route({
         company: body.company,
         title: body.title,
         tags: body.tags,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true, contactId }, 201);
@@ -376,7 +385,7 @@ http.route({
       const contactId = url.searchParams.get("id");
       if (!contactId) return errorResponse("Contact ID required", 400);
 
-      const contact = await ctx.runQuery(api.contacts.getContact, {
+      const contact = await ctx.runQuery(internal.contacts.internalGetContact, {
         contactId: contactId as Id<"contacts">,
       });
 
@@ -394,11 +403,11 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.contactId) return errorResponse("contactId required", 400);
 
-      await ctx.runMutation(api.contacts.updateContact, {
+      await ctx.runMutation(internal.contacts.internalUpdateContact, {
         contactId: body.contactId as Id<"contacts">,
         firstName: body.firstName,
         lastName: body.lastName,
@@ -407,6 +416,7 @@ http.route({
         company: body.company,
         title: body.title,
         tags: body.tags,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -428,7 +438,7 @@ http.route({
       const url = new URL(request.url);
       const leadId = url.searchParams.get("leadId");
 
-      const conversations = await ctx.runQuery(api.conversations.getConversations, {
+      const conversations = await ctx.runQuery(internal.conversations.internalGetConversations, {
         organizationId: apiKeyRecord.organizationId,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
       });
@@ -451,7 +461,7 @@ http.route({
       const conversationId = url.searchParams.get("conversationId");
       if (!conversationId) return errorResponse("conversationId required", 400);
 
-      const messages = await ctx.runQuery(api.conversations.getMessages, {
+      const messages = await ctx.runQuery(internal.conversations.internalGetMessages, {
         conversationId: conversationId as Id<"conversations">,
       });
 
@@ -468,17 +478,18 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.conversationId || !body.content) {
         return errorResponse("conversationId and content required", 400);
       }
 
-      const messageId = await ctx.runMutation(api.conversations.sendMessage, {
+      const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
         conversationId: body.conversationId as Id<"conversations">,
         content: body.content,
         contentType: body.contentType || "text",
         isInternal: body.isInternal || false,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true, messageId }, 201);
@@ -500,7 +511,7 @@ http.route({
       const url = new URL(request.url);
       const status = url.searchParams.get("status") as "pending" | "accepted" | "rejected" | null;
 
-      const handoffs = await ctx.runQuery(api.handoffs.getHandoffs, {
+      const handoffs = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
         organizationId: apiKeyRecord.organizationId,
         status: status || undefined,
       });
@@ -520,7 +531,7 @@ http.route({
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
 
-      const handoffs = await ctx.runQuery(api.handoffs.getHandoffs, {
+      const handoffs = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
         organizationId: apiKeyRecord.organizationId,
         status: "pending",
       });
@@ -538,13 +549,14 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.handoffId) return errorResponse("handoffId required", 400);
 
-      await ctx.runMutation(api.handoffs.acceptHandoff, {
+      await ctx.runMutation(internal.handoffs.internalAcceptHandoff, {
         handoffId: body.handoffId as Id<"handoffs">,
         notes: body.notes,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
@@ -560,13 +572,14 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
       if (!body.handoffId) return errorResponse("handoffId required", 400);
 
-      await ctx.runMutation(api.handoffs.rejectHandoff, {
+      await ctx.runMutation(internal.handoffs.internalRejectHandoff, {
         handoffId: body.handoffId as Id<"handoffs">,
         notes: body.notes,
+        teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });

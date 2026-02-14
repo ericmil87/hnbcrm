@@ -4,8 +4,8 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 
 interface LeadDetailPanelProps {
-  leadId: string;
-  organizationId: string;
+  leadId: Id<"leads">;
+  organizationId: Id<"organizations">;
   onClose: () => void;
 }
 
@@ -80,8 +80,8 @@ function ConversationTab({
   leadId,
   organizationId,
 }: {
-  leadId: string;
-  organizationId: string;
+  leadId: Id<"leads">;
+  organizationId: Id<"organizations">;
 }) {
   const [messageText, setMessageText] = useState("");
   const [isInternal, setIsInternal] = useState(false);
@@ -89,15 +89,15 @@ function ConversationTab({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const conversations = useQuery(api.conversations.getConversations, {
-    organizationId: organizationId as Id<"organizations">,
-    leadId: leadId as Id<"leads">,
+    organizationId,
+    leadId,
   });
 
   const firstConversation = conversations && conversations.length > 0 ? conversations[0] : null;
 
   const messages = useQuery(
     api.conversations.getMessages,
-    firstConversation ? { conversationId: firstConversation._id as Id<"conversations"> } : "skip"
+    firstConversation ? { conversationId: firstConversation._id } : "skip"
   );
 
   const sendMessage = useMutation(api.conversations.sendMessage);
@@ -115,11 +115,11 @@ function ConversationTab({
       let conversationId: Id<"conversations">;
 
       if (firstConversation) {
-        conversationId = firstConversation._id as Id<"conversations">;
+        conversationId = firstConversation._id;
       } else {
         conversationId = await createConversation({
-          organizationId: organizationId as Id<"organizations">,
-          leadId: leadId as Id<"leads">,
+          organizationId,
+          leadId,
           channel: "internal",
         });
       }
@@ -258,8 +258,8 @@ function ConversationTab({
 /*  Details Tab                                                        */
 /* ------------------------------------------------------------------ */
 
-function DetailsTab({ leadId }: { leadId: string }) {
-  const lead = useQuery(api.leads.getLead, { leadId: leadId as Id<"leads"> });
+function DetailsTab({ leadId }: { leadId: Id<"leads"> }) {
+  const lead = useQuery(api.leads.getLead, { leadId });
   const updateLead = useMutation(api.leads.updateLead);
   const updateQualification = useMutation(api.leads.updateLeadQualification);
 
@@ -304,7 +304,7 @@ function DetailsTab({ leadId }: { leadId: string }) {
     setSaving(true);
     try {
       await updateLead({
-        leadId: leadId as Id<"leads">,
+        leadId,
         title,
         value,
         priority,
@@ -326,7 +326,7 @@ function DetailsTab({ leadId }: { leadId: string }) {
     try {
       const score = [budget, authority, need, timeline].filter(Boolean).length;
       await updateQualification({
-        leadId: leadId as Id<"leads">,
+        leadId,
         qualification: { budget, authority, need, timeline, score },
       });
     } catch (error) {
@@ -502,9 +502,9 @@ const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   email_sent: { color: "bg-cyan-500", letter: "E" },
 };
 
-function ActivityTab({ leadId }: { leadId: string }) {
+function ActivityTab({ leadId }: { leadId: Id<"leads"> }) {
   const activities = useQuery(api.activities.getActivities, {
-    leadId: leadId as Id<"leads">,
+    leadId,
   });
 
   if (!activities) {

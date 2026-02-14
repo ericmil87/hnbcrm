@@ -11,6 +11,7 @@ export const seedMockData = mutation({
   args: {
     organizationId: v.id("organizations"),
   },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const { organizationId } = args;
 

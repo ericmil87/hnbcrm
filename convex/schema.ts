@@ -50,7 +50,8 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_team_member", ["teamMemberId"])
-    .index("by_key_hash", ["keyHash"]),
+    .index("by_key_hash", ["keyHash"])
+    .index("by_key_hash_and_active", ["keyHash", "isActive"]),
 
   // Boards (pipelines)
   boards: defineTable({
@@ -181,6 +182,7 @@ const applicationTables = {
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
+    .index("by_organization_and_board", ["organizationId", "boardId"])
     .index("by_board", ["boardId"])
     .index("by_stage", ["stageId"])
     .index("by_assigned_to", ["assignedTo"])
@@ -253,6 +255,7 @@ const applicationTables = {
     suggestedActions: v.array(v.string()),
     status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
     acceptedBy: v.optional(v.id("teamMembers")),
+    resolvedBy: v.optional(v.id("teamMembers")),
     notes: v.optional(v.string()),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),

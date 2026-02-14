@@ -9,9 +9,10 @@ import { HandoffQueue } from "./HandoffQueue";
 import { TeamPage } from "./TeamPage";
 import { Settings } from "./Settings";
 import { AuditLogs } from "./AuditLogs";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 interface DashboardProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 type Tab = "dashboard" | "board" | "inbox" | "handoffs" | "team" | "audit" | "settings";
@@ -19,7 +20,7 @@ type Tab = "dashboard" | "board" | "inbox" | "handoffs" | "team" | "audit" | "se
 export function Dashboard({ organizationId }: DashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, {
-    organizationId: organizationId as Id<"organizations">
+    organizationId
   });
 
   const tabs = [
@@ -68,25 +69,39 @@ export function Dashboard({ organizationId }: DashboardProps) {
       <div className="flex-1 overflow-hidden">
         <div className="h-full p-6 overflow-y-auto">
           {activeTab === "dashboard" && (
-            <DashboardOverview organizationId={organizationId} />
+            <ErrorBoundary>
+              <DashboardOverview organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "board" && (
-            <KanbanBoard organizationId={organizationId} />
+            <ErrorBoundary>
+              <KanbanBoard organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "inbox" && (
-            <Inbox organizationId={organizationId} />
+            <ErrorBoundary>
+              <Inbox organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "handoffs" && (
-            <HandoffQueue organizationId={organizationId} />
+            <ErrorBoundary>
+              <HandoffQueue organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "team" && (
-            <TeamPage organizationId={organizationId} />
+            <ErrorBoundary>
+              <TeamPage organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "audit" && (
-            <AuditLogs organizationId={organizationId} />
+            <ErrorBoundary>
+              <AuditLogs organizationId={organizationId} />
+            </ErrorBoundary>
           )}
           {activeTab === "settings" && (
-            <Settings organizationId={organizationId} />
+            <ErrorBoundary>
+              <Settings organizationId={organizationId} />
+            </ErrorBoundary>
           )}
         </div>
       </div>

@@ -9,6 +9,7 @@ export const getActivities = query({
     leadId: v.id("leads"),
     limit: v.optional(v.number()),
   },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -58,6 +59,7 @@ export const createActivity = mutation({
     content: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
+  returns: v.id("activities"),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -102,6 +104,7 @@ export const addActivity = internalMutation({
     content: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
+  returns: v.id("activities"),
   handler: async (ctx, args) => {
     return await ctx.db.insert("activities", {
       organizationId: args.organizationId,

@@ -1,22 +1,13 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { query, mutation, internalQuery } from "./_generated/server";
+import { requireAuth } from "./lib/auth";
 
 // Get boards for organization
 export const getBoards = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember) throw new Error("Not authorized");
+    await requireAuth(ctx, args.organizationId);
 
     return await ctx.db
       .query("boards")
@@ -28,21 +19,12 @@ export const getBoards = query({
 // Get stages for board
 export const getStages = query({
   args: { boardId: v.id("boards") },
+  returns: v.any(),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
     const board = await ctx.db.get(args.boardId);
     if (!board) throw new Error("Board not found");
 
-    // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", board.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember) throw new Error("Not authorized");
+    await requireAuth(ctx, board.organizationId);
 
     return await ctx.db
       .query("stages")
@@ -59,18 +41,10 @@ export const createBoard = mutation({
     description: v.optional(v.string()),
     color: v.string(),
   },
+  returns: v.id("boards"),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    // Verify user is admin or manager
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember || !["admin", "manager"].includes(userMember.role)) {
+    const userMember = await requireAuth(ctx, args.organizationId);
+    if (!["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
     }
 
@@ -120,21 +94,13 @@ export const createStage = mutation({
     isClosedWon: v.optional(v.boolean()),
     isClosedLost: v.optional(v.boolean()),
   },
+  returns: v.id("stages"),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
     const board = await ctx.db.get(args.boardId);
     if (!board) throw new Error("Board not found");
 
-    // Verify user is admin or manager
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", board.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember || !["admin", "manager"].includes(userMember.role)) {
+    const userMember = await requireAuth(ctx, board.organizationId);
+    if (!["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
     }
 
@@ -173,5 +139,29 @@ export const createStage = mutation({
     });
 
     return stageId;
+  },
+});
+
+// Internal: Get boards for organization (used by HTTP API router)
+export const internalGetBoards = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("boards")
+      .withIndex("by_organization_and_order", (q) => q.eq("organizationId", args.organizationId))
+      .collect();
+  },
+});
+
+// Internal: Get stages for board (used by HTTP API router)
+export const internalGetStages = internalQuery({
+  args: { boardId: v.id("boards") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("stages")
+      .withIndex("by_board_and_order", (q) => q.eq("boardId", args.boardId))
+      .collect();
   },
 });

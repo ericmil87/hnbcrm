@@ -12,6 +12,7 @@ export const getAuditLogs = query({
     limit: v.optional(v.number()),
     offset: v.optional(v.number()),
   },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");

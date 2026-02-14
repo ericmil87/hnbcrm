@@ -1,10 +1,12 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { requireAuth } from "./lib/auth";
 
 // Get user's organizations
 export const getUserOrganizations = query({
   args: {},
+  returns: v.any(),
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return [];
@@ -31,6 +33,7 @@ export const createOrganization = mutation({
     name: v.string(),
     slug: v.string(),
   },
+  returns: v.id("organizations"),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -153,11 +156,18 @@ export const createOrganization = mutation({
 // Get organization by slug
 export const getOrganizationBySlug = query({
   args: { slug: v.string() },
+  returns: v.any(),
   handler: async (ctx, args) => {
-    return await ctx.db
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const org = await ctx.db
       .query("organizations")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
+
+    if (!org) return null;
+    return { _id: org._id, name: org.name, slug: org.slug };
   },
 });
 
@@ -176,23 +186,13 @@ export const updateOrganization = mutation({
       })),
     })),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new Error("Organization not found");
 
-    // Verify user is admin
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
-      .first();
-
-    if (!userMember || userMember.role !== "admin") {
-      throw new Error("Not authorized");
-    }
+    const userMember = await requireAuth(ctx, args.organizationId);
+    if (userMember.role !== "admin") throw new Error("Not authorized");
 
     const now = Date.now();
     const changes: Record<string, any> = {};
@@ -207,7 +207,7 @@ export const updateOrganization = mutation({
       before.settings = org.settings;
     }
 
-    if (Object.keys(changes).length === 0) return;
+    if (Object.keys(changes).length === 0) return null;
 
     await ctx.db.patch(args.organizationId, {
       ...changes,
@@ -226,5 +226,28 @@ export const updateOrganization = mutation({
       severity: "medium",
       createdAt: now,
     });
+
+    return null;
+  },
+});
+
+// Internal: Get organization by ID (used by router instead of getOrganizationBySlug)
+export const internalGetOrganization = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.organizationId);
+  },
+});
+
+// Internal: Get organization by slug (used by HTTP API router)
+export const internalGetOrganizationBySlug = internalQuery({
+  args: { slug: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("organizations")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
   },
 });

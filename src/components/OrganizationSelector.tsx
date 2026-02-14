@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface OrganizationSelectorProps {
-  selectedOrgId: string | null;
-  onSelectOrg: (orgId: string | null) => void;
+  selectedOrgId: Id<"organizations"> | null;
+  onSelectOrg: (orgId: Id<"organizations"> | null) => void;
 }
 
 export function OrganizationSelector({ selectedOrgId, onSelectOrg }: OrganizationSelectorProps) {
@@ -31,8 +33,7 @@ export function OrganizationSelector({ selectedOrgId, onSelectOrg }: Organizatio
       setNewOrgSlug("");
       setShowCreateForm(false);
     } catch (error) {
-      console.error("Failed to create organization:", error);
-      alert("Failed to create organization. The slug might already be taken.");
+      toast.error("Failed to create organization. The slug might already be taken.");
     }
   };
 
@@ -46,7 +47,7 @@ export function OrganizationSelector({ selectedOrgId, onSelectOrg }: Organizatio
     <div className="relative">
       <select
         value={selectedOrgId || ""}
-        onChange={(e) => onSelectOrg(e.target.value || null)}
+        onChange={(e) => onSelectOrg(e.target.value ? (e.target.value as Id<"organizations">) : null)}
         className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white min-w-48"
       >
         <option value="">Select Organization</option>

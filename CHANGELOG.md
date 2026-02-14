@@ -2,6 +2,41 @@
 
 All notable changes to ClawCRM will be documented in this file.
 
+## [0.3.0] - 2026-02-14
+
+### Security & Performance Hardening
+
+#### Auth & Access Control
+- Created `convex/lib/auth.ts` with shared `requireAuth()` helper, replacing duplicated 8-line auth boilerplate across all backend files
+- Added authentication to `createConversation` and `getOrganizationBySlug` (previously unprotected)
+- `getOrganizationBySlug` now returns only safe fields (`_id`, `name`, `slug`) instead of full org settings
+
+#### Query Performance
+- Added `limit` argument with `.take()` to `getLeads`, `getConversations`, `getHandoffs` (and internal variants) — default 200, prevents unbounded `.collect()`
+- Added `by_organization_and_board` index on leads for efficient board-scoped queries
+- Added `by_key_hash_and_active` compound index on apiKeys, eliminating in-memory `isActive` filtering
+- `getConversations` now uses `by_lead_and_channel` index when `leadId` is provided instead of full org scan
+- Split `getDashboardStats` into 4 focused queries: `getPipelineStats`, `getLeadsBySource`, `getTeamPerformance`, `getDashboardSummary`
+
+#### Webhook Coverage
+- Added webhook triggers to `updateLead`, `deleteLead`, `assignLead`, `updateLeadQualification` (and internal variants)
+- Added webhook triggers to `acceptHandoff` and `rejectHandoff` (and internal variants)
+
+#### Bug Fixes
+- Fixed `rejectHandoff` incorrectly setting `acceptedBy` — now uses `resolvedBy` field
+- Added `resolvedBy` field to handoffs schema; set on both accept and reject
+
+#### Frontend Improvements
+- Changed `organizationId` prop type from `string` to `Id<"organizations">` across all 12 components, removing unsafe `as` casts
+- Replaced `console.error`/`alert` with `toast.error()` for consistent user-facing error handling
+- Added `ErrorBoundary` component wrapping all dashboard tab contents
+- Fixed `any` types in `Inbox.tsx` message styling and `Settings.tsx` org finder
+
+#### Cleanup
+- Renamed package from `flex-template` to `clawcrm`
+- Deleted unused `src/lib/utils.ts`
+- Typed `router.ts` helper functions — `jsonResponse` accepts `Record<string, unknown>`, typed `.find()` callbacks
+
 ## [0.2.0] - 2026-02-13
 
 ### Developer Tooling & AI Agent Support

@@ -1,10 +1,11 @@
 import React, { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface SettingsProps {
-  organizationId: string;
+  organizationId: Id<"organizations">;
 }
 
 type SettingsSection = "general" | "apikeys" | "fields" | "sources" | "webhooks";
@@ -51,10 +52,10 @@ export function Settings({ organizationId }: SettingsProps) {
 }
 
 // --- General / Org Profile Section ---
-function OrgProfileSection({ organizationId }: { organizationId: string }) {
+function OrgProfileSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const orgs = useQuery(api.organizations.getUserOrganizations);
   const updateOrganization = useMutation(api.organizations.updateOrganization);
-  const org = orgs?.find((o: any) => o?._id === organizationId);
+  const org = orgs?.find((o) => o?._id === organizationId);
 
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
@@ -73,7 +74,7 @@ function OrgProfileSection({ organizationId }: { organizationId: string }) {
     setSaving(true);
     try {
       await updateOrganization({
-        organizationId: organizationId as Id<"organizations">,
+        organizationId,
         name,
         settings: {
           timezone,
@@ -82,7 +83,7 @@ function OrgProfileSection({ organizationId }: { organizationId: string }) {
         },
       });
     } catch (error) {
-      console.error("Failed to update organization:", error);
+      toast.error("Failed to update organization");
     }
     setSaving(false);
   };
@@ -144,19 +145,19 @@ function OrgProfileSection({ organizationId }: { organizationId: string }) {
 }
 
 // --- API Keys Section ---
-function ApiKeysSection({ organizationId }: { organizationId: string }) {
+function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const [showCreateApiKey, setShowCreateApiKey] = useState(false);
   const [newApiKeyName, setNewApiKeyName] = useState("");
 
   const apiKeys = useQuery(api.apiKeys.getApiKeys, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
 
-  const createApiKey = useMutation(api.apiKeys.createApiKey);
+  const createApiKey = useAction(api.nodeActions.createApiKey);
 
   const handleCreateApiKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -165,12 +166,12 @@ function ApiKeysSection({ organizationId }: { organizationId: string }) {
     try {
       const aiAgent = teamMembers?.find(m => m.type === "ai");
       if (!aiAgent) {
-        alert("No AI agent found. Please create an AI team member first.");
+        toast.error("No AI agent found. Please create an AI team member first.");
         return;
       }
 
       const result = await createApiKey({
-        organizationId: organizationId as Id<"organizations">,
+        organizationId,
         teamMemberId: aiAgent._id,
         name: newApiKeyName,
       });
@@ -179,8 +180,7 @@ function ApiKeysSection({ organizationId }: { organizationId: string }) {
       setNewApiKeyName("");
       setShowCreateApiKey(false);
     } catch (error) {
-      console.error("Failed to create API key:", error);
-      alert("Failed to create API key");
+      toast.error("Failed to create API key");
     }
   };
 
@@ -259,13 +259,13 @@ function ApiKeysSection({ organizationId }: { organizationId: string }) {
 }
 
 // --- Custom Fields Section ---
-function CustomFieldsSection({ organizationId }: { organizationId: string }) {
+function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", key: "", type: "text" as string, options: "", isRequired: false });
 
   const fieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
   const createField = useMutation(api.fieldDefinitions.createFieldDefinition);
   const updateField = useMutation(api.fieldDefinitions.updateFieldDefinition);
@@ -285,7 +285,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: string }) {
         });
       } else {
         await createField({
-          organizationId: organizationId as Id<"organizations">,
+          organizationId,
           name: form.name,
           key: form.key,
           type: form.type as any,
@@ -405,13 +405,13 @@ function CustomFieldsSection({ organizationId }: { organizationId: string }) {
 }
 
 // --- Lead Sources Section ---
-function LeadSourcesSection({ organizationId }: { organizationId: string }) {
+function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", type: "website" as string });
 
   const sources = useQuery(api.leadSources.getLeadSources, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
   const createSource = useMutation(api.leadSources.createLeadSource);
   const updateSource = useMutation(api.leadSources.updateLeadSource);
@@ -428,7 +428,7 @@ function LeadSourcesSection({ organizationId }: { organizationId: string }) {
         });
       } else {
         await createSource({
-          organizationId: organizationId as Id<"organizations">,
+          organizationId,
           name: form.name,
           type: form.type as any,
         });
@@ -524,13 +524,13 @@ function LeadSourcesSection({ organizationId }: { organizationId: string }) {
 }
 
 // --- Webhooks Section ---
-function WebhooksSection({ organizationId }: { organizationId: string }) {
+function WebhooksSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", url: "", events: "", secret: "" });
 
   const webhooks = useQuery(api.webhooks.getWebhooks, {
-    organizationId: organizationId as Id<"organizations">,
+    organizationId,
   });
   const createWebhook = useMutation(api.webhooks.createWebhook);
   const updateWebhook = useMutation(api.webhooks.updateWebhook);
@@ -549,7 +549,7 @@ function WebhooksSection({ organizationId }: { organizationId: string }) {
         });
       } else {
         await createWebhook({
-          organizationId: organizationId as Id<"organizations">,
+          organizationId,
           name: form.name,
           url: form.url,
           events,

@@ -5,6 +5,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 // Get field definitions for organization
 export const getFieldDefinitions = query({
   args: { organizationId: v.id("organizations") },
+  returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -43,6 +44,7 @@ export const createFieldDefinition = mutation({
     isRequired: v.boolean(),
     order: v.number(),
   },
+  returns: v.id("fieldDefinitions"),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -119,6 +121,7 @@ export const updateFieldDefinition = mutation({
     isRequired: v.optional(v.boolean()),
     order: v.optional(v.number()),
   },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -162,7 +165,7 @@ export const updateFieldDefinition = mutation({
       before.order = fieldDef.order;
     }
 
-    if (Object.keys(changes).length === 0) return;
+    if (Object.keys(changes).length === 0) return null;
 
     await ctx.db.patch(args.fieldDefinitionId, changes);
 
@@ -178,12 +181,15 @@ export const updateFieldDefinition = mutation({
       severity: "low",
       createdAt: now,
     });
+
+    return null;
   },
 });
 
 // Delete field definition (admin/manager only)
 export const deleteFieldDefinition = mutation({
   args: { fieldDefinitionId: v.id("fieldDefinitions") },
+  returns: v.null(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
@@ -218,5 +224,7 @@ export const deleteFieldDefinition = mutation({
     });
 
     await ctx.db.delete(args.fieldDefinitionId);
+
+    return null;
   },
 });
