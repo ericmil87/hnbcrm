@@ -2,6 +2,17 @@
 
 All notable changes to ClawCRM will be documented in this file.
 
+## [0.2.0] - 2026-02-13
+
+### Developer Tooling & AI Agent Support
+
+- Added `convex-agent-plugins` submodule (18 best-practice rules, 7 skills, 2 agents)
+- Created `CLAUDE.md` (root) — commands, architecture, mandatory Convex rules, skill/agent catalog
+- Created `convex/CLAUDE.md` — backend file map, auth pattern, mutation side-effects checklist, index reference, HTTP API pattern
+- Created `src/CLAUDE.md` — component tree, data fetching/mutation patterns, styling conventions
+- Added PostToolUse hooks: auto-validate Convex functions for missing validators, auto-codegen after schema edits
+- Added `convex/seed.ts` for development seeding
+
 ## [0.1.0] - 2026-02-11
 
 ### Initial MVP Release
