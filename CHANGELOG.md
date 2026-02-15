@@ -16,6 +16,9 @@ Rewrites all documentation to professional open-source standards.
 - **CLAUDE.md** — Removed redundant Skills and Agents sections (auto-discoverable)
 - **src/CLAUDE.md** — Added DevelopersPage to structure tree, removed Path Alias and Key Dependencies sections
 - **convex/CLAUDE.md** — Added llmsTxt.ts and onboarding files to file layout table
+- **vercel.json** — Added SPA routing rewrite for Vercel deployment
+- **README.md** — Added Deploy section (Vercel + Convex production)
+- **CONTRIBUTING.md** — Added environment variables section
 
 ## [0.7.0] - 2026-02-15
 

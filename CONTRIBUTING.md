@@ -75,6 +75,15 @@ When opening an issue, include:
 - Browser and OS (for frontend issues)
 - Relevant error messages or console output
 
+## Environment Variables
+
+| Variable | Where | Description |
+|----------|-------|-------------|
+| `VITE_CONVEX_URL` | `.env.local` | Convex deployment URL (auto-set by `npx convex dev`) |
+| `CONVEX_DEPLOYMENT` | `.env.local` | Convex deployment name (auto-set) |
+
+For production deployment on Vercel, only `VITE_CONVEX_URL` needs to be set in the project settings.
+
 ## Notes
 
 - No test framework is configured yet — contributions to set one up are welcome

@@ -99,6 +99,33 @@ public/             Logo assets
 
 **Webhooks** — HMAC-SHA256 signed webhook events for lead, conversation, and handoff state changes.
 
+## Deploy
+
+The backend runs on [Convex Cloud](https://convex.dev) — no infrastructure to manage. The frontend is a static SPA that can be deployed anywhere.
+
+### Vercel (recommended)
+
+1. Import the repo on [vercel.com/new](https://vercel.com/new)
+2. Set the environment variable:
+
+   | Variable | Value |
+   |----------|-------|
+   | `VITE_CONVEX_URL` | Your Convex deployment URL (e.g. `https://your-app.convex.cloud`) |
+
+3. Deploy — Vercel auto-detects Vite, uses `npm run build`, outputs from `dist/`
+
+The included `vercel.json` handles SPA routing (all paths fallback to `index.html`).
+
+### Convex Production
+
+To deploy Convex functions to production:
+
+```bash
+npx convex deploy
+```
+
+See [Convex Hosting & Deployment](https://docs.convex.dev/production/) for details.
+
 ## UI Language
 
 The interface is in **Portuguese (PT-BR)**. English localization is planned.
