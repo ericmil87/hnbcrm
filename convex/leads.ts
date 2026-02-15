@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get leads for organization
 export const getLeads = query({
@@ -146,6 +147,7 @@ export const createLead = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { title: args.title, contactId: args.contactId },
+      description: buildAuditDescription({ action: "create", entityType: "lead", metadata: { title: args.title, contactId: args.contactId } }),
       severity: "medium",
       createdAt: now,
     });
@@ -246,6 +248,8 @@ export const updateLead = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before, after: changes },
+      metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -295,6 +299,8 @@ export const linkContact = mutation({
         before: { contactId: oldContactId },
         after: { contactId: args.contactId },
       },
+      metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before: { contactId: oldContactId }, after: { contactId: args.contactId } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -335,6 +341,7 @@ export const deleteLead = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "delete", entityType: "lead", metadata: { title: lead.title } }),
       severity: "high",
       createdAt: now,
     });
@@ -414,6 +421,8 @@ export const moveLeadToStage = mutation({
         before: { stageId: oldStageId },
         after: { stageId: args.stageId },
       },
+      metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name },
+      description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -478,6 +487,8 @@ export const assignLead = mutation({
         before: { assignedTo: oldAssignedTo },
         after: { assignedTo: args.assignedTo },
       },
+      metadata: { title: lead.title, assigneeName: newAssignee?.name },
+      description: buildAuditDescription({ action: "assign", entityType: "lead", metadata: { title: lead.title, assigneeName: newAssignee?.name }, changes: { before: { assignedTo: oldAssignedTo }, after: { assignedTo: args.assignedTo } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -544,6 +555,8 @@ export const updateLeadQualification = mutation({
         before: { qualification: lead.qualification },
         after: { qualification: args.qualification },
       },
+      metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before: { qualification: lead.qualification }, after: { qualification: args.qualification } } }),
       severity: "low",
       createdAt: now,
     });
@@ -720,6 +733,7 @@ export const internalCreateLead = internalMutation({
       actorId: teamMember._id,
       actorType: teamMember.type === "ai" ? "ai" : "human",
       metadata: { title: args.title, contactId: args.contactId },
+      description: buildAuditDescription({ action: "create", entityType: "lead", metadata: { title: args.title, contactId: args.contactId } }),
       severity: "medium",
       createdAt: now,
     });
@@ -817,6 +831,8 @@ export const internalUpdateLead = internalMutation({
       actorId: teamMember._id,
       actorType: teamMember.type === "ai" ? "ai" : "human",
       changes: { before, after: changes },
+      metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -857,6 +873,7 @@ export const internalDeleteLead = internalMutation({
       actorId: teamMember._id,
       actorType: teamMember.type === "ai" ? "ai" : "human",
       metadata: { title: lead.title },
+      description: buildAuditDescription({ action: "delete", entityType: "lead", metadata: { title: lead.title } }),
       severity: "high",
       createdAt: now,
     });
@@ -916,6 +933,8 @@ export const internalMoveLeadToStage = internalMutation({
         before: { stageId: oldStageId },
         after: { stageId: args.stageId },
       },
+      metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name },
+      description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -982,6 +1001,8 @@ export const internalAssignLead = internalMutation({
         before: { assignedTo: oldAssignedTo },
         after: { assignedTo: args.assignedTo },
       },
+      metadata: { title: lead.title, assigneeName: newAssignee?.name },
+      description: buildAuditDescription({ action: "assign", entityType: "lead", metadata: { title: lead.title, assigneeName: newAssignee?.name }, changes: { before: { assignedTo: oldAssignedTo }, after: { assignedTo: args.assignedTo } } }),
       severity: "medium",
       createdAt: now,
     });

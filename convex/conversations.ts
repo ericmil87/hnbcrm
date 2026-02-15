@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get conversations for organization
 export const getConversations = query({
@@ -158,6 +159,7 @@ export const sendMessage = mutation({
         leadId: conversation.leadId,
         isInternal: args.isInternal,
       },
+      description: buildAuditDescription({ action: "create", entityType: "message", metadata: { conversationId: args.conversationId, leadId: conversation.leadId, isInternal: args.isInternal } }),
       severity: "low",
       createdAt: now,
     });
@@ -386,6 +388,7 @@ export const internalSendMessage = internalMutation({
         leadId: conversation.leadId,
         isInternal: args.isInternal,
       },
+      description: buildAuditDescription({ action: "create", entityType: "message", metadata: { conversationId: args.conversationId, leadId: conversation.leadId, isInternal: args.isInternal } }),
       severity: "low",
       createdAt: now,
     });

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // All optional string fields on a contact that participate in search
 function buildSearchText(contact: {
@@ -244,6 +245,7 @@ export const createContact = mutation({
         name: `${args.firstName || ""} ${args.lastName || ""}`.trim(),
         email: args.email,
       },
+      description: buildAuditDescription({ action: "create", entityType: "contact", metadata: { name: `${args.firstName || ""} ${args.lastName || ""}`.trim(), email: args.email } }),
       severity: "low",
       createdAt: now,
     });
@@ -345,6 +347,7 @@ export const updateContact = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "contact", changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -384,6 +387,7 @@ export const deleteContact = mutation({
         name: `${contact.firstName || ""} ${contact.lastName || ""}`.trim(),
         email: contact.email,
       },
+      description: buildAuditDescription({ action: "delete", entityType: "contact", metadata: { name: `${contact.firstName || ""} ${contact.lastName || ""}`.trim(), email: contact.email } }),
       severity: "high",
       createdAt: now,
     });
@@ -538,6 +542,7 @@ export const internalCreateContact = internalMutation({
         name: `${args.firstName || ""} ${args.lastName || ""}`.trim(),
         email: args.email,
       },
+      description: buildAuditDescription({ action: "create", entityType: "contact", metadata: { name: `${args.firstName || ""} ${args.lastName || ""}`.trim(), email: args.email } }),
       severity: "low",
       createdAt: now,
     });
@@ -590,6 +595,7 @@ export const internalUpdateContact = internalMutation({
       actorId: teamMember._id,
       actorType: teamMember.type === "ai" ? "ai" : "human",
       changes: { before, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "contact", changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -652,6 +658,7 @@ export const enrichContact = internalMutation({
       actorType: teamMember.type === "ai" ? "ai" : "human",
       changes: { before, after },
       metadata: { enrichmentSource: args.source, confidence: args.confidence },
+      description: buildAuditDescription({ action: "update", entityType: "contact", metadata: { enrichmentSource: args.source, confidence: args.confidence }, changes: { before, after } }),
       severity: "low",
       createdAt: now,
     });
@@ -684,5 +691,22 @@ export const internalGetContactEnrichmentGaps = internalQuery({
     });
 
     return { ...contact, missingFields };
+  },
+});
+
+export const internalSearchContacts = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    searchText: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("contacts")
+      .withSearchIndex("search_contacts", (q) =>
+        q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
+      )
+      .take(args.limit ?? 20);
   },
 });

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get webhooks for organization (admin only)
 export const getWebhooks = query({
@@ -76,6 +77,7 @@ export const createWebhook = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, url: args.url, events: args.events },
+      description: buildAuditDescription({ action: "create", entityType: "webhook", metadata: { name: args.name, url: args.url, events: args.events } }),
       severity: "medium",
       createdAt: now,
     });
@@ -147,6 +149,7 @@ export const updateWebhook = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "webhook", changes: { before, after: changes } }),
       severity: "medium",
       createdAt: now,
     });
@@ -189,6 +192,7 @@ export const deleteWebhook = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: webhook.name, url: webhook.url },
+      description: buildAuditDescription({ action: "delete", entityType: "webhook", metadata: { name: webhook.name, url: webhook.url } }),
       severity: "high",
       createdAt: now,
     });

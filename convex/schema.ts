@@ -378,6 +378,7 @@ const applicationTables = {
       after: v.optional(v.record(v.string(), v.any())),
     })),
     metadata: v.optional(v.record(v.string(), v.any())),
+    description: v.optional(v.string()),
     severity: v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("critical")),
     ipAddress: v.optional(v.string()),
     userAgent: v.optional(v.string()),
@@ -388,7 +389,11 @@ const applicationTables = {
     .index("by_actor", ["actorId"])
     .index("by_organization_and_created", ["organizationId", "createdAt"])
     .index("by_severity", ["severity"])
-    .index("by_organization_and_actor", ["organizationId", "actorId"]),
+    .index("by_organization_and_actor", ["organizationId", "actorId"])
+    .index("by_organization_and_entity_type_and_created", ["organizationId", "entityType", "createdAt"])
+    .index("by_organization_and_action_and_created", ["organizationId", "action", "createdAt"])
+    .index("by_organization_and_severity_and_created", ["organizationId", "severity", "createdAt"])
+    .index("by_organization_and_actor_and_created", ["organizationId", "actorId", "createdAt"]),
 
   // Saved Views
   savedViews: defineTable({

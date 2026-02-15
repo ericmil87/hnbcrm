@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get field definitions for organization
 export const getFieldDefinitions = query({
@@ -123,6 +124,7 @@ export const createFieldDefinition = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, key: args.key, type: args.type, entityType: args.entityType },
+      description: buildAuditDescription({ action: "create", entityType: "fieldDefinition", metadata: { name: args.name, key: args.key, type: args.type, entityType: args.entityType } }),
       severity: "low",
       createdAt: now,
     });
@@ -206,6 +208,7 @@ export const updateFieldDefinition = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "fieldDefinition", changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -246,6 +249,7 @@ export const deleteFieldDefinition = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: fieldDef.name, key: fieldDef.key },
+      description: buildAuditDescription({ action: "delete", entityType: "fieldDefinition", metadata: { name: fieldDef.name, key: fieldDef.key } }),
       severity: "medium",
       createdAt: now,
     });

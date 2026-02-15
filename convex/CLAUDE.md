@@ -48,7 +48,7 @@ Note: `getAuthUserId` is still used directly in functions without org context (e
 When writing mutations that create/update/delete entities, include all three:
 
 1. **Activity log** — `ctx.db.insert("activities", { organizationId, leadId, type, actorId, actorType, content, metadata, createdAt })`
-2. **Audit log** — `ctx.db.insert("auditLogs", { organizationId, entityType, entityId, action, actorId, actorType, changes: { before, after }, severity, createdAt })`
+2. **Audit log** — `ctx.db.insert("auditLogs", { organizationId, entityType, entityId, action, actorId, actorType, changes: { before, after }, description: buildAuditDescription({...}), severity, createdAt })`
 3. **Webhook trigger** — `ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, { organizationId, event: "entity.action", payload })`
 
 ## Key Indexes
@@ -58,7 +58,7 @@ All tables use `by_organization` as the primary access pattern. Important compou
 - `conversations`: `by_lead_and_channel`, `by_organization_and_status`
 - `messages`: `by_conversation_and_created`
 - `stages`: `by_board_and_order`
-- `auditLogs`: `by_organization_and_created`, `by_entity`
+- `auditLogs`: `by_organization_and_created`, `by_entity`, `by_organization_and_entity_type_and_created`, `by_organization_and_action_and_created`, `by_organization_and_severity_and_created`, `by_organization_and_actor_and_created`
 - `activities`: `by_lead_and_created`
 - `apiKeys`: `by_key_hash_and_active`
 

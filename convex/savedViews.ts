@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 const filtersValidator = v.object({
   boardId: v.optional(v.id("boards")),
@@ -79,6 +80,7 @@ export const createSavedView = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, entityType: args.entityType },
+      description: buildAuditDescription({ action: "create", entityType: "savedView", metadata: { name: args.name, entityType: args.entityType } }),
       severity: "low",
       createdAt: now,
     });
@@ -152,6 +154,7 @@ export const deleteSavedView = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: view.name },
+      description: buildAuditDescription({ action: "delete", entityType: "savedView", metadata: { name: view.name } }),
       severity: "low",
       createdAt: now,
     });

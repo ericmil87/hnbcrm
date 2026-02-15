@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireAuth } from "./lib/auth";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get team members for organization
 export const getTeamMembers = query({
@@ -75,6 +76,7 @@ export const createTeamMember = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, role: args.role, type: args.type },
+      description: buildAuditDescription({ action: "create", entityType: "teamMember", metadata: { name: args.name, role: args.role, type: args.type } }),
       severity: "medium",
       createdAt: now,
     });
@@ -118,6 +120,7 @@ export const updateTeamMemberStatus = mutation({
         before: { status: teamMember.status },
         after: { status: args.status },
       },
+      description: buildAuditDescription({ action: "update", entityType: "teamMember", changes: { before: { status: teamMember.status }, after: { status: args.status } } }),
       severity: "low",
       createdAt: now,
     });

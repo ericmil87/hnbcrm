@@ -757,6 +757,165 @@ http.route({
   }),
 });
 
+// ---- Activity Endpoints ----
+
+// Get activities for a lead
+http.route({
+  path: "/api/v1/activities",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      await authenticateApiKey(ctx, request);
+      const url = new URL(request.url);
+      const leadId = url.searchParams.get("leadId");
+      if (!leadId) return errorResponse("leadId required", 400);
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
+
+      const activities = await ctx.runQuery(internal.activities.internalGetActivities, {
+        leadId: leadId as Id<"leads">,
+        limit,
+      });
+
+      return jsonResponse({ activities });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Create activity on a lead
+http.route({
+  path: "/api/v1/activities",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      if (!body.leadId) return errorResponse("leadId required", 400);
+      if (!body.type) return errorResponse("type required", 400);
+
+      const activityId = await ctx.runMutation(internal.activities.internalCreateActivity, {
+        leadId: body.leadId as Id<"leads">,
+        type: body.type,
+        content: body.content,
+        metadata: body.metadata,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+
+      return jsonResponse({ success: true, activityId }, 201);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Dashboard Endpoint ----
+
+// Get dashboard analytics
+http.route({
+  path: "/api/v1/dashboard",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+
+      const stats = await ctx.runQuery(internal.dashboard.internalGetDashboardStats, {
+        organizationId: apiKeyRecord.organizationId,
+      });
+
+      return jsonResponse(stats);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Contact Search Endpoint ----
+
+// Search contacts by text
+http.route({
+  path: "/api/v1/contacts/search",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const url = new URL(request.url);
+      const q = url.searchParams.get("q");
+      if (!q) return errorResponse("q (search query) required", 400);
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "20"), 100);
+
+      const contacts = await ctx.runQuery(internal.contacts.internalSearchContacts, {
+        organizationId: apiKeyRecord.organizationId,
+        searchText: q,
+        limit,
+      });
+
+      return jsonResponse({ contacts });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Lead Sources Endpoint ----
+
+// Get lead sources
+http.route({
+  path: "/api/v1/lead-sources",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+
+      const sources = await ctx.runQuery(internal.leadSources.internalGetLeadSources, {
+        organizationId: apiKeyRecord.organizationId,
+      });
+
+      return jsonResponse({ sources });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Audit Log Endpoints ----
+
+http.route({
+  path: "/api/v1/audit-logs",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const url = new URL(request.url);
+
+      const entityType = url.searchParams.get("entityType") || undefined;
+      const action = url.searchParams.get("action") as any || undefined;
+      const severity = url.searchParams.get("severity") as any || undefined;
+      const actorId = url.searchParams.get("actorId") as Id<"teamMembers"> | undefined || undefined;
+      const startDate = url.searchParams.get("startDate") ? Number(url.searchParams.get("startDate")) : undefined;
+      const endDate = url.searchParams.get("endDate") ? Number(url.searchParams.get("endDate")) : undefined;
+      const cursor = url.searchParams.get("cursor") || undefined;
+      const limit = url.searchParams.get("limit") ? Math.min(Number(url.searchParams.get("limit")), 200) : undefined;
+
+      const result = await ctx.runQuery(internal.auditLogs.internalGetAuditLogs, {
+        organizationId: apiKeyRecord.organizationId,
+        entityType,
+        action,
+        severity,
+        actorId,
+        startDate,
+        endDate,
+        cursor,
+        limit,
+      });
+
+      return jsonResponse(result as any);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
 // ---- LLMs.txt Routes ----
 
 http.route({
@@ -808,5 +967,10 @@ http.route({ path: "/api/v1/handoffs/reject", method: "OPTIONS", handler: option
 http.route({ path: "/api/v1/boards", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/team-members", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/field-definitions", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/activities", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/dashboard", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/contacts/search", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/lead-sources", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/audit-logs", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

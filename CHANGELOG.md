@@ -2,6 +2,46 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.10.0] - 2026-02-15
+
+### Audit Logs Overhaul — Human-Readable, Filterable, Agent-Friendly
+
+Complete redesign of the audit log system: server-generated PT-BR descriptions, 6 filter dimensions with compound indexes, cursor-based pagination, expandable before/after diffs, and a world-class frontend inspired by Linear/Stripe/WorkOS.
+
+#### Schema & Indexes (`convex/schema.ts`)
+- Added `description` optional field to `auditLogs` table — server-generated PT-BR summary
+- 4 new compound indexes for filtered queries: `by_organization_and_entity_type_and_created`, `by_organization_and_action_and_created`, `by_organization_and_severity_and_created`, `by_organization_and_actor_and_created`
+
+#### Description Builder (`convex/lib/auditDescription.ts`)
+- New `buildAuditDescription()` pure function — maps actions to PT-BR past-tense verbs and entity types to gendered articles
+- Special handling for move (stage names), assign (assignee name), handoff (from/to member names)
+- Examples: "Criou o lead 'João Silva'", "Moveu o lead 'Maria' de 'Prospecção' para 'Qualificação'"
+
+#### Backend Query Rewrite (`convex/auditLogs.ts`)
+- `getAuditLogs` rewritten — cursor-based pagination (replaces offset), 6 filter args (severity, entityType, action, actorId, startDate, endDate), smart index selection (priority: actorId > entityType > action > severity > org+created)
+- New `getAuditLogFilters` query — returns actors, all 13 entity types, all 6 actions for filter dropdowns
+- New `internalGetAuditLogs` — same logic for HTTP API layer
+- Actor enrichment: `actorName`, `actorAvatar`, `actorMemberType`
+
+#### Mutation File Updates (52 sites across 14 files)
+- All `ctx.db.insert("auditLogs", ...)` calls now include `description` field via `buildAuditDescription`
+- Enriched metadata: leads.ts moves include `fromStageName`/`toStageName`, assigns include `assigneeName`, handoffs include lead title + member names
+- Files: leads, contacts, handoffs, boards, webhooks, leadSources, fieldDefinitions, organizations, teamMembers, conversations, savedViews, onboarding, apiKeys, seed
+
+#### HTTP API (`convex/router.ts`)
+- New `GET /api/v1/audit-logs` endpoint with all query params (entityType, action, severity, actorId, startDate, endDate, cursor, limit)
+
+#### Frontend Redesign (`src/components/AuditLogs.tsx`)
+- Date grouping (Hoje, Ontem, Esta Semana, Este Mês, Anteriores) with group headers
+- 6 filter dropdowns (actor, action, entity type, severity) + date presets (24h, 7d, 30d, custom)
+- Active filter chips with individual/bulk clear
+- Expandable log rows with before/after diff table (responsive 3-col desktop, stacked mobile)
+- Entity-type icons, action badges, severity dots, actor avatars with AI indicator
+- Skeleton shimmer loading, contextual empty states
+- Cursor-based pagination (next/prev with cursor stack)
+- CSV export with UTF-8 BOM and PT-BR headers
+- Client-side PT-BR fallback for old logs without server `description`
+
 ## [0.9.0] - 2026-02-15
 
 ### MCP Server Improvements & New API Endpoints

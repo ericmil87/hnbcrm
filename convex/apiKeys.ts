@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireAuth } from "./lib/auth";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get API keys for organization (admin only)
 export const getApiKeys = query({
@@ -102,6 +103,7 @@ export const insertApiKey = internalMutation({
       actorId: args.actorId,
       actorType: "human",
       metadata: { name: args.name, teamMemberId: args.teamMemberId },
+      description: buildAuditDescription({ action: "create", entityType: "apiKey", metadata: { name: args.name, teamMemberId: args.teamMemberId } }),
       severity: "high",
       createdAt: now,
     });

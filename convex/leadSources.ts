@@ -1,6 +1,7 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get lead sources for organization
 export const getLeadSources = query({
@@ -76,6 +77,7 @@ export const createLeadSource = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, type: args.type },
+      description: buildAuditDescription({ action: "create", entityType: "leadSource", metadata: { name: args.name, type: args.type } }),
       severity: "low",
       createdAt: now,
     });
@@ -150,6 +152,7 @@ export const updateLeadSource = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "leadSource", changes: { before, after: changes } }),
       severity: "low",
       createdAt: now,
     });
@@ -190,6 +193,7 @@ export const deleteLeadSource = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: leadSource.name, type: leadSource.type },
+      description: buildAuditDescription({ action: "delete", entityType: "leadSource", metadata: { name: leadSource.name, type: leadSource.type } }),
       severity: "medium",
       createdAt: now,
     });
@@ -197,5 +201,17 @@ export const deleteLeadSource = mutation({
     await ctx.db.delete(args.leadSourceId);
 
     return null;
+  },
+});
+
+// Internal query for HTTP API
+export const internalGetLeadSources = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("leadSources")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(100);
   },
 });

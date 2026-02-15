@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Helper: generate a timestamp N days + hours ago
 function daysAgo(days: number, hours = 0): number {
@@ -463,6 +464,7 @@ export const seedMockData = mutation({
         actorType: a.actorType,
         changes: a.changes,
         metadata: a.metadata,
+        description: buildAuditDescription({ action: a.action, entityType: a.entityType, metadata: a.metadata, changes: a.changes }),
         severity: a.severity,
         createdAt: now - a.hoursAgo * 60 * 60 * 1000,
       });

@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get handoffs for organization
 export const getHandoffs = query({
@@ -99,6 +100,7 @@ export const requestHandoff = mutation({
     });
 
     // Log audit entry
+    const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
     await ctx.db.insert("auditLogs", {
       organizationId: lead.organizationId,
       entityType: "handoff",
@@ -110,13 +112,16 @@ export const requestHandoff = mutation({
         leadId: args.leadId,
         reason: args.reason,
         toMemberId: args.toMemberId,
+        title: lead.title,
+        fromMemberName: userMember.name,
+        toMemberName: toMember?.name,
       },
+      description: buildAuditDescription({ action: "create", entityType: "handoff", metadata: { title: lead.title, fromMemberName: userMember.name, toMemberName: toMember?.name } }),
       severity: "medium",
       createdAt: now,
     });
 
     // Log activity
-    const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
     await ctx.db.insert("activities", {
       organizationId: lead.organizationId,
       leadId: args.leadId,
@@ -181,6 +186,8 @@ export const acceptHandoff = mutation({
     });
 
     // Log audit entry
+    const acceptLead = await ctx.db.get(handoff.leadId);
+    const acceptFromMember = await ctx.db.get(handoff.fromMemberId);
     await ctx.db.insert("auditLogs", {
       organizationId: handoff.organizationId,
       entityType: "handoff",
@@ -192,6 +199,12 @@ export const acceptHandoff = mutation({
         before: { status: "pending" },
         after: { status: "accepted", acceptedBy: userMember._id },
       },
+      metadata: {
+        title: acceptLead?.title,
+        fromMemberName: acceptFromMember?.name,
+        toMemberName: userMember.name,
+      },
+      description: buildAuditDescription({ action: "update", entityType: "handoff", metadata: { title: acceptLead?.title, fromMemberName: acceptFromMember?.name, toMemberName: userMember.name }, changes: { before: { status: "pending" }, after: { status: "accepted", acceptedBy: userMember._id } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -250,6 +263,8 @@ export const rejectHandoff = mutation({
     });
 
     // Log audit entry
+    const rejectLead = await ctx.db.get(handoff.leadId);
+    const rejectFromMember = await ctx.db.get(handoff.fromMemberId);
     await ctx.db.insert("auditLogs", {
       organizationId: handoff.organizationId,
       entityType: "handoff",
@@ -261,6 +276,12 @@ export const rejectHandoff = mutation({
         before: { status: "pending" },
         after: { status: "rejected", resolvedBy: userMember._id },
       },
+      metadata: {
+        title: rejectLead?.title,
+        fromMemberName: rejectFromMember?.name,
+        toMemberName: userMember.name,
+      },
+      description: buildAuditDescription({ action: "update", entityType: "handoff", metadata: { title: rejectLead?.title, fromMemberName: rejectFromMember?.name, toMemberName: userMember.name }, changes: { before: { status: "pending" }, after: { status: "rejected", resolvedBy: userMember._id } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -373,6 +394,7 @@ export const internalRequestHandoff = internalMutation({
     });
 
     // Log audit entry
+    const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
     await ctx.db.insert("auditLogs", {
       organizationId: lead.organizationId,
       entityType: "handoff",
@@ -384,13 +406,16 @@ export const internalRequestHandoff = internalMutation({
         leadId: args.leadId,
         reason: args.reason,
         toMemberId: args.toMemberId,
+        title: lead.title,
+        fromMemberName: teamMember.name,
+        toMemberName: toMember?.name,
       },
+      description: buildAuditDescription({ action: "create", entityType: "handoff", metadata: { title: lead.title, fromMemberName: teamMember.name, toMemberName: toMember?.name } }),
       severity: "medium",
       createdAt: now,
     });
 
     // Log activity
-    const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
     await ctx.db.insert("activities", {
       organizationId: lead.organizationId,
       leadId: args.leadId,
@@ -457,6 +482,8 @@ export const internalAcceptHandoff = internalMutation({
     });
 
     // Log audit entry
+    const intAcceptLead = await ctx.db.get(handoff.leadId);
+    const intAcceptFromMember = await ctx.db.get(handoff.fromMemberId);
     await ctx.db.insert("auditLogs", {
       organizationId: handoff.organizationId,
       entityType: "handoff",
@@ -468,6 +495,12 @@ export const internalAcceptHandoff = internalMutation({
         before: { status: "pending" },
         after: { status: "accepted", acceptedBy: teamMember._id },
       },
+      metadata: {
+        title: intAcceptLead?.title,
+        fromMemberName: intAcceptFromMember?.name,
+        toMemberName: teamMember.name,
+      },
+      description: buildAuditDescription({ action: "update", entityType: "handoff", metadata: { title: intAcceptLead?.title, fromMemberName: intAcceptFromMember?.name, toMemberName: teamMember.name }, changes: { before: { status: "pending" }, after: { status: "accepted", acceptedBy: teamMember._id } } }),
       severity: "medium",
       createdAt: now,
     });
@@ -528,6 +561,8 @@ export const internalRejectHandoff = internalMutation({
     });
 
     // Log audit entry
+    const intRejectLead = await ctx.db.get(handoff.leadId);
+    const intRejectFromMember = await ctx.db.get(handoff.fromMemberId);
     await ctx.db.insert("auditLogs", {
       organizationId: handoff.organizationId,
       entityType: "handoff",
@@ -539,6 +574,12 @@ export const internalRejectHandoff = internalMutation({
         before: { status: "pending" },
         after: { status: "rejected", resolvedBy: teamMember._id },
       },
+      metadata: {
+        title: intRejectLead?.title,
+        fromMemberName: intRejectFromMember?.name,
+        toMemberName: teamMember.name,
+      },
+      description: buildAuditDescription({ action: "update", entityType: "handoff", metadata: { title: intRejectLead?.title, fromMemberName: intRejectFromMember?.name, toMemberName: teamMember.name }, changes: { before: { status: "pending" }, after: { status: "rejected", resolvedBy: teamMember._id } } }),
       severity: "medium",
       createdAt: now,
     });

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 // Get boards for organization
 export const getBoards = query({
@@ -78,6 +79,7 @@ export const createBoard = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name },
+      description: buildAuditDescription({ action: "create", entityType: "board", metadata: { name: args.name } }),
       severity: "medium",
       createdAt: now,
     });
@@ -135,6 +137,7 @@ export const createStage = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, boardId: args.boardId },
+      description: buildAuditDescription({ action: "create", entityType: "stage", metadata: { name: args.name, boardId: args.boardId } }),
       severity: "medium",
       createdAt: now,
     });
@@ -179,6 +182,7 @@ export const updateBoard = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before: { name: board.name }, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "board", changes: { before: { name: board.name }, after: changes } }),
       severity: "medium",
       createdAt: now,
     });
@@ -230,6 +234,7 @@ export const deleteBoard = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: board.name },
+      description: buildAuditDescription({ action: "delete", entityType: "board", metadata: { name: board.name } }),
       severity: "high",
       createdAt: now,
     });
@@ -278,6 +283,7 @@ export const updateStage = mutation({
       actorId: userMember._id,
       actorType: "human",
       changes: { before: { name: stage.name }, after: changes },
+      description: buildAuditDescription({ action: "update", entityType: "stage", changes: { before: { name: stage.name }, after: changes } }),
       severity: "medium",
       createdAt: now,
     });
@@ -319,6 +325,7 @@ export const deleteStage = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: stage.name, boardId: stage.boardId },
+      description: buildAuditDescription({ action: "delete", entityType: "stage", metadata: { name: stage.name, boardId: stage.boardId } }),
       severity: "high",
       createdAt: now,
     });
@@ -431,6 +438,7 @@ export const createBoardWithStages = mutation({
       actorId: userMember._id,
       actorType: "human",
       metadata: { name: args.name, stageCount: args.stages.length },
+      description: buildAuditDescription({ action: "create", entityType: "board", metadata: { name: args.name, stageCount: args.stages.length } }),
       severity: "medium",
       createdAt: now,
     });

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { buildAuditDescription } from "./lib/auditDescription";
 
 const wizardDataValidator = v.optional(v.any());
 
@@ -295,6 +296,7 @@ export const completeWizard = mutation({
         companySize: wizardData?.companySize,
         mainGoal: wizardData?.mainGoal,
       },
+      description: buildAuditDescription({ action: "update", entityType: "organization", metadata: { action: "onboarding_wizard_completed", industry: wizardData?.industry, companySize: wizardData?.companySize, mainGoal: wizardData?.mainGoal } }),
       severity: "medium",
       createdAt: now,
     });
@@ -424,6 +426,7 @@ export const setupPipelineFromWizard = mutation({
         stageCount: args.stages.length,
         stageNames: args.stages.map((s) => s.name),
       },
+      description: buildAuditDescription({ action: "create", entityType: "board", metadata: { action: "onboarding_pipeline_setup", boardName: args.boardName, stageCount: args.stages.length, stageNames: args.stages.map((s) => s.name) } }),
       severity: "medium",
       createdAt: now,
     });
