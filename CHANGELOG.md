@@ -2,6 +2,44 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.7.0] - 2026-02-15
+
+### MCP Server, Developer Portal & llms.txt
+
+Adds an MCP server for AI agent integration, a developer portal page, llms.txt endpoints, new REST API endpoints, and renames all remaining ClawCRM references to HNBCRM.
+
+#### MCP Server (`mcp-server/`)
+- **hnbcrm-mcp** npm package — Model Context Protocol server for AI agent integration
+- **HnbCrmClient** — TypeScript API client wrapping all REST endpoints
+- **Tools** — leads (search, create, update, move stage, assign), contacts (search, create, update), conversations (list, get messages, send), handoffs (list pending, accept, reject), pipeline (list boards with stages)
+- **Resources** — `hnbcrm://boards`, `hnbcrm://team-members`, `hnbcrm://field-definitions` with auto-refresh
+- Auth via `HNBCRM_API_URL` + `HNBCRM_API_KEY` environment variables
+
+#### Developer Portal (`src/pages/DevelopersPage.tsx`)
+- Public page at `/developers` with REST API docs, MCP server setup, and SDK examples
+- Tabbed code blocks for Claude Desktop, Cursor, and environment variable configs
+- Added "Developers" link to LandingPage header and footer
+
+#### llms.txt (`convex/llmsTxt.ts`, `convex/router.ts`)
+- `/llms.txt` and `/llms-full.txt` HTTP endpoints for AI-readable project documentation
+- Describes API capabilities, authentication, and endpoint reference
+
+#### New REST API Endpoints (`convex/router.ts`)
+- `GET /api/v1/boards` — List boards with stages (for MCP resources)
+- `GET /api/v1/team-members` — List team members (for MCP resources)
+- `GET /api/v1/field-definitions` — List field definitions (for MCP resources)
+
+#### Internal (`convex/fieldDefinitions.ts`)
+- Added `internalGetFieldDefinitions` query for HTTP API router access
+
+#### Landing Page (`src/components/LandingPage.tsx`)
+- Moved "Servidor MCP" from Coming Soon to built Features section
+- Removed "Em Breve" badge from MCP in pricing tier
+
+#### Rebrand Cleanup
+- Renamed all remaining `ClawCRM` references to `HNBCRM` across 19 files
+- Updated npm package name, API key prefix (`hnbcrm_`), localStorage keys, seed email domains, env var names, MCP resource URIs, TypeScript class names, config keys, and doc headings
+
 ## [0.6.0] - 2026-02-15
 
 ### URL Routing & Sales Landing Page

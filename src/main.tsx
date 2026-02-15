@@ -15,11 +15,13 @@ import { HandoffQueue } from "./components/HandoffQueue";
 import { TeamPage } from "./components/TeamPage";
 import { AuditLogs } from "./components/AuditLogs";
 import { Settings } from "./components/Settings";
+import { DevelopersPage } from "./pages/DevelopersPage";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 const router = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
+  { path: "/developers", element: <DevelopersPage /> },
   { path: "/entrar", element: <AuthPage /> },
   {
     path: "/app",

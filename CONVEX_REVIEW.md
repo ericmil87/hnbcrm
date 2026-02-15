@@ -1,4 +1,4 @@
-# ClawCRM — Convex Best Practices Review
+# HNBCRM — Convex Best Practices Review
 
 > Revisao completa da codebase contra as melhores praticas do Convex.
 > Data: 2026-02-14
@@ -78,7 +78,7 @@ const corsHeaders = {
 ```
 
 - **Risco:** qualquer dominio pode fazer requests a API.
-- **Fix:** em producao, restringir a origens especificas (ex: `https://app.clawcrm.com`).
+- **Fix:** em producao, restringir a origens especificas (ex: `https://app.hnbcrm.com`).
 
 ---
 
@@ -229,7 +229,7 @@ interface DashboardProps {
 
 ### 17. `package.json` com nome generico
 
-- Nome atual: `"flex-template"` — deveria ser `"clawcrm"`.
+- Nome atual: `"flex-template"` — deveria ser `"hnbcrm"`.
 
 ---
 

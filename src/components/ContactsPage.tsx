@@ -67,7 +67,7 @@ export function ContactsPage() {
   // Initialize active columns from localStorage or defaults
   const [activeColumns, setActiveColumns] = useState<ColumnKey[]>(() => {
     try {
-      const stored = localStorage.getItem(`clawcrm:contact-columns:${organizationId}`);
+      const stored = localStorage.getItem(`hnbcrm:contact-columns:${organizationId}`);
       if (stored) {
         const parsed = JSON.parse(stored);
         // Ensure "contact" is always included
@@ -86,7 +86,7 @@ export function ContactsPage() {
   useEffect(() => {
     try {
       localStorage.setItem(
-        `clawcrm:contact-columns:${organizationId}`,
+        `hnbcrm:contact-columns:${organizationId}`,
         JSON.stringify(activeColumns)
       );
     } catch (e) {

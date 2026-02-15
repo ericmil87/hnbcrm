@@ -1,4 +1,4 @@
-# ClawCRM MVP - Remaining Work
+# HNBCRM MVP - Remaining Work
 
 Status comparison of the current codebase against the requirements in `mvp_prompt.md`.
 

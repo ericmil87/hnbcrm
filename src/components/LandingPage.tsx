@@ -106,11 +106,18 @@ export function LandingPage() {
               />
               <span className="text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
-            <Link to="/entrar">
-              <Button variant="ghost" size="sm">
-                Entrar
-              </Button>
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link to="/developers">
+                <Button variant="ghost" size="sm">
+                  Developers
+                </Button>
+              </Link>
+              <Link to="/entrar">
+                <Button variant="ghost" size="sm">
+                  Entrar
+                </Button>
+              </Link>
+            </div>
           </div>
         </header>
 
@@ -294,6 +301,11 @@ function FeaturesSection() {
       title: "Webhooks HMAC-SHA256",
       description: "Receba eventos em tempo real com autenticação segura.",
     },
+    {
+      icon: Server,
+      title: "Servidor MCP",
+      description: "Integre agentes de IA via Model Context Protocol.",
+    },
   ];
 
   return (
@@ -359,11 +371,6 @@ function ComingSoonSection() {
   const { ref, isInView } = useInView({ threshold: 0.1 });
 
   const comingSoon = [
-    {
-      icon: Server,
-      title: "Servidor MCP",
-      description: "Integração nativa com Model Context Protocol.",
-    },
     {
       icon: Zap,
       title: "Motor de Automações",
@@ -697,9 +704,7 @@ function PricingSection() {
               </li>
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary flex items-center gap-2">
-                  Servidor MCP <Badge variant="warning">Em Breve</Badge>
-                </span>
+                <span className="text-text-secondary">Servidor MCP</span>
               </li>
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
@@ -781,6 +786,11 @@ function Footer() {
             className="h-8 w-8"
           />
           <span className="text-xl font-bold text-text-primary">HNBCRM</span>
+        </div>
+        <div className="flex items-center justify-center gap-6 mb-4">
+          <Link to="/developers" className="text-sm text-text-secondary hover:text-text-primary transition-colors">
+            Developers
+          </Link>
         </div>
         <p className="text-text-secondary mb-4">
           O CRM onde humanos e IA trabalham juntos.

@@ -1,4 +1,4 @@
-# ClawCRM
+# HNBCRM
 
 A multi-tenant CRM where humans and AI agents are equal team members. They collaborate on leads, share conversations, and hand off work to each other seamlessly.
 

@@ -55,10 +55,10 @@ export const seedMockData = mutation({
 
     // ─── 1. TEAM MEMBERS ────────────────────────────────────────────
     const teamMemberData = [
-      { name: "Sarah Chen", email: "sarah.chen@clawcrm.io", role: "manager" as const, type: "human" as const, status: "active" as const },
-      { name: "Marcus Johnson", email: "marcus.j@clawcrm.io", role: "agent" as const, type: "human" as const, status: "active" as const },
-      { name: "Emily Rodriguez", email: "emily.r@clawcrm.io", role: "agent" as const, type: "human" as const, status: "busy" as const },
-      { name: "Alex Kim", email: "alex.kim@clawcrm.io", role: "agent" as const, type: "human" as const, status: "active" as const },
+      { name: "Sarah Chen", email: "sarah.chen@hnbcrm.io", role: "manager" as const, type: "human" as const, status: "active" as const },
+      { name: "Marcus Johnson", email: "marcus.j@hnbcrm.io", role: "agent" as const, type: "human" as const, status: "active" as const },
+      { name: "Emily Rodriguez", email: "emily.r@hnbcrm.io", role: "agent" as const, type: "human" as const, status: "busy" as const },
+      { name: "Alex Kim", email: "alex.kim@hnbcrm.io", role: "agent" as const, type: "human" as const, status: "active" as const },
       { name: "Claw AI", email: undefined, role: "ai" as const, type: "ai" as const, status: "active" as const,
         capabilities: ["auto-reply", "qualification", "sentiment-analysis", "summarization", "handoff-detection"] },
     ];

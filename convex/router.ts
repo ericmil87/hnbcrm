@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
+import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
 
 const http = httpRouter();
 
@@ -686,6 +687,91 @@ http.route({
   }),
 });
 
+// ---- Reference Endpoints ----
+
+// Get boards with stages
+http.route({
+  path: "/api/v1/boards",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
+        organizationId: apiKeyRecord.organizationId,
+      });
+      const boardsWithStages = await Promise.all(
+        boards.map(async (board: any) => {
+          const stages = await ctx.runQuery(internal.boards.internalGetStages, {
+            boardId: board._id,
+          });
+          return { ...board, stages };
+        })
+      );
+      return jsonResponse({ boards: boardsWithStages });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Get team members
+http.route({
+  path: "/api/v1/team-members",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const members = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
+        organizationId: apiKeyRecord.organizationId,
+      });
+      return jsonResponse({ members });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Get field definitions
+http.route({
+  path: "/api/v1/field-definitions",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const fields = await ctx.runQuery(internal.fieldDefinitions.internalGetFieldDefinitions, {
+        organizationId: apiKeyRecord.organizationId,
+      });
+      return jsonResponse({ fields });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- LLMs.txt Routes ----
+
+http.route({
+  path: "/llms.txt",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(LLMS_TXT, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
+    });
+  }),
+});
+
+http.route({
+  path: "/llms-full.txt",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(LLMS_FULL_TXT, {
+      status: 200,
+      headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
+    });
+  }),
+});
+
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());
 
@@ -710,5 +796,8 @@ http.route({ path: "/api/v1/handoffs", method: "OPTIONS", handler: optionsHandle
 http.route({ path: "/api/v1/handoffs/pending", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/accept", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/reject", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/boards", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/team-members", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/field-definitions", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

@@ -39,7 +39,7 @@ export const createApiKey = action({
     if (!admin) throw new Error("Not authorized — admin role required");
 
     // Generate cryptographically secure API key
-    const apiKey = `clawcrm_${crypto.randomBytes(24).toString("base64url")}`;
+    const apiKey = `hnbcrm_${crypto.randomBytes(24).toString("base64url")}`;
     const keyHash = sha256(apiKey);
 
     // Store only the hash

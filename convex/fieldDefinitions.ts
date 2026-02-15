@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 
 // Get field definitions for organization
@@ -248,5 +248,17 @@ export const deleteFieldDefinition = mutation({
 
     await ctx.db.delete(args.fieldDefinitionId);
     return null;
+  },
+});
+
+// Internal: Get field definitions for organization (used by HTTP API router)
+export const internalGetFieldDefinitions = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("fieldDefinitions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .collect();
   },
 });
