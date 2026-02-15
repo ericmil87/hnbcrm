@@ -14,7 +14,7 @@ export const getUserOrganizations = query({
     const teamMembers = await ctx.db
       .query("teamMembers")
       .withIndex("by_user", (q) => q.eq("userId", userId))
-      .collect();
+      .take(50);
 
     const organizations = await Promise.all(
       teamMembers.map(async (member) => {

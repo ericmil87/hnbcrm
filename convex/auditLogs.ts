@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { batchGet } from "./lib/batchGet";
 
 // Get audit logs for organization
 export const getAuditLogs = query({
@@ -19,8 +20,9 @@ export const getAuditLogs = query({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -29,7 +31,7 @@ export const getAuditLogs = query({
       .query("auditLogs")
       .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId))
       .order("desc")
-      .collect();
+      .take(500);
 
     // Apply filters
     if (args.severity) {
@@ -47,16 +49,15 @@ export const getAuditLogs = query({
     const limit = args.limit || 50;
     const paginatedLogs = logs.slice(offset, offset + limit);
 
-    // Resolve actor names
-    const logsWithActors = await Promise.all(
-      paginatedLogs.map(async (log) => {
-        const actor = log.actorId ? await ctx.db.get(log.actorId) : null;
-        return {
-          ...log,
-          actorName: actor?.name || (log.actorType === "system" ? "System" : "Unknown"),
-        };
-      })
-    );
+    // Batch fetch actor names
+    const actorMap = await batchGet(ctx.db, paginatedLogs.map(l => l.actorId));
+    const logsWithActors = paginatedLogs.map(log => {
+      const actor = log.actorId ? actorMap.get(log.actorId) ?? null : null;
+      return {
+        ...log,
+        actorName: actor?.name || (log.actorType === "system" ? "System" : "Unknown"),
+      };
+    });
 
     return {
       logs: logsWithActors,

@@ -42,7 +42,8 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_user", ["userId"])
-    .index("by_organization_and_type", ["organizationId", "type"]),
+    .index("by_organization_and_type", ["organizationId", "type"])
+    .index("by_organization_and_user", ["organizationId", "userId"]),
 
   // API Keys for AI agents
   apiKeys: defineTable({
@@ -333,7 +334,8 @@ const applicationTables = {
     .index("by_organization", ["organizationId"])
     .index("by_lead", ["leadId"])
     .index("by_status", ["status"])
-    .index("by_organization_and_status", ["organizationId", "status"]),
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_status_and_created", ["status", "createdAt"]),
 
   // Activities (timeline events on leads)
   activities: defineTable({
@@ -353,7 +355,8 @@ const applicationTables = {
   })
     .index("by_lead", ["leadId"])
     .index("by_organization", ["organizationId"])
-    .index("by_lead_and_created", ["leadId", "createdAt"]),
+    .index("by_lead_and_created", ["leadId", "createdAt"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Audit Logs
   auditLogs: defineTable({
@@ -384,7 +387,8 @@ const applicationTables = {
     .index("by_entity", ["entityType", "entityId"])
     .index("by_actor", ["actorId"])
     .index("by_organization_and_created", ["organizationId", "createdAt"])
-    .index("by_severity", ["severity"]),
+    .index("by_severity", ["severity"])
+    .index("by_organization_and_actor", ["organizationId", "actorId"]),
 
   // Saved Views
   savedViews: defineTable({

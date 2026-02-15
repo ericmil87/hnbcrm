@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { batchGet } from "./lib/batchGet";
 
 // Get leads for organization
 export const getLeads = query({
@@ -34,23 +35,18 @@ export const getLeads = query({
 
     const leads = await query.take(args.limit ?? 200);
 
-    // Get related data
-    const leadsWithData = await Promise.all(
-      leads.map(async (lead) => {
-        const [contact, stage, assignee] = await Promise.all([
-          lead.contactId ? ctx.db.get(lead.contactId) : null,
-          ctx.db.get(lead.stageId),
-          lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
-        ]);
-
-        return {
-          ...lead,
-          contact,
-          stage,
-          assignee,
-        };
-      })
-    );
+    // Batch fetch related data
+    const [contactMap, stageMap, assigneeMap] = await Promise.all([
+      batchGet(ctx.db, leads.map(l => l.contactId)),
+      batchGet(ctx.db, leads.map(l => l.stageId)),
+      batchGet(ctx.db, leads.map(l => l.assignedTo)),
+    ]);
+    const leadsWithData = leads.map(lead => ({
+      ...lead,
+      contact: lead.contactId ? contactMap.get(lead.contactId) ?? null : null,
+      stage: stageMap.get(lead.stageId) ?? null,
+      assignee: lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null,
+    }));
 
     return leadsWithData;
   },
@@ -613,23 +609,18 @@ export const internalGetLeads = internalQuery({
 
     const leads = await query.take(args.limit ?? 200);
 
-    // Get related data
-    const leadsWithData = await Promise.all(
-      leads.map(async (lead) => {
-        const [contact, stage, assignee] = await Promise.all([
-          lead.contactId ? ctx.db.get(lead.contactId) : null,
-          ctx.db.get(lead.stageId),
-          lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
-        ]);
-
-        return {
-          ...lead,
-          contact,
-          stage,
-          assignee,
-        };
-      })
-    );
+    // Batch fetch related data
+    const [contactMap, stageMap, assigneeMap] = await Promise.all([
+      batchGet(ctx.db, leads.map(l => l.contactId)),
+      batchGet(ctx.db, leads.map(l => l.stageId)),
+      batchGet(ctx.db, leads.map(l => l.assignedTo)),
+    ]);
+    const leadsWithData = leads.map(lead => ({
+      ...lead,
+      contact: lead.contactId ? contactMap.get(lead.contactId) ?? null : null,
+      stage: stageMap.get(lead.stageId) ?? null,
+      assignee: lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null,
+    }));
 
     return leadsWithData;
   },

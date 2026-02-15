@@ -13,8 +13,9 @@ export const getWebhooks = query({
     // Verify user is admin
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || userMember.role !== "admin") {
@@ -24,7 +25,7 @@ export const getWebhooks = query({
     return await ctx.db
       .query("webhooks")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -45,8 +46,9 @@ export const createWebhook = mutation({
     // Verify user is admin
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || userMember.role !== "admin") {
@@ -102,8 +104,9 @@ export const updateWebhook = mutation({
     // Verify user is admin
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", webhook.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", webhook.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || userMember.role !== "admin") {
@@ -166,8 +169,9 @@ export const deleteWebhook = mutation({
     // Verify user is admin
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", webhook.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", webhook.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || userMember.role !== "admin") {

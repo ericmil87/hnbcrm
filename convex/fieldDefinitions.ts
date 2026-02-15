@@ -15,8 +15,9 @@ export const getFieldDefinitions = query({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -27,14 +28,14 @@ export const getFieldDefinitions = query({
         .withIndex("by_organization_and_entity", (q) =>
           q.eq("organizationId", args.organizationId).eq("entityType", args.entityType)
         )
-        .collect();
+        .take(100);
     }
 
     // Backward compat: return all if no entityType filter
     return await ctx.db
       .query("fieldDefinitions")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -64,8 +65,9 @@ export const createFieldDefinition = mutation({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
@@ -158,8 +160,9 @@ export const updateFieldDefinition = mutation({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", fieldDef.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", fieldDef.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
@@ -224,8 +227,9 @@ export const deleteFieldDefinition = mutation({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", fieldDef.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", fieldDef.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
@@ -259,6 +263,6 @@ export const internalGetFieldDefinitions = internalQuery({
     return await ctx.db
       .query("fieldDefinitions")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });

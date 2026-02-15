@@ -7,8 +7,9 @@ export async function requireAuth(ctx: QueryCtx | MutationCtx, organizationId: I
   if (!userId) throw new Error("Not authenticated");
   const userMember = await ctx.db
     .query("teamMembers")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .filter((q) => q.eq(q.field("userId"), userId))
+    .withIndex("by_organization_and_user", (q) =>
+      q.eq("organizationId", organizationId).eq("userId", userId)
+    )
     .first();
   if (!userMember) throw new Error("Not authorized");
   return userMember;

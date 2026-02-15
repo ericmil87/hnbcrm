@@ -165,15 +165,17 @@ http.route({
       const boardId = url.searchParams.get("boardId");
       const stageId = url.searchParams.get("stageId");
       const assignedTo = url.searchParams.get("assignedTo");
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
 
       const leads = await ctx.runQuery(internal.leads.internalGetLeads, {
         organizationId: apiKeyRecord.organizationId,
         boardId: boardId ? (boardId as Id<"boards">) : undefined,
         stageId: stageId ? (stageId as Id<"stages">) : undefined,
         assignedTo: assignedTo ? (assignedTo as Id<"teamMembers">) : undefined,
+        limit,
       });
 
-      return jsonResponse({ leads });
+      return jsonResponse({ leads, hasMore: leads.length === limit });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -335,12 +337,15 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const url = new URL(request.url);
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "500"), 500);
 
       const contacts = await ctx.runQuery(internal.contacts.internalGetContacts, {
         organizationId: apiKeyRecord.organizationId,
+        limit,
       });
 
-      return jsonResponse({ contacts });
+      return jsonResponse({ contacts, hasMore: contacts.length === limit });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -534,13 +539,15 @@ http.route({
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const leadId = url.searchParams.get("leadId");
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
 
       const conversations = await ctx.runQuery(internal.conversations.internalGetConversations, {
         organizationId: apiKeyRecord.organizationId,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
+        limit,
       });
 
-      return jsonResponse({ conversations });
+      return jsonResponse({ conversations, hasMore: conversations.length === limit });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -608,13 +615,15 @@ http.route({
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const status = url.searchParams.get("status") as "pending" | "accepted" | "rejected" | null;
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
 
       const handoffs = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
         organizationId: apiKeyRecord.organizationId,
         status: status || undefined,
+        limit,
       });
 
-      return jsonResponse({ handoffs });
+      return jsonResponse({ handoffs, hasMore: handoffs.length === limit });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }

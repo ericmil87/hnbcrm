@@ -12,7 +12,7 @@ export const getMatchingWebhooks = internalQuery({
     const webhooks = await ctx.db
       .query("webhooks")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
 
     return webhooks.filter(
       (w) => w.isActive && w.events.some((e) => e === args.event || e === "*")

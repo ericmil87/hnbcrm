@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { batchGet } from "./lib/batchGet";
 
 // Get conversations for organization
 export const getConversations = query({
@@ -42,34 +43,23 @@ export const getConversations = query({
       conversations = conversations.filter(c => c.channel === args.channel);
     }
 
-    // Get related data
-    const conversationsWithData = await Promise.all(
-      conversations.map(async (conversation) => {
-        const [lead, contact, assignee] = await Promise.all([
-          ctx.db.get(conversation.leadId),
-          conversation.leadId ? ctx.db.get(conversation.leadId).then(lead =>
-            lead?.contactId ? ctx.db.get(lead.contactId) : null
-          ) : null,
-          conversation.leadId ? ctx.db.get(conversation.leadId).then(lead =>
-            lead?.assignedTo ? ctx.db.get(lead.assignedTo) : null
-          ) : null,
-        ]);
+    // Batch fetch related data
+    const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
+    const leads = Array.from(leadMap.values());
+    const [contactMap, assigneeMap] = await Promise.all([
+      batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
+      batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
+    ]);
 
-        // Filter by assignee if specified
-        if (args.assignedTo && lead?.assignedTo !== args.assignedTo) {
-          return null;
-        }
+    const conversationsWithData = conversations.map(conversation => {
+      const lead = leadMap.get(conversation.leadId) ?? null;
+      const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
+      const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
+      if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
+      return { ...conversation, lead, contact, assignee };
+    }).filter(Boolean);
 
-        return {
-          ...conversation,
-          lead,
-          contact,
-          assignee,
-        };
-      })
-    );
-
-    return conversationsWithData.filter(Boolean);
+    return conversationsWithData;
   },
 });
 
@@ -86,18 +76,14 @@ export const getMessages = query({
     const messages = await ctx.db
       .query("messages")
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
-      .collect();
+      .take(500);
 
-    // Get sender info for each message
-    const messagesWithSenders = await Promise.all(
-      messages.map(async (message) => {
-        const sender = message.senderId ? await ctx.db.get(message.senderId) : null;
-        return {
-          ...message,
-          sender,
-        };
-      })
-    );
+    // Batch fetch sender info
+    const senderMap = await batchGet(ctx.db, messages.map(m => m.senderId));
+    const messagesWithSenders = messages.map(message => ({
+      ...message,
+      sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
+    }));
 
     return messagesWithSenders;
   },
@@ -285,34 +271,23 @@ export const internalGetConversations = internalQuery({
       conversations = conversations.filter(c => c.channel === args.channel);
     }
 
-    // Get related data
-    const conversationsWithData = await Promise.all(
-      conversations.map(async (conversation) => {
-        const [lead, contact, assignee] = await Promise.all([
-          ctx.db.get(conversation.leadId),
-          conversation.leadId ? ctx.db.get(conversation.leadId).then(lead =>
-            lead?.contactId ? ctx.db.get(lead.contactId) : null
-          ) : null,
-          conversation.leadId ? ctx.db.get(conversation.leadId).then(lead =>
-            lead?.assignedTo ? ctx.db.get(lead.assignedTo) : null
-          ) : null,
-        ]);
+    // Batch fetch related data
+    const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
+    const leads = Array.from(leadMap.values());
+    const [contactMap, assigneeMap] = await Promise.all([
+      batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
+      batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
+    ]);
 
-        // Filter by assignee if specified
-        if (args.assignedTo && lead?.assignedTo !== args.assignedTo) {
-          return null;
-        }
+    const conversationsWithData = conversations.map(conversation => {
+      const lead = leadMap.get(conversation.leadId) ?? null;
+      const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
+      const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
+      if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
+      return { ...conversation, lead, contact, assignee };
+    }).filter(Boolean);
 
-        return {
-          ...conversation,
-          lead,
-          contact,
-          assignee,
-        };
-      })
-    );
-
-    return conversationsWithData.filter(Boolean);
+    return conversationsWithData;
   },
 });
 
@@ -327,18 +302,14 @@ export const internalGetMessages = internalQuery({
     const messages = await ctx.db
       .query("messages")
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
-      .collect();
+      .take(500);
 
-    // Get sender info for each message
-    const messagesWithSenders = await Promise.all(
-      messages.map(async (message) => {
-        const sender = message.senderId ? await ctx.db.get(message.senderId) : null;
-        return {
-          ...message,
-          sender,
-        };
-      })
-    );
+    // Batch fetch sender info
+    const senderMap = await batchGet(ctx.db, messages.map(m => m.senderId));
+    const messagesWithSenders = messages.map(message => ({
+      ...message,
+      sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
+    }));
 
     return messagesWithSenders;
   },

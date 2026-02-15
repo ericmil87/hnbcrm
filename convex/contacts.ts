@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
+import { batchGet } from "./lib/batchGet";
 
 // All optional string fields on a contact that participate in search
 function buildSearchText(contact: {
@@ -86,7 +87,7 @@ export const getContacts = query({
     return await ctx.db
       .query("contacts")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(500);
   },
 });
 
@@ -130,17 +131,17 @@ export const getContactWithLeads = query({
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
-      .collect();
+      .take(100);
 
-    const leadsWithData = await Promise.all(
-      leads.map(async (lead) => {
-        const [stage, assignee] = await Promise.all([
-          ctx.db.get(lead.stageId),
-          lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
-        ]);
-        return { ...lead, stage, assignee };
-      })
-    );
+    const [stageMap, assigneeMap] = await Promise.all([
+      batchGet(ctx.db, leads.map(l => l.stageId)),
+      batchGet(ctx.db, leads.map(l => l.assignedTo)),
+    ]);
+    const leadsWithData = leads.map(lead => ({
+      ...lead,
+      stage: stageMap.get(lead.stageId) ?? null,
+      assignee: lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null,
+    }));
 
     return { ...contact, leads: leadsWithData };
   },
@@ -395,13 +396,13 @@ export const deleteContact = mutation({
 // ===== Internal functions (for HTTP API / httpAction context) =====
 
 export const internalGetContacts = internalQuery({
-  args: { organizationId: v.id("organizations") },
+  args: { organizationId: v.id("organizations"), limit: v.optional(v.number()) },
   returns: v.any(),
   handler: async (ctx, args) => {
     return await ctx.db
       .query("contacts")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(args.limit ?? 500);
   },
 });
 

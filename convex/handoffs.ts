@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { batchGet } from "./lib/batchGet";
 
 // Get handoffs for organization
 export const getHandoffs = query({
@@ -24,28 +25,28 @@ export const getHandoffs = query({
 
     const handoffs = await query.take(args.limit ?? 200);
 
-    // Get related data
-    const handoffsWithData = await Promise.all(
-      handoffs.map(async (handoff) => {
-        const [lead, fromMember, toMember, acceptedBy] = await Promise.all([
-          ctx.db.get(handoff.leadId),
-          ctx.db.get(handoff.fromMemberId),
-          handoff.toMemberId ? ctx.db.get(handoff.toMemberId) : null,
-          handoff.acceptedBy ? ctx.db.get(handoff.acceptedBy) : null,
-        ]);
+    // Batch fetch related data
+    const [leadMap, memberMap] = await Promise.all([
+      batchGet(ctx.db, handoffs.map(h => h.leadId)),
+      batchGet(ctx.db, [
+        ...handoffs.map(h => h.fromMemberId),
+        ...handoffs.map(h => h.toMemberId),
+        ...handoffs.map(h => h.acceptedBy),
+      ]),
+    ]);
+    const contactMap = await batchGet(ctx.db, Array.from(leadMap.values()).map((l: any) => l?.contactId));
 
-        const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
-
-        return {
-          ...handoff,
-          lead,
-          contact,
-          fromMember,
-          toMember,
-          acceptedBy,
-        };
-      })
-    );
+    const handoffsWithData = handoffs.map(handoff => {
+      const lead = leadMap.get(handoff.leadId) ?? null;
+      return {
+        ...handoff,
+        lead,
+        contact: lead?.contactId ? contactMap.get(lead.contactId) ?? null : null,
+        fromMember: memberMap.get(handoff.fromMemberId) ?? null,
+        toMember: handoff.toMemberId ? memberMap.get(handoff.toMemberId) ?? null : null,
+        acceptedBy: handoff.acceptedBy ? memberMap.get(handoff.acceptedBy) ?? null : null,
+      };
+    });
 
     return handoffsWithData;
   },
@@ -296,28 +297,28 @@ export const internalGetHandoffs = internalQuery({
 
     const handoffs = await query.take(args.limit ?? 200);
 
-    // Get related data
-    const handoffsWithData = await Promise.all(
-      handoffs.map(async (handoff) => {
-        const [lead, fromMember, toMember, acceptedBy] = await Promise.all([
-          ctx.db.get(handoff.leadId),
-          ctx.db.get(handoff.fromMemberId),
-          handoff.toMemberId ? ctx.db.get(handoff.toMemberId) : null,
-          handoff.acceptedBy ? ctx.db.get(handoff.acceptedBy) : null,
-        ]);
+    // Batch fetch related data
+    const [leadMap, memberMap] = await Promise.all([
+      batchGet(ctx.db, handoffs.map(h => h.leadId)),
+      batchGet(ctx.db, [
+        ...handoffs.map(h => h.fromMemberId),
+        ...handoffs.map(h => h.toMemberId),
+        ...handoffs.map(h => h.acceptedBy),
+      ]),
+    ]);
+    const contactMap = await batchGet(ctx.db, Array.from(leadMap.values()).map((l: any) => l?.contactId));
 
-        const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
-
-        return {
-          ...handoff,
-          lead,
-          contact,
-          fromMember,
-          toMember,
-          acceptedBy,
-        };
-      })
-    );
+    const handoffsWithData = handoffs.map(handoff => {
+      const lead = leadMap.get(handoff.leadId) ?? null;
+      return {
+        ...handoff,
+        lead,
+        contact: lead?.contactId ? contactMap.get(lead.contactId) ?? null : null,
+        fromMember: memberMap.get(handoff.fromMemberId) ?? null,
+        toMember: handoff.toMemberId ? memberMap.get(handoff.toMemberId) ?? null : null,
+        acceptedBy: handoff.acceptedBy ? memberMap.get(handoff.acceptedBy) ?? null : null,
+      };
+    });
 
     return handoffsWithData;
   },

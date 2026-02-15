@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id } from "./_generated/dataModel";
+import { batchGet } from "./lib/batchGet";
 
 // Get activities for a lead
 export const getActivities = query({
@@ -19,8 +20,9 @@ export const getActivities = query({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", lead.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", lead.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -31,16 +33,15 @@ export const getActivities = query({
       .order("desc")
       .take(args.limit || 50);
 
-    // Resolve actor names
-    const activitiesWithActors = await Promise.all(
-      activities.map(async (activity) => {
-        const actor = activity.actorId ? await ctx.db.get(activity.actorId) : null;
-        return {
-          ...activity,
-          actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
-        };
-      })
-    );
+    // Batch fetch actor names
+    const actorMap = await batchGet(ctx.db, activities.map(a => a.actorId));
+    const activitiesWithActors = activities.map(activity => {
+      const actor = activity.actorId ? actorMap.get(activity.actorId) ?? null : null;
+      return {
+        ...activity,
+        actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
+      };
+    });
 
     return activitiesWithActors;
   },
@@ -69,8 +70,9 @@ export const createActivity = mutation({
 
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", lead.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", lead.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");

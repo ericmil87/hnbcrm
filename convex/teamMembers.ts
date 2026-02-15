@@ -13,7 +13,7 @@ export const getTeamMembers = query({
     return await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(200);
   },
 });
 
@@ -27,8 +27,9 @@ export const getCurrentTeamMember = query({
 
     return await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
   },
 });
@@ -133,6 +134,6 @@ export const internalGetTeamMembers = internalQuery({
     return await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(200);
   },
 });

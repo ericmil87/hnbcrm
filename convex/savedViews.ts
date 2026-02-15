@@ -30,7 +30,7 @@ export const getSavedViews = query({
       .withIndex("by_organization_and_entity", (q) =>
         q.eq("organizationId", args.organizationId).eq("entityType", args.entityType)
       )
-      .collect();
+      .take(100);
 
     // Return shared views + user's own views
     return views.filter(

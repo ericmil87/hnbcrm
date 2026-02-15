@@ -13,8 +13,9 @@ export const getLeadSources = query({
     // Verify user is part of organization
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -22,7 +23,7 @@ export const getLeadSources = query({
     return await ctx.db
       .query("leadSources")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -49,8 +50,9 @@ export const createLeadSource = mutation({
     // Verify user is part of organization
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", args.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -111,8 +113,9 @@ export const updateLeadSource = mutation({
     // Verify user is part of organization
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", leadSource.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", leadSource.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");
@@ -169,8 +172,9 @@ export const deleteLeadSource = mutation({
     // Verify user is part of organization
     const userMember = await ctx.db
       .query("teamMembers")
-      .withIndex("by_organization", (q) => q.eq("organizationId", leadSource.organizationId))
-      .filter((q) => q.eq(q.field("userId"), userId))
+      .withIndex("by_organization_and_user", (q) =>
+        q.eq("organizationId", leadSource.organizationId).eq("userId", userId)
+      )
       .first();
 
     if (!userMember) throw new Error("Not authorized");

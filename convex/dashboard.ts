@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
+import { batchGet } from "./lib/batchGet";
 
 // Get dashboard stats for organization (kept for backward compatibility)
 export const getDashboardStats = query({
@@ -142,15 +143,14 @@ export const getDashboardStats = query({
       .order("desc")
       .take(10);
 
-    const recentActivities = await Promise.all(
-      activities.map(async (activity) => {
-        const actor = activity.actorId ? await ctx.db.get(activity.actorId) : null;
-        return {
-          ...activity,
-          actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
-        };
-      })
-    );
+    const actorMap = await batchGet(ctx.db, activities.map(a => a.actorId));
+    const recentActivities = activities.map(activity => {
+      const actor = activity.actorId ? actorMap.get(activity.actorId) ?? null : null;
+      return {
+        ...activity,
+        actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
+      };
+    });
 
     return {
       organizationName: org?.name ?? "",
@@ -241,7 +241,7 @@ export const getLeadsBySource = query({
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(2000);
 
     const leadSources = await ctx.db
       .query("leadSources")
@@ -272,7 +272,7 @@ export const getTeamPerformance = query({
     const leads = await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(2000);
 
     const teamMembers = await ctx.db
       .query("teamMembers")
@@ -316,7 +316,7 @@ export const getDashboardSummary = query({
       .withIndex("by_organization_and_status", (q) =>
         q.eq("organizationId", args.organizationId).eq("status", "pending")
       )
-      .collect();
+      .take(200);
 
     const activities = await ctx.db
       .query("activities")
@@ -324,15 +324,14 @@ export const getDashboardSummary = query({
       .order("desc")
       .take(10);
 
-    const recentActivities = await Promise.all(
-      activities.map(async (activity) => {
-        const actor = activity.actorId ? await ctx.db.get(activity.actorId) : null;
-        return {
-          ...activity,
-          actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
-        };
-      })
-    );
+    const actorMap = await batchGet(ctx.db, activities.map(a => a.actorId));
+    const recentActivities = activities.map(activity => {
+      const actor = activity.actorId ? actorMap.get(activity.actorId) ?? null : null;
+      return {
+        ...activity,
+        actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
+      };
+    });
 
     return {
       pendingHandoffs: handoffs.length,

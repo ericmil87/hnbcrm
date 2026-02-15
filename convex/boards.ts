@@ -13,7 +13,7 @@ export const getBoards = query({
     return await ctx.db
       .query("boards")
       .withIndex("by_organization_and_order", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -30,7 +30,7 @@ export const getStages = query({
     return await ctx.db
       .query("stages")
       .withIndex("by_board_and_order", (q) => q.eq("boardId", args.boardId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -53,8 +53,8 @@ export const createBoard = mutation({
     const boards = await ctx.db
       .query("boards")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
-    
+      .take(100);
+
     const maxOrder = Math.max(...boards.map(b => b.order), -1);
     const now = Date.now();
 
@@ -109,8 +109,8 @@ export const createStage = mutation({
     const stages = await ctx.db
       .query("stages")
       .withIndex("by_board", (q) => q.eq("boardId", args.boardId))
-      .collect();
-    
+      .take(100);
+
     const maxOrder = Math.max(...stages.map(s => s.order), -1);
     const now = Date.now();
 
@@ -216,7 +216,7 @@ export const deleteBoard = mutation({
     const stages = await ctx.db
       .query("stages")
       .withIndex("by_board", (q) => q.eq("boardId", args.boardId))
-      .collect();
+      .take(100);
 
     for (const stage of stages) {
       await ctx.db.delete(stage._id);
@@ -363,7 +363,7 @@ export const internalGetBoards = internalQuery({
     return await ctx.db
       .query("boards")
       .withIndex("by_organization_and_order", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
   },
 });
 
@@ -391,7 +391,7 @@ export const createBoardWithStages = mutation({
     const boards = await ctx.db
       .query("boards")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+      .take(100);
 
     const maxOrder = Math.max(...boards.map(b => b.order), -1);
     const now = Date.now();
@@ -447,6 +447,6 @@ export const internalGetStages = internalQuery({
     return await ctx.db
       .query("stages")
       .withIndex("by_board_and_order", (q) => q.eq("boardId", args.boardId))
-      .collect();
+      .take(100);
   },
 });

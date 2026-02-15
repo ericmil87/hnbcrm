@@ -2,6 +2,59 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.8.0] - 2026-02-15
+
+### Backend Performance & Query Optimization
+
+Eliminates N+1 query patterns, adds query bounds to all unbounded `.collect()` calls, replaces `.filter()` with compound indexes, and adds pagination support to REST API endpoints.
+
+#### Batch Fetch Utility (`convex/lib/batchGet.ts`)
+- New `batchGet()` helper — deduplicates IDs, fetches in parallel, returns `Map` for O(1) lookup
+- Replaces `Promise.all(items.map(async => ctx.db.get(...)))` N+1 patterns across 7 backend files
+
+#### N+1 Query Elimination
+- **activities.ts** — Batch actor name resolution
+- **auditLogs.ts** — Batch actor name resolution
+- **contacts.ts** — Batch stage + assignee lookup for contact leads
+- **conversations.ts** — Batch lead + contact + assignee lookup (public + internal)
+- **dashboard.ts** — Batch actor names in activity feeds
+- **handoffs.ts** — Batch lead + member + contact lookup (public + internal)
+- **leads.ts** — Batch contact + stage + assignee lookup (public + internal)
+
+#### Unbounded Query Bounds (`.collect()` → `.take(N)`)
+- **auditLogs** — `.take(500)`
+- **boards/stages** — `.take(100)`
+- **contacts** — `.take(500)`, leads per contact `.take(100)`
+- **messages** — `.take(500)`
+- **dashboard leads** — `.take(2000)`, handoffs `.take(200)`
+- **fieldDefinitions** — `.take(100)`
+- **leadSources** — `.take(100)`
+- **organizations** — `.take(50)` on user orgs
+- **savedViews** — `.take(100)`
+- **teamMembers** — `.take(200)`
+- **webhooks/webhookTrigger** — `.take(100)`
+
+#### Compound Index Migration (`.filter()` → `.withIndex()`)
+- New `by_organization_and_user` index on `teamMembers` — used in `requireAuth()` and 12+ auth checks across activities, apiKeys, auditLogs, fieldDefinitions, leadSources, teamMembers, webhooks
+- Eliminates in-memory `.filter(q => q.eq(q.field("userId"), userId))` pattern
+
+#### New Schema Indexes (`convex/schema.ts`)
+- `teamMembers.by_organization_and_user` — compound auth lookups
+- `handoffs.by_status_and_created` — time-sorted handoff queues
+- `activities.by_organization_and_created` — dashboard activity feeds
+- `auditLogs.by_organization_and_actor` — actor-scoped audit queries
+
+#### REST API Pagination (`convex/router.ts`)
+- `GET /api/v1/leads` — accepts `limit` param (max 500), returns `hasMore`
+- `GET /api/v1/contacts` — accepts `limit` param (max 500), returns `hasMore`
+- `GET /api/v1/conversations` — accepts `limit` param (max 500), returns `hasMore`
+- `GET /api/v1/handoffs` — accepts `limit` param (max 500), returns `hasMore`
+- `internalGetContacts` now accepts optional `limit` argument
+
+#### Documentation
+- **docs/GOING-PUBLIC.md** — Checklist for making the repository public (secrets audit, .gitignore, rename, visibility)
+- **docs/IMPROVEMENTS.md** — Technical roadmap: performance, security, AI features, MCP, frontend, webhooks, DX
+
 ## [0.7.1] - 2026-02-15
 
 ### Fixed — Mobile Auto-Zoom on Input Focus
