@@ -49,7 +49,7 @@ export function DashboardOverview({ organizationId, onTabChange }: DashboardOver
   const firstName = currentMember.name.split(" ")[0];
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-8 max-w-7xl">
       {/* 1. Hero Section */}
       <div className="flex items-center gap-4">
         <div className="h-12 w-12 md:h-14 md:w-14 rounded-2xl bg-brand-500/10 flex items-center justify-center shrink-0">
@@ -424,7 +424,7 @@ function ComingSoonCard({ icon: Icon, title, description }: ComingSoonCardProps)
 
 function LoadingSkeleton() {
   return (
-    <div className="space-y-8 max-w-7xl mx-auto">
+    <div className="space-y-8 max-w-7xl">
       <div className="flex items-center gap-4">
         <Skeleton variant="circle" className="h-14 w-14 rounded-2xl" />
         <div className="space-y-2 flex-1">

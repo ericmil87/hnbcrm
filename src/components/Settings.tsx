@@ -269,9 +269,11 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", key: "", type: "text" as string, options: "", isRequired: false });
+  const [entityTab, setEntityTab] = useState<"lead" | "contact">("lead");
 
   const fieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
     organizationId,
+    entityType: entityTab,
   });
   const createField = useMutation(api.fieldDefinitions.createFieldDefinition);
   const updateField = useMutation(api.fieldDefinitions.updateFieldDefinition);
@@ -295,6 +297,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
           name: form.name,
           key: form.key,
           type: form.type as any,
+          entityType: entityTab,
           options,
           isRequired: form.isRequired,
           order: fieldDefs?.length || 0,
@@ -340,6 +343,32 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
         </Button>
       </div>
 
+      {/* Entity type toggle */}
+      <div className="flex gap-2 mb-4">
+        <button
+          onClick={() => setEntityTab("lead")}
+          className={cn(
+            "px-4 py-2 rounded-full text-sm font-medium transition-colors",
+            entityTab === "lead"
+              ? "bg-brand-600 text-white"
+              : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
+          )}
+        >
+          Leads
+        </button>
+        <button
+          onClick={() => setEntityTab("contact")}
+          className={cn(
+            "px-4 py-2 rounded-full text-sm font-medium transition-colors",
+            entityTab === "contact"
+              ? "bg-brand-600 text-white"
+              : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
+          )}
+        >
+          Contatos
+        </button>
+      </div>
+
       {!fieldDefs && (
         <div className="flex justify-center py-8">
           <Spinner />
@@ -354,6 +383,9 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
                 <span className="font-medium text-text-primary">{field.name}</span>
                 <span className="text-sm text-text-muted">({field.key})</span>
                 <Badge variant="info">{field.type}</Badge>
+                {field.entityType && (
+                  <Badge variant="brand">{field.entityType === "lead" ? "Lead" : "Contato"}</Badge>
+                )}
                 {field.isRequired && <Badge variant="error">Obrigatório</Badge>}
               </div>
               <div className="flex gap-2">

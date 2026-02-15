@@ -112,13 +112,16 @@ const applicationTables = {
       v.literal("select"),
       v.literal("multiselect")
     ),
+    entityType: v.optional(v.union(v.literal("lead"), v.literal("contact"))),
     options: v.optional(v.array(v.string())),
     isRequired: v.boolean(),
     order: v.number(),
     createdAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
-    .index("by_organization_and_key", ["organizationId", "key"]),
+    .index("by_organization_and_key", ["organizationId", "key"])
+    .index("by_organization_and_entity", ["organizationId", "entityType"])
+    .index("by_organization_and_entity_and_key", ["organizationId", "entityType", "key"]),
 
   // Contacts
   contacts: defineTable({
@@ -133,6 +136,56 @@ const applicationTables = {
     telegramUsername: v.optional(v.string()),
     tags: v.array(v.string()),
     searchText: v.optional(v.string()),
+
+    // Identity
+    photoUrl: v.optional(v.string()),
+    bio: v.optional(v.string()),
+
+    // Social Profiles
+    linkedinUrl: v.optional(v.string()),
+    instagramUrl: v.optional(v.string()),
+    facebookUrl: v.optional(v.string()),
+    twitterUrl: v.optional(v.string()),
+
+    // Location
+    city: v.optional(v.string()),
+    state: v.optional(v.string()),
+    country: v.optional(v.string()),
+
+    // Professional
+    industry: v.optional(v.string()),
+    companySize: v.optional(v.string()),
+    cnpj: v.optional(v.string()),
+    companyWebsite: v.optional(v.string()),
+
+    // Behavioral
+    preferredContactTime: v.optional(v.union(
+      v.literal("morning"), v.literal("afternoon"), v.literal("evening")
+    )),
+    deviceType: v.optional(v.union(
+      v.literal("android"), v.literal("iphone"), v.literal("desktop"), v.literal("unknown")
+    )),
+    utmSource: v.optional(v.string()),
+    acquisitionChannel: v.optional(v.string()),
+
+    // Social Metrics
+    instagramFollowers: v.optional(v.number()),
+    linkedinConnections: v.optional(v.number()),
+    socialInfluenceScore: v.optional(v.number()),
+
+    // Custom Fields
+    customFields: v.optional(v.record(v.string(), v.any())),
+
+    // Enrichment provenance
+    enrichmentMeta: v.optional(v.record(v.string(), v.object({
+      source: v.string(),
+      updatedAt: v.number(),
+      confidence: v.optional(v.number()),
+    }))),
+
+    // Flexible overflow for future AI-discovered data
+    enrichmentExtra: v.optional(v.record(v.string(), v.any())),
+
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -141,6 +194,8 @@ const applicationTables = {
     .index("by_phone", ["phone"])
     .index("by_organization_and_email", ["organizationId", "email"])
     .index("by_organization_and_phone", ["organizationId", "phone"])
+    .index("by_organization_and_company", ["organizationId", "company"])
+    .index("by_organization_and_city", ["organizationId", "city"])
     .searchIndex("search_contacts", { searchField: "searchText", filterFields: ["organizationId"] }),
 
   // Leads

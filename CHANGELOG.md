@@ -2,6 +2,40 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.5.2] - 2026-02-15
+
+### Contact Enrichment & Enhanced UI
+
+Adds 20+ enrichment fields to contacts, full REST API for contacts, and a major frontend upgrade to the contacts experience.
+
+#### Schema & Backend (`convex/contacts.ts`, `convex/schema.ts`)
+- **20+ enrichment fields** on contacts: social URLs (LinkedIn, Instagram, Facebook, Twitter), location (city, state, country), company info (industry, companySize, CNPJ, companyWebsite), acquisition data (utmSource, acquisitionChannel, deviceType), social metrics (instagramFollowers, linkedinConnections, socialInfluenceScore), custom fields, and enrichment metadata
+- **`enrichContact` internal mutation** — AI-agent-friendly enrichment with per-field source/confidence tracking via `enrichmentMeta`
+- **`getContactEnrichmentGaps` query** — Returns missing fields for a contact (public + internal variants)
+- **`getContactWithLeads` query** — Contact with linked leads, stage info, and assignees
+- **`diffChanges` helper** — Extracted shared change-tracking logic, replacing duplicated per-field if-blocks in update mutations
+- **`buildSearchText` expanded** — Now indexes city, state, country, industry, and bio
+
+#### REST API (`convex/router.ts`)
+- Full contacts CRUD: `GET /api/v1/contacts`, `GET /api/v1/contacts/:id`, `POST /api/v1/contacts`, `PUT /api/v1/contacts/:id`, `DELETE /api/v1/contacts/:id`
+
+#### Field Definitions (`convex/fieldDefinitions.ts`)
+- Added `entityType` filter (`lead` | `contact`) to `getFieldDefinitions` query
+- New `by_organization_and_entity` index for scoped field lookups
+- `createFieldDefinition` now accepts optional `entityType`
+
+#### Frontend
+- **ContactDetailPanel** — Collapsible sections for social links, location, company info, acquisition data, custom fields; photo display; enrichment gap indicator
+- **CreateContactModal** — Multi-step form (basic info → enrichment fields) with all new fields
+- **ContactsPage** — Tag filters, enrichment gap badges on contact rows, improved search
+- **CustomFieldsRenderer** — New component for rendering and editing custom fields on contacts
+- **SocialIcons** — New component for social media link icons (LinkedIn, Instagram, Facebook, Twitter)
+- **CollapsibleSection** — New reusable UI primitive for expandable content sections
+- **Settings** — Added contact custom fields management section
+
+#### Seed Data (`convex/seed.ts`)
+- Enhanced seed contacts with social URLs, location, industry, and company data
+
 ## [0.5.1] - 2026-02-14
 
 ### Dashboard Home Page & Pipeline Widget Redesign

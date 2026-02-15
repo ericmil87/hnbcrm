@@ -2,19 +2,87 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 
-function buildSearchText(contact: { firstName?: string; lastName?: string; email?: string; phone?: string; company?: string; title?: string }): string {
-  return [contact.firstName, contact.lastName, contact.email, contact.phone, contact.company, contact.title]
-    .filter(Boolean)
-    .join(" ");
+// All optional string fields on a contact that participate in search
+function buildSearchText(contact: {
+  firstName?: string; lastName?: string; email?: string; phone?: string;
+  company?: string; title?: string; city?: string; state?: string;
+  country?: string; industry?: string; bio?: string;
+}): string {
+  return [
+    contact.firstName, contact.lastName, contact.email, contact.phone,
+    contact.company, contact.title, contact.city, contact.state,
+    contact.country, contact.industry, contact.bio,
+  ].filter(Boolean).join(" ");
 }
 
-// Get contacts for organization
+// Shared optional-field arg validators for enrichment fields
+const enrichmentArgFields = {
+  photoUrl: v.optional(v.string()),
+  bio: v.optional(v.string()),
+  linkedinUrl: v.optional(v.string()),
+  instagramUrl: v.optional(v.string()),
+  facebookUrl: v.optional(v.string()),
+  twitterUrl: v.optional(v.string()),
+  city: v.optional(v.string()),
+  state: v.optional(v.string()),
+  country: v.optional(v.string()),
+  industry: v.optional(v.string()),
+  companySize: v.optional(v.string()),
+  cnpj: v.optional(v.string()),
+  companyWebsite: v.optional(v.string()),
+  preferredContactTime: v.optional(v.union(
+    v.literal("morning"), v.literal("afternoon"), v.literal("evening")
+  )),
+  deviceType: v.optional(v.union(
+    v.literal("android"), v.literal("iphone"), v.literal("desktop"), v.literal("unknown")
+  )),
+  utmSource: v.optional(v.string()),
+  acquisitionChannel: v.optional(v.string()),
+  instagramFollowers: v.optional(v.number()),
+  linkedinConnections: v.optional(v.number()),
+  socialInfluenceScore: v.optional(v.number()),
+  customFields: v.optional(v.record(v.string(), v.any())),
+};
+
+// All the string/simple fields that can be diffed for change tracking
+const trackableFields = [
+  "firstName", "lastName", "email", "phone", "company", "title",
+  "whatsappNumber", "telegramUsername",
+  "photoUrl", "bio",
+  "linkedinUrl", "instagramUrl", "facebookUrl", "twitterUrl",
+  "city", "state", "country",
+  "industry", "companySize", "cnpj", "companyWebsite",
+  "preferredContactTime", "deviceType", "utmSource", "acquisitionChannel",
+  "instagramFollowers", "linkedinConnections", "socialInfluenceScore",
+] as const;
+
+function diffChanges(args: Record<string, any>, contact: Record<string, any>) {
+  const changes: Record<string, any> = {};
+  const before: Record<string, any> = {};
+  for (const field of trackableFields) {
+    if (args[field] !== undefined && args[field] !== contact[field]) {
+      changes[field] = args[field];
+      before[field] = contact[field];
+    }
+  }
+  if (args.tags !== undefined) {
+    changes.tags = args.tags;
+    before.tags = contact.tags;
+  }
+  if (args.customFields !== undefined) {
+    changes.customFields = args.customFields;
+    before.customFields = contact.customFields;
+  }
+  return { changes, before };
+}
+
+// ===== Public queries =====
+
 export const getContacts = query({
   args: { organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
-
     return await ctx.db
       .query("contacts")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -22,7 +90,91 @@ export const getContacts = query({
   },
 });
 
-// Create contact
+export const getContact = query({
+  args: { contactId: v.id("contacts") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) return null;
+    await requireAuth(ctx, contact.organizationId);
+    return contact;
+  },
+});
+
+export const searchContacts = query({
+  args: {
+    organizationId: v.id("organizations"),
+    searchText: v.string(),
+    limit: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    return await ctx.db
+      .query("contacts")
+      .withSearchIndex("search_contacts", (q) =>
+        q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
+      )
+      .take(args.limit ?? 20);
+  },
+});
+
+export const getContactWithLeads = query({
+  args: { contactId: v.id("contacts") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) return null;
+    await requireAuth(ctx, contact.organizationId);
+
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
+      .collect();
+
+    const leadsWithData = await Promise.all(
+      leads.map(async (lead) => {
+        const [stage, assignee] = await Promise.all([
+          ctx.db.get(lead.stageId),
+          lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
+        ]);
+        return { ...lead, stage, assignee };
+      })
+    );
+
+    return { ...contact, leads: leadsWithData };
+  },
+});
+
+export const getContactEnrichmentGaps = query({
+  args: { contactId: v.id("contacts") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) return null;
+    await requireAuth(ctx, contact.organizationId);
+
+    const allFields = [
+      "firstName", "lastName", "email", "phone", "company", "title",
+      "whatsappNumber", "telegramUsername", "photoUrl", "bio",
+      "linkedinUrl", "instagramUrl", "facebookUrl", "twitterUrl",
+      "city", "state", "country",
+      "industry", "companySize", "cnpj", "companyWebsite",
+      "preferredContactTime", "deviceType", "utmSource", "acquisitionChannel",
+      "instagramFollowers", "linkedinConnections", "socialInfluenceScore",
+    ];
+
+    const missingFields = allFields.filter((f) => {
+      const val = (contact as any)[f];
+      return val === undefined || val === null || val === "";
+    });
+
+    return { ...contact, missingFields };
+  },
+});
+
+// ===== Public mutations =====
+
 export const createContact = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -35,11 +187,11 @@ export const createContact = mutation({
     whatsappNumber: v.optional(v.string()),
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    ...enrichmentArgFields,
   },
   returns: v.id("contacts"),
   handler: async (ctx, args) => {
     const userMember = await requireAuth(ctx, args.organizationId);
-
     const now = Date.now();
 
     const searchText = buildSearchText(args);
@@ -55,11 +207,31 @@ export const createContact = mutation({
       telegramUsername: args.telegramUsername,
       tags: args.tags || [],
       searchText: searchText || undefined,
+      photoUrl: args.photoUrl,
+      bio: args.bio,
+      linkedinUrl: args.linkedinUrl,
+      instagramUrl: args.instagramUrl,
+      facebookUrl: args.facebookUrl,
+      twitterUrl: args.twitterUrl,
+      city: args.city,
+      state: args.state,
+      country: args.country,
+      industry: args.industry,
+      companySize: args.companySize,
+      cnpj: args.cnpj,
+      companyWebsite: args.companyWebsite,
+      preferredContactTime: args.preferredContactTime,
+      deviceType: args.deviceType,
+      utmSource: args.utmSource,
+      acquisitionChannel: args.acquisitionChannel,
+      instagramFollowers: args.instagramFollowers,
+      linkedinConnections: args.linkedinConnections,
+      socialInfluenceScore: args.socialInfluenceScore,
+      customFields: args.customFields,
       createdAt: now,
       updatedAt: now,
     });
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
       entityType: "contact",
@@ -79,7 +251,6 @@ export const createContact = mutation({
   },
 });
 
-// Find or create contact by email/phone
 export const findOrCreateContact = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -91,7 +262,6 @@ export const findOrCreateContact = mutation({
   },
   returns: v.id("contacts"),
   handler: async (ctx, args) => {
-    // Try to find existing contact
     let contact = null;
 
     if (args.email) {
@@ -112,15 +282,12 @@ export const findOrCreateContact = mutation({
         .first();
     }
 
-    if (contact) {
-      return contact._id;
-    }
+    if (contact) return contact._id;
 
-    // Create new contact
     const now = Date.now();
     const searchText = buildSearchText(args);
 
-    const contactId = await ctx.db.insert("contacts", {
+    return await ctx.db.insert("contacts", {
       organizationId: args.organizationId,
       firstName: args.firstName,
       lastName: args.lastName,
@@ -132,12 +299,9 @@ export const findOrCreateContact = mutation({
       createdAt: now,
       updatedAt: now,
     });
-
-    return contactId;
   },
 });
 
-// Update contact
 export const updateContact = mutation({
   args: {
     contactId: v.id("contacts"),
@@ -150,6 +314,7 @@ export const updateContact = mutation({
     whatsappNumber: v.optional(v.string()),
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    ...enrichmentArgFields,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -157,51 +322,11 @@ export const updateContact = mutation({
     if (!contact) throw new Error("Contact not found");
 
     const userMember = await requireAuth(ctx, contact.organizationId);
-
     const now = Date.now();
-    const changes: Record<string, any> = {};
-    const before: Record<string, any> = {};
 
-    if (args.firstName !== undefined && args.firstName !== contact.firstName) {
-      changes.firstName = args.firstName;
-      before.firstName = contact.firstName;
-    }
-    if (args.lastName !== undefined && args.lastName !== contact.lastName) {
-      changes.lastName = args.lastName;
-      before.lastName = contact.lastName;
-    }
-    if (args.email !== undefined && args.email !== contact.email) {
-      changes.email = args.email;
-      before.email = contact.email;
-    }
-    if (args.phone !== undefined && args.phone !== contact.phone) {
-      changes.phone = args.phone;
-      before.phone = contact.phone;
-    }
-    if (args.company !== undefined && args.company !== contact.company) {
-      changes.company = args.company;
-      before.company = contact.company;
-    }
-    if (args.title !== undefined && args.title !== contact.title) {
-      changes.title = args.title;
-      before.title = contact.title;
-    }
-    if (args.whatsappNumber !== undefined && args.whatsappNumber !== contact.whatsappNumber) {
-      changes.whatsappNumber = args.whatsappNumber;
-      before.whatsappNumber = contact.whatsappNumber;
-    }
-    if (args.telegramUsername !== undefined && args.telegramUsername !== contact.telegramUsername) {
-      changes.telegramUsername = args.telegramUsername;
-      before.telegramUsername = contact.telegramUsername;
-    }
-    if (args.tags !== undefined) {
-      changes.tags = args.tags;
-      before.tags = contact.tags;
-    }
-
+    const { changes, before } = diffChanges(args, contact);
     if (Object.keys(changes).length === 0) return null;
 
-    // Rebuild searchText with merged fields
     const merged = { ...contact, ...changes };
     const searchText = buildSearchText(merged);
 
@@ -211,7 +336,6 @@ export const updateContact = mutation({
       updatedAt: now,
     });
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: contact.organizationId,
       entityType: "contact",
@@ -228,7 +352,6 @@ export const updateContact = mutation({
   },
 });
 
-// Delete contact
 export const deleteContact = mutation({
   args: { contactId: v.id("contacts") },
   returns: v.null(),
@@ -238,7 +361,6 @@ export const deleteContact = mutation({
 
     const userMember = await requireAuth(ctx, contact.organizationId);
 
-    // Check for linked leads
     const linkedLeads = await ctx.db
       .query("leads")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
@@ -250,7 +372,6 @@ export const deleteContact = mutation({
 
     const now = Date.now();
 
-    // Log audit entry before deletion
     await ctx.db.insert("auditLogs", {
       organizationId: contact.organizationId,
       entityType: "contact",
@@ -267,78 +388,12 @@ export const deleteContact = mutation({
     });
 
     await ctx.db.delete(args.contactId);
-
     return null;
-  },
-});
-
-// Get single contact by ID
-export const getContact = query({
-  args: { contactId: v.id("contacts") },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    const contact = await ctx.db.get(args.contactId);
-    if (!contact) return null;
-
-    await requireAuth(ctx, contact.organizationId);
-
-    return contact;
-  },
-});
-
-// Search contacts using search index
-export const searchContacts = query({
-  args: {
-    organizationId: v.id("organizations"),
-    searchText: v.string(),
-    limit: v.optional(v.number()),
-  },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    await requireAuth(ctx, args.organizationId);
-
-    return await ctx.db
-      .query("contacts")
-      .withSearchIndex("search_contacts", (q) =>
-        q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
-      )
-      .take(args.limit ?? 20);
-  },
-});
-
-// Get contact with all linked leads
-export const getContactWithLeads = query({
-  args: { contactId: v.id("contacts") },
-  returns: v.any(),
-  handler: async (ctx, args) => {
-    const contact = await ctx.db.get(args.contactId);
-    if (!contact) return null;
-
-    await requireAuth(ctx, contact.organizationId);
-
-    const leads = await ctx.db
-      .query("leads")
-      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
-      .collect();
-
-    // Get stage info for each lead
-    const leadsWithData = await Promise.all(
-      leads.map(async (lead) => {
-        const [stage, assignee] = await Promise.all([
-          ctx.db.get(lead.stageId),
-          lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
-        ]);
-        return { ...lead, stage, assignee };
-      })
-    );
-
-    return { ...contact, leads: leadsWithData };
   },
 });
 
 // ===== Internal functions (for HTTP API / httpAction context) =====
 
-// Internal: Get contacts for organization (no auth check)
 export const internalGetContacts = internalQuery({
   args: { organizationId: v.id("organizations") },
   returns: v.any(),
@@ -350,7 +405,6 @@ export const internalGetContacts = internalQuery({
   },
 });
 
-// Internal: Get single contact by ID (no auth check)
 export const internalGetContact = internalQuery({
   args: { contactId: v.id("contacts") },
   returns: v.any(),
@@ -361,7 +415,6 @@ export const internalGetContact = internalQuery({
   },
 });
 
-// Internal: Find or create contact by email/phone (no auth needed)
 export const internalFindOrCreateContact = internalMutation({
   args: {
     organizationId: v.id("organizations"),
@@ -373,7 +426,6 @@ export const internalFindOrCreateContact = internalMutation({
   },
   returns: v.id("contacts"),
   handler: async (ctx, args) => {
-    // Try to find existing contact
     let contact = null;
 
     if (args.email) {
@@ -394,15 +446,12 @@ export const internalFindOrCreateContact = internalMutation({
         .first();
     }
 
-    if (contact) {
-      return contact._id;
-    }
+    if (contact) return contact._id;
 
-    // Create new contact
     const now = Date.now();
     const searchText = buildSearchText(args);
 
-    const contactId = await ctx.db.insert("contacts", {
+    return await ctx.db.insert("contacts", {
       organizationId: args.organizationId,
       firstName: args.firstName,
       lastName: args.lastName,
@@ -414,12 +463,9 @@ export const internalFindOrCreateContact = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-
-    return contactId;
   },
 });
 
-// Internal: Create contact (accepts teamMemberId instead of auth)
 export const internalCreateContact = internalMutation({
   args: {
     organizationId: v.id("organizations"),
@@ -433,6 +479,7 @@ export const internalCreateContact = internalMutation({
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     teamMemberId: v.id("teamMembers"),
+    ...enrichmentArgFields,
   },
   returns: v.id("contacts"),
   handler: async (ctx, args) => {
@@ -440,8 +487,8 @@ export const internalCreateContact = internalMutation({
     if (!teamMember) throw new Error("Team member not found");
 
     const now = Date.now();
-
     const searchText = buildSearchText(args);
+
     const contactId = await ctx.db.insert("contacts", {
       organizationId: args.organizationId,
       firstName: args.firstName,
@@ -454,11 +501,31 @@ export const internalCreateContact = internalMutation({
       telegramUsername: args.telegramUsername,
       tags: args.tags || [],
       searchText: searchText || undefined,
+      photoUrl: args.photoUrl,
+      bio: args.bio,
+      linkedinUrl: args.linkedinUrl,
+      instagramUrl: args.instagramUrl,
+      facebookUrl: args.facebookUrl,
+      twitterUrl: args.twitterUrl,
+      city: args.city,
+      state: args.state,
+      country: args.country,
+      industry: args.industry,
+      companySize: args.companySize,
+      cnpj: args.cnpj,
+      companyWebsite: args.companyWebsite,
+      preferredContactTime: args.preferredContactTime,
+      deviceType: args.deviceType,
+      utmSource: args.utmSource,
+      acquisitionChannel: args.acquisitionChannel,
+      instagramFollowers: args.instagramFollowers,
+      linkedinConnections: args.linkedinConnections,
+      socialInfluenceScore: args.socialInfluenceScore,
+      customFields: args.customFields,
       createdAt: now,
       updatedAt: now,
     });
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
       entityType: "contact",
@@ -478,7 +545,6 @@ export const internalCreateContact = internalMutation({
   },
 });
 
-// Internal: Update contact (accepts teamMemberId instead of auth)
 export const internalUpdateContact = internalMutation({
   args: {
     contactId: v.id("contacts"),
@@ -492,6 +558,7 @@ export const internalUpdateContact = internalMutation({
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     teamMemberId: v.id("teamMembers"),
+    ...enrichmentArgFields,
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -502,49 +569,9 @@ export const internalUpdateContact = internalMutation({
     if (!contact) throw new Error("Contact not found");
 
     const now = Date.now();
-    const changes: Record<string, any> = {};
-    const before: Record<string, any> = {};
-
-    if (args.firstName !== undefined && args.firstName !== contact.firstName) {
-      changes.firstName = args.firstName;
-      before.firstName = contact.firstName;
-    }
-    if (args.lastName !== undefined && args.lastName !== contact.lastName) {
-      changes.lastName = args.lastName;
-      before.lastName = contact.lastName;
-    }
-    if (args.email !== undefined && args.email !== contact.email) {
-      changes.email = args.email;
-      before.email = contact.email;
-    }
-    if (args.phone !== undefined && args.phone !== contact.phone) {
-      changes.phone = args.phone;
-      before.phone = contact.phone;
-    }
-    if (args.company !== undefined && args.company !== contact.company) {
-      changes.company = args.company;
-      before.company = contact.company;
-    }
-    if (args.title !== undefined && args.title !== contact.title) {
-      changes.title = args.title;
-      before.title = contact.title;
-    }
-    if (args.whatsappNumber !== undefined && args.whatsappNumber !== contact.whatsappNumber) {
-      changes.whatsappNumber = args.whatsappNumber;
-      before.whatsappNumber = contact.whatsappNumber;
-    }
-    if (args.telegramUsername !== undefined && args.telegramUsername !== contact.telegramUsername) {
-      changes.telegramUsername = args.telegramUsername;
-      before.telegramUsername = contact.telegramUsername;
-    }
-    if (args.tags !== undefined) {
-      changes.tags = args.tags;
-      before.tags = contact.tags;
-    }
-
+    const { changes, before } = diffChanges(args, contact);
     if (Object.keys(changes).length === 0) return null;
 
-    // Rebuild searchText with merged fields
     const merged = { ...contact, ...changes };
     const searchText = buildSearchText(merged);
 
@@ -554,7 +581,6 @@ export const internalUpdateContact = internalMutation({
       updatedAt: now,
     });
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: contact.organizationId,
       entityType: "contact",
@@ -568,5 +594,94 @@ export const internalUpdateContact = internalMutation({
     });
 
     return null;
+  },
+});
+
+// Enrichment mutation for AI agents
+export const enrichContact = internalMutation({
+  args: {
+    contactId: v.id("contacts"),
+    fields: v.record(v.string(), v.any()),
+    source: v.string(),
+    confidence: v.optional(v.number()),
+    teamMemberId: v.id("teamMembers"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const teamMember = await ctx.db.get(args.teamMemberId);
+    if (!teamMember) throw new Error("Team member not found");
+
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) throw new Error("Contact not found");
+
+    const now = Date.now();
+    const before: Record<string, any> = {};
+    const after: Record<string, any> = {};
+
+    // Build enrichmentMeta entries for each field
+    const existingMeta = contact.enrichmentMeta || {};
+    const newMeta: Record<string, { source: string; updatedAt: number; confidence?: number }> = { ...existingMeta };
+
+    for (const [key, value] of Object.entries(args.fields)) {
+      before[key] = (contact as any)[key];
+      after[key] = value;
+      newMeta[key] = {
+        source: args.source,
+        updatedAt: now,
+        confidence: args.confidence,
+      };
+    }
+
+    const merged = { ...contact, ...args.fields };
+    const searchText = buildSearchText(merged);
+
+    await ctx.db.patch(args.contactId, {
+      ...args.fields,
+      enrichmentMeta: newMeta,
+      searchText: searchText || undefined,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: contact.organizationId,
+      entityType: "contact",
+      entityId: args.contactId,
+      action: "update",
+      actorId: teamMember._id,
+      actorType: teamMember.type === "ai" ? "ai" : "human",
+      changes: { before, after },
+      metadata: { enrichmentSource: args.source, confidence: args.confidence },
+      severity: "low",
+      createdAt: now,
+    });
+
+    return null;
+  },
+});
+
+// Internal query for enrichment gaps
+export const internalGetContactEnrichmentGaps = internalQuery({
+  args: { contactId: v.id("contacts") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) return null;
+
+    const allFields = [
+      "firstName", "lastName", "email", "phone", "company", "title",
+      "whatsappNumber", "telegramUsername", "photoUrl", "bio",
+      "linkedinUrl", "instagramUrl", "facebookUrl", "twitterUrl",
+      "city", "state", "country",
+      "industry", "companySize", "cnpj", "companyWebsite",
+      "preferredContactTime", "deviceType", "utmSource", "acquisitionChannel",
+      "instagramFollowers", "linkedinConnections", "socialInfluenceScore",
+    ];
+
+    const missingFields = allFields.filter((f) => {
+      const val = (contact as any)[f];
+      return val === undefined || val === null || val === "";
+    });
+
+    return { ...contact, missingFields };
   },
 });

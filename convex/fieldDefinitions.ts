@@ -4,13 +4,15 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 
 // Get field definitions for organization
 export const getFieldDefinitions = query({
-  args: { organizationId: v.id("organizations") },
+  args: {
+    organizationId: v.id("organizations"),
+    entityType: v.optional(v.union(v.literal("lead"), v.literal("contact"))),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    // Verify user is part of organization
     const userMember = await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -19,6 +21,16 @@ export const getFieldDefinitions = query({
 
     if (!userMember) throw new Error("Not authorized");
 
+    if (args.entityType) {
+      return await ctx.db
+        .query("fieldDefinitions")
+        .withIndex("by_organization_and_entity", (q) =>
+          q.eq("organizationId", args.organizationId).eq("entityType", args.entityType)
+        )
+        .collect();
+    }
+
+    // Backward compat: return all if no entityType filter
     return await ctx.db
       .query("fieldDefinitions")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -40,6 +52,7 @@ export const createFieldDefinition = mutation({
       v.literal("select"),
       v.literal("multiselect")
     ),
+    entityType: v.optional(v.union(v.literal("lead"), v.literal("contact"))),
     options: v.optional(v.array(v.string())),
     isRequired: v.boolean(),
     order: v.number(),
@@ -49,7 +62,6 @@ export const createFieldDefinition = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    // Verify user is admin or manager
     const userMember = await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -60,16 +72,31 @@ export const createFieldDefinition = mutation({
       throw new Error("Not authorized");
     }
 
-    // Check for duplicate key within organization
-    const existing = await ctx.db
-      .query("fieldDefinitions")
-      .withIndex("by_organization_and_key", (q) =>
-        q.eq("organizationId", args.organizationId).eq("key", args.key)
-      )
-      .first();
+    // Check uniqueness within entity type scope
+    if (args.entityType) {
+      const existing = await ctx.db
+        .query("fieldDefinitions")
+        .withIndex("by_organization_and_entity_and_key", (q) =>
+          q.eq("organizationId", args.organizationId)
+            .eq("entityType", args.entityType)
+            .eq("key", args.key)
+        )
+        .first();
 
-    if (existing) {
-      throw new Error("A field definition with this key already exists");
+      if (existing) {
+        throw new Error("A field definition with this key already exists for this entity type");
+      }
+    } else {
+      const existing = await ctx.db
+        .query("fieldDefinitions")
+        .withIndex("by_organization_and_key", (q) =>
+          q.eq("organizationId", args.organizationId).eq("key", args.key)
+        )
+        .first();
+
+      if (existing) {
+        throw new Error("A field definition with this key already exists");
+      }
     }
 
     const now = Date.now();
@@ -79,13 +106,13 @@ export const createFieldDefinition = mutation({
       name: args.name,
       key: args.key,
       type: args.type,
+      entityType: args.entityType,
       options: args.options,
       isRequired: args.isRequired,
       order: args.order,
       createdAt: now,
     });
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
       entityType: "fieldDefinition",
@@ -93,7 +120,7 @@ export const createFieldDefinition = mutation({
       action: "create",
       actorId: userMember._id,
       actorType: "human",
-      metadata: { name: args.name, key: args.key, type: args.type },
+      metadata: { name: args.name, key: args.key, type: args.type, entityType: args.entityType },
       severity: "low",
       createdAt: now,
     });
@@ -129,7 +156,6 @@ export const updateFieldDefinition = mutation({
     const fieldDef = await ctx.db.get(args.fieldDefinitionId);
     if (!fieldDef) throw new Error("Field definition not found");
 
-    // Verify user is admin or manager
     const userMember = await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", fieldDef.organizationId))
@@ -169,7 +195,6 @@ export const updateFieldDefinition = mutation({
 
     await ctx.db.patch(args.fieldDefinitionId, changes);
 
-    // Log audit entry
     await ctx.db.insert("auditLogs", {
       organizationId: fieldDef.organizationId,
       entityType: "fieldDefinition",
@@ -197,7 +222,6 @@ export const deleteFieldDefinition = mutation({
     const fieldDef = await ctx.db.get(args.fieldDefinitionId);
     if (!fieldDef) throw new Error("Field definition not found");
 
-    // Verify user is admin or manager
     const userMember = await ctx.db
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", fieldDef.organizationId))
@@ -210,7 +234,6 @@ export const deleteFieldDefinition = mutation({
 
     const now = Date.now();
 
-    // Log audit entry before deletion
     await ctx.db.insert("auditLogs", {
       organizationId: fieldDef.organizationId,
       entityType: "fieldDefinition",
@@ -224,7 +247,6 @@ export const deleteFieldDefinition = mutation({
     });
 
     await ctx.db.delete(args.fieldDefinitionId);
-
     return null;
   },
 });

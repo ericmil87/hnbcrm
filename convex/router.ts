@@ -363,7 +363,30 @@ http.route({
         phone: body.phone,
         company: body.company,
         title: body.title,
+        whatsappNumber: body.whatsappNumber,
+        telegramUsername: body.telegramUsername,
         tags: body.tags,
+        photoUrl: body.photoUrl,
+        bio: body.bio,
+        linkedinUrl: body.linkedinUrl,
+        instagramUrl: body.instagramUrl,
+        facebookUrl: body.facebookUrl,
+        twitterUrl: body.twitterUrl,
+        city: body.city,
+        state: body.state,
+        country: body.country,
+        industry: body.industry,
+        companySize: body.companySize,
+        cnpj: body.cnpj,
+        companyWebsite: body.companyWebsite,
+        preferredContactTime: body.preferredContactTime,
+        deviceType: body.deviceType,
+        utmSource: body.utmSource,
+        acquisitionChannel: body.acquisitionChannel,
+        instagramFollowers: body.instagramFollowers,
+        linkedinConnections: body.linkedinConnections,
+        socialInfluenceScore: body.socialInfluenceScore,
+        customFields: body.customFields,
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
@@ -415,11 +438,84 @@ http.route({
         phone: body.phone,
         company: body.company,
         title: body.title,
+        whatsappNumber: body.whatsappNumber,
+        telegramUsername: body.telegramUsername,
         tags: body.tags,
+        photoUrl: body.photoUrl,
+        bio: body.bio,
+        linkedinUrl: body.linkedinUrl,
+        instagramUrl: body.instagramUrl,
+        facebookUrl: body.facebookUrl,
+        twitterUrl: body.twitterUrl,
+        city: body.city,
+        state: body.state,
+        country: body.country,
+        industry: body.industry,
+        companySize: body.companySize,
+        cnpj: body.cnpj,
+        companyWebsite: body.companyWebsite,
+        preferredContactTime: body.preferredContactTime,
+        deviceType: body.deviceType,
+        utmSource: body.utmSource,
+        acquisitionChannel: body.acquisitionChannel,
+        instagramFollowers: body.instagramFollowers,
+        linkedinConnections: body.linkedinConnections,
+        socialInfluenceScore: body.socialInfluenceScore,
+        customFields: body.customFields,
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Enrich contact (AI agent endpoint)
+http.route({
+  path: "/api/v1/contacts/enrich",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      if (!body.contactId) return errorResponse("contactId required", 400);
+      if (!body.fields || typeof body.fields !== "object") return errorResponse("fields object required", 400);
+      if (!body.source) return errorResponse("source required", 400);
+
+      await ctx.runMutation(internal.contacts.enrichContact, {
+        contactId: body.contactId as Id<"contacts">,
+        fields: body.fields,
+        source: body.source,
+        confidence: body.confidence,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Get contact enrichment gaps
+http.route({
+  path: "/api/v1/contacts/gaps",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      await authenticateApiKey(ctx, request);
+      const url = new URL(request.url);
+      const contactId = url.searchParams.get("id");
+      if (!contactId) return errorResponse("Contact ID required", 400);
+
+      const result = await ctx.runQuery(internal.contacts.internalGetContactEnrichmentGaps, {
+        contactId: contactId as Id<"contacts">,
+      });
+
+      if (!result) return errorResponse("Contact not found", 404);
+      return jsonResponse({ contact: result });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -604,6 +700,8 @@ http.route({ path: "/api/v1/contacts", method: "OPTIONS", handler: optionsHandle
 http.route({ path: "/api/v1/contacts/create", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/contacts/get", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/contacts/update", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/contacts/enrich", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/contacts/gaps", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/messages", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/send", method: "OPTIONS", handler: optionsHandler });

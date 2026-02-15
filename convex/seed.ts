@@ -83,18 +83,30 @@ export const seedMockData = mutation({
 
     // ─── 2. CONTACTS ────────────────────────────────────────────────
     const contactData = [
-      { firstName: "James", lastName: "Wilson", email: "james.wilson@techcorp.com", phone: "+1-555-0101", company: "TechCorp Solutions", title: "VP of Engineering", whatsappNumber: "+15550101", tags: ["enterprise", "tech"] },
-      { firstName: "Maria", lastName: "Garcia", email: "maria.garcia@globalretail.com", phone: "+1-555-0102", company: "Global Retail Inc", title: "Head of Operations", tags: ["retail", "enterprise"] },
-      { firstName: "David", lastName: "Lee", email: "david.lee@startupxyz.io", phone: "+1-555-0103", company: "StartupXYZ", title: "CEO", whatsappNumber: "+15550103", tags: ["startup", "saas"] },
-      { firstName: "Priya", lastName: "Patel", email: "priya.patel@financeplus.com", phone: "+1-555-0104", company: "FinancePlus", title: "Director of IT", tags: ["finance", "mid-market"] },
-      { firstName: "Robert", lastName: "Chen", email: "robert.chen@megahealth.org", phone: "+1-555-0105", company: "MegaHealth Systems", title: "CTO", tags: ["healthcare", "enterprise"] },
-      { firstName: "Sophie", lastName: "Martin", email: "sophie.m@creativestudio.co", phone: "+1-555-0106", company: "Creative Studio Co", title: "Founder", whatsappNumber: "+15550106", tags: ["agency", "startup"] },
-      { firstName: "Ahmed", lastName: "Hassan", email: "ahmed.h@logisticspro.com", phone: "+1-555-0107", company: "LogisticsPro", title: "Supply Chain Manager", tags: ["logistics"] },
-      { firstName: "Lisa", lastName: "Thompson", email: "lisa.t@edulearn.edu", phone: "+1-555-0108", company: "EduLearn Academy", title: "Dean of Technology", tags: ["education"] },
-      { firstName: "Michael", lastName: "Brown", email: "michael.b@realestateco.com", phone: "+1-555-0109", company: "RealEstate Co", title: "Managing Director", tags: ["real-estate", "enterprise"] },
-      { firstName: "Yuki", lastName: "Tanaka", email: "yuki.t@japantech.jp", phone: "+81-555-0110", company: "JapanTech Inc", title: "International Sales Director", tags: ["international", "tech"] },
-      { firstName: "Carlos", lastName: "Rivera", email: "carlos.r@latamgrowth.com", phone: "+52-555-0111", company: "LatAm Growth Partners", title: "Partner", whatsappNumber: "+525550111", tags: ["consulting", "latam"] },
-      { firstName: "Emma", lastName: "Johansson", email: "emma.j@nordicdesign.se", phone: "+46-555-0112", company: "Nordic Design AB", title: "Creative Director", tags: ["design", "nordic"] },
+      { firstName: "James", lastName: "Wilson", email: "james.wilson@techcorp.com", phone: "+1-555-0101", company: "TechCorp Solutions", title: "VP of Engineering", whatsappNumber: "+15550101", tags: ["enterprise", "tech"],
+        linkedinUrl: "https://linkedin.com/in/jameswilson", city: "San Francisco", state: "CA", country: "USA", industry: "Technology", companySize: "201-1000", companyWebsite: "https://techcorp.com", instagramFollowers: 1200, linkedinConnections: 850, socialInfluenceScore: 62 },
+      { firstName: "Maria", lastName: "Garcia", email: "maria.garcia@globalretail.com", phone: "+1-555-0102", company: "Global Retail Inc", title: "Head of Operations", tags: ["retail", "enterprise"],
+        linkedinUrl: "https://linkedin.com/in/mariagarcia", facebookUrl: "https://facebook.com/maria.garcia", city: "New York", state: "NY", country: "USA", industry: "Retail", companySize: "1000+", deviceType: "iphone" as const, acquisitionChannel: "tradeshow" },
+      { firstName: "David", lastName: "Lee", email: "david.lee@startupxyz.io", phone: "+1-555-0103", company: "StartupXYZ", title: "CEO", whatsappNumber: "+15550103", tags: ["startup", "saas"],
+        twitterUrl: "https://x.com/davidlee", linkedinUrl: "https://linkedin.com/in/davidlee", city: "Austin", state: "TX", country: "USA", industry: "SaaS", companySize: "11-50", utmSource: "referral", preferredContactTime: "morning" as const },
+      { firstName: "Priya", lastName: "Patel", email: "priya.patel@financeplus.com", phone: "+1-555-0104", company: "FinancePlus", title: "Director of IT", tags: ["finance", "mid-market"],
+        linkedinUrl: "https://linkedin.com/in/priyapatel", city: "Chicago", state: "IL", country: "USA", industry: "Finance", companySize: "51-200" },
+      { firstName: "Robert", lastName: "Chen", email: "robert.chen@megahealth.org", phone: "+1-555-0105", company: "MegaHealth Systems", title: "CTO", tags: ["healthcare", "enterprise"],
+        linkedinUrl: "https://linkedin.com/in/robertchen", city: "Boston", state: "MA", country: "USA", industry: "Healthcare", companySize: "1000+", companyWebsite: "https://megahealth.org", linkedinConnections: 1500, socialInfluenceScore: 78 },
+      { firstName: "Sophie", lastName: "Martin", email: "sophie.m@creativestudio.co", phone: "+1-555-0106", company: "Creative Studio Co", title: "Founder", whatsappNumber: "+15550106", tags: ["agency", "startup"],
+        instagramUrl: "https://instagram.com/sophiemartin", linkedinUrl: "https://linkedin.com/in/sophiemartin", city: "Los Angeles", state: "CA", country: "USA", industry: "Creative Agency", companySize: "1-10", instagramFollowers: 15000, socialInfluenceScore: 85 },
+      { firstName: "Ahmed", lastName: "Hassan", email: "ahmed.h@logisticspro.com", phone: "+1-555-0107", company: "LogisticsPro", title: "Supply Chain Manager", tags: ["logistics"],
+        city: "Dubai", country: "UAE", industry: "Logistics", companySize: "201-1000" },
+      { firstName: "Lisa", lastName: "Thompson", email: "lisa.t@edulearn.edu", phone: "+1-555-0108", company: "EduLearn Academy", title: "Dean of Technology", tags: ["education"],
+        linkedinUrl: "https://linkedin.com/in/lisathompson", city: "Denver", state: "CO", country: "USA", industry: "Education", companySize: "51-200" },
+      { firstName: "Michael", lastName: "Brown", email: "michael.b@realestateco.com", phone: "+1-555-0109", company: "RealEstate Co", title: "Managing Director", tags: ["real-estate", "enterprise"],
+        linkedinUrl: "https://linkedin.com/in/michaelbrown", facebookUrl: "https://facebook.com/michael.brown", city: "Miami", state: "FL", country: "USA", industry: "Real Estate", companySize: "51-200" },
+      { firstName: "Yuki", lastName: "Tanaka", email: "yuki.t@japantech.jp", phone: "+81-555-0110", company: "JapanTech Inc", title: "International Sales Director", tags: ["international", "tech"],
+        linkedinUrl: "https://linkedin.com/in/yukitanaka", city: "Tokyo", country: "Japan", industry: "Technology", companySize: "1000+", preferredContactTime: "afternoon" as const },
+      { firstName: "Carlos", lastName: "Rivera", email: "carlos.r@latamgrowth.com", phone: "+52-555-0111", company: "LatAm Growth Partners", title: "Partner", whatsappNumber: "+525550111", tags: ["consulting", "latam"],
+        linkedinUrl: "https://linkedin.com/in/carlosrivera", instagramUrl: "https://instagram.com/carlosrivera", city: "Sao Paulo", state: "SP", country: "Brazil", industry: "Consulting", companySize: "11-50", cnpj: "12.345.678/0001-90", deviceType: "android" as const },
+      { firstName: "Emma", lastName: "Johansson", email: "emma.j@nordicdesign.se", phone: "+46-555-0112", company: "Nordic Design AB", title: "Creative Director", tags: ["design", "nordic"],
+        instagramUrl: "https://instagram.com/emmajohansson", linkedinUrl: "https://linkedin.com/in/emmajohansson", twitterUrl: "https://x.com/emmajohansson", city: "Stockholm", country: "Sweden", industry: "Design", companySize: "11-50", instagramFollowers: 8500, socialInfluenceScore: 72 },
     ];
 
     const contactIds: Id<"contacts">[] = [];
@@ -107,8 +119,26 @@ export const seedMockData = mutation({
         phone: c.phone,
         company: c.company,
         title: c.title,
-        whatsappNumber: c.whatsappNumber,
+        whatsappNumber: (c as any).whatsappNumber,
         tags: c.tags,
+        linkedinUrl: (c as any).linkedinUrl,
+        instagramUrl: (c as any).instagramUrl,
+        facebookUrl: (c as any).facebookUrl,
+        twitterUrl: (c as any).twitterUrl,
+        city: (c as any).city,
+        state: (c as any).state,
+        country: (c as any).country,
+        industry: (c as any).industry,
+        companySize: (c as any).companySize,
+        companyWebsite: (c as any).companyWebsite,
+        cnpj: (c as any).cnpj,
+        preferredContactTime: (c as any).preferredContactTime,
+        deviceType: (c as any).deviceType,
+        utmSource: (c as any).utmSource,
+        acquisitionChannel: (c as any).acquisitionChannel,
+        instagramFollowers: (c as any).instagramFollowers,
+        linkedinConnections: (c as any).linkedinConnections,
+        socialInfluenceScore: (c as any).socialInfluenceScore,
         createdAt: daysAgo(7, Math.floor(Math.random() * 48)),
         updatedAt: daysAgo(3, Math.floor(Math.random() * 24)),
       });
@@ -435,6 +465,39 @@ export const seedMockData = mutation({
         metadata: a.metadata,
         severity: a.severity,
         createdAt: now - a.hoursAgo * 60 * 60 * 1000,
+      });
+    }
+
+    // ─── 8. FIELD DEFINITIONS (contact type) + BACKFILL ────────────
+    // Backfill existing fieldDefinitions with entityType: "lead"
+    const existingFieldDefs = await ctx.db
+      .query("fieldDefinitions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+      .collect();
+    for (const fd of existingFieldDefs) {
+      if (!fd.entityType) {
+        await ctx.db.patch(fd._id, { entityType: "lead" });
+      }
+    }
+
+    // Create sample contact field definitions
+    const contactFieldDefs = [
+      { name: "NPS Score", key: "nps_score", type: "number" as const, isRequired: false, order: 0 },
+      { name: "Idioma Preferido", key: "preferred_language", type: "select" as const, options: ["Portugues", "Ingles", "Espanhol", "Frances"], isRequired: false, order: 1 },
+      { name: "Aceita Marketing", key: "marketing_consent", type: "boolean" as const, isRequired: false, order: 2 },
+    ];
+
+    for (const fd of contactFieldDefs) {
+      await ctx.db.insert("fieldDefinitions", {
+        organizationId,
+        name: fd.name,
+        key: fd.key,
+        type: fd.type,
+        entityType: "contact",
+        options: fd.options,
+        isRequired: fd.isRequired,
+        order: fd.order,
+        createdAt: now,
       });
     }
 
