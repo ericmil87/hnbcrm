@@ -23,6 +23,8 @@ import type * as leadSources from "../leadSources.js";
 import type * as leads from "../leads.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as nodeActions from "../nodeActions.js";
+import type * as onboarding from "../onboarding.js";
+import type * as onboardingSeed from "../onboardingSeed.js";
 import type * as organizations from "../organizations.js";
 import type * as router from "../router.js";
 import type * as savedViews from "../savedViews.js";
@@ -53,6 +55,8 @@ declare const fullApi: ApiFromModules<{
   leads: typeof leads;
   "lib/auth": typeof lib_auth;
   nodeActions: typeof nodeActions;
+  onboarding: typeof onboarding;
+  onboardingSeed: typeof onboardingSeed;
   organizations: typeof organizations;
   router: typeof router;
   savedViews: typeof savedViews;

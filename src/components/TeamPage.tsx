@@ -10,6 +10,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 
 interface TeamPageProps {
   organizationId: Id<"organizations">;
@@ -86,6 +87,8 @@ export function TeamPage({ organizationId }: TeamPageProps) {
 
   return (
     <div className="space-y-6">
+      <SpotlightTooltip spotlightId="team" organizationId={organizationId} />
+
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold text-text-primary">Membros da Equipe</h2>
         <Button onClick={() => setShowAddMember(true)}>

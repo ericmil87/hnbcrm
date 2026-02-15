@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Skeleton } from "@/components/ui/Skeleton";
 import type { Tab } from "@/components/layout/BottomTabBar";
+import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import {
   Handshake,
   DollarSign,
@@ -62,6 +63,9 @@ export function DashboardOverview({ organizationId, onTabChange }: DashboardOver
           </p>
         </div>
       </div>
+
+      {/* Onboarding Checklist */}
+      <OnboardingChecklist organizationId={organizationId} onTabChange={onTabChange} />
 
       {/* 2. Quick Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

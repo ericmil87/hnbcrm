@@ -67,6 +67,11 @@ export default {
         'slide-in-up':   'slideInUp 300ms ease-out',
         'shimmer':       'shimmer 1.5s ease-in-out infinite',
         'pulse-brand':   'pulseBrand 2s ease-in-out infinite',
+        'scale-in':      'scaleIn 300ms ease-out',
+        'progress-fill': 'progressFill 600ms ease-out forwards',
+        'checkmark':     'checkmarkDraw 400ms ease-out forwards',
+        'slide-in-left': 'slideInLeft 200ms ease-out',
+        'bounce-in':     'bounceIn 500ms ease-out',
       },
       keyframes: {
         fadeIn: {
@@ -92,6 +97,28 @@ export default {
         pulseBrand: {
           '0%, 100%': { opacity: '1' },
           '50%':      { opacity: '0.6' },
+        },
+        scaleIn: {
+          from: { opacity: '0', transform: 'scale(0.8)' },
+          to:   { opacity: '1', transform: 'scale(1)' },
+        },
+        progressFill: {
+          from: { width: '0%' },
+          to:   { width: 'var(--progress-width)' },
+        },
+        checkmarkDraw: {
+          from: { 'stroke-dashoffset': '24' },
+          to:   { 'stroke-dashoffset': '0' },
+        },
+        slideInLeft: {
+          from: { opacity: '0', transform: 'translateX(-12px)' },
+          to:   { opacity: '1', transform: 'translateX(0)' },
+        },
+        bounceIn: {
+          '0%':   { opacity: '0', transform: 'scale(0.3)' },
+          '50%':  { transform: 'scale(1.05)' },
+          '70%':  { transform: 'scale(0.95)' },
+          '100%': { opacity: '1', transform: 'scale(1)' },
         },
       },
     },

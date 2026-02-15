@@ -2,6 +2,32 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.5.3] - 2026-02-15
+
+### @Mentions in Internal Notes & Onboarding System
+
+Adds Slack-like @mention autocomplete for internal notes and a full onboarding experience for new organizations.
+
+#### @Mentions (`src/lib/mentions.ts`, `src/components/ui/MentionTextarea.tsx`, `src/components/ui/MentionRenderer.tsx`)
+- **MentionTextarea** — Custom textarea with @mention autocomplete dropdown; type `@` after space/start to trigger, fuzzy-filters team members, keyboard navigation (arrows, Enter/Tab to select, Escape to close), accessible with ARIA attributes
+- **MentionRenderer** — Renders `@[Name](id)` tokens as brand-colored inline pills in message content
+- **Mention utilities** — Pure functions for parsing, insertion, ID extraction, and accent-normalized fuzzy filtering
+- Mentions only active for internal notes (`isInternal=true`), disabled for external messages
+- `mentionedUserIds` field added to messages schema for tracking who was mentioned
+
+#### Backend (`convex/conversations.ts`, `convex/router.ts`)
+- Added `mentionedUserIds` arg to `sendMessage` and `internalSendMessage` mutations (only stored for internal notes)
+- HTTP API `/api/v1/conversations/send` forwards `mentionedUserIds`
+
+#### Onboarding System (`convex/onboarding.ts`, `src/components/onboarding/`)
+- **OnboardingWizard** — 5-step wizard for new organizations: Welcome, Pipeline Setup, Sample Data, Team Invite, Complete
+- **OnboardingChecklist** — Dashboard widget tracking first-use milestones with progress bar
+- **SpotlightTooltip** — Contextual feature tooltips on first visit to key pages (Inbox, Contacts, Pipeline, etc.)
+- **ConfettiCanvas** — Celebration animation on milestone completions
+- `onboardingProgress` table tracks wizard state, checklist dismissal, seen spotlights, and celebrated milestones per team member
+- `onboardingMeta` field on organizations stores industry, company size, and main goal from wizard
+- Seed data templates for sample pipelines, leads, and contacts
+
 ## [0.5.2] - 2026-02-15
 
 ### Contact Enrichment & Enhanced UI

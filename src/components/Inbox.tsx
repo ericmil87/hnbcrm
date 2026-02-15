@@ -9,6 +9,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
+import { MentionTextarea } from "@/components/ui/MentionTextarea";
+import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { extractMentionIds } from "@/lib/mentions";
+import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 
 interface InboxProps {
   organizationId: Id<"organizations">;
@@ -19,6 +23,8 @@ export function Inbox({ organizationId }: InboxProps) {
   const [newMessage, setNewMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
   const [showMessages, setShowMessages] = useState(false);
+
+  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
@@ -36,11 +42,15 @@ export function Inbox({ organizationId }: InboxProps) {
     if (!newMessage.trim() || !selectedConversation) return;
 
     try {
+      const trimmed = newMessage.trim();
+      const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
+
       await sendMessage({
         conversationId: selectedConversation as Id<"conversations">,
-        content: newMessage,
+        content: trimmed,
         contentType: "text",
         isInternal,
+        mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
       });
       setNewMessage("");
     } catch (error) {
@@ -125,7 +135,9 @@ export function Inbox({ organizationId }: InboxProps) {
   };
 
   return (
-    <div className="h-full flex flex-col md:flex-row">
+    <>
+      <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
+      <div className="h-full flex flex-col md:flex-row">
       {/* Conversations List */}
       <div
         className={cn(
@@ -225,7 +237,11 @@ export function Inbox({ organizationId }: InboxProps) {
                       <div className={cn("text-xs font-medium mb-0.5", style.labelColor)}>
                         {message.sender?.name || style.label}
                       </div>
-                      <p className="text-sm">{message.content}</p>
+                      {message.isInternal ? (
+                        <MentionRenderer content={message.content} className="text-sm" />
+                      ) : (
+                        <p className="text-sm">{message.content}</p>
+                      )}
                       <div className="flex items-center justify-end mt-1">
                         <span className="text-xs opacity-75">
                           {new Date(message.createdAt).toLocaleTimeString("pt-BR", {
@@ -257,14 +273,23 @@ export function Inbox({ organizationId }: InboxProps) {
                 )}
               </div>
               <div className="flex gap-2">
-                <input
-                  type="text"
+                <MentionTextarea
                   value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder={isInternal ? "Escreva uma nota interna..." : "Digite uma mensagem..."}
+                  onChange={setNewMessage}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      if (newMessage.trim()) {
+                        handleSendMessage(e as unknown as React.FormEvent);
+                      }
+                    }
+                  }}
+                  teamMembers={teamMembers ?? []}
+                  mentionEnabled={isInternal}
+                  placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
+                  rows={1}
                   className={cn(
-                    "flex-1 px-3 py-2 bg-surface-sunken border text-text-primary rounded-field text-base",
-                    "placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-surface-raised transition-all",
+                    "bg-surface-sunken",
                     isInternal
                       ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
                       : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
@@ -294,5 +319,6 @@ export function Inbox({ organizationId }: InboxProps) {
         )}
       </div>
     </div>
+    </>
   );
 }

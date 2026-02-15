@@ -16,6 +16,7 @@ import { Button } from "./components/ui/Button";
 import { Input } from "./components/ui/Input";
 import { Building2, Plus } from "lucide-react";
 import type { Tab } from "./components/layout/BottomTabBar";
+import { OnboardingWizard } from "./components/onboarding/OnboardingWizard";
 
 export default function App() {
   const [selectedOrgId, setSelectedOrgId] = useState<Id<"organizations"> | null>(null);
@@ -65,7 +66,12 @@ function Content({
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
 }) {
+  const [wizardDone, setWizardDone] = useState(false);
   const loggedInUser = useQuery(api.auth.loggedInUser);
+  const onboardingProgress = useQuery(
+    api.onboarding.getOnboardingProgress,
+    selectedOrgId ? { organizationId: selectedOrgId } : "skip"
+  );
 
   if (loggedInUser === undefined) {
     return (
@@ -77,6 +83,21 @@ function Content({
 
   if (!selectedOrgId) {
     return <WelcomeScreen onSelectOrg={onSelectOrg} />;
+  }
+
+  // Show wizard for new orgs (null progress = no record + no data)
+  // Don't show if wizard was just completed in this session
+  if (
+    onboardingProgress !== undefined &&
+    !wizardDone &&
+    (onboardingProgress === null || onboardingProgress.wizardCompleted === false)
+  ) {
+    return (
+      <OnboardingWizard
+        organizationId={selectedOrgId}
+        onComplete={() => setWizardDone(true)}
+      />
+    );
   }
 
   return (

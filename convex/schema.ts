@@ -16,6 +16,12 @@ const applicationTables = {
         handoffThreshold: v.number(),
       })),
     }),
+    onboardingMeta: v.optional(v.object({
+      industry: v.optional(v.string()),
+      companySize: v.optional(v.string()),
+      mainGoal: v.optional(v.string()),
+      wizardCompletedAt: v.optional(v.number()),
+    })),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_slug", ["slug"]),
@@ -299,6 +305,7 @@ const applicationTables = {
       v.literal("failed")
     )),
     isInternal: v.boolean(),
+    mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
     metadata: v.optional(v.record(v.string(), v.any())),
     createdAt: v.number(),
   })
@@ -406,6 +413,22 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_entity", ["organizationId", "entityType"]),
+
+  // Onboarding Progress
+  onboardingProgress: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    wizardCompleted: v.boolean(),
+    wizardCurrentStep: v.number(),
+    wizardData: v.optional(v.any()),
+    checklistDismissed: v.boolean(),
+    seenSpotlights: v.array(v.string()),
+    celebratedMilestones: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_member", ["organizationId", "teamMemberId"]),
 
   // Webhooks
   webhooks: defineTable({

@@ -116,6 +116,7 @@ export const sendMessage = mutation({
       type: v.string(),
       size: v.number(),
     }))),
+    mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -137,6 +138,7 @@ export const sendMessage = mutation({
       contentType: args.contentType || "text",
       attachments: args.attachments,
       isInternal: args.isInternal || false,
+      mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
       createdAt: now,
     });
 
@@ -355,6 +357,7 @@ export const internalSendMessage = internalMutation({
       type: v.string(),
       size: v.number(),
     }))),
+    mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
     teamMemberId: v.id("teamMembers"),
   },
   returns: v.id("messages"),
@@ -378,6 +381,7 @@ export const internalSendMessage = internalMutation({
       contentType: args.contentType || "text",
       attachments: args.attachments,
       isInternal: args.isInternal || false,
+      mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
       createdAt: now,
     });
 

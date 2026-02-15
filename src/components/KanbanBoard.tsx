@@ -13,6 +13,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2 } from "lucide-react";
+import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import {
   DndContext,
   DragOverlay,
@@ -793,6 +794,8 @@ export function KanbanBoard({ organizationId }: KanbanBoardProps) {
       onDragEnd={handleDragEnd}
     >
       <div className="h-full flex flex-col">
+        <SpotlightTooltip spotlightId="board" organizationId={organizationId} />
+
         {/* Board Selector + Settings + Create Lead */}
         <div className="mb-4">
           <div className="flex items-center gap-4 flex-wrap">

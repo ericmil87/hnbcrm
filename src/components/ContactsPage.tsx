@@ -11,6 +11,7 @@ import { ContactDetailPanel } from "./ContactDetailPanel";
 import { CreateContactModal } from "./CreateContactModal";
 import { SocialIcons } from "@/components/SocialIcons";
 import { cn } from "@/lib/utils";
+import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 
 interface ContactsPageProps {
   organizationId: Id<"organizations">;
@@ -273,6 +274,8 @@ export function ContactsPage({ organizationId }: ContactsPageProps) {
   return (
     <>
       <div className="max-w-7xl">
+        <SpotlightTooltip spotlightId="contacts" organizationId={organizationId} />
+
         {/* Header */}
         <div className="flex flex-col gap-4 mb-6">
           <div className="flex items-center justify-between gap-4">

@@ -585,6 +585,7 @@ http.route({
         content: body.content,
         contentType: body.contentType || "text",
         isInternal: body.isInternal || false,
+        mentionedUserIds: body.mentionedUserIds,
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 

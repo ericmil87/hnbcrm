@@ -18,6 +18,9 @@ import {
   ExternalLink,
   Info,
 } from "lucide-react";
+import { MentionTextarea } from "@/components/ui/MentionTextarea";
+import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { extractMentionIds } from "@/lib/mentions";
 
 interface LeadDetailPanelProps {
   leadId: Id<"leads">;
@@ -91,6 +94,8 @@ function ConversationTab({
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
+
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
     leadId,
@@ -127,11 +132,15 @@ function ConversationTab({
         });
       }
 
+      const trimmed = messageText.trim();
+      const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
+
       await sendMessage({
         conversationId,
-        content: messageText.trim(),
+        content: trimmed,
         contentType: "text",
         isInternal,
+        mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
       });
 
       setMessageText("");
@@ -207,7 +216,11 @@ function ConversationTab({
                     {getSenderLabel(msg.senderType)}
                     {isInternalMsg && " (nota interna)"}
                   </div>
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  {isInternalMsg ? (
+                    <MentionRenderer content={msg.content} className="whitespace-pre-wrap" />
+                  ) : (
+                    <p className="whitespace-pre-wrap">{msg.content}</p>
+                  )}
                   <div
                     className={cn(
                       "text-xs mt-1",
@@ -244,14 +257,14 @@ function ConversationTab({
           </label>
         </div>
         <div className="flex gap-2">
-          <textarea
+          <MentionTextarea
             value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
+            onChange={setMessageText}
             onKeyDown={handleKeyDown}
-            placeholder={isInternal ? "Escreva uma nota interna..." : "Digite uma mensagem..."}
+            teamMembers={teamMembers ?? []}
+            mentionEnabled={isInternal}
+            placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
             rows={2}
-            className="flex-1 px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
-            style={{ fontSize: "16px" }}
           />
           <Button
             onClick={handleSend}
