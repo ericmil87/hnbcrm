@@ -113,6 +113,7 @@ export function TaskDetailSlideOver({
   const [sendingComment, setSendingComment] = useState(false);
   const [showSnoozeDate, setShowSnoozeDate] = useState(false);
   const [snoozeDate, setSnoozeDate] = useState("");
+  const [snoozeTime, setSnoozeTime] = useState("");
 
   const task = useQuery(api.tasks.getTask, { taskId });
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
@@ -193,14 +194,16 @@ export function TaskDetailSlideOver({
 
   const handleSnooze = async () => {
     if (!snoozeDate) return;
-    const snoozedUntil = new Date(snoozeDate + "T09:00").getTime();
+    const timeStr = snoozeTime || "09:00";
+    const snoozedUntil = new Date(snoozeDate + "T" + timeStr).getTime();
     try {
       await snoozeTask({ taskId, snoozedUntil });
-      toast.success("Tarefa adiada");
+      toast.success("Lembrete salvo");
       setShowSnoozeDate(false);
       setSnoozeDate("");
+      setSnoozeTime("");
     } catch {
-      toast.error("Falha ao adiar tarefa");
+      toast.error("Falha ao salvar lembrete");
     }
   };
 
@@ -331,7 +334,7 @@ export function TaskDetailSlideOver({
               onClick={() => setShowSnoozeDate(!showSnoozeDate)}
             >
               <AlarmClock size={14} />
-              Soneca
+              Lembrete
             </Button>
           )}
 
@@ -410,7 +413,7 @@ export function TaskDetailSlideOver({
           </div>
         </div>
 
-        {/* Snooze date picker */}
+        {/* Reminder date/time picker */}
         {showSnoozeDate && (
           <div className="flex items-center gap-2 px-4 py-2 bg-surface-sunken">
             <input
@@ -420,8 +423,16 @@ export function TaskDetailSlideOver({
               className="flex-1 px-3 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
               style={{ fontSize: "16px" }}
             />
+            <input
+              type="time"
+              value={snoozeTime}
+              onChange={(e) => setSnoozeTime(e.target.value)}
+              placeholder="09:00"
+              className="w-28 px-3 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              style={{ fontSize: "16px" }}
+            />
             <Button size="sm" onClick={handleSnooze} disabled={!snoozeDate}>
-              Adiar
+              Salvar
             </Button>
             <Button
               size="sm"
@@ -429,6 +440,7 @@ export function TaskDetailSlideOver({
               onClick={() => {
                 setShowSnoozeDate(false);
                 setSnoozeDate("");
+                setSnoozeTime("");
               }}
             >
               <X size={14} />
@@ -508,7 +520,7 @@ export function TaskDetailSlideOver({
             {task.snoozedUntil && task.snoozedUntil > now && (
               <Badge variant="info">
                 <AlarmClock size={12} className="mr-1" />
-                Adiada até {new Date(task.snoozedUntil).toLocaleDateString("pt-BR")}
+                Lembrete: {new Date(task.snoozedUntil).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
               </Badge>
             )}
           </div>

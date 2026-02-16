@@ -1378,8 +1378,8 @@ export const OPENAPI_SPEC = `{
     "/api/v1/tasks/snooze": {
       "post": {
         "tags": ["Tarefas"],
-        "summary": "Adiar tarefa",
-        "description": "Adia uma tarefa até uma data futura.",
+        "summary": "Definir lembrete",
+        "description": "Define um lembrete para uma tarefa.",
         "operationId": "snoozeTask",
         "requestBody": {
           "required": true,
@@ -1390,7 +1390,7 @@ export const OPENAPI_SPEC = `{
                 "required": ["taskId", "snoozedUntil"],
                 "properties": {
                   "taskId": { "type": "string", "description": "ID da tarefa" },
-                  "snoozedUntil": { "type": "number", "description": "Adiar até (timestamp ms)" }
+                  "snoozedUntil": { "type": "number", "description": "Data/hora do lembrete (timestamp ms)" }
                 }
               }
             }
