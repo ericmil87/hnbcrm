@@ -10,6 +10,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { SocialIcons } from "@/components/SocialIcons";
 import { CustomFieldsRenderer } from "@/components/CustomFieldsRenderer";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Trash2, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +93,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ContactForm | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const contactData = useQuery(api.contacts.getContactWithLeads, { contactId });
   const fieldDefs = useQuery(
@@ -169,7 +171,6 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
   };
 
   const handleDelete = async () => {
-    if (!confirm("Tem certeza que deseja excluir este contato?")) return;
     const deletePromise = deleteContact({ contactId });
     toast.promise(deletePromise, {
       loading: "Excluindo...",
@@ -560,12 +561,22 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
 
         {/* Footer - Delete button */}
         <div className="border-t border-border px-4 md:px-6 py-4 shrink-0">
-          <Button variant="danger" size="md" onClick={handleDelete} className="w-full">
+          <Button variant="danger" size="md" onClick={() => setShowDeleteConfirm(true)} className="w-full">
             <Trash2 size={18} className="mr-2" />
             Excluir Contato
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDelete}
+        title="Excluir Contato"
+        description="Tem certeza que deseja excluir este contato? Esta ação não pode ser desfeita."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
     </SlideOver>
   );
 }

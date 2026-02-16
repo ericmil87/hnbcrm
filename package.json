@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.12.0",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",

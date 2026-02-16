@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { ChevronUp, ChevronDown, X, Plus } from "lucide-react";
@@ -30,6 +31,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
   const [showAddForm, setShowAddForm] = useState(false);
   const [newStageName, setNewStageName] = useState("");
   const [newStageColor, setNewStageColor] = useState("#3B82F6");
+  const [confirmDeleteStageId, setConfirmDeleteStageId] = useState<Id<"stages"> | null>(null);
 
   const updateStage = useMutation(api.boards.updateStage);
   const deleteStage = useMutation(api.boards.deleteStage);
@@ -104,8 +106,6 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
   };
 
   const handleDeleteStage = async (stageId: Id<"stages">) => {
-    if (!confirm("Tem certeza que deseja excluir esta etapa?")) return;
-
     try {
       await deleteStage({ stageId });
       setLocalStages((prev) => prev.filter((s) => s._id !== stageId));
@@ -232,7 +232,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
 
               {/* Delete Button */}
               <button
-                onClick={() => handleDeleteStage(stage._id)}
+                onClick={() => setConfirmDeleteStageId(stage._id)}
                 className="p-1.5 rounded text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
                 aria-label="Excluir etapa"
               >
@@ -343,6 +343,18 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
           </Button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={!!confirmDeleteStageId}
+        onClose={() => setConfirmDeleteStageId(null)}
+        onConfirm={() => {
+          if (confirmDeleteStageId) handleDeleteStage(confirmDeleteStageId);
+        }}
+        title="Excluir Etapa"
+        description="Tem certeza que deseja excluir esta etapa? Leads vinculados precisarão ser movidos primeiro."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
     </Modal>
   );
 }

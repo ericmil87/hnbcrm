@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2 } from "lucide-react";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
@@ -355,6 +356,7 @@ function StageEditPopover({
 }) {
   const [name, setName] = useState(stage.name);
   const [selectedColor, setSelectedColor] = useState(stage.color);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const PRESET_COLORS = [
     "#71717A", // zinc
@@ -470,18 +472,26 @@ function StageEditPopover({
         {/* Divider + Delete */}
         <div className="pt-2 border-t border-border">
           <button
-            onClick={() => {
-              if (confirm(`Excluir a etapa "${stage.name}"?`)) {
-                onDelete(stage._id);
-                onClose();
-              }
-            }}
+            onClick={() => setShowDeleteConfirm(true)}
             className="w-full px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 rounded-field transition-colors flex items-center gap-2"
           >
             <Trash2 size={14} />
             Excluir Etapa
           </button>
         </div>
+
+        <ConfirmDialog
+          open={showDeleteConfirm}
+          onClose={() => setShowDeleteConfirm(false)}
+          onConfirm={() => {
+            onDelete(stage._id);
+            onClose();
+          }}
+          title="Excluir Etapa"
+          description={`Tem certeza que deseja excluir a etapa "${stage.name}"? Leads vinculados precisarão ser movidos primeiro.`}
+          confirmLabel="Excluir"
+          variant="danger"
+        />
       </div>
     </>
   );
@@ -584,6 +594,7 @@ export function KanbanBoard() {
   const [stageMenuId, setStageMenuId] = useState<Id<"stages"> | null>(null);
   const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [showCloseReasonModal, setShowCloseReasonModal] = useState(false);
+  const [showDeleteBoardConfirm, setShowDeleteBoardConfirm] = useState(false);
   const [pendingClose, setPendingClose] = useState<{
     leadId: Id<"leads">;
     stageId: Id<"stages">;
@@ -706,9 +717,6 @@ export function KanbanBoard() {
 
   const handleDeleteBoard = async () => {
     if (!selectedBoardId) return;
-    if (!confirm("Tem certeza que deseja excluir este pipeline? Esta ação não pode ser desfeita.")) {
-      return;
-    }
 
     try {
       await deleteBoard({ boardId: selectedBoardId });
@@ -864,7 +872,10 @@ export function KanbanBoard() {
                         Gerenciar Etapas
                       </button>
                       <button
-                        onClick={handleDeleteBoard}
+                        onClick={() => {
+                          setShowDeleteBoardConfirm(true);
+                          setShowSettingsMenu(false);
+                        }}
                         className="w-full px-4 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
                       >
                         Excluir Pipeline
@@ -1131,6 +1142,17 @@ export function KanbanBoard() {
           </div>
         </div>
       )}
+
+      {/* Delete Board Confirm */}
+      <ConfirmDialog
+        open={showDeleteBoardConfirm}
+        onClose={() => setShowDeleteBoardConfirm(false)}
+        onConfirm={handleDeleteBoard}
+        title="Excluir Pipeline"
+        description="Tem certeza que deseja excluir este pipeline? Esta ação não pode ser desfeita."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
 
       {/* Close Reason Modal */}
       {showCloseReasonModal && pendingClose && (

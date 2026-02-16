@@ -2,6 +2,22 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.12.0] - 2026-02-16
+
+### UX — Replace Native Dialogs with Design System Components
+
+Eliminates all `alert()` and `confirm()` browser dialogs across the app, replacing them with elegant modal components that match the dark theme design system.
+
+#### New Components
+- **`ConfirmDialog`** (`src/components/ui/ConfirmDialog.tsx`) — Reusable confirmation modal wrapping `Modal` + `Button`, with `danger` variant (red button + AlertTriangle icon) and PT-BR default labels ("Confirmar" / "Cancelar")
+- **`ApiKeyRevealModal`** (`src/components/ui/ApiKeyRevealModal.tsx`) — API key reveal modal with masked/revealed toggle (Eye/EyeOff), one-click copy with toast feedback, and security warning with ShieldAlert icon
+
+#### Replacements (8 native dialogs removed)
+- **Settings.tsx** — `alert()` for API key creation → `ApiKeyRevealModal`; 3 `confirm()` calls (custom fields, lead sources, webhooks) → `ConfirmDialog` with danger variant
+- **ManageStagesModal.tsx** — `confirm()` for stage deletion → `ConfirmDialog`
+- **ContactDetailPanel.tsx** — `confirm()` for contact deletion → `ConfirmDialog`
+- **KanbanBoard.tsx** — 2 `confirm()` calls (stage deletion in popover, pipeline deletion) → `ConfirmDialog`
+
 ## [0.11.0] - 2026-02-15
 
 ### Agent Skills, Developer Portal & llms.txt Updates

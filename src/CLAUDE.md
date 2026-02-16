@@ -22,7 +22,9 @@ src/
     │   ├── SlideOver.tsx      # Full-screen (mobile) / side panel (desktop)
     │   ├── Spinner.tsx        # Brand-colored loading spinner
     │   ├── Skeleton.tsx       # Shimmer loading placeholder
-    │   └── Avatar.tsx         # Initials avatar with AI badge + status dot
+    │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
+    │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
+    │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── layout/                # App shell and navigation
     │   ├── AuthLayout.tsx     # Auth-gated layout for /app/* (auth → org → onboarding → AppShell + Outlet)
     │   ├── AppShell.tsx       # Orchestrates Sidebar (md+) vs BottomTabBar (mobile)

@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ApiKeyRevealModal } from "@/components/ui/ApiKeyRevealModal";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 
@@ -158,6 +160,7 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
 function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"> }) {
   const [showCreateApiKey, setShowCreateApiKey] = useState(false);
   const [newApiKeyName, setNewApiKeyName] = useState("");
+  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
 
   const apiKeys = useQuery(api.apiKeys.getApiKeys, {
     organizationId,
@@ -186,7 +189,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
         name: newApiKeyName,
       });
 
-      alert(`Chave API criada: ${result.apiKey}\n\nSalve esta chave em local seguro. Você não poderá vê-la novamente.`);
+      setRevealedApiKey(result.apiKey);
       setNewApiKeyName("");
       setShowCreateApiKey(false);
     } catch (error) {
@@ -259,6 +262,14 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           </div>
         </form>
       </Modal>
+
+      {revealedApiKey && (
+        <ApiKeyRevealModal
+          open={!!revealedApiKey}
+          onClose={() => setRevealedApiKey(null)}
+          apiKey={revealedApiKey}
+        />
+      )}
     </Card>
   );
 }
@@ -269,6 +280,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", key: "", type: "text" as string, options: "", isRequired: false });
   const [entityTab, setEntityTab] = useState<"lead" | "contact">("lead");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const fieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
     organizationId,
@@ -323,7 +335,6 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Excluir este campo personalizado?")) return;
     try {
       await deleteField({ fieldDefinitionId: id as Id<"fieldDefinitions"> });
     } catch (error) {
@@ -389,7 +400,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEdit(field)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => handleDelete(field._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                <button onClick={() => setConfirmDeleteId(field._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
               </div>
             </div>
           ))}
@@ -397,6 +408,18 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
       ) : fieldDefs ? (
         <p className="text-text-secondary">Nenhum campo personalizado definido.</p>
       ) : null}
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) handleDelete(confirmDeleteId);
+        }}
+        title="Excluir Campo Personalizado"
+        description="Tem certeza que deseja excluir este campo personalizado? Esta ação não pode ser desfeita."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
 
       <Modal
         open={showForm}
@@ -460,6 +483,7 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", type: "website" as string });
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const sources = useQuery(api.leadSources.getLeadSources, {
     organizationId,
@@ -499,7 +523,6 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Excluir esta fonte de leads?")) return;
     try {
       await deleteSource({ leadSourceId: id as Id<"leadSources"> });
     } catch (error) {
@@ -537,7 +560,7 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEdit(source)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => handleDelete(source._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                <button onClick={() => setConfirmDeleteId(source._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
               </div>
             </div>
           ))}
@@ -545,6 +568,18 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
       ) : sources ? (
         <p className="text-text-secondary">Nenhuma fonte de leads configurada.</p>
       ) : null}
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) handleDelete(confirmDeleteId);
+        }}
+        title="Excluir Fonte de Leads"
+        description="Tem certeza que deseja excluir esta fonte de leads? Esta ação não pode ser desfeita."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
 
       <Modal
         open={showForm}
@@ -586,6 +621,7 @@ function WebhooksSection({ organizationId }: { organizationId: Id<"organizations
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", url: "", events: "", secret: "" });
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const webhooks = useQuery(api.webhooks.getWebhooks, {
     organizationId,
@@ -629,7 +665,6 @@ function WebhooksSection({ organizationId }: { organizationId: Id<"organizations
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Excluir este webhook?")) return;
     try {
       await deleteWebhook({ webhookId: id as Id<"webhooks"> });
     } catch (error) {
@@ -668,7 +703,7 @@ function WebhooksSection({ organizationId }: { organizationId: Id<"organizations
                     {webhook.isActive ? "Ativo" : "Inativo"}
                   </Badge>
                   <button onClick={() => handleEdit(webhook)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                  <button onClick={() => handleDelete(webhook._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                  <button onClick={() => setConfirmDeleteId(webhook._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
                 </div>
               </div>
               <div className="flex gap-1 flex-wrap">
@@ -682,6 +717,18 @@ function WebhooksSection({ organizationId }: { organizationId: Id<"organizations
       ) : webhooks ? (
         <p className="text-text-secondary">Nenhum webhook configurado.</p>
       ) : null}
+
+      <ConfirmDialog
+        open={!!confirmDeleteId}
+        onClose={() => setConfirmDeleteId(null)}
+        onConfirm={() => {
+          if (confirmDeleteId) handleDelete(confirmDeleteId);
+        }}
+        title="Excluir Webhook"
+        description="Tem certeza que deseja excluir este webhook? Esta ação não pode ser desfeita."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
 
       <Modal
         open={showForm}
