@@ -16,12 +16,14 @@ import { TeamPage } from "./components/TeamPage";
 import { AuditLogs } from "./components/AuditLogs";
 import { Settings } from "./components/Settings";
 import { DevelopersPage } from "./pages/DevelopersPage";
+import { PlaygroundPage } from "./pages/PlaygroundPage";
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 const router = createBrowserRouter([
   { path: "/", element: <LandingPage /> },
   { path: "/developers", element: <DevelopersPage /> },
+  { path: "/developers/playground", element: <PlaygroundPage /> },
   { path: "/entrar", element: <AuthPage /> },
   {
     path: "/app",

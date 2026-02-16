@@ -3,6 +3,7 @@ import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
+import { OPENAPI_SPEC } from "./openapiSpec";
 
 const http = httpRouter();
 
@@ -940,6 +941,19 @@ http.route({
   }),
 });
 
+// ---- OpenAPI Spec ----
+
+http.route({
+  path: "/api/v1/openapi.json",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(OPENAPI_SPEC, {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
+  }),
+});
+
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());
 
@@ -972,5 +986,6 @@ http.route({ path: "/api/v1/dashboard", method: "OPTIONS", handler: optionsHandl
 http.route({ path: "/api/v1/contacts/search", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/lead-sources", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/audit-logs", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/openapi.json", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

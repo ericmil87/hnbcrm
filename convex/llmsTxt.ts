@@ -474,17 +474,17 @@ The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 26 tools for AI agents:
 
 ### Lead Management
 
-#### list_leads
+#### crm_list_leads
 List leads with optional filters.
 - **boardId** (string, optional): Filter by board
 - **stageId** (string, optional): Filter by stage
 - **assignedTo** (string, optional): Filter by assigned team member
 
-#### get_lead
+#### crm_get_lead
 Get a single lead by ID.
 - **leadId** (string, required): The lead ID
 
-#### create_lead
+#### crm_create_lead
 Create a new lead via inbound endpoint.
 - **title** (string, required): Lead title
 - **contact** (object, optional): Contact info {firstName, lastName, email, phone, company}
@@ -496,70 +496,70 @@ Create a new lead via inbound endpoint.
 - **message** (string, optional): Initial message
 - **channel** (string, optional): Message channel
 
-#### update_lead
+#### crm_update_lead
 Update lead fields.
 - **leadId** (string, required): The lead ID
 - **title, value, priority, temperature, tags, customFields, sourceId** (optional)
 
-#### delete_lead
+#### crm_delete_lead
 Delete a lead.
 - **leadId** (string, required): The lead ID
 
-#### move_lead_stage
+#### crm_move_lead
 Move a lead to a different pipeline stage.
 - **leadId** (string, required): The lead ID
 - **stageId** (string, required): Target stage ID
 
-#### assign_lead
+#### crm_assign_lead
 Assign or unassign a lead.
 - **leadId** (string, required): The lead ID
 - **assignedTo** (string, optional): Team member ID (omit to unassign)
 
 ### Contact Management
 
-#### list_contacts
+#### crm_list_contacts
 List all contacts in the organization.
 
-#### get_contact
+#### crm_get_contact
 Get a single contact by ID.
 - **contactId** (string, required): The contact ID
 
-#### create_contact
+#### crm_create_contact
 Create a new contact.
 - **firstName, lastName, email, phone, company, title** and all enrichment fields (optional)
 
-#### update_contact
+#### crm_update_contact
 Update contact fields.
 - **contactId** (string, required): The contact ID
 - Plus any contact fields to update
 
-#### enrich_contact
+#### crm_enrich_contact
 Add enrichment data to a contact from an external source.
 - **contactId** (string, required): The contact ID
 - **fields** (object, required): Field values to enrich
 - **source** (string, required): Data source name
 - **confidence** (number, optional): Confidence score 0-1
 
-#### get_contact_gaps
+#### crm_get_contact_gaps
 Identify missing/enrichable fields on a contact.
 - **contactId** (string, required): The contact ID
 
-#### search_contacts
+#### crm_search_contacts
 Search contacts by name, email, company, or other text fields.
 - **query** (string, required): Search text
 - **limit** (number, optional): Max results (default 20, max 100)
 
 ### Conversations
 
-#### list_conversations
+#### crm_list_conversations
 List conversations, optionally filtered by lead.
 - **leadId** (string, optional): Filter by lead
 
-#### get_messages
+#### crm_get_messages
 Get messages for a conversation.
 - **conversationId** (string, required): The conversation ID
 
-#### send_message
+#### crm_send_message
 Send a message to a conversation.
 - **conversationId** (string, required): The conversation ID
 - **content** (string, required): Message content
@@ -568,7 +568,7 @@ Send a message to a conversation.
 
 ### Handoffs
 
-#### request_handoff
+#### crm_request_handoff
 Request a handoff for a lead.
 - **leadId** (string, required): The lead ID
 - **reason** (string, required): Why the handoff is needed
@@ -576,28 +576,39 @@ Request a handoff for a lead.
 - **summary** (string, optional): Conversation summary
 - **suggestedActions** (string[], optional): Recommended next steps
 
-### Reference Data
+#### crm_list_handoffs
+List handoff requests, optionally filtered by status.
+- **status** (string, optional): Filter by status (pending, accepted, rejected)
 
-#### list_boards
+#### crm_accept_handoff
+Accept a pending handoff request.
+- **handoffId** (string, required): The handoff ID
+- **notes** (string, optional): Notes about accepting
+
+#### crm_reject_handoff
+Reject a pending handoff request.
+- **handoffId** (string, required): The handoff ID
+- **notes** (string, optional): Reason for rejection
+
+### Pipeline & Reference Data
+
+#### crm_list_boards
 List all pipeline boards with their stages.
 
-#### list_team_members
+#### crm_list_team
 List all team members in the organization.
 
-#### list_field_definitions
-List custom field definitions.
-
-#### get_dashboard
+#### crm_get_dashboard
 Get pipeline analytics and summary statistics.
 
 ### Activities
 
-#### get_activities
+#### crm_get_activities
 Get the activity timeline for a lead.
 - **leadId** (string, required): The lead ID
 - **limit** (number, optional): Max results (default 50, max 200)
 
-#### create_activity
+#### crm_create_activity
 Log an activity on a lead (note, call, or email).
 - **leadId** (string, required): The lead ID
 - **type** (string, required): note, call, email_sent

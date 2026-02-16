@@ -2,6 +2,42 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.13.0] - 2026-02-16
+
+### Developer Portal & API Playground Overhaul
+
+Full-page API Playground, OpenAPI 3.1.0 spec, 2 new MCP tools, and complete tool name sync across docs.
+
+#### Full-Page API Playground (`src/pages/PlaygroundPage.tsx`)
+- New `/developers/playground` route — dedicated full-screen playground with breadcrumb header
+- `PlaygroundConfigProvider` context — shared config state across playground components
+- `JsonHighlighter` — regex-based JSON syntax highlighting (keys, strings, numbers, booleans, null)
+- Mobile UX: request/response tab switcher with auto-switch on response, compact endpoint selector
+- Desktop UX: 3-column layout (sidebar + request builder + response viewer)
+
+#### Playground Component Improvements
+- **RequestBuilder** — URL bar header with method badge + path, form validation with field-level errors and shake animation, JSON format button, type badges on all fields, support for PUT/DELETE methods, reset state on endpoint change
+- **PlaygroundConfig** — Collapsible config bar (compact view with masked key when configured)
+- **ResponseViewer** — Compact status bar with line count + byte size, `JsonHighlighter` replaces `CodeBlock`
+- **PlaygroundSidebar** — Method color coding (GET green, POST blue, PUT yellow, DELETE red), tighter spacing
+
+#### OpenAPI Spec (`convex/openapiSpec.ts`, `convex/router.ts`)
+- Full OpenAPI 3.1.0 specification for all REST API endpoints
+- Served at `GET /api/v1/openapi.json`
+
+#### MCP Server — Missing Tools (`mcp-server/src/tools/`)
+- Added `crm_reject_handoff` tool to `handoffs.ts` (was defined in REST API but not registered in MCP)
+- Added `crm_get_dashboard` tool to `pipeline.ts` (was defined in REST API but not registered in MCP)
+
+#### Developer Docs Sync
+- **DevelopersPage** — Updated all MCP tool names to `crm_*` prefix, corrected tool counts (contacts 4→7, handoffs 3→4), added Pipeline (3 tools) and Activities (2 tools) sections, fixed MCP config examples (`-y` flag, `HNBCRM_API_URL` env var)
+- **llms.txt** — Synced all 26 tool names to `crm_*` prefix, added missing `crm_list_handoffs`/`crm_accept_handoff`/`crm_reject_handoff` docs
+- Playground section on DevelopersPage replaced with CTA card linking to full-page playground
+
+#### Misc
+- `.gitignore` — Added `.mcp.json` (contains API keys)
+- `tailwind.config.js` — Added `shake` keyframe animation for form validation feedback
+
 ## [0.12.0] - 2026-02-16
 
 ### UX — Replace Native Dialogs with Design System Components

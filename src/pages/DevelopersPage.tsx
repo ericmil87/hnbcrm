@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   ArrowLeft,
   Key,
@@ -13,13 +13,13 @@ import {
   Search as SearchIcon,
   Download,
   BookOpen,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "@/components/developers/CodeBlock";
-import { ApiPlayground } from "@/components/developers/ApiPlayground";
 import { ALL_ENDPOINTS, API_CATEGORIES, getEndpointsByCategory } from "@/lib/apiRegistry";
 
 const sections = [
@@ -45,9 +45,9 @@ function ToolRow({ name, description, params }: { name: string; description: str
 }
 
 export function DevelopersPage() {
+  const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState("quick-start");
   const [searchQuery, setSearchQuery] = useState("");
-  const [playgroundEndpointId, setPlaygroundEndpointId] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
@@ -123,21 +123,33 @@ export function DevelopersPage() {
       {/* Mobile ToC */}
       <nav className="md:hidden sticky top-[57px] z-20 bg-surface-base/80 backdrop-blur-md border-b border-border overflow-x-auto">
         <div className="flex gap-1 px-4 py-2">
-          {sections.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => scrollTo(s.id)}
-              className={cn(
-                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors",
-                activeSection === s.id
-                  ? "bg-brand-500/10 text-brand-400"
-                  : "text-text-muted hover:text-text-secondary"
-              )}
-            >
-              <s.icon size={14} />
-              {s.label}
-            </button>
-          ))}
+          {sections.map((s) =>
+            s.id === "playground" ? (
+              <Link
+                key={s.id}
+                to="/developers/playground"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors text-text-muted hover:text-text-secondary"
+              >
+                <s.icon size={14} />
+                {s.label}
+                <ExternalLink size={10} />
+              </Link>
+            ) : (
+              <button
+                key={s.id}
+                onClick={() => scrollTo(s.id)}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors",
+                  activeSection === s.id
+                    ? "bg-brand-500/10 text-brand-400"
+                    : "text-text-muted hover:text-text-secondary"
+                )}
+              >
+                <s.icon size={14} />
+                {s.label}
+              </button>
+            )
+          )}
         </div>
       </nav>
 
@@ -145,21 +157,33 @@ export function DevelopersPage() {
         {/* Desktop Sidebar ToC */}
         <nav className="hidden md:block w-52 flex-shrink-0">
           <div className="sticky top-[73px] py-8 space-y-1">
-            {sections.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => scrollTo(s.id)}
-                className={cn(
-                  "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left",
-                  activeSection === s.id
-                    ? "bg-brand-500/10 text-brand-400"
-                    : "text-text-muted hover:text-text-secondary hover:bg-surface-raised"
-                )}
-              >
-                <s.icon size={16} />
-                {s.label}
-              </button>
-            ))}
+            {sections.map((s) =>
+              s.id === "playground" ? (
+                <Link
+                  key={s.id}
+                  to="/developers/playground"
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left text-text-muted hover:text-text-secondary hover:bg-surface-raised"
+                >
+                  <s.icon size={16} />
+                  {s.label}
+                  <ExternalLink size={12} className="ml-auto opacity-50" />
+                </Link>
+              ) : (
+                <button
+                  key={s.id}
+                  onClick={() => scrollTo(s.id)}
+                  className={cn(
+                    "w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-left",
+                    activeSection === s.id
+                      ? "bg-brand-500/10 text-brand-400"
+                      : "text-text-muted hover:text-text-secondary hover:bg-surface-raised"
+                  )}
+                >
+                  <s.icon size={16} />
+                  {s.label}
+                </button>
+              )
+            )}
           </div>
         </nav>
 
@@ -219,34 +243,51 @@ export function DevelopersPage() {
                 </div>
                 <h3 className="font-semibold text-text-primary">Explore o Playground</h3>
                 <p className="text-sm text-text-secondary">
-                  Teste todos os endpoints direto do navegador sem sair desta pagina.
+                  Teste todos os endpoints direto do navegador em tela cheia.
                 </p>
-                <Button variant="primary" size="sm" onClick={() => scrollTo("playground")}>
-                  <Play size={14} />
-                  Abrir Playground
-                </Button>
+                <Link to="/developers/playground">
+                  <Button variant="primary" size="sm">
+                    <Play size={14} />
+                    Abrir Playground
+                  </Button>
+                </Link>
               </Card>
             </div>
           </section>
 
-          {/* Playground */}
+          {/* Playground CTA */}
           <section id="playground" className="space-y-6 scroll-mt-24">
-            <div className="flex items-center justify-between">
-              <h2 className="text-2xl font-bold flex items-center gap-3">
-                <Play className="text-brand-400" size={24} />
-                API Playground
-              </h2>
-              <a href="/api/v1/openapi.json" target="_blank" rel="noopener noreferrer">
-                <Button variant="ghost" size="sm">
-                  <Download size={14} />
-                  OpenAPI Spec
-                </Button>
-              </a>
-            </div>
-            <p className="text-text-secondary">
-              Teste endpoints em tempo real. Configure sua Base URL e API Key, selecione um endpoint e envie requisicoes.
-            </p>
-            <ApiPlayground initialEndpointId={playgroundEndpointId ?? undefined} />
+            <h2 className="text-2xl font-bold flex items-center gap-3">
+              <Play className="text-brand-400" size={24} />
+              API Playground
+            </h2>
+            <Card className="p-8 flex flex-col md:flex-row items-center gap-6">
+              <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/30 flex items-center justify-center flex-shrink-0">
+                <Play size={28} className="text-brand-500" />
+              </div>
+              <div className="flex-1 text-center md:text-left">
+                <h3 className="text-lg font-semibold text-text-primary mb-1">
+                  Teste endpoints em tempo real
+                </h3>
+                <p className="text-sm text-text-secondary">
+                  Configure sua Base URL e API Key, selecione um endpoint e envie requisicoes — tudo direto do navegador.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <a href="/api/v1/openapi.json" target="_blank" rel="noopener noreferrer">
+                  <Button variant="ghost" size="sm">
+                    <Download size={14} />
+                    OpenAPI Spec
+                  </Button>
+                </a>
+                <Link to="/developers/playground">
+                  <Button variant="primary">
+                    <Play size={16} />
+                    Abrir Playground
+                  </Button>
+                </Link>
+              </div>
+            </Card>
           </section>
 
           {/* Authentication */}
@@ -320,10 +361,10 @@ export function DevelopersPage() {
   "mcpServers": {
     "hnbcrm": {
       "command": "npx",
-      "args": ["hnbcrm-mcp"],
+      "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_BASE_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
       }
     }
   }
@@ -341,10 +382,10 @@ export function DevelopersPage() {
   "mcpServers": {
     "hnbcrm": {
       "command": "npx",
-      "args": ["hnbcrm-mcp"],
+      "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_BASE_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
       }
     }
   }
@@ -362,10 +403,10 @@ export function DevelopersPage() {
   "mcpServers": {
     "hnbcrm": {
       "command": "npx",
-      "args": ["hnbcrm-mcp"],
+      "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_BASE_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
       }
     }
   }
@@ -402,13 +443,13 @@ export function DevelopersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="create_lead" description="Cria um novo lead no pipeline" params="title, boardId, contactId?" />
-                    <ToolRow name="list_leads" description="Lista leads com filtros" params="boardId?, stageId?, assignedTo?" />
-                    <ToolRow name="get_lead" description="Retorna detalhes de um lead" params="id" />
-                    <ToolRow name="update_lead" description="Atualiza campos de um lead" params="id, fields" />
-                    <ToolRow name="delete_lead" description="Remove um lead" params="id" />
-                    <ToolRow name="move_lead_stage" description="Move lead para outra etapa" params="id, stageId" />
-                    <ToolRow name="assign_lead" description="Atribui lead a um membro" params="id, assignedTo" />
+                    <ToolRow name="crm_create_lead" description="Cria um novo lead no pipeline" params="title, contact?, value?" />
+                    <ToolRow name="crm_list_leads" description="Lista leads com filtros" params="boardId?, stageId?, assignedTo?" />
+                    <ToolRow name="crm_get_lead" description="Retorna detalhes de um lead" params="id" />
+                    <ToolRow name="crm_update_lead" description="Atualiza campos de um lead" params="leadId, title?, value?, priority?" />
+                    <ToolRow name="crm_delete_lead" description="Remove um lead permanentemente" params="leadId" />
+                    <ToolRow name="crm_move_lead" description="Move lead para outra etapa" params="leadId, stageId" />
+                    <ToolRow name="crm_assign_lead" description="Atribui lead a um membro" params="leadId, assignedTo?" />
                   </tbody>
                 </table>
               </div>
@@ -419,7 +460,7 @@ export function DevelopersPage() {
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">
                 <h3 className="font-semibold text-text-primary flex items-center gap-2">
                   Contatos
-                  <Badge variant="brand">4 tools</Badge>
+                  <Badge variant="brand">7 tools</Badge>
                 </h3>
               </div>
               <div className="overflow-x-auto">
@@ -432,10 +473,13 @@ export function DevelopersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="create_contact" description="Cria um novo contato" params="name, email?, phone?" />
-                    <ToolRow name="list_contacts" description="Lista todos os contatos" params="—" />
-                    <ToolRow name="get_contact" description="Retorna detalhes do contato" params="id" />
-                    <ToolRow name="update_contact" description="Atualiza dados do contato" params="id, fields" />
+                    <ToolRow name="crm_list_contacts" description="Lista todos os contatos" params="—" />
+                    <ToolRow name="crm_get_contact" description="Retorna detalhes do contato" params="id" />
+                    <ToolRow name="crm_create_contact" description="Cria um novo contato" params="firstName?, email?, phone?, company?" />
+                    <ToolRow name="crm_update_contact" description="Atualiza dados do contato" params="contactId, fields..." />
+                    <ToolRow name="crm_enrich_contact" description="Adiciona dados de enriquecimento" params="contactId, fields, source" />
+                    <ToolRow name="crm_get_contact_gaps" description="Identifica campos vazios" params="id" />
+                    <ToolRow name="crm_search_contacts" description="Busca contatos por texto" params="query, limit?" />
                   </tbody>
                 </table>
               </div>
@@ -459,9 +503,9 @@ export function DevelopersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="list_conversations" description="Lista conversas de um lead" params="leadId" />
-                    <ToolRow name="get_messages" description="Retorna mensagens de uma conversa" params="conversationId" />
-                    <ToolRow name="send_message" description="Envia mensagem em uma conversa" params="conversationId, body, role" />
+                    <ToolRow name="crm_list_conversations" description="Lista conversas de um lead" params="leadId?" />
+                    <ToolRow name="crm_get_messages" description="Retorna mensagens de uma conversa" params="conversationId" />
+                    <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa" params="conversationId, content" />
                   </tbody>
                 </table>
               </div>
@@ -472,6 +516,33 @@ export function DevelopersPage() {
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">
                 <h3 className="font-semibold text-text-primary flex items-center gap-2">
                   Handoffs
+                  <Badge variant="brand">4 tools</Badge>
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-surface-sunken/50">
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <ToolRow name="crm_request_handoff" description="Solicita repasse IA para humano" params="leadId, reason" />
+                    <ToolRow name="crm_list_handoffs" description="Lista handoffs por status" params="status?" />
+                    <ToolRow name="crm_accept_handoff" description="Aceita um handoff pendente" params="handoffId, notes?" />
+                    <ToolRow name="crm_reject_handoff" description="Rejeita um handoff pendente" params="handoffId, notes?" />
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Pipeline */}
+            <Card className="p-0 overflow-hidden">
+              <div className="px-4 py-3 bg-surface-overlay border-b border-border">
+                <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                  Pipeline
                   <Badge variant="brand">3 tools</Badge>
                 </h3>
               </div>
@@ -485,19 +556,19 @@ export function DevelopersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="request_handoff" description="Solicita repasse IA para humano" params="leadId, reason" />
-                    <ToolRow name="list_handoffs" description="Lista handoffs por status" params="status?" />
-                    <ToolRow name="resolve_handoff" description="Aceita ou rejeita um handoff" params="id, action" />
+                    <ToolRow name="crm_list_boards" description="Lista boards com suas etapas" params="—" />
+                    <ToolRow name="crm_list_team" description="Lista membros da equipe" params="—" />
+                    <ToolRow name="crm_get_dashboard" description="Retorna analytics do pipeline" params="—" />
                   </tbody>
                 </table>
               </div>
             </Card>
 
-            {/* Pipeline */}
+            {/* Activities */}
             <Card className="p-0 overflow-hidden">
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">
                 <h3 className="font-semibold text-text-primary flex items-center gap-2">
-                  Pipeline
+                  Atividades
                   <Badge variant="brand">2 tools</Badge>
                 </h3>
               </div>
@@ -511,8 +582,8 @@ export function DevelopersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="list_boards" description="Lista boards com suas etapas" params="—" />
-                    <ToolRow name="list_team_members" description="Lista membros da equipe" params="—" />
+                    <ToolRow name="crm_get_activities" description="Timeline de atividades do lead" params="leadId, limit?" />
+                    <ToolRow name="crm_create_activity" description="Registra nota, ligacao ou email" params="leadId, type, content?" />
                   </tbody>
                 </table>
               </div>
@@ -664,10 +735,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                           <tr
                             key={ep.id}
                             className="border-b border-border last:border-b-0 hover:bg-surface-overlay/50 cursor-pointer transition-colors"
-                            onClick={() => {
-                              setPlaygroundEndpointId(ep.id);
-                              scrollTo("playground");
-                            }}
+                            onClick={() => navigate(`/developers/playground?endpoint=${ep.id}`)}
                           >
                             <td className="py-2.5 px-3">
                               <span className={cn(

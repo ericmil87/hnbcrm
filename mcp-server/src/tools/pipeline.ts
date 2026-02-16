@@ -28,4 +28,17 @@ export function registerPipelineTools(
       };
     }
   );
+
+  server.tool(
+    "crm_get_dashboard",
+    "Get pipeline analytics and summary statistics for the organization — total leads, leads by stage, leads by source, team performance, and recent activity.",
+    {},
+    { readOnlyHint: true, destructiveHint: false },
+    async () => {
+      const result = await client.get("/api/v1/dashboard");
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
 }

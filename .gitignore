@@ -28,4 +28,7 @@ dist-ssr
 .env
 .env.*
 
+# MCP config (contains API keys)
+.mcp.json
+
 temp/

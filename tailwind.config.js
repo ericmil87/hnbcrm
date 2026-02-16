@@ -72,6 +72,7 @@ export default {
         'checkmark':     'checkmarkDraw 400ms ease-out forwards',
         'slide-in-left': 'slideInLeft 200ms ease-out',
         'bounce-in':     'bounceIn 500ms ease-out',
+        'shake':         'shake 400ms ease-out',
       },
       keyframes: {
         fadeIn: {
@@ -119,6 +120,13 @@ export default {
           '50%':  { transform: 'scale(1.05)' },
           '70%':  { transform: 'scale(0.95)' },
           '100%': { opacity: '1', transform: 'scale(1)' },
+        },
+        shake: {
+          '0%, 100%': { transform: 'translateX(0)' },
+          '20%':      { transform: 'translateX(-4px)' },
+          '40%':      { transform: 'translateX(4px)' },
+          '60%':      { transform: 'translateX(-2px)' },
+          '80%':      { transform: 'translateX(2px)' },
         },
       },
     },

@@ -66,4 +66,19 @@ export function registerHandoffTools(
       };
     }
   );
+
+  server.tool(
+    "crm_reject_handoff",
+    "Reject a pending handoff request with optional feedback. The lead stays with the current owner.",
+    {
+      handoffId: z.string().describe("ID of the handoff to reject"),
+      notes: z.string().optional().describe("Reason for rejecting the handoff"),
+    },
+    async (args) => {
+      const result = await client.post("/api/v1/handoffs/reject", args);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    }
+  );
 }

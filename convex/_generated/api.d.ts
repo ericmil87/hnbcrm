@@ -28,6 +28,7 @@ import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
 import type * as onboarding from "../onboarding.js";
 import type * as onboardingSeed from "../onboardingSeed.js";
+import type * as openapiSpec from "../openapiSpec.js";
 import type * as organizations from "../organizations.js";
 import type * as router from "../router.js";
 import type * as savedViews from "../savedViews.js";
@@ -63,6 +64,7 @@ declare const fullApi: ApiFromModules<{
   nodeActions: typeof nodeActions;
   onboarding: typeof onboarding;
   onboardingSeed: typeof onboardingSeed;
+  openapiSpec: typeof openapiSpec;
   organizations: typeof organizations;
   router: typeof router;
   savedViews: typeof savedViews;
