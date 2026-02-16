@@ -198,6 +198,13 @@ export function Inbox() {
               </div>
             ))
           )}
+          {conversations && conversations.length === 200 && (
+            <div className="text-center py-2">
+              <span className="text-xs text-text-muted">
+                Mostrando as 200 conversas mais recentes
+              </span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -227,6 +234,13 @@ export function Inbox() {
 
             {/* Messages List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {messages && messages.length === 500 && (
+                <div className="text-center py-2 mb-2">
+                  <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
+                    Exibindo as últimas 500 mensagens
+                  </span>
+                </div>
+              )}
               {messages?.map((message) => {
                 const style = getMessageStyle(message);
                 return (

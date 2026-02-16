@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id } from "./_generated/dataModel";
 import { batchGet } from "./lib/batchGet";
@@ -114,6 +114,63 @@ export const addActivity = internalMutation({
       type: args.type,
       actorId: args.actorId,
       actorType: args.actorType,
+      content: args.content,
+      metadata: args.metadata,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+// Internal query for HTTP API
+export const internalGetActivities = internalQuery({
+  args: {
+    leadId: v.id("leads"),
+    limit: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const activities = await ctx.db
+      .query("activities")
+      .withIndex("by_lead_and_created", (q) => q.eq("leadId", args.leadId))
+      .order("desc")
+      .take(args.limit || 50);
+
+    const actorMap = await batchGet(ctx.db, activities.map(a => a.actorId));
+    return activities.map(activity => {
+      const actor = activity.actorId ? actorMap.get(activity.actorId) ?? null : null;
+      return {
+        ...activity,
+        actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
+      };
+    });
+  },
+});
+
+// Internal mutation for HTTP API — derives org from lead, type from team member
+export const internalCreateActivity = internalMutation({
+  args: {
+    leadId: v.id("leads"),
+    type: v.union(
+      v.literal("note"), v.literal("call"), v.literal("email_sent")
+    ),
+    content: v.optional(v.string()),
+    metadata: v.optional(v.record(v.string(), v.any())),
+    teamMemberId: v.id("teamMembers"),
+  },
+  returns: v.id("activities"),
+  handler: async (ctx, args) => {
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) throw new Error("Lead not found");
+
+    const teamMember = await ctx.db.get(args.teamMemberId);
+    if (!teamMember) throw new Error("Team member not found");
+
+    return await ctx.db.insert("activities", {
+      organizationId: lead.organizationId,
+      leadId: args.leadId,
+      type: args.type,
+      actorId: args.teamMemberId,
+      actorType: teamMember.type === "ai" ? "ai" : "human",
       content: args.content,
       metadata: args.metadata,
       createdAt: Date.now(),

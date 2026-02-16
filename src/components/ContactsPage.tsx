@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
+import { Pagination } from "@/components/ui/Pagination";
 import { ContactDetailPanel } from "./ContactDetailPanel";
 import { CreateContactModal } from "./CreateContactModal";
 import { SocialIcons } from "@/components/SocialIcons";
@@ -133,6 +134,17 @@ export function ContactsPage() {
   );
 
   const contacts = debouncedSearch.length >= 2 ? searchResults : allContacts;
+
+  const [contactPage, setContactPage] = useState(0);
+  const CONTACTS_PAGE_SIZE = 50;
+
+  useEffect(() => { setContactPage(0); }, [debouncedSearch]);
+
+  const totalContacts = contacts?.length ?? 0;
+  const paginatedContacts = contacts?.slice(
+    contactPage * CONTACTS_PAGE_SIZE,
+    (contactPage + 1) * CONTACTS_PAGE_SIZE
+  );
 
   const handleRowClick = (contactId: Id<"contacts">) => {
     setSelectedContactId(contactId);
@@ -390,6 +402,7 @@ export function ContactsPage() {
             )}
           </div>
         ) : (
+          <>
           <div className="bg-surface-raised border border-border rounded-card overflow-hidden">
             {/* Desktop: Table */}
             <div className="hidden md:block overflow-x-auto">
@@ -410,7 +423,7 @@ export function ContactsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {contacts.map((contact) => {
+                  {paginatedContacts?.map((contact) => {
                     return (
                       <tr
                         key={contact._id}
@@ -431,7 +444,7 @@ export function ContactsPage() {
 
             {/* Mobile: List */}
             <div className="md:hidden divide-y divide-border">
-              {contacts.map((contact) => {
+              {paginatedContacts?.map((contact) => {
                 const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
                 const displayName = fullName || contact.email || contact.phone || "Sem nome";
                 const hasSocial = contact.linkedinUrl || contact.instagramUrl || contact.facebookUrl || contact.twitterUrl;
@@ -470,7 +483,25 @@ export function ContactsPage() {
                 );
               })}
             </div>
+
+            {contacts && contacts.length > CONTACTS_PAGE_SIZE && (
+              <Pagination
+                page={contactPage}
+                pageSize={CONTACTS_PAGE_SIZE}
+                total={totalContacts}
+                hasMore={false}
+                onPageChange={setContactPage}
+                className="border-t border-border"
+              />
+            )}
           </div>
+
+          {contacts && contacts.length === 500 && (
+            <p className="text-xs text-text-muted text-center mt-3">
+              Exibindo os primeiros 500 contatos. Use a busca para encontrar contatos específicos.
+            </p>
+          )}
+          </>
         )}
       </div>
 

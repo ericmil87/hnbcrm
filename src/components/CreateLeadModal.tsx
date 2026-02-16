@@ -179,20 +179,27 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
           </div>
 
           {contactMode === "select" && (
-            <select
-              value={selectedContactId}
-              onChange={(e) => setSelectedContactId(e.target.value)}
-              className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="">Selecione um contato...</option>
-              {contacts?.map((contact) => (
-                <option key={contact._id} value={contact._id}>
-                  {[contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.email || contact.phone || "Sem nome"}
-                  {contact.company ? ` (${contact.company})` : ""}
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                value={selectedContactId}
+                onChange={(e) => setSelectedContactId(e.target.value)}
+                className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                style={{ fontSize: "16px" }}
+              >
+                <option value="">Selecione um contato...</option>
+                {contacts?.map((contact) => (
+                  <option key={contact._id} value={contact._id}>
+                    {[contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.email || contact.phone || "Sem nome"}
+                    {contact.company ? ` (${contact.company})` : ""}
+                  </option>
+                ))}
+              </select>
+              {contacts && contacts.length >= 500 && (
+                <p className="text-xs text-text-muted mt-1">
+                  Mostrando os primeiros 500 contatos.
+                </p>
+              )}
+            </>
           )}
 
           {contactMode === "create" && (

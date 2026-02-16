@@ -617,6 +617,11 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                     autoFocus
                   />
                 </div>
+                {contacts && contacts.length >= 500 && (
+                  <p className="text-xs text-text-muted mt-2">
+                    Mostrando os primeiros 500 contatos.
+                  </p>
+                )}
               </div>
               <div className="overflow-y-auto max-h-64">
                 {filteredContacts && filteredContacts.length > 0 ? (
