@@ -82,6 +82,7 @@ export const createTeamMember = mutation({
     role: v.union(v.literal("admin"), v.literal("manager"), v.literal("agent"), v.literal("ai")),
     type: v.union(v.literal("human"), v.literal("ai")),
     capabilities: v.optional(v.array(v.string())),
+    permissions: v.optional(permissionsValidator),
   },
   returns: v.id("teamMembers"),
   handler: async (ctx, args) => {
@@ -110,6 +111,7 @@ export const createTeamMember = mutation({
       type: args.type,
       status: "active",
       capabilities: args.capabilities,
+      permissions: args.permissions,
       createdAt: now,
       updatedAt: now,
     });
@@ -452,7 +454,6 @@ export const internalVerifyTeamManager = internalQuery({
     if (!userMember) return null;
 
     const perms = resolvePermissions(userMember.role as Role, (userMember as any).permissions);
-    const { hasPermission } = await import("./lib/permissions");
     if (!hasPermission(perms, "team", "manage")) return null;
 
     return userMember;

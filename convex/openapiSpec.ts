@@ -867,7 +867,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Referência"],
         "summary": "Listar membros da equipe",
-        "description": "Retorna todos os membros da equipe (humanos e agentes IA). Cada membro inclui um campo opcional `permissions` com 9 categorias RBAC. Operações de gerenciamento (convite, edição, remoção) são mutações Convex e não estão disponíveis via REST.",
+        "description": "Retorna todos os membros da equipe (humanos e agentes IA). Cada membro inclui um campo opcional 'permissions' com 9 categorias RBAC. Operacoes de gerenciamento (convite, edicao, remocao) sao mutacoes Convex e nao estao disponiveis via REST.",
         "operationId": "listTeamMembers",
         "responses": {
           "200": {

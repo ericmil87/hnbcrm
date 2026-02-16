@@ -78,6 +78,23 @@ export const revokeApiKey = mutation({
   },
 });
 
+// Get API keys for a specific team member (requires apiKeys:view)
+export const getApiKeysForMember = query({
+  args: {
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "apiKeys", "view");
+
+    return await ctx.db
+      .query("apiKeys")
+      .withIndex("by_team_member", (q) => q.eq("teamMemberId", args.teamMemberId))
+      .collect();
+  },
+});
+
 // Internal: Get API key by hash (checks isActive + expiresAt)
 export const getByKeyHash = internalQuery({
   args: { keyHash: v.string() },

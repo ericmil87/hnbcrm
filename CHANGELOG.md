@@ -2,6 +2,33 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.15.1] - 2026-02-16
+
+### Team Management UX — AI Agent Creation & API Key Management
+
+Streamlined AI agent creation flow, auto-generated API key names, and full API key lifecycle management from the member detail panel.
+
+#### AI Agent Creation UX (`src/components/team/InviteMemberModal.tsx`)
+- **Type selection step** — Visual cards to choose between Human and AI Agent before entering form
+- **Descriptive agent info** — Explains what agents are and how API keys work inline
+- **Auto-generate API key** — Toggle (on by default) creates an API key immediately after agent creation
+- **Slug-style key naming** — API key name auto-derived from bot name (e.g., "Bot de Vendas" → `bot-de-vendas`), no extra field to fill
+- **Result step** — Shows generated API key with reveal/copy and security warning (matches human temp password UX)
+- **Permissions editor** — Optional toggle to customize agent permissions at creation time
+
+#### API Key Management in Member Detail (`src/components/team/MemberDetailSlideOver.tsx`)
+- **Keys section** — AI agent members now show a "Chaves API" section listing all their keys
+- **Key metadata** — Each key shows name, creation date, last used, and status badges (Revogada/Expirada)
+- **Create new key** — "Nova Chave" button with pre-filled slug name from agent name
+- **Key reveal flow** — Newly created key shown with eye toggle, copy button, and security warning
+- **Revoke key** — Per-key revoke button with confirmation dialog
+
+#### Backend
+- **`getApiKeysForMember` query** (`convex/apiKeys.ts`) — New query using `by_team_member` index to fetch keys for a specific agent
+- **`createTeamMember` mutation** — Now accepts optional `permissions` arg for setting agent permissions at creation
+- **Fix: dynamic import crash** (`convex/teamMembers.ts`) — Removed `await import("./lib/permissions")` that caused `inviteHumanMember` to fail (Convex doesn't support dynamic imports)
+- **Fix: openapiSpec.ts** — Fixed template literal backtick syntax error in description string
+
 ## [0.15.0] - 2026-02-16
 
 ### RBAC Permissions System & Human Invite Flow
