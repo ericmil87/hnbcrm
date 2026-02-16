@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 // Get handoffs for organization
 export const getHandoffs = query({
@@ -305,9 +306,14 @@ export const internalGetHandoffs = internalQuery({
     organizationId: v.id("organizations"),
     status: v.optional(v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected"))),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 200, 500);
+    const cursor = parseCursor(args.cursor);
+    const overRead = limit + 1 + (cursor ? limit * 3 : 0);
+
     let query = ctx.db.query("handoffs").withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId));
 
     if (args.status) {
@@ -316,7 +322,20 @@ export const internalGetHandoffs = internalQuery({
       );
     }
 
-    const handoffs = await query.take(args.limit ?? 200);
+    const rawHandoffs = await query.order("desc").take(overRead);
+
+    let filtered = rawHandoffs;
+    if (cursor) {
+      filtered = rawHandoffs.filter(
+        (h) =>
+          h._creationTime < cursor.ts ||
+          (h._creationTime === cursor.ts && h._id < cursor.id)
+      );
+    }
+
+    const { items: handoffs, nextCursor, hasMore } = paginateResults(
+      filtered, limit, buildCursorFromCreationTime
+    );
 
     // Batch fetch related data
     const [leadMap, memberMap] = await Promise.all([
@@ -341,7 +360,7 @@ export const internalGetHandoffs = internalQuery({
       };
     });
 
-    return handoffsWithData;
+    return { handoffs: handoffsWithData, nextCursor, hasMore };
   },
 });
 

@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 // All optional string fields on a contact that participate in search
 function buildSearchText(contact: {
@@ -400,13 +401,36 @@ export const deleteContact = mutation({
 // ===== Internal functions (for HTTP API / httpAction context) =====
 
 export const internalGetContacts = internalQuery({
-  args: { organizationId: v.id("organizations"), limit: v.optional(v.number()) },
+  args: {
+    organizationId: v.id("organizations"),
+    limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
-    return await ctx.db
+    const limit = Math.min(args.limit ?? 500, 500);
+    const cursor = parseCursor(args.cursor);
+
+    const rawContacts = await ctx.db
       .query("contacts")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(args.limit ?? 500);
+      .order("desc")
+      .take(limit + 1 + (cursor ? limit * 3 : 0));
+
+    let filtered = rawContacts;
+    if (cursor) {
+      filtered = rawContacts.filter(
+        (c) =>
+          c._creationTime < cursor.ts ||
+          (c._creationTime === cursor.ts && c._id < cursor.id)
+      );
+    }
+
+    const { items: contacts, nextCursor, hasMore } = paginateResults(
+      filtered, limit, buildCursorFromCreationTime
+    );
+
+    return { contacts, nextCursor, hasMore };
   },
 });
 

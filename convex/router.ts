@@ -167,16 +167,18 @@ http.route({
       const stageId = url.searchParams.get("stageId");
       const assignedTo = url.searchParams.get("assignedTo");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
+      const cursor = url.searchParams.get("cursor") || undefined;
 
-      const leads = await ctx.runQuery(internal.leads.internalGetLeads, {
+      const result = await ctx.runQuery(internal.leads.internalGetLeads, {
         organizationId: apiKeyRecord.organizationId,
         boardId: boardId ? (boardId as Id<"boards">) : undefined,
         stageId: stageId ? (stageId as Id<"stages">) : undefined,
         assignedTo: assignedTo ? (assignedTo as Id<"teamMembers">) : undefined,
         limit,
+        cursor,
       });
 
-      return jsonResponse({ leads, hasMore: leads.length === limit });
+      return jsonResponse(result as any);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -340,13 +342,15 @@ http.route({
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "500"), 500);
+      const cursor = url.searchParams.get("cursor") || undefined;
 
-      const contacts = await ctx.runQuery(internal.contacts.internalGetContacts, {
+      const result = await ctx.runQuery(internal.contacts.internalGetContacts, {
         organizationId: apiKeyRecord.organizationId,
         limit,
+        cursor,
       });
 
-      return jsonResponse({ contacts, hasMore: contacts.length === limit });
+      return jsonResponse(result as any);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -541,14 +545,16 @@ http.route({
       const url = new URL(request.url);
       const leadId = url.searchParams.get("leadId");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
+      const cursor = url.searchParams.get("cursor") || undefined;
 
-      const conversations = await ctx.runQuery(internal.conversations.internalGetConversations, {
+      const result = await ctx.runQuery(internal.conversations.internalGetConversations, {
         organizationId: apiKeyRecord.organizationId,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
         limit,
+        cursor,
       });
 
-      return jsonResponse({ conversations, hasMore: conversations.length === limit });
+      return jsonResponse(result as any);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -617,14 +623,16 @@ http.route({
       const url = new URL(request.url);
       const status = url.searchParams.get("status") as "pending" | "accepted" | "rejected" | null;
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
+      const cursor = url.searchParams.get("cursor") || undefined;
 
-      const handoffs = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
+      const result = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
         organizationId: apiKeyRecord.organizationId,
         status: status || undefined,
         limit,
+        cursor,
       });
 
-      return jsonResponse({ handoffs, hasMore: handoffs.length === limit });
+      return jsonResponse(result as any);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -771,13 +779,15 @@ http.route({
       const leadId = url.searchParams.get("leadId");
       if (!leadId) return errorResponse("leadId required", 400);
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "50"), 200);
+      const cursor = url.searchParams.get("cursor") || undefined;
 
-      const activities = await ctx.runQuery(internal.activities.internalGetActivities, {
+      const result = await ctx.runQuery(internal.activities.internalGetActivities, {
         leadId: leadId as Id<"leads">,
         limit,
+        cursor,
       });
 
-      return jsonResponse({ activities });
+      return jsonResponse(result as any);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }

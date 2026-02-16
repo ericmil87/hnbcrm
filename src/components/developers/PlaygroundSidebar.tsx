@@ -2,13 +2,18 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { Search } from "lucide-react";
-import { ALL_ENDPOINTS, API_CATEGORIES, type ApiEndpoint } from "@/lib/apiRegistry";
+import { ALL_ENDPOINTS, API_CATEGORIES } from "@/lib/apiRegistry";
 
 interface PlaygroundSidebarProps {
   selectedEndpointId: string | null;
   onSelectEndpoint: (id: string) => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+}
+
+function getShortPath(path: string): string {
+  // Remove /api/v1 prefix and return the rest
+  return path.replace(/^\/api\/v1/, "");
 }
 
 export function PlaygroundSidebar({
@@ -75,6 +80,7 @@ export function PlaygroundSidebar({
                     <button
                       key={endpoint.id}
                       onClick={() => onSelectEndpoint(endpoint.id)}
+                      title={endpoint.path}
                       className={cn(
                         "w-full text-left px-2 py-1.5 rounded-lg transition-colors",
                         "hover:bg-surface-overlay",
@@ -83,16 +89,16 @@ export function PlaygroundSidebar({
                           : "text-text-secondary"
                       )}
                     >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge variant={getMethodColor(endpoint.method)} className="text-[10px] px-1.5 py-0">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={getMethodColor(endpoint.method)} className="text-[10px] px-1.5 py-0 flex-shrink-0">
                           {endpoint.method}
                         </Badge>
-                        <span className="text-xs font-mono truncate">
-                          {endpoint.path}
+                        <span className="text-[12px] font-medium truncate">
+                          {endpoint.title}
                         </span>
                       </div>
-                      <p className="text-[11px] text-text-muted line-clamp-1">
-                        {endpoint.title}
+                      <p className="text-[11px] text-text-muted font-mono mt-0.5 truncate pl-[42px]">
+                        {getShortPath(endpoint.path)}
                       </p>
                     </button>
                   ))}

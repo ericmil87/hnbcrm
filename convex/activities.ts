@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id } from "./_generated/dataModel";
 import { batchGet } from "./lib/batchGet";
+import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 // Get activities for a lead
 export const getActivities = query({
@@ -126,23 +127,43 @@ export const internalGetActivities = internalQuery({
   args: {
     leadId: v.id("leads"),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const activities = await ctx.db
+    const limit = Math.min(args.limit || 50, 200);
+    const cursor = parseCursor(args.cursor);
+    const overRead = limit + 1 + (cursor ? limit * 3 : 0);
+
+    const rawActivities = await ctx.db
       .query("activities")
       .withIndex("by_lead_and_created", (q) => q.eq("leadId", args.leadId))
       .order("desc")
-      .take(args.limit || 50);
+      .take(overRead);
+
+    let filtered = rawActivities;
+    if (cursor) {
+      filtered = rawActivities.filter(
+        (a) =>
+          a._creationTime < cursor.ts ||
+          (a._creationTime === cursor.ts && a._id < cursor.id)
+      );
+    }
+
+    const { items: activities, nextCursor, hasMore } = paginateResults(
+      filtered, limit, buildCursorFromCreationTime
+    );
 
     const actorMap = await batchGet(ctx.db, activities.map(a => a.actorId));
-    return activities.map(activity => {
+    const activitiesWithActors = activities.map(activity => {
       const actor = activity.actorId ? actorMap.get(activity.actorId) ?? null : null;
       return {
         ...activity,
         actorName: actor?.name || (activity.actorType === "system" ? "System" : "Unknown"),
       };
     });
+
+    return { activities: activitiesWithActors, nextCursor, hasMore };
   },
 });
 

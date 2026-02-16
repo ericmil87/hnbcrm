@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 // Get conversations for organization
 export const getConversations = query({
@@ -250,28 +251,53 @@ export const internalGetConversations = internalQuery({
     )),
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    let conversations;
+    const limit = Math.min(args.limit ?? 200, 500);
+    const cursor = parseCursor(args.cursor);
+    const overRead = limit + 1 + (cursor ? limit * 3 : 0);
+
+    let rawConversations;
     if (args.leadId && args.channel) {
-      conversations = await ctx.db.query("conversations")
+      rawConversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
-        .take(args.limit ?? 200);
+        .order("desc")
+        .take(overRead);
     } else if (args.leadId) {
-      conversations = await ctx.db.query("conversations")
+      rawConversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
-        .take(args.limit ?? 200);
+        .order("desc")
+        .take(overRead);
     } else {
-      conversations = await ctx.db.query("conversations")
+      rawConversations = await ctx.db.query("conversations")
         .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-        .take(args.limit ?? 200);
+        .order("desc")
+        .take(overRead);
     }
 
-    // Only filter by channel if we used the org-level index and channel was specified
+    // JS filters
+    const jsFilters: ((c: any) => boolean)[] = [];
     if (!args.leadId && args.channel) {
-      conversations = conversations.filter(c => c.channel === args.channel);
+      jsFilters.push(c => c.channel === args.channel);
     }
+    if (cursor) {
+      jsFilters.push(
+        (c) =>
+          c._creationTime < cursor.ts ||
+          (c._creationTime === cursor.ts && c._id < cursor.id)
+      );
+    }
+
+    let filtered = rawConversations;
+    for (const fn of jsFilters) {
+      filtered = filtered.filter(fn);
+    }
+
+    const { items: conversations, nextCursor, hasMore } = paginateResults(
+      filtered, limit, buildCursorFromCreationTime
+    );
 
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
@@ -289,7 +315,7 @@ export const internalGetConversations = internalQuery({
       return { ...conversation, lead, contact, assignee };
     }).filter(Boolean);
 
-    return conversationsWithData;
+    return { conversations: conversationsWithData, nextCursor, hasMore };
   },
 });
 

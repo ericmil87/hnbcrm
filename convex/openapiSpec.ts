@@ -106,7 +106,8 @@ export const OPENAPI_SPEC = `{
           { "name": "boardId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por board (pipeline)" },
           { "name": "stageId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por estágio" },
           { "name": "assignedTo", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por membro responsável" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação (retornado como nextCursor na resposta anterior)" }
         ],
         "responses": {
           "200": {
@@ -117,6 +118,7 @@ export const OPENAPI_SPEC = `{
                   "type": "object",
                   "properties": {
                     "leads": { "type": "array", "items": { "$ref": "#/components/schemas/Lead" } },
+                    "nextCursor": { "type": "string", "nullable": true, "description": "Cursor para a próxima página (null se não houver mais)" },
                     "hasMore": { "type": "boolean", "description": "Indica se há mais resultados" }
                   }
                 }
@@ -331,7 +333,8 @@ export const OPENAPI_SPEC = `{
         "description": "Retorna a lista de contatos da organização.",
         "operationId": "listContacts",
         "parameters": [
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 500, "maximum": 500 }, "description": "Limite de resultados" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 500, "maximum": 500 }, "description": "Limite de resultados" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
         "responses": {
           "200": {
@@ -342,6 +345,7 @@ export const OPENAPI_SPEC = `{
                   "type": "object",
                   "properties": {
                     "contacts": { "type": "array", "items": { "$ref": "#/components/schemas/Contact" } },
+                    "nextCursor": { "type": "string", "nullable": true, "description": "Cursor para a próxima página" },
                     "hasMore": { "type": "boolean", "description": "Indica se há mais resultados" }
                   }
                 }
@@ -608,7 +612,8 @@ export const OPENAPI_SPEC = `{
         "operationId": "listConversations",
         "parameters": [
           { "name": "leadId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por lead" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
         "responses": {
           "200": {
@@ -619,6 +624,7 @@ export const OPENAPI_SPEC = `{
                   "type": "object",
                   "properties": {
                     "conversations": { "type": "array", "items": { "$ref": "#/components/schemas/Conversation" } },
+                    "nextCursor": { "type": "string", "nullable": true, "description": "Cursor para a próxima página" },
                     "hasMore": { "type": "boolean", "description": "Indica se há mais resultados" }
                   }
                 }
@@ -711,7 +717,8 @@ export const OPENAPI_SPEC = `{
         "operationId": "listHandoffs",
         "parameters": [
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected"] }, "description": "Filtrar por status" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
         "responses": {
           "200": {
@@ -722,6 +729,7 @@ export const OPENAPI_SPEC = `{
                   "type": "object",
                   "properties": {
                     "handoffs": { "type": "array", "items": { "$ref": "#/components/schemas/Handoff" } },
+                    "nextCursor": { "type": "string", "nullable": true, "description": "Cursor para a próxima página" },
                     "hasMore": { "type": "boolean", "description": "Indica se há mais resultados" }
                   }
                 }
@@ -912,7 +920,8 @@ export const OPENAPI_SPEC = `{
         "operationId": "listActivities",
         "parameters": [
           { "name": "leadId", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do lead" },
-          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 }, "description": "Limite de resultados" }
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 }, "description": "Limite de resultados" },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
         "responses": {
           "200": {
@@ -922,7 +931,9 @@ export const OPENAPI_SPEC = `{
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "activities": { "type": "array", "items": { "$ref": "#/components/schemas/Activity" } }
+                    "activities": { "type": "array", "items": { "$ref": "#/components/schemas/Activity" } },
+                    "nextCursor": { "type": "string", "nullable": true, "description": "Cursor para a próxima página" },
+                    "hasMore": { "type": "boolean", "description": "Indica se há mais resultados" }
                   }
                 }
               }

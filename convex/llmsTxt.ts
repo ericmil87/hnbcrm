@@ -238,11 +238,11 @@ Universal lead capture. Creates lead + optional contact + optional conversation.
 **Response:** \`{ success: true, leadId, contactId }\`
 
 #### GET /api/v1/leads
-List leads for the organization.
+List leads for the organization with cursor-based pagination.
 
-**Query params:** boardId, stageId, assignedTo (all optional filters)
+**Query params:** boardId, stageId, assignedTo, limit, cursor (all optional)
 
-**Response:** \`{ leads: [...] }\`
+**Response:** \`{ leads: [...], nextCursor, hasMore }\`
 
 #### GET /api/v1/leads/get
 Get a single lead.
@@ -289,9 +289,11 @@ Request a handoff for a lead.
 ### Contact Endpoints
 
 #### GET /api/v1/contacts
-List contacts for the organization.
+List contacts for the organization with cursor-based pagination.
 
-**Response:** \`{ contacts: [...] }\`
+**Query params:** limit, cursor (all optional)
+
+**Response:** \`{ contacts: [...], nextCursor, hasMore }\`
 
 #### POST /api/v1/contacts/create
 Create a new contact.
@@ -331,11 +333,11 @@ Get enrichment gaps for a contact (which fields are missing).
 ### Conversation Endpoints
 
 #### GET /api/v1/conversations
-List conversations.
+List conversations with cursor-based pagination.
 
-**Query params:** leadId (optional filter)
+**Query params:** leadId, limit, cursor (all optional)
 
-**Response:** \`{ conversations: [...] }\`
+**Response:** \`{ conversations: [...], nextCursor, hasMore }\`
 
 #### GET /api/v1/conversations/messages
 Get messages for a conversation.
@@ -354,11 +356,11 @@ Send a message to a conversation.
 ### Handoff Endpoints
 
 #### GET /api/v1/handoffs
-List handoffs.
+List handoffs with cursor-based pagination.
 
-**Query params:** status (optional: pending, accepted, rejected)
+**Query params:** status, limit, cursor (all optional)
 
-**Response:** \`{ handoffs: [...] }\`
+**Response:** \`{ handoffs: [...], nextCursor, hasMore }\`
 
 #### GET /api/v1/handoffs/pending
 List pending handoffs (shortcut for status=pending).
@@ -404,11 +406,11 @@ List lead sources for the organization.
 ### Activity Endpoints
 
 #### GET /api/v1/activities
-Get the activity timeline for a lead.
+Get the activity timeline for a lead with cursor-based pagination.
 
-**Query params:** leadId (required), limit (optional, default 50, max 200)
+**Query params:** leadId (required), limit (optional, default 50, max 200), cursor (optional)
 
-**Response:** \`{ activities: [...] }\`
+**Response:** \`{ activities: [...], nextCursor, hasMore }\`
 
 #### POST /api/v1/activities
 Create an activity on a lead.

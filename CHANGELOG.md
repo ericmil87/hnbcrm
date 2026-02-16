@@ -2,6 +2,28 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.14.0] - 2026-02-16
+
+### API Playground v2 — Cursor Pagination, Resizable Panels, URL Routing, UX Polish
+
+Backend cursor pagination for all list endpoints, resizable playground panels, URL-persisted endpoint selection, and response pagination UI.
+
+#### Backend — Cursor Pagination (5 endpoints)
+- **Shared cursor utilities** (`convex/lib/cursor.ts`) — Extracted `parseCursor`, `buildCursorFromCreationTime`, `buildCursorFromCreatedAt`, `paginateResults` into a shared module; `auditLogs.ts` refactored to use it
+- **`GET /api/v1/leads`** — Added `cursor` query param; response now returns `{ leads, nextCursor, hasMore }`
+- **`GET /api/v1/contacts`** — Added `cursor` query param; response now returns `{ contacts, nextCursor, hasMore }`
+- **`GET /api/v1/conversations`** — Added `cursor` query param; response now returns `{ conversations, nextCursor, hasMore }`
+- **`GET /api/v1/handoffs`** — Added `cursor` query param; response now returns `{ handoffs, nextCursor, hasMore }`
+- **`GET /api/v1/activities`** — Added `cursor` query param; response now returns `{ activities, nextCursor, hasMore }`
+- All 5 internal queries (`internalGetLeads`, `internalGetContacts`, `internalGetConversations`, `internalGetHandoffs`, `internalGetActivities`) now accept optional `cursor` arg and return paginated results
+
+#### Frontend — API Playground Improvements
+- **Resizable panels** (`ApiPlayground.tsx`) — Drag-to-resize handles between sidebar, request builder, and response viewer; widths persist to localStorage; min/max constraints (sidebar 180-320px, request 280-500px)
+- **URL routing** (`PlaygroundPage.tsx`) — Selecting an endpoint updates URL to `?endpoint=list-leads`; deep-linking and refresh preserve selection
+- **Sidebar UI polish** (`PlaygroundSidebar.tsx`) — Shows title as primary text + short path segment instead of full truncated paths; hover tooltip shows full path
+- **Response pagination** (`ResponseViewer.tsx`) — When response includes `nextCursor` + `hasMore: true`, shows pagination bar with "Anterior" / page badge / "Proxima" buttons
+- **API registry** (`apiRegistry.ts`) — Added `cursor` query param to all 5 list endpoint definitions; updated response examples with `nextCursor`
+
 ## [0.13.0] - 2026-02-16
 
 ### Developer Portal & API Playground Overhaul

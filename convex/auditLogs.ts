@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, internalQuery } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { parseCursor, buildCursorFromCreatedAt } from "./lib/cursor";
 
 const PAGE_SIZE = 50;
 
@@ -20,18 +21,6 @@ async function enrichLogs(
       actorMemberType: actor?.type || null,
     };
   });
-}
-
-// Parse cursor: "createdAt|docId" or null
-function parseCursor(cursor: string | undefined): { ts: number; id: string } | null {
-  if (!cursor) return null;
-  const [ts, id] = cursor.split("|");
-  return { ts: Number(ts), id };
-}
-
-// Build cursor from a log entry
-function buildCursor(log: { createdAt: number; _id: string }): string {
-  return `${log.createdAt}|${log._id}`;
 }
 
 // Core query logic shared between public and internal
@@ -124,7 +113,7 @@ async function queryAuditLogs(
   // Paginate
   const hasMore = filtered.length > limit;
   const page = filtered.slice(0, limit);
-  const nextCursor = hasMore && page.length > 0 ? buildCursor(page[page.length - 1]) : null;
+  const nextCursor = hasMore && page.length > 0 ? buildCursorFromCreatedAt(page[page.length - 1]) : null;
 
   // Enrich with actor info
   const enriched = await enrichLogs(ctx, page);

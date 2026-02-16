@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { JsonHighlighter } from "./JsonHighlighter";
+import { Spinner } from "@/components/ui/Spinner";
 
 interface ResponseViewerProps {
   response: { status: number; data: unknown; time: number } | null;
+  hasMore?: boolean;
+  currentPage?: number;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
+  onGoBack?: () => void;
 }
 
 function formatBytes(bytes: number): string {
@@ -13,7 +19,14 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)} KB`;
 }
 
-export function ResponseViewer({ response }: ResponseViewerProps) {
+export function ResponseViewer({
+  response,
+  hasMore = false,
+  currentPage = 0,
+  isLoadingMore = false,
+  onLoadMore,
+  onGoBack,
+}: ResponseViewerProps) {
   const [copied, setCopied] = useState(false);
 
   if (!response) {
@@ -41,6 +54,8 @@ export function ResponseViewer({ response }: ResponseViewerProps) {
   const lineCount = jsonString.split("\n").length;
   const byteSize = new Blob([jsonString]).size;
 
+  const showPagination = hasMore || currentPage > 0;
+
   return (
     <div className="h-full flex flex-col bg-surface-raised">
       <div className="px-3 py-2 border-b border-border flex items-center gap-3">
@@ -62,6 +77,43 @@ export function ResponseViewer({ response }: ResponseViewerProps) {
       <div className="flex-1 overflow-auto p-3">
         <JsonHighlighter data={response.data} />
       </div>
+
+      {showPagination && (
+        <div className="px-3 py-2 border-t border-border flex items-center justify-between bg-surface-raised">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onGoBack}
+            disabled={currentPage <= 0 || isLoadingMore}
+          >
+            <ChevronLeft size={14} />
+            Anterior
+          </Button>
+
+          <Badge variant="default" className="text-xs px-2 py-0.5">
+            Página {currentPage + 1}
+          </Badge>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onLoadMore}
+            disabled={!hasMore || isLoadingMore}
+          >
+            {isLoadingMore ? (
+              <>
+                <Spinner size="sm" />
+                Carregando...
+              </>
+            ) : (
+              <>
+                Próxima
+                <ChevronRight size={14} />
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

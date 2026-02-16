@@ -9,7 +9,10 @@ interface RequestBuilderProps {
   endpoint: ApiEndpoint;
   baseUrl: string;
   apiKey: string;
-  onSendRequest: (response: { status: number; data: unknown; time: number }) => void;
+  onSendRequest: (
+    response: { status: number; data: unknown; time: number },
+    requestInfo?: { formData: Record<string, unknown>; mode: "form" | "json"; jsonBody: string }
+  ) => void;
 }
 
 const getMethodColor = (method: string) => {
@@ -214,17 +217,23 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
       const data = await response.json();
       const endTime = performance.now();
 
-      onSendRequest({
-        status: response.status,
-        data,
-        time: Math.round(endTime - startTime),
-      });
+      onSendRequest(
+        {
+          status: response.status,
+          data,
+          time: Math.round(endTime - startTime),
+        },
+        { formData, mode, jsonBody }
+      );
     } catch (error) {
-      onSendRequest({
-        status: 0,
-        data: { error: error instanceof Error ? error.message : "Erro desconhecido" },
-        time: 0,
-      });
+      onSendRequest(
+        {
+          status: 0,
+          data: { error: error instanceof Error ? error.message : "Erro desconhecido" },
+          time: 0,
+        },
+        { formData, mode, jsonBody }
+      );
     } finally {
       setIsLoading(false);
     }

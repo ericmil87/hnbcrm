@@ -24,6 +24,7 @@ import type * as leads from "../leads.js";
 import type * as lib_auditDescription from "../lib/auditDescription.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_batchGet from "../lib/batchGet.js";
+import type * as lib_cursor from "../lib/cursor.js";
 import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
 import type * as onboarding from "../onboarding.js";
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auditDescription": typeof lib_auditDescription;
   "lib/auth": typeof lib_auth;
   "lib/batchGet": typeof lib_batchGet;
+  "lib/cursor": typeof lib_cursor;
   llmsTxt: typeof llmsTxt;
   nodeActions: typeof nodeActions;
   onboarding: typeof onboarding;

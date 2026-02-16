@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 // Get leads for organization
 export const getLeads = query({
@@ -601,9 +602,13 @@ export const internalGetLeads = internalQuery({
     stageId: v.optional(v.id("stages")),
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
+    cursor: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 200, 500);
+    const cursor = parseCursor(args.cursor);
+
     let query = ctx.db.query("leads").withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId));
 
     if (args.stageId) {
@@ -620,7 +625,22 @@ export const internalGetLeads = internalQuery({
       );
     }
 
-    const leads = await query.take(args.limit ?? 200);
+    // Over-read to detect hasMore
+    const rawLeads = await query.order("desc").take(limit + 1 + (cursor ? limit * 3 : 0));
+
+    // Apply cursor filter
+    let filtered = rawLeads;
+    if (cursor) {
+      filtered = rawLeads.filter(
+        (l) =>
+          l._creationTime < cursor.ts ||
+          (l._creationTime === cursor.ts && l._id < cursor.id)
+      );
+    }
+
+    const { items: leads, nextCursor, hasMore } = paginateResults(
+      filtered, limit, buildCursorFromCreationTime
+    );
 
     // Batch fetch related data
     const [contactMap, stageMap, assigneeMap] = await Promise.all([
@@ -635,7 +655,7 @@ export const internalGetLeads = internalQuery({
       assignee: lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null,
     }));
 
-    return leadsWithData;
+    return { leads: leadsWithData, nextCursor, hasMore };
   },
 });
 

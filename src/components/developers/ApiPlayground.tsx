@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { PlaygroundConfig } from "./PlaygroundConfig";
 import { PlaygroundSidebar } from "./PlaygroundSidebar";
 import { RequestBuilder } from "./RequestBuilder";
@@ -11,9 +11,58 @@ import { getEndpoint, ALL_ENDPOINTS, API_CATEGORIES } from "@/lib/apiRegistry";
 interface ApiPlaygroundProps {
   initialEndpointId?: string;
   fullPage?: boolean;
+  onEndpointChange?: (id: string | null) => void;
 }
 
-export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProps) {
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 320;
+const SIDEBAR_DEFAULT = 240;
+const REQUEST_MIN = 280;
+const REQUEST_MAX = 500;
+const REQUEST_DEFAULT = 340;
+
+function getStoredWidth(key: string, defaultVal: number): number {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) return Math.max(0, Number(stored));
+  } catch {}
+  return defaultVal;
+}
+
+function ResizeHandle({ onResize }: { onResize: (delta: number) => void }) {
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        onResize(moveEvent.clientX - startX);
+      };
+
+      const handleMouseUp = () => {
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [onResize]
+  );
+
+  return (
+    <div
+      onMouseDown={handleMouseDown}
+      className="w-1.5 flex-shrink-0 cursor-col-resize bg-border hover:bg-brand-500/30 active:bg-brand-500/50 transition-colors"
+    />
+  );
+}
+
+export function ApiPlayground({ initialEndpointId, fullPage, onEndpointChange }: ApiPlaygroundProps) {
   const { baseUrl, apiKey, isConfigured } = usePlaygroundConfig();
   const [selectedEndpointId, setSelectedEndpointId] = useState<string | null>(
     initialEndpointId || null
@@ -25,6 +74,27 @@ export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProp
     time: number;
   } | null>(null);
   const [mobileTab, setMobileTab] = useState<"request" | "response">("request");
+
+  // Resizable panel widths
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    getStoredWidth("hnbcrm_playground_sidebarW", SIDEBAR_DEFAULT)
+  );
+  const [requestWidth, setRequestWidth] = useState(() =>
+    getStoredWidth("hnbcrm_playground_requestW", REQUEST_DEFAULT)
+  );
+  const sidebarBaseRef = useRef(sidebarWidth);
+  const requestBaseRef = useRef(requestWidth);
+
+  // Pagination state
+  const [paginationCursors, setPaginationCursors] = useState<string[]>([]);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [lastRequestInfo, setLastRequestInfo] = useState<{
+    endpoint: typeof selectedEndpointId;
+    formData: Record<string, unknown>;
+    mode: "form" | "json";
+    jsonBody: string;
+  } | null>(null);
 
   useEffect(() => {
     if (initialEndpointId) {
@@ -39,11 +109,174 @@ export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProp
     }
   }, [response]);
 
+  // Persist widths
+  useEffect(() => {
+    try { localStorage.setItem("hnbcrm_playground_sidebarW", String(sidebarWidth)); } catch {}
+  }, [sidebarWidth]);
+  useEffect(() => {
+    try { localStorage.setItem("hnbcrm_playground_requestW", String(requestWidth)); } catch {}
+  }, [requestWidth]);
+
+  const handleSelectEndpoint = (id: string | null) => {
+    setSelectedEndpointId(id);
+    setResponse(null);
+    setPaginationCursors([]);
+    setCurrentPage(0);
+    setLastRequestInfo(null);
+    onEndpointChange?.(id);
+  };
+
   const selectedEndpoint = selectedEndpointId ? getEndpoint(selectedEndpointId) : null;
 
   const handleResponse = (res: { status: number; data: unknown; time: number }) => {
     setResponse(res);
+    // Track pagination cursor from response
+    const data = res.data as any;
+    if (data?.nextCursor && data?.hasMore) {
+      // Only update cursors if this is a new request (not pagination)
+      if (!isLoadingMore) {
+        setPaginationCursors([]);
+        setCurrentPage(0);
+      }
+    }
   };
+
+  // Detect if response has pagination info
+  const responseData = response?.data as any;
+  const responseHasMore = responseData?.hasMore === true && responseData?.nextCursor;
+  const responseNextCursor = responseData?.nextCursor as string | undefined;
+
+  const handleLoadMore = async () => {
+    if (!responseNextCursor || !lastRequestInfo || !selectedEndpoint) return;
+    setIsLoadingMore(true);
+
+    try {
+      // Build URL with cursor
+      const queryParams = selectedEndpoint.params
+        .filter((p) => p.location === "query")
+        .map((param) => {
+          if (param.name === "cursor") return `cursor=${encodeURIComponent(responseNextCursor)}`;
+          const value = lastRequestInfo.formData[param.name];
+          if (value !== undefined && value !== "") {
+            return `${param.name}=${encodeURIComponent(String(value))}`;
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .join("&");
+
+      // Add cursor if not already in params
+      let queryString = queryParams;
+      if (!queryString.includes("cursor=")) {
+        queryString += (queryString ? "&" : "") + `cursor=${encodeURIComponent(responseNextCursor)}`;
+      }
+
+      const url = baseUrl + selectedEndpoint.path + (queryString ? `?${queryString}` : "");
+      const startTime = performance.now();
+
+      const fetchResponse = await fetch(url, {
+        method: selectedEndpoint.method,
+        headers: {
+          "X-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+      });
+      const data = await fetchResponse.json();
+      const endTime = performance.now();
+
+      // Save current cursor for going back
+      setPaginationCursors((prev) => [...prev, responseNextCursor]);
+      setCurrentPage((prev) => prev + 1);
+
+      setResponse({
+        status: fetchResponse.status,
+        data,
+        time: Math.round(endTime - startTime),
+      });
+    } catch (error) {
+      // Don't override response on error
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleGoBack = async () => {
+    if (currentPage <= 0 || !lastRequestInfo || !selectedEndpoint) return;
+    setIsLoadingMore(true);
+
+    try {
+      // Get the cursor for the previous page (or none for page 0)
+      const prevCursor = currentPage >= 2 ? paginationCursors[currentPage - 2] : undefined;
+
+      const queryParams = selectedEndpoint.params
+        .filter((p) => p.location === "query")
+        .map((param) => {
+          if (param.name === "cursor") {
+            return prevCursor ? `cursor=${encodeURIComponent(prevCursor)}` : null;
+          }
+          const value = lastRequestInfo.formData[param.name];
+          if (value !== undefined && value !== "") {
+            return `${param.name}=${encodeURIComponent(String(value))}`;
+          }
+          return null;
+        })
+        .filter(Boolean)
+        .join("&");
+
+      let queryString = queryParams;
+      if (prevCursor && !queryString.includes("cursor=")) {
+        queryString += (queryString ? "&" : "") + `cursor=${encodeURIComponent(prevCursor)}`;
+      }
+
+      const url = baseUrl + selectedEndpoint.path + (queryString ? `?${queryString}` : "");
+      const startTime = performance.now();
+
+      const fetchResponse = await fetch(url, {
+        method: selectedEndpoint.method,
+        headers: {
+          "X-API-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+      });
+      const data = await fetchResponse.json();
+      const endTime = performance.now();
+
+      setPaginationCursors((prev) => prev.slice(0, currentPage - 1));
+      setCurrentPage((prev) => prev - 1);
+
+      setResponse({
+        status: fetchResponse.status,
+        data,
+        time: Math.round(endTime - startTime),
+      });
+    } catch (error) {
+      // Don't override response on error
+    } finally {
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleSidebarResize = useCallback(
+    (delta: number) => {
+      setSidebarWidth(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, sidebarBaseRef.current + delta)));
+    },
+    []
+  );
+
+  const handleRequestResize = useCallback(
+    (delta: number) => {
+      setRequestWidth(Math.min(REQUEST_MAX, Math.max(REQUEST_MIN, requestBaseRef.current + delta)));
+    },
+    []
+  );
+
+  // Update base refs on mousedown (start of drag) via effect
+  useEffect(() => {
+    sidebarBaseRef.current = sidebarWidth;
+  }, [sidebarWidth]);
+  useEffect(() => {
+    requestBaseRef.current = requestWidth;
+  }, [requestWidth]);
 
   const containerClass = fullPage
     ? "flex flex-col h-full bg-surface-base overflow-hidden"
@@ -76,8 +309,7 @@ export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProp
               <select
                 value={selectedEndpointId || ""}
                 onChange={(e) => {
-                  setSelectedEndpointId(e.target.value || null);
-                  setResponse(null);
+                  handleSelectEndpoint(e.target.value || null);
                   setMobileTab("request");
                 }}
                 className="w-full bg-surface-raised border border-border-strong rounded-field px-3 py-2 text-base text-text-primary focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
@@ -141,12 +373,22 @@ export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProp
                         endpoint={selectedEndpoint}
                         baseUrl={baseUrl}
                         apiKey={apiKey}
-                        onSendRequest={handleResponse}
+                        onSendRequest={(res, reqInfo) => {
+                          handleResponse(res);
+                          if (reqInfo) setLastRequestInfo({ ...reqInfo, endpoint: selectedEndpointId });
+                        }}
                       />
                     </div>
                   ) : (
                     <div className="h-full overflow-y-auto">
-                      <ResponseViewer response={response} />
+                      <ResponseViewer
+                        response={response}
+                        hasMore={!!responseHasMore}
+                        currentPage={currentPage}
+                        isLoadingMore={isLoadingMore}
+                        onLoadMore={handleLoadMore}
+                        onGoBack={handleGoBack}
+                      />
                     </div>
                   )}
                 </div>
@@ -158,32 +400,42 @@ export function ApiPlayground({ initialEndpointId, fullPage }: ApiPlaygroundProp
             )}
           </div>
 
-          {/* Desktop layout */}
+          {/* Desktop layout — resizable panels */}
           <div className="hidden md:flex flex-1 overflow-hidden">
-            <div className="w-56 flex-shrink-0">
+            <div style={{ width: sidebarWidth }} className="flex-shrink-0">
               <PlaygroundSidebar
                 selectedEndpointId={selectedEndpointId}
-                onSelectEndpoint={(id) => {
-                  setSelectedEndpointId(id);
-                  setResponse(null);
-                }}
+                onSelectEndpoint={(id) => handleSelectEndpoint(id)}
                 searchQuery={searchQuery}
                 onSearchChange={setSearchQuery}
               />
             </div>
 
+            <ResizeHandle onResize={handleSidebarResize} />
+
             {selectedEndpoint ? (
               <>
-                <div className="w-[340px] flex-shrink-0 overflow-hidden">
+                <div style={{ width: requestWidth }} className="flex-shrink-0 overflow-hidden">
                   <RequestBuilder
                     endpoint={selectedEndpoint}
                     baseUrl={baseUrl}
                     apiKey={apiKey}
-                    onSendRequest={handleResponse}
+                    onSendRequest={(res, reqInfo) => {
+                      handleResponse(res);
+                      if (reqInfo) setLastRequestInfo({ ...reqInfo, endpoint: selectedEndpointId });
+                    }}
                   />
                 </div>
-                <div className="flex-1 min-w-0 border-l border-border">
-                  <ResponseViewer response={response} />
+                <ResizeHandle onResize={handleRequestResize} />
+                <div className="flex-1 min-w-0">
+                  <ResponseViewer
+                    response={response}
+                    hasMore={!!responseHasMore}
+                    currentPage={currentPage}
+                    isLoadingMore={isLoadingMore}
+                    onLoadMore={handleLoadMore}
+                    onGoBack={handleGoBack}
+                  />
                 </div>
               </>
             ) : (

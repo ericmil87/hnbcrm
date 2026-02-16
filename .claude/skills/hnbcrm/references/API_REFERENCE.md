@@ -43,9 +43,9 @@ List leads with optional filters.
 | stageId | string | no | Filter by stage |
 | assignedTo | string | no | Filter by assigned team member |
 
-**REST:** `GET /api/v1/leads?boardId=X&stageId=Y&assignedTo=Z&limit=200`
+**REST:** `GET /api/v1/leads?boardId=X&stageId=Y&assignedTo=Z&limit=200&cursor=CURSOR`
 
-**Response:** `{ leads: [...], hasMore }`
+**Response:** `{ leads: [...], nextCursor, hasMore }`
 
 ---
 
@@ -137,13 +137,13 @@ Assign a lead to a team member or unassign.
 
 ### crm_list_contacts
 
-List all contacts in the organization.
+List all contacts in the organization with cursor-based pagination.
 
 **MCP Parameters:** None
 
-**REST:** `GET /api/v1/contacts?limit=500`
+**REST:** `GET /api/v1/contacts?limit=500&cursor=CURSOR`
 
-**Response:** `{ contacts: [...], hasMore }`
+**Response:** `{ contacts: [...], nextCursor, hasMore }`
 
 ---
 
@@ -252,16 +252,16 @@ Search contacts by name, email, company, or other text.
 
 ### crm_list_conversations
 
-List conversations, optionally filtered by lead.
+List conversations with cursor-based pagination, optionally filtered by lead.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | leadId | string | no | Filter by lead |
 
-**REST:** `GET /api/v1/conversations?leadId=X&limit=200`
+**REST:** `GET /api/v1/conversations?leadId=X&limit=200&cursor=CURSOR`
 
-**Response:** `{ conversations: [...], hasMore }`
+**Response:** `{ conversations: [...], nextCursor, hasMore }`
 
 ---
 
@@ -322,16 +322,16 @@ Request an AI-to-human (or human-to-human) handoff for a lead.
 
 ### crm_list_handoffs
 
-List handoff requests by status.
+List handoff requests by status with cursor-based pagination.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | status | string | no | `pending`, `accepted`, `rejected` |
 
-**REST:** `GET /api/v1/handoffs?status=pending&limit=200`
+**REST:** `GET /api/v1/handoffs?status=pending&limit=200&cursor=CURSOR`
 
-**Response:** `{ handoffs: [...], hasMore }`
+**Response:** `{ handoffs: [...], nextCursor, hasMore }`
 
 ---
 
@@ -429,7 +429,7 @@ Get pipeline analytics and summary statistics.
 
 ### crm_get_activities
 
-Get the activity timeline for a lead.
+Get the activity timeline for a lead with cursor-based pagination.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
@@ -437,9 +437,9 @@ Get the activity timeline for a lead.
 | leadId | string | yes | The lead ID |
 | limit | number | no | Max results (default 50, max 200) |
 
-**REST:** `GET /api/v1/activities?leadId=X&limit=50`
+**REST:** `GET /api/v1/activities?leadId=X&limit=50&cursor=CURSOR`
 
-**Response:** `{ activities: [...] }`
+**Response:** `{ activities: [...], nextCursor, hasMore }`
 
 ---
 

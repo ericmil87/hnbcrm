@@ -5,8 +5,16 @@ import { PlaygroundConfigProvider } from "@/components/developers/PlaygroundConf
 import { ApiPlayground } from "@/components/developers/ApiPlayground";
 
 export function PlaygroundPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const endpointId = searchParams.get("endpoint") || undefined;
+
+  const handleEndpointChange = (id: string | null) => {
+    if (id) {
+      setSearchParams({ endpoint: id });
+    } else {
+      setSearchParams({});
+    }
+  };
 
   return (
     <PlaygroundConfigProvider>
@@ -50,7 +58,7 @@ export function PlaygroundPage() {
 
         {/* Full-height playground */}
         <div className="flex-1 min-h-0">
-          <ApiPlayground initialEndpointId={endpointId} fullPage />
+          <ApiPlayground initialEndpointId={endpointId} fullPage onEndpointChange={handleEndpointChange} />
         </div>
       </div>
     </PlaygroundConfigProvider>

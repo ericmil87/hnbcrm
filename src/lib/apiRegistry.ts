@@ -81,11 +81,13 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
       { name: "stageId", type: "string", required: false, location: "query", description: "Filtrar por etapa" },
       { name: "assignedTo", type: "string", required: false, location: "query", description: "Filtrar por responsavel" },
       { name: "limit", type: "number", required: false, location: "query", description: "Limite de resultados (max 500)", default: "200" },
+      { name: "cursor", type: "string", required: false, location: "query", description: "Cursor para paginação" },
     ],
     responseExample: {
       leads: [
         { _id: "jd7x8k2m9n4p5q1r", title: "Novo lead via formulario", boardId: "kn8y...", stageId: "m2a4...", contactId: "p5b7...", assignedTo: null, value: 5000, priority: "medium", temperature: "warm", tags: [], customFields: {}, _creationTime: 1739620800000 },
       ],
+      nextCursor: "1739620800000|jd7x8k2m9n4p5q1r",
       hasMore: false,
     },
   },
@@ -187,11 +189,13 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     description: "Lista todos os contatos da organizacao.",
     params: [
       { name: "limit", type: "number", required: false, location: "query", description: "Limite de resultados (max 500)", default: "500" },
+      { name: "cursor", type: "string", required: false, location: "query", description: "Cursor para paginação" },
     ],
     responseExample: {
       contacts: [
         { _id: "k3b7y9w2x5z8a4c6", firstName: "Maria", lastName: "Silva", email: "maria@empresa.com", phone: "+5511999999999", company: "Empresa LTDA", _creationTime: 1739620800000 },
       ],
+      nextCursor: "1739620800000|k3b7y9w2x5z8a4c6",
       hasMore: false,
     },
   },
@@ -320,11 +324,13 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     params: [
       { name: "leadId", type: "string", required: false, location: "query", description: "Filtrar por lead" },
       { name: "limit", type: "number", required: false, location: "query", description: "Limite de resultados (max 500)", default: "200" },
+      { name: "cursor", type: "string", required: false, location: "query", description: "Cursor para paginação" },
     ],
     responseExample: {
       conversations: [
         { _id: "c9v2s4t7n1a8e3r6", leadId: "jd7x8k2m9n4p5q1r", channel: "webchat", status: "active", lastMessageAt: 1739620800000, _creationTime: 1739620800000 },
       ],
+      nextCursor: "1739620800000|c9v2s4t7n1a8e3r6",
       hasMore: false,
     },
   },
@@ -371,11 +377,13 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     params: [
       { name: "status", type: "string", required: false, location: "query", description: "Filtrar por status", enumValues: ["pending", "accepted", "rejected"] },
       { name: "limit", type: "number", required: false, location: "query", description: "Limite de resultados (max 500)", default: "200" },
+      { name: "cursor", type: "string", required: false, location: "query", description: "Cursor para paginação" },
     ],
     responseExample: {
       handoffs: [
         { _id: "h4n8d0f2f9i3d1x7", leadId: "jd7x8k2m9n4p5q1r", status: "pending", reason: "Cliente pediu atendimento humano", _creationTime: 1739620800000 },
       ],
+      nextCursor: "1739620800000|h4n8d0f2f9i3d1x7",
       hasMore: false,
     },
   },
@@ -486,11 +494,14 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     params: [
       { name: "leadId", type: "string", required: true, location: "query", description: "ID do lead" },
       { name: "limit", type: "number", required: false, location: "query", description: "Limite de resultados (max 200)", default: "50" },
+      { name: "cursor", type: "string", required: false, location: "query", description: "Cursor para paginação" },
     ],
     responseExample: {
       activities: [
         { _id: "a1c3t5v7y9b1d3f5", leadId: "jd7x8k2m9n4p5q1r", type: "note", content: "Ligacao realizada", _creationTime: 1739620800000 },
       ],
+      nextCursor: "1739620800000|a1c3t5v7y9b1d3f5",
+      hasMore: false,
     },
   },
   {
