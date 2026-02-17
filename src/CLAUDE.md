@@ -25,9 +25,11 @@ src/
     │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
     │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
+    ├── SEO.tsx                # Dynamic meta tags (react-helmet-async) — NEW
+    ├── StructuredData.tsx     # JSON-LD structured data for rich results — NEW
     ├── layout/                # App shell and navigation
-    │   ├── AuthLayout.tsx     # Auth-gated layout for /app/* (auth → org → onboarding → AppShell + Outlet)
-    │   ├── AppShell.tsx       # Orchestrates Sidebar (md+) vs BottomTabBar (mobile)
+    │   ├── AuthLayout.tsx     # Auth-gated layout for /app/* (auth → org → onboarding → ScrollRestoration → AppShell + Outlet)
+    │   ├── AppShell.tsx       # Orchestrates Sidebar (md+) vs BottomTabBar (mobile) — NOW USES WINDOW SCROLL
     │   ├── Sidebar.tsx        # Desktop left nav — URL-based active state (useLocation)
     │   └── BottomTabBar.tsx   # Mobile bottom tabs — URL-based (exports Tab type)
     ├── LandingPage.tsx         # Public sales landing page at /
@@ -91,11 +93,52 @@ if (data === undefined) return <Spinner size="lg" />;
 
 **Navigation:** URL-based via react-router v7. `src/lib/routes.ts` defines `TAB_ROUTES` (Tab → path) and `PATH_TO_TAB` (path → Tab). `Sidebar` and `BottomTabBar` derive active state from `useLocation()` and navigate via `useNavigate()`. The `Tab` type is exported from `BottomTabBar.tsx`.
 
+**SEO per route:** Use the `<SEO />` component from `@/components/SEO` in each public page:
+```tsx
+import { SEO } from '@/components/SEO';
+
+export function MyPublicPage() {
+  return (
+    <>
+      <SEO
+        title="Page Title"
+        description="Page description for search engines and social cards"
+        keywords="keyword1, keyword2, keyword3"
+        ogImage="/path-to-image.png"
+      />
+      {/* page content */}
+    </>
+  );
+}
+```
+
+**Lazy loading routes:** Use React.lazy() for authenticated routes to reduce initial bundle:
+```tsx
+import { lazy, Suspense } from "react";
+import { Spinner } from "@/components/ui/Spinner";
+
+const DashboardOverview = lazy(() => import("./components/DashboardOverview").then(m => ({ default: m.DashboardOverview })));
+
+function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => JSX.Element> }) {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size="lg" /></div>}>
+      <Component />
+    </Suspense>
+  );
+}
+
+// In router:
+{ path: "painel", element: <LazyRoute Component={DashboardOverview} /> }
+```
+
+**Scroll restoration:** React Router v7's `<ScrollRestoration />` is configured in `AuthLayout.tsx`. Window scrolls naturally (no nested scroll containers). Scroll position automatically saved/restored on navigation and page reloads.
+
 ## React Anti-Patterns
 
 - **NEVER** call `Date.now()` or functions that return new values in useQuery args → use `useState(() => Date.now())` instead (prevents infinite loops)
 - **NEVER** pass `new Set()` / `new Map()` / `[]` / `{}` directly to useState → use initializer function: `useState(() => new Set())`
 - **NEVER** call setState in render body → use useEffect or event handlers only
+- **NEVER** call Convex queries in Suspense fallback components → Fallbacks should only render static UI (e.g., `<Spinner />`)
 
 ## Styling
 
