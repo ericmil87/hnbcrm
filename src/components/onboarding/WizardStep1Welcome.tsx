@@ -24,9 +24,13 @@ interface WizardStep1WelcomeProps {
   industry: string;
   companySize: string;
   mainGoal: string;
+  currency: string;
+  timezone: string;
   onIndustryChange: (industry: string) => void;
   onCompanySizeChange: (size: string) => void;
   onMainGoalChange: (goal: string) => void;
+  onCurrencyChange: (c: string) => void;
+  onTimezoneChange: (tz: string) => void;
 }
 
 const ICON_MAP: Record<string, React.ElementType> = {
@@ -44,13 +48,38 @@ const ICON_MAP: Record<string, React.ElementType> = {
   Sparkles,
 };
 
+const CURRENCIES = [
+  { key: "BRL", flag: "🇧🇷", symbol: "R$", label: "Real", sublabel: "Brasileiro" },
+  { key: "USD", flag: "🇺🇸", symbol: "$", label: "Dólar", sublabel: "Americano" },
+  { key: "EUR", flag: "🇪🇺", symbol: "€", label: "Euro", sublabel: "" },
+];
+
+const TIMEZONES = [
+  { value: "America/Sao_Paulo", label: "América/São Paulo (GMT-3)" },
+  { value: "America/Manaus", label: "América/Manaus (GMT-4)" },
+  { value: "America/Fortaleza", label: "América/Fortaleza (GMT-3)" },
+  { value: "America/New_York", label: "América/Nova York (GMT-5)" },
+  { value: "America/Chicago", label: "América/Chicago (GMT-6)" },
+  { value: "America/Denver", label: "América/Denver (GMT-7)" },
+  { value: "America/Los_Angeles", label: "América/Los Angeles (GMT-8)" },
+  { value: "Europe/Paris", label: "Europa/Paris (GMT+1)" },
+  { value: "Europe/London", label: "Europa/Londres (GMT+0)" },
+  { value: "Europe/Berlin", label: "Europa/Berlim (GMT+1)" },
+  { value: "Asia/Tokyo", label: "Ásia/Tóquio (GMT+9)" },
+  { value: "UTC", label: "UTC (GMT+0)" },
+];
+
 export function WizardStep1Welcome({
   industry,
   companySize,
   mainGoal,
+  currency,
+  timezone,
   onIndustryChange,
   onCompanySizeChange,
   onMainGoalChange,
+  onCurrencyChange,
+  onTimezoneChange,
 }: WizardStep1WelcomeProps) {
   return (
     <div className="space-y-8 animate-fade-in-up">
@@ -179,6 +208,69 @@ export function WizardStep1Welcome({
             );
           })}
         </div>
+      </div>
+
+      {/* Section 4: Currency */}
+      <div className="space-y-3">
+        <label className="block text-sm font-semibold text-text-primary">
+          Moeda principal
+        </label>
+        <div className="grid grid-cols-3 gap-3">
+          {CURRENCIES.map((c) => {
+            const isSelected = currency === c.key;
+
+            return (
+              <Card
+                key={c.key}
+                variant="interactive"
+                className={cn(
+                  "flex flex-col items-center justify-center gap-1.5 p-4 cursor-pointer transition-all duration-150",
+                  isSelected &&
+                    "border-brand-500 bg-brand-500/10 shadow-md shadow-brand-500/10"
+                )}
+                onClick={() => onCurrencyChange(c.key)}
+              >
+                <span className="text-2xl leading-none">{c.flag}</span>
+                <span
+                  className={cn(
+                    "text-sm font-semibold transition-colors duration-150",
+                    isSelected ? "text-brand-500" : "text-text-primary"
+                  )}
+                >
+                  {c.symbol} {c.label}
+                </span>
+                {c.sublabel && (
+                  <span className="text-xs text-text-secondary text-center">
+                    {c.sublabel}
+                  </span>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Section 5: Timezone */}
+      <div className="space-y-3">
+        <label className="block text-sm font-semibold text-text-primary">
+          Fuso horário
+        </label>
+        <select
+          value={timezone}
+          onChange={(e) => onTimezoneChange(e.target.value)}
+          className={cn(
+            "w-full px-3 py-2 rounded-lg text-sm",
+            "bg-surface-raised border border-border text-text-primary",
+            "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500",
+            "transition-colors duration-150"
+          )}
+        >
+          {TIMEZONES.map((tz) => (
+            <option key={tz.value} value={tz.value}>
+              {tz.label}
+            </option>
+          ))}
+        </select>
       </div>
     </div>
   );

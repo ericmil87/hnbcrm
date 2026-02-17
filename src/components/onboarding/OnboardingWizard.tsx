@@ -27,6 +27,8 @@ interface StageConfig {
 }
 
 interface InviteRow {
+  type: "human" | "ai";
+  name: string;
   email: string;
   role: "admin" | "manager" | "agent";
 }
@@ -51,6 +53,8 @@ export function OnboardingWizard({
   const [industry, setIndustry] = useState("");
   const [companySize, setCompanySize] = useState("");
   const [mainGoal, setMainGoal] = useState("");
+  const [currency, setCurrency] = useState("BRL");
+  const [timezone, setTimezone] = useState("America/Sao_Paulo");
   const [stages, setStages] = useState<StageConfig[]>([]);
   const [boardName, setBoardName] = useState("");
   const [sampleDataEnabled, setSampleDataEnabled] = useState(false);
@@ -58,7 +62,7 @@ export function OnboardingWizard({
   const [generatingStep, setGeneratingStep] = useState("");
   const [sampleDataGenerated, setSampleDataGenerated] = useState(false);
   const [invites, setInvites] = useState<InviteRow[]>([
-    { email: "", role: "agent" },
+    { type: "human", name: "", email: "", role: "agent" },
   ]);
   const [isNavigating, setIsNavigating] = useState(false);
   const [initialized, setInitialized] = useState(false);
@@ -86,13 +90,44 @@ export function OnboardingWizard({
       if (data.industry) setIndustry(data.industry);
       if (data.companySize) setCompanySize(data.companySize);
       if (data.mainGoal) setMainGoal(data.mainGoal);
-      if (Array.isArray(data.stages)) setStages(data.stages);
+      if (data.currency) setCurrency(data.currency);
+      if (data.timezone) setTimezone(data.timezone);
+      if (Array.isArray(data.stages) && data.stages.length > 0) setStages(data.stages);
       if (data.boardName) setBoardName(data.boardName);
       if (typeof data.sampleDataEnabled === "boolean") setSampleDataEnabled(data.sampleDataEnabled);
       if (typeof data.sampleDataGenerated === "boolean") setSampleDataGenerated(data.sampleDataGenerated);
-      if (Array.isArray(data.invites)) setInvites(data.invites);
+      if (Array.isArray(data.invites)) {
+        setInvites(
+          data.invites.map((inv: any) => ({
+            type: inv.type ?? "human",
+            name: inv.name ?? "",
+            email: inv.email ?? "",
+            role: inv.role ?? "agent",
+          }))
+        );
+      }
     }
   }, [savedProgress]);
+
+  // Safety net: if on step 1 with no stages, reload template from industry
+  useEffect(() => {
+    if (currentStep === 1 && stages.length === 0 && industry) {
+      const template = getTemplateByIndustry(industry);
+      setStages(template.stages);
+      if (!boardName) setBoardName(template.boardName);
+    }
+  }, [currentStep, stages.length, industry]);
+
+  // Currency change handler — auto-sets a sensible default timezone
+  const handleCurrencyChange = (c: string) => {
+    setCurrency(c);
+    const defaults: Record<string, string> = {
+      BRL: "America/Sao_Paulo",
+      USD: "America/New_York",
+      EUR: "Europe/Paris",
+    };
+    setTimezone(defaults[c] ?? timezone);
+  };
 
   // Persist wizard state
   const persistState = async (stepOverride?: number) => {
@@ -101,6 +136,8 @@ export function OnboardingWizard({
       industry,
       companySize,
       mainGoal,
+      currency,
+      timezone,
       stages,
       boardName,
       sampleDataEnabled,
@@ -187,17 +224,28 @@ export function OnboardingWizard({
         setCurrentStep(3);
       } else if (currentStep === 3) {
         // Step 3 → 4: Create team members from invites
-        const validInvites = invites.filter((inv) => inv.email.trim() !== "");
+        const validInvites = invites.filter((inv) =>
+          inv.type === "ai" ? inv.name.trim() !== "" : inv.email.trim() !== ""
+        );
 
         for (const invite of validInvites) {
-          const name = invite.email.split("@")[0];
-          await createTeamMember({
-            organizationId,
-            name,
-            email: invite.email,
-            role: invite.role,
-            type: "human",
-          });
+          if (invite.type === "ai") {
+            await createTeamMember({
+              organizationId,
+              name: invite.name.trim(),
+              role: "ai",
+              type: "ai",
+            });
+          } else {
+            const name = invite.name.trim() || invite.email.split("@")[0];
+            await createTeamMember({
+              organizationId,
+              name,
+              email: invite.email,
+              role: invite.role,
+              type: "human",
+            });
+          }
         }
 
         if (validInvites.length > 0) {
@@ -252,7 +300,7 @@ export function OnboardingWizard({
           <img
             src="/orange_icon_logo_transparent-bg-528x488.png"
             alt="HNBCRM"
-            className="h-10 w-10 md:h-12 md:w-12"
+            className="h-10 w-10 md:h-12 md:w-12 object-contain"
           />
           <div className="hidden md:block flex-1 ml-8">
             <WizardStepIndicator
@@ -277,9 +325,13 @@ export function OnboardingWizard({
                 industry={industry}
                 companySize={companySize}
                 mainGoal={mainGoal}
+                currency={currency}
+                timezone={timezone}
                 onIndustryChange={setIndustry}
                 onCompanySizeChange={setCompanySize}
                 onMainGoalChange={setMainGoal}
+                onCurrencyChange={handleCurrencyChange}
+                onTimezoneChange={setTimezone}
               />
             )}
             {currentStep === 1 && (
@@ -308,7 +360,9 @@ export function OnboardingWizard({
               <WizardStep5Complete
                 pipelineName={boardName}
                 stageCount={stages.length}
-                inviteCount={invites.filter((inv) => inv.email.trim() !== "").length}
+                inviteCount={invites.filter((inv) =>
+                  inv.type === "ai" ? inv.name.trim() !== "" : inv.email.trim() !== ""
+                ).length}
                 sampleDataGenerated={sampleDataGenerated}
                 onGoToDashboard={handleComplete}
               />

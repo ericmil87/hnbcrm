@@ -115,7 +115,7 @@ export function LandingPage() {
               <img
                 src="/orange_icon_logo_transparent-bg-528x488.png"
                 alt="HNBCRM Logo"
-                className="h-8 w-8"
+                className="h-8 w-8 object-contain"
               />
               <span className="text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
@@ -907,7 +907,7 @@ function Footer() {
           <img
             src="/orange_icon_logo_transparent-bg-528x488.png"
             alt="HNBCRM Logo"
-            className="h-8 w-8"
+            className="h-8 w-8 object-contain"
           />
           <span className="text-xl font-bold text-text-primary">HNBCRM</span>
         </div>

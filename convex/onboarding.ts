@@ -270,7 +270,10 @@ export const completeWizard = mutation({
       updatedAt: now,
     });
 
-    // Patch organization with onboarding metadata from wizard data
+    // Fetch existing org to preserve aiConfig
+    const existingOrg = await ctx.db.get(args.organizationId);
+
+    // Patch organization with onboarding metadata and settings from wizard data
     const wizardData = progress.wizardData;
     await ctx.db.patch(args.organizationId, {
       onboardingMeta: {
@@ -278,6 +281,11 @@ export const completeWizard = mutation({
         companySize: wizardData?.companySize,
         mainGoal: wizardData?.mainGoal,
         wizardCompletedAt: now,
+      },
+      settings: {
+        timezone: wizardData?.timezone ?? "America/Sao_Paulo",
+        currency: wizardData?.currency ?? "BRL",
+        aiConfig: existingOrg?.settings?.aiConfig,
       },
       updatedAt: now,
     });

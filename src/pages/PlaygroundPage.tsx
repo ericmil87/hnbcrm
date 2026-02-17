@@ -34,7 +34,7 @@ export function PlaygroundPage() {
                 <img
                   src="/orange_icon_logo_transparent-bg-528x488.png"
                   alt="HNBCRM"
-                  className="h-6 w-6"
+                  className="h-6 w-6 object-contain"
                 />
                 <span className="text-sm font-bold text-text-primary hidden sm:inline">HNBCRM</span>
               </Link>

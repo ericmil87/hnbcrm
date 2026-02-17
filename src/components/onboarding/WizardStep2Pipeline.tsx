@@ -66,8 +66,11 @@ export function WizardStep2Pipeline({
   };
 
   const handleAddStage = () => {
-    // Insert before the last 2 closed stages
-    const insertIndex = Math.max(0, stages.length - 2);
+    // Insert before the first closed stage (Won/Lost), or append to end if none exist
+    const firstClosedIndex = stages.findIndex(
+      (s) => s.isClosedWon || s.isClosedLost
+    );
+    const insertIndex = firstClosedIndex === -1 ? stages.length : firstClosedIndex;
     const newStages = [...stages];
     newStages.splice(insertIndex, 0, {
       name: "Nova Etapa",

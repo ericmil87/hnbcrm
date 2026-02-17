@@ -2,6 +2,54 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.19.0] - 2026-02-17
+
+### Onboarding — AI Agents, Currency/Timezone in Step 1, Pipeline Fix & Logo Polish
+
+#### AI Agent Support in Team Invite Step (`src/components/onboarding/`)
+
+**`WizardStep4TeamInvite.tsx`** — Full rewrite
+- Each invite row has a leading type icon: `User` (brand-500) for humans, `Bot` (semantic-warning) for AI agents
+- Human rows: email input + role select with brand-colored focus rings (unchanged UX)
+- AI rows: name input + "IA" badge (warning color); no email or role needed
+- Focus ring color matches member type: brand for human, warning for AI
+- Two add buttons replace single "Adicionar outro": `+ Humano` (User icon) and `+ Agente IA` (Bot icon) — stacked on mobile, side-by-side on sm+
+- Remove button shows spacer `<div className="w-8" />` when only 1 row remains (keeps layout stable)
+- Single `update(index, patch)` helper replaces separate email/role handlers
+
+**`OnboardingWizard.tsx`** — Four targeted changes
+- `InviteRow` interface extended with `type: "human" | "ai"` and `name: string` fields
+- Initial state updated: `{ type: "human", name: "", email: "", role: "agent" }`
+- Defensive hydration on progress restore: fills missing `type`/`name` from persisted wizard data (backwards compatible with older sessions)
+- Step 3→4 processes both types: AI members use name only (`role: "ai"`, `type: "ai"`); human members derive name from email if blank
+- `inviteCount` on Step 5 uses type-aware filter (AI: name non-empty; human: email non-empty)
+
+No backend changes — `createTeamMember` already accepts `type: "ai"` / `role: "ai"`.
+
+#### Currency & Timezone Fields Moved to Step 1 (`src/components/onboarding/WizardStep1Welcome.tsx`)
+
+- Added **Section 4 — Moeda principal**: visual card picker for BRL 🇧🇷, USD 🇺🇸, EUR 🇪🇺 — matching the interactive card pattern used for industry/goal/size
+- Added **Section 5 — Fuso horário**: dropdown with 12 common timezones (Americas, Europe, Asia, UTC)
+- Props extended: `currency`, `timezone`, `onCurrencyChange`, `onTimezoneChange`
+- Selection persists into wizard state and is saved to org settings on completion
+
+#### Save Timezone & Currency to Org on Wizard Complete (`convex/onboarding.ts`)
+
+- `completeWizard` mutation now patches `organization.settings` with `timezone` and `currency` from wizard data
+- Fetches existing org first to preserve `settings.aiConfig` (avoids clobbering existing AI configuration)
+
+#### Pipeline Stage Insert Fix (`src/components/onboarding/WizardStep2Pipeline.tsx`)
+
+- `handleAddStage`: new stage now inserts before the **first** closed (Won/Lost) stage instead of always at `length - 2`; falls back to appending if no closed stages exist
+
+#### Logo Rendering Fix (`src/components/LandingPage.tsx`, `src/pages/DevelopersPage.tsx`, `src/pages/PlaygroundPage.tsx`)
+
+- Added `object-contain` to all logo `<img>` elements to prevent distortion of the non-square (528×488) asset
+
+#### Removed Stale Preload (`index.html`)
+
+- Removed `<link rel="preload">` for unused `orange_icon_logo_transparent_bg_full-700x700.png`
+
 ## [0.18.0] - 2026-02-17
 
 ### Bundle Optimization & SEO Enhancement
