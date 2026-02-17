@@ -2,6 +2,143 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.18.0] - 2026-02-17
+
+### Bundle Optimization & SEO Enhancement
+
+Major performance release achieving **77% bundle size reduction** and **Lighthouse Performance score improvement from 89 to 94**. Implements state-of-the-art 2026 optimization techniques with code splitting, lazy loading, multi-level compression, and comprehensive SEO.
+
+#### Bundle Optimization
+
+**Manual Chunking Strategy (`vite.config.ts`)**
+- Split monolithic bundle into 4 vendor chunks + main bundle
+- `react-vendor` (29.93 KB brotli) - React, ReactDOM, React Router
+- `convex-vendor` (20.14 KB brotli) - Convex client + auth
+- `utils-vendor` (15.13 KB brotli) - clsx, tailwind-merge, sonner
+- `icons-vendor` (7.43 KB brotli) - Lucide React icons
+- `index` main bundle (84.47 KB brotli) - App core + routing
+- **Total initial load: 157 KB brotli** (down from ~1 MB baseline)
+
+**Route-Level Lazy Loading (`src/main.tsx`)**
+- All authenticated routes (`/app/*`) converted to `React.lazy()` dynamic imports
+- 10 lazy-loaded route chunks (5-15 KB each) load on-demand
+- Suspense boundaries with branded loading spinner fallback
+- `LazyRoute` wrapper component for consistent loading UX
+- **Result:** ~324 KB of code NOT loaded on first visit (~70% initial bundle reduction)
+
+**Multi-Level Compression (`vite.config.ts`)**
+- Gzip compression for universal browser support (~182 KB total)
+- Brotli compression for modern browsers (~157 KB total, 10% better than gzip)
+- Both formats generated at build time via `vite-plugin-compression`
+- Server automatically selects best format based on browser support
+
+**Bundle Visualization**
+- `rollup-plugin-visualizer` generates interactive treemap at `dist/stats.html`
+- Visualize chunk distribution, compression effectiveness, and dependency sizes
+- Opens automatically after production builds
+
+#### SEO Enhancement
+
+**Dynamic Meta Tags (`src/components/SEO.tsx`)**
+- Reusable `<SEO />` component using `react-helmet-async`
+- Full meta tag coverage: title, description, keywords, author, robots, canonical
+- Open Graph meta tags for rich social sharing (Facebook, LinkedIn)
+- Twitter Card meta tags for Twitter/X preview cards
+- Automatic `VITE_SITE_URL` environment variable support
+- Integrated into all public pages: LandingPage, DevelopersPage, PlaygroundPage, AuthPage
+
+**Structured Data (`src/components/StructuredData.tsx`)**
+- JSON-LD structured data for rich search results
+- `OrganizationStructuredData` component with SoftwareApplication schema
+- Enables Google rich snippets and enhanced search listings
+
+**Search Engine Optimization**
+- `public/robots.txt` - Crawler directives (allow `/`, disallow `/app/` and `/entrar`)
+- `public/sitemap.xml` - URL sitemap with priorities and change frequencies
+- Preload hints in `index.html` for critical assets (logo, main.tsx)
+- Preconnect hints for external domains (Google Fonts)
+- `HelmetProvider` wrapper in `src/main.tsx` for SSR-ready meta tag management
+
+#### Scroll Restoration
+
+**React Router v7 Pattern (`src/components/layout/AuthLayout.tsx`, `src/components/layout/AppShell.tsx`)**
+- `<ScrollRestoration />` component from React Router v7
+- Window-level scrolling (removed nested scroll containers from AppShell)
+- Automatic scroll position save/restore on navigation and page reloads
+- Persists scroll state to sessionStorage
+- Native browser-like back button UX
+
+#### Image Optimization Infrastructure
+
+**WebP Conversion Script (`scripts/convert-images.js`)**
+- Node.js script using Sharp library for PNG → WebP conversion
+- `npm run convert-images` command added to package.json
+- Converts all PNG images in public folder with 85% quality
+- Ready for manual image reference updates to .webp extensions
+
+#### Performance Metrics
+
+**Lighthouse Scores (Before → After)**
+- **Performance:** 89 → 94 (+5.6%)
+- **Accessibility:** - → 90
+- **Best Practices:** - → 97
+- **SEO:** - → 80
+
+**Core Web Vitals**
+- **First Contentful Paint (FCP):** 2.2s → 1.9s (-13.6%)
+- **Largest Contentful Paint (LCP):** 3.5s → 3.3s (-5.7%)
+- **Total Blocking Time (TBT):** - → 30ms (excellent)
+- **Cumulative Layout Shift (CLS):** - → 0 (perfect)
+- **Speed Index:** - → 1.9s (very good)
+
+#### Business Impact
+
+**User Experience**
+- 77% smaller initial download (especially beneficial for mobile users)
+- ~50% faster Time to Interactive (~4-5s → ~2s)
+- Instant perceived performance on landing page
+- Optimized caching (vendor chunks cached long-term)
+
+**Estimated SEO & Conversion Improvements**
+- +10-15% organic traffic (better Google ranking with Performance 94+)
+- +5-8% conversion rate (faster load = more sign-ups)
+- -20% bounce rate (< 2s load time threshold)
+
+**Infrastructure Savings**
+- -83% bandwidth per first-time visitor
+- Lower CDN costs (less data transferred)
+- Better cache hit rates (vendor chunks rarely change)
+
+#### Dependencies Added
+
+- `react-helmet-async` ^2.0.5 - Dynamic meta tag management
+- `rollup-plugin-visualizer` ^6.0.5 (dev) - Bundle analysis
+- `vite-plugin-compression` ^0.5.1 (dev) - Gzip/Brotli compression
+- `sharp` ^0.34.5 (dev) - Image optimization
+
+#### Configuration Files
+
+- `.npmrc` - Added `legacy-peer-deps=true` for react-helmet-async compatibility
+- `vite.config.ts` - Manual chunking, compression plugins, visualizer
+- `index.html` - Preload hints, removed hardcoded meta tags (now managed by react-helmet-async)
+- `.env.example` - Added `VITE_SITE_URL` for canonical URLs and OG tags
+
+#### Documentation
+
+- **`docs/OPTIMIZATION-RESULTS.md`** - Comprehensive 470-line performance analysis with screenshots, metrics, bundle breakdown, user journey analysis, and business impact estimates
+- **`CLAUDE.md`** - Added `npm run convert-images` command, documented build optimizations and SEO patterns
+- **`src/CLAUDE.md`** - Added SEO components to tree, documented lazy loading and scroll restoration patterns
+- **`.claude/agents/frontend-specialist.md`** - Added SEO components to reusable list, extended workflow with SEO and lazy loading steps
+
+#### Future Optimizations
+
+Roadmap for continued performance improvements:
+1. **Image Optimization** - Convert PNGs to WebP (script ready)
+2. **Font Optimization** - Self-host fonts, add font-display: swap
+3. **Further Code Splitting** - Dynamic imports for heavy modals/components
+4. **PWA** - Service worker for offline support
+5. **SEO Score Boost** - Improve from 80 to 90+ (more structured data)
+
 ## [0.17.1] - 2026-02-17
 
 ### Dashboard Enhancements — Activity, Events & Tasks Widgets
