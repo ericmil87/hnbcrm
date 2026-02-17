@@ -3,6 +3,7 @@ import { useConvexAuth } from "convex/react";
 import { SignInForm } from "@/SignInForm";
 import { Spinner } from "@/components/ui/Spinner";
 import { ArrowLeft } from "lucide-react";
+import { SEO } from "@/components/SEO";
 
 export function AuthPage() {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -20,8 +21,14 @@ export function AuthPage() {
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen px-4 bg-gradient-to-b from-surface-overlay to-surface-base">
-      <div className="w-full max-w-md">
+    <>
+      <SEO
+        title="Entrar"
+        description="Acesse sua conta HNBCRM"
+        noindex={true}
+      />
+      <div className="flex items-center justify-center min-h-screen px-4 bg-gradient-to-b from-surface-overlay to-surface-base">
+        <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
           <Link
             to="/"
@@ -47,5 +54,6 @@ export function AuthPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

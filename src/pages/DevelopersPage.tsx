@@ -21,6 +21,7 @@ import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 import { CodeBlock } from "@/components/developers/CodeBlock";
 import { ALL_ENDPOINTS, API_CATEGORIES, getEndpointsByCategory } from "@/lib/apiRegistry";
+import { SEO } from "@/components/SEO";
 
 const sections = [
   { id: "quick-start", label: "Quick Start", icon: Rocket },
@@ -81,8 +82,14 @@ export function DevelopersPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-base text-text-primary">
-      {/* Header */}
+    <>
+      <SEO
+        title="Developer Documentation"
+        description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 44 endpoints documentados com playground interativo."
+        keywords="api, rest, mcp, webhooks, developer, integration, ai agents"
+      />
+      <div className="min-h-screen bg-surface-base text-text-primary">
+        {/* Header */}
       <header className="sticky top-0 z-30 bg-surface-base/80 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
@@ -1027,5 +1034,6 @@ function verifyWebhook(body, signature, secret) {
         </div>
       </footer>
     </div>
+    </>
   );
 }

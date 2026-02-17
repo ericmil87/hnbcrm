@@ -88,6 +88,8 @@ You build mobile-first, accessible, performant React components with TypeScript 
 - `src/components/ui/Spinner.tsx` — Brand-colored loading spinner
 - `src/components/ui/Skeleton.tsx` — Shimmer loading placeholder
 - `src/components/ui/Avatar.tsx` — Team member avatar with human/AI indicator
+- `src/components/SEO.tsx` — Dynamic meta tags with react-helmet-async (title, description, OG, Twitter Cards)
+- `src/components/StructuredData.tsx` — JSON-LD structured data for rich search results
 
 ## Existing Layout Components
 
@@ -117,3 +119,5 @@ You build mobile-first, accessible, performant React components with TypeScript 
 6. All text visible to users must be in Portuguese (BR)
 7. Replace all emoji icons with `lucide-react` icons
 8. Ensure all interactive elements have proper focus states and aria-labels
+9. **NEW:** For public pages, add `<SEO />` component with appropriate meta tags
+10. **NEW:** Use lazy loading (`React.lazy()`) for large authenticated route components to reduce initial bundle

@@ -3,6 +3,7 @@ import { ArrowLeft, Download } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { PlaygroundConfigProvider } from "@/components/developers/PlaygroundConfigProvider";
 import { ApiPlayground } from "@/components/developers/ApiPlayground";
+import { SEO } from "@/components/SEO";
 
 export function PlaygroundPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,9 +18,15 @@ export function PlaygroundPage() {
   };
 
   return (
-    <PlaygroundConfigProvider>
-      <div className="h-screen flex flex-col bg-surface-base text-text-primary">
-        {/* Compact header */}
+    <>
+      <SEO
+        title="API Playground"
+        description="Teste a API REST do HNBCRM interativamente. 44 endpoints para leads, contatos, conversas, atividades e webhooks."
+        keywords="api playground, rest api, testing, developer tools"
+      />
+      <PlaygroundConfigProvider>
+        <div className="h-screen flex flex-col bg-surface-base text-text-primary">
+          {/* Compact header */}
         <header className="flex-shrink-0 bg-surface-base border-b border-border">
           <div className="px-4 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
@@ -62,5 +69,6 @@ export function PlaygroundPage() {
         </div>
       </div>
     </PlaygroundConfigProvider>
+    </>
   );
 }

@@ -34,6 +34,8 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
+import { SEO } from "@/components/SEO";
+import { OrganizationStructuredData } from "@/components/StructuredData";
 
 // Simple useInView hook for scroll animations
 function useInView(options = {}) {
@@ -93,8 +95,15 @@ export function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-base text-text-primary">
-      {/* Hero Section with inline header */}
+    <>
+      <SEO
+        title="HNBCRM — CRM com Colaboração Humano-IA"
+        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e integre agentes de IA via API REST e MCP."
+        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest"
+      />
+      <OrganizationStructuredData />
+      <div className="min-h-screen bg-surface-base text-text-primary">
+        {/* Hero Section with inline header */}
       <section
         ref={heroRef}
         className="relative min-h-[85vh] md:min-h-screen flex flex-col bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,107,0,0.15),transparent)]"
@@ -209,6 +218,7 @@ export function LandingPage() {
       {/* Footer */}
       <Footer />
     </div>
+    </>
   );
 }
 

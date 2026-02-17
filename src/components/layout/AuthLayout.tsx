@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, Outlet } from "react-router";
+import { Navigate, Outlet, ScrollRestoration } from "react-router";
 import { useConvexAuth, useQuery, useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../convex/_generated/api";
@@ -100,20 +100,23 @@ export function AuthLayout() {
   }
 
   return (
-    <AppShell
-      onSignOut={() => signOut()}
-      organizationId={selectedOrgId}
-      orgSelector={
-        <OrganizationSelector
-          selectedOrgId={selectedOrgId}
-          onSelectOrg={setSelectedOrgId}
-        />
-      }
-    >
-      <ErrorBoundary>
-        <Outlet context={{ organizationId: selectedOrgId } satisfies AppOutletContext} />
-      </ErrorBoundary>
-    </AppShell>
+    <>
+      <ScrollRestoration />
+      <AppShell
+        onSignOut={() => signOut()}
+        organizationId={selectedOrgId}
+        orgSelector={
+          <OrganizationSelector
+            selectedOrgId={selectedOrgId}
+            onSelectOrg={setSelectedOrgId}
+          />
+        }
+      >
+        <ErrorBoundary>
+          <Outlet context={{ organizationId: selectedOrgId } satisfies AppOutletContext} />
+        </ErrorBoundary>
+      </AppShell>
+    </>
   );
 }
 

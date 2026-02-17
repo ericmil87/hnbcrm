@@ -1,6 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
+import { visualizer } from 'rollup-plugin-visualizer';
+import viteCompression from 'vite-plugin-compression';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -34,10 +36,38 @@ window.addEventListener('message', async (message) => {
         }
       : null,
     // End of code for taking screenshots on chef.convex.dev.
+    mode === 'production' && visualizer({
+      open: true,
+      filename: 'dist/stats.html',
+      gzipSize: true,
+      brotliSize: true,
+    }),
+    viteCompression({ algorithm: 'gzip' }),
+    viteCompression({ algorithm: 'brotliCompress', ext: '.br' }),
   ].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Core React (react, react-dom, react-router)
+          'react-vendor': ['react', 'react-dom', 'react-router'],
+
+          // Convex backend client
+          'convex-vendor': ['convex/react', '@convex-dev/auth/react'],
+
+          // Utility libraries
+          'utils-vendor': ['clsx', 'tailwind-merge', 'sonner'],
+
+          // Icons library (lucide-react)
+          'icons-vendor': ['lucide-react'],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
   },
 }));
