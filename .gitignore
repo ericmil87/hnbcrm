@@ -32,3 +32,9 @@ dist-ssr
 .mcp.json
 
 temp/
+
+# Internal planning docs (not for public repo)
+docs/EXPORT-IMPORT-PLAN.md
+docs/FEATURE-ROADMAP-RESEARCH.md
+docs/I18N-IMPLEMENTATION-PLAN.md
+docs/MCP-PUBLISHING-PLAN.md

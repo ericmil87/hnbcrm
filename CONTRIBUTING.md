@@ -10,7 +10,7 @@ Thanks for your interest in contributing! This guide will help you get started.
 ## Development Setup
 
 ```bash
-git clone https://github.com/hnbcrm/hnbcrm.git
+git clone https://github.com/ericmil87/hnbcrm.git
 cd hnbcrm
 npm install
 npm run dev

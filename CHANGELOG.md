@@ -2,6 +2,35 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.19.1] - 2026-02-17
+
+### Post-Launch Public Repo Cleanup
+
+Community health files, corrected URLs, and GitHub repository metadata for the public release at github.com/ericmil87/hnbcrm.
+
+#### Documentation Fixes
+
+- **README.md** — Version badge corrected to `0.19.0`; clone URL corrected from `hnbcrm/hnbcrm` → `ericmil87/hnbcrm`
+- **CONTRIBUTING.md** — Clone URL corrected to `ericmil87/hnbcrm`
+
+#### New Community Health Files
+
+- **SECURITY.md** — Security policy: scope (auth, data isolation, API keys, webhooks), reporting email (`security@hnbcrm.com`), SLA (48h ack, 14-day critical patch), out-of-scope list
+- **CODE_OF_CONDUCT.md** — Contributor Covenant 2.1 adapted; enforcement contact `conduct@hnbcrm.com`
+
+#### GitHub Issue & PR Templates (`.github/`)
+
+- **`.github/ISSUE_TEMPLATE/bug_report.md`** — Bug report template with steps to reproduce, expected/actual behavior, and environment table
+- **`.github/ISSUE_TEMPLATE/feature_request.md`** — Feature request template with problem statement, proposed solution, alternatives, and context
+- **`.github/PULL_REQUEST_TEMPLATE.md`** — PR template with change summary, type-of-change checklist, and project-specific lint/validator checklist
+
+#### Repository Metadata
+
+- **`.gitignore`** — Added 4 internal planning docs (`docs/EXPORT-IMPORT-PLAN.md`, `docs/FEATURE-ROADMAP-RESEARCH.md`, `docs/I18N-IMPLEMENTATION-PLAN.md`, `docs/MCP-PUBLISHING-PLAN.md`) to prevent accidental commits
+- **GitHub topics** — Added via `gh repo edit`: `crm`, `ai`, `convex`, `react`, `typescript`, `mcp`
+
+---
+
 ## [0.19.0] - 2026-02-17
 
 ### Onboarding — AI Agents, Currency/Timezone in Step 1, Pipeline Fix & Logo Polish
