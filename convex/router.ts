@@ -1050,17 +1050,16 @@ http.route({
 
 // ---- Public Form Endpoints (no auth) ----
 
-// Get published form by slug
+// Get published form by slug — GET /api/v1/forms/public?slug=xxx
 http.route({
-  path: "/api/v1/forms/public/:slug",
+  path: "/api/v1/forms/public",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
       const url = new URL(request.url);
-      const segments = url.pathname.split("/");
-      const slug = segments[segments.length - 1];
+      const slug = url.searchParams.get("slug");
 
-      if (!slug) return errorResponse("Slug is required", 400);
+      if (!slug) return errorResponse("slug query parameter is required", 400);
 
       const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
       if (!form) return errorResponse("Form not found", 404);
@@ -1086,21 +1085,18 @@ http.route({
   }),
 });
 
-// Submit form
+// Submit form — POST /api/v1/forms/public/submit { slug, data, _honeypot }
 http.route({
-  path: "/api/v1/forms/public/:slug/submit",
+  path: "/api/v1/forms/public/submit",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
-      const url = new URL(request.url);
-      const segments = url.pathname.split("/");
-      // Path: /api/v1/forms/public/:slug/submit — slug is second-to-last
-      const slug = segments[segments.length - 2];
-
-      if (!slug) return errorResponse("Slug is required", 400);
-
       const body = await request.json();
-      const { data, _honeypot } = body;
+      const { slug, data, _honeypot } = body;
+
+      if (!slug || typeof slug !== "string") {
+        return errorResponse("slug is required", 400);
+      }
 
       if (!data || typeof data !== "object") {
         return errorResponse("data object is required", 400);
@@ -1144,7 +1140,7 @@ http.route({
         honeypotTriggered,
       });
 
-      return jsonResponse({ success: true, ...result });
+      return jsonResponse(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Internal server error";
       const status = message.includes("not found") ? 404 : message.includes("limit") ? 400 : 500;
@@ -1872,7 +1868,7 @@ http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsH
 http.route({ path: "/api/v1/files/:id", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/notifications/preferences", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: optionsHandler });
-http.route({ path: "/api/v1/forms/public/:slug", method: "OPTIONS", handler: optionsHandler });
-http.route({ path: "/api/v1/forms/public/:slug/submit", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

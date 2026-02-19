@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.21.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.22.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -36,6 +36,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Calendar** — Day/week/month views with drag-to-reschedule and task integration
 - **@Mentions** — Tag team members in internal notes with autocomplete
 - **File Storage** — Message attachments, contact photos, lead documents with quota management
+- **Embeddable Forms** — WYSIWYG form builder with public URLs, CRM field mapping, spam protection, and embed codes
 
 ## Tech Stack
 

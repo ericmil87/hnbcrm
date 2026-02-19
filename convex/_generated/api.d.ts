@@ -23,6 +23,8 @@ import type * as email from "../email.js";
 import type * as emailTemplates from "../emailTemplates.js";
 import type * as fieldDefinitions from "../fieldDefinitions.js";
 import type * as files from "../files.js";
+import type * as formSubmissions from "../formSubmissions.js";
+import type * as forms from "../forms.js";
 import type * as handoffs from "../handoffs.js";
 import type * as http from "../http.js";
 import type * as leadSources from "../leadSources.js";
@@ -72,6 +74,8 @@ declare const fullApi: ApiFromModules<{
   emailTemplates: typeof emailTemplates;
   fieldDefinitions: typeof fieldDefinitions;
   files: typeof files;
+  formSubmissions: typeof formSubmissions;
+  forms: typeof forms;
   handoffs: typeof handoffs;
   http: typeof http;
   leadSources: typeof leadSources;

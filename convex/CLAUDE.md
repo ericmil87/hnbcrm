@@ -30,6 +30,8 @@
 | `lib/batchGet.ts` | Utility for batch-fetching documents by IDs |
 | `authHelpers.ts` | Internal queries/mutations for auth table operations (user/authAccount CRUD) |
 | `nodeActions.ts` | Node.js actions: API key hashing, webhook dispatch, invite, password change |
+| `forms.ts` | Form builder CRUD: create, update, publish, archive, duplicate, slug check |
+| `formSubmissions.ts` | Form submission processing, stats, spam detection |
 | `notificationPreferences.ts` | Per-member notification preferences CRUD |
 | `apiKeys.ts` | API key generation, validation, revocation, permission scoping |
 | `leadSources.ts` / `fieldDefinitions.ts` | Lead sources + custom fields |

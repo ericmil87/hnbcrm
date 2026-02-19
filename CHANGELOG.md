@@ -2,6 +2,91 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.22.0] - 2026-02-19
+
+### Form Builder — WYSIWYG Editor, Public Forms & Embeds
+
+Complete embeddable form system: visual form builder with drag-and-drop fields, customizable themes, CRM field mapping, public form URLs, honeypot spam protection, and iframe/script embed codes.
+
+#### Schema — 2 New Tables (`convex/schema.ts`)
+
+- **`forms` table** — Form definitions with embedded field array, theme config, lead creation settings, assignment modes
+  - **8 field types**: text, email, phone, number, select, textarea, checkbox, date
+  - **CRM mapping**: Each field optionally maps to a contact or lead entity field
+  - **Theme object**: primaryColor, backgroundColor, textColor, borderRadius, showBranding
+  - **Settings object**: submitButtonText, successMessage, redirectUrl, leadTitle template, boardId/stageId/sourceId, assignmentMode (none/specific/round_robin), defaultPriority, defaultTemperature, tags, honeypotEnabled, submissionLimit, notifyOnSubmission, notifyMemberIds
+  - **4 indexes**: `by_organization`, `by_organization_and_status`, `by_slug`, `by_organization_and_slug`
+- **`formSubmissions` table** — Submission data with lead/contact linkage, UTM tracking, spam detection
+  - **Processing statuses**: processed, spam, error
+  - **3 indexes**: `by_form`, `by_form_and_created`, `by_organization_and_created`
+
+#### Backend — `convex/forms.ts` (10 functions)
+
+- **Queries**: `getForms`, `getForm`, `checkSlugAvailability`, `internalGetPublishedForm`
+- **Mutations**: `createForm` (with default fields + auto-slug), `updateForm`, `publishForm`, `unpublishForm`, `archiveForm`, `deleteForm` (cascade deletes submissions), `duplicateForm`
+- All mutations include audit logging and webhook triggers
+
+#### Backend — `convex/formSubmissions.ts` (3 functions)
+
+- **`internalProcessSubmission`** — Processes public submission: validates honeypot, extracts CRM-mapped fields, finds/creates contact, creates lead (with assignment mode logic), stores submission, logs activity/audit, triggers webhooks, sends email notifications
+- **`getFormSubmissions`** — Paginated submission list per form
+- **`getFormStats`** — Submission analytics: total, processed, spam, error, last 7d, last 30d
+
+#### HTTP API — 2 Public Endpoints (`convex/router.ts`)
+
+- **`GET /api/v1/forms/public?slug=xxx`** — Fetch published form by slug (no auth required, returns sanitized fields/theme/settings)
+- **`POST /api/v1/forms/public/submit`** — Submit form data (no auth, body: `{ slug, data, _honeypot }`), returns `{ success, leadId, contactId }`
+- CORS preflight routes for both endpoints
+
+#### Frontend — 14 New Components (`src/components/forms/`)
+
+**Builder components** (`builder/`):
+- **FieldPalette.tsx** — Sidebar palette with 8 draggable field types
+- **FieldCanvas.tsx** — Drag-and-drop canvas for arranging form fields
+- **FieldCard.tsx** — Individual field card in the canvas (draggable, click to configure)
+- **FieldConfigPanel.tsx** — Property editor for selected field (label, placeholder, required, validation, width)
+- **CrmMappingSelect.tsx** — Contact/lead field mapping selector
+- **FormSettingsPanel.tsx** — Lead creation settings (title template, board, stage, source, assignment, priority, temperature, tags)
+- **ThemePanel.tsx** — Visual theme editor (colors, border radius, branding toggle) with live preview
+- **PublishDialog.tsx** — Publish confirmation with shareable URL, iframe embed code, and script embed code
+- **types.ts** — Shared TypeScript types for the builder
+
+**Renderer components** (`renderer/`):
+- **FormRenderer.tsx** — Renders form from field definitions with validation and submission
+- **FormField.tsx** — Individual field renderer (8 types) with error states
+- **FormSuccess.tsx** — Post-submission success screen with custom message
+
+**Page components**:
+- **FormListPage.tsx** — Form management list with status badges, submission counts, quick actions (route: `/app/formularios`)
+- **FormBuilderPage.tsx** — Full WYSIWYG form builder with tabbed panels (Fields, Settings, Theme), live preview, auto-save (route: `/app/formularios/:id`)
+
+#### Public Form Page (`src/pages/PublicFormPage.tsx`)
+
+- Standalone page at `/f/:slug` — fetches form via public HTTP endpoint, renders with FormRenderer
+- No authentication required — accessible to anyone with the link
+- Honeypot field for spam protection, UTM parameter tracking
+- SEO meta tags via `<SEO />` component
+
+#### Navigation
+
+- New `/app/formularios` route in `src/lib/routes.ts`
+- New `/app/formularios/:id` route for form builder
+- New `/f/:slug` public route for form rendering
+- "Formularios" tab added to Sidebar (desktop) and BottomTabBar (mobile)
+
+#### Documentation Updates
+
+- **`convex/CLAUDE.md`** — Added `forms.ts` and `formSubmissions.ts` to file layout table
+- **`src/CLAUDE.md`** — Added `forms/` directory tree and `PublicFormPage.tsx` to component structure
+- **`convex/llmsTxt.ts`** — Added Form and FormSubmission data models, public form endpoints
+- **`README.md`** — Added "Embeddable Forms" to features list
+- **`.claude/skills/hnbcrm/SKILL.md`** — Mentioned form submission workflow
+- **`.claude/skills/hnbcrm/references/WORKFLOWS.md`** — Added Workflow 8: Form Submission
+- **`.claude/skills/hnbcrm/references/API_REFERENCE.md`** — Added public form endpoints
+- **`.claude/skills/hnbcrm/references/DATA_MODEL.md`** — Added Form and FormSubmission entities
+
+---
+
 ## [0.21.0] - 2026-02-19
 
 ### Email Notification System — Resend Integration, Templates & Preferences

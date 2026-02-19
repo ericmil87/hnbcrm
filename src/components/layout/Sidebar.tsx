@@ -14,6 +14,7 @@ import {
   ArrowRightLeft,
   Users,
   ScrollText,
+  FileText,
   Settings,
   LogOut,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const navItems: NavItem[] = [
   { id: "calendar", label: "Calendario", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
+  { id: "forms", label: "Formularios", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 

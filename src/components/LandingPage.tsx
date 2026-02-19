@@ -324,6 +324,11 @@ function FeaturesSection() {
       description: "Receba eventos em tempo real com autenticação segura.",
     },
     {
+      icon: Layers,
+      title: "Formularios",
+      description: "Crie formularios embeddable com builder visual, mapeamento de campos e protecao anti-spam.",
+    },
+    {
       icon: Server,
       title: "Servidor MCP",
       description: "Integre agentes de IA via Model Context Protocol.",

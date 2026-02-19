@@ -36,8 +36,6 @@ src/
     │   └── BottomTabBar.tsx   # Mobile bottom tabs — URL-based (exports Tab type)
     ├── LandingPage.tsx         # Public sales landing page at /
     ├── AuthPage.tsx            # Auth screen at /entrar with back link
-├── pages/
-│   └── DevelopersPage.tsx      # Public developer portal at /developers
     ├── Dashboard.tsx           # (legacy, unused — superseded by Outlet routing)
     ├── DashboardOverview.tsx   # Metrics overview (route: /app/painel)
     ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline)
@@ -64,6 +62,26 @@ src/
     │   ├── CalendarFilters.tsx       # Filter popover (team member, type)
     │   ├── useCalendarState.ts       # Custom hook for calendar state
     │   └── constants.ts              # Color mappings, labels, PT-BR names
+    ├── forms/                  # Form builder & renderer
+    │   ├── FormListPage.tsx   # Form management list (route: /app/formularios)
+    │   ├── FormBuilderPage.tsx # WYSIWYG form builder (route: /app/formularios/:id)
+    │   ├── builder/           # Builder components
+    │   │   ├── types.ts       # Shared types for form builder
+    │   │   ├── FieldPalette.tsx    # Drag-to-add field type palette
+    │   │   ├── FieldCard.tsx       # Draggable field card in canvas
+    │   │   ├── FieldCanvas.tsx     # Drop zone for form fields
+    │   │   ├── FieldConfigPanel.tsx # Field property editor
+    │   │   ├── CrmMappingSelect.tsx # CRM entity/field mapping selector
+    │   │   ├── FormSettingsPanel.tsx # Lead creation & assignment settings
+    │   │   ├── ThemePanel.tsx      # Visual theme customization
+    │   │   └── PublishDialog.tsx   # Publish confirmation with embed codes
+    │   └── renderer/          # Public form renderer
+    │       ├── FormRenderer.tsx    # Renders form from field definitions
+    │       ├── FormField.tsx       # Individual field renderer
+    │       └── FormSuccess.tsx     # Post-submit success screen
+├── pages/
+│   ├── DevelopersPage.tsx      # Public developer portal at /developers
+│   └── PublicFormPage.tsx      # Public form page at /f/:slug (no auth)
     ├── ErrorBoundary.tsx       # Error boundary wrapper
     └── OrganizationSelector.tsx # Org switcher dropdown
 ```

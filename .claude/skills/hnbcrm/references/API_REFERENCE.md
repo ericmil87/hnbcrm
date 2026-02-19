@@ -609,6 +609,36 @@ Reschedule a calendar event to a new time.
 
 ---
 
+## Public Forms (no auth required)
+
+### GET /api/v1/forms/public
+
+Get a published form by slug. No authentication required.
+
+**Query params:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| slug | string | yes | Form slug |
+
+**Response:** `{ form: { name, description, fields, theme, settings: { submitButtonText, successMessage, redirectUrl, honeypotEnabled } } }`
+
+---
+
+### POST /api/v1/forms/public/submit
+
+Submit data to a published form. Creates a lead and contact automatically.
+
+**Body:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| slug | string | yes | Form slug |
+| data | object | yes | Field values keyed by field ID |
+| _honeypot | any | no | Honeypot field — if filled, submission is silently marked as spam |
+
+**Response:** `{ success: true, leadId, contactId }`
+
+---
+
 ## Pending Handoffs Shortcut
 
 **REST only:** `GET /api/v1/handoffs/pending`

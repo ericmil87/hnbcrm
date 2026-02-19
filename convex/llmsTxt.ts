@@ -339,6 +339,43 @@ Join table for lead-document relationships.
 | category | enum | contract, proposal, invoice, other |
 | uploadedBy | Id<teamMembers> | Who uploaded the document |
 
+### Form
+An embeddable form that creates leads/contacts on submission.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | string | Form name |
+| slug | string | URL-friendly slug (unique) |
+| description | string | Optional description |
+| status | enum | draft, published, archived |
+| publishedAt | number | When the form was published |
+| fields | array | Embedded field definitions (see below) |
+| theme | object | Visual theme: primaryColor, backgroundColor, textColor, borderRadius, showBranding |
+| settings | object | Lead creation settings: submitButtonText, successMessage, redirectUrl, leadTitle template, boardId, stageId, sourceId, assignmentMode (none/specific/round_robin), assignedTo, defaultPriority, defaultTemperature, tags, honeypotEnabled, submissionLimit, notifyOnSubmission, notifyMemberIds |
+| createdBy | Id<teamMembers> | Form creator |
+| submissionCount | number | Total submissions received |
+| lastSubmissionAt | number | Timestamp of last submission |
+
+**Form field types:** text, email, phone, number, select, textarea, checkbox, date
+
+**Field properties:** id, type, label, placeholder, helpText, isRequired, validation, options, defaultValue, width (full/half), crmMapping ({entity: lead|contact, field: string})
+
+### Form Submission
+A submission from a public form.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| formId | Id<forms> | Parent form |
+| data | Record<string, any> | Submitted field values keyed by field ID |
+| leadId | Id<leads> | Created lead (if processed) |
+| contactId | Id<contacts> | Created/matched contact (if processed) |
+| ipAddress | string | Submitter IP address |
+| userAgent | string | Browser user agent |
+| referrer | string | Referrer URL |
+| utmSource, utmMedium, utmCampaign | string | UTM tracking parameters |
+| honeypotTriggered | boolean | Whether the spam honeypot was triggered |
+| processingStatus | enum | processed, spam, error |
+
 ---
 
 ## REST API Endpoints
@@ -813,6 +850,27 @@ Get audit logs with filtering and cursor-based pagination.
 ### Notification Preferences
 - GET /api/v1/notifications/preferences — Get notification preferences for the authenticated API key's team member
 - PUT /api/v1/notifications/preferences — Update notification preferences. Body: { invite?: boolean, handoffRequested?: boolean, ... }
+
+### Public Form Endpoints (no auth required)
+
+#### GET /api/v1/forms/public
+Get a published form by slug.
+
+**Query params:** slug (required)
+
+**Response:** \`{ form: { name, description, fields, theme, settings: { submitButtonText, successMessage, redirectUrl, honeypotEnabled } } }\`
+
+#### POST /api/v1/forms/public/submit
+Submit data to a published form. Creates a lead + contact automatically.
+
+**Body:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| slug | string | yes | Form slug |
+| data | object | yes | Field values keyed by field ID |
+| _honeypot | any | no | Honeypot field (if filled, submission is marked as spam) |
+
+**Response:** \`{ success: true, leadId, contactId }\`
 
 ### Webhooks (Inbound)
 - POST /api/v1/webhooks/resend — Resend email delivery webhook (authenticated via RESEND_WEBHOOK_SECRET, not API key)
