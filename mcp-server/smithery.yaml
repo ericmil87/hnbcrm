@@ -1,0 +1,29 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - apiUrl
+      - apiKey
+    properties:
+      apiUrl:
+        type: string
+        description: Your HNBCRM Convex deployment URL (e.g. https://your-app.convex.site)
+      apiKey:
+        type: string
+        description: API key generated from HNBCRM Settings > API Keys
+  commandFunction:
+    |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'hnbcrm-mcp'],
+      env: {
+        HNBCRM_API_URL: config.apiUrl,
+        HNBCRM_API_KEY: config.apiKey
+      }
+    })
+  exampleConfig:
+    apiUrl: "https://your-app.convex.site"
+    apiKey: "hc_your_api_key_here"

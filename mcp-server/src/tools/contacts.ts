@@ -50,12 +50,12 @@ export function registerContactTools(server: McpServer, client: HnbCrmClient) {
     "crm_get_contact",
     "Get full details of a specific contact by ID, including all enrichment fields, social profiles, and custom data.",
     {
-      id: z.string().describe("The contact ID to retrieve"),
+      contactId: z.string().describe("The contact ID to retrieve"),
     },
     { readOnlyHint: true, destructiveHint: false },
     async (args) => {
       try {
-        const result = await client.get("/api/v1/contacts/get", { id: args.id });
+        const result = await client.get("/api/v1/contacts/get", { id: args.contactId });
         return successResult(result);
       } catch (error) {
         return errorResult(error);
@@ -120,12 +120,12 @@ export function registerContactTools(server: McpServer, client: HnbCrmClient) {
     "crm_get_contact_gaps",
     "Get which contact fields are empty/missing. Essential for knowing what data to research before calling crm_enrich_contact.",
     {
-      id: z.string().describe("The contact ID to check for gaps"),
+      contactId: z.string().describe("The contact ID to check for gaps"),
     },
     { readOnlyHint: true, destructiveHint: false },
     async (args) => {
       try {
-        const result = await client.get("/api/v1/contacts/gaps", { id: args.id });
+        const result = await client.get("/api/v1/contacts/gaps", { id: args.contactId });
         return successResult(result);
       } catch (error) {
         return errorResult(error);

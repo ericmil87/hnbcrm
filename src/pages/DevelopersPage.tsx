@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   ArrowLeft,
+  Bot,
+  Check,
   Key,
   Server,
   Table2,
@@ -29,6 +31,7 @@ const sections = [
   { id: "auth", label: "Autenticacao", icon: Key },
   { id: "mcp", label: "Servidor MCP", icon: Server },
   { id: "mcp-tools", label: "Tools MCP", icon: Table2 },
+  { id: "openclaw", label: "OpenClaw", icon: Bot },
   { id: "agent-skills", label: "Agent Skills", icon: BookOpen },
   { id: "rest-api", label: "API REST", icon: Globe },
   { id: "webhooks", label: "Webhooks", icon: Webhook },
@@ -355,6 +358,16 @@ export function DevelopersPage() {
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">Instalacao</h3>
               <CodeBlock language="bash">{`npx hnbcrm-mcp`}</CodeBlock>
+              <p className="text-sm text-text-muted">
+                Tambem disponivel no{" "}
+                <a href="https://smithery.ai/servers/hnbcrm-mcp" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
+                  Smithery.ai
+                </a>
+                {" "}e via{" "}
+                <a href="https://www.npmjs.com/package/hnbcrm-mcp" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
+                  npm
+                </a>.
+              </p>
             </Card>
 
             <Card className="p-6 space-y-4">
@@ -657,6 +670,76 @@ export function DevelopersPage() {
                     <ToolRow name="calendar_reschedule_event" description="Reagenda evento para novo horario" params="eventId, newStartTime" />
                   </tbody>
                 </table>
+              </div>
+            </Card>
+          </section>
+
+          {/* OpenClaw Integration */}
+          <section id="openclaw" className="space-y-6 scroll-mt-24">
+            <h2 className="text-2xl font-bold flex items-center gap-3">
+              <Bot className="text-brand-400" size={24} />
+              OpenClaw
+            </h2>
+            <p className="text-text-secondary">
+              O HNBCRM e compativel nativamente com{" "}
+              <a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
+                OpenClaw
+              </a>
+              {" "}&mdash; o agente de IA open-source com 100k+ estrelas no GitHub.
+              Conecte seu CRM ao OpenClaw via MCP em minutos.
+            </p>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">Setup Rapido</h3>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">1.</span> Instale o servidor MCP via npm:
+                  </p>
+                  <CodeBlock language="bash">{`npm install -g hnbcrm-mcp`}</CodeBlock>
+                </div>
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">2.</span> Configure no OpenClaw (MCP bridge):
+                  </p>
+                  <CodeBlock language="json">{`{
+  "mcpServers": {
+    "hnbcrm": {
+      "command": "npx",
+      "args": ["-y", "hnbcrm-mcp"],
+      "env": {
+        "HNBCRM_API_URL": "https://seu-deployment.convex.site",
+        "HNBCRM_API_KEY": "sua_chave_aqui"
+      }
+    }
+  }
+}`}</CodeBlock>
+                </div>
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">3.</span> Copie o Agent Skill (opcional, melhora o contexto do agente):
+                  </p>
+                  <CodeBlock language="bash">{`cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/`}</CodeBlock>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">O que o OpenClaw pode fazer com HNBCRM</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  "Gerenciar leads no pipeline automaticamente",
+                  "Enriquecer contatos com dados de pesquisa web",
+                  "Responder conversas e enviar mensagens",
+                  "Solicitar handoffs para vendedores humanos",
+                  "Criar tarefas e agendar eventos no calendario",
+                  "Gerar relatorios de analytics do pipeline",
+                ].map((capability) => (
+                  <div key={capability} className="flex items-start gap-2 text-sm text-text-secondary">
+                    <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={16} />
+                    <span>{capability}</span>
+                  </div>
+                ))}
               </div>
             </Card>
           </section>

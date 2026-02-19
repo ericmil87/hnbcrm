@@ -28,6 +28,11 @@ export function registerLeadTools(server: McpServer, client: HnbCrmClient) {
         .optional()
         .describe("How engaged the lead is"),
       tags: z.array(z.string()).optional().describe("Categorization tags"),
+      customFields: z
+        .record(z.any())
+        .optional()
+        .describe("Custom field key-value pairs"),
+      sourceId: z.string().optional().describe("Lead source ID"),
       message: z
         .string()
         .optional()
@@ -72,10 +77,10 @@ export function registerLeadTools(server: McpServer, client: HnbCrmClient) {
     "crm_get_lead",
     "Get full details of a specific lead by its ID, including contact info, current stage, custom fields, and assignment.",
     {
-      id: z.string().describe("The lead ID to retrieve"),
+      leadId: z.string().describe("The lead ID to retrieve"),
     },
     async (args) => {
-      const result = await client.get("/api/v1/leads/get", { id: args.id });
+      const result = await client.get("/api/v1/leads/get", { id: args.leadId });
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
       };
@@ -102,6 +107,17 @@ export function registerLeadTools(server: McpServer, client: HnbCrmClient) {
         .record(z.any())
         .optional()
         .describe("Custom field key-value pairs"),
+      sourceId: z.string().optional().describe("New source ID"),
+      qualification: z
+        .object({
+          budget: z.boolean().optional().describe("Can afford the solution"),
+          authority: z.boolean().optional().describe("Is the decision-maker"),
+          need: z.boolean().optional().describe("Has a clear pain point"),
+          timeline: z.boolean().optional().describe("Has urgency to buy"),
+          score: z.number().optional().describe("Count of true values (0-4)"),
+        })
+        .optional()
+        .describe("BANT qualification scoring"),
     },
     async (args) => {
       const result = await client.post("/api/v1/leads/update", args);

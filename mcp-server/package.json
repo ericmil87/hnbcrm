@@ -1,12 +1,18 @@
 {
   "name": "hnbcrm-mcp",
   "version": "0.1.0",
-  "description": "MCP server for HNBCRM — CRM where humans and AI work together",
+  "description": "MCP server for HNBCRM — 44 tools to manage leads, contacts, pipeline, tasks, and calendar via AI agents",
   "type": "module",
   "bin": {
     "hnbcrm-mcp": "./dist/index.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -24,5 +30,31 @@
     "node": ">=18"
   },
   "license": "MIT",
-  "keywords": ["mcp", "crm", "ai", "model-context-protocol", "hnbcrm"]
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "model-context-protocol",
+    "crm",
+    "ai",
+    "ai-agent",
+    "hnbcrm",
+    "clawcrm",
+    "leads",
+    "pipeline",
+    "sales",
+    "contacts",
+    "openclaw",
+    "claude",
+    "cursor"
+  ],
+  "author": "HNBCRM Team",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericmil87/hnbcrm.git",
+    "directory": "mcp-server"
+  },
+  "homepage": "https://github.com/ericmil87/hnbcrm/tree/main/mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/ericmil87/hnbcrm/issues"
+  }
 }

@@ -112,13 +112,36 @@ Then configure MCP in `~/.gemini/settings.json` (or your project config) followi
 
 ### OpenClaw
 
-Copy the skill directory to your OpenClaw workspace:
+1. Install the MCP server:
+
+```bash
+npm install -g hnbcrm-mcp
+```
+
+2. Configure MCP in your OpenClaw settings:
+
+```json
+{
+  "mcpServers": {
+    "hnbcrm": {
+      "command": "npx",
+      "args": ["-y", "hnbcrm-mcp"],
+      "env": {
+        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+3. Copy the skill directory to your OpenClaw workspace:
 
 ```bash
 cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 ```
 
-Configure the MCP server in OpenClaw's settings with the same `npx hnbcrm-mcp` command and environment variables.
+The agent will automatically detect the skill and begin the bootstrap sequence (discover team, learn pipeline, check handoffs, review leads).
 
 ### REST-Only (No MCP)
 

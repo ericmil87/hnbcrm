@@ -2,6 +2,34 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.20.0] - 2026-02-19
+
+### MCP Server Published to npm + OpenClaw Integration
+
+Published the `hnbcrm-mcp` package to npm for one-command installation (`npx hnbcrm-mcp`). Added Smithery.ai registry config, dedicated OpenClaw setup docs, and updated homepage/developer portal with corrected tool counts and OpenClaw integration highlights.
+
+#### npm Publishing (`mcp-server/`)
+- **Published `hnbcrm-mcp@0.1.0` to npm** — 44 MCP tools across 8 categories, 11.9 KB compressed
+- **`package.json`** — Added `files` whitelist, `repository`, `homepage`, `bugs`, `author`, expanded `keywords` (15 terms including `openclaw`, `claude`, `cursor`, `modelcontextprotocol`)
+- **`LICENSE`** — Created MIT license file (was declared but missing)
+- **`smithery.yaml`** — Created Smithery.ai registry config with stdio transport and configSchema for `apiUrl`/`apiKey`
+- **`README.md`** — Added npm + Smithery badges, OpenClaw config section, missing Tasks (12 tools) and Calendar (6 tools) to Tools Reference, fixed total count to 44
+
+#### Homepage (`src/components/LandingPage.tsx`)
+- **REST API card** — Fixed "30 endpoints" → "44 endpoints"
+- **MCP Server card** — Fixed "26 ferramentas" → "44 ferramentas", added OpenClaw to compatible platforms
+- **Agent Skills card** — Added OpenClaw to compatible platforms list
+
+#### Developer Portal (`src/pages/DevelopersPage.tsx`)
+- **New "OpenClaw" section** — Dedicated nav entry + full section with setup guide (3 steps: npm install, MCP JSON config, optional skill copy) and 6-item capabilities list
+- **MCP installation section** — Added Smithery.ai and npm links after the `npx` command
+- **New imports** — `Bot` and `Check` icons from lucide-react
+
+#### Agent Skill (`.claude/skills/hnbcrm/references/SETUP.md`)
+- **Expanded OpenClaw section** — From 2 lines to full 3-step guide with MCP JSON config block and bootstrap sequence note
+
+---
+
 ## [0.19.1] - 2026-02-17
 
 ### Post-Launch Public Repo Cleanup

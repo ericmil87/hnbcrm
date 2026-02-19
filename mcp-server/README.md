@@ -1,6 +1,9 @@
 # HNBCRM MCP Server
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together to manage leads, contacts, and sales pipelines.
+[![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
+[![smithery badge](https://smithery.ai/badge/hnbcrm-mcp)](https://smithery.ai/servers/hnbcrm-mcp)
+
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **44 tools across 8 categories** to manage leads, contacts, pipeline, tasks, and calendar via AI agents.
 
 ## Prerequisites
 
@@ -106,6 +109,31 @@ Add to your VS Code settings or workspace `.vscode/mcp.json`:
 }
 ```
 
+### OpenClaw
+
+Add to your OpenClaw MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "hnbcrm": {
+      "command": "npx",
+      "args": ["-y", "hnbcrm-mcp"],
+      "env": {
+        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+To also install the agent skill:
+
+```bash
+cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
+```
+
 ## Tools Reference
 
 ### Leads (7 tools)
@@ -164,6 +192,34 @@ Add to your VS Code settings or workspace `.vscode/mcp.json`:
 | `crm_get_activities` | Get activity timeline for a lead |
 | `crm_create_activity` | Log a note, call, or email on a lead |
 
+### Tasks (12 tools)
+
+| Tool | Description |
+|------|-------------|
+| `crm_create_task` | Create a task with optional checklist and recurrence |
+| `crm_list_tasks` | List tasks with filtering and pagination |
+| `crm_get_task` | Get full task details |
+| `crm_update_task` | Update task properties |
+| `crm_complete_task` | Mark a task as complete |
+| `crm_delete_task` | Delete a task |
+| `crm_list_my_tasks` | Get the agent's task queue sorted by urgency |
+| `crm_snooze_task` | Reschedule a task reminder |
+| `crm_add_task_comment` | Add a comment to a task |
+| `crm_list_task_comments` | Get comments on a task |
+| `crm_search_tasks` | Search tasks by text |
+| `crm_bulk_complete_tasks` | Batch complete multiple tasks |
+
+### Calendar (6 tools)
+
+| Tool | Description |
+|------|-------------|
+| `calendar_list_events` | List events in a date range with filters |
+| `calendar_create_event` | Create an event with attendees, recurrence, and meeting URL |
+| `calendar_get_event` | Get event details |
+| `calendar_update_event` | Update event properties |
+| `calendar_delete_event` | Delete an event |
+| `calendar_reschedule_event` | Quickly reschedule an event |
+
 ## Resources
 
 | URI | Description |
@@ -192,4 +248,4 @@ npm run dev
 
 ## License
 
-[MIT](../LICENSE)
+[MIT](LICENSE)

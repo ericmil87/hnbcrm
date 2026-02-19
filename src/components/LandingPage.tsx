@@ -396,14 +396,14 @@ function DeveloperSection() {
     {
       icon: Globe,
       title: "API REST Completa",
-      description: "30 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticacao via API Key.",
+      description: "44 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticacao via API Key.",
       link: "/developers#rest-api",
       linkText: "Ver Documentacao",
     },
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "26 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor e VS Code.",
+      description: "44 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
@@ -418,7 +418,7 @@ function DeveloperSection() {
     {
       icon: BookOpen,
       title: "Agent Skills",
-      description: "Skill portavel que ensina qualquer agente de IA a operar como membro da equipe. Compativel com Claude Code, Cursor, Gemini e mais.",
+      description: "Skill portavel que ensina qualquer agente de IA a operar como membro da equipe. Compativel com Claude Code, Cursor, OpenClaw, Gemini e mais.",
       link: "/developers#agent-skills",
       linkText: "Ver Skill",
     },
