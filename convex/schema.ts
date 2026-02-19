@@ -581,6 +581,125 @@ const applicationTables = {
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_member", ["organizationId", "teamMemberId"]),
 
+  // Notification Preferences (opt-out model: no row = all enabled)
+  notificationPreferences: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    invite: v.boolean(),
+    handoffRequested: v.boolean(),
+    handoffResolved: v.boolean(),
+    taskOverdue: v.boolean(),
+    taskAssigned: v.boolean(),
+    leadAssigned: v.boolean(),
+    newMessage: v.boolean(),
+    dailyDigest: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_member", ["organizationId", "teamMemberId"])
+    .index("by_member", ["teamMemberId"]),
+
+  // Forms (embeddable lead capture)
+  forms: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    status: v.union(v.literal("draft"), v.literal("published"), v.literal("archived")),
+    publishedAt: v.optional(v.number()),
+
+    // Fields — embedded array (atomic reorder via single patch)
+    fields: v.array(v.object({
+      id: v.string(),
+      type: v.union(
+        v.literal("text"), v.literal("email"), v.literal("phone"),
+        v.literal("number"), v.literal("select"), v.literal("textarea"),
+        v.literal("checkbox"), v.literal("date")
+      ),
+      label: v.string(),
+      placeholder: v.optional(v.string()),
+      helpText: v.optional(v.string()),
+      isRequired: v.boolean(),
+      validation: v.optional(v.object({
+        minLength: v.optional(v.number()),
+        maxLength: v.optional(v.number()),
+        min: v.optional(v.number()),
+        max: v.optional(v.number()),
+        pattern: v.optional(v.string()),
+      })),
+      options: v.optional(v.array(v.string())),
+      defaultValue: v.optional(v.string()),
+      width: v.optional(v.union(v.literal("full"), v.literal("half"))),
+      crmMapping: v.optional(v.object({
+        entity: v.union(v.literal("lead"), v.literal("contact")),
+        field: v.string(),
+      })),
+    })),
+
+    // Theme
+    theme: v.object({
+      primaryColor: v.string(),
+      backgroundColor: v.string(),
+      textColor: v.string(),
+      borderRadius: v.union(v.literal("none"), v.literal("sm"), v.literal("md"), v.literal("lg"), v.literal("full")),
+      showBranding: v.boolean(),
+    }),
+
+    // Settings
+    settings: v.object({
+      submitButtonText: v.string(),
+      successMessage: v.string(),
+      redirectUrl: v.optional(v.string()),
+      notifyOnSubmission: v.boolean(),
+      notifyMemberIds: v.optional(v.array(v.id("teamMembers"))),
+      leadTitle: v.string(),
+      boardId: v.optional(v.id("boards")),
+      stageId: v.optional(v.id("stages")),
+      sourceId: v.optional(v.id("leadSources")),
+      assignedTo: v.optional(v.id("teamMembers")),
+      assignmentMode: v.union(v.literal("specific"), v.literal("round_robin"), v.literal("none")),
+      defaultPriority: v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent")),
+      defaultTemperature: v.union(v.literal("cold"), v.literal("warm"), v.literal("hot")),
+      tags: v.array(v.string()),
+      honeypotEnabled: v.boolean(),
+      submissionLimit: v.optional(v.number()),
+    }),
+
+    // Metadata
+    createdBy: v.id("teamMembers"),
+    submissionCount: v.number(),
+    lastSubmissionAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_slug", ["slug"])
+    .index("by_organization_and_slug", ["organizationId", "slug"]),
+
+  // Form Submissions
+  formSubmissions: defineTable({
+    organizationId: v.id("organizations"),
+    formId: v.id("forms"),
+    data: v.record(v.string(), v.any()),
+    leadId: v.optional(v.id("leads")),
+    contactId: v.optional(v.id("contacts")),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    utmSource: v.optional(v.string()),
+    utmMedium: v.optional(v.string()),
+    utmCampaign: v.optional(v.string()),
+    honeypotTriggered: v.boolean(),
+    processingStatus: v.union(v.literal("processed"), v.literal("spam"), v.literal("error")),
+    errorMessage: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_form", ["formId"])
+    .index("by_form_and_created", ["formId", "createdAt"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
   // Webhooks
   webhooks: defineTable({
     organizationId: v.id("organizations"),

@@ -616,3 +616,13 @@ Reschedule a calendar event to a new time.
 Shortcut for `GET /api/v1/handoffs?status=pending`.
 
 **Response:** `{ handoffs: [...] }`
+
+---
+
+## Notifications
+
+### Notification Tools
+| MCP Tool | REST Endpoint |
+|----------|--------------|
+| `crm_get_notification_preferences` | GET /api/v1/notifications/preferences |
+| `crm_update_notification_preferences` | PUT /api/v1/notifications/preferences |

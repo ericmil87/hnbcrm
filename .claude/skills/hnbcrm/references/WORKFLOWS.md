@@ -319,3 +319,15 @@ Leads can have conversations across multiple channels (whatsapp, telegram, email
 1. List all conversations for the lead
 2. Read messages across channels to get the full picture
 3. Respond in the same channel the contact used last
+
+---
+
+## 7. Email Notifications
+
+- After requesting a handoff, the target human receives an email notification automatically.
+- After a handoff is accepted/rejected, the requester is notified by email.
+- When a lead or task is assigned, the assignee receives an email.
+- Overdue tasks trigger email reminders to assignees.
+- A daily digest email summarizes CRM activity at 08:00 BRT.
+- Members can opt out of specific notification types via Settings > Notificacoes.
+- AI agents are never sent emails (type !== "human" check).

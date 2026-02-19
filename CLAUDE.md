@@ -30,6 +30,8 @@ Multi-tenant CRM with human-AI team collaboration. Convex backend, React + Tailw
 
 **Side effects in mutations:** Most mutations insert into `activities` + `auditLogs` and trigger webhooks via `ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, ...)`.
 
+**Email/Notifications:** `@convex-dev/resend` component for email delivery. Central dispatch via `convex/email.ts` — all events go through `internal.email.dispatchNotification`. Templates in `convex/emailTemplates.ts` (PT-BR). Per-member preferences in `notificationPreferences` table (opt-out model — no row means all enabled). Convex components registered in `convex/convex.config.ts`. **Email env vars:** `RESEND_API_KEY`, `APP_URL`, `RESEND_FROM_EMAIL` (default: `HNBCRM <noreply@mail.hnbcrm.com>`), `RESEND_WEBHOOK_SECRET`. Domain: `mail.hnbcrm.com` (subdomain to avoid Gmail MX conflict).
+
 **HTTP API:** `convex/router.ts` has RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. API keys resolve permissions from key → team member → role defaults. Routes wired in `convex/http.ts`.
 
 **Frontend:** SPA with react-router v7. Dark theme default, mobile-first, PT-BR UI. `src/main.tsx` → `HelmetProvider` → `ConvexAuthProvider` → `RouterProvider`. Public routes: `/` (LandingPage), `/entrar` (AuthPage). App routes: `/app/*` wrapped by `AuthLayout` → `ScrollRestoration` → `AppShell` → `<Outlet />`. Page components get `organizationId` via `useOutletContext`. Reusable UI in `src/components/ui/`, layout in `src/components/layout/`. State is Convex reactive queries + local `useState`. Path alias `@/` → `src/`.

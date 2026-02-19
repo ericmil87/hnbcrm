@@ -25,6 +25,8 @@ src/
     │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
     │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
+    ├── notifications/
+    │   └── NotificationPreferences.tsx  # Email notification preferences (Settings tab)
     ├── SEO.tsx                # Dynamic meta tags (react-helmet-async) — NEW
     ├── StructuredData.tsx     # JSON-LD structured data for rich results — NEW
     ├── layout/                # App shell and navigation

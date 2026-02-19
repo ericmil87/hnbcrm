@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
 import { OPENAPI_SPEC } from "./openapiSpec";
 import { resolvePermissions, type Role, type Permissions } from "./lib/permissions";
+import { resend } from "./email";
 
 const http = httpRouter();
 
@@ -1047,6 +1048,111 @@ http.route({
   }),
 });
 
+// ---- Public Form Endpoints (no auth) ----
+
+// Get published form by slug
+http.route({
+  path: "/api/v1/forms/public/:slug",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const url = new URL(request.url);
+      const segments = url.pathname.split("/");
+      const slug = segments[segments.length - 1];
+
+      if (!slug) return errorResponse("Slug is required", 400);
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Return sanitized form data (strip internal fields)
+      const sanitized = {
+        name: form.name,
+        description: form.description,
+        fields: form.fields,
+        theme: form.theme,
+        settings: {
+          submitButtonText: form.settings.submitButtonText,
+          successMessage: form.settings.successMessage,
+          redirectUrl: form.settings.redirectUrl,
+          honeypotEnabled: form.settings.honeypotEnabled,
+        },
+      };
+
+      return jsonResponse({ form: sanitized });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Submit form
+http.route({
+  path: "/api/v1/forms/public/:slug/submit",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const url = new URL(request.url);
+      const segments = url.pathname.split("/");
+      // Path: /api/v1/forms/public/:slug/submit — slug is second-to-last
+      const slug = segments[segments.length - 2];
+
+      if (!slug) return errorResponse("Slug is required", 400);
+
+      const body = await request.json();
+      const { data, _honeypot } = body;
+
+      if (!data || typeof data !== "object") {
+        return errorResponse("data object is required", 400);
+      }
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Extract metadata from request
+      const ipAddress = request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined;
+      const userAgent = request.headers.get("user-agent") || undefined;
+      const referrer = request.headers.get("referer") || undefined;
+
+      // Extract UTM params from referrer if present
+      let utmSource: string | undefined;
+      let utmMedium: string | undefined;
+      let utmCampaign: string | undefined;
+
+      if (referrer) {
+        try {
+          const refUrl = new URL(referrer);
+          utmSource = refUrl.searchParams.get("utm_source") || undefined;
+          utmMedium = refUrl.searchParams.get("utm_medium") || undefined;
+          utmCampaign = refUrl.searchParams.get("utm_campaign") || undefined;
+        } catch {
+          // Invalid referrer URL, ignore
+        }
+      }
+
+      const honeypotTriggered = !!_honeypot;
+
+      const result = await ctx.runMutation(internal.formSubmissions.internalProcessSubmission, {
+        formId: form._id,
+        data,
+        ipAddress,
+        userAgent,
+        referrer,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        honeypotTriggered,
+      });
+
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Internal server error";
+      const status = message.includes("not found") ? 404 : message.includes("limit") ? 400 : 500;
+      return errorResponse(message, status);
+    }
+  }),
+});
+
 // ---- LLMs.txt Routes ----
 
 http.route({
@@ -1651,6 +1757,61 @@ http.route({
   }),
 });
 
+// ---- Notification Preferences Endpoints ----
+
+http.route({
+  path: "/api/v1/notifications/preferences",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const prefs = await ctx.runQuery(internal.notificationPreferences.internalGetPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ preferences: prefs });
+    } catch (e: any) {
+      return errorResponse(e.message, e.message.includes("API key") ? 401 : 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/notifications/preferences",
+  method: "PUT",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      await ctx.runMutation(internal.notificationPreferences.internalUpsertPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        updates: body,
+      });
+      // Return the updated preferences
+      const prefs = await ctx.runQuery(internal.notificationPreferences.internalGetPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ preferences: prefs });
+    } catch (e: any) {
+      return errorResponse(e.message, e.message.includes("API key") ? 401 : 400);
+    }
+  }),
+});
+
+// ---- Resend Webhook Endpoint ----
+
+http.route({
+  path: "/api/v1/webhooks/resend",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await resend.handleResendEventWebhook(ctx, request);
+  }),
+});
+
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());
 
@@ -1709,5 +1870,9 @@ http.route({ path: "/api/v1/files/upload-url", method: "OPTIONS", handler: optio
 http.route({ path: "/api/v1/files", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/notifications/preferences", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/:slug", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/:slug/submit", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

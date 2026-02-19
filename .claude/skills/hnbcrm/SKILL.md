@@ -134,6 +134,10 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 - **Internal notes**: Use `isInternal: true` for AI reasoning, observations, or team coordination — the contact won't see these
 - **Don't over-respond**: If a human team member is already handling the conversation, don't jump in unless explicitly asked
 
+### 7. Email Notifications
+
+- **Email Notifications:** The system automatically sends email notifications on key CRM events (handoff requests, task assignments, lead assignments, overdue tasks). AI agents can check/update their notification preferences via `crm_get_notification_preferences` and `crm_update_notification_preferences` MCP tools.
+
 ## Best Practices
 
 1. **Always check for duplicates** before creating contacts — search by email, phone, and name

@@ -14,7 +14,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (44 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (46 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
@@ -322,6 +322,11 @@ File metadata for uploaded files (attachments, photos, documents).
 | teamMemberId | Id<teamMembers> | Linked team member (if avatar) |
 | uploadedBy | Id<teamMembers> | Who uploaded the file |
 | metadata | Record<string, any> | Additional metadata |
+
+### notificationPreferences
+Per-member email notification preferences (opt-out model).
+Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, createdAt, updatedAt
+Indexes: by_organization, by_organization_and_member, by_member
 
 ### Lead Document
 Join table for lead-document relationships.
@@ -805,6 +810,25 @@ Get audit logs with filtering and cursor-based pagination.
 
 **Response:** \`{ logs: [...], nextCursor, hasMore }\`
 
+### Notification Preferences
+- GET /api/v1/notifications/preferences — Get notification preferences for the authenticated API key's team member
+- PUT /api/v1/notifications/preferences — Update notification preferences. Body: { invite?: boolean, handoffRequested?: boolean, ... }
+
+### Webhooks (Inbound)
+- POST /api/v1/webhooks/resend — Resend email delivery webhook (authenticated via RESEND_WEBHOOK_SECRET, not API key)
+
+### Notification Event Types
+| Event | Description |
+|-------|-------------|
+| invite | Team member invited to organization |
+| handoffRequested | AI-to-human handoff requested |
+| handoffResolved | Handoff accepted or rejected |
+| taskOverdue | Assigned task is overdue |
+| taskAssigned | Task assigned to member |
+| leadAssigned | Lead assigned to member |
+| newMessage | New inbound message on assigned lead |
+| dailyDigest | Daily summary of CRM activity |
+
 ---
 
 ## Agent Skill
@@ -827,7 +851,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 44 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 46 tools for AI agents:
 
 ### Lead Management
 

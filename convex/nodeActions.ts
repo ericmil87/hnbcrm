@@ -143,6 +143,25 @@ export const inviteHumanMember = action({
       }
     );
 
+    // Send invite email for new users
+    if (isNewUser && tempPassword) {
+      const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
+        organizationId: args.organizationId,
+      });
+      await ctx.runMutation(internal.email.dispatchNotification, {
+        organizationId: args.organizationId,
+        recipientMemberId: teamMemberId,
+        eventType: "invite",
+        templateData: {
+          memberName: args.name,
+          orgName: org?.name ?? "HNBCRM",
+          email: args.email,
+          tempPassword,
+          loginUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/entrar`,
+        },
+      });
+    }
+
     return {
       teamMemberId,
       isNewUser,

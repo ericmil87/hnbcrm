@@ -486,6 +486,22 @@ export const createTask = mutation({
       payload: { taskId, title: args.title, type: args.type, priority: args.priority, dueDate: args.dueDate, assignedTo: args.assignedTo },
     });
 
+    // Email notification
+    if (args.assignedTo && args.assignedTo !== userMember._id) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: args.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: args.title,
+          dueDate: args.dueDate ? new Date(args.dueDate).toLocaleDateString("pt-BR") : undefined,
+          assignedByName: userMember.name,
+          leadTitle: undefined,
+          taskUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas`,
+        },
+      });
+    }
+
     return taskId;
   },
 });
@@ -719,6 +735,22 @@ export const assignTask = mutation({
       event: "task.assigned",
       payload: { taskId: args.taskId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
+
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: task.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: task.title,
+          dueDate: task.dueDate ? new Date(task.dueDate).toLocaleDateString("pt-BR") : undefined,
+          assignedByName: userMember.name,
+          leadTitle: undefined,
+          taskUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas`,
+        },
+      });
+    }
 
     return null;
   },
@@ -1276,6 +1308,22 @@ export const internalCreateTask = internalMutation({
       payload: { taskId, title: args.title, type: args.type, priority: args.priority, dueDate: args.dueDate, assignedTo: args.assignedTo },
     });
 
+    // Email notification
+    if (args.assignedTo && args.assignedTo !== args.teamMemberId) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: args.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: args.title,
+          dueDate: args.dueDate ? new Date(args.dueDate).toLocaleDateString("pt-BR") : undefined,
+          assignedByName: teamMember.name,
+          leadTitle: undefined,
+          taskUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas`,
+        },
+      });
+    }
+
     return taskId;
   },
 });
@@ -1496,6 +1544,22 @@ export const internalAssignTask = internalMutation({
       payload: { taskId: args.taskId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
 
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: task.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: task.title,
+          dueDate: task.dueDate ? new Date(task.dueDate).toLocaleDateString("pt-BR") : undefined,
+          assignedByName: teamMember.name,
+          leadTitle: undefined,
+          taskUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas`,
+        },
+      });
+    }
+
     return null;
   },
 });
@@ -1710,6 +1774,20 @@ export const processOverdueReminders = internalMutation({
           event: "task.reminder_triggered",
           payload: { taskId: task._id, title: task.title, dueDate: task.dueDate, assignedTo: task.assignedTo },
         });
+
+        // Email notification
+        if (task.assignedTo) {
+          await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+            organizationId: task.organizationId,
+            recipientMemberId: task.assignedTo,
+            eventType: "taskOverdue",
+            templateData: {
+              taskTitle: task.title,
+              dueDate: task.dueDate ? new Date(task.dueDate).toLocaleDateString("pt-BR") : "N/A",
+              taskUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas`,
+            },
+          });
+        }
       }
     }
 

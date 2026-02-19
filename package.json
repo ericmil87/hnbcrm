@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm",
   "private": true,
-  "version": "0.20.0",
+  "version": "0.21.0",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
@@ -14,11 +14,13 @@
   "dependencies": {
     "@auth/core": "^0.37.0",
     "@convex-dev/auth": "^0.0.80",
+    "@convex-dev/resend": "^0.2.3",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "clsx": "^2.1.1",
     "convex": "^1.31.2",
+    "convex-helpers": "^0.1.112",
     "lucide-react": "^0.564.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",

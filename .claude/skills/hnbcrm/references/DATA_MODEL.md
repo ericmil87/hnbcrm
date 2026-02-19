@@ -310,6 +310,25 @@ Authentication key for REST API and MCP access, tied to a team member.
 
 ---
 
+### Notification Preferences
+
+Per-member email notification preferences. Opt-out model — when no record exists, all notifications are enabled.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| organizationId | Id\<organizations\> | Organization |
+| teamMemberId | Id\<teamMembers\> | Team member |
+| invite | boolean | Receive invite notifications |
+| handoffRequested | boolean | Receive handoff request notifications |
+| handoffResolved | boolean | Receive handoff resolved notifications |
+| taskOverdue | boolean | Receive task overdue notifications |
+| taskAssigned | boolean | Receive task assigned notifications |
+| leadAssigned | boolean | Receive lead assigned notifications |
+| newMessage | boolean | Receive new message notifications |
+| dailyDigest | boolean | Receive daily digest emails |
+
+---
+
 ## Complete Enum Reference
 
 | Enum | Values |
@@ -330,6 +349,7 @@ Authentication key for REST API and MCP access, tied to a team member.
 | Activity Type | `note`, `call`, `email_sent`, `stage_change`, `assignment`, `handoff`, `qualification_update`, `created`, `message_sent`, `event_created`, `event_completed` |
 | Calendar Event Type | `call`, `meeting`, `follow_up`, `demo`, `task`, `reminder`, `other` |
 | Calendar Event Status | `scheduled`, `completed`, `cancelled` |
+| Notification Event Type | `invite`, `handoffRequested`, `handoffResolved`, `taskOverdue`, `taskAssigned`, `leadAssigned`, `newMessage`, `dailyDigest` |
 | Audit Action | `create`, `update`, `delete`, `move`, `assign`, `handoff` |
 | Audit Severity | `low`, `medium`, `high`, `critical` |
 | Preferred Contact Time | `morning`, `afternoon`, `evening` |

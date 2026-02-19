@@ -2,6 +2,97 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.21.0] - 2026-02-19
+
+### Email Notification System — Resend Integration, Templates & Preferences
+
+Complete transactional email system using `@convex-dev/resend` with 8 PT-BR templates, per-member opt-out preferences, daily digest cron, and full MCP/REST API integration.
+
+#### Backend — Email Infrastructure
+
+**`convex/email.ts`** — Central email module
+- **Resend component instance** — `@convex-dev/resend` wrapper with `testMode: true` (dev safety) and event webhook handler
+- **`dispatchNotification` internal mutation** — Single entry point for all email sends; checks recipient is human with email, checks opt-out preferences, builds template, sends via Resend
+- **`sendDailyDigest` internal mutation** — Iterates all orgs, gathers 24h stats (new leads, completed tasks, pending handoffs, overdue tasks), sends digest to eligible members
+- **`handleEmailEvent`** — Resend webhook handler for delivery status tracking
+
+**`convex/emailTemplates.ts`** — 8 PT-BR dark-theme email templates
+- **`invite`** — Welcome email with temp credentials and CTA button
+- **`handoffRequested`** — Handoff request with lead details and suggested actions
+- **`handoffResolved`** — Handoff accepted/rejected notification with status color
+- **`taskOverdue`** — Overdue task reminder with due date
+- **`taskAssigned`** — New task assignment notification
+- **`leadAssigned`** — Lead assignment with value and contact info
+- **`newMessage`** — New inbound message with preview and channel label
+- **`dailyDigest`** — 4-metric summary card (new leads, completed tasks, pending handoffs, overdue tasks)
+- All templates use shared `baseTemplate` with HNBCRM branding (orange accent, dark card, pill CTA button)
+
+**`convex/convex.config.ts`** — Convex component registration
+- Registers `@convex-dev/resend` component for email delivery
+
+#### Schema & Preferences (`convex/schema.ts`, `convex/notificationPreferences.ts`)
+
+- **`notificationPreferences` table** — Per-member opt-out model (no row = all enabled)
+- **8 boolean fields** — `invite`, `handoffRequested`, `handoffResolved`, `taskOverdue`, `taskAssigned`, `leadAssigned`, `newMessage`, `dailyDigest`
+- **3 indexes** — `by_organization`, `by_organization_and_member`, `by_member`
+- **Public queries/mutations** — `getMyPreferences`, `updateMyPreferences` (upsert), `getMemberPreferences` (admin)
+- **Internal functions** — `shouldNotify`, `internalGetPreferences`, `internalUpsertPreferences`
+
+#### Email Triggers Wired (4 backend files, 10 call sites)
+
+- **`handoffs.ts`** — `requestHandoff` → `handoffRequested` to target member; `acceptHandoff`/`rejectHandoff` → `handoffResolved` to requester (both public + internal variants)
+- **`leads.ts`** — `assignLead` → `leadAssigned` to assignee (both public + internal)
+- **`tasks.ts`** — `createTask`/`assignTask` → `taskAssigned` to assignee; `processOverdueReminders` → `taskOverdue` to assignee (both public + internal)
+- **`nodeActions.ts`** — `inviteHumanMember` → `invite` email with org name, credentials, and login URL
+
+#### Cron Job (`convex/crons.ts`)
+
+- **Daily digest** — `sendDailyDigest` scheduled at 11:00 UTC (08:00 BRT) via `crons.daily()`
+
+#### HTTP API (`convex/router.ts`)
+
+- **`GET /api/v1/notifications/preferences`** — Get notification preferences for authenticated API key's team member
+- **`PUT /api/v1/notifications/preferences`** — Update notification preferences (partial update, upsert)
+- **`POST /api/v1/webhooks/resend`** — Resend email delivery webhook endpoint (authenticated via RESEND_WEBHOOK_SECRET)
+- CORS preflight routes added for both new paths
+
+#### MCP Server — Notification Tools (`mcp-server/src/tools/notifications.ts`)
+
+- **`crm_get_notification_preferences`** — Get current agent's email notification preferences
+- **`crm_update_notification_preferences`** — Update preferences (e.g., disable `dailyDigest`)
+- **`HnbCrmClient.put()` method** — Added PUT support to MCP client
+- Tool count updated: 44 → **46 tools across 9 categories**
+
+#### Frontend — Notification Preferences (`src/components/notifications/NotificationPreferences.tsx`)
+
+- **NotificationsSection** — Settings tab with toggle switches for each notification type
+- Integrated into `Settings.tsx` as "Notificacoes" section tab
+
+#### Documentation Updates
+
+- **`CLAUDE.md`** — Added Email/Notifications section with env vars, domain config, dispatch pattern
+- **`convex/CLAUDE.md`** — Added `email.ts`, `emailTemplates.ts`, `convex.config.ts`, `notificationPreferences.ts` to file layout; added email dispatch to mutation side-effects checklist
+- **`src/CLAUDE.md`** — Added `notifications/NotificationPreferences.tsx` to component tree
+- **`README.md`** — Added full "Email Setup (Resend)" section with domain config, env vars, webhook setup, test mode, and architecture overview
+- **`convex/llmsTxt.ts`** — Added `notificationPreferences` data model, notification preference endpoints, event type reference table; updated MCP tool count to 46
+- **`.claude/skills/hnbcrm/SKILL.md`** — Added "Email Notifications" section with MCP tool references
+- **`.claude/skills/hnbcrm/references/API_REFERENCE.md`** — Added notification tools mapping
+- **`.claude/skills/hnbcrm/references/DATA_MODEL.md`** — Added notification preferences entity and `Notification Event Type` enum
+- **`.claude/skills/hnbcrm/references/WORKFLOWS.md`** — Added workflow 7: Email Notifications
+- **`mcp-server/README.md`** — Added Notifications category (2 tools), updated totals to 46 tools / 9 categories
+
+#### Dependencies Added
+
+- `@convex-dev/resend` ^0.2.3 — Convex component for Resend email delivery
+- `convex-helpers` ^0.1.112 — Convex utility helpers (peer dep)
+
+#### Docs Housekeeping
+
+- **Archived** — `docs/GOING-PUBLIC.md` and `docs/OPTIMIZATION-RESULTS.md` moved to `docs/archive/`
+- **New** — `docs/PRODUCTION-DEPLOYMENT-PLAN.md` — Production deployment checklist
+
+---
+
 ## [0.20.0] - 2026-02-19
 
 ### MCP Server Published to npm + OpenClaw Integration

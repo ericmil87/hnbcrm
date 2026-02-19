@@ -513,6 +513,22 @@ export const assignLead = mutation({
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
 
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "leadAssigned",
+        templateData: {
+          leadTitle: lead.title,
+          value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
+          contactName: undefined,
+          assignedByName: userMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+        },
+      });
+    }
+
     return null;
   },
 });
@@ -1187,6 +1203,22 @@ export const internalAssignLead = internalMutation({
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
+
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "leadAssigned",
+        templateData: {
+          leadTitle: lead.title,
+          value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
+          contactName: undefined,
+          assignedByName: teamMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+        },
+      });
+    }
 
     return null;
   },
