@@ -2,6 +2,44 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.23.0] - 2026-03-01
+
+### Landing Page & Developer Portal — GitHub + Open-Source Overhaul
+
+GitHub presence, open-source credibility, and community links added across landing page and developer portal. Shared footer, extracted hook, and section reorder for better conversion flow.
+
+#### New Files
+
+- **`src/hooks/useInView.ts`** — Extracted shared `useInView` IntersectionObserver hook (was inline in LandingPage)
+- **`src/components/landing/OpenSourceSection.tsx`** — Replaces SocialProofBar with open-source credibility section: MIT License badge, 3 stat cards (v0.22.0, 44+ MCP tools, TypeScript 99%), tech stack badges (React, Convex, TailwindCSS, TypeScript), centered GitHub CTA
+- **`src/components/landing/Footer.tsx`** — Shared 4-column footer used by both LandingPage and DevelopersPage: Brand column, Produto (Funcionalidades, Precos, Roadmap, Entrar), Desenvolvedores (Docs, Playground, MCP, Agent Skills), Comunidade (GitHub, npm, Contribuir, Seguranca). Copyright 2026 + MIT License link
+
+#### Landing Page (`src/components/LandingPage.tsx`)
+
+- **Header** — Added GitHub icon link (lucide-react `Github`) before Developers/Entrar nav items
+- **Hero CTAs** — Replaced "Ver Funcionalidades" scroll button with "Ver no GitHub" external link with Github icon
+- **Section reorder** — `OpenSourceSection → Features → Developer → HowItWorks → ComingSoon → Pricing → CTA` (HowItWorks moved before ComingSoon for better conversion flow)
+- **DeveloperSection** — Added 5th card "Codigo Aberto" linking to GitHub repo; grid updated to `lg:grid-cols-5`; external link handling for non-internal routes
+- **CTASection** — Added "ou explore o codigo no GitHub" soft text link below primary CTA button
+- **Footer** — Replaced inline footer with shared `<Footer />` component
+- **Cleanup** — Removed `SocialProofBar` function, inline `useInView` hook, unused imports (`Sparkles`, `TrendingUp`, `Zap as Lightning`)
+
+#### Developer Portal (`src/pages/DevelopersPage.tsx`)
+
+- **Header** — Added GitHub icon link before "Voltar" button
+- **Desktop sidebar** — Added GitHub external link at bottom with divider separator
+- **Hero section** — Added "Open Source — MIT License" badge linking to GitHub and "npm: hnbcrm-mcp" linking to npmjs.com
+- **Quick Start** — Added self-host card before existing steps: `git clone`, `npm install`, `npm run dev` in CodeBlock
+- **Footer** — Replaced inline footer with shared `<Footer />` component
+
+#### Links
+
+- All GitHub links → `github.com/ericmil87/hnbcrm` (new tab)
+- All npm links → `npmjs.com/package/hnbcrm-mcp` (new tab)
+- Copyright updated from 2025 to 2026
+
+---
+
 ## [0.22.0] - 2026-02-19
 
 ### Form Builder — WYSIWYG Editor, Public Forms & Embeds

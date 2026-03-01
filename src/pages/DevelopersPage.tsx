@@ -16,6 +16,7 @@ import {
   Download,
   BookOpen,
   ExternalLink,
+  Github,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { CodeBlock } from "@/components/developers/CodeBlock";
 import { ALL_ENDPOINTS, API_CATEGORIES, getEndpointsByCategory } from "@/lib/apiRegistry";
 import { SEO } from "@/components/SEO";
+import { Footer } from "@/components/landing/Footer";
 
 const sections = [
   { id: "quick-start", label: "Quick Start", icon: Rocket },
@@ -121,12 +123,23 @@ export function DevelopersPage() {
             </div>
           </div>
 
-          <Link to="/" className="flex-shrink-0">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft size={16} />
-              Voltar
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <a
+              href="https://github.com/ericmil87/hnbcrm"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-text-muted hover:text-text-primary transition-colors"
+              aria-label="GitHub"
+            >
+              <Github size={20} />
+            </a>
+            <Link to="/" className="flex-shrink-0">
+              <Button variant="ghost" size="sm">
+                <ArrowLeft size={16} />
+                Voltar
+              </Button>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -194,6 +207,18 @@ export function DevelopersPage() {
                 </button>
               )
             )}
+            <div className="mt-4 pt-4 border-t border-border">
+              <a
+                href="https://github.com/ericmil87/hnbcrm"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors text-text-muted hover:text-text-secondary hover:bg-surface-raised"
+              >
+                <Github size={16} />
+                GitHub
+                <ExternalLink size={12} className="ml-auto opacity-50" />
+              </a>
+            </div>
           </div>
         </nav>
 
@@ -209,6 +234,26 @@ export function DevelopersPage() {
               Build on HNBCRM — integre agentes de IA, automatize workflows e
               estenda seu CRM.
             </p>
+            <div className="flex flex-wrap items-center gap-3 mt-2">
+              <a
+                href="https://github.com/ericmil87/hnbcrm"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-brand-400 hover:text-brand-300 transition-colors"
+              >
+                <Github size={14} />
+                Open Source — MIT License
+              </a>
+              <span className="text-text-muted">|</span>
+              <a
+                href="https://www.npmjs.com/package/hnbcrm-mcp"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors"
+              >
+                npm: hnbcrm-mcp
+              </a>
+            </div>
           </section>
 
           {/* Quick Start */}
@@ -220,6 +265,21 @@ export function DevelopersPage() {
             <p className="text-text-secondary">
               Comece a usar a API em 3 passos simples.
             </p>
+
+            <Card className="p-6 mb-8">
+              <div className="flex items-center gap-2 mb-3">
+                <Github size={18} className="text-brand-400" />
+                <h3 className="font-semibold text-text-primary">Self-host</h3>
+                <Badge variant="brand">Open Source</Badge>
+              </div>
+              <p className="text-sm text-text-secondary mb-4">
+                Clone o repositorio e rode localmente em minutos.
+              </p>
+              <CodeBlock>{`git clone https://github.com/ericmil87/hnbcrm.git
+cd hnbcrm
+npm install
+npm run dev`}</CodeBlock>
+            </Card>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Step 1 */}
@@ -1082,36 +1142,7 @@ function verifyWebhook(body, signature, secret) {
         </main>
       </div>
 
-      {/* Footer */}
-      <footer className="py-8 border-t border-border">
-        <div className="max-w-6xl mx-auto px-4 text-center">
-          <div className="flex items-center justify-center gap-2 mb-4">
-            <img
-              src="/orange_icon_logo_transparent-bg-528x488.png"
-              alt="HNBCRM Logo"
-              className="h-8 w-8 object-contain"
-            />
-            <span className="text-xl font-bold text-text-primary">HNBCRM</span>
-          </div>
-          <div className="flex items-center justify-center gap-6 mb-4">
-            <Link
-              to="/"
-              className="text-sm text-text-secondary hover:text-text-primary transition-colors"
-            >
-              Home
-            </Link>
-            <Link
-              to="/entrar"
-              className="text-sm text-text-secondary hover:text-text-primary transition-colors"
-            >
-              Entrar
-            </Link>
-          </div>
-          <p className="text-sm text-text-muted">
-            &copy; 2025 HNBCRM. Todos os direitos reservados.
-          </p>
-        </div>
-      </footer>
+      <Footer />
     </div>
     </>
   );
