@@ -451,6 +451,16 @@ export const deleteForm = mutation({
       await ctx.db.delete(submission._id);
     }
 
+    // Delete all related partials
+    const partials = await ctx.db
+      .query("formPartials")
+      .withIndex("by_form", (q) => q.eq("formId", args.formId))
+      .collect();
+
+    for (const partial of partials) {
+      await ctx.db.delete(partial._id);
+    }
+
     await ctx.db.delete(args.formId);
 
     return null;

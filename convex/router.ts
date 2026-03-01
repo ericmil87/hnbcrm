@@ -3,6 +3,7 @@ import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
+import { EMBED_SCRIPT } from "./embedScript";
 import { OPENAPI_SPEC } from "./openapiSpec";
 import { resolvePermissions, type Role, type Permissions } from "./lib/permissions";
 import { resend } from "./email";
@@ -1079,6 +1080,7 @@ http.route({
           successTitle: form.settings.successTitle,
           successSubtitle: form.settings.successSubtitle,
           successCta: form.settings.successCta,
+          partialCaptureEnabled: form.settings.partialCaptureEnabled,
         },
       };
 
@@ -1096,7 +1098,7 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const body = await request.json();
-      const { slug, data, _honeypot } = body;
+      const { slug, data, _honeypot, sessionId } = body;
 
       if (!slug || typeof slug !== "string") {
         return errorResponse("slug is required", 400);
@@ -1142,6 +1144,7 @@ http.route({
         utmMedium,
         utmCampaign,
         honeypotTriggered,
+        sessionId: sessionId || undefined,
       });
 
       // Phase 6: Return proper status codes for validation/duplicate errors
@@ -1164,6 +1167,125 @@ http.route({
       const status = message.includes("not found") ? 404 : message.includes("limit") ? 400 : 500;
       return errorResponse(message, status);
     }
+  }),
+});
+
+// Save partial form submission — POST /api/v1/forms/public/partial
+http.route({
+  path: "/api/v1/forms/public/partial",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      // Parse body — sendBeacon sends as text/plain, so always parse as JSON string
+      const contentType = request.headers.get("content-type") || "";
+      let body: any;
+      if (contentType.includes("text/plain")) {
+        const text = await request.text();
+        body = JSON.parse(text);
+      } else {
+        body = await request.json();
+      }
+
+      const { slug, sessionId, data, completedFieldIds, currentStep, totalFields } = body;
+
+      if (!slug || typeof slug !== "string") {
+        return errorResponse("slug is required", 400);
+      }
+      if (!sessionId || typeof sessionId !== "string") {
+        return errorResponse("sessionId is required", 400);
+      }
+      if (!data || typeof data !== "object") {
+        return errorResponse("data object is required", 400);
+      }
+      if (!Array.isArray(completedFieldIds)) {
+        return errorResponse("completedFieldIds array is required", 400);
+      }
+      if (typeof totalFields !== "number") {
+        return errorResponse("totalFields number is required", 400);
+      }
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Check if partial capture is enabled for this form
+      if (!form.settings.partialCaptureEnabled) {
+        return jsonResponse({ ignored: true });
+      }
+
+      // Extract metadata from request headers
+      const ipAddress = request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined;
+      const userAgent = request.headers.get("user-agent") || undefined;
+      const referrer = request.headers.get("referer") || undefined;
+
+      // Extract UTM params from referrer if present
+      let utmSource: string | undefined;
+      let utmMedium: string | undefined;
+      let utmCampaign: string | undefined;
+
+      if (referrer) {
+        try {
+          const refUrl = new URL(referrer);
+          utmSource = refUrl.searchParams.get("utm_source") || undefined;
+          utmMedium = refUrl.searchParams.get("utm_medium") || undefined;
+          utmCampaign = refUrl.searchParams.get("utm_campaign") || undefined;
+        } catch {
+          // Invalid referrer URL, ignore
+        }
+      }
+
+      await ctx.runMutation(internal.formPartials.internalSavePartial, {
+        formId: form._id,
+        sessionId,
+        data,
+        completedFieldIds,
+        totalFields,
+        currentStep,
+        ipAddress,
+        userAgent,
+        referrer,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Internal server error";
+      const status = message.includes("not found") ? 404 : 500;
+      return errorResponse(message, status);
+    }
+  }),
+});
+
+// ---- Embed Script ----
+
+http.route({
+  path: "/api/v1/embed.js",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(EMBED_SCRIPT, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/v1/embed.js",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
   }),
 });
 
@@ -1888,5 +2010,6 @@ http.route({ path: "/api/v1/notifications/preferences", method: "OPTIONS", handl
 http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

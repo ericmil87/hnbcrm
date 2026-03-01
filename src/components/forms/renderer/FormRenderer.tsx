@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback, useMemo } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, type FormFieldDefinition } from "./FormField";
 import { FormSuccess } from "./FormSuccess";
+import { usePartialCapture } from "./usePartialCapture";
 import type { ConditionalLogic } from "@/components/forms/builder/types";
 
 const radiusMap: Record<string, string> = {
@@ -32,6 +33,7 @@ interface FormSettings {
   successTitle?: string;
   successSubtitle?: string;
   successCta?: { label: string; url: string };
+  partialCaptureEnabled?: boolean;
 }
 
 interface FormStep {
@@ -57,6 +59,9 @@ interface FormRendererProps {
   onSubmit?: (data: Record<string, string>) => Promise<void>;
   isPreview?: boolean;
   prefillData?: Record<string, string>;
+  formSlug?: string;
+  siteUrl?: string;
+  onSessionId?: (sessionId: string | null) => void;
 }
 
 /**
@@ -201,8 +206,36 @@ export function FormRenderer({
   onSubmit,
   isPreview = false,
   prefillData,
+  formSlug,
+  siteUrl,
+  onSessionId,
 }: FormRendererProps) {
   const { theme, settings, fields, steps } = form;
+
+  // Count non-layout fields for partial capture
+  const nonLayoutFieldCount = useMemo(
+    () => fields.filter((f) => !LAYOUT_TYPES.has(f.type)).length,
+    [fields]
+  );
+
+  const partialCaptureActive =
+    !!settings.partialCaptureEnabled && !isPreview && !!formSlug && !!siteUrl;
+
+  const {
+    sessionId,
+    onFieldBlur: onPartialFieldBlur,
+    onStepChange: onPartialStepChange,
+  } = usePartialCapture({
+    formSlug: formSlug ?? "",
+    siteUrl: siteUrl ?? "",
+    totalFields: nonLayoutFieldCount,
+    enabled: partialCaptureActive,
+  });
+
+  // Notify parent of sessionId for inclusion in submit payload
+  useEffect(() => {
+    onSessionId?.(sessionId);
+  }, [sessionId, onSessionId]);
 
   const [values, setValues] = useState<Record<string, string>>(() =>
     buildInitialValues(fields, prefillData)
@@ -277,13 +310,17 @@ export function FormRenderer({
       return;
     }
     setErrors({});
-    setCurrentStep((prev) => Math.min(prev + 1, totalSteps - 1));
-  }, [currentStepFields, validateFields, totalSteps]);
+    const nextStep = Math.min(currentStep + 1, totalSteps - 1);
+    setCurrentStep(nextStep);
+    onPartialStepChange(nextStep);
+  }, [currentStepFields, validateFields, totalSteps, currentStep, onPartialStepChange]);
 
   const handlePrevStep = useCallback(() => {
     setErrors({});
-    setCurrentStep((prev) => Math.max(prev - 1, 0));
-  }, []);
+    const prevStep = Math.max(currentStep - 1, 0);
+    setCurrentStep(prevStep);
+    onPartialStepChange(prevStep);
+  }, [currentStep, onPartialStepChange]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -474,6 +511,11 @@ export function FormRenderer({
                 value={values[field.id] ?? ""}
                 error={errors[field.id]}
                 onChange={(value) => handleChange(field.id, value)}
+                onBlur={
+                  partialCaptureActive
+                    ? () => onPartialFieldBlur(field.id, values[field.id] ?? "")
+                    : undefined
+                }
                 disabled={isSubmitting || isPreview}
               />
             );
@@ -569,6 +611,16 @@ export function FormRenderer({
             </button>
           )}
         </div>
+
+        {/* LGPD partial capture notice */}
+        {partialCaptureActive && (
+          <p
+            className="mt-4 text-center text-[11px] leading-relaxed"
+            style={{ color: "var(--form-text)", opacity: 0.4 }}
+          >
+            Ao preencher, seus dados sao salvos automaticamente para facilitar o preenchimento.
+          </p>
+        )}
 
         {/* Branding */}
         {theme.showBranding && (

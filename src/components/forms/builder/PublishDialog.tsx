@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { Copy, Check, ExternalLink, Globe, Code2 } from "lucide-react";
 import { toast } from "sonner";
+import { EmbedConfigPanel } from "./EmbedConfigPanel";
 
 interface PublishDialogProps {
   open: boolean;
@@ -18,6 +19,8 @@ interface PublishDialogProps {
   onPublish: () => Promise<void>;
   onUnpublish: () => Promise<void>;
 }
+
+type DialogTab = "status" | "embed";
 
 function CopyField({
   label,
@@ -82,6 +85,14 @@ function CopyField({
   );
 }
 
+/**
+ * Derive the Convex HTTP site URL from the Convex cloud URL.
+ */
+function getSiteUrl(): string {
+  const convexUrl = (import.meta.env.VITE_CONVEX_URL as string) ?? "";
+  return convexUrl.replace(".cloud", ".site");
+}
+
 export function PublishDialog({
   open,
   onClose,
@@ -90,10 +101,11 @@ export function PublishDialog({
   onUnpublish,
 }: PublishDialogProps) {
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<DialogTab>("status");
 
   const isPublished = form.status === "published";
   const publicUrl = `${window.location.origin}/f/${form.slug}`;
-  const iframeCode = `<iframe src="${publicUrl}" width="100%" height="600" frameborder="0"></iframe>`;
+  const siteUrl = getSiteUrl();
 
   const statusVariant =
     form.status === "published"
@@ -137,7 +149,7 @@ export function PublishDialog({
 
   return (
     <Modal open={open} onClose={onClose} title="Publicar Formulario">
-      <div className="space-y-6">
+      <div className="space-y-5">
         {/* Status card */}
         <div className="flex items-center justify-between py-3 px-4 rounded-lg bg-surface-sunken border border-border">
           <div className="min-w-0 mr-3">
@@ -148,6 +160,36 @@ export function PublishDialog({
           </div>
           <Badge variant={statusVariant}>{statusLabel}</Badge>
         </div>
+
+        {/* Tab switcher — only show when published */}
+        {isPublished && (
+          <div className="flex gap-1 border-b border-border">
+            <button
+              onClick={() => setActiveTab("status")}
+              className={cn(
+                "px-4 py-2 text-sm font-medium transition-all duration-150 border-b-2 -mb-px",
+                "focus:outline-none",
+                activeTab === "status"
+                  ? "border-brand-500 text-brand-400"
+                  : "border-transparent text-text-secondary hover:text-text-primary"
+              )}
+            >
+              Status
+            </button>
+            <button
+              onClick={() => setActiveTab("embed")}
+              className={cn(
+                "px-4 py-2 text-sm font-medium transition-all duration-150 border-b-2 -mb-px",
+                "focus:outline-none",
+                activeTab === "embed"
+                  ? "border-brand-500 text-brand-400"
+                  : "border-transparent text-text-secondary hover:text-text-primary"
+              )}
+            >
+              Incorporacao
+            </button>
+          </div>
+        )}
 
         {/* Draft state */}
         {!isPublished && (
@@ -171,8 +213,8 @@ export function PublishDialog({
           </div>
         )}
 
-        {/* Published state */}
-        {isPublished && (
+        {/* Published — Status tab */}
+        {isPublished && activeTab === "status" && (
           <>
             {/* Green status indicator */}
             <div className="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-semantic-success/10 border border-semantic-success/20">
@@ -183,18 +225,12 @@ export function PublishDialog({
             {/* Copy fields */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold text-text-primary">
-                Codigos de Incorporacao
+                Link publico
               </h3>
               <CopyField
-                label="Link publico"
+                label="URL"
                 value={publicUrl}
                 icon={ExternalLink}
-              />
-              <CopyField
-                label="Codigo iframe"
-                value={iframeCode}
-                icon={Code2}
-                isCode
               />
             </div>
 
@@ -227,6 +263,11 @@ export function PublishDialog({
               </Button>
             </div>
           </>
+        )}
+
+        {/* Published — Embed tab */}
+        {isPublished && activeTab === "embed" && (
+          <EmbedConfigPanel slug={form.slug} siteUrl={siteUrl} />
         )}
       </div>
     </Modal>

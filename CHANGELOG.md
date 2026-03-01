@@ -2,6 +2,78 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.25.0] - 2026-03-01
+
+### Partial Submission Recovery + Popup/Widget Embeds
+
+Two Tier 1 features: recover data from the 67% of forms that are abandoned mid-fill, and embed forms as popups, slide-ins, and side tabs that convert 3-5x better than static iframes.
+
+#### Feature 1: Partial Submission Recovery
+
+Automatically captures field data as visitors fill out forms, even if they never submit. A cron job marks stale sessions as abandoned, and successful submissions convert the partial record.
+
+- **`convex/schema.ts`** — New `formPartials` table (sessionId, status, data, completedFieldIds, completionPercent, 5 indexes), `sessionId` on `formSubmissions`, `partialCaptureEnabled` in form settings
+- **`convex/formPartials.ts`** (new) — `internalSavePartial` (upsert with 2s server-side throttle), `internalMarkConverted`, `internalMarkAbandoned` (15-min threshold + `form.abandoned` webhook), `getFormPartials`, `getPartialStats`
+- **`convex/crons.ts`** — 10-minute cron for abandoned partial detection
+- **`convex/formSubmissions.ts`** — `internalProcessSubmission` accepts `sessionId`, stores on record, calls `internalMarkConverted` on success
+- **`convex/forms.ts`** — `deleteForm` deletes related `formPartials`
+- **`convex/router.ts`** — `POST /api/v1/forms/public/partial` (public, handles `sendBeacon` text/plain), `sessionId` passed through submit endpoint, `partialCaptureEnabled` in GET response
+- **`src/components/forms/renderer/usePartialCapture.ts`** (new) — Client hook: `sessionId` via `crypto.randomUUID()` persisted in `sessionStorage`, debounced save (2s), `navigator.sendBeacon` on `beforeunload`, periodic save (45s), immediate save on step change
+- **`src/components/forms/renderer/FormRenderer.tsx`** — Integrates `usePartialCapture` hook, LGPD transparency notice, `onBlur` callback for partial tracking
+- **`src/components/forms/renderer/FormField.tsx`** — `onBlur` prop added to all input types (text, email, phone, number, date, url, select, textarea, checkbox, radio)
+- **`src/components/forms/FormSubmissionsPage.tsx`** — "Parciais" tab with stats bar (total, abandoned, converted, conversion rate), status filter tabs, progress bar per partial, expandable data preview, mobile cards
+- **`src/components/forms/builder/FormSettingsPanel.tsx`** — "Captura parcial" toggle section
+- **`src/pages/PublicFormPage.tsx`** — Passes `formSlug`, `siteUrl`, `onSessionId` to `FormRenderer`, includes `sessionId` in submit request body
+
+#### Feature 2: PostMessage Protocol (Embed Bridge)
+
+- **`src/pages/PublicFormPage.tsx`** — Detects `?embed=1` query param for embed mode (minimal wrapper, no min-height), `ResizeObserver` → `hnbcrm:resize`, posts `hnbcrm:ready` and `hnbcrm:submitted`, listens for `hnbcrm:prefill` from parent
+
+#### Feature 3: Popup/Widget Embed System
+
+Lightweight vanilla JS loader (2.63 KB gzipped) that external sites include via a single `<script>` tag. Zero dependencies.
+
+- **`src/embed/loader.ts`** (new) — IIFE reading `data-*` attributes from its own script tag. 4 display modes: **inline** (auto-height iframe in container), **popup** (overlay + centered dialog, fade animation), **slidein** (fixed bottom-right panel, slide-up), **sidetab** (persistent edge tab + expandable panel). 4 triggers: **click** (`[data-hnbcrm-open]` elements), **delay** (configurable seconds), **scroll** (percentage threshold), **exit_intent** (desktop mouseleave + mobile swipe detection). Suppression via `localStorage` with configurable days. PostMessage handling for resize/ready/submitted. All CSS injected via `<style>`, `hnbcrm-` prefixed classes. Closes on Escape key and overlay click.
+- **`vite.embed.config.ts`** (new) — Separate Vite config: lib mode, IIFE format, esbuild minification, `publicDir: false`
+- **`convex/embedScript.ts`** (new) — Exports embed loader as string constant for HTTP serving
+- **`convex/router.ts`** — `GET /api/v1/embed.js` serves script with 24h cache + CORS
+- **`package.json`** — `build:embed` script
+
+#### Feature 4: Embed Configuration UI
+
+- **`src/components/forms/builder/EmbedConfigPanel.tsx`** (new) — Mode selector (4 visual cards), trigger selector (popup/slidein), trigger-specific inputs (delay seconds, scroll %), suppression days, tab label + position (sidetab), live-updating code snippet with copy button
+- **`src/components/forms/builder/PublishDialog.tsx`** — Rewritten with tabbed interface: "Status" tab (existing publish/unpublish flow) + "Incorporacao" tab (embed configuration)
+
+#### Files Created (6)
+
+| File | Purpose |
+|------|---------|
+| `convex/formPartials.ts` | Partial submission CRUD + cron handler |
+| `convex/embedScript.ts` | Embed loader JS content for HTTP serving |
+| `src/components/forms/renderer/usePartialCapture.ts` | Client-side partial capture hook |
+| `src/components/forms/builder/EmbedConfigPanel.tsx` | Embed config UI panel |
+| `src/embed/loader.ts` | Standalone embed loader (vanilla TS, 2.63 KB gzipped) |
+| `vite.embed.config.ts` | Vite build config for embed script |
+
+#### Files Modified (12)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | `formPartials` table, `sessionId` on submissions, `partialCaptureEnabled` setting |
+| `convex/router.ts` | `POST /partial`, `GET /embed.js` endpoints, `sessionId` in submit, `partialCaptureEnabled` in GET |
+| `convex/formSubmissions.ts` | `sessionId` arg + storage, `internalMarkConverted` call |
+| `convex/forms.ts` | Partials cleanup on form deletion |
+| `convex/crons.ts` | Abandonment detection cron (10 min) |
+| `src/pages/PublicFormPage.tsx` | PostMessage protocol, embed mode, partial capture integration |
+| `src/components/forms/renderer/FormRenderer.tsx` | `usePartialCapture` hook, LGPD notice, `onBlur` wiring |
+| `src/components/forms/renderer/FormField.tsx` | `onBlur` prop on all input types |
+| `src/components/forms/builder/PublishDialog.tsx` | Tabbed UI (Status + Incorporacao) |
+| `src/components/forms/builder/FormSettingsPanel.tsx` | Partial capture toggle |
+| `src/components/forms/builder/types.ts` | `partialCaptureEnabled` in FormSettings |
+| `package.json` | `build:embed` script |
+
+---
+
 ## [0.24.0] - 2026-03-01
 
 ### Form Builder v2 — 7 Major Upgrades

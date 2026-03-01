@@ -704,6 +704,8 @@ const applicationTables = {
         body: v.optional(v.string()),
         replyTo: v.optional(v.string()),
       })),
+      // Partial submission capture
+      partialCaptureEnabled: v.optional(v.boolean()),
     }),
 
     // Metadata
@@ -734,11 +736,41 @@ const applicationTables = {
     honeypotTriggered: v.boolean(),
     processingStatus: v.union(v.literal("processed"), v.literal("spam"), v.literal("error")),
     errorMessage: v.optional(v.string()),
+    sessionId: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_form", ["formId"])
     .index("by_form_and_created", ["formId", "createdAt"])
     .index("by_form_and_status", ["formId", "processingStatus"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Form Partials (partial submission recovery)
+  formPartials: defineTable({
+    organizationId: v.id("organizations"),
+    formId: v.id("forms"),
+    sessionId: v.string(),
+    status: v.union(v.literal("in_progress"), v.literal("abandoned"), v.literal("converted")),
+    data: v.record(v.string(), v.any()),
+    currentStep: v.optional(v.number()),
+    completedFieldIds: v.array(v.string()),
+    totalFields: v.number(),
+    completionPercent: v.number(),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    utmSource: v.optional(v.string()),
+    utmMedium: v.optional(v.string()),
+    utmCampaign: v.optional(v.string()),
+    firstInteractionAt: v.number(),
+    lastActivityAt: v.number(),
+    convertedAt: v.optional(v.number()),
+    submissionId: v.optional(v.id("formSubmissions")),
+    createdAt: v.number(),
+  })
+    .index("by_form", ["formId"])
+    .index("by_form_and_session", ["formId", "sessionId"])
+    .index("by_form_and_status", ["formId", "status"])
+    .index("by_status_and_activity", ["status", "lastActivityAt"])
     .index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Webhooks

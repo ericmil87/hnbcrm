@@ -690,6 +690,21 @@ export function FormSettingsPanel({
           />
         </div>
       </section>
+
+      {/* ── 7. Captura parcial ────────────────────────────────── */}
+      <section aria-label="Captura parcial">
+        <SectionHeader>Captura parcial</SectionHeader>
+        <div className="space-y-4">
+          <ToggleRow
+            label="Captura parcial habilitada"
+            description="Salva dados automaticamente quando visitantes preenchem campos, mesmo que nao enviem o formulario"
+            checked={settings.partialCaptureEnabled ?? false}
+            onToggle={() =>
+              update({ partialCaptureEnabled: !(settings.partialCaptureEnabled ?? false) })
+            }
+          />
+        </div>
+      </section>
     </div>
   );
 }

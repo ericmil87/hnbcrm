@@ -9,4 +9,6 @@ crons.interval("process recurring tasks", { hours: 1 }, internal.tasks.processRe
 // Daily digest email — 11:00 UTC = 08:00 BRT (Brasilia Time)
 crons.daily("send daily digest", { hourUTC: 11, minuteUTC: 0 }, internal.email.sendDailyDigest);
 
+crons.interval("mark abandoned form partials", { minutes: 10 }, internal.formPartials.internalMarkAbandoned);
+
 export default crons;

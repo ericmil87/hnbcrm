@@ -26,6 +26,7 @@ export interface FormFieldProps {
   value: string;
   error?: string;
   onChange: (value: string) => void;
+  onBlur?: () => void;
   disabled?: boolean;
 }
 
@@ -46,7 +47,7 @@ const inputBaseStyle = [
 
 const inputErrorStyle = "border-[#EF4444] focus:border-[#EF4444] focus:ring-[#EF4444]";
 
-export function FormField({ field, value, error, onChange, disabled }: FormFieldProps) {
+export function FormField({ field, value, error, onChange, onBlur, disabled }: FormFieldProps) {
   const inputId = `field-${field.id}`;
 
   const labelEl = (
@@ -170,6 +171,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
               type="checkbox"
               checked={value === "true"}
               onChange={(e) => onChange(e.target.checked ? "true" : "false")}
+              onBlur={onBlur}
               disabled={disabled}
               aria-required={field.isRequired}
               aria-invalid={!!error}
@@ -267,6 +269,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
                     value={opt}
                     checked={value === opt}
                     onChange={() => onChange(opt)}
+                    onBlur={onBlur}
                     disabled={disabled}
                     className="sr-only"
                   />
@@ -313,6 +316,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
             id={inputId}
             value={value}
             onChange={(e) => onChange(e.target.value)}
+            onBlur={onBlur}
             disabled={disabled}
             aria-required={field.isRequired}
             aria-invalid={!!error}
@@ -368,6 +372,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
           rows={4}
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
           placeholder={field.placeholder}
           disabled={disabled}
           aria-required={field.isRequired}
@@ -419,6 +424,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
         inputMode={inputModeMap[field.type] ?? "text"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
         placeholder={field.placeholder}
         disabled={disabled}
         aria-required={field.isRequired}

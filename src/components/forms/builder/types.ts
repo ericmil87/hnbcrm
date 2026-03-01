@@ -85,4 +85,6 @@ export interface FormSettings {
     body?: string;
     replyTo?: string;
   };
+  // Partial submission capture
+  partialCaptureEnabled?: boolean;
 }

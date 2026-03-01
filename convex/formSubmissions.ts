@@ -146,6 +146,7 @@ export const internalProcessSubmission = internalMutation({
     utmMedium: v.optional(v.string()),
     utmCampaign: v.optional(v.string()),
     honeypotTriggered: v.boolean(),
+    sessionId: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -361,7 +362,7 @@ export const internalProcessSubmission = internalMutation({
     });
 
     // Store form submission
-    await ctx.db.insert("formSubmissions", {
+    const submissionId = await ctx.db.insert("formSubmissions", {
       organizationId: form.organizationId,
       formId: args.formId,
       data: args.data,
@@ -375,8 +376,18 @@ export const internalProcessSubmission = internalMutation({
       utmCampaign: args.utmCampaign,
       honeypotTriggered: false,
       processingStatus: "processed",
+      sessionId: args.sessionId,
       createdAt: now,
     });
+
+    // Mark partial as converted if sessionId was provided
+    if (args.sessionId) {
+      await ctx.runMutation(internal.formPartials.internalMarkConverted, {
+        formId: args.formId,
+        sessionId: args.sessionId,
+        submissionId,
+      });
+    }
 
     // Increment form submission count
     await ctx.db.patch(args.formId, {

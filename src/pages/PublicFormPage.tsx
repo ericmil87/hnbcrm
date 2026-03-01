@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link } from "react-router";
 import { SEO } from "@/components/SEO";
 import { Spinner } from "@/components/ui/Spinner";
@@ -22,12 +22,17 @@ interface FormSettings {
   successMessage: string;
   redirectUrl?: string;
   honeypotEnabled: boolean;
+  successTitle?: string;
+  successSubtitle?: string;
+  successCta?: { label: string; url: string };
+  partialCaptureEnabled?: boolean;
 }
 
 interface PublicFormData {
   name: string;
   description?: string;
   fields: FormFieldDefinition[];
+  steps?: Array<{ id: string; title: string; description?: string; fieldIds: string[] }>;
   theme: FormTheme;
   settings: FormSettings;
 }
@@ -42,20 +47,11 @@ type PageState =
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Derive the Convex HTTP site URL from the Convex cloud URL.
- * e.g. https://happy-dog-123.convex.cloud → https://happy-dog-123.convex.site
- */
 function getSiteUrl(): string {
   const convexUrl = (import.meta.env.VITE_CONVEX_URL as string) ?? "";
   return convexUrl.replace(".cloud", ".site");
 }
 
-/**
- * Build a prefill map from URL search params.
- * We try to match params by label or by crmMapping field name.
- * Returns a map of field.id → value for any fields that match.
- */
 function buildPrefillData(
   fields: FormFieldDefinition[],
   searchParams: URLSearchParams
@@ -63,9 +59,7 @@ function buildPrefillData(
   const prefill: Record<string, string> = {};
 
   for (const field of fields) {
-    // Match by field label (lowercased, spaces → underscores)
     const labelKey = field.label.toLowerCase().replace(/\s+/g, "_");
-    // Match by crmMapping field name (e.g. "email", "firstName", "phone")
     const mapping = field as { crmMapping?: { entity: string; field: string } };
     const crmKey = mapping.crmMapping?.field?.toLowerCase() ?? "";
 
@@ -84,18 +78,34 @@ function buildPrefillData(
 }
 
 // ---------------------------------------------------------------------------
+// PostMessage helpers
+// ---------------------------------------------------------------------------
+
+function postToParent(type: string, data?: Record<string, unknown>) {
+  if (window.parent === window) return;
+  window.parent.postMessage({ type, ...data }, "*");
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 export function PublicFormPage() {
   const { formSlug } = useParams<{ formSlug: string }>();
   const [pageState, setPageState] = useState<PageState>({ kind: "loading" });
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const siteUrl = getSiteUrl();
   const searchParams = new URLSearchParams(
     typeof window !== "undefined" ? window.location.search : ""
   );
 
+  // Embed mode detection
+  const isEmbed = searchParams.get("embed") === "1";
+  const formContainerRef = useRef<HTMLDivElement>(null);
+  const prefillDataRef = useRef<Record<string, string>>({});
+
+  // Fetch form data
   useEffect(() => {
     if (!formSlug) {
       setPageState({ kind: "not_found" });
@@ -129,6 +139,7 @@ export function PublicFormPage() {
         const json = await res.json();
         const form: PublicFormData = json.form;
         const prefill = buildPrefillData(form.fields, searchParams);
+        prefillDataRef.current = prefill;
         setPageState({ kind: "ready", form, prefill });
       } catch (err) {
         if (cancelled) return;
@@ -143,11 +154,62 @@ export function PublicFormPage() {
     return () => {
       cancelled = true;
     };
-    // searchParams intentionally omitted — derived from window.location at mount time
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formSlug, siteUrl]);
 
-  // ----- Submit handler -----
+  // PostMessage: ResizeObserver for embed mode
+  useEffect(() => {
+    if (!isEmbed || !formContainerRef.current) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = Math.ceil(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+        postToParent("hnbcrm:resize", { height });
+      }
+    });
+
+    observer.observe(formContainerRef.current);
+    return () => observer.disconnect();
+  }, [isEmbed, pageState.kind]);
+
+  // PostMessage: signal ready on mount in embed mode
+  useEffect(() => {
+    if (isEmbed && pageState.kind === "ready") {
+      postToParent("hnbcrm:ready");
+    }
+  }, [isEmbed, pageState.kind]);
+
+  // PostMessage: listen for prefill messages from parent
+  useEffect(() => {
+    if (!isEmbed) return;
+
+    function handleMessage(event: MessageEvent) {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+
+      if (data.type === "hnbcrm:prefill" && data.data && typeof data.data === "object") {
+        // Merge prefill data into current form state
+        if (pageState.kind === "ready") {
+          const merged = { ...prefillDataRef.current, ...data.data };
+          prefillDataRef.current = merged;
+          setPageState((prev) => {
+            if (prev.kind !== "ready") return prev;
+            return { ...prev, prefill: merged };
+          });
+        }
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [isEmbed, pageState.kind]);
+
+  // Handle sessionId from FormRenderer
+  const handleSessionId = useCallback((id: string | null) => {
+    setSessionId(id);
+  }, []);
+
+  // Submit handler
   async function handleSubmit(data: Record<string, string>) {
     if (pageState.kind !== "ready") return;
 
@@ -159,6 +221,7 @@ export function PublicFormPage() {
         body: JSON.stringify({
           slug: formSlug,
           data,
+          sessionId: sessionId ?? undefined,
           _honeypot: undefined,
           referrer: document.referrer,
           utmSource: searchParams.get("utm_source"),
@@ -178,13 +241,18 @@ export function PublicFormPage() {
       }
       throw new Error(message);
     }
+
+    // PostMessage: notify parent of successful submission
+    if (isEmbed) {
+      postToParent("hnbcrm:submitted");
+    }
   }
 
   // ----- Loading -----
   if (pageState.kind === "loading") {
     return (
       <main
-        className="min-h-screen bg-surface-base flex items-center justify-center p-4"
+        className={isEmbed ? "flex items-center justify-center p-4" : "min-h-screen bg-surface-base flex items-center justify-center p-4"}
         aria-label="Carregando formulario"
       >
         <Spinner size="lg" />
@@ -194,6 +262,14 @@ export function PublicFormPage() {
 
   // ----- Not found -----
   if (pageState.kind === "not_found") {
+    if (isEmbed) {
+      return (
+        <main className="flex items-center justify-center p-4">
+          <p className="text-sm text-text-secondary">Formulario nao encontrado</p>
+        </main>
+      );
+    }
+
     return (
       <>
         <SEO
@@ -235,6 +311,14 @@ export function PublicFormPage() {
 
   // ----- Fetch error -----
   if (pageState.kind === "error") {
+    if (isEmbed) {
+      return (
+        <main className="flex items-center justify-center p-4">
+          <p className="text-sm text-text-secondary">{pageState.message}</p>
+        </main>
+      );
+    }
+
     return (
       <>
         <SEO
@@ -253,7 +337,6 @@ export function PublicFormPage() {
             <button
               onClick={() => {
                 setPageState({ kind: "loading" });
-                // Re-trigger the effect by forcing a reload
                 window.location.reload();
               }}
               className="inline-flex items-center justify-center h-11 px-6 rounded-full
@@ -271,6 +354,26 @@ export function PublicFormPage() {
 
   // ----- Ready -----
   const { form, prefill } = pageState;
+
+  // Embed mode: minimal wrapper, transparent background option
+  if (isEmbed) {
+    return (
+      <div ref={formContainerRef} style={{ backgroundColor: form.theme.backgroundColor }}>
+        <div className="p-4">
+          <FormRenderer
+            form={form}
+            onSubmit={handleSubmit}
+            prefillData={prefill}
+            formSlug={formSlug}
+            siteUrl={siteUrl}
+            onSessionId={handleSessionId}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Normal (non-embed) mode
   const pageStyle: React.CSSProperties = {
     backgroundColor: form.theme.backgroundColor,
     minHeight: "100vh",
@@ -286,7 +389,6 @@ export function PublicFormPage() {
         }
         noindex={false}
       />
-      {/* Page background uses the form's theme background color */}
       <div style={pageStyle} className="flex items-center justify-center p-4">
         <main
           className="w-full max-w-lg animate-fade-in-up"
@@ -301,6 +403,9 @@ export function PublicFormPage() {
                 form={form}
                 onSubmit={handleSubmit}
                 prefillData={prefill}
+                formSlug={formSlug}
+                siteUrl={siteUrl}
+                onSessionId={handleSessionId}
               />
             </div>
           </div>
