@@ -12,6 +12,12 @@ import {
   AlignLeft,
   CheckSquare,
   Calendar,
+  CircleDot,
+  Link,
+  EyeOff,
+  Heading,
+  Minus,
+  Star,
 } from "lucide-react";
 import type { FormField } from "./types";
 
@@ -31,6 +37,12 @@ const FIELD_ICONS: Record<FormField["type"], React.ElementType> = {
   textarea: AlignLeft,
   checkbox: CheckSquare,
   date: Calendar,
+  radio: CircleDot,
+  url: Link,
+  hidden: EyeOff,
+  heading: Heading,
+  divider: Minus,
+  rating: Star,
 };
 
 const FIELD_LABELS: Record<FormField["type"], string> = {
@@ -42,6 +54,12 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
   textarea: "Area de Texto",
   checkbox: "Checkbox",
   date: "Data",
+  radio: "Radio",
+  url: "URL",
+  hidden: "Oculto",
+  heading: "Titulo",
+  divider: "Divisor",
+  rating: "Avaliacao",
 };
 
 export function FieldCard({ field, isSelected, onSelect, onDelete }: FieldCardProps) {

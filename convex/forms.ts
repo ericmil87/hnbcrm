@@ -3,6 +3,7 @@ import { query, mutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
 
 // Helper: generate a short random ID (8 chars)
 function generateFieldId(): string {
@@ -182,6 +183,7 @@ export const updateForm = mutation({
     fields: v.optional(v.array(v.any())),
     theme: v.optional(v.any()),
     settings: v.optional(v.any()),
+    steps: v.optional(v.any()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -227,6 +229,10 @@ export const updateForm = mutation({
     if (args.settings !== undefined) {
       changes.settings = args.settings;
       before.settings = form.settings;
+    }
+    if (args.steps !== undefined) {
+      changes.steps = args.steps;
+      before.steps = form.steps;
     }
 
     if (Object.keys(changes).length === 0) return null;
@@ -274,8 +280,34 @@ export const publishForm = mutation({
 
     const userMember = await requirePermission(ctx, form.organizationId, "settings", "manage");
 
-    if (form.fields.length === 0) {
-      throw new Error("Form must have at least 1 field to publish");
+    const inputFields = form.fields.filter(
+      (f: any) => !LAYOUT_FIELD_TYPES.includes(f.type)
+    );
+    if (inputFields.length === 0) {
+      throw new Error("Form must have at least 1 input field to publish");
+    }
+
+    // Phase 4: validate steps — every field must belong to exactly one step
+    if (form.steps && form.steps.length > 0) {
+      const allFieldIds = new Set(form.fields.map((f: any) => f.id));
+      const assignedFieldIds = new Set<string>();
+      for (const step of form.steps) {
+        for (const fid of step.fieldIds) {
+          if (!allFieldIds.has(fid)) {
+            throw new Error(`Step "${step.title}" references unknown field ${fid}`);
+          }
+          if (assignedFieldIds.has(fid)) {
+            throw new Error(`Field ${fid} is assigned to multiple steps`);
+          }
+          assignedFieldIds.add(fid);
+        }
+      }
+      // Ensure every field is assigned to a step
+      for (const f of form.fields) {
+        if (!assignedFieldIds.has(f.id)) {
+          throw new Error(`Field "${f.label}" is not assigned to any step`);
+        }
+      }
     }
 
     const now = Date.now();
@@ -460,6 +492,7 @@ export const duplicateForm = mutation({
       description: form.description,
       status: "draft",
       fields: form.fields,
+      steps: form.steps,
       theme: form.theme,
       settings: form.settings,
       createdBy: userMember._id,

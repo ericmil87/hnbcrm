@@ -35,6 +35,7 @@ import type * as lib_batchGet from "../lib/batchGet.js";
 import type * as lib_cursor from "../lib/cursor.js";
 import type * as lib_fileQuotas from "../lib/fileQuotas.js";
 import type * as lib_fileValidation from "../lib/fileValidation.js";
+import type * as lib_formFieldTypes from "../lib/formFieldTypes.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
@@ -86,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   "lib/cursor": typeof lib_cursor;
   "lib/fileQuotas": typeof lib_fileQuotas;
   "lib/fileValidation": typeof lib_fileValidation;
+  "lib/formFieldTypes": typeof lib_formFieldTypes;
   "lib/permissions": typeof lib_permissions;
   llmsTxt: typeof llmsTxt;
   nodeActions: typeof nodeActions;

@@ -13,14 +13,22 @@ import {
   AlignLeft,
   CheckSquare,
   Calendar,
+  CircleDot,
+  Link,
+  EyeOff,
+  Heading,
+  Minus,
+  Star,
 } from "lucide-react";
 import { CrmMappingSelect } from "./CrmMappingSelect";
+import { ConditionalLogicEditor } from "./ConditionalLogicEditor";
 import type { FormField } from "./types";
 
 interface FieldConfigPanelProps {
   field: FormField;
   onChange: (updated: FormField) => void;
   organizationId: string;
+  allFields?: FormField[];
 }
 
 const FIELD_ICONS: Record<FormField["type"], React.ElementType> = {
@@ -32,6 +40,12 @@ const FIELD_ICONS: Record<FormField["type"], React.ElementType> = {
   textarea: AlignLeft,
   checkbox: CheckSquare,
   date: Calendar,
+  radio: CircleDot,
+  url: Link,
+  hidden: EyeOff,
+  heading: Heading,
+  divider: Minus,
+  rating: Star,
 };
 
 const FIELD_LABELS: Record<FormField["type"], string> = {
@@ -43,6 +57,12 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
   textarea: "Area de Texto",
   checkbox: "Caixa de Selecao",
   date: "Data",
+  radio: "Radio",
+  url: "URL",
+  hidden: "Oculto",
+  heading: "Titulo",
+  divider: "Divisor",
+  rating: "Avaliacao",
 };
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -114,6 +134,7 @@ export function FieldConfigPanel({
   field,
   onChange,
   organizationId,
+  allFields,
 }: FieldConfigPanelProps) {
   const [newOption, setNewOption] = useState("");
 
@@ -146,12 +167,35 @@ export function FieldConfigPanel({
     field.type === "text" ||
     field.type === "textarea" ||
     field.type === "email" ||
-    field.type === "phone";
+    field.type === "phone" ||
+    field.type === "url";
   const showNumberValidation = field.type === "number";
-  const showPatternInput = field.type === "text" || field.type === "textarea";
-  const showSelectOptions = field.type === "select";
+  const showPatternInput =
+    field.type === "text" ||
+    field.type === "textarea" ||
+    field.type === "url";
+  const showSelectOptions =
+    field.type === "select" || field.type === "radio";
   const hasValidationSection =
     showTextValidation || showNumberValidation || showPatternInput;
+
+  // Visibility flags per field type
+  const isHidden = field.type === "hidden";
+  const isHeading = field.type === "heading";
+  const isDivider = field.type === "divider";
+  const isLayoutOnly = isHeading || isDivider;
+  const isRating = field.type === "rating";
+
+  // heading/divider/hidden suppress most controls
+  const showRequired = !isLayoutOnly && !isHidden;
+  const showWidth = !isLayoutOnly && !isHidden;
+  const showCrmMapping = !isLayoutOnly && !isHidden;
+  // hidden only shows defaultValue; heading only shows label
+  const showPlaceholder =
+    !isLayoutOnly && !isHidden && field.type !== "checkbox" && !isRating;
+  const showHelpText = !isLayoutOnly && !isHidden;
+  const showDefaultValue = !isLayoutOnly && !isRating;
+  const showValidation = hasValidationSection && !isHidden && !isLayoutOnly && !isRating;
 
   const currentWidth = field.width ?? "full";
 
@@ -174,159 +218,195 @@ export function FieldConfigPanel({
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+
+        {/* ── Divisor: visual-only message ──────────────────────── */}
+        {isDivider && (
+          <p className="text-sm text-text-muted text-center py-4">
+            Este campo e apenas visual, sem configuracao adicional.
+          </p>
+        )}
+
         {/* ── Propriedades ──────────────────────────────────────── */}
-        <section aria-label="Propriedades">
-          <SectionHeader>Propriedades</SectionHeader>
-          <div className="space-y-3">
-            <Input
-              label="Rotulo *"
-              value={field.label}
-              onChange={(e) => update({ label: e.target.value })}
-              placeholder="Ex: Nome completo"
-            />
+        {!isDivider && (
+          <section aria-label="Propriedades">
+            <SectionHeader>Propriedades</SectionHeader>
+            <div className="space-y-3">
 
-            {field.type !== "checkbox" && (
+              {/* Label — always shown; heading uses special label text */}
               <Input
-                label="Placeholder"
-                value={field.placeholder ?? ""}
-                onChange={(e) =>
-                  update({ placeholder: e.target.value || undefined })
-                }
-                placeholder="Ex: Digite seu nome"
+                label={isHeading ? "Texto do titulo *" : "Rotulo *"}
+                value={field.label}
+                onChange={(e) => update({ label: e.target.value })}
+                placeholder={isHeading ? "Ex: Dados pessoais" : "Ex: Nome completo"}
               />
-            )}
 
-            <div>
-              <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Texto de ajuda
-              </label>
-              <input
-                type="text"
-                value={field.helpText ?? ""}
-                onChange={(e) =>
-                  update({ helpText: e.target.value || undefined })
-                }
-                placeholder="Instrucoes adicionais para o usuario"
-                className={cn(
-                  "w-full bg-surface-raised border border-border-strong rounded-field",
-                  "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
-                  "transition-colors duration-150",
-                  "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-                )}
-              />
-            </div>
+              {/* Hidden: show defaultValue prominently as "Valor fixo" */}
+              {isHidden && (
+                <Input
+                  label="Valor fixo"
+                  value={field.defaultValue ?? ""}
+                  onChange={(e) =>
+                    update({ defaultValue: e.target.value || undefined })
+                  }
+                  placeholder="Valor enviado de forma oculta"
+                />
+              )}
 
-            <ToggleRow
-              label="Obrigatorio"
-              description="O usuario deve preencher este campo"
-              checked={field.isRequired}
-              onToggle={() => update({ isRequired: !field.isRequired })}
-            />
+              {/* Placeholder — suppressed for checkbox, heading, hidden, rating */}
+              {showPlaceholder && (
+                <Input
+                  label="Placeholder"
+                  value={field.placeholder ?? ""}
+                  onChange={(e) =>
+                    update({ placeholder: e.target.value || undefined })
+                  }
+                  placeholder="Ex: Digite seu nome"
+                />
+              )}
 
-            {/* Width selector */}
-            <div>
-              <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Largura
-              </label>
-              <div className="flex gap-2">
-                {(["full", "half"] as const).map((w) => (
-                  <button
-                    key={w}
-                    onClick={() => update({ width: w })}
+              {/* Help text — suppressed for heading and hidden */}
+              {showHelpText && (
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Texto de ajuda
+                  </label>
+                  <input
+                    type="text"
+                    value={field.helpText ?? ""}
+                    onChange={(e) =>
+                      update({ helpText: e.target.value || undefined })
+                    }
+                    placeholder="Instrucoes adicionais para o usuario"
                     className={cn(
-                      "flex-1 py-2 text-sm rounded-lg border transition-all duration-150",
-                      "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-overlay",
-                      currentWidth === w
-                        ? "border-brand-500 bg-brand-500/10 text-brand-500 font-medium"
-                        : "border-border-strong bg-surface-raised text-text-secondary hover:border-border"
+                      "w-full bg-surface-raised border border-border-strong rounded-field",
+                      "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
+                      "transition-colors duration-150",
+                      "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
                     )}
-                    aria-pressed={currentWidth === w}
-                  >
-                    {w === "full" ? "Largura total" : "Meia largura"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Input
-              label="Valor padrao"
-              value={field.defaultValue ?? ""}
-              onChange={(e) =>
-                update({ defaultValue: e.target.value || undefined })
-              }
-              placeholder="Valor pre-preenchido"
-            />
-
-            {/* Select options editor */}
-            {showSelectOptions && (
-              <div>
-                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Opcoes de selecao
-                </label>
-                <div className="space-y-2">
-                  {(field.options ?? []).map((opt, index) => (
-                    <div key={index} className="flex items-center gap-2">
-                      <span className="flex-1 px-3 py-2 text-sm bg-surface-sunken border border-border rounded-lg text-text-primary truncate">
-                        {opt}
-                      </span>
-                      <button
-                        aria-label={`Remover opcao ${opt}`}
-                        onClick={() => removeOption(index)}
-                        className={cn(
-                          "p-2 rounded-lg text-text-muted",
-                          "hover:text-semantic-error hover:bg-semantic-error/10",
-                          "transition-colors",
-                          "focus:outline-none focus:ring-2 focus:ring-semantic-error"
-                        )}
-                      >
-                        <Trash2 size={14} aria-hidden="true" />
-                      </button>
-                    </div>
-                  ))}
-
-                  <div className="flex gap-2 mt-2">
-                    <input
-                      type="text"
-                      value={newOption}
-                      onChange={(e) => setNewOption(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addOption();
-                        }
-                      }}
-                      placeholder="Nova opcao..."
-                      className={cn(
-                        "flex-1 bg-surface-raised border border-border-strong rounded-field",
-                        "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
-                        "transition-colors duration-150",
-                        "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-                      )}
-                    />
-                    <Button
-                      variant="secondary"
-                      size="md"
-                      onClick={addOption}
-                      aria-label="Adicionar opcao"
-                    >
-                      <Plus size={16} aria-hidden="true" />
-                      <span className="hidden sm:inline">Adicionar</span>
-                    </Button>
-                  </div>
-
-                  {(!field.options || field.options.length === 0) && (
-                    <p className="text-[12px] text-text-muted text-center py-1">
-                      Nenhuma opcao adicionada ainda
-                    </p>
-                  )}
+                  />
                 </div>
-              </div>
-            )}
-          </div>
-        </section>
+              )}
+
+              {/* Required toggle — suppressed for heading, divider, hidden */}
+              {showRequired && (
+                <ToggleRow
+                  label="Obrigatorio"
+                  description="O usuario deve preencher este campo"
+                  checked={field.isRequired}
+                  onToggle={() => update({ isRequired: !field.isRequired })}
+                />
+              )}
+
+              {/* Width selector — suppressed for heading, divider, hidden */}
+              {showWidth && (
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Largura
+                  </label>
+                  <div className="flex gap-2">
+                    {(["full", "half"] as const).map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => update({ width: w })}
+                        className={cn(
+                          "flex-1 py-2 text-sm rounded-lg border transition-all duration-150",
+                          "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-overlay",
+                          currentWidth === w
+                            ? "border-brand-500 bg-brand-500/10 text-brand-500 font-medium"
+                            : "border-border-strong bg-surface-raised text-text-secondary hover:border-border"
+                        )}
+                        aria-pressed={currentWidth === w}
+                      >
+                        {w === "full" ? "Largura total" : "Meia largura"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Default value — suppressed for heading, divider, rating, and hidden (shown above) */}
+              {showDefaultValue && !isHidden && (
+                <Input
+                  label="Valor padrao"
+                  value={field.defaultValue ?? ""}
+                  onChange={(e) =>
+                    update({ defaultValue: e.target.value || undefined })
+                  }
+                  placeholder="Valor pre-preenchido"
+                />
+              )}
+
+              {/* Options editor — select and radio */}
+              {showSelectOptions && (
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Opcoes de selecao
+                  </label>
+                  <div className="space-y-2">
+                    {(field.options ?? []).map((opt, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <span className="flex-1 px-3 py-2 text-sm bg-surface-sunken border border-border rounded-lg text-text-primary truncate">
+                          {opt}
+                        </span>
+                        <button
+                          aria-label={`Remover opcao ${opt}`}
+                          onClick={() => removeOption(index)}
+                          className={cn(
+                            "p-2 rounded-lg text-text-muted",
+                            "hover:text-semantic-error hover:bg-semantic-error/10",
+                            "transition-colors",
+                            "focus:outline-none focus:ring-2 focus:ring-semantic-error"
+                          )}
+                        >
+                          <Trash2 size={14} aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))}
+
+                    <div className="flex gap-2 mt-2">
+                      <input
+                        type="text"
+                        value={newOption}
+                        onChange={(e) => setNewOption(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addOption();
+                          }
+                        }}
+                        placeholder="Nova opcao..."
+                        className={cn(
+                          "flex-1 bg-surface-raised border border-border-strong rounded-field",
+                          "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
+                          "transition-colors duration-150",
+                          "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
+                        )}
+                      />
+                      <Button
+                        variant="secondary"
+                        size="md"
+                        onClick={addOption}
+                        aria-label="Adicionar opcao"
+                      >
+                        <Plus size={16} aria-hidden="true" />
+                        <span className="hidden sm:inline">Adicionar</span>
+                      </Button>
+                    </div>
+
+                    {(!field.options || field.options.length === 0) && (
+                      <p className="text-[12px] text-text-muted text-center py-1">
+                        Nenhuma opcao adicionada ainda
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
 
         {/* ── Validacao ─────────────────────────────────────────── */}
-        {hasValidationSection && (
+        {showValidation && (
           <section aria-label="Validacao">
             <SectionHeader>Validacao</SectionHeader>
             <div className="space-y-3">
@@ -411,14 +491,29 @@ export function FieldConfigPanel({
         )}
 
         {/* ── Mapeamento CRM ────────────────────────────────────── */}
-        <section aria-label="Mapeamento CRM">
-          <SectionHeader>Mapeamento CRM</SectionHeader>
-          <CrmMappingSelect
-            value={field.crmMapping}
-            onChange={(mapping) => update({ crmMapping: mapping })}
-            organizationId={organizationId}
-          />
-        </section>
+        {showCrmMapping && (
+          <section aria-label="Mapeamento CRM">
+            <SectionHeader>Mapeamento CRM</SectionHeader>
+            <CrmMappingSelect
+              value={field.crmMapping}
+              onChange={(mapping) => update({ crmMapping: mapping })}
+              organizationId={organizationId}
+            />
+          </section>
+        )}
+
+        {/* ── Logica condicional ─────────────────────────────────── */}
+        {!isLayoutOnly && allFields && allFields.length > 1 && (
+          <section aria-label="Logica condicional">
+            <SectionHeader>Logica condicional</SectionHeader>
+            <ConditionalLogicEditor
+              logic={field.conditionalLogic}
+              onChange={(logic) => update({ conditionalLogic: logic })}
+              fields={allFields}
+              currentFieldId={field.id}
+            />
+          </section>
+        )}
       </div>
     </div>
   );

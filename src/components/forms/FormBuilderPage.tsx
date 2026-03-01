@@ -17,7 +17,9 @@ import { FormSettingsPanel } from "@/components/forms/builder/FormSettingsPanel"
 import { ThemePanel } from "@/components/forms/builder/ThemePanel";
 import { PublishDialog } from "@/components/forms/builder/PublishDialog";
 import { FormRenderer } from "@/components/forms/renderer/FormRenderer";
-import type { FormField, FormTheme, FormSettings } from "@/components/forms/builder/types";
+import { StepManager } from "@/components/forms/builder/StepManager";
+import type { FormField, FormStep, FormTheme, FormSettings } from "@/components/forms/builder/types";
+import { LAYOUT_FIELD_TYPES, OPTIONS_FIELD_TYPES } from "@/components/forms/builder/types";
 import {
   ArrowLeft,
   Save,
@@ -63,6 +65,12 @@ const DEFAULT_LABELS: Record<FormField["type"], string> = {
   textarea: "Mensagem",
   checkbox: "Caixa de selecao",
   date: "Data",
+  radio: "Opcoes",
+  url: "URL",
+  hidden: "Campo oculto",
+  heading: "Titulo da secao",
+  divider: "Divisor",
+  rating: "Avaliacao",
 };
 
 // Generate an 8-char alphanumeric ID
@@ -76,14 +84,22 @@ function genFieldId(): string {
 }
 
 function createNewField(type: FormField["type"]): FormField {
-  return {
+  const base: FormField = {
     id: genFieldId(),
     type,
     label: DEFAULT_LABELS[type],
     isRequired: false,
     width: "full",
-    ...(type === "select" ? { options: ["Opcao 1", "Opcao 2"] } : {}),
   };
+  // Add default options for select/radio
+  if (OPTIONS_FIELD_TYPES.includes(type)) {
+    base.options = ["Opcao 1", "Opcao 2"];
+  }
+  // Layout fields are never required
+  if (LAYOUT_FIELD_TYPES.includes(type)) {
+    base.isRequired = false;
+  }
+  return base;
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────────
@@ -266,11 +282,12 @@ function MenuItemRow({
 
 // ── Editor tab bar ────────────────────────────────────────────────────────────
 
-type EditorTab = "campos" | "configuracoes" | "tema";
+type EditorTab = "campos" | "etapas" | "configuracoes" | "tema";
 
 const EDITOR_TABS: { key: EditorTab; label: string }[] = [
   { key: "campos", label: "Campos" },
-  { key: "configuracoes", label: "Configuracoes" },
+  { key: "etapas", label: "Etapas" },
+  { key: "configuracoes", label: "Config" },
   { key: "tema", label: "Tema" },
 ];
 
@@ -297,6 +314,7 @@ export function FormBuilderPage() {
   const [description, setDescription] = useState<string | undefined>(undefined);
   const [slug, setSlug] = useState<string | undefined>(undefined);
   const [fields, setFields] = useState<FormField[]>([]);
+  const [steps, setSteps] = useState<FormStep[] | undefined>(undefined);
   const [theme, setTheme] = useState<FormTheme>(DEFAULT_THEME);
   const [settings, setSettings] = useState<FormSettings>(DEFAULT_SETTINGS);
 
@@ -306,6 +324,7 @@ export function FormBuilderPage() {
     description: undefined as string | undefined,
     slug: undefined as string | undefined,
     fields: [] as FormField[],
+    steps: undefined as FormStep[] | undefined,
     theme: DEFAULT_THEME,
     settings: DEFAULT_SETTINGS,
   });
@@ -319,6 +338,7 @@ export function FormBuilderPage() {
     setDescription(form.description);
     setSlug(form.slug);
     setFields((form.fields as FormField[]) ?? []);
+    setSteps((form.steps as FormStep[] | undefined) ?? undefined);
     setTheme((form.theme as FormTheme) ?? DEFAULT_THEME);
     setSettings((form.settings as FormSettings) ?? DEFAULT_SETTINGS);
     serverStateRef.current = {
@@ -326,6 +346,7 @@ export function FormBuilderPage() {
       description: form.description,
       slug: form.slug,
       fields: (form.fields as FormField[]) ?? [],
+      steps: (form.steps as FormStep[] | undefined) ?? undefined,
       theme: (form.theme as FormTheme) ?? DEFAULT_THEME,
       settings: (form.settings as FormSettings) ?? DEFAULT_SETTINGS,
     };
@@ -339,6 +360,7 @@ export function FormBuilderPage() {
       description !== serverStateRef.current.description ||
       slug !== serverStateRef.current.slug ||
       JSON.stringify(fields) !== JSON.stringify(serverStateRef.current.fields) ||
+      JSON.stringify(steps) !== JSON.stringify(serverStateRef.current.steps) ||
       JSON.stringify(theme) !== JSON.stringify(serverStateRef.current.theme) ||
       JSON.stringify(settings) !== JSON.stringify(serverStateRef.current.settings));
 
@@ -384,11 +406,12 @@ export function FormBuilderPage() {
         description,
         slug,
         fields: fields as Parameters<typeof updateForm>[0]["fields"],
+        steps: steps as any,
         theme: theme as Parameters<typeof updateForm>[0]["theme"],
         settings: settings as Parameters<typeof updateForm>[0]["settings"],
       }).then(() => {
         // Update server ref so dirty state resets
-        serverStateRef.current = { name, description, slug, fields, theme, settings };
+        serverStateRef.current = { name, description, slug, fields, steps, theme, settings };
       }).finally(() => setIsSaving(false)),
       {
         loading: "Salvando...",
@@ -396,7 +419,7 @@ export function FormBuilderPage() {
         error: "Erro ao salvar formulario",
       }
     );
-  }, [formId, isDirty, name, description, slug, fields, theme, settings, updateForm]);
+  }, [formId, isDirty, name, description, slug, fields, steps, theme, settings, updateForm]);
 
   // ── Publish / Unpublish ───────────────────────────────────────────────────────
   const handlePublish = useCallback(() => {
@@ -407,16 +430,17 @@ export function FormBuilderPage() {
         formId: formId as Id<"forms">,
         name, description, slug,
         fields: fields as Parameters<typeof updateForm>[0]["fields"],
+        steps: steps as any,
         theme: theme as Parameters<typeof updateForm>[0]["theme"],
         settings: settings as Parameters<typeof updateForm>[0]["settings"],
       }).then(() => {
-        serverStateRef.current = { name, description, slug, fields, theme, settings };
+        serverStateRef.current = { name, description, slug, fields, steps, theme, settings };
         setShowPublishDialog(true);
       });
     } else {
       setShowPublishDialog(true);
     }
-  }, [formId, isDirty, name, description, slug, fields, theme, settings, updateForm]);
+  }, [formId, isDirty, name, description, slug, fields, steps, theme, settings, updateForm]);
 
   const handleUnpublish = useCallback(() => {
     if (!formId) return;
@@ -507,7 +531,7 @@ export function FormBuilderPage() {
           )}
         >
           <FormRenderer
-            form={{ name, description, fields, theme, settings }}
+            form={{ name, description, fields, steps, theme, settings }}
             isPreview={true}
           />
         </div>
@@ -580,10 +604,21 @@ export function FormBuilderPage() {
                     field={selectedField}
                     onChange={handleFieldChange}
                     organizationId={organizationId}
+                    allFields={fields}
                   />
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {editorTab === "etapas" && (
+          <div className="p-4">
+            <StepManager
+              steps={steps}
+              onChange={setSteps}
+              fields={fields}
+            />
           </div>
         )}
 

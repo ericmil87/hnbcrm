@@ -1,9 +1,138 @@
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
+
+// ── Phase 6: Server-side validation helper ──
+
+function validateSubmissionData(
+  fields: any[],
+  data: Record<string, any>,
+  visibleFieldIds?: Set<string>
+): { valid: boolean; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+
+  for (const field of fields) {
+    // Skip layout fields
+    if (LAYOUT_FIELD_TYPES.includes(field.type)) continue;
+    // Skip hidden fields from required validation (they always have defaultValue)
+    if (field.type === "hidden") continue;
+    // Skip invisible fields (conditional logic)
+    if (visibleFieldIds && !visibleFieldIds.has(field.id)) continue;
+
+    const value = data[field.id];
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    const isEmpty = field.type === "checkbox" ? value !== "true" : trimmed === "";
+
+    if (field.isRequired && isEmpty) {
+      errors[field.id] = "Campo obrigatório";
+      continue;
+    }
+
+    if (!isEmpty && trimmed) {
+      if (field.type === "email") {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(trimmed)) {
+          errors[field.id] = "E-mail inválido";
+        }
+      }
+
+      if (field.type === "url") {
+        try {
+          new URL(trimmed);
+        } catch {
+          errors[field.id] = "URL inválida";
+        }
+      }
+
+      if (field.type === "rating") {
+        const num = parseInt(trimmed);
+        if (isNaN(num) || num < 1 || num > 5) {
+          errors[field.id] = "Avaliação inválida";
+        }
+      }
+
+      const v = field.validation;
+      if (v) {
+        if (v.minLength !== undefined && trimmed.length < v.minLength) {
+          errors[field.id] = `Mínimo ${v.minLength} caracteres`;
+        }
+        if (v.maxLength !== undefined && trimmed.length > v.maxLength) {
+          errors[field.id] = `Máximo ${v.maxLength} caracteres`;
+        }
+        if (field.type === "number") {
+          const num = Number(value);
+          if (v.min !== undefined && num < v.min) {
+            errors[field.id] = `Mínimo: ${v.min}`;
+          }
+          if (v.max !== undefined && num > v.max) {
+            errors[field.id] = `Máximo: ${v.max}`;
+          }
+        }
+        if (v.pattern) {
+          try {
+            if (!new RegExp(v.pattern).test(trimmed)) {
+              errors[field.id] = "Formato inválido";
+            }
+          } catch {
+            // Invalid regex, skip
+          }
+        }
+      }
+    }
+  }
+
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+// Phase 3: Evaluate conditional logic server-side
+function evaluateFieldVisibilityServer(
+  field: any,
+  data: Record<string, any>
+): boolean {
+  const logic = field.conditionalLogic;
+  if (!logic || !logic.conditions || logic.conditions.length === 0) return true;
+
+  const results = logic.conditions.map((condition: any) => {
+    const fieldValue = String(data[condition.fieldId] ?? "");
+    const condValue = condition.value ?? "";
+
+    switch (condition.operator) {
+      case "equals": return fieldValue === condValue;
+      case "not_equals": return fieldValue !== condValue;
+      case "contains": return fieldValue.toLowerCase().includes(condValue.toLowerCase());
+      case "not_contains": return !fieldValue.toLowerCase().includes(condValue.toLowerCase());
+      case "is_empty": return fieldValue.trim() === "";
+      case "is_not_empty": return fieldValue.trim() !== "";
+      case "greater_than": return Number(fieldValue) > Number(condValue);
+      case "less_than": return Number(fieldValue) < Number(condValue);
+      default: return true;
+    }
+  });
+
+  const conditionsMet = logic.logic === "all"
+    ? results.every(Boolean)
+    : results.some(Boolean);
+
+  return logic.action === "show" ? conditionsMet : !conditionsMet;
+}
+
+// Phase 6: Simple hash for duplicate detection
+function hashSubmissionData(data: Record<string, any>): string {
+  const sorted = Object.keys(data).sort().map(k => `${k}:${data[k]}`).join("|");
+  // Simple hash — good enough for 60s window dedup
+  let hash = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const char = sorted.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0; // Convert to 32bit integer
+  }
+  return String(hash);
+}
 
 // Internal: Process a form submission (called from HTTP action, no auth)
 export const internalProcessSubmission = internalMutation({
@@ -58,11 +187,69 @@ export const internalProcessSubmission = internalMutation({
       return { success: true, spam: true };
     }
 
-    // Extract contact fields from data using crmMappings
+    // Phase 3: Compute field visibility based on conditional logic
+    const visibleFieldIds = new Set<string>();
+    for (const field of form.fields) {
+      if (evaluateFieldVisibilityServer(field, args.data)) {
+        visibleFieldIds.add(field.id);
+      }
+    }
+
+    // Phase 6: Server-side validation
+    const validationResult = validateSubmissionData(form.fields, args.data, visibleFieldIds);
+    if (!validationResult.valid) {
+      // Store with error status
+      await ctx.db.insert("formSubmissions", {
+        organizationId: form.organizationId,
+        formId: args.formId,
+        data: args.data,
+        ipAddress: args.ipAddress,
+        userAgent: args.userAgent,
+        referrer: args.referrer,
+        utmSource: args.utmSource,
+        utmMedium: args.utmMedium,
+        utmCampaign: args.utmCampaign,
+        honeypotTriggered: false,
+        processingStatus: "error",
+        errorMessage: JSON.stringify(validationResult.errors),
+        createdAt: now,
+      });
+
+      await ctx.db.patch(args.formId, {
+        submissionCount: form.submissionCount + 1,
+        lastSubmissionAt: now,
+        updatedAt: now,
+      });
+
+      return { success: false, validation: true, errors: validationResult.errors };
+    }
+
+    // Phase 6: Duplicate detection — check recent submissions (last 60s)
+    const fingerprint = hashSubmissionData(args.data);
+    const sixtySecondsAgo = now - 60 * 1000;
+    const recentSubmissions = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_form_and_created", (q) =>
+        q.eq("formId", args.formId).gte("createdAt", sixtySecondsAgo)
+      )
+      .collect();
+
+    const isDuplicate = recentSubmissions.some((s) => {
+      if (s.processingStatus === "spam") return false;
+      return hashSubmissionData(s.data as Record<string, any>) === fingerprint;
+    });
+
+    if (isDuplicate) {
+      return { success: false, duplicate: true };
+    }
+
+    // Extract contact fields from data using crmMappings (only visible fields)
     const contactFields: Record<string, string> = {};
     const leadCustomFields: Record<string, any> = {};
 
     for (const field of form.fields) {
+      // Skip invisible fields from CRM mapping
+      if (!visibleFieldIds.has(field.id)) continue;
       const value = args.data[field.id];
       if (value === undefined || value === null || value === "") continue;
 
@@ -248,11 +435,30 @@ export const internalProcessSubmission = internalMutation({
       }
     }
 
+    // Phase 7: Send confirmation email to submitter if enabled
+    if (form.settings.confirmationEmail?.enabled && contactFields.email) {
+      // Build field label map for variable replacement
+      const fieldLabels: Record<string, string> = {};
+      for (const field of form.fields) {
+        fieldLabels[field.id] = field.label;
+      }
+
+      await ctx.scheduler.runAfter(0, internal.email.sendConfirmationEmail, {
+        toEmail: contactFields.email,
+        formName: form.name,
+        subject: form.settings.confirmationEmail.subject,
+        body: form.settings.confirmationEmail.body,
+        replyTo: form.settings.confirmationEmail.replyTo,
+        submittedData: args.data,
+        fieldLabels,
+      });
+    }
+
     return { success: true, leadId, contactId };
   },
 });
 
-// Get form submissions
+// Get form submissions (legacy, kept for backward compat)
 export const getFormSubmissions = query({
   args: {
     formId: v.id("forms"),
@@ -272,6 +478,36 @@ export const getFormSubmissions = query({
       .take(limit);
 
     return submissions;
+  },
+});
+
+// Phase 1: Paginated form submissions with optional status filter
+export const getFormSubmissionsPaginated = query({
+  args: {
+    formId: v.id("forms"),
+    organizationId: v.id("organizations"),
+    status: v.optional(v.union(v.literal("processed"), v.literal("spam"), v.literal("error"))),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+
+    if (args.status) {
+      return await ctx.db
+        .query("formSubmissions")
+        .withIndex("by_form_and_status", (q) =>
+          q.eq("formId", args.formId).eq("processingStatus", args.status!)
+        )
+        .order("desc")
+        .paginate(args.paginationOpts);
+    }
+
+    return await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_form_and_created", (q) => q.eq("formId", args.formId))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -302,5 +538,61 @@ export const getFormStats = query({
     const last30Days = submissions.filter((s) => s.createdAt >= thirtyDaysAgo).length;
 
     return { total, processed, spam, error, last7Days, last30Days };
+  },
+});
+
+// Phase 5: Form analytics with daily breakdown
+export const getFormAnalytics = query({
+  args: {
+    formId: v.id("forms"),
+    organizationId: v.id("organizations"),
+    now: v.number(),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+
+    const submissions = await ctx.db
+      .query("formSubmissions")
+      .withIndex("by_form_and_created", (q) => q.eq("formId", args.formId))
+      .collect();
+
+    const sevenDaysAgo = args.now - 7 * 24 * 60 * 60 * 1000;
+    const thirtyDaysAgo = args.now - 30 * 24 * 60 * 60 * 1000;
+
+    const total = submissions.length;
+    const processed = submissions.filter((s) => s.processingStatus === "processed").length;
+    const spam = submissions.filter((s) => s.processingStatus === "spam").length;
+    const error = submissions.filter((s) => s.processingStatus === "error").length;
+    const last7Days = submissions.filter((s) => s.createdAt >= sevenDaysAgo).length;
+    const last30Days = submissions.filter((s) => s.createdAt >= thirtyDaysAgo).length;
+    const spamRate = total > 0 ? spam / total : 0;
+
+    // Daily submissions for last 30 days
+    const dailySubmissions: { date: string; count: number }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const dayStart = args.now - (i + 1) * 24 * 60 * 60 * 1000;
+      const dayEnd = args.now - i * 24 * 60 * 60 * 1000;
+      const count = submissions.filter((s) => s.createdAt >= dayStart && s.createdAt < dayEnd).length;
+      const date = new Date(dayStart).toISOString().split("T")[0];
+      dailySubmissions.push({ date, count });
+    }
+
+    // UTM source breakdown
+    const utmBreakdown: Record<string, number> = {};
+    for (const s of submissions) {
+      if (s.utmSource) {
+        utmBreakdown[s.utmSource] = (utmBreakdown[s.utmSource] ?? 0) + 1;
+      }
+    }
+    const utmSources = Object.entries(utmBreakdown)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      total, processed, spam, error,
+      last7Days, last30Days, spamRate,
+      dailySubmissions, utmSources,
+    };
   },
 });

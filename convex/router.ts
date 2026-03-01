@@ -1069,12 +1069,16 @@ http.route({
         name: form.name,
         description: form.description,
         fields: form.fields,
+        steps: form.steps,
         theme: form.theme,
         settings: {
           submitButtonText: form.settings.submitButtonText,
           successMessage: form.settings.successMessage,
           redirectUrl: form.settings.redirectUrl,
           honeypotEnabled: form.settings.honeypotEnabled,
+          successTitle: form.settings.successTitle,
+          successSubtitle: form.settings.successSubtitle,
+          successCta: form.settings.successCta,
         },
       };
 
@@ -1139,6 +1143,20 @@ http.route({
         utmCampaign,
         honeypotTriggered,
       });
+
+      // Phase 6: Return proper status codes for validation/duplicate errors
+      if (result && result.validation === true) {
+        return new Response(JSON.stringify(result), {
+          status: 422,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      if (result && result.duplicate === true) {
+        return new Response(JSON.stringify(result), {
+          status: 409,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
 
       return jsonResponse(result);
     } catch (error) {

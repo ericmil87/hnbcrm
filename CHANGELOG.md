@@ -2,6 +2,109 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.24.0] - 2026-03-01
+
+### Form Builder v2 — 7 Major Upgrades
+
+Complete overhaul of the form builder with submission management, 6 new field types, conditional logic, multi-step forms, analytics dashboard, server-side validation, and post-submission experience.
+
+#### Phase 1: Submission Management View
+
+- **`FormSubmissionsPage.tsx`** (new) — Paginated table with status filter tabs (Todas/Processadas/Spam/Erros), expandable rows showing all field values, desktop table + mobile card layout, CSV export with UTF-8 BOM
+- **`formSubmissions.ts`** — Added `getFormSubmissionsPaginated` query using cursor-based pagination (`paginationOptsValidator`) with optional status filter via `by_form_and_status` index
+- **`formSubmissions.ts`** — Added `getFormAnalytics` query returning daily breakdown, UTM source analysis, spam rate
+- **`schema.ts`** — Added `by_form_and_status` index to `formSubmissions` table
+- **`main.tsx`** — Route `/app/formularios/:formId/submissoes`
+- **`FormListPage.tsx`** — Added "Ver submissoes" and "Analytics" quick links per form card
+
+#### Phase 2: Additional Field Types (6 new)
+
+Expanded from 8 to 14 field types: `radio`, `url`, `hidden`, `heading`, `divider`, `rating`.
+
+- **`schema.ts`** — Expanded field type union with 6 new literals
+- **`convex/lib/formFieldTypes.ts`** (new) — Shared `LAYOUT_FIELD_TYPES` and `OPTIONS_FIELD_TYPES` constants
+- **`builder/types.ts`** — Rewritten with `FieldType` union, `ConditionalLogic`, `FormStep`, expanded `FormSettings`
+- **`builder/FieldPalette.tsx`** — Split into "Campos de Entrada" (12 types) and "Layout" (2 types) sections
+- **`builder/FieldCard.tsx`** — Extended icon/label maps for 6 new types
+- **`builder/FieldConfigPanel.tsx`** — Per-type config: hidden (valor fixo), heading (titulo text), divider (visual-only message), rating (simplified), radio (reuses options editor)
+- **`renderer/FormField.tsx`** — Rewritten with renderers for all 14 types including `RatingInput` (clickable stars with hover state), radio fieldset, url input, hidden input, heading `<h3>`, divider `<hr>`
+- **`FormBuilderPage.tsx`** — Updated `DEFAULT_LABELS` and `createNewField()` for new types
+
+#### Phase 3: Conditional Logic / Field Visibility Rules
+
+Show/hide fields based on other field values with AND/OR logic and 8 operators.
+
+- **`schema.ts`** — Added optional `conditionalLogic` object to field definition: `action` (show/hide), `logic` (all/any), `conditions[]` with `fieldId`, `operator` (equals, not_equals, contains, not_contains, is_empty, is_not_empty, greater_than, less_than), `value`
+- **`builder/ConditionalLogicEditor.tsx`** (new) — Toggle + condition rows UI with field/operator/value selectors, SegmentControl for action/logic, filters out current field and layout fields
+- **`builder/FieldConfigPanel.tsx`** — Integrated ConditionalLogicEditor section, added `allFields` prop
+- **`renderer/FormRenderer.tsx`** — `evaluateFieldVisibility()` callback; hidden fields get `display: none`; excluded from submit payload
+- **`formSubmissions.ts`** — Server-side `evaluateFieldVisibilityServer()` mirrors client logic; only visible fields mapped to CRM
+
+#### Phase 4: Multi-Step Forms
+
+Step grouping with progress bar, per-step validation, and backward-compatible design.
+
+- **`schema.ts`** — Added optional `steps` array to forms table: `{ id, title, description?, fieldIds[] }`
+- **`builder/StepManager.tsx`** (new) — Enable toggle, step cards with field assignment (pill-based add/remove), reorder, add/delete, unassigned fields warning
+- **`FormBuilderPage.tsx`** — "Etapas" tab in editor, `steps` state with dirty tracking, save/publish includes steps
+- **`renderer/FormRenderer.tsx`** — Multi-step rendering: one step at a time, Anterior/Proximo/Enviar buttons, `StepProgressBar` component, per-step validation
+- **`forms.ts`** — `publishForm` validates every field assigned to exactly one step; `updateForm`/`duplicateForm` include steps
+- **`router.ts`** — Public form GET includes `steps` in response
+
+#### Phase 5: Form Analytics Dashboard
+
+- **`FormAnalyticsPage.tsx`** (new) — Summary cards (total, 7d, 30d, spam rate), inline SVG sparkline chart (polyline + gradient fill), status breakdown with semantic badges, UTM source table with horizontal bar chart
+- **`main.tsx`** — Route `/app/formularios/:formId/analytics`
+
+#### Phase 6: Server-Side Validation + Duplicate Prevention
+
+- **`formSubmissions.ts`** — `validateSubmissionData()` helper mirroring client validation (required, email regex, url, rating, min/max, pattern); called in `internalProcessSubmission`; invalid submissions stored as `processingStatus: "error"`
+- **`formSubmissions.ts`** — `hashSubmissionData()` for duplicate detection; queries recent submissions (60s window); rejects if fingerprint matches
+- **`router.ts`** — Returns `422` for validation errors, `409` for duplicates with structured JSON responses
+
+#### Phase 7: Custom Thank You Page + Confirmation Email
+
+- **`schema.ts`** — Expanded `settings`: `successTitle`, `successSubtitle`, `successCta` (label + url), `confirmationEmail` (enabled, subject, body, replyTo)
+- **`builder/FormSettingsPanel.tsx`** — "Pagina de sucesso" section (title/subtitle with `{variable}` hint, CTA button fields) + "Email de confirmacao" section (toggle, subject, body textarea, reply-to)
+- **`renderer/FormSuccess.tsx`** — Rewritten with `replaceVariables()` for `{field}` template support, optional CTA button, fallback to simple message
+- **`email.ts`** — Added `sendConfirmationEmail` internal mutation using Resend component
+- **`emailTemplates.ts`** — Added `buildFormConfirmationTemplate()` with variable replacement + "formConfirmation" dispatcher case
+- **`router.ts`** — Public form GET includes `successTitle`, `successSubtitle`, `successCta`
+
+#### Files Created (5)
+
+| File | Purpose |
+|------|---------|
+| `convex/lib/formFieldTypes.ts` | Shared constants for layout/options field types |
+| `src/components/forms/FormSubmissionsPage.tsx` | Paginated submissions table with filters + CSV export |
+| `src/components/forms/FormAnalyticsPage.tsx` | Analytics dashboard with sparkline + UTM breakdown |
+| `src/components/forms/builder/ConditionalLogicEditor.tsx` | Conditional logic rule editor |
+| `src/components/forms/builder/StepManager.tsx` | Multi-step form manager |
+
+#### Files Modified (18)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | 6 new field types, conditionalLogic, steps, expanded settings, new index |
+| `convex/formSubmissions.ts` | Paginated query, analytics, server validation, dedup, conditional logic eval, confirmation email |
+| `convex/forms.ts` | Step validation in publish, steps in update/duplicate, layout field filtering |
+| `convex/router.ts` | Steps + success settings in GET, 422/409 responses in submit |
+| `convex/email.ts` | `sendConfirmationEmail` internal mutation |
+| `convex/emailTemplates.ts` | `buildFormConfirmationTemplate` + dispatcher case |
+| `src/main.tsx` | 2 new lazy routes (submissions, analytics) |
+| `src/components/forms/FormBuilderPage.tsx` | Steps state, StepManager tab, allFields to config panel |
+| `src/components/forms/FormListPage.tsx` | Quick links (submissions, analytics) |
+| `src/components/forms/builder/types.ts` | FieldType union, ConditionalLogic, FormStep, expanded FormSettings |
+| `src/components/forms/builder/FieldPalette.tsx` | Grouped sections, 6 new field buttons |
+| `src/components/forms/builder/FieldCard.tsx` | 6 new icon/label entries |
+| `src/components/forms/builder/FieldConfigPanel.tsx` | Per-type configs, ConditionalLogicEditor integration |
+| `src/components/forms/builder/FormSettingsPanel.tsx` | Success page + confirmation email settings |
+| `src/components/forms/renderer/FormField.tsx` | 6 new field renderers (rating, radio, url, hidden, heading, divider) |
+| `src/components/forms/renderer/FormRenderer.tsx` | Conditional logic, multi-step, new field types, error handling |
+| `src/components/forms/renderer/FormSuccess.tsx` | Variable replacement, CTA button |
+
+---
+
 ## [0.23.0] - 2026-03-01
 
 ### Landing Page & Developer Portal — GitHub + Open-Source Overhaul

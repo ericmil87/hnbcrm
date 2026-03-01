@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 
 export interface FormFieldDefinition {
   id: string;
-  type: "text" | "email" | "phone" | "number" | "select" | "textarea" | "checkbox" | "date";
+  type: "text" | "email" | "phone" | "number" | "select" | "textarea" | "checkbox" | "date"
+    | "radio" | "url" | "hidden" | "heading" | "divider" | "rating";
   label: string;
   placeholder?: string;
   helpText?: string;
@@ -63,13 +65,18 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
   );
 
   const helpTextEl = field.helpText ? (
-    <p className="mt-1.5 text-[13px]" style={{ color: "var(--form-text)", opacity: 0.5 }}>
+    <p
+      id={`${inputId}-help`}
+      className="mt-1.5 text-[13px]"
+      style={{ color: "var(--form-text)", opacity: 0.5 }}
+    >
       {field.helpText}
     </p>
   ) : null;
 
   const errorEl = error ? (
     <p
+      id={`${inputId}-error`}
       className="mt-1.5 text-[13px] font-medium animate-shake text-[#EF4444]"
       role="alert"
       aria-live="polite"
@@ -81,6 +88,73 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
   const wrapperClass = cn(
     field.width === "half" ? "col-span-1" : "col-span-1 md:col-span-2"
   );
+
+  // --- Hidden field ---
+  if (field.type === "hidden") {
+    return (
+      <input
+        type="hidden"
+        id={inputId}
+        name={field.id}
+        value={value || field.defaultValue || ""}
+      />
+    );
+  }
+
+  // --- Heading ---
+  if (field.type === "heading") {
+    return (
+      <div className={cn("col-span-1 md:col-span-2", "pt-2")}>
+        <h3
+          className="text-lg font-semibold"
+          style={{ color: "var(--form-text)" }}
+        >
+          {field.label}
+        </h3>
+        {field.helpText && (
+          <p
+            className="mt-1 text-sm"
+            style={{ color: "var(--form-text)", opacity: 0.6 }}
+          >
+            {field.helpText}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // --- Divider ---
+  if (field.type === "divider") {
+    return (
+      <div className="col-span-1 md:col-span-2 py-2">
+        <hr
+          className="border-t"
+          style={{ borderColor: "rgba(var(--form-text-rgb,250,250,250),0.15)" }}
+        />
+      </div>
+    );
+  }
+
+  // --- Rating ---
+  if (field.type === "rating") {
+    return (
+      <div className={wrapperClass}>
+        {labelEl}
+        <RatingInput
+          inputId={inputId}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          error={!!error}
+          isRequired={field.isRequired}
+          helpTextId={field.helpText ? `${inputId}-help` : undefined}
+          errorId={error ? `${inputId}-error` : undefined}
+        />
+        {helpTextEl}
+        {errorEl}
+      </div>
+    );
+  }
 
   // --- Checkbox ---
   if (field.type === "checkbox") {
@@ -143,7 +217,7 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
             )}
           </span>
         </label>
-        {helpTextEl && (
+        {field.helpText && (
           <p
             id={`${inputId}-help`}
             className="mt-1.5 text-[13px] pl-[34px]"
@@ -162,6 +236,69 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
             {error}
           </p>
         )}
+      </div>
+    );
+  }
+
+  // --- Radio ---
+  if (field.type === "radio") {
+    return (
+      <div className={wrapperClass}>
+        <fieldset>
+          <legend
+            className="block text-[13px] font-medium mb-2"
+            style={{ color: "var(--form-text)", opacity: 0.85 }}
+          >
+            {field.label}
+            {field.isRequired && (
+              <span className="ml-1 text-[#EF4444]" aria-hidden="true">*</span>
+            )}
+          </legend>
+          <div className="space-y-2">
+            {field.options?.map((opt) => (
+              <label
+                key={opt}
+                className="flex items-center gap-3 cursor-pointer select-none"
+              >
+                <div className="relative flex-shrink-0">
+                  <input
+                    type="radio"
+                    name={inputId}
+                    value={opt}
+                    checked={value === opt}
+                    onChange={() => onChange(opt)}
+                    disabled={disabled}
+                    className="sr-only"
+                  />
+                  <div
+                    className={cn(
+                      "w-[20px] h-[20px] rounded-full border-2 transition-all duration-150",
+                      "flex items-center justify-center flex-shrink-0",
+                      value === opt
+                        ? "border-[var(--form-primary)]"
+                        : "border-[rgba(var(--form-text-rgb,250,250,250),0.3)]",
+                      error && "border-[#EF4444]",
+                      disabled && "opacity-50 cursor-not-allowed"
+                    )}
+                    aria-hidden="true"
+                  >
+                    {value === opt && (
+                      <div
+                        className="w-[10px] h-[10px] rounded-full"
+                        style={{ backgroundColor: "var(--form-primary)" }}
+                      />
+                    )}
+                  </div>
+                </div>
+                <span className="text-base" style={{ color: "var(--form-text)" }}>
+                  {opt}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {helpTextEl}
+        {errorEl}
       </div>
     );
   }
@@ -215,25 +352,8 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
             </svg>
           </div>
         </div>
-        {field.helpText && (
-          <p
-            id={`${inputId}-help`}
-            className="mt-1.5 text-[13px]"
-            style={{ color: "var(--form-text)", opacity: 0.5 }}
-          >
-            {field.helpText}
-          </p>
-        )}
-        {error && (
-          <p
-            id={`${inputId}-error`}
-            className="mt-1.5 text-[13px] font-medium animate-shake text-[#EF4444]"
-            role="alert"
-            aria-live="polite"
-          >
-            {error}
-          </p>
-        )}
+        {helpTextEl}
+        {errorEl}
       </div>
     );
   }
@@ -265,50 +385,29 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
             error && inputErrorStyle
           )}
         />
-        {field.helpText && (
-          <p
-            id={`${inputId}-help`}
-            className="mt-1.5 text-[13px]"
-            style={{ color: "var(--form-text)", opacity: 0.5 }}
-          >
-            {field.helpText}
-          </p>
-        )}
-        {error && (
-          <p
-            id={`${inputId}-error`}
-            className="mt-1.5 text-[13px] font-medium animate-shake text-[#EF4444]"
-            role="alert"
-            aria-live="polite"
-          >
-            {error}
-          </p>
-        )}
+        {helpTextEl}
+        {errorEl}
       </div>
     );
   }
 
-  // --- Text, Email, Phone, Number, Date ---
-  const typeMap: Record<FormFieldDefinition["type"], React.HTMLInputTypeAttribute> = {
+  // --- Text, Email, Phone, Number, Date, URL ---
+  const typeMap: Record<string, React.HTMLInputTypeAttribute> = {
     text: "text",
     email: "email",
     phone: "tel",
     number: "number",
-    select: "text",
-    textarea: "text",
-    checkbox: "checkbox",
     date: "date",
+    url: "url",
   };
 
-  const inputModeMap: Record<FormFieldDefinition["type"], React.HTMLAttributes<HTMLInputElement>["inputMode"]> = {
+  const inputModeMap: Record<string, React.HTMLAttributes<HTMLInputElement>["inputMode"]> = {
     text: "text",
     email: "email",
     phone: "tel",
     number: "numeric",
-    select: "text",
-    textarea: "text",
-    checkbox: "none",
     date: "none",
+    url: "url",
   };
 
   return (
@@ -316,8 +415,8 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
       {labelEl}
       <input
         id={inputId}
-        type={typeMap[field.type]}
-        inputMode={inputModeMap[field.type]}
+        type={typeMap[field.type] ?? "text"}
+        inputMode={inputModeMap[field.type] ?? "text"}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={field.placeholder}
@@ -337,25 +436,79 @@ export function FormField({ field, value, error, onChange, disabled }: FormField
         max={field.validation?.max !== undefined ? String(field.validation.max) : undefined}
         className={cn(inputBaseStyle, error && inputErrorStyle)}
       />
-      {field.helpText && (
-        <p
-          id={`${inputId}-help`}
-          className="mt-1.5 text-[13px]"
-          style={{ color: "var(--form-text)", opacity: 0.5 }}
-        >
-          {field.helpText}
-        </p>
-      )}
-      {error && (
-        <p
-          id={`${inputId}-error`}
-          className="mt-1.5 text-[13px] font-medium animate-shake text-[#EF4444]"
-          role="alert"
-          aria-live="polite"
-        >
-          {error}
-        </p>
-      )}
+      {helpTextEl}
+      {errorEl}
+    </div>
+  );
+}
+
+// --- Rating Stars Component ---
+function RatingInput({
+  inputId,
+  value,
+  onChange,
+  disabled,
+  error,
+  isRequired,
+  helpTextId,
+  errorId,
+}: {
+  inputId: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  error: boolean;
+  isRequired: boolean;
+  helpTextId?: string;
+  errorId?: string;
+}) {
+  const [hovered, setHovered] = useState(0);
+  const currentValue = parseInt(value) || 0;
+
+  return (
+    <div
+      role="radiogroup"
+      aria-label="Avaliacao"
+      aria-required={isRequired}
+      aria-invalid={error}
+      aria-describedby={error ? errorId : helpTextId}
+      className="flex gap-1"
+    >
+      {[1, 2, 3, 4, 5].map((star) => {
+        const isFilled = star <= (hovered || currentValue);
+        return (
+          <button
+            key={star}
+            type="button"
+            role="radio"
+            aria-checked={star === currentValue}
+            aria-label={`${star} estrela${star > 1 ? "s" : ""}`}
+            disabled={disabled}
+            onClick={() => onChange(String(star))}
+            onMouseEnter={() => setHovered(star)}
+            onMouseLeave={() => setHovered(0)}
+            className={cn(
+              "p-1 transition-all duration-150 rounded",
+              "focus:outline-none focus:ring-2 focus:ring-[var(--form-primary)] focus:ring-opacity-50",
+              disabled && "opacity-50 cursor-not-allowed"
+            )}
+          >
+            <svg
+              width="28"
+              height="28"
+              viewBox="0 0 24 24"
+              fill={isFilled ? "var(--form-primary)" : "none"}
+              stroke={isFilled ? "var(--form-primary)" : "rgba(var(--form-text-rgb,250,250,250),0.3)"}
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="transition-colors duration-150"
+            >
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+            </svg>
+          </button>
+        );
+      })}
     </div>
   );
 }

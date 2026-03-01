@@ -28,6 +28,8 @@ const AuditLogs = lazy(() => import("./components/AuditLogs").then(m => ({ defau
 const Settings = lazy(() => import("./components/Settings").then(m => ({ default: m.Settings })));
 const FormListPage = lazy(() => import("./components/forms/FormListPage").then(m => ({ default: m.FormListPage })));
 const FormBuilderPage = lazy(() => import("./components/forms/FormBuilderPage").then(m => ({ default: m.FormBuilderPage })));
+const FormSubmissionsPage = lazy(() => import("./components/forms/FormSubmissionsPage").then(m => ({ default: m.FormSubmissionsPage })));
+const FormAnalyticsPage = lazy(() => import("./components/forms/FormAnalyticsPage").then(m => ({ default: m.FormAnalyticsPage })));
 
 // Wrapper component for Suspense boundaries
 function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => JSX.Element> }) {
@@ -62,6 +64,8 @@ const router = createBrowserRouter([
       { path: "auditoria", element: <LazyRoute Component={AuditLogs} /> },
       { path: "formularios", element: <LazyRoute Component={FormListPage} /> },
       { path: "formularios/:formId", element: <LazyRoute Component={FormBuilderPage} /> },
+      { path: "formularios/:formId/submissoes", element: <LazyRoute Component={FormSubmissionsPage} /> },
+      { path: "formularios/:formId/analytics", element: <LazyRoute Component={FormAnalyticsPage} /> },
       { path: "configuracoes", element: <LazyRoute Component={Settings} /> },
     ],
   },

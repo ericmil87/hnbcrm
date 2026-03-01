@@ -61,6 +61,41 @@ export const handleEmailEvent = internalMutation({
   },
 });
 
+// ── Form confirmation email (Phase 7) ──
+// Sent to the form submitter after they fill out a public form.
+export const sendConfirmationEmail = internalMutation({
+  args: {
+    toEmail: v.string(),
+    formName: v.string(),
+    subject: v.optional(v.string()),
+    body: v.optional(v.string()),
+    replyTo: v.optional(v.string()),
+    submittedData: v.any(),
+    fieldLabels: v.any(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const template = buildTemplate("formConfirmation", {
+      formName: args.formName,
+      subject: args.subject,
+      body: args.body,
+      submittedData: args.submittedData,
+      fieldLabels: args.fieldLabels,
+    });
+
+    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "HNBCRM <noreply@mail.hnbcrm.com>";
+    await resend.sendEmail(ctx, {
+      from: fromEmail,
+      to: args.toEmail,
+      subject: template.subject,
+      html: template.html,
+      ...(args.replyTo ? { replyTo: [args.replyTo] } : {}),
+    });
+
+    return null;
+  },
+});
+
 // ── Daily digest cron handler ──
 export const sendDailyDigest = internalMutation({
   args: {},

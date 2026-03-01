@@ -512,7 +512,156 @@ export function FormSettingsPanel({
         </div>
       </section>
 
-      {/* ── 4. Spam ─────────────────────────────────────────────── */}
+      {/* ── 4. Pagina de sucesso ──────────────────────────────── */}
+      <section aria-label="Pagina de sucesso">
+        <SectionHeader>Pagina de sucesso</SectionHeader>
+        <div className="space-y-4">
+          <Input
+            label="Titulo (opcional)"
+            value={settings.successTitle ?? ""}
+            onChange={(e) =>
+              update({ successTitle: e.target.value || undefined })
+            }
+            placeholder="Obrigado, {nome}!"
+          />
+          <p className="text-[12px] text-text-muted -mt-2">
+            Use <span className="text-brand-400">{"{campo}"}</span> para inserir
+            valores das respostas
+          </p>
+
+          <Input
+            label="Subtitulo (opcional)"
+            value={settings.successSubtitle ?? ""}
+            onChange={(e) =>
+              update({ successSubtitle: e.target.value || undefined })
+            }
+            placeholder="Entraremos em contato em breve."
+          />
+
+          <div>
+            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+              Botao de acao (opcional)
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <Input
+                label=""
+                value={settings.successCta?.label ?? ""}
+                onChange={(e) =>
+                  update({
+                    successCta:
+                      e.target.value || settings.successCta?.url
+                        ? {
+                            label: e.target.value,
+                            url: settings.successCta?.url ?? "",
+                          }
+                        : undefined,
+                  })
+                }
+                placeholder="Texto do botao"
+              />
+              <Input
+                label=""
+                value={settings.successCta?.url ?? ""}
+                onChange={(e) =>
+                  update({
+                    successCta:
+                      e.target.value || settings.successCta?.label
+                        ? {
+                            label: settings.successCta?.label ?? "",
+                            url: e.target.value,
+                          }
+                        : undefined,
+                  })
+                }
+                placeholder="https://..."
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── 5. Email de confirmacao ──────────────────────────── */}
+      <section aria-label="Email de confirmacao">
+        <SectionHeader>Email de confirmacao</SectionHeader>
+        <div className="space-y-4">
+          <ToggleRow
+            label="Enviar email de confirmacao"
+            description="Envia um email para quem preencher o formulario"
+            checked={settings.confirmationEmail?.enabled ?? false}
+            onToggle={() =>
+              update({
+                confirmationEmail: {
+                  ...(settings.confirmationEmail ?? {}),
+                  enabled: !(settings.confirmationEmail?.enabled ?? false),
+                },
+              })
+            }
+          />
+
+          {settings.confirmationEmail?.enabled && (
+            <>
+              <Input
+                label="Assunto do email"
+                value={settings.confirmationEmail.subject ?? ""}
+                onChange={(e) =>
+                  update({
+                    confirmationEmail: {
+                      ...settings.confirmationEmail!,
+                      subject: e.target.value || undefined,
+                    },
+                  })
+                }
+                placeholder="Recebemos sua mensagem!"
+              />
+
+              <div>
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Corpo do email
+                </label>
+                <textarea
+                  rows={4}
+                  value={settings.confirmationEmail.body ?? ""}
+                  onChange={(e) =>
+                    update({
+                      confirmationEmail: {
+                        ...settings.confirmationEmail!,
+                        body: e.target.value || undefined,
+                      },
+                    })
+                  }
+                  placeholder="Obrigado por entrar em contato, {nome}! Recebemos sua mensagem e retornaremos em breve."
+                  className={cn(
+                    "w-full bg-surface-raised border border-border-strong rounded-field",
+                    "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
+                    "transition-colors duration-150 resize-y",
+                    "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
+                  )}
+                />
+                <p className="mt-1 text-[12px] text-text-muted">
+                  Use <span className="text-brand-400">{"{campo}"}</span> para
+                  inserir valores das respostas
+                </p>
+              </div>
+
+              <Input
+                label="Reply-To (opcional)"
+                value={settings.confirmationEmail.replyTo ?? ""}
+                onChange={(e) =>
+                  update({
+                    confirmationEmail: {
+                      ...settings.confirmationEmail!,
+                      replyTo: e.target.value || undefined,
+                    },
+                  })
+                }
+                placeholder="contato@empresa.com"
+              />
+            </>
+          )}
+        </div>
+      </section>
+
+      {/* ── 6. Spam ─────────────────────────────────────────────── */}
       <section aria-label="Configuracoes de spam">
         <SectionHeader>Spam</SectionHeader>
         <div className="space-y-4">

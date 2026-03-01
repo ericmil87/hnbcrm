@@ -357,6 +357,56 @@ export function buildFormSubmissionTemplate(data: {
   };
 }
 
+export function buildFormConfirmationTemplate(data: {
+  formName: string;
+  subject?: string;
+  body?: string;
+  submittedData?: Record<string, string>;
+  fieldLabels?: Record<string, string>;
+}): TemplateResult {
+  const subject = data.subject || `Confirmacao: ${data.formName}`;
+
+  // Replace {variable} placeholders in body
+  let bodyContent = data.body || "Obrigado por preencher o formulario. Recebemos sua submissao com sucesso.";
+  if (data.submittedData && data.fieldLabels) {
+    for (const [fieldId, value] of Object.entries(data.submittedData)) {
+      const label = data.fieldLabels[fieldId];
+      if (label) {
+        bodyContent = bodyContent.replace(new RegExp(`\\{${label}\\}`, "gi"), value);
+      }
+      bodyContent = bodyContent.replace(new RegExp(`\\{${fieldId}\\}`, "gi"), value);
+    }
+  }
+
+  // Build data summary
+  let dataSummary = "";
+  if (data.submittedData && data.fieldLabels) {
+    const rows = Object.entries(data.submittedData)
+      .filter(([, v]) => v && v.trim())
+      .map(([fieldId, value]) => {
+        const label = data.fieldLabels![fieldId] || fieldId;
+        return infoRow(label, value);
+      })
+      .join("");
+    if (rows) {
+      dataSummary = infoTable(rows);
+    }
+  }
+
+  return {
+    subject,
+    html: baseTemplate({
+      preheader: `Confirmacao de envio: ${data.formName}`,
+      appUrl: "https://app.hnbcrm.com.br",
+      content: `
+        ${heading("Confirmacao de Envio")}
+        ${paragraph(bodyContent)}
+        ${dataSummary}
+      `,
+    }),
+  };
+}
+
 // ──────────────────────────────────────────────
 // Template Dispatcher
 // ──────────────────────────────────────────────
@@ -384,6 +434,8 @@ export function buildTemplate(
       return buildDailyDigestTemplate(data as any);
     case "formSubmission":
       return buildFormSubmissionTemplate(data as any);
+    case "formConfirmation":
+      return buildFormConfirmationTemplate(data as any);
     default:
       return {
         subject: "Notificacao HNBCRM",

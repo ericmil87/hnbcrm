@@ -22,6 +22,8 @@ import {
   ArchiveRestore,
   Trash2,
   Send,
+  BarChart3,
+  Inbox,
 } from "lucide-react";
 
 type FormDoc = {
@@ -355,6 +357,33 @@ export function FormListPage() {
                         : "Nenhuma"}
                     </span>
                   </div>
+
+                  {/* Quick links */}
+                  {submissionCount > 0 && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/app/formularios/${form._id}/submissoes`);
+                        }}
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-brand-400 transition-colors"
+                      >
+                        <Inbox size={12} />
+                        Ver submissoes
+                      </button>
+                      <span className="text-border">|</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/app/formularios/${form._id}/analytics`);
+                        }}
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-brand-400 transition-colors"
+                      >
+                        <BarChart3 size={12} />
+                        Analytics
+                      </button>
+                    </div>
+                  )}
                 </article>
               );
             })}

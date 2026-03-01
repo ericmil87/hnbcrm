@@ -615,7 +615,10 @@ const applicationTables = {
       type: v.union(
         v.literal("text"), v.literal("email"), v.literal("phone"),
         v.literal("number"), v.literal("select"), v.literal("textarea"),
-        v.literal("checkbox"), v.literal("date")
+        v.literal("checkbox"), v.literal("date"),
+        // Phase 2 field types
+        v.literal("radio"), v.literal("url"), v.literal("hidden"),
+        v.literal("heading"), v.literal("divider"), v.literal("rating")
       ),
       label: v.string(),
       placeholder: v.optional(v.string()),
@@ -635,6 +638,21 @@ const applicationTables = {
         entity: v.union(v.literal("lead"), v.literal("contact")),
         field: v.string(),
       })),
+      // Phase 3: Conditional logic
+      conditionalLogic: v.optional(v.object({
+        action: v.union(v.literal("show"), v.literal("hide")),
+        logic: v.union(v.literal("all"), v.literal("any")),
+        conditions: v.array(v.object({
+          fieldId: v.string(),
+          operator: v.union(
+            v.literal("equals"), v.literal("not_equals"),
+            v.literal("contains"), v.literal("not_contains"),
+            v.literal("is_empty"), v.literal("is_not_empty"),
+            v.literal("greater_than"), v.literal("less_than")
+          ),
+          value: v.optional(v.string()),
+        })),
+      })),
     })),
 
     // Theme
@@ -645,6 +663,14 @@ const applicationTables = {
       borderRadius: v.union(v.literal("none"), v.literal("sm"), v.literal("md"), v.literal("lg"), v.literal("full")),
       showBranding: v.boolean(),
     }),
+
+    // Phase 4: Multi-step form grouping
+    steps: v.optional(v.array(v.object({
+      id: v.string(),
+      title: v.string(),
+      description: v.optional(v.string()),
+      fieldIds: v.array(v.string()),
+    }))),
 
     // Settings
     settings: v.object({
@@ -664,6 +690,20 @@ const applicationTables = {
       tags: v.array(v.string()),
       honeypotEnabled: v.boolean(),
       submissionLimit: v.optional(v.number()),
+      // Phase 7: Custom thank you page
+      successTitle: v.optional(v.string()),
+      successSubtitle: v.optional(v.string()),
+      successCta: v.optional(v.object({
+        label: v.string(),
+        url: v.string(),
+      })),
+      // Phase 7: Confirmation email
+      confirmationEmail: v.optional(v.object({
+        enabled: v.boolean(),
+        subject: v.optional(v.string()),
+        body: v.optional(v.string()),
+        replyTo: v.optional(v.string()),
+      })),
     }),
 
     // Metadata
@@ -698,6 +738,7 @@ const applicationTables = {
   })
     .index("by_form", ["formId"])
     .index("by_form_and_created", ["formId", "createdAt"])
+    .index("by_form_and_status", ["formId", "processingStatus"])
     .index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Webhooks
