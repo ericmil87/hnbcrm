@@ -24,6 +24,7 @@ import {
   Send,
   BarChart3,
   Inbox,
+  FlaskConical,
 } from "lucide-react";
 
 type FormDoc = {
@@ -170,6 +171,7 @@ export function FormListPage() {
   const navigate = useNavigate();
 
   const forms = useQuery(api.forms.getForms, { organizationId });
+  const experiments = useQuery(api.formExperiments.listExperiments, { organizationId });
 
   const createForm = useMutation(api.forms.createForm);
   const duplicateForm = useMutation(api.forms.duplicateForm);
@@ -339,6 +341,12 @@ export function FormListPage() {
                       <span className="flex items-center gap-1 text-xs text-semantic-success">
                         <Send size={12} />
                         Ativo
+                      </span>
+                    )}
+                    {experiments?.some((e: any) => e.formId === form._id && (e.status === "running" || e.status === "paused" || e.status === "draft")) && (
+                      <span className="flex items-center gap-1 text-xs text-brand-400">
+                        <FlaskConical size={12} />
+                        A/B
                       </span>
                     )}
                   </div>

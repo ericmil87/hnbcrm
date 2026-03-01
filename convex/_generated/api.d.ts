@@ -24,6 +24,7 @@ import type * as emailTemplates from "../emailTemplates.js";
 import type * as embedScript from "../embedScript.js";
 import type * as fieldDefinitions from "../fieldDefinitions.js";
 import type * as files from "../files.js";
+import type * as formExperiments from "../formExperiments.js";
 import type * as formPartials from "../formPartials.js";
 import type * as formSubmissions from "../formSubmissions.js";
 import type * as forms from "../forms.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   embedScript: typeof embedScript;
   fieldDefinitions: typeof fieldDefinitions;
   files: typeof files;
+  formExperiments: typeof formExperiments;
   formPartials: typeof formPartials;
   formSubmissions: typeof formSubmissions;
   forms: typeof forms;

@@ -2,6 +2,77 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.26.0] - 2026-03-01
+
+### Full UTM Capture + Native A/B Testing for Forms
+
+Two major upgrades: fix the UTM capture bug and extend to all 5 standard params with cross-session persistence, and build a complete native A/B testing system — a competitive differentiator since Typeform, Jotform, HubSpot, and Tally all lack it.
+
+#### Feature 1: URL Parameter Prefill + Auto UTM Capture
+
+Fixes a backend bug where body-sent UTM values were silently dropped (only `Referer` header parsing worked). Adds `utm_content` and `utm_term` support. Implements cross-page UTM persistence via sessionStorage + 30-day cookie. Forwards parent-page UTMs to embedded iframes automatically.
+
+- **`convex/schema.ts`** — Added `utmContent`, `utmTerm` to `formSubmissions` and `formPartials` tables
+- **`convex/router.ts`** — Fixed UTM bug: body values now take priority over referrer-parsed ones in both submit and partial endpoints. All 5 UTM params passed through to processing functions
+- **`convex/formSubmissions.ts`** — `internalProcessSubmission` accepts and stores `utmContent`, `utmTerm` in all 3 insert paths (spam, error, success)
+- **`convex/formPartials.ts`** — `internalSavePartial` accepts and stores `utmContent`, `utmTerm`
+- **`src/lib/utmPersistence.ts`** (new) — UTM resolution cascade: URL params → sessionStorage → 30-day first-party cookie. `resolveUtmParams()` + `persistUtm()` exports
+- **`src/pages/PublicFormPage.tsx`** — Uses `resolveUtmParams` instead of raw `searchParams.get()`, sends all 5 UTM params in submit payload
+- **`src/embed/loader.ts`** — Forwards parent page's `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term` to iframe src
+- **`convex/embedScript.ts`** — Rebuilt with UTM forwarding logic
+
+#### Feature 2: UTM Analytics Enhancement
+
+- **`convex/formSubmissions.ts`** — `getFormAnalytics` now returns breakdowns for all 5 UTM dimensions (`utmSources`, `utmMediums`, `utmCampaigns`, `utmContents`, `utmTerms`) using shared `buildUtmBreakdown` helper
+- **`src/components/forms/FormAnalyticsPage.tsx`** — Replaced single UTM source table with tabbed section: Fonte | Midia | Campanha | Conteudo | Termo. Each tab shows bar-chart breakdown with count badges
+
+#### Feature 3: Native A/B Testing
+
+Complete A/B testing system built from scratch. Deterministic variant assignment via MurmurHash3, Bayesian statistics with Monte Carlo simulation for statistical significance.
+
+- **`convex/schema.ts`** — 2 new tables: `formExperiments` (status lifecycle: draft → running → paused → concluded), `formExperimentVariants` (traffic weights in basis points, view/conversion counters). Added `experimentId`, `variantId`, `visitorId` to `formSubmissions` and `formPartials`
+- **`convex/formExperiments.ts`** (new) — Full experiment backend:
+  - Mutations: `createExperiment` (duplicates form for variant B, 50/50 split), `startExperiment`, `pauseExperiment`, `resumeExperiment`, `concludeExperiment` (records winner), `updateTrafficSplit` (validates sum=10000), `deleteExperiment`, `internalRecordView`, `internalRecordConversion`
+  - Queries: `getExperiment` (with Bayesian stats), `getExperimentByForm`, `listExperiments`, `internalGetActiveExperiment`
+  - Bayesian stats: Beta-Binomial model, 10,000 Monte Carlo samples via xorshift32 PRNG, 95% credible intervals, probability of winning per variant
+- **`convex/router.ts`** — GET `/api/v1/forms/public` returns experiment config (variants with keys/weights) alongside form data. New POST `/api/v1/forms/experiment/view` for view tracking. Submit endpoint passes `experimentId`/`variantId`/`visitorId` through
+- **`convex/formSubmissions.ts`** — After successful submission with `variantId`, calls `internalRecordConversion` to increment variant counter
+- **`src/lib/abTesting.ts`** (new) — MurmurHash3 (32-bit), `getVisitorId()` (localStorage-persisted), `selectVariant()` (hash-based bucketing into 0-10000 range)
+- **`src/pages/PublicFormPage.tsx`** — After fetching form, checks for active experiment, selects variant deterministically, fetches variant form data if non-control, fires view tracking (fire-and-forget with keepalive), includes experiment data in submit payload
+- **`src/components/forms/FormExperimentPage.tsx`** (new) — Experiment dashboard: status management (start/pause/resume), variant comparison table (visitors, conversions, rate, probability), visual probability bar, traffic split slider, winner declaration with ConfirmDialog
+- **`src/components/forms/experiment/ExperimentSetupModal.tsx`** (new) — Modal for creating experiments: name input, hypothesis textarea, info card explaining variant B creation
+- **`src/components/forms/FormBuilderPage.tsx`** — Experiment bar between header and content: shows "Criar Teste A/B" button or active experiment status/stats with link to dashboard
+- **`src/components/forms/FormListPage.tsx`** — A/B badge (FlaskConical icon) on form cards with active experiments
+- **`src/main.tsx`** — New route: `/app/formularios/:formId/experimento/:experimentId`
+
+#### Files Created (5)
+
+| File | Purpose |
+|------|---------|
+| `src/lib/utmPersistence.ts` | UTM resolution: URL → sessionStorage → cookie |
+| `src/lib/abTesting.ts` | MurmurHash3, visitorId, deterministic variant selection |
+| `convex/formExperiments.ts` | Experiment CRUD, variant management, Bayesian stats |
+| `src/components/forms/FormExperimentPage.tsx` | A/B test dashboard page |
+| `src/components/forms/experiment/ExperimentSetupModal.tsx` | Create experiment modal |
+
+#### Files Modified (10)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | +`utmContent`/`utmTerm` on 2 tables, +`experimentId`/`variantId`/`visitorId` on 2 tables, +2 new tables |
+| `convex/router.ts` | UTM body-priority bug fix, experiment in form GET, view tracking endpoint, experiment fields in submit |
+| `convex/formSubmissions.ts` | UTM + experiment args, conversion tracking, 5-dimension UTM analytics |
+| `convex/formPartials.ts` | UTM + experiment args |
+| `convex/embedScript.ts` | Rebuilt with UTM forwarding |
+| `src/pages/PublicFormPage.tsx` | UTM persistence, A/B variant routing, experiment submit data |
+| `src/embed/loader.ts` | Forward parent UTMs to iframe |
+| `src/components/forms/FormAnalyticsPage.tsx` | Tabbed 5-dimension UTM breakdown |
+| `src/components/forms/FormBuilderPage.tsx` | Experiment bar with status/stats |
+| `src/components/forms/FormListPage.tsx` | A/B badge on cards |
+| `src/main.tsx` | Experiment route |
+
+---
+
 ## [0.25.0] - 2026-03-01
 
 ### Partial Submission Recovery + Popup/Widget Embeds

@@ -29,6 +29,14 @@
   }
 
   var iframeSrc = origin + "/f/" + slug + "?embed=1";
+
+  // Forward parent page UTM params to iframe
+  var parentParams = new URLSearchParams(window.location.search);
+  ["utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term"].forEach(function (key) {
+    var val = parentParams.get(key);
+    if (val) iframeSrc += "&" + key + "=" + encodeURIComponent(val);
+  });
+
   var suppressKey = "hnbcrm_suppress_" + slug;
 
   // Suppression check

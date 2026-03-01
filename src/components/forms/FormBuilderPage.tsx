@@ -20,6 +20,7 @@ import { FormRenderer } from "@/components/forms/renderer/FormRenderer";
 import { StepManager } from "@/components/forms/builder/StepManager";
 import type { FormField, FormStep, FormTheme, FormSettings } from "@/components/forms/builder/types";
 import { LAYOUT_FIELD_TYPES, OPTIONS_FIELD_TYPES } from "@/components/forms/builder/types";
+import { ExperimentSetupModal } from "@/components/forms/experiment/ExperimentSetupModal";
 import {
   ArrowLeft,
   Save,
@@ -31,6 +32,7 @@ import {
   Monitor,
   Pencil,
   Check,
+  FlaskConical,
 } from "lucide-react";
 
 // ── Default values ────────────────────────────────────────────────────────────
@@ -304,6 +306,11 @@ export function FormBuilderPage() {
     formId ? { formId: formId as Id<"forms"> } : "skip"
   );
 
+  const experiment = useQuery(
+    api.formExperiments.getExperimentByForm,
+    formId ? { formId: formId as Id<"forms"> } : "skip"
+  );
+
   const updateForm = useMutation(api.forms.updateForm);
   const publishForm = useMutation(api.forms.publishForm);
   const unpublishForm = useMutation(api.forms.unpublishForm);
@@ -371,6 +378,7 @@ export function FormBuilderPage() {
   const [previewDevice, setPreviewDevice] = useState<"mobile" | "desktop">("mobile");
   const [showPublishDialog, setShowPublishDialog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showExperimentModal, setShowExperimentModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   // ── Field actions ─────────────────────────────────────────────────────────────
@@ -699,6 +707,49 @@ export function FormBuilderPage() {
         </div>
       </header>
 
+      {/* ── Experiment bar ────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 px-3 py-2 md:px-4 border-b border-border-subtle bg-surface-raised shrink-0">
+        <FlaskConical size={16} className="text-text-muted shrink-0" />
+        {experiment && experiment.status !== "concluded" ? (
+          <>
+            <span className="text-xs text-text-secondary truncate">
+              Teste A/B: <span className="font-medium text-text-primary">{experiment.name}</span>
+            </span>
+            <Badge
+              variant={experiment.status === "running" ? "success" : experiment.status === "paused" ? "default" : "warning"}
+              className="shrink-0"
+            >
+              {experiment.status === "running" ? "Em execucao" : experiment.status === "paused" ? "Pausado" : "Rascunho"}
+            </Badge>
+            {experiment.variants && (
+              <span className="text-xs text-text-muted tabular-nums hidden sm:inline">
+                {experiment.variants.reduce((s: number, v: any) => s + v.views, 0).toLocaleString("pt-BR")} visitantes
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => navigate(`/app/formularios/${formId}/experimento/${experiment._id}`)}
+              className="ml-auto shrink-0"
+            >
+              Ver dashboard
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-xs text-text-muted">Nenhum teste A/B ativo</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowExperimentModal(true)}
+              className="ml-auto shrink-0"
+            >
+              Criar Teste A/B
+            </Button>
+          </>
+        )}
+      </div>
+
       {/* ── Mobile tab switcher (Editar | Visualizar) ────────────────────── */}
       <div className="flex md:hidden shrink-0 border-b border-border bg-surface-raised">
         {(["editar", "visualizar"] as const).map((tab) => (
@@ -764,6 +815,20 @@ export function FormBuilderPage() {
         cancelLabel="Cancelar"
         variant="danger"
       />
+
+      {/* ── Experiment Setup Modal ──────────────────────────────────────────── */}
+      {formId && (
+        <ExperimentSetupModal
+          open={showExperimentModal}
+          onClose={() => setShowExperimentModal(false)}
+          formId={formId as Id<"forms">}
+          organizationId={organizationId}
+          onCreated={(experimentId) => {
+            setShowExperimentModal(false);
+            navigate(`/app/formularios/${formId}/experimento/${experimentId}`);
+          }}
+        />
+      )}
     </div>
   );
 }

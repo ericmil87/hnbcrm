@@ -145,8 +145,13 @@ export const internalProcessSubmission = internalMutation({
     utmSource: v.optional(v.string()),
     utmMedium: v.optional(v.string()),
     utmCampaign: v.optional(v.string()),
+    utmContent: v.optional(v.string()),
+    utmTerm: v.optional(v.string()),
     honeypotTriggered: v.boolean(),
     sessionId: v.optional(v.string()),
+    experimentId: v.optional(v.id("formExperiments")),
+    variantId: v.optional(v.id("formExperimentVariants")),
+    visitorId: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -173,8 +178,13 @@ export const internalProcessSubmission = internalMutation({
         utmSource: args.utmSource,
         utmMedium: args.utmMedium,
         utmCampaign: args.utmCampaign,
+        utmContent: args.utmContent,
+        utmTerm: args.utmTerm,
         honeypotTriggered: true,
         processingStatus: "spam",
+        experimentId: args.experimentId,
+        variantId: args.variantId,
+        visitorId: args.visitorId,
         createdAt: now,
       });
 
@@ -210,9 +220,14 @@ export const internalProcessSubmission = internalMutation({
         utmSource: args.utmSource,
         utmMedium: args.utmMedium,
         utmCampaign: args.utmCampaign,
+        utmContent: args.utmContent,
+        utmTerm: args.utmTerm,
         honeypotTriggered: false,
         processingStatus: "error",
         errorMessage: JSON.stringify(validationResult.errors),
+        experimentId: args.experimentId,
+        variantId: args.variantId,
+        visitorId: args.visitorId,
         createdAt: now,
       });
 
@@ -374,11 +389,23 @@ export const internalProcessSubmission = internalMutation({
       utmSource: args.utmSource,
       utmMedium: args.utmMedium,
       utmCampaign: args.utmCampaign,
+      utmContent: args.utmContent,
+      utmTerm: args.utmTerm,
       honeypotTriggered: false,
       processingStatus: "processed",
       sessionId: args.sessionId,
+      experimentId: args.experimentId,
+      variantId: args.variantId,
+      visitorId: args.visitorId,
       createdAt: now,
     });
+
+    // Record A/B experiment conversion if variant is present
+    if (args.variantId) {
+      await ctx.runMutation(internal.formExperiments.internalRecordConversion, {
+        variantId: args.variantId,
+      });
+    }
 
     // Mark partial as converted if sessionId was provided
     if (args.sessionId) {
@@ -589,21 +616,28 @@ export const getFormAnalytics = query({
       dailySubmissions.push({ date, count });
     }
 
-    // UTM source breakdown
-    const utmBreakdown: Record<string, number> = {};
-    for (const s of submissions) {
-      if (s.utmSource) {
-        utmBreakdown[s.utmSource] = (utmBreakdown[s.utmSource] ?? 0) + 1;
+    // UTM breakdowns for all 5 dimensions
+    function buildUtmBreakdown(field: keyof typeof submissions[0]): { source: string; count: number }[] {
+      const map: Record<string, number> = {};
+      for (const s of submissions) {
+        const val = s[field] as string | undefined;
+        if (val) map[val] = (map[val] ?? 0) + 1;
       }
+      return Object.entries(map)
+        .map(([source, count]) => ({ source, count }))
+        .sort((a, b) => b.count - a.count);
     }
-    const utmSources = Object.entries(utmBreakdown)
-      .map(([source, count]) => ({ source, count }))
-      .sort((a, b) => b.count - a.count);
+
+    const utmSources = buildUtmBreakdown("utmSource");
+    const utmMediums = buildUtmBreakdown("utmMedium");
+    const utmCampaigns = buildUtmBreakdown("utmCampaign");
+    const utmContents = buildUtmBreakdown("utmContent");
+    const utmTerms = buildUtmBreakdown("utmTerm");
 
     return {
       total, processed, spam, error,
       last7Days, last30Days, spamRate,
-      dailySubmissions, utmSources,
+      dailySubmissions, utmSources, utmMediums, utmCampaigns, utmContents, utmTerms,
     };
   },
 });

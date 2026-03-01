@@ -23,7 +23,7 @@ interface DailySubmission {
   count: number;
 }
 
-interface UtmSource {
+interface UtmBreakdown {
   source: string;
   count: number;
 }
@@ -37,7 +37,11 @@ interface FormAnalytics {
   last30Days: number;
   spamRate: number;
   dailySubmissions: DailySubmission[];
-  utmSources: UtmSource[];
+  utmSources: UtmBreakdown[];
+  utmMediums: UtmBreakdown[];
+  utmCampaigns: UtmBreakdown[];
+  utmContents: UtmBreakdown[];
+  utmTerms: UtmBreakdown[];
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -227,70 +231,136 @@ function StatusBreakdownCard({
   );
 }
 
-// ── UTM Source Table ──────────────────────────────────────────────────────────
+// ── UTM Breakdown Bar List ────────────────────────────────────────────────────
 
-interface UtmSourceTableProps {
-  sources: UtmSource[];
+interface UtmBarListProps {
+  items: UtmBreakdown[];
   total: number;
 }
 
-function UtmSourceTable({ sources, total }: UtmSourceTableProps) {
-  if (sources.length === 0) return null;
+function UtmBarList({ items, total }: UtmBarListProps) {
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-8 text-text-muted text-sm">
+        Sem dados para esta dimensao
+      </div>
+    );
+  }
 
-  const maxCount = Math.max(...sources.map((s) => s.count), 1);
+  const maxCount = Math.max(...items.map((s) => s.count), 1);
+
+  return (
+    <div className="divide-y divide-border-subtle">
+      {items.map((s) => {
+        const pct = total > 0 ? (s.count / total) * 100 : 0;
+        const barWidth = (s.count / maxCount) * 100;
+
+        return (
+          <div key={s.source} className="px-4 py-3 md:px-5 flex items-center gap-4">
+            <div className="w-28 md:w-36 shrink-0">
+              <p className="text-sm font-medium text-text-primary truncate capitalize">
+                {s.source}
+              </p>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="h-2 rounded-full bg-surface-overlay overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-brand-600 transition-all duration-500"
+                  style={{ width: `${barWidth}%` }}
+                  role="presentation"
+                />
+              </div>
+            </div>
+            <div className="w-24 shrink-0 text-right">
+              <span className="text-sm font-semibold text-text-primary tabular-nums">
+                {formatNumber(s.count)}
+              </span>
+              <span className="text-xs text-text-muted ml-1 tabular-nums">
+                ({formatPercent(pct)})
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── UTM Tabbed Section ───────────────────────────────────────────────────────
+
+const UTM_TABS = [
+  { key: "source", label: "Fonte" },
+  { key: "medium", label: "Midia" },
+  { key: "campaign", label: "Campanha" },
+  { key: "content", label: "Conteudo" },
+  { key: "term", label: "Termo" },
+] as const;
+
+type UtmTabKey = (typeof UTM_TABS)[number]["key"];
+
+interface UtmTabbedSectionProps {
+  analytics: FormAnalytics;
+}
+
+function UtmTabbedSection({ analytics }: UtmTabbedSectionProps) {
+  const [activeTab, setActiveTab] = useState<UtmTabKey>("source");
+
+  const hasAnyUtm =
+    analytics.utmSources.length > 0 ||
+    analytics.utmMediums.length > 0 ||
+    analytics.utmCampaigns.length > 0 ||
+    analytics.utmContents.length > 0 ||
+    analytics.utmTerms.length > 0;
+
+  if (!hasAnyUtm) return null;
+
+  const tabData: Record<UtmTabKey, UtmBreakdown[]> = {
+    source: analytics.utmSources,
+    medium: analytics.utmMediums,
+    campaign: analytics.utmCampaigns,
+    content: analytics.utmContents,
+    term: analytics.utmTerms,
+  };
 
   return (
     <section
       className="bg-surface-raised border border-border rounded-card overflow-hidden"
-      aria-label="Origens de trafego (UTM)"
+      aria-label="Parametros UTM"
     >
       <div className="px-4 py-3 md:px-5 md:py-4 border-b border-border">
         <h2 className="text-sm font-semibold text-text-primary">
-          Origens de Trafego (UTM)
+          Parametros UTM
         </h2>
         <p className="text-xs text-text-muted mt-0.5">
-          Canais que geraram submissoes com parametros UTM
+          Detalhamento por dimensao de trafego
         </p>
       </div>
 
-      <div className="divide-y divide-border-subtle">
-        {sources.map((s) => {
-          const pct = total > 0 ? (s.count / total) * 100 : 0;
-          const barWidth = (s.count / maxCount) * 100;
-
-          return (
-            <div key={s.source} className="px-4 py-3 md:px-5 flex items-center gap-4">
-              {/* Source name */}
-              <div className="w-28 md:w-36 shrink-0">
-                <p className="text-sm font-medium text-text-primary truncate capitalize">
-                  {s.source}
-                </p>
-              </div>
-
-              {/* Bar */}
-              <div className="flex-1 min-w-0">
-                <div className="h-2 rounded-full bg-surface-overlay overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-brand-600 transition-all duration-500"
-                    style={{ width: `${barWidth}%` }}
-                    role="presentation"
-                  />
-                </div>
-              </div>
-
-              {/* Count + percent */}
-              <div className="w-24 shrink-0 text-right">
-                <span className="text-sm font-semibold text-text-primary tabular-nums">
-                  {formatNumber(s.count)}
-                </span>
-                <span className="text-xs text-text-muted ml-1 tabular-nums">
-                  ({formatPercent(pct)})
-                </span>
-              </div>
-            </div>
-          );
-        })}
+      {/* Tabs */}
+      <div className="flex border-b border-border-subtle overflow-x-auto">
+        {UTM_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              "px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
+              "focus:outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500",
+              activeTab === tab.key
+                ? "text-brand-500 border-b-2 border-brand-500"
+                : "text-text-secondary hover:text-text-primary"
+            )}
+          >
+            {tab.label}
+            {tabData[tab.key].length > 0 && (
+              <span className="ml-1.5 text-xs text-text-muted tabular-nums">
+                ({tabData[tab.key].length})
+              </span>
+            )}
+          </button>
+        ))}
       </div>
+
+      <UtmBarList items={tabData[activeTab]} total={analytics.total} />
     </section>
   );
 }
@@ -540,13 +610,8 @@ export function FormAnalyticsPage() {
               </div>
             </section>
 
-            {/* UTM Sources */}
-            {analytics.utmSources.length > 0 && (
-              <UtmSourceTable
-                sources={analytics.utmSources}
-                total={analytics.total}
-              />
-            )}
+            {/* UTM Breakdown (tabbed) */}
+            <UtmTabbedSection analytics={analytics} />
 
           </div>
         )}

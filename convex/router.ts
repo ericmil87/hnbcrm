@@ -1084,11 +1084,42 @@ http.route({
         },
       };
 
-      return jsonResponse({ form: sanitized });
+      // Check for active A/B experiment on this form
+      const experiment = await ctx.runQuery(internal.formExperiments.internalGetActiveExperiment, { formId: form._id });
+
+      return jsonResponse({ form: sanitized, experiment: experiment ?? undefined });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
   }),
+});
+
+// Track A/B experiment view — POST /api/v1/forms/experiment/view
+http.route({
+  path: "/api/v1/forms/experiment/view",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { variantId } = body;
+
+      if (!variantId) return errorResponse("variantId is required", 400);
+
+      await ctx.runMutation(internal.formExperiments.internalRecordView, {
+        variantId: variantId as Id<"formExperimentVariants">,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/forms/experiment/view",
+  method: "OPTIONS",
+  handler: httpAction(async () => handleOptions()),
 });
 
 // Submit form — POST /api/v1/forms/public/submit { slug, data, _honeypot }
@@ -1116,7 +1147,7 @@ http.route({
       const userAgent = request.headers.get("user-agent") || undefined;
       const referrer = request.headers.get("referer") || undefined;
 
-      // Extract UTM params from referrer if present
+      // Extract UTM params from referrer as fallback
       let utmSource: string | undefined;
       let utmMedium: string | undefined;
       let utmCampaign: string | undefined;
@@ -1132,6 +1163,13 @@ http.route({
         }
       }
 
+      // Body UTM values take priority over referrer-parsed ones
+      utmSource = body.utmSource || utmSource;
+      utmMedium = body.utmMedium || utmMedium;
+      utmCampaign = body.utmCampaign || utmCampaign;
+      const utmContent: string | undefined = body.utmContent || undefined;
+      const utmTerm: string | undefined = body.utmTerm || undefined;
+
       const honeypotTriggered = !!_honeypot;
 
       const result = await ctx.runMutation(internal.formSubmissions.internalProcessSubmission, {
@@ -1143,8 +1181,13 @@ http.route({
         utmSource,
         utmMedium,
         utmCampaign,
+        utmContent,
+        utmTerm,
         honeypotTriggered,
         sessionId: sessionId || undefined,
+        experimentId: body.experimentId || undefined,
+        variantId: body.variantId || undefined,
+        visitorId: body.visitorId || undefined,
       });
 
       // Phase 6: Return proper status codes for validation/duplicate errors
@@ -1217,7 +1260,7 @@ http.route({
       const userAgent = request.headers.get("user-agent") || undefined;
       const referrer = request.headers.get("referer") || undefined;
 
-      // Extract UTM params from referrer if present
+      // Extract UTM params from referrer as fallback
       let utmSource: string | undefined;
       let utmMedium: string | undefined;
       let utmCampaign: string | undefined;
@@ -1233,6 +1276,13 @@ http.route({
         }
       }
 
+      // Body UTM values take priority over referrer-parsed ones
+      utmSource = body.utmSource || utmSource;
+      utmMedium = body.utmMedium || utmMedium;
+      utmCampaign = body.utmCampaign || utmCampaign;
+      const utmContent: string | undefined = body.utmContent || undefined;
+      const utmTerm: string | undefined = body.utmTerm || undefined;
+
       await ctx.runMutation(internal.formPartials.internalSavePartial, {
         formId: form._id,
         sessionId,
@@ -1246,6 +1296,11 @@ http.route({
         utmSource,
         utmMedium,
         utmCampaign,
+        utmContent,
+        utmTerm,
+        experimentId: body.experimentId || undefined,
+        variantId: body.variantId || undefined,
+        visitorId: body.visitorId || undefined,
       });
 
       return jsonResponse({ success: true });

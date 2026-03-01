@@ -733,10 +733,15 @@ const applicationTables = {
     utmSource: v.optional(v.string()),
     utmMedium: v.optional(v.string()),
     utmCampaign: v.optional(v.string()),
+    utmContent: v.optional(v.string()),
+    utmTerm: v.optional(v.string()),
     honeypotTriggered: v.boolean(),
     processingStatus: v.union(v.literal("processed"), v.literal("spam"), v.literal("error")),
     errorMessage: v.optional(v.string()),
     sessionId: v.optional(v.string()),
+    experimentId: v.optional(v.id("formExperiments")),
+    variantId: v.optional(v.id("formExperimentVariants")),
+    visitorId: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_form", ["formId"])
@@ -761,6 +766,11 @@ const applicationTables = {
     utmSource: v.optional(v.string()),
     utmMedium: v.optional(v.string()),
     utmCampaign: v.optional(v.string()),
+    utmContent: v.optional(v.string()),
+    utmTerm: v.optional(v.string()),
+    experimentId: v.optional(v.id("formExperiments")),
+    variantId: v.optional(v.id("formExperimentVariants")),
+    visitorId: v.optional(v.string()),
     firstInteractionAt: v.number(),
     lastActivityAt: v.number(),
     convertedAt: v.optional(v.number()),
@@ -772,6 +782,43 @@ const applicationTables = {
     .index("by_form_and_status", ["formId", "status"])
     .index("by_status_and_activity", ["status", "lastActivityAt"])
     .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Form A/B Testing Experiments
+  formExperiments: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    formId: v.id("forms"),
+    hypothesis: v.optional(v.string()),
+    status: v.union(v.literal("draft"), v.literal("running"), v.literal("paused"), v.literal("concluded")),
+    winnerVariantId: v.optional(v.string()),
+    concludedAt: v.optional(v.number()),
+    concludedBy: v.optional(v.id("teamMembers")),
+    createdBy: v.id("teamMembers"),
+    startedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_form", ["formId"])
+    .index("by_organization_and_status", ["organizationId", "status"]),
+
+  // Form Experiment Variants
+  formExperimentVariants: defineTable({
+    organizationId: v.id("organizations"),
+    experimentId: v.id("formExperiments"),
+    formId: v.id("forms"),
+    name: v.string(),
+    variantKey: v.string(),
+    trafficWeight: v.number(),
+    views: v.number(),
+    conversions: v.number(),
+    isControl: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_experiment", ["experimentId"])
+    .index("by_form", ["formId"])
+    .index("by_organization", ["organizationId"]),
 
   // Webhooks
   webhooks: defineTable({

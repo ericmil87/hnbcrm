@@ -4,6 +4,8 @@ import { SEO } from "@/components/SEO";
 import { Spinner } from "@/components/ui/Spinner";
 import { FormRenderer } from "@/components/forms/renderer/FormRenderer";
 import type { FormFieldDefinition } from "@/components/forms/renderer/FormField";
+import { resolveUtmParams, type UtmData } from "@/lib/utmPersistence";
+import { getVisitorId, selectVariant, type ExperimentVariant } from "@/lib/abTesting";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,11 +39,16 @@ interface PublicFormData {
   settings: FormSettings;
 }
 
+interface ExperimentConfig {
+  experimentId: string;
+  variants: ExperimentVariant[];
+}
+
 type PageState =
   | { kind: "loading" }
   | { kind: "not_found" }
   | { kind: "error"; message: string }
-  | { kind: "ready"; form: PublicFormData; prefill: Record<string, string> };
+  | { kind: "ready"; form: PublicFormData; prefill: Record<string, string>; experiment?: ExperimentConfig; selectedVariant?: ExperimentVariant };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -137,10 +144,49 @@ export function PublicFormPage() {
         }
 
         const json = await res.json();
-        const form: PublicFormData = json.form;
+        let form: PublicFormData = json.form;
         const prefill = buildPrefillData(form.fields, searchParams);
         prefillDataRef.current = prefill;
-        setPageState({ kind: "ready", form, prefill });
+
+        // Handle A/B experiment variant routing
+        let experiment: ExperimentConfig | undefined;
+        let selectedVariant: ExperimentVariant | undefined;
+
+        if (json.experiment && json.experiment.variants?.length > 0) {
+          experiment = json.experiment as ExperimentConfig;
+          const visitorId = getVisitorId();
+          selectedVariant = selectVariant(experiment.experimentId, visitorId, experiment.variants);
+
+          // If selected variant is different from current form, fetch that variant's form
+          if (selectedVariant && !selectedVariant.isControl && selectedVariant.slug !== formSlug) {
+            try {
+              const variantRes = await fetch(
+                `${siteUrl}/api/v1/forms/public?slug=${encodeURIComponent(selectedVariant.slug)}`
+              );
+              if (!cancelled && variantRes.ok) {
+                const variantJson = await variantRes.json();
+                form = variantJson.form;
+              }
+            } catch {
+              // Variant fetch failed, use control form
+            }
+          }
+
+          // Fire view tracking (fire-and-forget)
+          if (selectedVariant) {
+            fetch(`${siteUrl}/api/v1/forms/experiment/view`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                variantId: selectedVariant._id,
+                visitorId,
+              }),
+              keepalive: true,
+            }).catch(() => {});
+          }
+        }
+
+        setPageState({ kind: "ready", form, prefill, experiment, selectedVariant });
       } catch (err) {
         if (cancelled) return;
         const message =
@@ -209,9 +255,15 @@ export function PublicFormPage() {
     setSessionId(id);
   }, []);
 
+  // Resolve UTM params with persistence cascade
+  const utmData = useRef<UtmData>(resolveUtmParams(searchParams));
+
   // Submit handler
   async function handleSubmit(data: Record<string, string>) {
     if (pageState.kind !== "ready") return;
+
+    const utm = utmData.current;
+    const { experiment, selectedVariant } = pageState;
 
     const res = await fetch(
       `${siteUrl}/api/v1/forms/public/submit`,
@@ -224,9 +276,14 @@ export function PublicFormPage() {
           sessionId: sessionId ?? undefined,
           _honeypot: undefined,
           referrer: document.referrer,
-          utmSource: searchParams.get("utm_source"),
-          utmMedium: searchParams.get("utm_medium"),
-          utmCampaign: searchParams.get("utm_campaign"),
+          utmSource: utm.utmSource,
+          utmMedium: utm.utmMedium,
+          utmCampaign: utm.utmCampaign,
+          utmContent: utm.utmContent,
+          utmTerm: utm.utmTerm,
+          experimentId: experiment?.experimentId,
+          variantId: selectedVariant?._id,
+          visitorId: experiment ? getVisitorId() : undefined,
         }),
       }
     );
