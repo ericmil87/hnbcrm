@@ -20,6 +20,7 @@ const ENTITY_LABELS: Record<string, { article: string; label: string }> = {
   calendarEvent: { article: "o", label: "evento" },
   form: { article: "o", label: "formulário" },
   formSubmission: { article: "a", label: "submissão de formulário" },
+  channelConfig: { article: "a", label: "conexão de canal" },
 };
 
 const ACTION_VERBS: Record<string, string> = {

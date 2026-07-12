@@ -282,6 +282,31 @@ const applicationTables = {
     .index("by_handoff_status", ["handoffState.status"])
     .index("by_last_activity", ["lastActivityAt"]),
 
+  // Channel configurations (per-org connections to external messaging providers)
+  channelConfigs: defineTable({
+    organizationId: v.id("organizations"),
+    channel: v.union(v.literal("whatsapp")), // union-ready for future channels
+    displayName: v.string(),
+    phoneNumberId: v.string(), // Meta Cloud API phone number id (webhook routing key)
+    wabaId: v.string(), // WhatsApp Business Account id
+    displayPhoneNumber: v.optional(v.string()), // human-readable, filled by health check
+    verifyToken: v.string(), // webhook GET handshake token
+    // Secrets encrypted at rest (AES-256-GCM via lib/secretCrypto); never sent to clients
+    appSecretEncrypted: v.string(),
+    accessTokenEncrypted: v.string(),
+    // Plaintext last-4 for masked display without decryption
+    appSecretLast4: v.string(),
+    accessTokenLast4: v.string(),
+    status: v.union(v.literal("active"), v.literal("disabled"), v.literal("error")),
+    lastHealthCheckAt: v.optional(v.number()),
+    healthDetail: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_phone_number_id", ["phoneNumberId"])
+    .index("by_verify_token", ["verifyToken"]),
+
   // Conversations
   conversations: defineTable({
     organizationId: v.id("organizations"),
@@ -293,6 +318,7 @@ const applicationTables = {
       v.literal("webchat"),
       v.literal("internal")
     ),
+    channelConfigId: v.optional(v.id("channelConfigs")), // which connected number this conversation belongs to
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
     messageCount: v.number(),

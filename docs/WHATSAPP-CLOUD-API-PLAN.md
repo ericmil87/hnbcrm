@@ -11,7 +11,7 @@
 > is **no code path that creates an inbound message from a contact** (see
 > `docs/PROJECT-STATUS.md` — "real channel dispatch not implemented").
 >
-> **Status: 🟠 in progress — Wave 1 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
+> **Status: 🟠 in progress — Waves 1–2 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
 > **Estimated effort:** ~10–13 dev-days across 6 waves.
 
 ---
@@ -146,27 +146,27 @@ the Settings UI — no per-tenant env vars.)*
 
 ## Wave 2 — Channel configuration foundation (multi-tenant) ~2 days
 
-- [ ] **2.1 Schema `channelConfigs`**: `organizationId`, `channel` (literal `"whatsapp"`
+- [x] **2.1 Schema `channelConfigs`**: `organizationId`, `channel` (literal `"whatsapp"`
   for now, union-ready), `displayName`, `phoneNumberId`, `wabaId`,
   `displayPhoneNumber?`, `verifyToken`, `appSecretEncrypted`, `accessTokenEncrypted`,
   `status` (`active|disabled|error`), `lastHealthCheckAt?`, `healthDetail?`, timestamps.
   Indexes: by organization, by `phoneNumberId`, by `verifyToken` (active lookup).
-- [ ] **2.2 Secret crypto**: `convex/lib/secretCrypto.ts` — AES-256-GCM encrypt/decrypt
+- [x] **2.2 Secret crypto**: `convex/lib/secretCrypto.ts` — AES-256-GCM encrypt/decrypt
   with `CHANNEL_ENCRYPTION_KEY` (Web Crypto, random IV, versioned `v1:` prefix).
   Fail with a clear error if the env var is missing/malformed. Unit tests.
-- [ ] **2.3 Config mutations/queries** (`convex/channelConfigs.ts`): create/update/
+- [x] **2.3 Config mutations/queries** (`convex/channelConfigs.ts`): create/update/
   disable/delete (admin-only via existing role checks; audit-logged **without secret
   values**). Queries return masked secrets (`…last4`, `hasToken`) — encrypted fields
   are never sent to clients. Internal getters return decrypted values for
   actions only.
-- [ ] **2.4 Health check action**: `checkChannelHealth(configId)` — Graph API
+- [x] **2.4 Health check action**: `checkChannelHealth(configId)` — Graph API
   `GET /{phone_number_id}?fields=display_phone_number,verified_name` with the decrypted
   token; stores result (`status`, `displayPhoneNumber`, `healthDetail`,
   `lastHealthCheckAt`). This powers a "Test connection" button.
-- [ ] **2.5 Conversation linkage**: add `channelConfigId: v.optional(v.id("channelConfigs"))`
+- [x] **2.5 Conversation linkage**: add `channelConfigId: v.optional(v.id("channelConfigs"))`
   to `conversations`; helper to resolve an org's default active config (single-config
   orgs) when a conversation was created in-app rather than by ingress.
-- [ ] **2.6 Tests**: crypto round-trip, masked reads, admin-only enforcement, health
+- [x] **2.6 Tests**: crypto round-trip, masked reads, admin-only enforcement, health
   check happy/error paths (Graph API fetch mocked).
 
 **Gate:** lint + tests green.
@@ -312,4 +312,11 @@ App Review) · template creation/management UI · WhatsApp Flows · Coexistence
 - 2026-07-11 — [1.5] `message.sent` payload enriched with `senderType` + `senderId` in both `sendMessage` and `internalSendMessage` (Wave 1 commit)
 - 2026-07-11 — [1.6] `internalUpdateDeliveryStatus(organizationId, externalId, status, errorDetail?)` — org arg added to honor org-scoped index; unknown externalId → warn + null (Wave 1 commit)
 - 2026-07-11 — [1.7] Test harness: `vitest` + `convex-test@0.0.41` (pinned — 0.0.42+ requires convex ^1.32, repo is on 1.31.2) + `@edge-runtime/vm`; `vitest.config.mts` (edge-runtime env); `npm test` script; 6 tests in `convex/conversations.test.ts` covering inbound creation, idempotent replay, `message.received`/`message.sent` payload sender info, delivery-status happy/unknown paths. Fake timers keep scheduled webhook triggers queued (asserted via `_scheduled_functions`) (Wave 1 commit)
-- 2026-07-11 — **Wave 1 gate green**: `npm run lint` exit 0 (tsc convex + tsc app + convex dev --once + vite build) and `npm test` 6/6 passing
+- 2026-07-11 — **Wave 1 gate green**: `npm run lint` exit 0 (tsc convex + tsc app + convex dev --once + vite build) and `npm test` 6/6 passing (commit 4c5a506)
+- 2026-07-11 — [2.1] `channelConfigs` table with all planned fields + `appSecretLast4`/`accessTokenLast4` (plaintext last-4 so queries can mask without decrypting); indexes `by_organization`, `by_phone_number_id`, `by_verify_token` (Wave 2 commit)
+- 2026-07-11 — [2.2] `convex/lib/secretCrypto.ts` — AES-256-GCM via Web Crypto, random 12-byte IV, `v1:` prefix, clear errors for missing/malformed `CHANNEL_ENCRYPTION_KEY`; 7 unit tests in `convex/secretCrypto.test.ts` (round-trip, unique IV, tamper rejection, format/key errors) (Wave 2 commit)
+- 2026-07-11 — [2.3] `convex/channelConfigs.ts` — create/update as public **actions** (encrypt in action, persist via internal mutation running `requirePermission(settings, manage)` on the caller's auth context); enable/disable/delete mutations; `getChannelConfigs` returns masked (`…last4`) + `hasToken`, never encrypted fields; audit logs record changed field names only; phoneNumberId/verifyToken uniqueness enforced deployment-wide (webhook routing keys); `channelConfig` label added to `auditDescription.ts` (Wave 2 commit)
+- 2026-07-11 — [2.4] `checkChannelHealth` action — Graph API v23.0 `GET /{phone_number_id}?fields=display_phone_number,verified_name` with decrypted token; stores `status`/`displayPhoneNumber`/`healthDetail`/`lastHealthCheckAt`; failing check → `status: "error"`, passing check restores `active` unless deliberately `disabled` (Wave 2 commit)
+- 2026-07-11 — [2.5] `channelConfigId` optional field on `conversations`; `internalGetDefaultActiveConfig(organizationId, channel)` resolves single-config orgs (wired into egress in Wave 4) (Wave 2 commit)
+- 2026-07-11 — [2.6] 13 tests in `convex/channelConfigs.test.ts`: encrypted at rest + masked reads + no secrets in audit payloads, duplicate phoneNumberId rejected, admin-only enforcement (agent + unauthenticated rejected), health check happy/error paths with mocked Graph API fetch, default-active-config resolution skips disabled configs (Wave 2 commit)
+- 2026-07-11 — **Wave 2 gate green**: `npm run lint` exit 0 and `npm test` 20/20 passing. Note: convex action types referencing same-module internals need explicit handler return annotations (TS7022 circularity) — pattern documented by example in `channelConfigs.ts`
