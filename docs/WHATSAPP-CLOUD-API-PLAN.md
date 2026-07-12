@@ -11,7 +11,7 @@
 > is **no code path that creates an inbound message from a contact** (see
 > `docs/PROJECT-STATUS.md` — "real channel dispatch not implemented").
 >
-> **Status: 🟡 not started** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
+> **Status: 🟠 in progress — Wave 1 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
 > **Estimated effort:** ~10–13 dev-days across 6 waves.
 
 ---
@@ -116,28 +116,28 @@ the Settings UI — no per-tenant env vars.)*
 
 *The structural gap: inbound messages don't exist. Everything else builds on this.*
 
-- [ ] **1.1 Schema**: add `externalId: v.optional(v.string())` to `messages` + index
+- [x] **1.1 Schema**: add `externalId: v.optional(v.string())` to `messages` + index
   for dedupe lookup (wamid is globally unique; scope the index per the codebase's
   org-scoping convention in `convex/schema.ts`). Also verify `deliveryStatus` values
   cover `sent|delivered|read|failed`.
-- [ ] **1.2 Inbound mutation**: `internalReceiveMessage` in `convex/conversations.ts` —
+- [x] **1.2 Inbound mutation**: `internalReceiveMessage` in `convex/conversations.ts` —
   creates `direction: "inbound"`, `senderType: "contact"` messages (with `externalId`,
   `contentType`, `attachments`, `metadata`), get-or-creates the conversation
   (reuse `internalCreateConversation`), updates `lastMessageAt`/`messageCount`,
   logs activity. **Idempotent**: if `externalId` already exists, return existing id, no-op.
-- [ ] **1.3 REST endpoint**: `POST /api/v1/conversations/receive` in `convex/router.ts`
+- [x] **1.3 REST endpoint**: `POST /api/v1/conversations/receive` in `convex/router.ts`
   (X-API-Key auth, same pattern as `/conversations/send`) so external bridges can
   inject inbound messages for any channel. Body: `contactPhone` (or `contactId`),
   `channel`, `content`, `contentType?`, `externalId?`, `metadata?`.
-- [ ] **1.4 Webhook event `message.received`**: fire on inbound creation (register the
+- [x] **1.4 Webhook event `message.received`**: fire on inbound creation (register the
   event type wherever `message.sent` is defined; payload parity with 1.5).
-- [ ] **1.5 Enrich `message.sent` payload**: add `senderType` + `senderId` (today
+- [x] **1.5 Enrich `message.sent` payload**: add `senderType` + `senderId` (today
   consumers can't tell human vs AI vs which member without an extra GET). Update both
   `sendMessage` and `internalSendMessage` triggers.
-- [ ] **1.6 Delivery-status mutation**: `internalUpdateDeliveryStatus(externalId, status,
+- [x] **1.6 Delivery-status mutation**: `internalUpdateDeliveryStatus(externalId, status,
   errorDetail?)` — finds message by `externalId`, updates `deliveryStatus` (+ error into
   `metadata`). (Today `deliveryStatus` is written by nothing.)
-- [ ] **1.7 Test harness (first tests in the repo)**: add `vitest` + `convex-test`;
+- [x] **1.7 Test harness (first tests in the repo)**: add `vitest` + `convex-test`;
   cover: inbound creation, idempotent replay, `message.received`/`message.sent` payloads
   include sender info, delivery-status update. Add `npm test` script.
 
@@ -305,4 +305,11 @@ App Review) · template creation/management UI · WhatsApp Flows · Coexistence
 <!-- Agent: append entries as `- YYYY-MM-DD — [wave.task] summary (commit abc1234)` -->
 <!-- Blocked items: `- YYYY-MM-DD — BLOCKED [wave.task]: reason, what's needed` -->
 
-*(empty — not started)*
+- 2026-07-11 — [1.1] `externalId` on `messages` + `by_organization_and_external_id` index; verified `deliveryStatus` already covers sent|delivered|read|failed (Wave 1 commit)
+- 2026-07-11 — [1.2] `internalReceiveMessage` in `conversations.ts` — inbound contact messages, idempotent on `externalId`, get-or-creates conversation via shared `getOrCreateConversation` helper (also deduped `createConversation`/`internalCreateConversation`), reopens closed conversations, updates lead activity, logs `message_received` activity (Wave 1 commit)
+- 2026-07-11 — [1.3] `POST /api/v1/conversations/receive` in `router.ts` — X-API-Key auth, contact by `contactId`/`contactPhone` (find-or-create), lead find-or-create on default board with AI auto-assign; added `internalGetLeadsByContact` to `leads.ts` (Wave 1 commit)
+- 2026-07-11 — [1.4] `message.received` webhook fired on inbound creation with payload parity (senderType/contactId/externalId); event registered in `llmsTxt.ts` event table (Wave 1 commit)
+- 2026-07-11 — [1.5] `message.sent` payload enriched with `senderType` + `senderId` in both `sendMessage` and `internalSendMessage` (Wave 1 commit)
+- 2026-07-11 — [1.6] `internalUpdateDeliveryStatus(organizationId, externalId, status, errorDetail?)` — org arg added to honor org-scoped index; unknown externalId → warn + null (Wave 1 commit)
+- 2026-07-11 — [1.7] Test harness: `vitest` + `convex-test@0.0.41` (pinned — 0.0.42+ requires convex ^1.32, repo is on 1.31.2) + `@edge-runtime/vm`; `vitest.config.mts` (edge-runtime env); `npm test` script; 6 tests in `convex/conversations.test.ts` covering inbound creation, idempotent replay, `message.received`/`message.sent` payload sender info, delivery-status happy/unknown paths. Fake timers keep scheduled webhook triggers queued (asserted via `_scheduled_functions`) (Wave 1 commit)
+- 2026-07-11 — **Wave 1 gate green**: `npm run lint` exit 0 (tsc convex + tsc app + convex dev --once + vite build) and `npm test` 6/6 passing

@@ -622,6 +622,101 @@ http.route({
   }),
 });
 
+// Receive an inbound message from a contact (external bridges for any channel)
+http.route({
+  path: "/api/v1/conversations/receive",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+
+      if (!body.content) {
+        return errorResponse("content required", 400);
+      }
+      if (!body.contactId && !body.contactPhone) {
+        return errorResponse("contactId or contactPhone required", 400);
+      }
+      const channel = body.channel || "whatsapp";
+
+      // Resolve contact
+      let contactId: Id<"contacts">;
+      if (body.contactId) {
+        contactId = body.contactId as Id<"contacts">;
+        const contact = await ctx.runQuery(internal.contacts.internalGetContact, { contactId });
+        if (!contact || contact.organizationId !== apiKeyRecord.organizationId) {
+          return errorResponse("Contact not found", 404);
+        }
+      } else {
+        contactId = await ctx.runMutation(internal.contacts.internalFindOrCreateContact, {
+          organizationId: apiKeyRecord.organizationId,
+          phone: body.contactPhone,
+          firstName: body.contactFirstName,
+          lastName: body.contactLastName,
+        });
+      }
+
+      // Find the contact's most recent lead, or create one on the default board
+      const leads = await ctx.runQuery(internal.leads.internalGetLeadsByContact, {
+        organizationId: apiKeyRecord.organizationId,
+        contactId,
+      });
+      let leadId: Id<"leads">;
+      if (leads.length > 0) {
+        leadId = leads[0]._id;
+      } else {
+        const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
+          organizationId: apiKeyRecord.organizationId,
+        });
+        const defaultBoard = boards.find((b: { isDefault: boolean }) => b.isDefault) || boards[0];
+        if (!defaultBoard) {
+          return errorResponse("No boards configured", 500);
+        }
+
+        // Auto-assign to AI agent if configured
+        let assignedTo = undefined;
+        const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
+          organizationId: apiKeyRecord.organizationId,
+        });
+        if (org?.settings.aiConfig?.autoAssign) {
+          const members = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
+            organizationId: apiKeyRecord.organizationId,
+          });
+          const availableAI = members.find((m: { type: string; status: string }) => m.type === "ai" && m.status === "active");
+          assignedTo = availableAI?._id;
+        }
+
+        const contact = await ctx.runQuery(internal.contacts.internalGetContact, { contactId });
+        const contactName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ")
+          || contact?.phone || contact?.email || "Unknown contact";
+
+        leadId = await ctx.runMutation(internal.leads.internalCreateLead, {
+          organizationId: apiKeyRecord.organizationId,
+          title: body.leadTitle || contactName,
+          contactId,
+          boardId: defaultBoard._id,
+          assignedTo,
+          teamMemberId: apiKeyRecord.teamMemberId,
+        });
+      }
+
+      const messageId = await ctx.runMutation(internal.conversations.internalReceiveMessage, {
+        organizationId: apiKeyRecord.organizationId,
+        leadId,
+        channel,
+        content: body.content,
+        contentType: body.contentType || "text",
+        externalId: body.externalId,
+        metadata: body.metadata,
+      });
+
+      return jsonResponse({ success: true, messageId, leadId, contactId }, 201);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
 // ---- Handoff Endpoints ----
 
 // Get handoffs
@@ -2023,6 +2118,7 @@ http.route({ path: "/api/v1/contacts/gaps", method: "OPTIONS", handler: optionsH
 http.route({ path: "/api/v1/conversations", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/messages", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/send", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/receive", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/pending", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/accept", method: "OPTIONS", handler: optionsHandler });

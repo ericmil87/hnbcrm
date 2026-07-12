@@ -1229,6 +1229,7 @@ const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   stage_change: { color: "bg-purple-500", letter: "S" },
   assignment: { color: "bg-indigo-500", letter: "A" },
   message_sent: { color: "bg-brand-500", letter: "M" },
+  message_received: { color: "bg-cyan-500", letter: "R" },
   handoff: { color: "bg-brand-600", letter: "H" },
   qualification_update: { color: "bg-semantic-warning", letter: "Q" },
   note: { color: "bg-surface-overlay", letter: "N" },

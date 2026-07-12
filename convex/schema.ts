@@ -323,13 +323,15 @@ const applicationTables = {
     )),
     isInternal: v.boolean(),
     mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
+    externalId: v.optional(v.string()), // provider message id (e.g. WhatsApp wamid) for dedupe + status updates
     metadata: v.optional(v.record(v.string(), v.any())),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
     .index("by_lead", ["leadId"])
     .index("by_organization", ["organizationId"])
-    .index("by_conversation_and_created", ["conversationId", "createdAt"]),
+    .index("by_conversation_and_created", ["conversationId", "createdAt"])
+    .index("by_organization_and_external_id", ["organizationId", "externalId"]),
 
   // Handoffs
   handoffs: defineTable({
@@ -362,6 +364,7 @@ const applicationTables = {
       v.literal("stage_change"), v.literal("assignment"),
       v.literal("handoff"), v.literal("qualification_update"),
       v.literal("created"), v.literal("message_sent"),
+      v.literal("message_received"),
       v.literal("task_created"), v.literal("task_completed"),
       v.literal("event_created"), v.literal("event_completed")
     ),

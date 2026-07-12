@@ -845,6 +845,24 @@ export const internalGetLead = internalQuery({
   },
 });
 
+// Internal: Get leads for a contact (most recent first)
+export const internalGetLeadsByContact = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
+      .order("desc")
+      .take(50);
+
+    return leads.filter((l) => l.organizationId === args.organizationId);
+  },
+});
+
 // Internal: Create lead (accepts teamMemberId instead of auth)
 export const internalCreateLead = internalMutation({
   args: {

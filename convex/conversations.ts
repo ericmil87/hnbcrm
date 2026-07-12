@@ -1,10 +1,43 @@
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation, MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+
+type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
+
+// Get-or-create a conversation for a lead/channel pair (shared by
+// createConversation, internalCreateConversation and internalReceiveMessage)
+async function getOrCreateConversation(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; leadId: Id<"leads">; channel: ConversationChannel }
+): Promise<Id<"conversations">> {
+  const existing = await ctx.db
+    .query("conversations")
+    .withIndex("by_lead_and_channel", (q) =>
+      q.eq("leadId", args.leadId).eq("channel", args.channel)
+    )
+    .first();
+
+  if (existing) {
+    return existing._id;
+  }
+
+  const now = Date.now();
+
+  return await ctx.db.insert("conversations", {
+    organizationId: args.organizationId,
+    leadId: args.leadId,
+    channel: args.channel,
+    status: "active",
+    messageCount: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
 
 // Get conversations for organization
 export const getConversations = query({
@@ -215,7 +248,14 @@ export const sendMessage = mutation({
       await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
         organizationId: conversation.organizationId,
         event: "message.sent",
-        payload: { messageId, conversationId: args.conversationId, leadId: conversation.leadId, channel: conversation.channel },
+        payload: {
+          messageId,
+          conversationId: args.conversationId,
+          leadId: conversation.leadId,
+          channel: conversation.channel,
+          senderType: userMember.type === "ai" ? "ai" : "human",
+          senderId: userMember._id,
+        },
       });
     }
 
@@ -240,31 +280,7 @@ export const createConversation = mutation({
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
 
-    // Check if conversation already exists
-    const existing = await ctx.db
-      .query("conversations")
-      .withIndex("by_lead_and_channel", (q) =>
-        q.eq("leadId", args.leadId).eq("channel", args.channel)
-      )
-      .first();
-
-    if (existing) {
-      return existing._id;
-    }
-
-    const now = Date.now();
-
-    const conversationId = await ctx.db.insert("conversations", {
-      organizationId: args.organizationId,
-      leadId: args.leadId,
-      channel: args.channel,
-      status: "active",
-      messageCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return conversationId;
+    return await getOrCreateConversation(ctx, args);
   },
 });
 
@@ -502,7 +518,14 @@ export const internalSendMessage = internalMutation({
       await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
         organizationId: conversation.organizationId,
         event: "message.sent",
-        payload: { messageId, conversationId: args.conversationId, leadId: conversation.leadId, channel: conversation.channel },
+        payload: {
+          messageId,
+          conversationId: args.conversationId,
+          leadId: conversation.leadId,
+          channel: conversation.channel,
+          senderType: teamMember.type === "ai" ? "ai" : "human",
+          senderId: teamMember._id,
+        },
       });
     }
 
@@ -525,30 +548,156 @@ export const internalCreateConversation = internalMutation({
   },
   returns: v.id("conversations"),
   handler: async (ctx, args) => {
-    // Check if conversation already exists
-    const existing = await ctx.db
-      .query("conversations")
-      .withIndex("by_lead_and_channel", (q) =>
-        q.eq("leadId", args.leadId).eq("channel", args.channel)
-      )
-      .first();
+    return await getOrCreateConversation(ctx, args);
+  },
+});
 
-    if (existing) {
-      return existing._id;
+// Internal: Receive an inbound message from a contact (webhook ingress / external bridges).
+// Idempotent on externalId: replaying the same provider message id is a no-op.
+export const internalReceiveMessage = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadId: v.id("leads"),
+    channel: v.union(
+      v.literal("whatsapp"),
+      v.literal("telegram"),
+      v.literal("email"),
+      v.literal("webchat"),
+      v.literal("internal")
+    ),
+    content: v.string(),
+    contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
+    attachments: v.optional(v.array(v.id("files"))),
+    externalId: v.optional(v.string()),
+    metadata: v.optional(v.record(v.string(), v.any())),
+  },
+  returns: v.id("messages"),
+  handler: async (ctx, args) => {
+    // Idempotency: providers redeliver webhooks; the same externalId must not duplicate
+    if (args.externalId) {
+      const existing = await ctx.db
+        .query("messages")
+        .withIndex("by_organization_and_external_id", (q) =>
+          q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+        )
+        .first();
+      if (existing) return existing._id;
     }
 
-    const now = Date.now();
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) throw new Error("Lead not found");
+    if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
 
-    const conversationId = await ctx.db.insert("conversations", {
+    const conversationId = await getOrCreateConversation(ctx, {
       organizationId: args.organizationId,
       leadId: args.leadId,
       channel: args.channel,
-      status: "active",
-      messageCount: 0,
+    });
+    const conversation = (await ctx.db.get(conversationId))!;
+
+    const now = Date.now();
+
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: args.organizationId,
+      conversationId,
+      leadId: args.leadId,
+      direction: "inbound",
+      senderType: "contact",
+      content: args.content,
+      contentType: args.contentType || "text",
+      attachments: args.attachments,
+      externalId: args.externalId,
+      metadata: args.metadata,
+      isInternal: false,
       createdAt: now,
+    });
+
+    // Link attachment files back to this message
+    if (args.attachments && args.attachments.length > 0) {
+      await Promise.all(
+        args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId }))
+      );
+    }
+
+    // Update conversation (reopen if closed — an inbound message revives it)
+    await ctx.db.patch(conversationId, {
+      status: "active",
+      lastMessageAt: now,
+      messageCount: conversation.messageCount + 1,
       updatedAt: now,
     });
 
-    return conversationId;
+    // Update lead activity
+    await ctx.db.patch(args.leadId, {
+      lastActivityAt: now,
+      updatedAt: now,
+      conversationStatus: "active",
+    });
+
+    // Log activity
+    await ctx.db.insert("activities", {
+      organizationId: args.organizationId,
+      leadId: args.leadId,
+      type: "message_received",
+      actorType: "system",
+      content: `Message received via ${args.channel}`,
+      metadata: { conversationId, externalId: args.externalId },
+      createdAt: now,
+    });
+
+    // Trigger webhooks
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: args.organizationId,
+      event: "message.received",
+      payload: {
+        messageId,
+        conversationId,
+        leadId: args.leadId,
+        channel: args.channel,
+        senderType: "contact",
+        contactId: lead.contactId,
+        externalId: args.externalId,
+      },
+    });
+
+    return messageId;
+  },
+});
+
+// Internal: Update delivery status of an outbound message by provider id (e.g. WhatsApp wamid)
+export const internalUpdateDeliveryStatus = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    externalId: v.string(),
+    status: v.union(
+      v.literal("sent"),
+      v.literal("delivered"),
+      v.literal("read"),
+      v.literal("failed")
+    ),
+    errorDetail: v.optional(v.string()),
+  },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const message = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+      )
+      .first();
+
+    if (!message) {
+      console.warn(`Delivery status for unknown externalId: ${args.externalId}`);
+      return null;
+    }
+
+    await ctx.db.patch(message._id, {
+      deliveryStatus: args.status,
+      ...(args.errorDetail
+        ? { metadata: { ...(message.metadata ?? {}), deliveryError: args.errorDetail } }
+        : {}),
+    });
+
+    return message._id;
   },
 });

@@ -1192,7 +1192,8 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | contact.created | New contact created |
 | contact.updated | Contact fields updated |
 | conversation.created | New conversation started |
-| message.sent | Message sent to conversation |
+| message.sent | Message sent to conversation (payload includes senderType + senderId) |
+| message.received | Inbound message received from a contact |
 | handoff.requested | Handoff requested |
 | handoff.accepted | Handoff accepted |
 | handoff.rejected | Handoff rejected |
