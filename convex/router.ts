@@ -28,8 +28,11 @@ function handleOptions() {
 
 // Standard error response
 function errorResponse(message: string, status: number = 500) {
-  return new Response(JSON.stringify({ error: message, code: status }), {
-    status,
+  // Rate-limit failures bubble up as thrown errors from authenticateApiKey —
+  // map them to 429 here so every /api/v1 route answers correctly
+  const finalStatus = message.includes("Rate limit exceeded") ? 429 : status;
+  return new Response(JSON.stringify({ error: message, code: finalStatus }), {
+    status: finalStatus,
     headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }

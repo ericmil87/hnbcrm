@@ -71,6 +71,8 @@ const applicationTables = {
     name: v.string(),
     keyHash: v.string(),
     lastUsed: v.optional(v.number()),
+    rateWindowStart: v.optional(v.number()), // fixed-window rate limit state
+    rateWindowCount: v.optional(v.number()),
     isActive: v.boolean(),
     permissions: v.optional(permissionsValidator),
     expiresAt: v.optional(v.number()),
@@ -586,6 +588,13 @@ const applicationTables = {
       company: v.optional(v.string()),
       minValue: v.optional(v.number()),
       maxValue: v.optional(v.number()),
+      channel: v.optional(v.union(
+        v.literal("whatsapp"),
+        v.literal("telegram"),
+        v.literal("email"),
+        v.literal("webchat"),
+        v.literal("internal")
+      )),
     }),
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.union(v.literal("asc"), v.literal("desc"))),

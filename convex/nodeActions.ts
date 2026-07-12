@@ -233,31 +233,53 @@ export const triggerWebhooks = internalAction({
       event: args.event,
     });
 
+    // Retry with backoff; non-2xx responses count as failures (not only thrown errors)
+    const MAX_ATTEMPTS = 3;
+    const BACKOFF_MS = [0, 2000, 5000];
+
     for (const webhook of webhooks) {
-      try {
-        const body = JSON.stringify({
-          event: args.event,
-          timestamp: Date.now(),
-          data: args.payload,
-        });
+      const body = JSON.stringify({
+        event: args.event,
+        timestamp: Date.now(),
+        data: args.payload,
+      });
+      const signature = `sha256=${hmacSha256(body, webhook.secret)}`;
 
-        const signature = `sha256=${hmacSha256(body, webhook.secret)}`;
+      let delivered = false;
+      let lastFailure = "";
 
-        await fetch(webhook.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Webhook-Signature": signature,
-            "X-Webhook-Event": args.event,
-          },
-          body,
-        });
+      for (let attempt = 0; attempt < MAX_ATTEMPTS && !delivered; attempt++) {
+        if (BACKOFF_MS[attempt] > 0) {
+          await new Promise((resolve) => setTimeout(resolve, BACKOFF_MS[attempt]));
+        }
+        try {
+          const response = await fetch(webhook.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Webhook-Signature": signature,
+              "X-Webhook-Event": args.event,
+            },
+            body,
+          });
+          if (response.ok) {
+            delivered = true;
+          } else {
+            lastFailure = `HTTP ${response.status}`;
+          }
+        } catch (error) {
+          lastFailure = error instanceof Error ? error.message : String(error);
+        }
+      }
 
+      if (delivered) {
         await ctx.runMutation(internal.webhookTrigger.updateWebhookTriggered, {
           webhookId: webhook._id,
         });
-      } catch (error) {
-        console.error(`Failed to trigger webhook ${webhook.name}:`, error);
+      } else {
+        console.error(
+          `Webhook "${webhook.name}" (${args.event}) failed after ${MAX_ATTEMPTS} attempts: ${lastFailure}`
+        );
       }
     }
 

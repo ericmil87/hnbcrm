@@ -11,7 +11,7 @@
 > is **no code path that creates an inbound message from a contact** (see
 > `docs/PROJECT-STATUS.md` — "real channel dispatch not implemented").
 >
-> **Status: 🟠 in progress — Waves 1–4 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
+> **Status: 🟢 Waves 1–5 done — Wave 6 (validação com credenciais Meta) pendente** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
 > **Estimated effort:** ~10–13 dev-days across 6 waves.
 
 ---
@@ -239,24 +239,24 @@ the Settings UI — no per-tenant env vars.)*
 
 ## Wave 5 — Settings UI, Inbox polish & reliability ~2–3 days
 
-- [ ] **5.1 Settings → Channels page** (follow existing settings/UI patterns, PT-BR like
+- [x] **5.1 Settings → Channels page** (follow existing settings/UI patterns, PT-BR like
   the rest of the app): list of connected WhatsApp numbers per org; connect form
   (display name, phone number id, WABA id, verify token — generated suggestion —,
   app secret, access token); secrets shown masked after save (re-paste to change);
   "Test connection" button (health check, shows verified name/number); enable/disable;
   the exact webhook callback URL + verify token displayed for copy-paste into the Meta
   app config. Admin-only.
-- [ ] **5.2 Setup guidance in-UI**: short inline checklist linking to
+- [x] **5.2 Setup guidance in-UI**: short inline checklist linking to
   `docs/WHATSAPP-SETUP.md` (what to create on Meta's side, in which order).
-- [ ] **5.3 Inbox UI**: delivery-status ticks on outbound whatsapp messages
+- [x] **5.3 Inbox UI**: delivery-status ticks on outbound whatsapp messages
   (sent/delivered/read/failed with error tooltip); failed-send visual state; service
   window indicator on the conversation header ("window closes in Xh" / "window closed —
   template required"). Minimal and consistent with existing Inbox components.
-- [ ] **5.4 Saved views**: add `channel` filter to `filtersValidator` + UI (gap found in
+- [x] **5.4 Saved views**: add `channel` filter to `filtersValidator` + UI (gap found in
   review — e.g. "WhatsApp leads awaiting handoff" views).
-- [ ] **5.5 Outbound webhook reliability**: retry with backoff (3 attempts) + treat
+- [x] **5.5 Outbound webhook reliability**: retry with backoff (3 attempts) + treat
   non-2xx as failure + log failures (today only thrown exceptions are logged).
-- [ ] **5.6 (Stretch)** basic rate limiting on `/api/v1` authenticated endpoints
+- [x] **5.6 (Stretch)** basic rate limiting on `/api/v1` authenticated endpoints
   (currently none — a leaked API key has no throttle).
 
 **Gate:** lint + tests green; manual UI walkthrough (screenshots in the wave summary).
@@ -336,4 +336,11 @@ App Review) · template creation/management UI · WhatsApp Flows · Coexistence
 - 2026-07-12 — [4.5] `internalSendTemplate` mutation (whatsapp-only, full side-effect checklist, `[template] name` best-effort body, metadata carries name/language/components) + REST `POST /api/v1/conversations/send-template` (Wave 4 commit)
 - 2026-07-12 — [4.6] Mark-as-read: after a successful dispatch, best-effort read receipt for the latest inbound wamid (never fails the send) (Wave 4 commit)
 - 2026-07-12 — [4.7] 10 new tests (56 total): dispatch scheduled only for whatsapp non-internal sends, ~6s pacing between consecutive sends, success path (payload/credentials/wamid), read receipt, no-config → clear failure + activity, 131026/131056 mapping, double-dispatch guard, template payload end-to-end, non-whatsapp template rejection, service window exposure (Wave 4 commit)
-- 2026-07-12 — **Wave 4 gate green**: lint exit 0, 56/56 tests
+- 2026-07-12 — **Wave 4 gate green**: lint exit 0, 56/56 tests (commit f026115)
+- 2026-07-12 — [5.1] Settings → Canais (`src/components/settings/ChannelsSection.tsx` + tab em `Settings.tsx`): lista de números com status/health, form conectar/editar (verify token gerado + copiar; segredos password-only, mascarados após salvar, re-colar para trocar), Testar conexão, ativar/desativar/excluir, bloco com a URL de callback exata (`….convex.site/webhooks/whatsapp`) + verify token copiáveis; ações dentro de `PermissionGate settings/manage` (Wave 5 commit A)
+- 2026-07-12 — [5.2] Card colapsável "Como conectar" com checklist numerado do lado Meta (app → WhatsApp product → System User token → App Secret → webhook + verify token → testar), referenciando `docs/WHATSAPP-SETUP.md` (arquivo será criado na Wave 6.1) (Wave 5 commit A)
+- 2026-07-12 — [5.3] Inbox: ticks de entrega em mensagens outbound whatsapp (Check/CheckCheck/CheckCheck brand/AlertCircle com tooltip do erro), estado visual de falha na bolha (ring vermelho + linha de erro), indicador da janela de 24h no cabeçalho ("Janela fecha em Xh/Xmin" / "Janela fechada — requer template") com relógio via setInterval 60s (Wave 5 commit A)
+- 2026-07-12 — [5.4] `channel` adicionado ao `filtersValidator` (`savedViews.ts` + `schema.ts`) e select "Canal" no `CreateViewModal` (PT-BR). Nota: os componentes de saved views (`ViewSelector`/`CreateViewModal`) ainda não estão montados em nenhuma página — a aplicação do filtro nas listas fica para quando essa feature for plugada (Wave 5 commit B)
+- 2026-07-12 — [5.5] `triggerWebhooks` com retry + backoff (3 tentativas: 0s/2s/5s), non-2xx contam como falha e falhas definitivas são logadas com evento e motivo (Wave 5 commit B)
+- 2026-07-12 — [5.6] Rate limiting básico por API key nos endpoints `/api/v1`: janela fixa de 60s, 300 req/janela, estado no doc da chave (aproveita o write de `lastUsed` já existente — zero writes extras); resposta HTTP 429 mapeada centralmente em `errorResponse` (Wave 5 commit B)
+- 2026-07-12 — **Wave 5 gate green**: lint exit 0 (vite build inclui a UI nova), 56/56 tests. **Pendente para revisão do Eric:** walkthrough visual/screenshots das telas (Canais + Inbox) — exige app logado; código compilando e padrões seguidos
