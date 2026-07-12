@@ -17,8 +17,9 @@ import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { ShieldAlert } from "lucide-react";
 import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
+import { ChannelsSection } from "@/components/settings/ChannelsSection";
 
-type SettingsSection = "general" | "apikeys" | "fields" | "sources" | "webhooks" | "notifications";
+type SettingsSection = "general" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "notifications";
 
 export function Settings() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -40,6 +41,7 @@ export function Settings() {
     { id: "fields", name: "Campos Personalizados" },
     { id: "sources", name: "Fontes de Leads" },
     { id: "webhooks", name: "Webhooks" },
+    { id: "channels", name: "Canais" },
     { id: "notifications", name: "Notificacoes" },
   ];
 
@@ -70,6 +72,7 @@ export function Settings() {
       {activeSection === "fields" && <CustomFieldsSection organizationId={organizationId} />}
       {activeSection === "sources" && <LeadSourcesSection organizationId={organizationId} />}
       {activeSection === "webhooks" && <WebhooksSection organizationId={organizationId} />}
+      {activeSection === "channels" && <ChannelsSection organizationId={organizationId} />}
       {activeSection === "notifications" && <NotificationsSection organizationId={organizationId} />}
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -6,7 +6,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
-import { Send, ArrowLeft } from "lucide-react";
+import { Send, ArrowLeft, Check, CheckCheck, AlertCircle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -24,6 +24,12 @@ export function Inbox() {
   const [newMessage, setNewMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
   const [showMessages, setShowMessages] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
@@ -135,6 +141,53 @@ export function Inbox() {
     }
   };
 
+  // WhatsApp delivery status tick for outbound, non-internal messages
+  const renderDeliveryTick = (message: {
+    deliveryStatus?: "sent" | "delivered" | "read" | "failed";
+    metadata?: Record<string, any>;
+  }) => {
+    const status = message.deliveryStatus;
+    if (!status) return null;
+
+    if (status === "failed") {
+      return (
+        <span title={message.metadata?.deliveryError || "Falha no envio"} className="shrink-0">
+          <AlertCircle className="h-3.5 w-3.5 text-semantic-error" />
+        </span>
+      );
+    }
+    if (status === "read") {
+      return <CheckCheck className="h-3.5 w-3.5 text-brand-400 shrink-0" />;
+    }
+    if (status === "delivered") {
+      return <CheckCheck className="h-3.5 w-3.5 text-text-secondary shrink-0" />;
+    }
+    return <Check className="h-3.5 w-3.5 text-text-secondary shrink-0" />;
+  };
+
+  // 24h WhatsApp service window label for the conversation header
+  const getServiceWindowInfo = (serviceWindowExpiresAt: number | null) => {
+    if (!serviceWindowExpiresAt || serviceWindowExpiresAt <= now) {
+      return {
+        text: "Janela fechada — requer template",
+        tone: "text-semantic-warning" as const,
+      };
+    }
+    const remainingMs = serviceWindowExpiresAt - now;
+    const remainingMinutes = Math.max(1, Math.round(remainingMs / 60_000));
+    const label =
+      remainingMinutes < 60
+        ? `Janela fecha em ${remainingMinutes}min`
+        : `Janela fecha em ${Math.round(remainingMinutes / 60)}h`;
+    return { text: label, tone: "text-text-secondary" as const };
+  };
+
+  const currentConversation = validConversations.find((c) => c._id === selectedConversation);
+  const windowInfo =
+    currentConversation?.channel === "whatsapp"
+      ? getServiceWindowInfo(currentConversation.serviceWindowExpiresAt)
+      : null;
+
   return (
     <>
       <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
@@ -220,19 +273,39 @@ export function Inbox() {
         {selectedConversation ? (
           <>
             {/* Mobile header with back button */}
-            <div className="md:hidden p-4 border-b border-border bg-surface-raised flex items-center gap-3">
-              <button
-                onClick={handleBackToList}
-                className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
-                aria-label="Voltar"
-              >
-                <ArrowLeft size={20} />
-              </button>
-              <h2 className="text-base font-semibold text-text-primary">
-                {validConversations.find((c) => c._id === selectedConversation)?.contact?.firstName}{" "}
-                {validConversations.find((c) => c._id === selectedConversation)?.contact?.lastName}
-              </h2>
+            <div className="md:hidden p-4 border-b border-border bg-surface-raised flex flex-col gap-1">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleBackToList}
+                  className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
+                  aria-label="Voltar"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="text-base font-semibold text-text-primary">
+                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
+                </h2>
+              </div>
+              {windowInfo && (
+                <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  {windowInfo.text}
+                </div>
+              )}
             </div>
+
+            {/* Desktop header */}
+            {windowInfo && (
+              <div className="hidden md:flex p-4 border-b border-border bg-surface-raised items-center justify-between">
+                <h2 className="text-base font-semibold text-text-primary">
+                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
+                </h2>
+                <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
+                  <Clock className="h-4 w-4 shrink-0" />
+                  {windowInfo.text}
+                </div>
+              </div>
+            )}
 
             {/* Messages List */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -245,9 +318,21 @@ export function Inbox() {
               )}
               {messages?.map((message) => {
                 const style = getMessageStyle(message);
+                const showDeliveryTick =
+                  !message.isInternal &&
+                  message.direction === "outbound" &&
+                  currentConversation?.channel === "whatsapp";
+                const isFailed = showDeliveryTick && message.deliveryStatus === "failed";
                 return (
                   <div key={message._id} className={`flex ${style.align}`}>
-                    <div className={cn("max-w-xs lg:max-w-md px-4 py-2", style.bg, style.rounded)}>
+                    <div
+                      className={cn(
+                        "max-w-xs lg:max-w-md px-4 py-2",
+                        style.bg,
+                        style.rounded,
+                        isFailed && "ring-1 ring-semantic-error/60"
+                      )}
+                    >
                       {/* Sender type label */}
                       <div className={cn("text-xs font-medium mb-0.5", style.labelColor)}>
                         {message.sender?.name || style.label}
@@ -257,14 +342,20 @@ export function Inbox() {
                       ) : (
                         <p className="text-sm">{message.content}</p>
                       )}
-                      <div className="flex items-center justify-end mt-1">
+                      <div className="flex items-center justify-end gap-1 mt-1">
                         <span className="text-xs opacity-75">
                           {new Date(message.createdAt).toLocaleTimeString("pt-BR", {
                             hour: "2-digit",
                             minute: "2-digit",
                           })}
                         </span>
+                        {showDeliveryTick && renderDeliveryTick(message)}
                       </div>
+                      {isFailed && message.metadata?.deliveryError && (
+                        <p className="text-xs text-semantic-error mt-1">
+                          {message.metadata.deliveryError}
+                        </p>
+                      )}
                     </div>
                   </div>
                 );
