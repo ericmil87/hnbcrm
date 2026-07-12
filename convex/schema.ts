@@ -883,7 +883,7 @@ const applicationTables = {
     leadId: v.optional(v.id("leads")),
     teamMemberId: v.optional(v.id("teamMembers")),
 
-    uploadedBy: v.id("teamMembers"),
+    uploadedBy: v.optional(v.id("teamMembers")), // absent for inbound media sent by contacts
     metadata: v.optional(v.record(v.string(), v.any())),
     createdAt: v.number(),
   })

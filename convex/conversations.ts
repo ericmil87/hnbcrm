@@ -565,6 +565,7 @@ export const internalReceiveMessage = internalMutation({
       v.literal("webchat"),
       v.literal("internal")
     ),
+    channelConfigId: v.optional(v.id("channelConfigs")),
     content: v.string(),
     contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
     attachments: v.optional(v.array(v.id("files"))),
@@ -619,12 +620,16 @@ export const internalReceiveMessage = internalMutation({
       );
     }
 
-    // Update conversation (reopen if closed — an inbound message revives it)
+    // Update conversation (reopen if closed — an inbound message revives it);
+    // stamp which connected number it belongs to so egress uses the right credentials
     await ctx.db.patch(conversationId, {
       status: "active",
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
+        ? { channelConfigId: args.channelConfigId }
+        : {}),
     });
 
     // Update lead activity
@@ -661,6 +666,23 @@ export const internalReceiveMessage = internalMutation({
     });
 
     return messageId;
+  },
+});
+
+// Internal: lookup a message by provider id (early idempotency check for ingest actions)
+export const internalGetMessageByExternalId = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    externalId: v.string(),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+      )
+      .first();
   },
 });
 

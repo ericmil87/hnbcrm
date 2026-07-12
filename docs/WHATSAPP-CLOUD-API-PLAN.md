@@ -11,7 +11,7 @@
 > is **no code path that creates an inbound message from a contact** (see
 > `docs/PROJECT-STATUS.md` — "real channel dispatch not implemented").
 >
-> **Status: 🟠 in progress — Waves 1–2 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
+> **Status: 🟠 in progress — Waves 1–3 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
 > **Estimated effort:** ~10–13 dev-days across 6 waves.
 
 ---
@@ -174,34 +174,34 @@ the Settings UI — no per-tenant env vars.)*
 
 ## Wave 3 — Meta webhook ingress (multi-tenant routing) ~2–3 days
 
-- [ ] **3.1 Module** `convex/whatsapp.ts` (+ `convex/lib/whatsappParse.ts` for pure
+- [x] **3.1 Module** `convex/whatsapp.ts` (+ `convex/lib/whatsappParse.ts` for pure
   payload parsing — keeps it unit-testable). Routes registered in `convex/router.ts`
   (`http.route({ path: "/webhooks/whatsapp", ... })`).
-- [ ] **3.2 GET handshake**: `hub.mode=subscribe` + `hub.verify_token` looked up across
+- [x] **3.2 GET handshake**: `hub.mode=subscribe` + `hub.verify_token` looked up across
   active `channelConfigs` → echo `hub.challenge` (plain text 200); 403 otherwise.
-- [ ] **3.3 POST routing + signature**: raw body → parse untrusted JSON → extract
+- [x] **3.3 POST routing + signature**: raw body → parse untrusted JSON → extract
   `value.metadata.phone_number_id` → lookup config → verify `X-Hub-Signature-256`
   (HMAC-SHA256 with decrypted `appSecret`, timing-safe). 401 on mismatch; 200 + drop +
   warn on unknown `phone_number_id`. Answer fast; heavy work via
   `ctx.runMutation`/scheduler.
-- [ ] **3.4 Message parsing** (`value.messages[]`): text; `image|audio|video|document|sticker`
+- [x] **3.4 Message parsing** (`value.messages[]`): text; `image|audio|video|document|sticker`
   (→ 3.5); `interactive` (button_reply/list_reply → text + metadata); `location`,
   `contacts`, `reaction` → readable text + raw payload in `metadata`; unknown types →
   fallback text `[unsupported message type: X]` + metadata. Map `value.contacts[0]`
   (profile name, wa_id) into contact get-or-create.
-- [ ] **3.5 Media pipeline**: Graph API `GET /{media_id}` (per-config token) →
+- [x] **3.5 Media pipeline**: Graph API `GET /{media_id}` (per-config token) →
   short-lived URL (expires ~5 min) → download **immediately** → `ctx.storage.store` →
   `files` record (`fileType: "message_attachment"`) attached to the message. Size guard
   (skip oversized, keep a metadata note).
-- [ ] **3.6 Contact/lead/conversation routing**: config → `organizationId`; by `wa_id`
+- [x] **3.6 Contact/lead/conversation routing**: config → `organizationId`; by `wa_id`
   phone → `internalFindOrCreateContact` → ensure lead on default board/stage with
   auto-assign to an active `type:"ai"` member if configured (reuse the
   `/api/v1/inbound/lead` flow logic; extract a shared helper instead of copy-pasting) →
   `internalReceiveMessage`, stamping `channelConfigId` on the conversation.
-- [ ] **3.7 Statuses**: `value.statuses[]` → `internalUpdateDeliveryStatus` per wamid
+- [x] **3.7 Statuses**: `value.statuses[]` → `internalUpdateDeliveryStatus` per wamid
   (`sent|delivered|read|failed`, capture `errors[]` detail — e.g. `131047`
   re-engagement — into metadata).
-- [ ] **3.8 Tests**: fixture JSONs for each payload type (fake numbers/tokens),
+- [x] **3.8 Tests**: fixture JSONs for each payload type (fake numbers/tokens),
   signature pass/fail per-tenant, routing to the right org among multiple configs,
   duplicate delivery replay (idempotency), statuses update path.
 
@@ -319,4 +319,13 @@ App Review) · template creation/management UI · WhatsApp Flows · Coexistence
 - 2026-07-11 — [2.4] `checkChannelHealth` action — Graph API v23.0 `GET /{phone_number_id}?fields=display_phone_number,verified_name` with decrypted token; stores `status`/`displayPhoneNumber`/`healthDetail`/`lastHealthCheckAt`; failing check → `status: "error"`, passing check restores `active` unless deliberately `disabled` (Wave 2 commit)
 - 2026-07-11 — [2.5] `channelConfigId` optional field on `conversations`; `internalGetDefaultActiveConfig(organizationId, channel)` resolves single-config orgs (wired into egress in Wave 4) (Wave 2 commit)
 - 2026-07-11 — [2.6] 13 tests in `convex/channelConfigs.test.ts`: encrypted at rest + masked reads + no secrets in audit payloads, duplicate phoneNumberId rejected, admin-only enforcement (agent + unauthenticated rejected), health check happy/error paths with mocked Graph API fetch, default-active-config resolution skips disabled configs (Wave 2 commit)
-- 2026-07-11 — **Wave 2 gate green**: `npm run lint` exit 0 and `npm test` 20/20 passing. Note: convex action types referencing same-module internals need explicit handler return annotations (TS7022 circularity) — pattern documented by example in `channelConfigs.ts`
+- 2026-07-11 — **Wave 2 gate green**: `npm run lint` exit 0 and `npm test` 20/20 passing. Note: convex action types referencing same-module internals need explicit handler return annotations (TS7022 circularity) — pattern documented by example in `channelConfigs.ts` (commit be6d745)
+- 2026-07-11 — [3.1] `convex/whatsapp.ts` (handlers + ingest action + routing mutation) + `convex/lib/whatsappParse.ts` (pure payload parsing + HMAC verification); routes wired in `router.ts` at `/webhooks/whatsapp` (Wave 3 commit)
+- 2026-07-11 — [3.2] GET handshake: `hub.verify_token` looked up across active configs via `by_verify_token` index → echoes `hub.challenge`; 403 otherwise (Wave 3 commit)
+- 2026-07-11 — [3.3] POST: raw body → untrusted parse → `phone_number_id` → config lookup → `X-Hub-Signature-256` HMAC-SHA256 timing-safe verify with decrypted per-tenant appSecret; 401 mismatch, 200+drop+warn unknown ids, 400 invalid JSON; statuses inline, messages via scheduler (answer <5s) (Wave 3 commit)
+- 2026-07-11 — [3.4] All payload types parsed: text, image/sticker/audio/video/document (→media), interactive button/list replies, template button, location, contacts, reaction (readable PT-BR text + raw in metadata), unknown → `[unsupported message type: X]`; profile name mapped into contact get-or-create (Wave 3 commit)
+- 2026-07-11 — [3.5] Media pipeline in `internalIngestMessage`: Graph `GET /{media_id}` with per-config token → immediate download → `ctx.storage.store` → `files` record (`message_attachment`, no uploader — `files.uploadedBy` made optional) linked to the message; 25MB size guard with metadata note; media errors degrade to metadata, message still ingested (Wave 3 commit)
+- 2026-07-11 — [3.6] Shared routing extracted to `convex/lib/inboundRouting.ts` (`findOrCreateContactByPhone` + `ensureLeadForContact`: default board/first stage, AI auto-assign, activity+audit) — used by webhook ingress AND `/api/v1/conversations/receive` (refactored to `internal.leads.internalEnsureLeadForContact`, removing the Wave 1 inline copy); `buildSearchText` moved to `lib/searchText.ts`; conversation stamped with `channelConfigId` (Wave 3 commit)
+- 2026-07-11 — [3.7] `value.statuses[]` → `internalUpdateDeliveryStatus` per wamid, `errors[]` (code/title/details, e.g. 131047) captured into message metadata (Wave 3 commit)
+- 2026-07-11 — [3.8] 26 new tests (46 total): `whatsappParse.test.ts` (every payload type, statuses, signature pass/fail) + `whatsapp.test.ts` (handshake 200/403, signature 401, unknown phone_number_id 200-drop, multi-tenant routing to the right org/config, ingest end-to-end incl. contact/lead/conversation, duplicate replay idempotency, media download with per-config token, oversized-media skip, status updates via POST) (Wave 3 commit)
+- 2026-07-11 — **Wave 3 gate green**: lint exit 0, 46/46 tests; manual curl smoke against the dev deployment: GET wrong token → 403, POST unknown phone_number_id → 200 drop, invalid JSON → 400. `CHANNEL_ENCRYPTION_KEY` confirmed present on the dev deployment

@@ -40,8 +40,11 @@ import type * as lib_cursor from "../lib/cursor.js";
 import type * as lib_fileQuotas from "../lib/fileQuotas.js";
 import type * as lib_fileValidation from "../lib/fileValidation.js";
 import type * as lib_formFieldTypes from "../lib/formFieldTypes.js";
+import type * as lib_inboundRouting from "../lib/inboundRouting.js";
 import type * as lib_permissions from "../lib/permissions.js";
+import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
+import type * as lib_whatsappParse from "../lib/whatsappParse.js";
 import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
 import type * as notificationPreferences from "../notificationPreferences.js";
@@ -57,6 +60,7 @@ import type * as tasks from "../tasks.js";
 import type * as teamMembers from "../teamMembers.js";
 import type * as webhookTrigger from "../webhookTrigger.js";
 import type * as webhooks from "../webhooks.js";
+import type * as whatsapp from "../whatsapp.js";
 
 import type {
   ApiFromModules,
@@ -97,8 +101,11 @@ declare const fullApi: ApiFromModules<{
   "lib/fileQuotas": typeof lib_fileQuotas;
   "lib/fileValidation": typeof lib_fileValidation;
   "lib/formFieldTypes": typeof lib_formFieldTypes;
+  "lib/inboundRouting": typeof lib_inboundRouting;
   "lib/permissions": typeof lib_permissions;
+  "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;
+  "lib/whatsappParse": typeof lib_whatsappParse;
   llmsTxt: typeof llmsTxt;
   nodeActions: typeof nodeActions;
   notificationPreferences: typeof notificationPreferences;
@@ -114,6 +121,7 @@ declare const fullApi: ApiFromModules<{
   teamMembers: typeof teamMembers;
   webhookTrigger: typeof webhookTrigger;
   webhooks: typeof webhooks;
+  whatsapp: typeof whatsapp;
 }>;
 
 /**

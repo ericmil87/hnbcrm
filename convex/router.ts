@@ -7,6 +7,10 @@ import { EMBED_SCRIPT } from "./embedScript";
 import { OPENAPI_SPEC } from "./openapiSpec";
 import { resolvePermissions, type Role, type Permissions } from "./lib/permissions";
 import { resend } from "./email";
+import {
+  webhookVerify as whatsappWebhookVerify,
+  webhookReceive as whatsappWebhookReceive,
+} from "./whatsapp";
 
 const http = httpRouter();
 
@@ -657,48 +661,12 @@ http.route({
       }
 
       // Find the contact's most recent lead, or create one on the default board
-      const leads = await ctx.runQuery(internal.leads.internalGetLeadsByContact, {
+      // (shared inbound routing — same logic as the WhatsApp webhook ingress)
+      const leadId: Id<"leads"> = await ctx.runMutation(internal.leads.internalEnsureLeadForContact, {
         organizationId: apiKeyRecord.organizationId,
         contactId,
+        title: body.leadTitle,
       });
-      let leadId: Id<"leads">;
-      if (leads.length > 0) {
-        leadId = leads[0]._id;
-      } else {
-        const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
-          organizationId: apiKeyRecord.organizationId,
-        });
-        const defaultBoard = boards.find((b: { isDefault: boolean }) => b.isDefault) || boards[0];
-        if (!defaultBoard) {
-          return errorResponse("No boards configured", 500);
-        }
-
-        // Auto-assign to AI agent if configured
-        let assignedTo = undefined;
-        const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
-          organizationId: apiKeyRecord.organizationId,
-        });
-        if (org?.settings.aiConfig?.autoAssign) {
-          const members = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
-            organizationId: apiKeyRecord.organizationId,
-          });
-          const availableAI = members.find((m: { type: string; status: string }) => m.type === "ai" && m.status === "active");
-          assignedTo = availableAI?._id;
-        }
-
-        const contact = await ctx.runQuery(internal.contacts.internalGetContact, { contactId });
-        const contactName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ")
-          || contact?.phone || contact?.email || "Unknown contact";
-
-        leadId = await ctx.runMutation(internal.leads.internalCreateLead, {
-          organizationId: apiKeyRecord.organizationId,
-          title: body.leadTitle || contactName,
-          contactId,
-          boardId: defaultBoard._id,
-          assignedTo,
-          teamMemberId: apiKeyRecord.teamMemberId,
-        });
-      }
 
       const messageId = await ctx.runMutation(internal.conversations.internalReceiveMessage, {
         organizationId: apiKeyRecord.organizationId,
@@ -2097,6 +2065,11 @@ http.route({
     return await resend.handleResendEventWebhook(ctx, request);
   }),
 });
+
+// ---- WhatsApp Cloud API webhooks (multi-tenant: routed by phone_number_id) ----
+
+http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
+http.route({ path: "/webhooks/whatsapp", method: "POST", handler: whatsappWebhookReceive });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

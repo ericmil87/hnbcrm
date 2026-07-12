@@ -5,6 +5,7 @@ import { requireAuth, requirePermission } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { ensureLeadForContact } from "./lib/inboundRouting";
 
 // Get leads for organization
 export const getLeads = query({
@@ -860,6 +861,19 @@ export const internalGetLeadsByContact = internalQuery({
       .take(50);
 
     return leads.filter((l) => l.organizationId === args.organizationId);
+  },
+});
+
+// Internal: find the contact's most recent lead or create one on the default board
+export const internalEnsureLeadForContact = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+    title: v.optional(v.string()),
+  },
+  returns: v.id("leads"),
+  handler: async (ctx, args) => {
+    return await ensureLeadForContact(ctx, args);
   },
 });
 
