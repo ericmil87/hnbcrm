@@ -626,6 +626,33 @@ http.route({
   }),
 });
 
+// Send a WhatsApp template message (re-engagement outside the 24h window)
+http.route({
+  path: "/api/v1/conversations/send-template",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      if (!body.conversationId || !body.templateName || !body.languageCode) {
+        return errorResponse("conversationId, templateName and languageCode required", 400);
+      }
+
+      const messageId = await ctx.runMutation(internal.conversations.internalSendTemplate, {
+        conversationId: body.conversationId as Id<"conversations">,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        templateName: body.templateName,
+        languageCode: body.languageCode,
+        components: body.components,
+      });
+
+      return jsonResponse({ success: true, messageId }, 201);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
 // Receive an inbound message from a contact (external bridges for any channel)
 http.route({
   path: "/api/v1/conversations/receive",
@@ -2092,6 +2119,7 @@ http.route({ path: "/api/v1/conversations", method: "OPTIONS", handler: optionsH
 http.route({ path: "/api/v1/conversations/messages", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/send", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/receive", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/send-template", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/pending", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/accept", method: "OPTIONS", handler: optionsHandler });

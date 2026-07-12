@@ -6,8 +6,17 @@ import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
+
+// 24h Meta customer-service window. Clients compare against the clock — queries
+// must stay Date.now()-free for reactivity, so we expose the expiry timestamp.
+const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function serviceWindowExpiresAt(conversation: { lastInboundAt?: number }): number | null {
+  return conversation.lastInboundAt ? conversation.lastInboundAt + SERVICE_WINDOW_MS : null;
+}
 
 // Get-or-create a conversation for a lead/channel pair (shared by
 // createConversation, internalCreateConversation and internalReceiveMessage)
@@ -91,7 +100,13 @@ export const getConversations = query({
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
-      return { ...conversation, lead, contact, assignee };
+      return {
+        ...conversation,
+        lead,
+        contact,
+        assignee,
+        serviceWindowExpiresAt: serviceWindowExpiresAt(conversation),
+      };
     }).filter(Boolean);
 
     return conversationsWithData;
@@ -259,6 +274,11 @@ export const sendMessage = mutation({
       });
     }
 
+    // Real channel dispatch (paced per conversation)
+    if (!args.isInternal && conversation.channel === "whatsapp") {
+      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    }
+
     return messageId;
   },
 });
@@ -361,7 +381,13 @@ export const internalGetConversations = internalQuery({
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
-      return { ...conversation, lead, contact, assignee };
+      return {
+        ...conversation,
+        lead,
+        contact,
+        assignee,
+        serviceWindowExpiresAt: serviceWindowExpiresAt(conversation),
+      };
     }).filter(Boolean);
 
     return { conversations: conversationsWithData, nextCursor, hasMore };
@@ -529,6 +555,11 @@ export const internalSendMessage = internalMutation({
       });
     }
 
+    // Real channel dispatch (paced per conversation)
+    if (!args.isInternal && conversation.channel === "whatsapp") {
+      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    }
+
     return messageId;
   },
 });
@@ -625,6 +656,7 @@ export const internalReceiveMessage = internalMutation({
     await ctx.db.patch(conversationId, {
       status: "active",
       lastMessageAt: now,
+      lastInboundAt: now, // (re)opens the 24h customer-service window
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
       ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
@@ -664,6 +696,111 @@ export const internalReceiveMessage = internalMutation({
         externalId: args.externalId,
       },
     });
+
+    return messageId;
+  },
+});
+
+// Internal: send a WhatsApp template message (re-engagement outside the 24h window)
+export const internalSendTemplate = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    teamMemberId: v.id("teamMembers"),
+    templateName: v.string(),
+    languageCode: v.string(),
+    components: v.optional(v.array(v.any())),
+  },
+  returns: v.id("messages"),
+  handler: async (ctx, args) => {
+    const teamMember = await ctx.db.get(args.teamMemberId);
+    if (!teamMember) throw new Error("Team member not found");
+
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new Error("Conversation not found");
+    if (conversation.channel !== "whatsapp") {
+      throw new Error("Template messages are only supported on the whatsapp channel");
+    }
+
+    const now = Date.now();
+
+    // Best-effort rendered body — the real text lives in Meta's template definition
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: conversation.organizationId,
+      conversationId: args.conversationId,
+      leadId: conversation.leadId,
+      direction: "outbound",
+      senderId: teamMember._id,
+      senderType: teamMember.type === "ai" ? "ai" : "human",
+      content: `[template] ${args.templateName}`,
+      contentType: "text",
+      isInternal: false,
+      metadata: {
+        template: {
+          name: args.templateName,
+          languageCode: args.languageCode,
+          ...(args.components ? { components: args.components } : {}),
+        },
+      },
+      createdAt: now,
+    });
+
+    await ctx.db.patch(args.conversationId, {
+      lastMessageAt: now,
+      messageCount: conversation.messageCount + 1,
+      updatedAt: now,
+    });
+
+    const lead = await ctx.db.get(conversation.leadId);
+    if (lead) {
+      await ctx.db.patch(conversation.leadId, {
+        lastActivityAt: now,
+        updatedAt: now,
+        conversationStatus: "active",
+      });
+    }
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: conversation.organizationId,
+      entityType: "message",
+      entityId: messageId,
+      action: "create",
+      actorId: teamMember._id,
+      actorType: teamMember.type === "ai" ? "ai" : "human",
+      metadata: {
+        conversationId: args.conversationId,
+        leadId: conversation.leadId,
+        templateName: args.templateName,
+      },
+      description: buildAuditDescription({ action: "create", entityType: "message", metadata: { conversationId: args.conversationId, leadId: conversation.leadId } }),
+      severity: "low",
+      createdAt: now,
+    });
+
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "message_sent",
+      actorId: teamMember._id,
+      actorType: teamMember.type === "ai" ? "ai" : "human",
+      content: `Template "${args.templateName}" enviado via whatsapp`,
+      metadata: { conversationId: args.conversationId, templateName: args.templateName },
+      createdAt: now,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: conversation.organizationId,
+      event: "message.sent",
+      payload: {
+        messageId,
+        conversationId: args.conversationId,
+        leadId: conversation.leadId,
+        channel: conversation.channel,
+        senderType: teamMember.type === "ai" ? "ai" : "human",
+        senderId: teamMember._id,
+      },
+    });
+
+    await scheduleWhatsappDispatch(ctx, conversation, messageId);
 
     return messageId;
   },

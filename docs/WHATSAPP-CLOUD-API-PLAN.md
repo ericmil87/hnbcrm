@@ -11,7 +11,7 @@
 > is **no code path that creates an inbound message from a contact** (see
 > `docs/PROJECT-STATUS.md` — "real channel dispatch not implemented").
 >
-> **Status: 🟠 in progress — Waves 1–3 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
+> **Status: 🟠 in progress — Waves 1–4 done** · Base branch: `feat/form-builder` · Work branch: `feat/whatsapp-cloud-api`
 > **Estimated effort:** ~10–13 dev-days across 6 waves.
 
 ---
@@ -210,28 +210,28 @@ the Settings UI — no per-tenant env vars.)*
 
 ## Wave 4 — Outbound dispatch via Graph API ~2 days
 
-- [ ] **4.1 Dispatch action**: `POST https://graph.facebook.com/v23.0/{phone_number_id}/messages`
+- [x] **4.1 Dispatch action**: `POST https://graph.facebook.com/v23.0/{phone_number_id}/messages`
   using the conversation's `channelConfigId` credentials — `text` first;
   `image/document/audio` via `link` (public storage URL) or uploaded media id. Store
   returned wamid → message `externalId`, set `deliveryStatus: "sent"`.
-- [ ] **4.2 Hook into send flow**: in `sendMessage`/`internalSendMessage`, when the
+- [x] **4.2 Hook into send flow**: in `sendMessage`/`internalSendMessage`, when the
   conversation `channel === "whatsapp"` and `!isInternal`, schedule the dispatch action
   (`ctx.scheduler.runAfter(0, …)`). On Graph API error: `deliveryStatus: "failed"` +
   error code/message in `metadata` + activity entry (visible in Inbox). Missing/disabled
   config → failed with a clear, user-readable reason.
-- [ ] **4.3 Pacing**: per-conversation sequential dispatch with small delay to respect
+- [x] **4.3 Pacing**: per-conversation sequential dispatch with small delay to respect
   the ~1 msg/6s per-recipient pair limit (error `131056`); simple scheduler chaining is
   enough — no queue infra.
-- [ ] **4.4 24h service window**: track `lastInboundAt` on the conversation (set by
+- [x] **4.4 24h service window**: track `lastInboundAt` on the conversation (set by
   ingress); expose an `isWithinServiceWindow` computed field in conversation queries;
   on `131026` (window closed) mark failed with a clear message.
-- [ ] **4.5 Template sending (minimal)**: `internalSendTemplate` mutation + REST endpoint
+- [x] **4.5 Template sending (minimal)**: `internalSendTemplate` mutation + REST endpoint
   `POST /api/v1/conversations/send-template` (`templateName`, `languageCode`,
   `components?`) for re-engaging outside the window. Record as an outbound message
   (rendered body best-effort, metadata carries template info).
-- [ ] **4.6 Mark-as-read (nice-to-have)**: on human/AI reply, send read receipt for the
+- [x] **4.6 Mark-as-read (nice-to-have)**: on human/AI reply, send read receipt for the
   latest inbound wamid. Skip if it complicates the wave.
-- [ ] **4.7 Tests**: dispatch scheduling on whatsapp channel only, per-config credential
+- [x] **4.7 Tests**: dispatch scheduling on whatsapp channel only, per-config credential
   resolution, error mapping (`131026`/`131056` → failed + metadata), window computation.
 
 **Gate:** lint + tests green.
@@ -328,4 +328,12 @@ App Review) · template creation/management UI · WhatsApp Flows · Coexistence
 - 2026-07-11 — [3.6] Shared routing extracted to `convex/lib/inboundRouting.ts` (`findOrCreateContactByPhone` + `ensureLeadForContact`: default board/first stage, AI auto-assign, activity+audit) — used by webhook ingress AND `/api/v1/conversations/receive` (refactored to `internal.leads.internalEnsureLeadForContact`, removing the Wave 1 inline copy); `buildSearchText` moved to `lib/searchText.ts`; conversation stamped with `channelConfigId` (Wave 3 commit)
 - 2026-07-11 — [3.7] `value.statuses[]` → `internalUpdateDeliveryStatus` per wamid, `errors[]` (code/title/details, e.g. 131047) captured into message metadata (Wave 3 commit)
 - 2026-07-11 — [3.8] 26 new tests (46 total): `whatsappParse.test.ts` (every payload type, statuses, signature pass/fail) + `whatsapp.test.ts` (handshake 200/403, signature 401, unknown phone_number_id 200-drop, multi-tenant routing to the right org/config, ingest end-to-end incl. contact/lead/conversation, duplicate replay idempotency, media download with per-config token, oversized-media skip, status updates via POST) (Wave 3 commit)
-- 2026-07-11 — **Wave 3 gate green**: lint exit 0, 46/46 tests; manual curl smoke against the dev deployment: GET wrong token → 403, POST unknown phone_number_id → 200 drop, invalid JSON → 400. `CHANNEL_ENCRYPTION_KEY` confirmed present on the dev deployment
+- 2026-07-11 — **Wave 3 gate green**: lint exit 0, 46/46 tests; manual curl smoke against the dev deployment: GET wrong token → 403, POST unknown phone_number_id → 200 drop, invalid JSON → 400. `CHANNEL_ENCRYPTION_KEY` confirmed present on the dev deployment (commit 2f7c5ec)
+- 2026-07-12 — [4.1] `internalDispatchMessage` action: `POST /v23.0/{phone_number_id}/messages` with the conversation's config credentials (fallback: org's default active config); text, media attachment via public storage `link` (image/audio/document with filename+caption), template payloads; wamid → `externalId`, `deliveryStatus: "sent"`; double-dispatch guarded (Wave 4 commit)
+- 2026-07-12 — [4.2] `sendMessage`/`internalSendMessage` schedule dispatch when `channel === "whatsapp" && !isInternal`; Graph errors → `deliveryStatus: "failed"` + `metadata.deliveryError(/Code)` + system activity on the lead; missing/disabled config and missing contact phone fail with clear PT-BR reasons without calling Meta (Wave 4 commit)
+- 2026-07-12 — [4.3] Pacing via `nextDispatchAt` cursor on the conversation (`lib/whatsappDispatch.ts`): each send claims the next ~6s slot — no queue infra (Wave 4 commit)
+- 2026-07-12 — [4.4] `lastInboundAt` set by ingress; queries expose `serviceWindowExpiresAt` (= lastInboundAt + 24h) instead of a boolean — `Date.now()` is banned in Convex queries, so the client compares against the clock; `131026` mapped to a clear template-required failure (Wave 4 commit)
+- 2026-07-12 — [4.5] `internalSendTemplate` mutation (whatsapp-only, full side-effect checklist, `[template] name` best-effort body, metadata carries name/language/components) + REST `POST /api/v1/conversations/send-template` (Wave 4 commit)
+- 2026-07-12 — [4.6] Mark-as-read: after a successful dispatch, best-effort read receipt for the latest inbound wamid (never fails the send) (Wave 4 commit)
+- 2026-07-12 — [4.7] 10 new tests (56 total): dispatch scheduled only for whatsapp non-internal sends, ~6s pacing between consecutive sends, success path (payload/credentials/wamid), read receipt, no-config → clear failure + activity, 131026/131056 mapping, double-dispatch guard, template payload end-to-end, non-whatsapp template rejection, service window exposure (Wave 4 commit)
+- 2026-07-12 — **Wave 4 gate green**: lint exit 0, 56/56 tests

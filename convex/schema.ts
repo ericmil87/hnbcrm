@@ -321,6 +321,8 @@ const applicationTables = {
     channelConfigId: v.optional(v.id("channelConfigs")), // which connected number this conversation belongs to
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
+    lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
+    nextDispatchAt: v.optional(v.number()), // pacing cursor for outbound dispatch (~1 msg/6s per recipient)
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),

@@ -7,7 +7,7 @@
  * scheduled; status updates run inline as plain mutations.
  */
 import { v } from "convex/values";
-import { httpAction, internalAction, internalMutation } from "./_generated/server";
+import { httpAction, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { decryptSecret } from "./lib/secretCrypto";
@@ -228,6 +228,237 @@ export const internalRouteInbound = internalMutation({
       contactId,
     });
     return { contactId, leadId };
+  },
+});
+
+// ── Outbound dispatch (Graph API egress) ──
+
+// Internal: everything the dispatch action needs, in one query
+export const internalGetDispatchContext = internalQuery({
+  args: { messageId: v.id("messages") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) return null;
+
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation) return null;
+
+    // Per-conversation config, falling back to the org's default active one
+    let config = conversation.channelConfigId
+      ? await ctx.db.get(conversation.channelConfigId)
+      : null;
+    if (!config) {
+      const configs = await ctx.db
+        .query("channelConfigs")
+        .withIndex("by_organization", (q) => q.eq("organizationId", conversation.organizationId))
+        .collect();
+      config = configs.find((c) => c.channel === "whatsapp" && c.status === "active") ?? null;
+    }
+
+    const lead = await ctx.db.get(conversation.leadId);
+    const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
+
+    // Latest inbound wamid — used for the mark-as-read receipt
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+      .order("desc")
+      .take(50);
+    const latestInbound = recent.find((m) => m.direction === "inbound" && m.externalId);
+
+    const attachmentFiles = message.attachments
+      ? (await Promise.all(message.attachments.map((id) => ctx.db.get(id)))).filter(
+          (f): f is NonNullable<typeof f> => f !== null
+        )
+      : [];
+
+    return {
+      message,
+      conversation,
+      config,
+      toPhone: contact?.whatsappNumber ?? contact?.phone ?? null,
+      latestInboundExternalId: latestInbound?.externalId ?? null,
+      attachmentFiles,
+    };
+  },
+});
+
+// Internal: dispatch one outbound message to the Graph API
+export const internalDispatchMessage = internalAction({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
+      messageId: args.messageId,
+    });
+    if (!context) return null;
+
+    const { message, config, toPhone, latestInboundExternalId, attachmentFiles } = context;
+
+    // Already dispatched (redelivery / duplicate scheduling)
+    if (message.externalId || message.deliveryStatus) return null;
+
+    if (!config || config.status !== "active") {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail:
+          "Nenhum número de WhatsApp ativo conectado para esta organização — configure em Configurações → Canais",
+      });
+      return null;
+    }
+    if (!toPhone) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
+      });
+      return null;
+    }
+
+    // Build the Graph API payload: template > media attachment > text
+    const payload: Record<string, unknown> = { messaging_product: "whatsapp", to: toPhone };
+    const template = message.metadata?.template as
+      | { name: string; languageCode: string; components?: unknown[] }
+      | undefined;
+    if (template) {
+      payload.type = "template";
+      payload.template = {
+        name: template.name,
+        language: { code: template.languageCode },
+        ...(template.components ? { components: template.components } : {}),
+      };
+    } else if (attachmentFiles.length > 0) {
+      const file = attachmentFiles[0];
+      const link = await ctx.storage.getUrl(file.storageId);
+      if (!link) {
+        await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+          messageId: args.messageId,
+          detail: "Anexo indisponível no armazenamento",
+        });
+        return null;
+      }
+      const kind = file.mimeType.startsWith("image/")
+        ? "image"
+        : file.mimeType.startsWith("audio/")
+          ? "audio"
+          : "document";
+      payload.type = kind;
+      payload[kind] = {
+        link,
+        ...(kind === "document" ? { filename: file.name } : {}),
+        ...(kind !== "audio" && message.content ? { caption: message.content } : {}),
+      };
+    } else {
+      payload.type = "text";
+      payload.text = { body: message.content };
+    }
+
+    const accessToken = await decryptSecret(config.accessTokenEncrypted);
+    let response: Response;
+    let body: Record<string, any>;
+    try {
+      response = await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      body = await response.json().catch(() => ({}));
+    } catch (e) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail: e instanceof Error ? e.message : "Falha de rede ao enviar",
+      });
+      return null;
+    }
+
+    const wamid = body?.messages?.[0]?.id;
+    if (response.ok && typeof wamid === "string") {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatched, {
+        messageId: args.messageId,
+        wamid,
+      });
+      // Nice-to-have: mark the latest inbound message as read (best-effort)
+      if (latestInboundExternalId) {
+        try {
+          await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              status: "read",
+              message_id: latestInboundExternalId,
+            }),
+          });
+        } catch {
+          // read receipts are cosmetic — never fail the dispatch over them
+        }
+      }
+    } else {
+      const code = body?.error?.code as number | undefined;
+      const detail =
+        code === 131026
+          ? "Fora da janela de 24h — é necessário enviar um template aprovado (erro 131026)"
+          : code === 131056
+            ? "Limite de envio para este destinatário — aguarde alguns segundos (erro 131056)"
+            : body?.error?.message ?? `Falha no envio (HTTP ${response.status})`;
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        errorCode: code,
+        detail,
+      });
+    }
+
+    return null;
+  },
+});
+
+// Internal: record a successful dispatch (wamid → externalId for status webhooks)
+export const internalMarkDispatched = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    wamid: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.messageId, {
+      externalId: args.wamid,
+      deliveryStatus: "sent",
+    });
+    return null;
+  },
+});
+
+// Internal: record a failed dispatch (visible in Inbox via deliveryStatus + activity)
+export const internalMarkDispatchFailed = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    errorCode: v.optional(v.number()),
+    detail: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) return null;
+
+    await ctx.db.patch(args.messageId, {
+      deliveryStatus: "failed",
+      metadata: {
+        ...(message.metadata ?? {}),
+        deliveryError: args.detail,
+        ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
+      },
+    });
+
+    await ctx.db.insert("activities", {
+      organizationId: message.organizationId,
+      leadId: message.leadId,
+      type: "note",
+      actorType: "system",
+      content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
+      metadata: { conversationId: message.conversationId, messageId: args.messageId },
+      createdAt: Date.now(),
+    });
+    return null;
   },
 });
 

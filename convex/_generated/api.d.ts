@@ -44,6 +44,7 @@ import type * as lib_inboundRouting from "../lib/inboundRouting.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
+import type * as lib_whatsappDispatch from "../lib/whatsappDispatch.js";
 import type * as lib_whatsappParse from "../lib/whatsappParse.js";
 import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
@@ -105,6 +106,7 @@ declare const fullApi: ApiFromModules<{
   "lib/permissions": typeof lib_permissions;
   "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;
+  "lib/whatsappDispatch": typeof lib_whatsappDispatch;
   "lib/whatsappParse": typeof lib_whatsappParse;
   llmsTxt: typeof llmsTxt;
   nodeActions: typeof nodeActions;
