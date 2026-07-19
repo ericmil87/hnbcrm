@@ -7,7 +7,13 @@
  * scheduled; status updates run inline as plain mutations.
  */
 import { v } from "convex/values";
-import { httpAction, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import {
+  ActionCtx,
+  httpAction,
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { decryptSecret } from "./lib/secretCrypto";
@@ -17,6 +23,15 @@ import {
   verifyWebhookSignature,
 } from "./lib/whatsappParse";
 import { findOrCreateContactByPhone, ensureLeadForContact } from "./lib/inboundRouting";
+import { configProvider } from "./channelConfigs";
+import {
+  BridgeSendRequest,
+  bridgeSendKindForMime,
+  buildBridgeMediaSendRequest,
+  buildBridgeTextSendRequest,
+  parseBridgeSendResponse,
+} from "./lib/bridgeSend";
+import { toDataUri } from "./lib/bridgeMedia";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -82,7 +97,13 @@ export const webhookReceive = httpAction(async (ctx, request) => {
     return new Response("OK", { status: 200 });
   }
 
-  // Now verify the signature with THIS tenant's app secret
+  // Now verify the signature with THIS tenant's app secret. App secret is a
+  // Meta-only field; a config routed by phone_number_id is always a Meta config,
+  // but guard defensively rather than crash on an undefined secret.
+  if (!config.appSecretEncrypted) {
+    console.warn(`WhatsApp webhook config ${config._id} has no app secret — dropped`);
+    return new Response("OK", { status: 200 });
+  }
   const appSecret = await decryptSecret(config.appSecretEncrypted);
   const signatureValid = await verifyWebhookSignature(
     rawBody,
@@ -146,6 +167,11 @@ export const internalIngestMessage = internalAction({
     // Media pipeline: resolve short-lived URL and download immediately (~5 min expiry)
     if (args.message.media?.id) {
       try {
+        // Media download uses the Meta access token; the surrounding catch records
+        // a mediaError note if this config has none (e.g. a non-Meta provider).
+        if (!config.accessTokenEncrypted) {
+          throw new Error("Config sem token de acesso — mídia não baixada");
+        }
         const accessToken = await decryptSecret(config.accessTokenEncrypted);
         const lookupRes = await fetch(`${GRAPH_API_BASE}/${args.message.media.id}`, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -284,6 +310,156 @@ export const internalGetDispatchContext = internalQuery({
   },
 });
 
+// Bracketed placeholders the ingress puts on media without a caption ("[imagem]",
+// "[documento]", …). We never echo them back as a caption on an outbound send.
+const MEDIA_PLACEHOLDERS = new Set([
+  "[imagem]",
+  "[figurinha]",
+  "[mensagem de voz]",
+  "[áudio]",
+  "[vídeo]",
+  "[documento]",
+  "[mensagem não suportada]",
+]);
+function captionFor(content: string | undefined): string | undefined {
+  if (!content) return undefined;
+  const trimmed = content.trim();
+  if (trimmed.length === 0 || MEDIA_PLACEHOLDERS.has(trimmed)) return undefined;
+  return content;
+}
+
+// Send one outbound message (text OR media) through the wuzapi bridge and record
+// the result. Kept out of the action body so the Meta path stays readable; the
+// decrypt + blob read run here (in the action) exactly like the Meta path.
+// Pacing (nextDispatchAt) is unchanged — scheduling still happens in conversations.ts.
+async function dispatchViaBridge(
+  ctx: ActionCtx,
+  args: {
+    messageId: Id<"messages">;
+    message: any;
+    config: any;
+    toPhone: string | null;
+    attachmentFiles: any[];
+  }
+): Promise<void> {
+  const { messageId, message, config, toPhone, attachmentFiles } = args;
+
+  // Templates are exclusive to the official Cloud API. internalSendTemplate already
+  // rejects bridge configs; this is a defensive backstop so no template ever hits
+  // the gateway.
+  if (message.metadata?.template) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: "Templates são exclusivos da WhatsApp Cloud API oficial — não disponível no canal bridge",
+    });
+    return;
+  }
+
+  if (!toPhone) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
+    });
+    return;
+  }
+
+  if (!config.bridgeBaseUrl || !config.bridgeInstanceId || !config.bridgeTokenEncrypted) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: "Configuração bridge incompleta — reconfigure o canal em Configurações → Canais",
+    });
+    return;
+  }
+
+  const token = await decryptSecret(config.bridgeTokenEncrypted);
+
+  // Media message → upload the FIRST attachment via the matching /chat/send/*
+  // endpoint. A media contentType with no attachment is a malformed message.
+  const isMediaMessage =
+    attachmentFiles.length > 0 || (message.contentType && message.contentType !== "text");
+  let request: BridgeSendRequest;
+  let extraAttachmentsNote: string | undefined;
+
+  if (isMediaMessage) {
+    if (attachmentFiles.length === 0) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId,
+        detail: "Mensagem de mídia sem anexo — nada para enviar",
+      });
+      return;
+    }
+    const file = attachmentFiles[0];
+    if ((file.size ?? 0) > MAX_MEDIA_BYTES) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId,
+        detail: "Anexo muito grande para o WhatsApp (limite de 25MB)",
+      });
+      return;
+    }
+    const blob = await ctx.storage.get(file.storageId);
+    if (!blob) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId,
+        detail: "Anexo indisponível no armazenamento",
+      });
+      return;
+    }
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    request = buildBridgeMediaSendRequest({
+      baseUrl: config.bridgeBaseUrl,
+      token,
+      toPhone,
+      kind: bridgeSendKindForMime(file.mimeType),
+      dataUri: toDataUri(bytes, file.mimeType),
+      caption: captionFor(message.content),
+      filename: file.name,
+    });
+    // The bridge sends one attachment per message; note any extras we skip.
+    if (attachmentFiles.length > 1) {
+      extraAttachmentsNote = `${attachmentFiles.length - 1} anexo(s) adicional(is) não enviado(s) — o WhatsApp bridge envia um por mensagem`;
+    }
+  } else {
+    request = buildBridgeTextSendRequest({
+      baseUrl: config.bridgeBaseUrl,
+      token,
+      toPhone,
+      body: message.content,
+    });
+  }
+
+  let response: Response;
+  let body: Record<string, any>;
+  try {
+    response = await fetch(request.url, {
+      method: "POST",
+      headers: request.headers,
+      body: request.body,
+    });
+    body = await response.json().catch(() => ({}));
+  } catch (e) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: e instanceof Error ? e.message : "Falha de rede ao enviar pelo bridge",
+    });
+    return;
+  }
+
+  const result = parseBridgeSendResponse(response.ok, response.status, body);
+  if (result.ok) {
+    // Same mutation the Meta path uses: stores externalId (=wamid) + deliveryStatus "sent".
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatched, {
+      messageId,
+      wamid: result.externalId,
+      ...(extraAttachmentsNote ? { note: extraAttachmentsNote } : {}),
+    });
+  } else {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: `Falha no envio pelo bridge: ${result.error}`,
+    });
+  }
+}
+
 // Internal: dispatch one outbound message to the Graph API
 export const internalDispatchMessage = internalAction({
   args: { messageId: v.id("messages") },
@@ -304,6 +480,28 @@ export const internalDispatchMessage = internalAction({
         messageId: args.messageId,
         detail:
           "Nenhum número de WhatsApp ativo conectado para esta organização — configure em Configurações → Canais",
+      });
+      return null;
+    }
+    // Bridge provider (unofficial wuzapi/whatsmeow gateway) uses a separate REST
+    // egress. Everything below this branch is the untouched Meta Graph API path.
+    if (configProvider(config) === "bridge") {
+      await dispatchViaBridge(ctx, {
+        messageId: args.messageId,
+        message,
+        config,
+        toPhone,
+        attachmentFiles,
+      });
+      return null;
+    }
+
+    // Meta Cloud API path requires the Graph credentials. A complete Meta config
+    // always has both, so the happy path never hits this guard.
+    if (!config.accessTokenEncrypted || !config.phoneNumberId) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail: "Configuração Meta incompleta — reconfigure o canal em Configurações → Canais",
       });
       return null;
     }
@@ -412,18 +610,30 @@ export const internalDispatchMessage = internalAction({
   },
 });
 
-// Internal: record a successful dispatch (wamid → externalId for status webhooks)
+// Internal: record a successful dispatch (wamid → externalId for status webhooks).
+// `note` is an optional diagnostic (e.g. extra attachments the bridge couldn't
+// send in one message); the Meta path never passes it, so its metadata is untouched.
 export const internalMarkDispatched = internalMutation({
   args: {
     messageId: v.id("messages"),
     wamid: v.string(),
+    note: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.messageId, {
-      externalId: args.wamid,
-      deliveryStatus: "sent",
-    });
+    if (args.note) {
+      const message = await ctx.db.get(args.messageId);
+      await ctx.db.patch(args.messageId, {
+        externalId: args.wamid,
+        deliveryStatus: "sent",
+        metadata: { ...(message?.metadata ?? {}), dispatchNote: args.note },
+      });
+    } else {
+      await ctx.db.patch(args.messageId, {
+        externalId: args.wamid,
+        deliveryStatus: "sent",
+      });
+    }
     return null;
   },
 });

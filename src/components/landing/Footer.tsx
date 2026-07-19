@@ -85,11 +85,15 @@ export function Footer() {
         </div>
 
         {/* Bottom bar */}
-        <div className="pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div className="pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-sm text-text-muted">
             &copy; 2026 HNBCRM. Todos os direitos reservados.
           </p>
-          <ExtLink href={`${GITHUB_URL}/blob/main/LICENSE`}>MIT License</ExtLink>
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+            <InternalLink to="/termos">Termos</InternalLink>
+            <InternalLink to="/privacidade">Privacidade</InternalLink>
+            <ExtLink href={`${GITHUB_URL}/blob/main/LICENSE`}>MIT License</ExtLink>
+          </div>
         </div>
       </div>
     </footer>

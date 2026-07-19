@@ -20,6 +20,12 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
 - Permissions: Granular RBAC with 9 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys). API keys can have scoped permissions.
 
+## WhatsApp Channel
+
+WhatsApp connects per organization through one of two providers on the same "whatsapp" channel:
+- meta — official WhatsApp Cloud API (Meta Graph API). Enforces the 24-hour customer service window and requires approved templates to reopen it.
+- bridge — self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. No 24-hour window and no templates. Opt-in per organization; it uses a protocol not sanctioned by Meta and carries a permanent-ban risk the organization accepts.
+
 ## Agent Skill (for AI Agents)
 
 HNBCRM ships an open-standard Agent Skill that teaches any AI agent to operate as a CRM team member. The skill covers lead management, contact enrichment, conversation handling, and AI-to-human handoffs.
@@ -1199,6 +1205,21 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | handoff.rejected | Handoff rejected |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
+
+---
+
+## WhatsApp Channel
+
+WhatsApp is delivered per organization through channel configs (the \`channelConfigs\` table) with a \`provider\` field. Both providers share the same \`whatsapp\` conversation channel; outbound dispatch branches by provider.
+
+### meta (official — WhatsApp Cloud API)
+- Uses the Meta Graph API. Inbound webhook: \`POST /webhooks/whatsapp\` (subscription handshake via \`GET /webhooks/whatsapp\`, verify token per number).
+- Enforces WhatsApp's 24-hour customer service window. Outside the window, only approved message templates can be sent.
+
+### bridge (unofficial — self-hosted gateway)
+- Uses a self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. Inbound webhook: \`POST /webhooks/bridge\`, verified by HMAC-SHA256 (\`WA_BRIDGE_HMAC_SECRET\`).
+- No 24-hour window and no templates — conversations can be replied to at any time.
+- Opt-in per organization. It relies on a protocol not sanctioned by Meta, violates WhatsApp's Terms of Service, and the number may be permanently banned; the organization accepts this risk.
 
 ---
 

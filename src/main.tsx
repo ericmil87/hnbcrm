@@ -14,6 +14,8 @@ import { PlaygroundPage } from "./pages/PlaygroundPage";
 import { Spinner } from "./components/ui/Spinner";
 
 const PublicFormPage = lazy(() => import("./pages/PublicFormPage").then(m => ({ default: m.PublicFormPage })));
+const TermsPage = lazy(() => import("./pages/TermsPage").then(m => ({ default: m.TermsPage })));
+const PrivacyPage = lazy(() => import("./pages/PrivacyPage").then(m => ({ default: m.PrivacyPage })));
 
 // Lazy load authenticated routes
 const DashboardOverview = lazy(() => import("./components/DashboardOverview").then(m => ({ default: m.DashboardOverview })));
@@ -48,6 +50,8 @@ const router = createBrowserRouter([
   { path: "/developers", element: <DevelopersPage /> },
   { path: "/developers/playground", element: <PlaygroundPage /> },
   { path: "/entrar", element: <AuthPage /> },
+  { path: "/termos", element: <LazyRoute Component={TermsPage} /> },
+  { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} /> },
   { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} /> },
   {
     path: "/app",

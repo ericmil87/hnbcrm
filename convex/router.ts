@@ -11,6 +11,7 @@ import {
   webhookVerify as whatsappWebhookVerify,
   webhookReceive as whatsappWebhookReceive,
 } from "./whatsapp";
+import { webhookReceive as bridgeWebhookReceive } from "./bridge";
 
 const http = httpRouter();
 
@@ -2100,6 +2101,7 @@ http.route({
 
 http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
 http.route({ path: "/webhooks/whatsapp", method: "POST", handler: whatsappWebhookReceive });
+http.route({ path: "/webhooks/bridge", method: "POST", handler: bridgeWebhookReceive });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

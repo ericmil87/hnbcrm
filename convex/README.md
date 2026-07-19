@@ -12,6 +12,13 @@ Real-time backend powered by [Convex](https://convex.dev). All queries are react
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD with 20+ enrichment fields |
 | `conversations.ts` | Multi-channel conversations and messages |
+| `channelConfigs.ts` | Per-org WhatsApp channel configs (provider `meta`\|`bridge`), encrypted credentials, health checks |
+| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`) + outbound dispatch, branched by provider |
+| `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified |
+| `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification |
+| `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media) |
+| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers |
+| `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, provisioning |
 | `handoffs.ts` | AI-to-human handoff workflow |
 | `boards.ts` | Pipeline boards and stage management |
 | `organizations.ts` | Organization CRUD and settings |

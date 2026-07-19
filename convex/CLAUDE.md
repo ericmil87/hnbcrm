@@ -13,6 +13,13 @@
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD |
 | `conversations.ts` | Multi-channel conversations + messages |
+| `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |
+| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch, branched by provider |
+| `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET` |
+| `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification (no ctx) |
+| `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
+| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
+| `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
 | `handoffs.ts` | AI-to-human handoff workflow |
 | `boards.ts` | Kanban boards and stages |
 | `organizations.ts` | Organization CRUD + settings |

@@ -183,8 +183,11 @@ export function Inbox() {
   };
 
   const currentConversation = validConversations.find((c) => c._id === selectedConversation);
+  // The 24h window + template CTA only apply to the official Cloud API. Bridge
+  // (unofficial) conversations report serviceWindowApplies === false — hide it.
   const windowInfo =
-    currentConversation?.channel === "whatsapp"
+    currentConversation?.channel === "whatsapp" &&
+    currentConversation.serviceWindowApplies !== false
       ? getServiceWindowInfo(currentConversation.serviceWindowExpiresAt)
       : null;
 

@@ -288,17 +288,40 @@ const applicationTables = {
   channelConfigs: defineTable({
     organizationId: v.id("organizations"),
     channel: v.union(v.literal("whatsapp")), // union-ready for future channels
+    // Which WhatsApp transport this config uses. Optional for backward compat:
+    // legacy rows predate the field — read paths normalize undefined → "meta"
+    // (see configProvider() in channelConfigs.ts). "meta" = Cloud API (Graph),
+    // "bridge" = unofficial gateway (whatsmeow/wuzapi over REST + webhook).
+    provider: v.optional(v.union(v.literal("meta"), v.literal("bridge"))),
     displayName: v.string(),
-    phoneNumberId: v.string(), // Meta Cloud API phone number id (webhook routing key)
-    wabaId: v.string(), // WhatsApp Business Account id
+    // ── Meta Cloud API fields (present when provider === "meta") ──
+    phoneNumberId: v.optional(v.string()), // Meta Cloud API phone number id (webhook routing key)
+    wabaId: v.optional(v.string()), // WhatsApp Business Account id
     displayPhoneNumber: v.optional(v.string()), // human-readable, filled by health check
-    verifyToken: v.string(), // webhook GET handshake token
+    verifyToken: v.optional(v.string()), // webhook GET handshake token
     // Secrets encrypted at rest (AES-256-GCM via lib/secretCrypto); never sent to clients
-    appSecretEncrypted: v.string(),
-    accessTokenEncrypted: v.string(),
+    appSecretEncrypted: v.optional(v.string()),
+    accessTokenEncrypted: v.optional(v.string()),
     // Plaintext last-4 for masked display without decryption
-    appSecretLast4: v.string(),
-    accessTokenLast4: v.string(),
+    appSecretLast4: v.optional(v.string()),
+    accessTokenLast4: v.optional(v.string()),
+    // ── Bridge (whatsmeow/wuzapi) fields (present when provider === "bridge") ──
+    bridgeBaseUrl: v.optional(v.string()), // REST base URL of the wuzapi gateway
+    bridgeInstanceId: v.optional(v.string()), // instance/user id in the gateway (ingress routing key)
+    bridgeTokenEncrypted: v.optional(v.string()), // per-instance token, AES-encrypted at rest
+    bridgeTokenLast4: v.optional(v.string()),
+    // Bridge pairing state from the last health check / QR fetch (whatsmeow session).
+    // Drives the Channels card badge; absent on Meta configs. The coarse status
+    // field (active/error) still mirrors "connected vs not" as the Meta path does.
+    bridgeSessionState: v.optional(
+      v.union(
+        v.literal("connected"),
+        v.literal("connecting"),
+        v.literal("qr"),
+        v.literal("disconnected"),
+        v.literal("banned")
+      )
+    ),
     status: v.union(v.literal("active"), v.literal("disabled"), v.literal("error")),
     lastHealthCheckAt: v.optional(v.number()),
     healthDetail: v.optional(v.string()),
@@ -307,7 +330,8 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_phone_number_id", ["phoneNumberId"])
-    .index("by_verify_token", ["verifyToken"]),
+    .index("by_verify_token", ["verifyToken"])
+    .index("by_bridge_instance", ["bridgeInstanceId"]),
 
   // Conversations
   conversations: defineTable({

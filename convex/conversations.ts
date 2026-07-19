@@ -7,6 +7,7 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { configProvider } from "./channelConfigs";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -16,6 +17,22 @@ const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function serviceWindowExpiresAt(conversation: { lastInboundAt?: number }): number | null {
   return conversation.lastInboundAt ? conversation.lastInboundAt + SERVICE_WINDOW_MS : null;
+}
+
+// The 24h window + templates are exclusive to the official Cloud API. The bridge
+// (unofficial wuzapi) has no such window, so bridge conversations are ALWAYS free
+// to message: `serviceWindowApplies` is false and no expiry is exposed. A meta
+// config, or a conversation with no channelConfigId, keeps the original behavior.
+// (The U5 UI reads `serviceWindowApplies` to hide the window/template controls.)
+function serviceWindowFields(
+  conversation: { lastInboundAt?: number },
+  config: { provider?: "meta" | "bridge" | null } | null | undefined
+): { serviceWindowExpiresAt: number | null; serviceWindowApplies: boolean } {
+  const applies = !config || configProvider(config) !== "bridge";
+  return {
+    serviceWindowExpiresAt: applies ? serviceWindowExpiresAt(conversation) : null,
+    serviceWindowApplies: applies,
+  };
 }
 
 // Get-or-create a conversation for a lead/channel pair (shared by
@@ -90,22 +107,24 @@ export const getConversations = query({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap] = await Promise.all([
+    const [contactMap, assigneeMap, configMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
+      batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
       const lead = leadMap.get(conversation.leadId) ?? null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
+      const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
         lead,
         contact,
         assignee,
-        serviceWindowExpiresAt: serviceWindowExpiresAt(conversation),
+        ...serviceWindowFields(conversation, config),
       };
     }).filter(Boolean);
 
@@ -371,22 +390,24 @@ export const internalGetConversations = internalQuery({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap] = await Promise.all([
+    const [contactMap, assigneeMap, configMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
+      batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
       const lead = leadMap.get(conversation.leadId) ?? null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
+      const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
         lead,
         contact,
         assignee,
-        serviceWindowExpiresAt: serviceWindowExpiresAt(conversation),
+        ...serviceWindowFields(conversation, config),
       };
     }).filter(Boolean);
 
@@ -719,6 +740,26 @@ export const internalSendTemplate = internalMutation({
     if (!conversation) throw new Error("Conversation not found");
     if (conversation.channel !== "whatsapp") {
       throw new Error("Template messages are only supported on the whatsapp channel");
+    }
+
+    // Templates are exclusive to the official WhatsApp Cloud API. Reject them for a
+    // bridge config before scheduling any dispatch — never call a template on the
+    // gateway. Resolve the provider the same way dispatch does: the conversation's
+    // config, falling back to the org's default active whatsapp config.
+    let config = conversation.channelConfigId
+      ? await ctx.db.get(conversation.channelConfigId)
+      : null;
+    if (!config) {
+      const configs = await ctx.db
+        .query("channelConfigs")
+        .withIndex("by_organization", (q) => q.eq("organizationId", conversation.organizationId))
+        .collect();
+      config = configs.find((c) => c.channel === "whatsapp" && c.status === "active") ?? null;
+    }
+    if (config && configProvider(config) === "bridge") {
+      throw new Error(
+        "Templates são exclusivos da WhatsApp Cloud API oficial e não estão disponíveis no canal bridge"
+      );
     }
 
     const now = Date.now();
