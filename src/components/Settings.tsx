@@ -7,6 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -564,10 +565,11 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
               placeholder="Opção 1, Opção 2, Opção 3"
             />
           )}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.isRequired} onChange={(e) => setForm({ ...form, isRequired: e.target.checked })} className="rounded border-border-strong bg-surface-raised text-brand-600 focus:ring-brand-500" />
-            <span className="text-sm text-text-secondary">Obrigatório</span>
-          </label>
+          <Checkbox
+            checked={form.isRequired}
+            onChange={(e) => setForm({ ...form, isRequired: e.target.checked })}
+            label="Obrigatório"
+          />
           <div className="flex gap-2 pt-4">
             <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
             <Button type="submit" className="flex-1">Salvar</Button>

@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -672,11 +673,10 @@ export function TaskDetailSlideOver({
                   key={item.id}
                   className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-sunken transition-colors group"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={item.completed}
                     onChange={() => handleToggleChecklistItem(item.id)}
-                    className="shrink-0 h-4 w-4 rounded border-border-strong text-brand-500 focus:ring-brand-500 cursor-pointer"
+                    containerClassName="shrink-0"
                   />
                   <span
                     className={cn(

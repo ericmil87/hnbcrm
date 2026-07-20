@@ -21,6 +21,8 @@ interface MentionTextareaProps {
   disabled?: boolean;
   className?: string;
   mentionEnabled?: boolean;
+  /** Expõe o textarea interno (ex.: inserir emoji na posição do cursor). */
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -45,6 +47,7 @@ export function MentionTextarea({
   disabled,
   className,
   mentionEnabled = false,
+  inputRef,
 }: MentionTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -223,7 +226,10 @@ export function MentionTextarea({
       )}
 
       <textarea
-        ref={textareaRef}
+        ref={(el) => {
+          textareaRef.current = el;
+          if (inputRef) inputRef.current = el;
+        }}
         value={value}
         onChange={handleChange}
         onInput={handleInput}

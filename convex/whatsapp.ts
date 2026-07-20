@@ -25,9 +25,13 @@ import {
 import { findOrCreateContactByPhone, ensureLeadForContact } from "./lib/inboundRouting";
 import { configProvider } from "./channelConfigs";
 import {
+  BridgeQuote,
   BridgeSendRequest,
   bridgeSendKindForMime,
+  buildBridgeMarkReadRequest,
   buildBridgeMediaSendRequest,
+  buildBridgePresenceRequest,
+  buildBridgeReactRequest,
   buildBridgeTextSendRequest,
   parseBridgeSendResponse,
 } from "./lib/bridgeSend";
@@ -328,6 +332,38 @@ function captionFor(content: string | undefined): string | undefined {
   return content;
 }
 
+// Transcode a recorded voice note to audio/ogg; codecs=opus (WhatsApp PTT format)
+// via the self-hosted Whisper service's /convert endpoint. Returns the converted
+// bytes, or null when the service isn't configured or the conversion fails — the
+// caller then sends the original untouched. Best-effort: never throws.
+async function convertVoiceNoteToOggOpus(
+  bytes: Uint8Array,
+  mimeType: string
+): Promise<Uint8Array | null> {
+  const serviceUrl = process.env.WHISPER_SERVICE_URL;
+  const serviceToken = process.env.WHISPER_SERVICE_TOKEN;
+  if (!serviceUrl || !serviceToken) return null;
+  try {
+    const form = new FormData();
+    form.append(
+      "file",
+      new Blob([bytes], { type: mimeType || "application/octet-stream" }),
+      "voice-note"
+    );
+    const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/convert?target=ogg-opus`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceToken}` },
+      body: form,
+    });
+    if (!response.ok) return null;
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength === 0) return null;
+    return new Uint8Array(buffer);
+  } catch {
+    return null;
+  }
+}
+
 // Send one outbound message (text OR media) through the wuzapi bridge and record
 // the result. Kept out of the action body so the Meta path stays readable; the
 // decrypt + blob read run here (in the action) exactly like the Meta path.
@@ -373,12 +409,25 @@ async function dispatchViaBridge(
 
   const token = await decryptSecret(config.bridgeTokenEncrypted);
 
+  // Reply/quote: the outbound message carries metadata.quoted.externalId (the
+  // whatsmeow id of the quoted message) resolved when the message was created.
+  // Participant is only needed when quoting the CONTACT's own message.
+  const quotedMeta = message.metadata?.quoted as
+    | { externalId?: string; fromMe?: boolean }
+    | undefined;
+  const quote: BridgeQuote | undefined = quotedMeta?.externalId
+    ? {
+        stanzaId: quotedMeta.externalId,
+        ...(quotedMeta.fromMe ? {} : { participant: `${toPhone}@s.whatsapp.net` }),
+      }
+    : undefined;
+
   // Media message → upload the FIRST attachment via the matching /chat/send/*
   // endpoint. A media contentType with no attachment is a malformed message.
   const isMediaMessage =
     attachmentFiles.length > 0 || (message.contentType && message.contentType !== "text");
   let request: BridgeSendRequest;
-  let extraAttachmentsNote: string | undefined;
+  const dispatchNotes: string[] = [];
 
   if (isMediaMessage) {
     if (attachmentFiles.length === 0) {
@@ -404,19 +453,41 @@ async function dispatchViaBridge(
       });
       return;
     }
-    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bytes = new Uint8Array(await blob.arrayBuffer());
+    let sendMime = file.mimeType;
+
+    // Voice notes: the browser records audio/webm (or ogg) but WhatsApp/whatsmeow
+    // expects a PTT as audio/ogg; codecs=opus. When the Whisper service is
+    // configured, transcode non-ogg audio via its /convert endpoint; otherwise
+    // (or on failure) fall back to sending the original and note it.
+    // VALIDAR: whether wuzapi accepts a raw webm data-URI as a playable voice note.
+    if (message.contentType === "audio" && !/^audio\/ogg/i.test(file.mimeType)) {
+      const converted = await convertVoiceNoteToOggOpus(bytes, file.mimeType);
+      if (converted) {
+        bytes = converted;
+        sendMime = "audio/ogg; codecs=opus";
+      } else {
+        dispatchNotes.push(
+          "Nota de voz enviada no formato original — conversão para ogg/opus indisponível"
+        );
+      }
+    }
+
     request = buildBridgeMediaSendRequest({
       baseUrl: config.bridgeBaseUrl,
       token,
       toPhone,
-      kind: bridgeSendKindForMime(file.mimeType),
-      dataUri: toDataUri(bytes, file.mimeType),
+      kind: bridgeSendKindForMime(sendMime),
+      dataUri: toDataUri(bytes, sendMime),
       caption: captionFor(message.content),
       filename: file.name,
+      quote,
     });
     // The bridge sends one attachment per message; note any extras we skip.
     if (attachmentFiles.length > 1) {
-      extraAttachmentsNote = `${attachmentFiles.length - 1} anexo(s) adicional(is) não enviado(s) — o WhatsApp bridge envia um por mensagem`;
+      dispatchNotes.push(
+        `${attachmentFiles.length - 1} anexo(s) adicional(is) não enviado(s) — o WhatsApp bridge envia um por mensagem`
+      );
     }
   } else {
     request = buildBridgeTextSendRequest({
@@ -424,6 +495,7 @@ async function dispatchViaBridge(
       token,
       toPhone,
       body: message.content,
+      quote,
     });
   }
 
@@ -446,11 +518,12 @@ async function dispatchViaBridge(
 
   const result = parseBridgeSendResponse(response.ok, response.status, body);
   if (result.ok) {
+    const note = dispatchNotes.length > 0 ? dispatchNotes.join("; ") : undefined;
     // Same mutation the Meta path uses: stores externalId (=wamid) + deliveryStatus "sent".
     await ctx.runMutation(internal.whatsapp.internalMarkDispatched, {
       messageId,
       wamid: result.externalId,
-      ...(extraAttachmentsNote ? { note: extraAttachmentsNote } : {}),
+      ...(note ? { note } : {}),
     });
   } else {
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
@@ -549,6 +622,16 @@ export const internalDispatchMessage = internalAction({
     } else {
       payload.type = "text";
       payload.text = { body: message.content };
+    }
+
+    // Reply/quote: reference the quoted message id via Graph `context`. Templates
+    // don't carry a reply context, so only attach it to text/media sends.
+    if (!template) {
+      const quotedExternalId = (message.metadata?.quoted as { externalId?: string } | undefined)
+        ?.externalId;
+      if (quotedExternalId) {
+        payload.context = { message_id: quotedExternalId };
+      }
     }
 
     const accessToken = await decryptSecret(config.accessTokenEncrypted);
@@ -668,6 +751,120 @@ export const internalMarkDispatchFailed = internalMutation({
       metadata: { conversationId: message.conversationId, messageId: args.messageId },
       createdAt: Date.now(),
     });
+    return null;
+  },
+});
+
+// ── Reactions / read receipts / typing (best-effort provider egress) ──
+
+// Internal: push a reaction to the provider. Bridge → wuzapi /chat/react; Meta →
+// a Graph "reaction" message. Best-effort: the local metadata.reactions patch
+// already happened in the mutation, so a gateway hiccup is only logged.
+export const internalDispatchReaction = internalAction({
+  args: { messageId: v.id("messages"), emoji: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
+      messageId: args.messageId,
+    });
+    if (!context) return null;
+    const { message, config, toPhone } = context;
+    // Need a provider id on the target and a destination to react at all.
+    if (!config || !toPhone || !message.externalId) return null;
+
+    try {
+      if (configProvider(config) === "bridge") {
+        if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+        const token = await decryptSecret(config.bridgeTokenEncrypted);
+        const request = buildBridgeReactRequest({
+          baseUrl: config.bridgeBaseUrl,
+          token,
+          toPhone,
+          emoji: args.emoji,
+          stanzaId: message.externalId,
+          fromMe: message.direction === "outbound",
+        });
+        await fetch(request.url, { method: "POST", headers: request.headers, body: request.body });
+      } else {
+        if (!config.accessTokenEncrypted || !config.phoneNumberId) return null;
+        const accessToken = await decryptSecret(config.accessTokenEncrypted);
+        await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            to: toPhone,
+            type: "reaction",
+            // Meta uses an empty emoji to REMOVE a reaction — same convention as ours.
+            reaction: { message_id: message.externalId, emoji: args.emoji },
+          }),
+        });
+      }
+    } catch (e) {
+      console.warn("Reaction dispatch failed (best-effort):", e);
+    }
+    return null;
+  },
+});
+
+// Internal: send bridge read receipts to the wuzapi gateway. Best-effort — the
+// local readAt stamps already happened in the mutation.
+export const internalBridgeMarkRead = internalAction({
+  args: {
+    configId: v.id("channelConfigs"),
+    chatPhone: v.string(),
+    externalIds: v.array(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    if (args.externalIds.length === 0) return null;
+    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+      configId: args.configId,
+    });
+    if (!config || configProvider(config) !== "bridge") return null;
+    if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+    try {
+      const token = await decryptSecret(config.bridgeTokenEncrypted);
+      const request = buildBridgeMarkReadRequest({
+        baseUrl: config.bridgeBaseUrl,
+        token,
+        ids: args.externalIds,
+        chatPhone: args.chatPhone,
+      });
+      await fetch(request.url, { method: "POST", headers: request.headers, body: request.body });
+    } catch (e) {
+      console.warn("Bridge mark-read failed (best-effort):", e);
+    }
+    return null;
+  },
+});
+
+// Internal: send a bridge chat presence (typing indicator). Best-effort, stateless.
+export const internalBridgeSendPresence = internalAction({
+  args: {
+    configId: v.id("channelConfigs"),
+    toPhone: v.string(),
+    state: v.union(v.literal("composing"), v.literal("paused")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+      configId: args.configId,
+    });
+    if (!config || configProvider(config) !== "bridge") return null;
+    if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+    try {
+      const token = await decryptSecret(config.bridgeTokenEncrypted);
+      const request = buildBridgePresenceRequest({
+        baseUrl: config.bridgeBaseUrl,
+        token,
+        toPhone: args.toPhone,
+        state: args.state,
+      });
+      await fetch(request.url, { method: "POST", headers: request.headers, body: request.body });
+    } catch (e) {
+      console.warn("Bridge presence failed (best-effort):", e);
+    }
     return null;
   },
 });

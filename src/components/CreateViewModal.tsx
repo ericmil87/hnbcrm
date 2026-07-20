@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Modal } from "@/components/ui/Modal";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -203,20 +204,12 @@ export function CreateViewModal({
                   </label>
                   <div className="space-y-2 max-h-40 overflow-y-auto p-2 bg-surface-raised border border-border-strong rounded-field">
                     {stages.map((stage) => (
-                      <label
+                      <Checkbox
                         key={stage._id}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedStageIds.includes(stage._id)}
-                          onChange={() => toggleStage(stage._id)}
-                          className="rounded border-border-strong text-brand-600 focus:ring-brand-500"
-                        />
-                        <span className="text-sm text-text-primary">
-                          {stage.name}
-                        </span>
-                      </label>
+                        checked={selectedStageIds.includes(stage._id)}
+                        onChange={() => toggleStage(stage._id)}
+                        label={<span className="text-text-primary">{stage.name}</span>}
+                      />
                     ))}
                   </div>
                 </div>

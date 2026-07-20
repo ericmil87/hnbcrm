@@ -118,6 +118,24 @@ export const webhookReceive = httpAction(async (ctx, request) => {
         status: parsed.receipt.status,
       });
     }
+  } else if (parsed.kind === "reaction") {
+    // Contact reacted to a message — patch the target's metadata.reactions inline.
+    // Unknown target is a no-op (returns null); never a message of its own.
+    await ctx.runMutation(internal.conversations.internalApplyReaction, {
+      organizationId: config.organizationId,
+      targetExternalId: parsed.reaction.targetExternalId,
+      emoji: parsed.reaction.emoji,
+      sender: "contact",
+      senderName: parsed.reaction.senderName,
+      at: parsed.reaction.timestamp,
+    });
+  } else if (parsed.kind === "chat_presence") {
+    // Contato digitando/parou — patch barato na conversa, some via TTL no cliente.
+    await ctx.runMutation(internal.conversations.internalSetContactPresence, {
+      organizationId: config.organizationId,
+      phone: parsed.presence.phone,
+      state: parsed.presence.state,
+    });
   }
   // parsed.kind === "ignored" (fromMe, group, presence, unrecognized) → no-op
 
@@ -155,6 +173,18 @@ export const internalIngestBridgeMessage = internalAction({
 
     const metadata: Record<string, unknown> = { ...(args.message.metadata ?? {}) };
     let attachments: Id<"files">[] | undefined;
+
+    // Resolve an inbound reply's quoted message (by whatsmeow id) to our local
+    // message id, so the UI can link the reply to the original. If the quoted
+    // message predates the integration (not stored), we keep the raw quote only.
+    const quoted = metadata.quoted as { externalId?: string } | undefined;
+    if (quoted?.externalId) {
+      const target = await ctx.runQuery(internal.conversations.internalGetMessageByExternalId, {
+        organizationId: config.organizationId,
+        externalId: quoted.externalId,
+      });
+      if (target?._id) metadata.quotedMessageId = target._id;
+    }
 
     // Media pipeline: ask wuzapi to download + decrypt, then store as a file.
     // Any failure keeps the placeholder message with a note (mediaPending stays

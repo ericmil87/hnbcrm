@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Copy, Send, WrapText } from "lucide-react";
@@ -301,18 +302,18 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
     if (param.type === "boolean") {
       return (
         <div key={fieldKey} className="flex items-center gap-3">
-          <input
-            type="checkbox"
+          <Checkbox
             id={fieldKey}
             checked={Boolean(value)}
             onChange={(e) => handleFieldChange(param.name, e.target.checked, parentKey)}
-            className="w-4 h-4 rounded border-border-strong bg-surface-raised text-brand-600 focus:ring-brand-500"
+            label={
+              <span className="text-[13px] font-medium">
+                {param.name}
+                <Badge variant="default" className="ml-2 text-[10px] px-1 py-0 font-normal">boolean</Badge>
+                {param.required && <Badge variant="error" className="ml-1 text-[10px] px-1.5">obrigatório</Badge>}
+              </span>
+            }
           />
-          <label htmlFor={fieldKey} className="text-[13px] font-medium text-text-secondary">
-            {param.name}
-            <Badge variant="default" className="ml-2 text-[10px] px-1 py-0 font-normal">boolean</Badge>
-            {param.required && <Badge variant="error" className="ml-1 text-[10px] px-1.5">obrigatório</Badge>}
-          </label>
         </div>
       );
     }

@@ -40,8 +40,18 @@ export const ALLOWED_MIME_TYPES = {
     "audio/mpeg": { maxSize: 10 * 1024 * 1024, extensions: [".mp3"] },
     "audio/wav": { maxSize: 10 * 1024 * 1024, extensions: [".wav"] },
     "audio/ogg": { maxSize: 10 * 1024 * 1024, extensions: [".ogg"] },
+    // Notas de voz gravadas no navegador: Chrome/Firefox produzem webm/opus,
+    // Safari produz mp4 (m4a). O backend converte para ogg/opus no envio.
+    "audio/webm": { maxSize: 10 * 1024 * 1024, extensions: [".webm"] },
+    "audio/mp4": { maxSize: 10 * 1024 * 1024, extensions: [".m4a", ".mp4"] },
   },
 } as const;
+
+// MediaRecorder e o WhatsApp reportam mime com parâmetros ("audio/webm;codecs=opus",
+// "audio/ogg; codecs=opus") — a comparação com o allowlist usa só o tipo base.
+function baseMimeType(mimeType: string): string {
+  return mimeType.split(";")[0].trim().toLowerCase();
+}
 
 /**
  * Get all allowed MIME types as a flat object
@@ -60,7 +70,7 @@ function getAllAllowedMimeTypes(): Record<string, { maxSize: number; extensions:
  */
 export function validateMimeType(mimeType: string): boolean {
   const allowed = getAllAllowedMimeTypes();
-  return mimeType in allowed;
+  return baseMimeType(mimeType) in allowed;
 }
 
 /**
@@ -68,7 +78,7 @@ export function validateMimeType(mimeType: string): boolean {
  */
 export function getMaxFileSize(mimeType: string): number | null {
   const allowed = getAllAllowedMimeTypes();
-  return allowed[mimeType]?.maxSize ?? null;
+  return allowed[baseMimeType(mimeType)]?.maxSize ?? null;
 }
 
 /**
@@ -88,10 +98,11 @@ export function formatFileSize(bytes: number): string {
  * Get file category from MIME type
  */
 export function getFileCategory(mimeType: string): "image" | "document" | "text" | "audio" | "other" {
-  if (mimeType in ALLOWED_MIME_TYPES.images) return "image";
-  if (mimeType in ALLOWED_MIME_TYPES.documents) return "document";
-  if (mimeType in ALLOWED_MIME_TYPES.text) return "text";
-  if (mimeType in ALLOWED_MIME_TYPES.audio) return "audio";
+  const base = baseMimeType(mimeType);
+  if (base in ALLOWED_MIME_TYPES.images) return "image";
+  if (base in ALLOWED_MIME_TYPES.documents) return "document";
+  if (base in ALLOWED_MIME_TYPES.text) return "text";
+  if (base in ALLOWED_MIME_TYPES.audio) return "audio";
   return "other";
 }
 

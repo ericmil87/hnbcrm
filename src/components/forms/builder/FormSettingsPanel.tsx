@@ -4,6 +4,7 @@ import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { X } from "lucide-react";
 import type { FormSettings } from "./types";
 
@@ -453,18 +454,17 @@ export function FormSettingsPanel({
                   const isSelected =
                     settings.notifyMemberIds?.includes(m._id) ?? false;
                   return (
-                    <label
+                    <div
                       key={m._id}
                       className={cn(
-                        "flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer",
+                        "flex items-center gap-3 px-3 py-2.5 rounded-lg",
                         "border transition-all duration-150",
                         isSelected
                           ? "border-brand-500 bg-brand-500/10"
                           : "border-border bg-surface-raised hover:border-border-strong"
                       )}
                     >
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={isSelected}
                         onChange={(e) => {
                           const current = settings.notifyMemberIds ?? [];
@@ -474,31 +474,10 @@ export function FormSettingsPanel({
                               : current.filter((id) => id !== m._id),
                           });
                         }}
-                        className="sr-only"
+                        containerClassName="flex-1"
+                        label={<span className="text-text-primary">{m.name}</span>}
                       />
-                      <div
-                        className={cn(
-                          "w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all",
-                          isSelected
-                            ? "border-brand-500 bg-brand-600"
-                            : "border-border-strong bg-transparent"
-                        )}
-                        aria-hidden="true"
-                      >
-                        {isSelected && (
-                          <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
-                            <path
-                              d="M1 3.5L3.5 6L8 1"
-                              stroke="white"
-                              strokeWidth="1.5"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </div>
-                      <span className="text-sm text-text-primary">{m.name}</span>
-                    </label>
+                    </div>
                   );
                 })}
                 {humanMembers.length === 0 && (

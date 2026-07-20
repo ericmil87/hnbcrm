@@ -6,6 +6,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
@@ -29,6 +30,7 @@ import {
   Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
 
 // Derive the public webhook callback host from the Convex deployment URL
 // (client-facing ".convex.cloud" deployment maps to the HTTP action host ".convex.site")
@@ -63,6 +65,7 @@ type ChannelConfig = {
   bridgeTokenMasked: string | null;
   hasBridgeToken: boolean;
   bridgeSessionState: BridgeSessionState | null;
+  autoTranscribeAudio: boolean;
   status: "active" | "disabled" | "error";
   lastHealthCheckAt: number | null;
   healthDetail: string | null;
@@ -158,6 +161,15 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
     });
   };
 
+  const handleToggleAutoTranscribe = (config: ChannelConfig) => {
+    const next = !config.autoTranscribeAudio;
+    toast.promise(updateChannelConfig({ configId: config._id, autoTranscribeAudio: next }), {
+      loading: "Atualizando...",
+      success: next ? "Transcrição automática ativada" : "Transcrição automática desativada",
+      error: "Falha ao atualizar transcrição automática",
+    });
+  };
+
   const handleDelete = (configId: Id<"channelConfigs">) => {
     toast.promise(deleteChannelConfig({ configId }), {
       loading: "Excluindo número...",
@@ -245,6 +257,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
                 onTest={() => handleTestConnection(config)}
                 onEdit={() => openEditForm(config)}
                 onToggle={() => handleToggleStatus(config)}
+                onToggleAutoTranscribe={() => handleToggleAutoTranscribe(config)}
                 onDelete={() => setConfirmDeleteId(config._id)}
                 onShowQr={() => setQrConfig(config)}
                 onCopy={handleCopy}
@@ -252,6 +265,8 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
             ))}
           </div>
         )}
+
+        {configs && configs.length > 0 && <ChannelHealthPanel organizationId={organizationId} />}
       </Card>
 
       {/* Meta webhook configuration block */}
@@ -353,6 +368,7 @@ function ChannelCard({
   onTest,
   onEdit,
   onToggle,
+  onToggleAutoTranscribe,
   onDelete,
   onShowQr,
   onCopy,
@@ -364,6 +380,7 @@ function ChannelCard({
   onTest: () => void;
   onEdit: () => void;
   onToggle: () => void;
+  onToggleAutoTranscribe: () => void;
   onDelete: () => void;
   onShowQr: () => void;
   onCopy: (field: string, value: string, message: string) => void;
@@ -454,6 +471,42 @@ function ChannelCard({
             </button>
           </PermissionGate>
         </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-base border border-border-subtle p-2.5">
+        <div className="min-w-0">
+          <span className="text-sm text-text-primary">Transcrever áudios automaticamente</span>
+          <p className="text-xs text-text-muted mt-0.5">Usa Whisper local no seu servidor</p>
+        </div>
+        <PermissionGate
+          organizationId={organizationId}
+          category="settings"
+          level="manage"
+          fallback={
+            <Badge variant={config.autoTranscribeAudio ? "success" : "default"}>
+              {config.autoTranscribeAudio ? "Ativado" : "Desativado"}
+            </Badge>
+          }
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={config.autoTranscribeAudio}
+            aria-label="Transcrever áudios automaticamente"
+            onClick={onToggleAutoTranscribe}
+            className={cn(
+              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+              config.autoTranscribeAudio ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
+            )}
+          >
+            <span
+              className={cn(
+                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                config.autoTranscribeAudio ? "translate-x-5" : "translate-x-1"
+              )}
+            />
+          </button>
+        </PermissionGate>
       </div>
 
       {/* Meta: verify token footer. Bridge: gateway instance info (no secrets). */}
@@ -681,6 +734,7 @@ type UpdateChannelConfigFn = (args: {
   bridgeBaseUrl?: string;
   bridgeInstanceId?: string;
   bridgeToken?: string;
+  autoTranscribeAudio?: boolean;
 }) => Promise<null>;
 
 type ProvisionBridgeFn = (args: {
@@ -1105,17 +1159,16 @@ function BridgeForm({
             </a>{" "}
             para os detalhes sobre o canal WhatsApp não oficial.
           </p>
-          <label className="flex items-start gap-2 pt-1 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={riskAccepted}
-              onChange={(e) => setRiskAccepted(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 rounded border-border accent-brand-600"
-            />
+          <Checkbox
+            containerClassName="pt-1"
+            checked={riskAccepted}
+            onChange={(e) => setRiskAccepted(e.target.checked)}
+            label={
             <span className="text-xs text-text-primary">
               Entendo e assumo o risco de usar um canal WhatsApp não oficial.
             </span>
-          </label>
+            }
+          />
         </div>
       )}
 

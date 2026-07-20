@@ -157,6 +157,8 @@ A message thread on a lead, scoped by channel.
 | channel | enum | whatsapp, telegram, email, webchat, internal |
 | status | enum | active, closed |
 | messageCount | number | Total messages |
+| archivedAt | number? | When set, conversation is archived (hidden from the default inbox list) |
+| labelIds | Id<conversationLabels>[]? | Org-scoped labels applied to the conversation |
 
 ### Message
 An individual message in a conversation.
@@ -170,8 +172,11 @@ An individual message in a conversation.
 | senderType | enum | contact, human, ai |
 | content | string | Message text |
 | contentType | enum | text, image, file, audio |
+| attachments | Id<files>[]? | Attached files (images, audio, documents) |
+| deliveryStatus | enum? | sent, delivered, read, failed (WhatsApp ticks) |
 | isInternal | boolean | Internal note (not visible to contact) |
 | mentionedUserIds | Id<teamMembers>[] | @mentioned team members |
+| transcriptText | string? | Voice-note transcription (self-hosted Whisper), full-text searchable |
 
 ### Handoff
 An AI-to-human (or human-to-human) handoff request.
@@ -520,11 +525,18 @@ Get messages for a conversation.
 **Response:** \`{ messages: [...] }\`
 
 #### POST /api/v1/conversations/send
-Send a message to a conversation.
+Send a message to a conversation. Supports file attachments and replying to (quoting) another message.
 
-**Body:** conversationId (required), content (required), contentType (default: text), isInternal (default: false), mentionedUserIds (optional)
+**Body:** conversationId (required), content (required unless attachments given), contentType (default: text), isInternal (default: false), mentionedUserIds (optional), attachments (optional file ids), replyToMessageId (optional)
 
 **Response:** \`{ success: true, messageId }\`
+
+#### POST /api/v1/conversations/receive
+Inject an inbound message from a contact — for external bridges on any channel. Creates the contact and lead if they don't exist; idempotent per externalId.
+
+**Body:** content (required), contactPhone or contactId (one required), channel (default: whatsapp), contentType (default: text), contactFirstName/contactLastName (optional, used when creating the contact), leadTitle (optional), externalId (optional, dedupes redeliveries)
+
+**Response:** \`{ success: true, messageId, leadId, contactId }\`
 
 ### Handoff Endpoints
 

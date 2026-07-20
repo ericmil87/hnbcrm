@@ -7,6 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Contact2, Search, Plus, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -348,29 +349,26 @@ export function ContactsPage() {
                       const isFixed = col.fixed;
 
                       return (
-                        <label
+                        <div
                           key={col.key}
                           className={cn(
-                            "flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors",
-                            isFixed ? "opacity-50 cursor-not-allowed" : "hover:bg-surface-raised"
+                            "flex items-center gap-3 px-3 py-2.5 transition-colors",
+                            isFixed ? "opacity-50" : "hover:bg-surface-raised"
                           )}
                         >
-                          <input
-                            type="checkbox"
+                          <Checkbox
                             checked={isActive}
                             disabled={isFixed}
                             onChange={() => toggleColumn(col.key)}
-                            className="w-4 h-4 rounded border-border-strong text-brand-600 focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-overlay disabled:opacity-50"
+                            containerClassName="flex-1"
+                            label={<span className="text-text-primary">{col.label}</span>}
                           />
-                          <span className="text-sm text-text-primary flex-1">
-                            {col.label}
-                          </span>
                           {isFixed && (
                             <span className="text-xs text-text-muted">
                               Fixo
                             </span>
                           )}
-                        </label>
+                        </div>
                       );
                     })}
                   </div>

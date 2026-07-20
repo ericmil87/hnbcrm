@@ -99,6 +99,7 @@ function maskConfig(config: Doc<"channelConfigs">) {
     bridgeTokenMasked: config.bridgeTokenLast4 ? `…${config.bridgeTokenLast4}` : null,
     hasBridgeToken: config.bridgeTokenEncrypted != null,
     bridgeSessionState: config.bridgeSessionState ?? null,
+    autoTranscribeAudio: config.autoTranscribeAudio ?? false,
     status: config.status,
     lastHealthCheckAt: config.lastHealthCheckAt ?? null,
     healthDetail: config.healthDetail ?? null,
@@ -120,6 +121,77 @@ export const getChannelConfigs = query({
       .collect();
 
     return configs.map(maskConfig);
+  },
+});
+
+// Saúde do canal WhatsApp: métricas de entrega sobre as mensagens recentes da
+// org (janela `since`, teto de 1000 — `sampled` avisa quando o teto cortou).
+export const getChannelStats = query({
+  args: {
+    organizationId: v.id("organizations"),
+    since: v.number(), // timestamp do início da janela (calculado no cliente)
+  },
+  returns: v.object({
+    sent: v.number(),
+    delivered: v.number(),
+    read: v.number(),
+    failed: v.number(),
+    inbound: v.number(),
+    lastInboundAt: v.union(v.number(), v.null()),
+    lastOutboundAt: v.union(v.number(), v.null()),
+    sampled: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "view");
+
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .order("desc")
+      .take(1000);
+
+    // Só mensagens de conversas WhatsApp contam para a saúde do canal.
+    const convIds = Array.from(new Set(recent.map((m) => m.conversationId)));
+    const convDocs = await Promise.all(convIds.map((id) => ctx.db.get(id)));
+    const whatsappConvIds = new Set(
+      convDocs.filter((c) => c?.channel === "whatsapp").map((c) => c!._id)
+    );
+
+    let sent = 0;
+    let delivered = 0;
+    let read = 0;
+    let failed = 0;
+    let inbound = 0;
+    let lastInboundAt: number | null = null;
+    let lastOutboundAt: number | null = null;
+
+    for (const m of recent) {
+      if (!whatsappConvIds.has(m.conversationId) || m.isInternal) continue;
+      if (m.direction === "outbound") {
+        if (lastOutboundAt === null) lastOutboundAt = m.createdAt;
+        if (m.createdAt < args.since) continue;
+        sent++;
+        if (m.deliveryStatus === "delivered") delivered++;
+        else if (m.deliveryStatus === "read") {
+          delivered++;
+          read++;
+        } else if (m.deliveryStatus === "failed") failed++;
+      } else if (m.direction === "inbound") {
+        if (lastInboundAt === null) lastInboundAt = m.createdAt;
+        if (m.createdAt >= args.since) inbound++;
+      }
+    }
+
+    return {
+      sent,
+      delivered,
+      read,
+      failed,
+      inbound,
+      lastInboundAt,
+      lastOutboundAt,
+      sampled: recent.length === 1000,
+    };
   },
 });
 
@@ -219,10 +291,12 @@ export const updateChannelConfig = action({
     bridgeBaseUrl: v.optional(v.string()),
     bridgeInstanceId: v.optional(v.string()),
     bridgeToken: v.optional(v.string()),
+    // Shared (both providers)
+    autoTranscribeAudio: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const patch: Record<string, string> = {};
+    const patch: Record<string, string | boolean> = {};
     if (args.displayName !== undefined) patch.displayName = args.displayName;
     if (args.phoneNumberId !== undefined) patch.phoneNumberId = args.phoneNumberId.trim();
     if (args.wabaId !== undefined) patch.wabaId = args.wabaId.trim();
@@ -241,6 +315,7 @@ export const updateChannelConfig = action({
       patch.bridgeTokenEncrypted = await encryptSecret(args.bridgeToken);
       patch.bridgeTokenLast4 = secretLast4(args.bridgeToken);
     }
+    if (args.autoTranscribeAudio !== undefined) patch.autoTranscribeAudio = args.autoTranscribeAudio;
 
     await ctx.runMutation(internal.channelConfigs.internalPatchConfig, {
       configId: args.configId,
@@ -791,7 +866,7 @@ export const internalInsertConfig = internalMutation({
 export const internalPatchConfig = internalMutation({
   args: {
     configId: v.id("channelConfigs"),
-    patch: v.record(v.string(), v.string()),
+    patch: v.record(v.string(), v.union(v.string(), v.boolean())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -808,7 +883,10 @@ export const internalPatchConfig = internalMutation({
     const BRIDGE_FIELDS = new Set([
       "bridgeBaseUrl", "bridgeInstanceId", "bridgeTokenEncrypted", "bridgeTokenLast4",
     ]);
-    const allowedFields = new Set(["displayName", ...META_FIELDS, ...BRIDGE_FIELDS]);
+    // Shared fields apply to both providers, so they sit outside the
+    // provider-exclusivity check below.
+    const SHARED_FIELDS = new Set(["displayName", "autoTranscribeAudio"]);
+    const allowedFields = new Set([...SHARED_FIELDS, ...META_FIELDS, ...BRIDGE_FIELDS]);
     for (const field of Object.keys(args.patch)) {
       if (!allowedFields.has(field)) throw new Error(`Field not updatable: ${field}`);
       // A config's provider is immutable — reject fields from the other provider
@@ -820,24 +898,28 @@ export const internalPatchConfig = internalMutation({
       }
     }
 
-    if (args.patch.phoneNumberId && args.patch.phoneNumberId !== config.phoneNumberId) {
+    const patchPhoneNumberId = typeof args.patch.phoneNumberId === "string" ? args.patch.phoneNumberId : undefined;
+    if (patchPhoneNumberId && patchPhoneNumberId !== config.phoneNumberId) {
       const existing = await ctx.db
         .query("channelConfigs")
-        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.patch.phoneNumberId))
+        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", patchPhoneNumberId))
         .first();
       if (existing) throw new Error("Este phone number ID já está conectado");
     }
-    if (args.patch.verifyToken && args.patch.verifyToken !== config.verifyToken) {
+    const patchVerifyToken = typeof args.patch.verifyToken === "string" ? args.patch.verifyToken : undefined;
+    if (patchVerifyToken && patchVerifyToken !== config.verifyToken) {
       const existing = await ctx.db
         .query("channelConfigs")
-        .withIndex("by_verify_token", (q) => q.eq("verifyToken", args.patch.verifyToken))
+        .withIndex("by_verify_token", (q) => q.eq("verifyToken", patchVerifyToken))
         .first();
       if (existing) throw new Error("Este verify token já está em uso — gere outro");
     }
-    if (args.patch.bridgeInstanceId && args.patch.bridgeInstanceId !== config.bridgeInstanceId) {
+    const patchBridgeInstanceId =
+      typeof args.patch.bridgeInstanceId === "string" ? args.patch.bridgeInstanceId : undefined;
+    if (patchBridgeInstanceId && patchBridgeInstanceId !== config.bridgeInstanceId) {
       const existing = await ctx.db
         .query("channelConfigs")
-        .withIndex("by_bridge_instance", (q) => q.eq("bridgeInstanceId", args.patch.bridgeInstanceId))
+        .withIndex("by_bridge_instance", (q) => q.eq("bridgeInstanceId", patchBridgeInstanceId))
         .first();
       if (existing) throw new Error("Esta instância do bridge já está conectada");
     }

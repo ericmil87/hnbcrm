@@ -325,6 +325,9 @@ const applicationTables = {
     status: v.union(v.literal("active"), v.literal("disabled"), v.literal("error")),
     lastHealthCheckAt: v.optional(v.number()),
     healthDetail: v.optional(v.string()),
+    // Auto-transcribe inbound voice notes with the local Whisper service
+    // (convex/transcription.ts). Applies to both providers; absent/false = off.
+    autoTranscribeAudio: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -349,6 +352,16 @@ const applicationTables = {
     lastMessageAt: v.optional(v.number()),
     lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
     nextDispatchAt: v.optional(v.number()), // pacing cursor for outbound dispatch (~1 msg/6s per recipient)
+    // Presença do contato (ChatPresence do bridge) — "digitando..." no header.
+    // `at` permite expirar no cliente (evento "paused" pode nunca chegar).
+    contactPresence: v.optional(
+      v.object({
+        state: v.union(v.literal("composing"), v.literal("paused")),
+        at: v.number(),
+      })
+    ),
+    archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
+    labelIds: v.optional(v.array(v.id("conversationLabels"))),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -379,13 +392,65 @@ const applicationTables = {
     mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
     externalId: v.optional(v.string()), // provider message id (e.g. WhatsApp wamid) for dedupe + status updates
     metadata: v.optional(v.record(v.string(), v.any())),
+    // Cópia rasa de metadata.transcription.text — search index só indexa campo
+    // de topo, então a transcrição pesquisável vive aqui (setada ao transcrever).
+    transcriptText: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
     .index("by_lead", ["leadId"])
     .index("by_organization", ["organizationId"])
     .index("by_conversation_and_created", ["conversationId", "createdAt"])
-    .index("by_organization_and_external_id", ["organizationId", "externalId"]),
+    .index("by_organization_and_external_id", ["organizationId", "externalId"])
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["organizationId", "conversationId"],
+    })
+    .searchIndex("search_transcript", {
+      searchField: "transcriptText",
+      filterFields: ["organizationId", "conversationId"],
+    }),
+
+  // Etiquetas de conversa (org-scoped), atribuídas via conversations.labelIds.
+  conversationLabels: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    color: v.string(), // hex da paleta fixa do frontend
+    createdAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Mensagens agendadas do inbox — entregues via ctx.scheduler.runAt.
+  scheduledMessages: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    content: v.string(),
+    scheduledAt: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("sent"),
+      v.literal("canceled"),
+      v.literal("failed")
+    ),
+    createdBy: v.id("teamMembers"),
+    scheduledFunctionId: v.optional(v.string()), // id do runAt, para cancelar
+    sentMessageId: v.optional(v.id("messages")),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_organization", ["organizationId"]),
+
+  // Respostas rápidas do inbox — inseridas digitando "/" no composer.
+  quickReplies: defineTable({
+    organizationId: v.id("organizations"),
+    shortcut: v.string(), // sem a barra, ex. "saudacao"
+    content: v.string(),
+    createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_shortcut", ["organizationId", "shortcut"]),
 
   // Handoffs
   handoffs: defineTable({

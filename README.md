@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.22.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.34.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -25,7 +25,9 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 
 - **AI-Human Collaboration** — Human team members and AI bots are equal participants with shared context
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
-- **Unified Inbox** — WhatsApp, Telegram, email conversations in one place with internal notes
+- **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions
+- **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel
+- **Voice Transcription** — Self-hosted Whisper service transcribes voice notes locally (opt-in per org, no paid API), transcripts are searchable
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
 - **REST API** — Full CRUD at `/api/v1/` with API key authentication and HMAC webhooks
@@ -88,7 +90,11 @@ convex/
   leads.ts          Lead CRUD, stage moves, assignment
   calendar.ts       Calendar events (time-ranged) CRUD
   contacts.ts       Contact CRUD with enrichment
-  conversations.ts  Multi-channel messaging
+  conversations.ts  Multi-channel messaging, labels, message search
+  whatsapp.ts       WhatsApp ingress + outbound dispatch (Cloud API / bridge)
+  transcription.ts  Voice-note transcription (self-hosted Whisper)
+  quickReplies.ts   Quick replies ("/" shortcuts in the composer)
+  scheduledMessages.ts  Scheduled message delivery
   handoffs.ts       AI-to-human handoff workflow
   llmsTxt.ts        /llms.txt endpoint content
   seed.ts           Development seed data

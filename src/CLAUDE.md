@@ -24,6 +24,7 @@ src/
     │   ├── Skeleton.tsx       # Shimmer loading placeholder
     │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
     │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
+    │   ├── Checkbox.tsx       # Styled checkbox with label/description
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── notifications/
     │   └── NotificationPreferences.tsx  # Email notification preferences (Settings tab)
@@ -41,7 +42,15 @@ src/
     ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline)
     ├── LeadDetailPanel.tsx     # SlideOver for lead details
     ├── CreateLeadModal.tsx     # Modal for creating new leads
-    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada)
+    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select
+    ├── inbox/                  # Inbox building blocks (shared with LeadDetailPanel)
+    │   ├── MessageBubble.tsx        # Message rendering (media, quotes, reactions, ticks)
+    │   ├── VoiceRecorder.tsx        # Mic recording + upload of voice notes
+    │   ├── VoiceTranscription.tsx   # Transcription display / "Transcrever" action
+    │   ├── EmojiPickerButton.tsx    # Emoji picker for the composer
+    │   ├── QuickReplies.tsx         # "/" quick replies (hook + dropdown + manage modal)
+    │   ├── ConversationActionsMenu.tsx  # Archive + labels menu ("..." in conversation header)
+    │   └── ...                      # ReactionPicker, ForwardModal, AudioPlayer, etc.
     ├── HandoffQueue.tsx        # AI-to-human handoff management (route: /app/repasses)
     ├── TeamPage.tsx            # Team member management (route: /app/equipe)
     ├── Settings.tsx            # Organization settings (route: /app/configuracoes)

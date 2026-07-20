@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Modal } from "@/components/ui/Modal";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -242,45 +243,37 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
 
             {/* Closed Won/Lost Toggles */}
             <div className="flex items-center gap-4 pl-11">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={stage.isClosedWon || false}
-                  onChange={(e) => {
-                    const newValue = e.target.checked;
-                    setLocalStages((prev) =>
-                      prev.map((s) =>
-                        s._id === stage._id
-                          ? { ...s, isClosedWon: newValue, isClosedLost: false }
-                          : s
-                      )
-                    );
-                    handleUpdateStage(stage._id, { isClosedWon: newValue, isClosedLost: false });
-                  }}
-                  className="w-4 h-4 text-brand-600 bg-surface-raised border-border-strong rounded focus:ring-2 focus:ring-brand-500"
-                />
-                <span className="text-xs text-text-secondary">Fechado - Ganho</span>
-              </label>
+              <Checkbox
+                checked={stage.isClosedWon || false}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  setLocalStages((prev) =>
+                    prev.map((s) =>
+                      s._id === stage._id
+                        ? { ...s, isClosedWon: newValue, isClosedLost: false }
+                        : s
+                    )
+                  );
+                  handleUpdateStage(stage._id, { isClosedWon: newValue, isClosedLost: false });
+                }}
+                label={<span className="text-xs">Fechado - Ganho</span>}
+              />
 
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={stage.isClosedLost || false}
-                  onChange={(e) => {
-                    const newValue = e.target.checked;
-                    setLocalStages((prev) =>
-                      prev.map((s) =>
-                        s._id === stage._id
-                          ? { ...s, isClosedLost: newValue, isClosedWon: false }
-                          : s
-                      )
-                    );
-                    handleUpdateStage(stage._id, { isClosedLost: newValue, isClosedWon: false });
-                  }}
-                  className="w-4 h-4 text-brand-600 bg-surface-raised border-border-strong rounded focus:ring-2 focus:ring-brand-500"
-                />
-                <span className="text-xs text-text-secondary">Fechado - Perdido</span>
-              </label>
+              <Checkbox
+                checked={stage.isClosedLost || false}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  setLocalStages((prev) =>
+                    prev.map((s) =>
+                      s._id === stage._id
+                        ? { ...s, isClosedLost: newValue, isClosedWon: false }
+                        : s
+                    )
+                  );
+                  handleUpdateStage(stage._id, { isClosedLost: newValue, isClosedWon: false });
+                }}
+                label={<span className="text-xs">Fechado - Perdido</span>}
+              />
             </div>
           </div>
         ))}

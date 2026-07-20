@@ -12,7 +12,10 @@
 | `router.ts` | RESTful API endpoints (`/api/v1/*`), API key auth |
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD |
-| `conversations.ts` | Multi-channel conversations + messages |
+| `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
+| `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest) |
+| `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
+| `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |
 | `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch, branched by provider |
 | `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET` |

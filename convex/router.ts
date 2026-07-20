@@ -610,16 +610,24 @@ http.route({
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
-      if (!body.conversationId || !body.content) {
-        return errorResponse("conversationId and content required", 400);
+      // Attachments (file ids) — the mutation validates they belong to the org.
+      const attachments = Array.isArray(body.attachments)
+        ? (body.attachments as Id<"files">[])
+        : undefined;
+      if (!body.conversationId || (!body.content && !(attachments && attachments.length > 0))) {
+        return errorResponse("conversationId and content (or attachments) required", 400);
       }
 
       const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
         conversationId: body.conversationId as Id<"conversations">,
-        content: body.content,
+        content: body.content ?? "",
         contentType: body.contentType || "text",
         isInternal: body.isInternal || false,
+        attachments,
         mentionedUserIds: body.mentionedUserIds,
+        replyToMessageId: body.replyToMessageId
+          ? (body.replyToMessageId as Id<"messages">)
+          : undefined,
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 

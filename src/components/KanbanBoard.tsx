@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -11,6 +11,7 @@ import { ManageStagesModal } from "./ManageStagesModal";
 import { EditBoardModal } from "./EditBoardModal";
 import { CloseReasonModal } from "./CloseReasonModal";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -26,12 +27,28 @@ import {
   useSensor,
   useSensors,
   closestCorners,
+  pointerWithin,
+  rectIntersection,
   DragEndEvent,
   DragStartEvent,
   useDraggable,
   useDroppable,
+  type CollisionDetection,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
+
+// Custom collision detection: prefer the column under the pointer, then any
+// column the dragged card overlaps, falling back to closest corners. This makes
+// dropping feel precise instead of "snapping" to an unexpected column.
+const collisionDetectionStrategy: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) return pointerCollisions;
+
+  const rectCollisions = rectIntersection(args);
+  if (rectCollisions.length > 0) return rectCollisions;
+
+  return closestCorners(args);
+};
 
 interface Lead {
   _id: Id<"leads">;
@@ -65,56 +82,52 @@ interface Stage {
   isClosedLost?: boolean;
 }
 
-// Draggable Card Component
-function DraggableCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: lead._id,
-  });
+const getPriorityVariant = (priority: string): "error" | "warning" | "default" => {
+  if (priority === "urgent") return "error";
+  if (priority === "high") return "warning";
+  return "default";
+};
 
-  const style = transform
-    ? {
-        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
-        opacity: isDragging ? 0.5 : 1,
-      }
-    : undefined;
+const getTemperatureVariant = (temperature: string): "error" | "warning" | "info" => {
+  if (temperature === "hot") return "error";
+  if (temperature === "warm") return "warning";
+  return "info";
+};
 
+const getPriorityLabel = (priority: string): string => {
+  const labels: Record<string, string> = {
+    urgent: "Urgente",
+    high: "Alta",
+    medium: "Média",
+    low: "Baixa",
+  };
+  return labels[priority] || priority;
+};
+
+const getTemperatureLabel = (temperature: string): string => {
+  const labels: Record<string, string> = {
+    hot: "Quente",
+    warm: "Morno",
+    cold: "Frio",
+  };
+  return labels[temperature] || temperature;
+};
+
+// Presentational lead card — shared by the in-column DraggableCard and the
+// DragOverlay so the dragged card looks identical to the real one.
+function LeadCardView({
+  lead,
+  variant = "default",
+}: {
+  lead: Lead;
+  variant?: "default" | "placeholder" | "overlay";
+}) {
   const priorityColor = {
     urgent: "bg-semantic-error",
     high: "bg-semantic-warning",
     medium: "bg-brand-500",
     low: "bg-surface-overlay",
   }[lead.priority] || "bg-surface-overlay";
-
-  const getPriorityVariant = (priority: string): "error" | "warning" | "default" => {
-    if (priority === "urgent") return "error";
-    if (priority === "high") return "warning";
-    return "default";
-  };
-
-  const getTemperatureVariant = (temperature: string): "error" | "warning" | "info" => {
-    if (temperature === "hot") return "error";
-    if (temperature === "warm") return "warning";
-    return "info";
-  };
-
-  const getPriorityLabel = (priority: string): string => {
-    const labels: Record<string, string> = {
-      urgent: "Urgente",
-      high: "Alta",
-      medium: "Média",
-      low: "Baixa",
-    };
-    return labels[priority] || priority;
-  };
-
-  const getTemperatureLabel = (temperature: string): string => {
-    const labels: Record<string, string> = {
-      hot: "Quente",
-      warm: "Morno",
-      cold: "Frio",
-    };
-    return labels[temperature] || temperature;
-  };
 
   // Calculate days since last activity
   const daysSinceActivity = Math.floor((Date.now() - lead.lastActivityAt) / 86400000);
@@ -127,12 +140,12 @@ function DraggableCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
 
   return (
     <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      onClick={onClick}
-      className="bg-surface-raised p-4 rounded-card border border-border cursor-pointer hover:border-border-strong hover:shadow-card-hover transition-all touch-none relative"
+      className={cn(
+        "bg-surface-raised p-4 rounded-card border relative transition-all",
+        variant === "default" && "border-border hover:border-border-strong hover:shadow-card-hover",
+        variant === "placeholder" && "opacity-40 border-dashed border-border-strong",
+        variant === "overlay" && "w-80 border-brand-500 rotate-2 scale-[1.03] shadow-elevated cursor-grabbing",
+      )}
     >
       {/* Priority Color Bar */}
       <div className={cn("absolute left-0 top-0 bottom-0 w-1 rounded-l-card", priorityColor)} />
@@ -192,34 +205,73 @@ function DraggableCard({ lead, onClick }: { lead: Lead; onClick: () => void }) {
   );
 }
 
+// Draggable Card Component
+function DraggableCard({
+  lead,
+  onClick,
+  justDraggedRef,
+}: {
+  lead: Lead;
+  onClick: () => void;
+  justDraggedRef: React.MutableRefObject<boolean>;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: lead._id,
+  });
+
+  const handleClick = () => {
+    // Suppress the click that fires right after a drag ends, and while dragging.
+    if (isDragging || justDraggedRef.current) return;
+    onClick();
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      onClick={handleClick}
+      className="cursor-pointer touch-manipulation select-none"
+    >
+      <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} />
+    </div>
+  );
+}
+
 // Droppable Column Component
 function DroppableColumn({
   stage,
   leads,
   totalValue,
-  isOver,
+  isDragActive,
   onLeadClick,
   onQuickAdd,
   onStageMenu,
+  justDraggedRef,
 }: {
   stage: Stage;
   leads: Lead[];
   totalValue: number;
-  isOver: boolean;
+  isDragActive: boolean;
   onLeadClick: (leadId: Id<"leads">) => void;
   onQuickAdd: () => void;
   onStageMenu: (e: React.MouseEvent) => void;
+  justDraggedRef: React.MutableRefObject<boolean>;
 }) {
-  const { setNodeRef } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: stage._id,
   });
+
+  // Show the "drop here" affordance in the column being hovered, and in any
+  // empty column while a drag is in progress (so empty targets read as valid).
+  const showDropSlot = isOver || (isDragActive && leads.length === 0);
 
   return (
     <div
       ref={setNodeRef}
       className={cn(
         "flex-shrink-0 w-80 bg-surface-sunken rounded-card p-4 flex flex-col snap-start transition-all",
-        isOver && "ring-2 ring-brand-500/50"
+        isOver && "ring-2 ring-brand-500 bg-brand-500/5"
       )}
     >
       {/* Color accent bar at top */}
@@ -257,8 +309,19 @@ function DroppableColumn({
 
       <div className="space-y-3 flex-1 overflow-y-auto">
         {leads.map((lead) => (
-          <DraggableCard key={lead._id} lead={lead} onClick={() => onLeadClick(lead._id)} />
+          <DraggableCard
+            key={lead._id}
+            lead={lead}
+            onClick={() => onLeadClick(lead._id)}
+            justDraggedRef={justDraggedRef}
+          />
         ))}
+
+        {showDropSlot && (
+          <div className="border-2 border-dashed border-brand-500/40 rounded-card h-20 flex items-center justify-center text-xs text-text-muted">
+            Solte aqui
+          </div>
+        )}
       </div>
     </div>
   );
@@ -446,28 +509,20 @@ function StageEditPopover({
 
         {/* Won/Lost toggles */}
         <div className="space-y-2">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={stage.isClosedWon || false}
-              onChange={(e) => {
-                onUpdate(stage._id, { isClosedWon: e.target.checked, isClosedLost: false });
-              }}
-              className="w-4 h-4 text-brand-600 bg-surface-raised border-border-strong rounded focus:ring-2 focus:ring-brand-500"
-            />
-            <span className="text-xs text-text-secondary">Fechado - Ganho</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={stage.isClosedLost || false}
-              onChange={(e) => {
-                onUpdate(stage._id, { isClosedLost: e.target.checked, isClosedWon: false });
-              }}
-              className="w-4 h-4 text-brand-600 bg-surface-raised border-border-strong rounded focus:ring-2 focus:ring-brand-500"
-            />
-            <span className="text-xs text-text-secondary">Fechado - Perdido</span>
-          </label>
+          <Checkbox
+            checked={stage.isClosedWon || false}
+            onChange={(e) => {
+              onUpdate(stage._id, { isClosedWon: e.target.checked, isClosedLost: false });
+            }}
+            label={<span className="text-xs">Fechado - Ganho</span>}
+          />
+          <Checkbox
+            checked={stage.isClosedLost || false}
+            onChange={(e) => {
+              onUpdate(stage._id, { isClosedLost: e.target.checked, isClosedWon: false });
+            }}
+            label={<span className="text-xs">Fechado - Perdido</span>}
+          />
         </div>
 
         {/* Divider + Delete */}
@@ -621,7 +676,21 @@ export function KanbanBoard() {
   );
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
-  const moveLeadToStage = useMutation(api.leads.moveLeadToStage);
+  const moveLeadToStage = useMutation(api.leads.moveLeadToStage).withOptimisticUpdate(
+    (localStore, args) => {
+      if (!selectedBoardId) return;
+      const queryArgs = { organizationId, boardId: selectedBoardId };
+      const existing = localStore.getQuery(api.leads.getLeads, queryArgs);
+      if (!existing) return;
+      localStore.setQuery(
+        api.leads.getLeads,
+        queryArgs,
+        existing.map((lead) =>
+          lead._id === args.leadId ? { ...lead, stageId: args.stageId } : lead
+        )
+      );
+    }
+  );
   const deleteBoard = useMutation(api.boards.deleteBoard);
   const createBoard = useMutation(api.boards.createBoard);
   const createBoardWithStages = useMutation(api.boards.createBoardWithStages);
@@ -629,13 +698,16 @@ export function KanbanBoard() {
   const deleteStage = useMutation(api.boards.deleteStage);
   const createStage = useMutation(api.boards.createStage);
 
+  // Suppress the click that fires immediately after a drag ends.
+  const justDraggedRef = useRef(false);
+
   // DnD Sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
     }),
     useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 5 },
+      activationConstraint: { delay: 250, tolerance: 8 },
     })
   );
 
@@ -687,6 +759,12 @@ export function KanbanBoard() {
   const handleDragEnd = (event: DragEndEvent) => {
     setDraggedLeadId(null);
 
+    // Flag the just-finished drag so the card's onClick doesn't open the panel.
+    justDraggedRef.current = true;
+    setTimeout(() => {
+      justDraggedRef.current = false;
+    }, 150);
+
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
@@ -709,12 +787,11 @@ export function KanbanBoard() {
       return;
     }
 
-    // Normal move (non-closed stage)
-    toast.promise(moveLeadToStage({ leadId, stageId }), {
-      loading: "Movendo lead...",
-      success: "Lead movido!",
-      error: "Falha ao mover lead",
-    });
+    // Normal move (non-closed stage). The optimistic update settles the card in
+    // the target column instantly, so a simple success/error toast is enough.
+    moveLeadToStage({ leadId, stageId })
+      .then(() => toast.success("Lead movido!"))
+      .catch(() => toast.error("Falha ao mover lead"));
   };
 
   const handleDeleteBoard = async () => {
@@ -798,7 +875,7 @@ export function KanbanBoard() {
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCorners}
+      collisionDetection={collisionDetectionStrategy}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
@@ -966,11 +1043,17 @@ export function KanbanBoard() {
         {/* Kanban Board */}
         {stages && (
           <div className="flex-1 overflow-x-auto">
-            <div className="flex gap-6 h-full min-w-max pb-6 scroll-smooth snap-x snap-mandatory">
+            <div
+              className={cn(
+                "flex gap-6 h-full min-w-max pb-6",
+                // Snap + smooth scroll get in the way of dnd-kit's edge auto-scroll,
+                // so drop them entirely while a drag is in progress.
+                draggedLeadId === null && "scroll-smooth snap-x snap-proximity"
+              )}
+            >
               {stages.map((stage) => {
                 const stageLeads = filteredLeads?.filter((lead) => lead.stageId === stage._id) || [];
                 const totalValue = stageLeads.reduce((sum, lead) => sum + lead.value, 0);
-                const isOver = draggedLeadId !== null;
 
                 return (
                   <div key={stage._id} className="flex-shrink-0 w-80 relative">
@@ -986,7 +1069,8 @@ export function KanbanBoard() {
                       stage={stage}
                       leads={stageLeads}
                       totalValue={totalValue}
-                      isOver={isOver}
+                      isDragActive={draggedLeadId !== null}
+                      justDraggedRef={justDraggedRef}
                       onLeadClick={(leadId) => setSelectedLeadId(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}
                       onStageMenu={(e: React.MouseEvent) => {
@@ -1047,14 +1131,7 @@ export function KanbanBoard() {
 
         {/* Drag Overlay */}
         <DragOverlay>
-          {draggedLead ? (
-            <div className="bg-surface-raised p-4 rounded-card border border-brand-500 shadow-elevated opacity-90 w-80">
-              <h4 className="font-medium text-text-primary mb-2">{draggedLead.title}</h4>
-              <span className="text-lg font-semibold text-brand-400 tabular-nums">
-                R$ {draggedLead.value.toLocaleString("pt-BR")}
-              </span>
-            </div>
-          ) : null}
+          {draggedLead ? <LeadCardView lead={draggedLead} variant="overlay" /> : null}
         </DragOverlay>
       </div>
 

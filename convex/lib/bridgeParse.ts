@@ -37,9 +37,33 @@ export interface ParsedBridgeReceipt {
   externalIds: string[]; // whatsmeow message IDs this receipt refers to
 }
 
+/** A quoted/replied-to message reference lifted from a whatsmeow ContextInfo. */
+export interface ParsedBridgeQuoted {
+  externalId: string; // whatsmeow id of the quoted message (ContextInfo.StanzaID)
+  participant?: string; // JID of the quoted message's sender (as delivered)
+  preview?: string; // short text preview of the quoted message, when available
+}
+
+/** An inbound reaction from the contact to a specific message. */
+export interface ParsedBridgeReaction {
+  targetExternalId: string; // whatsmeow id of the message being reacted to
+  emoji: string; // "" means the contact REMOVED their reaction
+  from: string; // sender phone digits (E.164 without '+')
+  senderName?: string;
+  timestamp: number; // ms epoch
+}
+
+/** Contact typing state in a 1:1 chat (whatsmeow ChatPresence). */
+export interface ParsedBridgePresence {
+  phone: string; // contact phone digits
+  state: "composing" | "paused";
+}
+
 export type ParsedBridgeEvent =
   | { kind: "message"; message: ParsedBridgeInbound }
   | { kind: "receipt"; receipt: ParsedBridgeReceipt }
+  | { kind: "reaction"; reaction: ParsedBridgeReaction }
+  | { kind: "chat_presence"; presence: ParsedBridgePresence }
   | { kind: "ignored"; reason: string };
 
 /** First defined value among the given keys (tolerates casing differences). */
@@ -136,6 +160,35 @@ interface ExtractedContent {
   metadataExtra: Record<string, unknown>;
 }
 
+/**
+ * Lift the quoted-message reference from a node's ContextInfo, if any. whatsmeow
+ * attaches ContextInfo to extendedTextMessage AND to every media node when the
+ * user replies. Returns undefined when there is no quote (or no StanzaID).
+ *
+ * VALIDAR: exact ContextInfo key casing from the live gateway — we read the proto
+ * JSON (`stanzaId`/`quotedMessage`) and Go struct (`StanzaID`/`QuotedMessage`)
+ * spellings, plus `participant`.
+ */
+function quotedFrom(node: Record<string, any> | undefined): ParsedBridgeQuoted | undefined {
+  const ci = pick(node, "contextInfo", "ContextInfo");
+  if (!ci || typeof ci !== "object") return undefined;
+  const stanzaId = strUndef(pick(ci, "stanzaId", "stanzaID", "StanzaID", "StanzaId", "id", "ID"));
+  if (!stanzaId) return undefined;
+  const participant = strUndef(pick(ci, "participant", "Participant"));
+  const quotedMessage = pick(ci, "quotedMessage", "QuotedMessage");
+  // extractContent never recurses into ContextInfo, so this is a safe one-level
+  // preview of whatever the quoted message was (text or a "[imagem]" placeholder).
+  const preview =
+    quotedMessage && typeof quotedMessage === "object"
+      ? strUndef(extractContent(quotedMessage).content)
+      : undefined;
+  return {
+    externalId: stanzaId,
+    ...(participant ? { participant } : {}),
+    ...(preview ? { preview } : {}),
+  };
+}
+
 /** Map a decrypted whatsmeow waE2E.Message to our content shape. */
 function extractContent(waMsg: Record<string, any>): ExtractedContent {
   const conversation = pick(waMsg, "conversation", "Conversation");
@@ -147,6 +200,10 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
   const doc = pick(waMsg, "documentMessage", "DocumentMessage");
   const reaction = pick(waMsg, "reactionMessage", "ReactionMessage");
 
+  // The node bearing the ContextInfo (quote) for this message, if any.
+  const quoted = quotedFrom(extended ?? image ?? sticker ?? audio ?? video ?? doc);
+  const quoteMeta = quoted ? { quoted } : {};
+
   if (typeof conversation === "string" && conversation.length > 0) {
     return { contentType: "text", content: conversation, metadataExtra: { bridgeType: "text" } };
   }
@@ -155,7 +212,7 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
     return {
       contentType: "text",
       content: typeof text === "string" ? text : "",
-      metadataExtra: { bridgeType: "extendedText" },
+      metadataExtra: { bridgeType: "extendedText", ...quoteMeta },
     };
   }
   if (image) {
@@ -163,7 +220,7 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       contentType: "image",
       content: strOr(pick(image, "caption", "Caption"), "[imagem]"),
       media: mediaFrom("image", image),
-      metadataExtra: { bridgeType: "image" },
+      metadataExtra: { bridgeType: "image", ...quoteMeta },
     };
   }
   if (sticker) {
@@ -171,7 +228,7 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       contentType: "image",
       content: "[figurinha]",
       media: mediaFrom("sticker", sticker),
-      metadataExtra: { bridgeType: "sticker" },
+      metadataExtra: { bridgeType: "sticker", ...quoteMeta },
     };
   }
   if (audio) {
@@ -180,7 +237,7 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       contentType: "audio",
       content: ptt ? "[mensagem de voz]" : "[áudio]",
       media: mediaFrom("audio", audio),
-      metadataExtra: { bridgeType: "audio" },
+      metadataExtra: { bridgeType: "audio", ...quoteMeta },
     };
   }
   if (video) {
@@ -188,7 +245,7 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       contentType: "file",
       content: strOr(pick(video, "caption", "Caption"), "[vídeo]"),
       media: mediaFrom("video", video),
-      metadataExtra: { bridgeType: "video" },
+      metadataExtra: { bridgeType: "video", ...quoteMeta },
     };
   }
   if (doc) {
@@ -198,10 +255,12 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       contentType: "file",
       content: strOr(fileName, strOr(caption, "[documento]")),
       media: mediaFrom("document", doc),
-      metadataExtra: { bridgeType: "document" },
+      metadataExtra: { bridgeType: "document", ...quoteMeta },
     };
   }
   if (reaction) {
+    // Reactions are handled as a distinct event upstream (parseMessage); this
+    // branch only survives as a defensive fallback for an unexpected shape.
     const emoji = pick(reaction, "text", "Text");
     const targetId = pick(pick(reaction, "key", "Key") ?? {}, "ID", "Id", "id");
     return {
@@ -216,6 +275,19 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
     content: "[mensagem não suportada]",
     metadataExtra: { bridgeType: "unknown", raw: waMsg },
   };
+}
+
+/** Pull the reaction target id + emoji from a whatsmeow reactionMessage node. */
+function reactionFrom(
+  reaction: Record<string, any>
+): { targetExternalId: string; emoji: string } | null {
+  const key = pick(reaction, "key", "Key") ?? {};
+  const targetExternalId = strUndef(pick(key, "ID", "Id", "id"));
+  if (!targetExternalId) return null;
+  // An absent/empty text means the reaction was removed — a meaningful state.
+  const raw = pick(reaction, "text", "Text");
+  const emoji = typeof raw === "string" ? raw : "";
+  return { targetExternalId, emoji };
 }
 
 function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
@@ -255,6 +327,25 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
 
   const profileName = strUndef(pick(info, "PushName", "pushName"));
   const timestamp = parseTimestamp(pick(info, "Timestamp", "timestamp"));
+
+  // A reaction from the contact is NOT a message — surface it as its own event so
+  // the ingest can patch the target message instead of creating a standalone note.
+  const reactionNode = pick(waMsg, "reactionMessage", "ReactionMessage");
+  if (reactionNode) {
+    const parsedReaction = reactionFrom(reactionNode);
+    if (!parsedReaction) return { kind: "ignored", reason: "reaction without target id" };
+    return {
+      kind: "reaction",
+      reaction: {
+        targetExternalId: parsedReaction.targetExternalId,
+        emoji: parsedReaction.emoji,
+        from,
+        senderName: profileName,
+        timestamp,
+      },
+    };
+  }
+
   const extracted = extractContent(waMsg);
 
   return {
@@ -329,12 +420,28 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   const p = payload as Record<string, any> | null;
   if (!p || typeof p !== "object") return { kind: "ignored", reason: "empty" };
 
-  const type = typeof p.type === "string" ? p.type : typeof p.Type === "string" ? p.Type : undefined;
-  // The whatsmeow event body — nested under `event`/`data`, else the payload itself
-  const event = (pick(p, "event", "Event", "data", "Data") ?? p) as Record<string, any>;
+  // Nome do evento: `type` (envelope clássico) ou `event` quando este é string
+  // (envelope alternativo `{event: "ChatPresence", data: {...}}` visto na doc).
+  const type =
+    typeof p.type === "string"
+      ? p.type
+      : typeof p.Type === "string"
+        ? p.Type
+        : typeof p.event === "string"
+          ? p.event
+          : typeof p.Event === "string"
+            ? p.Event
+            : undefined;
+  // The whatsmeow event body — nested under `event`/`data`, else the payload
+  // itself. Só valores-objeto contam (em um dos envelopes `event` é a string acima).
+  const bodyCandidate = [p.event, p.Event, p.data, p.Data].find(
+    (x) => x !== null && typeof x === "object"
+  );
+  const event = (bodyCandidate ?? p) as Record<string, any>;
 
   const t = (type ?? "").toLowerCase();
   if (t.includes("receipt") || t === "ack") return parseReceipt(event);
+  if (t === "chatpresence" || t === "chat_presence") return parseChatPresence(event);
   if (
     t === "message" ||
     pick(event, "Info", "info") !== undefined ||
@@ -342,8 +449,31 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   ) {
     return parseMessage(event);
   }
-  // Presence, HistorySync, ChatPresence, Connected, etc. — not ingested here
+  // Presence, HistorySync, Connected, etc. — not ingested here
   return { kind: "ignored", reason: type ? `unhandled type ${type}` : "unrecognized" };
+}
+
+/**
+ * whatsmeow ChatPresence: { Chat, Sender, IsFromMe, IsGroup, State, Media }.
+ * Só interessa "digitando/parou" de contato em chat 1:1 — self/grupo é ignorado.
+ */
+function parseChatPresence(event: Record<string, any>): ParsedBridgeEvent {
+  const chatJid = String(pick(event, "Chat", "chat") ?? "");
+  const senderJid = String(pick(event, "Sender", "sender") ?? "");
+  if (
+    pick(event, "IsFromMe", "isFromMe") === true ||
+    pick(event, "IsGroup", "isGroup") === true ||
+    chatJid.endsWith("@g.us") ||
+    senderJid.endsWith("@g.us")
+  ) {
+    return { kind: "ignored", reason: "presence from self/group" };
+  }
+  const rawState = String(pick(event, "State", "state") ?? "").toLowerCase();
+  const state =
+    rawState === "composing" ? "composing" : rawState === "paused" ? "paused" : null;
+  const phone = jidToPhone(senderJid) ?? jidToPhone(chatJid);
+  if (!state || !phone) return { kind: "ignored", reason: "presence without state/phone" };
+  return { kind: "chat_presence", presence: { phone, state } };
 }
 
 function hexEncode(bytes: Uint8Array): string {
