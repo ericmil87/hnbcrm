@@ -5,6 +5,7 @@ import { requireAuth, requirePermission } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { ensureLeadForContact } from "./lib/inboundRouting";
 
 // Get leads for organization
 export const getLeads = query({
@@ -513,6 +514,22 @@ export const assignLead = mutation({
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
 
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "leadAssigned",
+        templateData: {
+          leadTitle: lead.title,
+          value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
+          contactName: undefined,
+          assignedByName: userMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+        },
+      });
+    }
+
     return null;
   },
 });
@@ -826,6 +843,37 @@ export const internalGetLead = internalQuery({
       assignee,
       source,
     };
+  },
+});
+
+// Internal: Get leads for a contact (most recent first)
+export const internalGetLeadsByContact = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
+      .order("desc")
+      .take(50);
+
+    return leads.filter((l) => l.organizationId === args.organizationId);
+  },
+});
+
+// Internal: find the contact's most recent lead or create one on the default board
+export const internalEnsureLeadForContact = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+    title: v.optional(v.string()),
+  },
+  returns: v.id("leads"),
+  handler: async (ctx, args) => {
+    return await ensureLeadForContact(ctx, args);
   },
 });
 
@@ -1187,6 +1235,22 @@ export const internalAssignLead = internalMutation({
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
+
+    // Email notification
+    if (args.assignedTo) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.assignedTo,
+        eventType: "leadAssigned",
+        templateData: {
+          leadTitle: lead.title,
+          value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
+          contactName: undefined,
+          assignedByName: teamMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+        },
+      });
+    }
 
     return null;
   },

@@ -23,12 +23,10 @@ import {
   Target,
   Layers,
   Check,
-  Sparkles,
-  Zap as Lightning,
-  TrendingUp,
   Code2,
   Play,
   BookOpen,
+  Github,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -36,32 +34,9 @@ import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 import { SEO } from "@/components/SEO";
 import { OrganizationStructuredData } from "@/components/StructuredData";
-
-// Simple useInView hook for scroll animations
-function useInView(options = {}) {
-  const [isInView, setIsInView] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) {
-        setIsInView(true);
-      }
-    }, options);
-
-    if (ref.current) {
-      observer.observe(ref.current);
-    }
-
-    return () => {
-      if (ref.current) {
-        observer.unobserve(ref.current);
-      }
-    };
-  }, []);
-
-  return { ref, isInView };
-}
+import { useInView } from "@/hooks/useInView";
+import { OpenSourceSection } from "@/components/landing/OpenSourceSection";
+import { Footer } from "@/components/landing/Footer";
 
 export function LandingPage() {
   const [showFloatingCta, setShowFloatingCta] = useState(false);
@@ -86,13 +61,6 @@ export function LandingPage() {
       }
     };
   }, []);
-
-  const scrollToSection = (id: string) => {
-    const element = document.getElementById(id);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" });
-    }
-  };
 
   return (
     <>
@@ -120,6 +88,15 @@ export function LandingPage() {
               <span className="text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
             <div className="flex items-center gap-4">
+              <a
+                href="https://github.com/ericmil87/hnbcrm"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-text-muted hover:text-text-primary transition-colors"
+                aria-label="GitHub"
+              >
+                <Github size={20} />
+              </a>
               <Link to="/developers">
                 <Button variant="ghost" size="sm">
                   Developers
@@ -158,14 +135,16 @@ export function LandingPage() {
                   Começar Grátis
                 </Button>
               </Link>
-              <Button
-                variant="secondary"
-                size="lg"
-                onClick={() => scrollToSection("funcionalidades")}
-                className="min-h-[44px]"
+              <a
+                href="https://github.com/ericmil87/hnbcrm"
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                Ver Funcionalidades
-              </Button>
+                <Button variant="secondary" size="lg" className="min-h-[44px]">
+                  <Github size={18} />
+                  Ver no GitHub
+                </Button>
+              </a>
             </div>
 
             <p className="text-sm text-text-muted animate-fade-in-up [animation-delay:300ms]">
@@ -193,8 +172,8 @@ export function LandingPage() {
       </Link>
 
       <main>
-        {/* Social Proof Bar */}
-        <SocialProofBar />
+        {/* Open Source Section */}
+        <OpenSourceSection />
 
         {/* Features Section */}
         <FeaturesSection />
@@ -202,11 +181,11 @@ export function LandingPage() {
         {/* Developer Section */}
         <DeveloperSection />
 
-        {/* Coming Soon Section */}
-        <ComingSoonSection />
-
         {/* How It Works Section */}
         <HowItWorksSection />
+
+        {/* Coming Soon Section */}
+        <ComingSoonSection />
 
         {/* Pricing Section */}
         <PricingSection />
@@ -219,38 +198,6 @@ export function LandingPage() {
       <Footer />
     </div>
     </>
-  );
-}
-
-function SocialProofBar() {
-  return (
-    <div className="py-8 border-y border-border bg-surface-sunken/50">
-      <div className="max-w-6xl mx-auto px-4">
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-8 md:gap-16">
-          <div className="flex items-center gap-3">
-            <Sparkles className="text-brand-500" size={24} />
-            <div>
-              <div className="text-2xl font-bold text-text-primary">12+</div>
-              <div className="text-sm text-text-secondary">Funcionalidades</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Lightning className="text-brand-500" size={24} />
-            <div>
-              <div className="text-2xl font-bold text-text-primary">Tempo Real</div>
-              <div className="text-sm text-text-secondary">com Convex</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <TrendingUp className="text-brand-500" size={24} />
-            <div>
-              <div className="text-2xl font-bold text-text-primary">IA Nativa</div>
-              <div className="text-sm text-text-secondary">de Verdade</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -322,6 +269,11 @@ function FeaturesSection() {
       icon: Webhook,
       title: "Webhooks HMAC-SHA256",
       description: "Receba eventos em tempo real com autenticação segura.",
+    },
+    {
+      icon: Layers,
+      title: "Formularios",
+      description: "Crie formularios embeddable com builder visual, mapeamento de campos e protecao anti-spam.",
     },
     {
       icon: Server,
@@ -422,6 +374,14 @@ function DeveloperSection() {
       link: "/developers#agent-skills",
       linkText: "Ver Skill",
     },
+    {
+      icon: Github,
+      title: "Codigo Aberto",
+      description: "100% open source, MIT License. Faca fork, contribua ou use como base para seu projeto.",
+      link: "https://github.com/ericmil87/hnbcrm",
+      linkText: "Ver no GitHub",
+      external: true,
+    },
   ];
 
   return (
@@ -453,7 +413,7 @@ function DeveloperSection() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           {cards.map((card, index) => (
             <Card
               key={index}
@@ -473,16 +433,29 @@ function DeveloperSection() {
               <p className="text-sm text-text-secondary mb-6 flex-1">
                 {card.description}
               </p>
-              <Link to={card.link}>
-                <Button
-                  variant={card.primary ? "primary" : "secondary"}
-                  size="sm"
-                  className="w-full min-h-[44px]"
-                >
-                  <Code2 size={16} />
-                  {card.linkText}
-                </Button>
-              </Link>
+              {card.external ? (
+                <a href={card.link} target="_blank" rel="noopener noreferrer">
+                  <Button
+                    variant={card.primary ? "primary" : "secondary"}
+                    size="sm"
+                    className="w-full min-h-[44px]"
+                  >
+                    <Code2 size={16} />
+                    {card.linkText}
+                  </Button>
+                </a>
+              ) : (
+                <Link to={card.link}>
+                  <Button
+                    variant={card.primary ? "primary" : "secondary"}
+                    size="sm"
+                    className="w-full min-h-[44px]"
+                  >
+                    <Code2 size={16} />
+                    {card.linkText}
+                  </Button>
+                </Link>
+              )}
             </Card>
           ))}
         </div>
@@ -893,36 +866,21 @@ function CTASection() {
               Criar Conta Grátis
             </Button>
           </Link>
+          <p className="mt-4 text-sm text-text-muted">
+            ou{" "}
+            <a
+              href="https://github.com/ericmil87/hnbcrm"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-text-secondary hover:text-text-primary transition-colors inline-flex items-center gap-1"
+            >
+              explore o codigo no GitHub
+              <Github size={14} />
+            </a>
+          </p>
         </div>
       </div>
     </section>
   );
 }
 
-function Footer() {
-  return (
-    <footer className="py-8 border-t border-border">
-      <div className="max-w-6xl mx-auto px-4 text-center">
-        <div className="flex items-center justify-center gap-2 mb-4">
-          <img
-            src="/orange_icon_logo_transparent-bg-528x488.png"
-            alt="HNBCRM Logo"
-            className="h-8 w-8 object-contain"
-          />
-          <span className="text-xl font-bold text-text-primary">HNBCRM</span>
-        </div>
-        <div className="flex items-center justify-center gap-6 mb-4">
-          <Link to="/developers" className="text-sm text-text-secondary hover:text-text-primary transition-colors">
-            Developers
-          </Link>
-        </div>
-        <p className="text-text-secondary mb-4">
-          O CRM onde humanos e IA trabalham juntos.
-        </p>
-        <p className="text-sm text-text-muted">
-          © 2025 HNBCRM. Todos os direitos reservados.
-        </p>
-      </div>
-    </footer>
-  );
-}

@@ -120,13 +120,35 @@ export const getByKeyHash = internalQuery({
   },
 });
 
-// Internal: Update last used
+// Basic per-key rate limiting (fixed 1-minute window). Piggybacks on the
+// lastUsed write that every authenticated API request already performs.
+export const RATE_LIMIT_MESSAGE = "Rate limit exceeded — try again in a minute";
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT_PER_WINDOW = 300;
+
+// Internal: Update last used + enforce the per-key rate limit
 export const updateLastUsed = internalMutation({
   args: { apiKeyId: v.id("apiKeys") },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const apiKey = await ctx.db.get(args.apiKeyId);
+    if (!apiKey) return null;
+
+    const now = Date.now();
+    let windowStart = apiKey.rateWindowStart ?? now;
+    let count = (apiKey.rateWindowCount ?? 0) + 1;
+    if (now - windowStart >= RATE_WINDOW_MS) {
+      windowStart = now;
+      count = 1;
+    }
+    if (count > RATE_LIMIT_PER_WINDOW) {
+      throw new Error(RATE_LIMIT_MESSAGE);
+    }
+
     await ctx.db.patch(args.apiKeyId, {
-      lastUsed: Date.now(),
+      lastUsed: now,
+      rateWindowStart: windowStart,
+      rateWindowCount: count,
     });
 
     return null;

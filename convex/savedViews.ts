@@ -14,6 +14,13 @@ const filtersValidator = v.object({
   company: v.optional(v.string()),
   minValue: v.optional(v.number()),
   maxValue: v.optional(v.number()),
+  channel: v.optional(v.union(
+    v.literal("whatsapp"),
+    v.literal("telegram"),
+    v.literal("email"),
+    v.literal("webchat"),
+    v.literal("internal")
+  )),
 });
 
 // Get saved views for organization

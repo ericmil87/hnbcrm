@@ -10,6 +10,7 @@ export const TAB_ROUTES: Record<Tab, string> = {
   handoffs: "/app/repasses",
   team: "/app/equipe",
   audit: "/app/auditoria",
+  forms: "/app/formularios",
   settings: "/app/configuracoes",
 };
 

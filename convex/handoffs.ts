@@ -141,6 +141,22 @@ export const requestHandoff = mutation({
       payload: { handoffId, leadId: args.leadId, reason: args.reason, fromMemberId: userMember._id, toMemberId: args.toMemberId },
     });
 
+    // Email notification
+    if (args.toMemberId) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.toMemberId,
+        eventType: "handoffRequested",
+        templateData: {
+          leadTitle: lead.title,
+          reason: args.reason,
+          suggestedActions: args.suggestedActions,
+          fromMemberName: userMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/repasses`,
+        },
+      });
+    }
+
     return handoffId;
   },
 });
@@ -229,6 +245,19 @@ export const acceptHandoff = mutation({
       payload: { handoffId: args.handoffId, leadId: handoff.leadId, acceptedBy: userMember._id },
     });
 
+    // Email notification
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: handoff.organizationId,
+      recipientMemberId: handoff.fromMemberId,
+      eventType: "handoffResolved",
+      templateData: {
+        leadTitle: acceptLead?.title,
+        status: "aceito",
+        resolvedByName: userMember.name,
+        leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+      },
+    });
+
     return null;
   },
 });
@@ -292,6 +321,19 @@ export const rejectHandoff = mutation({
       organizationId: handoff.organizationId,
       event: "handoff.rejected",
       payload: { handoffId: args.handoffId, leadId: handoff.leadId, rejectedBy: userMember._id },
+    });
+
+    // Email notification
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: handoff.organizationId,
+      recipientMemberId: handoff.fromMemberId,
+      eventType: "handoffResolved",
+      templateData: {
+        leadTitle: rejectLead?.title,
+        status: "rejeitado",
+        resolvedByName: userMember.name,
+        leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+      },
     });
 
     return null;
@@ -453,6 +495,22 @@ export const internalRequestHandoff = internalMutation({
       payload: { handoffId, leadId: args.leadId, reason: args.reason, fromMemberId: args.teamMemberId, toMemberId: args.toMemberId },
     });
 
+    // Email notification
+    if (args.toMemberId) {
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: lead.organizationId,
+        recipientMemberId: args.toMemberId,
+        eventType: "handoffRequested",
+        templateData: {
+          leadTitle: lead.title,
+          reason: args.reason,
+          suggestedActions: args.suggestedActions,
+          fromMemberName: teamMember.name,
+          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/repasses`,
+        },
+      });
+    }
+
     return handoffId;
   },
 });
@@ -543,6 +601,19 @@ export const internalAcceptHandoff = internalMutation({
       payload: { handoffId: args.handoffId, leadId: handoff.leadId, acceptedBy: teamMember._id },
     });
 
+    // Email notification
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: handoff.organizationId,
+      recipientMemberId: handoff.fromMemberId,
+      eventType: "handoffResolved",
+      templateData: {
+        leadTitle: intAcceptLead?.title,
+        status: "aceito",
+        resolvedByName: teamMember.name,
+        leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+      },
+    });
+
     return null;
   },
 });
@@ -608,6 +679,19 @@ export const internalRejectHandoff = internalMutation({
       organizationId: handoff.organizationId,
       event: "handoff.rejected",
       payload: { handoffId: args.handoffId, leadId: handoff.leadId, rejectedBy: teamMember._id },
+    });
+
+    // Email notification
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: handoff.organizationId,
+      recipientMemberId: handoff.fromMemberId,
+      eventType: "handoffResolved",
+      templateData: {
+        leadTitle: intRejectLead?.title,
+        status: "rejeitado",
+        resolvedByName: teamMember.name,
+        leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+      },
     });
 
     return null;

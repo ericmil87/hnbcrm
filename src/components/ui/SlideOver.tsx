@@ -8,9 +8,15 @@ interface SlideOverProps {
   title?: string;
   children: React.ReactNode;
   className?: string;
+  /**
+   * Overrides the body wrapper classes. Defaults to a vertical scroll
+   * container. Pass e.g. "flex-1 min-h-0 flex flex-col overflow-hidden" to let
+   * the content own its layout (fixed footer + inner scroll).
+   */
+  bodyClassName?: string;
 }
 
-export function SlideOver({ open, onClose, title, children, className }: SlideOverProps) {
+export function SlideOver({ open, onClose, title, children, className, bodyClassName }: SlideOverProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -80,7 +86,7 @@ export function SlideOver({ open, onClose, title, children, className }: SlideOv
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto">{children}</div>
+        <div className={cn("flex-1 overflow-y-auto", bodyClassName)}>{children}</div>
       </div>
     </div>
   );

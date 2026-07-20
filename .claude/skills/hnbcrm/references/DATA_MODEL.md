@@ -310,6 +310,111 @@ Authentication key for REST API and MCP access, tied to a team member.
 
 ---
 
+### Notification Preferences
+
+Per-member email notification preferences. Opt-out model — when no record exists, all notifications are enabled.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| organizationId | Id\<organizations\> | Organization |
+| teamMemberId | Id\<teamMembers\> | Team member |
+| invite | boolean | Receive invite notifications |
+| handoffRequested | boolean | Receive handoff request notifications |
+| handoffResolved | boolean | Receive handoff resolved notifications |
+| taskOverdue | boolean | Receive task overdue notifications |
+| taskAssigned | boolean | Receive task assigned notifications |
+| leadAssigned | boolean | Receive lead assigned notifications |
+| newMessage | boolean | Receive new message notifications |
+| dailyDigest | boolean | Receive daily digest emails |
+
+---
+
+### Form
+
+An embeddable form that creates leads/contacts on submission.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | string | Form name |
+| slug | string | URL-friendly slug (globally unique) |
+| description | string | Optional description |
+| status | enum | `draft`, `published`, `archived` |
+| publishedAt | number | Timestamp when published |
+| fields | array | Embedded field definitions (see below) |
+| theme | object | Visual theme config |
+| settings | object | Lead creation and assignment settings |
+| createdBy | Id\<teamMembers\> | Form creator |
+| submissionCount | number | Total submissions received |
+| lastSubmissionAt | number | Timestamp of last submission |
+
+**Form field definition:**
+| Field | Type | Description |
+|-------|------|-------------|
+| id | string | Unique field identifier |
+| type | enum | `text`, `email`, `phone`, `number`, `select`, `textarea`, `checkbox`, `date` |
+| label | string | Display label |
+| placeholder | string | Placeholder text |
+| helpText | string | Help text below the field |
+| isRequired | boolean | Whether the field is required |
+| validation | object | `{ minLength?, maxLength?, min?, max?, pattern? }` |
+| options | string[] | Options for select type |
+| defaultValue | string | Default value |
+| width | enum | `full`, `half` |
+| crmMapping | object | `{ entity: "lead" \| "contact", field: string }` |
+
+**Theme object:**
+| Field | Type | Description |
+|-------|------|-------------|
+| primaryColor | string | Primary accent color (hex) |
+| backgroundColor | string | Form background color |
+| textColor | string | Text color |
+| borderRadius | enum | `none`, `sm`, `md`, `lg`, `full` |
+| showBranding | boolean | Show HNBCRM branding |
+
+**Settings object:**
+| Field | Type | Description |
+|-------|------|-------------|
+| submitButtonText | string | Submit button label |
+| successMessage | string | Message shown after submission |
+| redirectUrl | string | Optional redirect after submission |
+| leadTitle | string | Template for lead title (`{email}`, `{name}`, `{firstName}`, etc.) |
+| boardId | Id\<boards\> | Target pipeline board (optional, defaults to org default) |
+| stageId | Id\<stages\> | Target stage (optional, defaults to first stage) |
+| sourceId | Id\<leadSources\> | Lead source (optional) |
+| assignmentMode | enum | `none`, `specific`, `round_robin` |
+| assignedTo | Id\<teamMembers\> | Fixed assignee (when mode=specific) |
+| defaultPriority | enum | `low`, `medium`, `high`, `urgent` |
+| defaultTemperature | enum | `cold`, `warm`, `hot` |
+| tags | string[] | Tags applied to created leads |
+| honeypotEnabled | boolean | Enable honeypot spam protection |
+| submissionLimit | number | Max submissions allowed (optional) |
+| notifyOnSubmission | boolean | Send email on new submissions |
+| notifyMemberIds | Id\<teamMembers\>[] | Members to notify |
+
+---
+
+### Form Submission
+
+A submission from a public form.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| formId | Id\<forms\> | Parent form |
+| data | Record\<string, any\> | Submitted field values (keyed by field ID) |
+| leadId | Id\<leads\> | Created lead (if processed) |
+| contactId | Id\<contacts\> | Created/matched contact (if processed) |
+| ipAddress | string | Submitter IP address |
+| userAgent | string | Browser user agent |
+| referrer | string | Referrer URL |
+| utmSource | string | UTM source parameter |
+| utmMedium | string | UTM medium parameter |
+| utmCampaign | string | UTM campaign parameter |
+| honeypotTriggered | boolean | Whether the honeypot was triggered |
+| processingStatus | enum | `processed`, `spam`, `error` |
+| errorMessage | string | Error details (when status=error) |
+
+---
+
 ## Complete Enum Reference
 
 | Enum | Values |
@@ -330,7 +435,14 @@ Authentication key for REST API and MCP access, tied to a team member.
 | Activity Type | `note`, `call`, `email_sent`, `stage_change`, `assignment`, `handoff`, `qualification_update`, `created`, `message_sent`, `event_created`, `event_completed` |
 | Calendar Event Type | `call`, `meeting`, `follow_up`, `demo`, `task`, `reminder`, `other` |
 | Calendar Event Status | `scheduled`, `completed`, `cancelled` |
+| Notification Event Type | `invite`, `handoffRequested`, `handoffResolved`, `taskOverdue`, `taskAssigned`, `leadAssigned`, `newMessage`, `dailyDigest` |
 | Audit Action | `create`, `update`, `delete`, `move`, `assign`, `handoff` |
 | Audit Severity | `low`, `medium`, `high`, `critical` |
+| Form Status | `draft`, `published`, `archived` |
+| Form Field Type | `text`, `email`, `phone`, `number`, `select`, `textarea`, `checkbox`, `date` |
+| Form Field Width | `full`, `half` |
+| Form Border Radius | `none`, `sm`, `md`, `lg`, `full` |
+| Form Assignment Mode | `none`, `specific`, `round_robin` |
+| Form Submission Status | `processed`, `spam`, `error` |
 | Preferred Contact Time | `morning`, `afternoon`, `evening` |
 | Device Type | `android`, `iphone`, `desktop`, `unknown` |

@@ -11,6 +11,7 @@ import { registerPipelineTools } from "./tools/pipeline.js";
 import { registerActivityTools } from "./tools/activities.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerCalendarTools } from "./tools/calendar.js";
+import { registerNotificationTools } from "./tools/notifications.js";
 import { registerResources } from "./resources.js";
 
 function createServer(apiUrl: string, apiKey: string) {
@@ -29,6 +30,7 @@ function createServer(apiUrl: string, apiKey: string) {
   registerActivityTools(server, client);
   registerTaskTools(server, client);
   registerCalendarTools(server, client);
+  registerNotificationTools(server, client);
   registerResources(server, client);
 
   return server;

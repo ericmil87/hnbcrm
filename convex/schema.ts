@@ -71,6 +71,8 @@ const applicationTables = {
     name: v.string(),
     keyHash: v.string(),
     lastUsed: v.optional(v.number()),
+    rateWindowStart: v.optional(v.number()), // fixed-window rate limit state
+    rateWindowCount: v.optional(v.number()),
     isActive: v.boolean(),
     permissions: v.optional(permissionsValidator),
     expiresAt: v.optional(v.number()),
@@ -282,6 +284,58 @@ const applicationTables = {
     .index("by_handoff_status", ["handoffState.status"])
     .index("by_last_activity", ["lastActivityAt"]),
 
+  // Channel configurations (per-org connections to external messaging providers)
+  channelConfigs: defineTable({
+    organizationId: v.id("organizations"),
+    channel: v.union(v.literal("whatsapp")), // union-ready for future channels
+    // Which WhatsApp transport this config uses. Optional for backward compat:
+    // legacy rows predate the field — read paths normalize undefined → "meta"
+    // (see configProvider() in channelConfigs.ts). "meta" = Cloud API (Graph),
+    // "bridge" = unofficial gateway (whatsmeow/wuzapi over REST + webhook).
+    provider: v.optional(v.union(v.literal("meta"), v.literal("bridge"))),
+    displayName: v.string(),
+    // ── Meta Cloud API fields (present when provider === "meta") ──
+    phoneNumberId: v.optional(v.string()), // Meta Cloud API phone number id (webhook routing key)
+    wabaId: v.optional(v.string()), // WhatsApp Business Account id
+    displayPhoneNumber: v.optional(v.string()), // human-readable, filled by health check
+    verifyToken: v.optional(v.string()), // webhook GET handshake token
+    // Secrets encrypted at rest (AES-256-GCM via lib/secretCrypto); never sent to clients
+    appSecretEncrypted: v.optional(v.string()),
+    accessTokenEncrypted: v.optional(v.string()),
+    // Plaintext last-4 for masked display without decryption
+    appSecretLast4: v.optional(v.string()),
+    accessTokenLast4: v.optional(v.string()),
+    // ── Bridge (whatsmeow/wuzapi) fields (present when provider === "bridge") ──
+    bridgeBaseUrl: v.optional(v.string()), // REST base URL of the wuzapi gateway
+    bridgeInstanceId: v.optional(v.string()), // instance/user id in the gateway (ingress routing key)
+    bridgeTokenEncrypted: v.optional(v.string()), // per-instance token, AES-encrypted at rest
+    bridgeTokenLast4: v.optional(v.string()),
+    // Bridge pairing state from the last health check / QR fetch (whatsmeow session).
+    // Drives the Channels card badge; absent on Meta configs. The coarse status
+    // field (active/error) still mirrors "connected vs not" as the Meta path does.
+    bridgeSessionState: v.optional(
+      v.union(
+        v.literal("connected"),
+        v.literal("connecting"),
+        v.literal("qr"),
+        v.literal("disconnected"),
+        v.literal("banned")
+      )
+    ),
+    status: v.union(v.literal("active"), v.literal("disabled"), v.literal("error")),
+    lastHealthCheckAt: v.optional(v.number()),
+    healthDetail: v.optional(v.string()),
+    // Auto-transcribe inbound voice notes with the local Whisper service
+    // (convex/transcription.ts). Applies to both providers; absent/false = off.
+    autoTranscribeAudio: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_phone_number_id", ["phoneNumberId"])
+    .index("by_verify_token", ["verifyToken"])
+    .index("by_bridge_instance", ["bridgeInstanceId"]),
+
   // Conversations
   conversations: defineTable({
     organizationId: v.id("organizations"),
@@ -293,8 +347,21 @@ const applicationTables = {
       v.literal("webchat"),
       v.literal("internal")
     ),
+    channelConfigId: v.optional(v.id("channelConfigs")), // which connected number this conversation belongs to
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
+    lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
+    nextDispatchAt: v.optional(v.number()), // pacing cursor for outbound dispatch (~1 msg/6s per recipient)
+    // Presença do contato (ChatPresence do bridge) — "digitando..." no header.
+    // `at` permite expirar no cliente (evento "paused" pode nunca chegar).
+    contactPresence: v.optional(
+      v.object({
+        state: v.union(v.literal("composing"), v.literal("paused")),
+        at: v.number(),
+      })
+    ),
+    archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
+    labelIds: v.optional(v.array(v.id("conversationLabels"))),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -323,13 +390,67 @@ const applicationTables = {
     )),
     isInternal: v.boolean(),
     mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
+    externalId: v.optional(v.string()), // provider message id (e.g. WhatsApp wamid) for dedupe + status updates
     metadata: v.optional(v.record(v.string(), v.any())),
+    // Cópia rasa de metadata.transcription.text — search index só indexa campo
+    // de topo, então a transcrição pesquisável vive aqui (setada ao transcrever).
+    transcriptText: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
     .index("by_lead", ["leadId"])
     .index("by_organization", ["organizationId"])
-    .index("by_conversation_and_created", ["conversationId", "createdAt"]),
+    .index("by_conversation_and_created", ["conversationId", "createdAt"])
+    .index("by_organization_and_external_id", ["organizationId", "externalId"])
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["organizationId", "conversationId"],
+    })
+    .searchIndex("search_transcript", {
+      searchField: "transcriptText",
+      filterFields: ["organizationId", "conversationId"],
+    }),
+
+  // Etiquetas de conversa (org-scoped), atribuídas via conversations.labelIds.
+  conversationLabels: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    color: v.string(), // hex da paleta fixa do frontend
+    createdAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Mensagens agendadas do inbox — entregues via ctx.scheduler.runAt.
+  scheduledMessages: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    content: v.string(),
+    scheduledAt: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("sent"),
+      v.literal("canceled"),
+      v.literal("failed")
+    ),
+    createdBy: v.id("teamMembers"),
+    scheduledFunctionId: v.optional(v.string()), // id do runAt, para cancelar
+    sentMessageId: v.optional(v.id("messages")),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_organization", ["organizationId"]),
+
+  // Respostas rápidas do inbox — inseridas digitando "/" no composer.
+  quickReplies: defineTable({
+    organizationId: v.id("organizations"),
+    shortcut: v.string(), // sem a barra, ex. "saudacao"
+    content: v.string(),
+    createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_shortcut", ["organizationId", "shortcut"]),
 
   // Handoffs
   handoffs: defineTable({
@@ -362,6 +483,7 @@ const applicationTables = {
       v.literal("stage_change"), v.literal("assignment"),
       v.literal("handoff"), v.literal("qualification_update"),
       v.literal("created"), v.literal("message_sent"),
+      v.literal("message_received"),
       v.literal("task_created"), v.literal("task_completed"),
       v.literal("event_created"), v.literal("event_completed")
     ),
@@ -555,6 +677,13 @@ const applicationTables = {
       company: v.optional(v.string()),
       minValue: v.optional(v.number()),
       maxValue: v.optional(v.number()),
+      channel: v.optional(v.union(
+        v.literal("whatsapp"),
+        v.literal("telegram"),
+        v.literal("email"),
+        v.literal("webchat"),
+        v.literal("internal")
+      )),
     }),
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
@@ -580,6 +709,245 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_member", ["organizationId", "teamMemberId"]),
+
+  // Notification Preferences (opt-out model: no row = all enabled)
+  notificationPreferences: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    invite: v.boolean(),
+    handoffRequested: v.boolean(),
+    handoffResolved: v.boolean(),
+    taskOverdue: v.boolean(),
+    taskAssigned: v.boolean(),
+    leadAssigned: v.boolean(),
+    newMessage: v.boolean(),
+    dailyDigest: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_member", ["organizationId", "teamMemberId"])
+    .index("by_member", ["teamMemberId"]),
+
+  // Forms (embeddable lead capture)
+  forms: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    status: v.union(v.literal("draft"), v.literal("published"), v.literal("archived")),
+    publishedAt: v.optional(v.number()),
+
+    // Fields — embedded array (atomic reorder via single patch)
+    fields: v.array(v.object({
+      id: v.string(),
+      type: v.union(
+        v.literal("text"), v.literal("email"), v.literal("phone"),
+        v.literal("number"), v.literal("select"), v.literal("textarea"),
+        v.literal("checkbox"), v.literal("date"),
+        // Phase 2 field types
+        v.literal("radio"), v.literal("url"), v.literal("hidden"),
+        v.literal("heading"), v.literal("divider"), v.literal("rating")
+      ),
+      label: v.string(),
+      placeholder: v.optional(v.string()),
+      helpText: v.optional(v.string()),
+      isRequired: v.boolean(),
+      validation: v.optional(v.object({
+        minLength: v.optional(v.number()),
+        maxLength: v.optional(v.number()),
+        min: v.optional(v.number()),
+        max: v.optional(v.number()),
+        pattern: v.optional(v.string()),
+      })),
+      options: v.optional(v.array(v.string())),
+      defaultValue: v.optional(v.string()),
+      width: v.optional(v.union(v.literal("full"), v.literal("half"))),
+      crmMapping: v.optional(v.object({
+        entity: v.union(v.literal("lead"), v.literal("contact")),
+        field: v.string(),
+      })),
+      // Phase 3: Conditional logic
+      conditionalLogic: v.optional(v.object({
+        action: v.union(v.literal("show"), v.literal("hide")),
+        logic: v.union(v.literal("all"), v.literal("any")),
+        conditions: v.array(v.object({
+          fieldId: v.string(),
+          operator: v.union(
+            v.literal("equals"), v.literal("not_equals"),
+            v.literal("contains"), v.literal("not_contains"),
+            v.literal("is_empty"), v.literal("is_not_empty"),
+            v.literal("greater_than"), v.literal("less_than")
+          ),
+          value: v.optional(v.string()),
+        })),
+      })),
+    })),
+
+    // Theme
+    theme: v.object({
+      primaryColor: v.string(),
+      backgroundColor: v.string(),
+      textColor: v.string(),
+      borderRadius: v.union(v.literal("none"), v.literal("sm"), v.literal("md"), v.literal("lg"), v.literal("full")),
+      showBranding: v.boolean(),
+    }),
+
+    // Phase 4: Multi-step form grouping
+    steps: v.optional(v.array(v.object({
+      id: v.string(),
+      title: v.string(),
+      description: v.optional(v.string()),
+      fieldIds: v.array(v.string()),
+    }))),
+
+    // Settings
+    settings: v.object({
+      submitButtonText: v.string(),
+      successMessage: v.string(),
+      redirectUrl: v.optional(v.string()),
+      notifyOnSubmission: v.boolean(),
+      notifyMemberIds: v.optional(v.array(v.id("teamMembers"))),
+      leadTitle: v.string(),
+      boardId: v.optional(v.id("boards")),
+      stageId: v.optional(v.id("stages")),
+      sourceId: v.optional(v.id("leadSources")),
+      assignedTo: v.optional(v.id("teamMembers")),
+      assignmentMode: v.union(v.literal("specific"), v.literal("round_robin"), v.literal("none")),
+      defaultPriority: v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent")),
+      defaultTemperature: v.union(v.literal("cold"), v.literal("warm"), v.literal("hot")),
+      tags: v.array(v.string()),
+      honeypotEnabled: v.boolean(),
+      submissionLimit: v.optional(v.number()),
+      // Phase 7: Custom thank you page
+      successTitle: v.optional(v.string()),
+      successSubtitle: v.optional(v.string()),
+      successCta: v.optional(v.object({
+        label: v.string(),
+        url: v.string(),
+      })),
+      // Phase 7: Confirmation email
+      confirmationEmail: v.optional(v.object({
+        enabled: v.boolean(),
+        subject: v.optional(v.string()),
+        body: v.optional(v.string()),
+        replyTo: v.optional(v.string()),
+      })),
+      // Partial submission capture
+      partialCaptureEnabled: v.optional(v.boolean()),
+    }),
+
+    // Metadata
+    createdBy: v.id("teamMembers"),
+    submissionCount: v.number(),
+    lastSubmissionAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_slug", ["slug"])
+    .index("by_organization_and_slug", ["organizationId", "slug"]),
+
+  // Form Submissions
+  formSubmissions: defineTable({
+    organizationId: v.id("organizations"),
+    formId: v.id("forms"),
+    data: v.record(v.string(), v.any()),
+    leadId: v.optional(v.id("leads")),
+    contactId: v.optional(v.id("contacts")),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    utmSource: v.optional(v.string()),
+    utmMedium: v.optional(v.string()),
+    utmCampaign: v.optional(v.string()),
+    utmContent: v.optional(v.string()),
+    utmTerm: v.optional(v.string()),
+    honeypotTriggered: v.boolean(),
+    processingStatus: v.union(v.literal("processed"), v.literal("spam"), v.literal("error")),
+    errorMessage: v.optional(v.string()),
+    sessionId: v.optional(v.string()),
+    experimentId: v.optional(v.id("formExperiments")),
+    variantId: v.optional(v.id("formExperimentVariants")),
+    visitorId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_form", ["formId"])
+    .index("by_form_and_created", ["formId", "createdAt"])
+    .index("by_form_and_status", ["formId", "processingStatus"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Form Partials (partial submission recovery)
+  formPartials: defineTable({
+    organizationId: v.id("organizations"),
+    formId: v.id("forms"),
+    sessionId: v.string(),
+    status: v.union(v.literal("in_progress"), v.literal("abandoned"), v.literal("converted")),
+    data: v.record(v.string(), v.any()),
+    currentStep: v.optional(v.number()),
+    completedFieldIds: v.array(v.string()),
+    totalFields: v.number(),
+    completionPercent: v.number(),
+    ipAddress: v.optional(v.string()),
+    userAgent: v.optional(v.string()),
+    referrer: v.optional(v.string()),
+    utmSource: v.optional(v.string()),
+    utmMedium: v.optional(v.string()),
+    utmCampaign: v.optional(v.string()),
+    utmContent: v.optional(v.string()),
+    utmTerm: v.optional(v.string()),
+    experimentId: v.optional(v.id("formExperiments")),
+    variantId: v.optional(v.id("formExperimentVariants")),
+    visitorId: v.optional(v.string()),
+    firstInteractionAt: v.number(),
+    lastActivityAt: v.number(),
+    convertedAt: v.optional(v.number()),
+    submissionId: v.optional(v.id("formSubmissions")),
+    createdAt: v.number(),
+  })
+    .index("by_form", ["formId"])
+    .index("by_form_and_session", ["formId", "sessionId"])
+    .index("by_form_and_status", ["formId", "status"])
+    .index("by_status_and_activity", ["status", "lastActivityAt"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Form A/B Testing Experiments
+  formExperiments: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    formId: v.id("forms"),
+    hypothesis: v.optional(v.string()),
+    status: v.union(v.literal("draft"), v.literal("running"), v.literal("paused"), v.literal("concluded")),
+    winnerVariantId: v.optional(v.string()),
+    concludedAt: v.optional(v.number()),
+    concludedBy: v.optional(v.id("teamMembers")),
+    createdBy: v.id("teamMembers"),
+    startedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_form", ["formId"])
+    .index("by_organization_and_status", ["organizationId", "status"]),
+
+  // Form Experiment Variants
+  formExperimentVariants: defineTable({
+    organizationId: v.id("organizations"),
+    experimentId: v.id("formExperiments"),
+    formId: v.id("forms"),
+    name: v.string(),
+    variantKey: v.string(),
+    trafficWeight: v.number(),
+    views: v.number(),
+    conversions: v.number(),
+    isControl: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_experiment", ["experimentId"])
+    .index("by_form", ["formId"])
+    .index("by_organization", ["organizationId"]),
 
   // Webhooks
   webhooks: defineTable({
@@ -615,7 +983,7 @@ const applicationTables = {
     leadId: v.optional(v.id("leads")),
     teamMemberId: v.optional(v.id("teamMembers")),
 
-    uploadedBy: v.id("teamMembers"),
+    uploadedBy: v.optional(v.id("teamMembers")), // absent for inbound media sent by contacts
     metadata: v.optional(v.record(v.string(), v.any())),
     createdAt: v.number(),
   })

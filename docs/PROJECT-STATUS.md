@@ -1,7 +1,7 @@
 # HNBCRM — Project Status & Roadmap
 
-**Last Updated:** 2026-02-15
-**Current Version:** v0.11.0
+**Last Updated:** 2026-07-19
+**Current Version:** v0.33.0
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
@@ -498,6 +498,34 @@ HNBCRM (Humans & Bots CRM) is a **realtime-first, AI-native, multi-tenant CRM** 
 | llms.txt Agent Skills section | Done | In both `/llms.txt` and `/llms-full.txt` |
 
 **Files:** `.claude/skills/hnbcrm/`, `src/components/LandingPage.tsx`, `src/pages/DevelopersPage.tsx`, `convex/llmsTxt.ts`
+
+---
+
+### 2.23 WhatsApp Channel (Cloud API + Bridge) — DONE
+
+Real channel dispatch for WhatsApp, delivered per organization via two transports on the same `whatsapp` channel, selected by `channelConfigs.provider`.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Per-org channel configs (`channelConfigs` table) | Done | Encrypted credentials, masked reads, health checks |
+| Provider selector (`meta` \| `bridge`) | Done | Same channel, two transports; UI chooser on connect |
+| **Meta — WhatsApp Cloud API (official)** | Done | Graph API dispatch, 24h service window, message templates |
+| Meta webhook ingress + subscription handshake | Done | `GET/POST /webhooks/whatsapp`, per-number verify token |
+| Multi-tenant webhook routing | Done | Routes by `phoneNumberId` to the org's config |
+| Outbound dispatch + 24h window / templates | Done | Window state surfaced in Inbox; template send outside window |
+| **Bridge — self-hosted wuzapi gateway (unofficial)** | Done | WhatsApp Web protocol (whatsmeow), QR pairing, no 24h window, no templates |
+| Bridge webhook ingress (HMAC-SHA256) | Done | `POST /webhooks/bridge`, verified via `WA_BRIDGE_HMAC_SECRET` |
+| Bridge inbound + delivery receipts | Done | Pure parser (`lib/bridgeParse.ts`), tolerant of casing/LID JIDs |
+| Bridge outbound text + bidirectional media | Done | `lib/bridgeSend.ts`, `lib/bridgeMedia.ts` |
+| Bridge session lifecycle (QR / status / provisioning) | Done | `lib/bridgeSession.ts`, assisted provisioning via gateway admin token |
+| QR pairing UI with auto-detection | Done | Polls gateway, flips to connected, auto-closes |
+| Opt-in risk acceptance (ban risk) | Done | Mandatory checkbox + link to `/termos`; number may be permanently banned |
+| Channel filters + webhook delivery retries | Done | v0.32.0 |
+| End-to-end validation (real pilot) | Done | Validated e2e against a real wuzapi gateway on 2026-07-19 |
+
+**Risk note:** the bridge provider uses a protocol not sanctioned by Meta, violates the WhatsApp Terms of Service, and the connected number may be permanently banned. It is opt-in per organization, "at your own risk" (dedicated number, no cold outreach, warm-up and rate limiting). See `/termos`.
+
+**Files:** `convex/channelConfigs.ts`, `convex/whatsapp.ts`, `convex/bridge.ts`, `convex/lib/bridgeParse.ts`, `convex/lib/bridgeSend.ts`, `convex/lib/bridgeMedia.ts`, `convex/lib/bridgeSession.ts`, `src/components/settings/ChannelsSection.tsx`, `src/components/Inbox.tsx`
 
 ---
 

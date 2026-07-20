@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.19.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.34.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -25,7 +25,9 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 
 - **AI-Human Collaboration** — Human team members and AI bots are equal participants with shared context
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
-- **Unified Inbox** — WhatsApp, Telegram, email conversations in one place with internal notes
+- **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions
+- **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel
+- **Voice Transcription** — Self-hosted Whisper service transcribes voice notes locally (opt-in per org, no paid API), transcripts are searchable
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
 - **REST API** — Full CRUD at `/api/v1/` with API key authentication and HMAC webhooks
@@ -36,6 +38,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Calendar** — Day/week/month views with drag-to-reschedule and task integration
 - **@Mentions** — Tag team members in internal notes with autocomplete
 - **File Storage** — Message attachments, contact photos, lead documents with quota management
+- **Embeddable Forms** — WYSIWYG form builder with public URLs, CRM field mapping, spam protection, and embed codes
 
 ## Tech Stack
 
@@ -87,7 +90,11 @@ convex/
   leads.ts          Lead CRUD, stage moves, assignment
   calendar.ts       Calendar events (time-ranged) CRUD
   contacts.ts       Contact CRUD with enrichment
-  conversations.ts  Multi-channel messaging
+  conversations.ts  Multi-channel messaging, labels, message search
+  whatsapp.ts       WhatsApp ingress + outbound dispatch (Cloud API / bridge)
+  transcription.ts  Voice-note transcription (self-hosted Whisper)
+  quickReplies.ts   Quick replies ("/" shortcuts in the composer)
+  scheduledMessages.ts  Scheduled message delivery
   handoffs.ts       AI-to-human handoff workflow
   llmsTxt.ts        /llms.txt endpoint content
   seed.ts           Development seed data
@@ -107,6 +114,57 @@ public/             Logo assets
 **Webhooks** — HMAC-SHA256 signed webhook events for lead, conversation, and handoff state changes.
 
 **llms.txt** — AI-readable documentation at `/llms.txt` (summary) and `/llms-full.txt` (full reference) for LLM-powered tools and agents.
+
+## Email Setup (Resend)
+
+HNBCRM uses [@convex-dev/resend](https://github.com/get-convex/convex-resend) for transactional email delivery. The system sends notifications for team invites, handoff requests, task assignments, lead assignments, overdue reminders, and daily digests.
+
+### Domain Configuration
+
+Since the primary domain (`hnbcrm.com`) uses Gmail for sending/receiving, Resend is configured on a **subdomain** (`mail.hnbcrm.com`) to avoid MX/SPF conflicts.
+
+**Steps:**
+
+1. **Resend Dashboard** → Domains → Add Domain → `mail.hnbcrm.com`
+2. **Cloudflare DNS** — Add the records Resend provides:
+   - 3x CNAME records for DKIM (e.g., `resend._domainkey.mail.hnbcrm.com`)
+   - 1x TXT record for SPF on `mail.hnbcrm.com`
+   - 1x TXT record for DMARC (if not already on root domain)
+3. **Verify** in Resend dashboard (near-instant with Cloudflare)
+
+### Environment Variables
+
+```bash
+npx convex env set RESEND_API_KEY re_xxxxx
+npx convex env set APP_URL https://app.hnbcrm.com.br
+npx convex env set RESEND_FROM_EMAIL "HNBCRM <noreply@mail.hnbcrm.com>"
+npx convex env set RESEND_WEBHOOK_SECRET whsec_xxxxx   # after webhook setup
+```
+
+### Webhook Setup
+
+1. In the Resend dashboard, create a webhook pointing to:
+   `https://<your-convex-deployment>.convex.site/api/v1/webhooks/resend`
+2. Enable all `email.*` events
+3. Copy the signing secret to `RESEND_WEBHOOK_SECRET`
+
+### Test Mode
+
+By default, `@convex-dev/resend` runs in **test mode** — only Resend test addresses receive emails. To enable production sending, update `convex/email.ts`:
+
+```typescript
+export const resend: Resend = new Resend(components.resend, {
+  testMode: false,  // Enable real email delivery
+  onEmailEvent: internal.email.handleEmailEvent,
+});
+```
+
+### Architecture
+
+- **Central dispatch**: `convex/email.ts` → `internal.email.dispatchNotification`
+- **Templates**: `convex/emailTemplates.ts` (8 PT-BR templates, dark theme)
+- **Preferences**: `notificationPreferences` table (opt-out model)
+- **Daily digest**: Cron at 08:00 BRT via `convex/crons.ts`
 
 ## Deploy
 

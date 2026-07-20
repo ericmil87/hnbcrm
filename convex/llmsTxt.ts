@@ -14,11 +14,17 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (44 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (46 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
 - Permissions: Granular RBAC with 9 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys). API keys can have scoped permissions.
+
+## WhatsApp Channel
+
+WhatsApp connects per organization through one of two providers on the same "whatsapp" channel:
+- meta — official WhatsApp Cloud API (Meta Graph API). Enforces the 24-hour customer service window and requires approved templates to reopen it.
+- bridge — self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. No 24-hour window and no templates. Opt-in per organization; it uses a protocol not sanctioned by Meta and carries a permanent-ban risk the organization accepts.
 
 ## Agent Skill (for AI Agents)
 
@@ -151,6 +157,8 @@ A message thread on a lead, scoped by channel.
 | channel | enum | whatsapp, telegram, email, webchat, internal |
 | status | enum | active, closed |
 | messageCount | number | Total messages |
+| archivedAt | number? | When set, conversation is archived (hidden from the default inbox list) |
+| labelIds | Id<conversationLabels>[]? | Org-scoped labels applied to the conversation |
 
 ### Message
 An individual message in a conversation.
@@ -164,8 +172,11 @@ An individual message in a conversation.
 | senderType | enum | contact, human, ai |
 | content | string | Message text |
 | contentType | enum | text, image, file, audio |
+| attachments | Id<files>[]? | Attached files (images, audio, documents) |
+| deliveryStatus | enum? | sent, delivered, read, failed (WhatsApp ticks) |
 | isInternal | boolean | Internal note (not visible to contact) |
 | mentionedUserIds | Id<teamMembers>[] | @mentioned team members |
+| transcriptText | string? | Voice-note transcription (self-hosted Whisper), full-text searchable |
 
 ### Handoff
 An AI-to-human (or human-to-human) handoff request.
@@ -323,6 +334,11 @@ File metadata for uploaded files (attachments, photos, documents).
 | uploadedBy | Id<teamMembers> | Who uploaded the file |
 | metadata | Record<string, any> | Additional metadata |
 
+### notificationPreferences
+Per-member email notification preferences (opt-out model).
+Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, createdAt, updatedAt
+Indexes: by_organization, by_organization_and_member, by_member
+
 ### Lead Document
 Join table for lead-document relationships.
 
@@ -333,6 +349,43 @@ Join table for lead-document relationships.
 | title | string | Document title (optional, defaults to filename) |
 | category | enum | contract, proposal, invoice, other |
 | uploadedBy | Id<teamMembers> | Who uploaded the document |
+
+### Form
+An embeddable form that creates leads/contacts on submission.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | string | Form name |
+| slug | string | URL-friendly slug (unique) |
+| description | string | Optional description |
+| status | enum | draft, published, archived |
+| publishedAt | number | When the form was published |
+| fields | array | Embedded field definitions (see below) |
+| theme | object | Visual theme: primaryColor, backgroundColor, textColor, borderRadius, showBranding |
+| settings | object | Lead creation settings: submitButtonText, successMessage, redirectUrl, leadTitle template, boardId, stageId, sourceId, assignmentMode (none/specific/round_robin), assignedTo, defaultPriority, defaultTemperature, tags, honeypotEnabled, submissionLimit, notifyOnSubmission, notifyMemberIds |
+| createdBy | Id<teamMembers> | Form creator |
+| submissionCount | number | Total submissions received |
+| lastSubmissionAt | number | Timestamp of last submission |
+
+**Form field types:** text, email, phone, number, select, textarea, checkbox, date
+
+**Field properties:** id, type, label, placeholder, helpText, isRequired, validation, options, defaultValue, width (full/half), crmMapping ({entity: lead|contact, field: string})
+
+### Form Submission
+A submission from a public form.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| formId | Id<forms> | Parent form |
+| data | Record<string, any> | Submitted field values keyed by field ID |
+| leadId | Id<leads> | Created lead (if processed) |
+| contactId | Id<contacts> | Created/matched contact (if processed) |
+| ipAddress | string | Submitter IP address |
+| userAgent | string | Browser user agent |
+| referrer | string | Referrer URL |
+| utmSource, utmMedium, utmCampaign | string | UTM tracking parameters |
+| honeypotTriggered | boolean | Whether the spam honeypot was triggered |
+| processingStatus | enum | processed, spam, error |
 
 ---
 
@@ -472,11 +525,18 @@ Get messages for a conversation.
 **Response:** \`{ messages: [...] }\`
 
 #### POST /api/v1/conversations/send
-Send a message to a conversation.
+Send a message to a conversation. Supports file attachments and replying to (quoting) another message.
 
-**Body:** conversationId (required), content (required), contentType (default: text), isInternal (default: false), mentionedUserIds (optional)
+**Body:** conversationId (required), content (required unless attachments given), contentType (default: text), isInternal (default: false), mentionedUserIds (optional), attachments (optional file ids), replyToMessageId (optional)
 
 **Response:** \`{ success: true, messageId }\`
+
+#### POST /api/v1/conversations/receive
+Inject an inbound message from a contact — for external bridges on any channel. Creates the contact and lead if they don't exist; idempotent per externalId.
+
+**Body:** content (required), contactPhone or contactId (one required), channel (default: whatsapp), contentType (default: text), contactFirstName/contactLastName (optional, used when creating the contact), leadTitle (optional), externalId (optional, dedupes redeliveries)
+
+**Response:** \`{ success: true, messageId, leadId, contactId }\`
 
 ### Handoff Endpoints
 
@@ -805,6 +865,46 @@ Get audit logs with filtering and cursor-based pagination.
 
 **Response:** \`{ logs: [...], nextCursor, hasMore }\`
 
+### Notification Preferences
+- GET /api/v1/notifications/preferences — Get notification preferences for the authenticated API key's team member
+- PUT /api/v1/notifications/preferences — Update notification preferences. Body: { invite?: boolean, handoffRequested?: boolean, ... }
+
+### Public Form Endpoints (no auth required)
+
+#### GET /api/v1/forms/public
+Get a published form by slug.
+
+**Query params:** slug (required)
+
+**Response:** \`{ form: { name, description, fields, theme, settings: { submitButtonText, successMessage, redirectUrl, honeypotEnabled } } }\`
+
+#### POST /api/v1/forms/public/submit
+Submit data to a published form. Creates a lead + contact automatically.
+
+**Body:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| slug | string | yes | Form slug |
+| data | object | yes | Field values keyed by field ID |
+| _honeypot | any | no | Honeypot field (if filled, submission is marked as spam) |
+
+**Response:** \`{ success: true, leadId, contactId }\`
+
+### Webhooks (Inbound)
+- POST /api/v1/webhooks/resend — Resend email delivery webhook (authenticated via RESEND_WEBHOOK_SECRET, not API key)
+
+### Notification Event Types
+| Event | Description |
+|-------|-------------|
+| invite | Team member invited to organization |
+| handoffRequested | AI-to-human handoff requested |
+| handoffResolved | Handoff accepted or rejected |
+| taskOverdue | Assigned task is overdue |
+| taskAssigned | Task assigned to member |
+| leadAssigned | Lead assigned to member |
+| newMessage | New inbound message on assigned lead |
+| dailyDigest | Daily summary of CRM activity |
+
 ---
 
 ## Agent Skill
@@ -827,7 +927,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 44 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 46 tools for AI agents:
 
 ### Lead Management
 
@@ -1110,12 +1210,28 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | contact.created | New contact created |
 | contact.updated | Contact fields updated |
 | conversation.created | New conversation started |
-| message.sent | Message sent to conversation |
+| message.sent | Message sent to conversation (payload includes senderType + senderId) |
+| message.received | Inbound message received from a contact |
 | handoff.requested | Handoff requested |
 | handoff.accepted | Handoff accepted |
 | handoff.rejected | Handoff rejected |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
+
+---
+
+## WhatsApp Channel
+
+WhatsApp is delivered per organization through channel configs (the \`channelConfigs\` table) with a \`provider\` field. Both providers share the same \`whatsapp\` conversation channel; outbound dispatch branches by provider.
+
+### meta (official — WhatsApp Cloud API)
+- Uses the Meta Graph API. Inbound webhook: \`POST /webhooks/whatsapp\` (subscription handshake via \`GET /webhooks/whatsapp\`, verify token per number).
+- Enforces WhatsApp's 24-hour customer service window. Outside the window, only approved message templates can be sent.
+
+### bridge (unofficial — self-hosted gateway)
+- Uses a self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. Inbound webhook: \`POST /webhooks/bridge\`, verified by HMAC-SHA256 (\`WA_BRIDGE_HMAC_SECRET\`).
+- No 24-hour window and no templates — conversations can be replied to at any time.
+- Opt-in per organization. It relies on a protocol not sanctioned by Meta, violates WhatsApp's Terms of Service, and the number may be permanently banned; the organization accepts this risk.
 
 ---
 

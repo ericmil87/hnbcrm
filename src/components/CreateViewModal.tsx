@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Modal } from "@/components/ui/Modal";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -36,6 +37,9 @@ export function CreateViewModal({
   >();
   const [selectedTemperature, setSelectedTemperature] = useState<
     "cold" | "warm" | "hot" | undefined
+  >();
+  const [selectedChannel, setSelectedChannel] = useState<
+    "whatsapp" | "telegram" | "email" | "webchat" | "internal" | undefined
   >();
   const [hasContact, setHasContact] = useState<boolean | undefined>();
   const [company, setCompany] = useState("");
@@ -81,6 +85,7 @@ export function CreateViewModal({
       if (selectedAssignee) filters.assignedTo = selectedAssignee;
       if (selectedPriority) filters.priority = selectedPriority;
       if (selectedTemperature) filters.temperature = selectedTemperature;
+      if (selectedChannel) filters.channel = selectedChannel;
       if (hasContact !== undefined) filters.hasContact = hasContact;
       if (company.trim()) filters.company = company.trim();
       if (minValue.trim()) filters.minValue = parseFloat(minValue);
@@ -199,20 +204,12 @@ export function CreateViewModal({
                   </label>
                   <div className="space-y-2 max-h-40 overflow-y-auto p-2 bg-surface-raised border border-border-strong rounded-field">
                     {stages.map((stage) => (
-                      <label
+                      <Checkbox
                         key={stage._id}
-                        className="flex items-center gap-2 cursor-pointer"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedStageIds.includes(stage._id)}
-                          onChange={() => toggleStage(stage._id)}
-                          className="rounded border-border-strong text-brand-600 focus:ring-brand-500"
-                        />
-                        <span className="text-sm text-text-primary">
-                          {stage.name}
-                        </span>
-                      </label>
+                        checked={selectedStageIds.includes(stage._id)}
+                        onChange={() => toggleStage(stage._id)}
+                        label={<span className="text-text-primary">{stage.name}</span>}
+                      />
                     ))}
                   </div>
                 </div>
@@ -301,6 +298,41 @@ export function CreateViewModal({
                   <option value="cold">Frio</option>
                   <option value="warm">Morno</option>
                   <option value="hot">Quente</option>
+                </select>
+              </div>
+
+              {/* Channel */}
+              <div>
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Canal
+                </label>
+                <select
+                  value={selectedChannel || ""}
+                  onChange={(e) =>
+                    setSelectedChannel(
+                      e.target.value as
+                        | "whatsapp"
+                        | "telegram"
+                        | "email"
+                        | "webchat"
+                        | "internal"
+                        | undefined
+                    )
+                  }
+                  className={cn(
+                    "w-full bg-surface-raised border border-border-strong rounded-field",
+                    "px-3.5 py-2.5 text-sm text-text-primary",
+                    "focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20",
+                    "transition-colors"
+                  )}
+                  style={{ fontSize: "16px" }}
+                >
+                  <option value="">Todos os canais</option>
+                  <option value="whatsapp">WhatsApp</option>
+                  <option value="telegram">Telegram</option>
+                  <option value="email">E-mail</option>
+                  <option value="webchat">Chat do site</option>
+                  <option value="internal">Interno</option>
                 </select>
               </div>
 

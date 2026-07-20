@@ -2,6 +2,466 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.26.0] - 2026-03-01
+
+### Full UTM Capture + Native A/B Testing for Forms
+
+Two major upgrades: fix the UTM capture bug and extend to all 5 standard params with cross-session persistence, and build a complete native A/B testing system — a competitive differentiator since Typeform, Jotform, HubSpot, and Tally all lack it.
+
+#### Feature 1: URL Parameter Prefill + Auto UTM Capture
+
+Fixes a backend bug where body-sent UTM values were silently dropped (only `Referer` header parsing worked). Adds `utm_content` and `utm_term` support. Implements cross-page UTM persistence via sessionStorage + 30-day cookie. Forwards parent-page UTMs to embedded iframes automatically.
+
+- **`convex/schema.ts`** — Added `utmContent`, `utmTerm` to `formSubmissions` and `formPartials` tables
+- **`convex/router.ts`** — Fixed UTM bug: body values now take priority over referrer-parsed ones in both submit and partial endpoints. All 5 UTM params passed through to processing functions
+- **`convex/formSubmissions.ts`** — `internalProcessSubmission` accepts and stores `utmContent`, `utmTerm` in all 3 insert paths (spam, error, success)
+- **`convex/formPartials.ts`** — `internalSavePartial` accepts and stores `utmContent`, `utmTerm`
+- **`src/lib/utmPersistence.ts`** (new) — UTM resolution cascade: URL params → sessionStorage → 30-day first-party cookie. `resolveUtmParams()` + `persistUtm()` exports
+- **`src/pages/PublicFormPage.tsx`** — Uses `resolveUtmParams` instead of raw `searchParams.get()`, sends all 5 UTM params in submit payload
+- **`src/embed/loader.ts`** — Forwards parent page's `utm_source`, `utm_medium`, `utm_campaign`, `utm_content`, `utm_term` to iframe src
+- **`convex/embedScript.ts`** — Rebuilt with UTM forwarding logic
+
+#### Feature 2: UTM Analytics Enhancement
+
+- **`convex/formSubmissions.ts`** — `getFormAnalytics` now returns breakdowns for all 5 UTM dimensions (`utmSources`, `utmMediums`, `utmCampaigns`, `utmContents`, `utmTerms`) using shared `buildUtmBreakdown` helper
+- **`src/components/forms/FormAnalyticsPage.tsx`** — Replaced single UTM source table with tabbed section: Fonte | Midia | Campanha | Conteudo | Termo. Each tab shows bar-chart breakdown with count badges
+
+#### Feature 3: Native A/B Testing
+
+Complete A/B testing system built from scratch. Deterministic variant assignment via MurmurHash3, Bayesian statistics with Monte Carlo simulation for statistical significance.
+
+- **`convex/schema.ts`** — 2 new tables: `formExperiments` (status lifecycle: draft → running → paused → concluded), `formExperimentVariants` (traffic weights in basis points, view/conversion counters). Added `experimentId`, `variantId`, `visitorId` to `formSubmissions` and `formPartials`
+- **`convex/formExperiments.ts`** (new) — Full experiment backend:
+  - Mutations: `createExperiment` (duplicates form for variant B, 50/50 split), `startExperiment`, `pauseExperiment`, `resumeExperiment`, `concludeExperiment` (records winner), `updateTrafficSplit` (validates sum=10000), `deleteExperiment`, `internalRecordView`, `internalRecordConversion`
+  - Queries: `getExperiment` (with Bayesian stats), `getExperimentByForm`, `listExperiments`, `internalGetActiveExperiment`
+  - Bayesian stats: Beta-Binomial model, 10,000 Monte Carlo samples via xorshift32 PRNG, 95% credible intervals, probability of winning per variant
+- **`convex/router.ts`** — GET `/api/v1/forms/public` returns experiment config (variants with keys/weights) alongside form data. New POST `/api/v1/forms/experiment/view` for view tracking. Submit endpoint passes `experimentId`/`variantId`/`visitorId` through
+- **`convex/formSubmissions.ts`** — After successful submission with `variantId`, calls `internalRecordConversion` to increment variant counter
+- **`src/lib/abTesting.ts`** (new) — MurmurHash3 (32-bit), `getVisitorId()` (localStorage-persisted), `selectVariant()` (hash-based bucketing into 0-10000 range)
+- **`src/pages/PublicFormPage.tsx`** — After fetching form, checks for active experiment, selects variant deterministically, fetches variant form data if non-control, fires view tracking (fire-and-forget with keepalive), includes experiment data in submit payload
+- **`src/components/forms/FormExperimentPage.tsx`** (new) — Experiment dashboard: status management (start/pause/resume), variant comparison table (visitors, conversions, rate, probability), visual probability bar, traffic split slider, winner declaration with ConfirmDialog
+- **`src/components/forms/experiment/ExperimentSetupModal.tsx`** (new) — Modal for creating experiments: name input, hypothesis textarea, info card explaining variant B creation
+- **`src/components/forms/FormBuilderPage.tsx`** — Experiment bar between header and content: shows "Criar Teste A/B" button or active experiment status/stats with link to dashboard
+- **`src/components/forms/FormListPage.tsx`** — A/B badge (FlaskConical icon) on form cards with active experiments
+- **`src/main.tsx`** — New route: `/app/formularios/:formId/experimento/:experimentId`
+
+#### Files Created (5)
+
+| File | Purpose |
+|------|---------|
+| `src/lib/utmPersistence.ts` | UTM resolution: URL → sessionStorage → cookie |
+| `src/lib/abTesting.ts` | MurmurHash3, visitorId, deterministic variant selection |
+| `convex/formExperiments.ts` | Experiment CRUD, variant management, Bayesian stats |
+| `src/components/forms/FormExperimentPage.tsx` | A/B test dashboard page |
+| `src/components/forms/experiment/ExperimentSetupModal.tsx` | Create experiment modal |
+
+#### Files Modified (10)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | +`utmContent`/`utmTerm` on 2 tables, +`experimentId`/`variantId`/`visitorId` on 2 tables, +2 new tables |
+| `convex/router.ts` | UTM body-priority bug fix, experiment in form GET, view tracking endpoint, experiment fields in submit |
+| `convex/formSubmissions.ts` | UTM + experiment args, conversion tracking, 5-dimension UTM analytics |
+| `convex/formPartials.ts` | UTM + experiment args |
+| `convex/embedScript.ts` | Rebuilt with UTM forwarding |
+| `src/pages/PublicFormPage.tsx` | UTM persistence, A/B variant routing, experiment submit data |
+| `src/embed/loader.ts` | Forward parent UTMs to iframe |
+| `src/components/forms/FormAnalyticsPage.tsx` | Tabbed 5-dimension UTM breakdown |
+| `src/components/forms/FormBuilderPage.tsx` | Experiment bar with status/stats |
+| `src/components/forms/FormListPage.tsx` | A/B badge on cards |
+| `src/main.tsx` | Experiment route |
+
+---
+
+## [0.25.0] - 2026-03-01
+
+### Partial Submission Recovery + Popup/Widget Embeds
+
+Two Tier 1 features: recover data from the 67% of forms that are abandoned mid-fill, and embed forms as popups, slide-ins, and side tabs that convert 3-5x better than static iframes.
+
+#### Feature 1: Partial Submission Recovery
+
+Automatically captures field data as visitors fill out forms, even if they never submit. A cron job marks stale sessions as abandoned, and successful submissions convert the partial record.
+
+- **`convex/schema.ts`** — New `formPartials` table (sessionId, status, data, completedFieldIds, completionPercent, 5 indexes), `sessionId` on `formSubmissions`, `partialCaptureEnabled` in form settings
+- **`convex/formPartials.ts`** (new) — `internalSavePartial` (upsert with 2s server-side throttle), `internalMarkConverted`, `internalMarkAbandoned` (15-min threshold + `form.abandoned` webhook), `getFormPartials`, `getPartialStats`
+- **`convex/crons.ts`** — 10-minute cron for abandoned partial detection
+- **`convex/formSubmissions.ts`** — `internalProcessSubmission` accepts `sessionId`, stores on record, calls `internalMarkConverted` on success
+- **`convex/forms.ts`** — `deleteForm` deletes related `formPartials`
+- **`convex/router.ts`** — `POST /api/v1/forms/public/partial` (public, handles `sendBeacon` text/plain), `sessionId` passed through submit endpoint, `partialCaptureEnabled` in GET response
+- **`src/components/forms/renderer/usePartialCapture.ts`** (new) — Client hook: `sessionId` via `crypto.randomUUID()` persisted in `sessionStorage`, debounced save (2s), `navigator.sendBeacon` on `beforeunload`, periodic save (45s), immediate save on step change
+- **`src/components/forms/renderer/FormRenderer.tsx`** — Integrates `usePartialCapture` hook, LGPD transparency notice, `onBlur` callback for partial tracking
+- **`src/components/forms/renderer/FormField.tsx`** — `onBlur` prop added to all input types (text, email, phone, number, date, url, select, textarea, checkbox, radio)
+- **`src/components/forms/FormSubmissionsPage.tsx`** — "Parciais" tab with stats bar (total, abandoned, converted, conversion rate), status filter tabs, progress bar per partial, expandable data preview, mobile cards
+- **`src/components/forms/builder/FormSettingsPanel.tsx`** — "Captura parcial" toggle section
+- **`src/pages/PublicFormPage.tsx`** — Passes `formSlug`, `siteUrl`, `onSessionId` to `FormRenderer`, includes `sessionId` in submit request body
+
+#### Feature 2: PostMessage Protocol (Embed Bridge)
+
+- **`src/pages/PublicFormPage.tsx`** — Detects `?embed=1` query param for embed mode (minimal wrapper, no min-height), `ResizeObserver` → `hnbcrm:resize`, posts `hnbcrm:ready` and `hnbcrm:submitted`, listens for `hnbcrm:prefill` from parent
+
+#### Feature 3: Popup/Widget Embed System
+
+Lightweight vanilla JS loader (2.63 KB gzipped) that external sites include via a single `<script>` tag. Zero dependencies.
+
+- **`src/embed/loader.ts`** (new) — IIFE reading `data-*` attributes from its own script tag. 4 display modes: **inline** (auto-height iframe in container), **popup** (overlay + centered dialog, fade animation), **slidein** (fixed bottom-right panel, slide-up), **sidetab** (persistent edge tab + expandable panel). 4 triggers: **click** (`[data-hnbcrm-open]` elements), **delay** (configurable seconds), **scroll** (percentage threshold), **exit_intent** (desktop mouseleave + mobile swipe detection). Suppression via `localStorage` with configurable days. PostMessage handling for resize/ready/submitted. All CSS injected via `<style>`, `hnbcrm-` prefixed classes. Closes on Escape key and overlay click.
+- **`vite.embed.config.ts`** (new) — Separate Vite config: lib mode, IIFE format, esbuild minification, `publicDir: false`
+- **`convex/embedScript.ts`** (new) — Exports embed loader as string constant for HTTP serving
+- **`convex/router.ts`** — `GET /api/v1/embed.js` serves script with 24h cache + CORS
+- **`package.json`** — `build:embed` script
+
+#### Feature 4: Embed Configuration UI
+
+- **`src/components/forms/builder/EmbedConfigPanel.tsx`** (new) — Mode selector (4 visual cards), trigger selector (popup/slidein), trigger-specific inputs (delay seconds, scroll %), suppression days, tab label + position (sidetab), live-updating code snippet with copy button
+- **`src/components/forms/builder/PublishDialog.tsx`** — Rewritten with tabbed interface: "Status" tab (existing publish/unpublish flow) + "Incorporacao" tab (embed configuration)
+
+#### Files Created (6)
+
+| File | Purpose |
+|------|---------|
+| `convex/formPartials.ts` | Partial submission CRUD + cron handler |
+| `convex/embedScript.ts` | Embed loader JS content for HTTP serving |
+| `src/components/forms/renderer/usePartialCapture.ts` | Client-side partial capture hook |
+| `src/components/forms/builder/EmbedConfigPanel.tsx` | Embed config UI panel |
+| `src/embed/loader.ts` | Standalone embed loader (vanilla TS, 2.63 KB gzipped) |
+| `vite.embed.config.ts` | Vite build config for embed script |
+
+#### Files Modified (12)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | `formPartials` table, `sessionId` on submissions, `partialCaptureEnabled` setting |
+| `convex/router.ts` | `POST /partial`, `GET /embed.js` endpoints, `sessionId` in submit, `partialCaptureEnabled` in GET |
+| `convex/formSubmissions.ts` | `sessionId` arg + storage, `internalMarkConverted` call |
+| `convex/forms.ts` | Partials cleanup on form deletion |
+| `convex/crons.ts` | Abandonment detection cron (10 min) |
+| `src/pages/PublicFormPage.tsx` | PostMessage protocol, embed mode, partial capture integration |
+| `src/components/forms/renderer/FormRenderer.tsx` | `usePartialCapture` hook, LGPD notice, `onBlur` wiring |
+| `src/components/forms/renderer/FormField.tsx` | `onBlur` prop on all input types |
+| `src/components/forms/builder/PublishDialog.tsx` | Tabbed UI (Status + Incorporacao) |
+| `src/components/forms/builder/FormSettingsPanel.tsx` | Partial capture toggle |
+| `src/components/forms/builder/types.ts` | `partialCaptureEnabled` in FormSettings |
+| `package.json` | `build:embed` script |
+
+---
+
+## [0.24.0] - 2026-03-01
+
+### Form Builder v2 — 7 Major Upgrades
+
+Complete overhaul of the form builder with submission management, 6 new field types, conditional logic, multi-step forms, analytics dashboard, server-side validation, and post-submission experience.
+
+#### Phase 1: Submission Management View
+
+- **`FormSubmissionsPage.tsx`** (new) — Paginated table with status filter tabs (Todas/Processadas/Spam/Erros), expandable rows showing all field values, desktop table + mobile card layout, CSV export with UTF-8 BOM
+- **`formSubmissions.ts`** — Added `getFormSubmissionsPaginated` query using cursor-based pagination (`paginationOptsValidator`) with optional status filter via `by_form_and_status` index
+- **`formSubmissions.ts`** — Added `getFormAnalytics` query returning daily breakdown, UTM source analysis, spam rate
+- **`schema.ts`** — Added `by_form_and_status` index to `formSubmissions` table
+- **`main.tsx`** — Route `/app/formularios/:formId/submissoes`
+- **`FormListPage.tsx`** — Added "Ver submissoes" and "Analytics" quick links per form card
+
+#### Phase 2: Additional Field Types (6 new)
+
+Expanded from 8 to 14 field types: `radio`, `url`, `hidden`, `heading`, `divider`, `rating`.
+
+- **`schema.ts`** — Expanded field type union with 6 new literals
+- **`convex/lib/formFieldTypes.ts`** (new) — Shared `LAYOUT_FIELD_TYPES` and `OPTIONS_FIELD_TYPES` constants
+- **`builder/types.ts`** — Rewritten with `FieldType` union, `ConditionalLogic`, `FormStep`, expanded `FormSettings`
+- **`builder/FieldPalette.tsx`** — Split into "Campos de Entrada" (12 types) and "Layout" (2 types) sections
+- **`builder/FieldCard.tsx`** — Extended icon/label maps for 6 new types
+- **`builder/FieldConfigPanel.tsx`** — Per-type config: hidden (valor fixo), heading (titulo text), divider (visual-only message), rating (simplified), radio (reuses options editor)
+- **`renderer/FormField.tsx`** — Rewritten with renderers for all 14 types including `RatingInput` (clickable stars with hover state), radio fieldset, url input, hidden input, heading `<h3>`, divider `<hr>`
+- **`FormBuilderPage.tsx`** — Updated `DEFAULT_LABELS` and `createNewField()` for new types
+
+#### Phase 3: Conditional Logic / Field Visibility Rules
+
+Show/hide fields based on other field values with AND/OR logic and 8 operators.
+
+- **`schema.ts`** — Added optional `conditionalLogic` object to field definition: `action` (show/hide), `logic` (all/any), `conditions[]` with `fieldId`, `operator` (equals, not_equals, contains, not_contains, is_empty, is_not_empty, greater_than, less_than), `value`
+- **`builder/ConditionalLogicEditor.tsx`** (new) — Toggle + condition rows UI with field/operator/value selectors, SegmentControl for action/logic, filters out current field and layout fields
+- **`builder/FieldConfigPanel.tsx`** — Integrated ConditionalLogicEditor section, added `allFields` prop
+- **`renderer/FormRenderer.tsx`** — `evaluateFieldVisibility()` callback; hidden fields get `display: none`; excluded from submit payload
+- **`formSubmissions.ts`** — Server-side `evaluateFieldVisibilityServer()` mirrors client logic; only visible fields mapped to CRM
+
+#### Phase 4: Multi-Step Forms
+
+Step grouping with progress bar, per-step validation, and backward-compatible design.
+
+- **`schema.ts`** — Added optional `steps` array to forms table: `{ id, title, description?, fieldIds[] }`
+- **`builder/StepManager.tsx`** (new) — Enable toggle, step cards with field assignment (pill-based add/remove), reorder, add/delete, unassigned fields warning
+- **`FormBuilderPage.tsx`** — "Etapas" tab in editor, `steps` state with dirty tracking, save/publish includes steps
+- **`renderer/FormRenderer.tsx`** — Multi-step rendering: one step at a time, Anterior/Proximo/Enviar buttons, `StepProgressBar` component, per-step validation
+- **`forms.ts`** — `publishForm` validates every field assigned to exactly one step; `updateForm`/`duplicateForm` include steps
+- **`router.ts`** — Public form GET includes `steps` in response
+
+#### Phase 5: Form Analytics Dashboard
+
+- **`FormAnalyticsPage.tsx`** (new) — Summary cards (total, 7d, 30d, spam rate), inline SVG sparkline chart (polyline + gradient fill), status breakdown with semantic badges, UTM source table with horizontal bar chart
+- **`main.tsx`** — Route `/app/formularios/:formId/analytics`
+
+#### Phase 6: Server-Side Validation + Duplicate Prevention
+
+- **`formSubmissions.ts`** — `validateSubmissionData()` helper mirroring client validation (required, email regex, url, rating, min/max, pattern); called in `internalProcessSubmission`; invalid submissions stored as `processingStatus: "error"`
+- **`formSubmissions.ts`** — `hashSubmissionData()` for duplicate detection; queries recent submissions (60s window); rejects if fingerprint matches
+- **`router.ts`** — Returns `422` for validation errors, `409` for duplicates with structured JSON responses
+
+#### Phase 7: Custom Thank You Page + Confirmation Email
+
+- **`schema.ts`** — Expanded `settings`: `successTitle`, `successSubtitle`, `successCta` (label + url), `confirmationEmail` (enabled, subject, body, replyTo)
+- **`builder/FormSettingsPanel.tsx`** — "Pagina de sucesso" section (title/subtitle with `{variable}` hint, CTA button fields) + "Email de confirmacao" section (toggle, subject, body textarea, reply-to)
+- **`renderer/FormSuccess.tsx`** — Rewritten with `replaceVariables()` for `{field}` template support, optional CTA button, fallback to simple message
+- **`email.ts`** — Added `sendConfirmationEmail` internal mutation using Resend component
+- **`emailTemplates.ts`** — Added `buildFormConfirmationTemplate()` with variable replacement + "formConfirmation" dispatcher case
+- **`router.ts`** — Public form GET includes `successTitle`, `successSubtitle`, `successCta`
+
+#### Files Created (5)
+
+| File | Purpose |
+|------|---------|
+| `convex/lib/formFieldTypes.ts` | Shared constants for layout/options field types |
+| `src/components/forms/FormSubmissionsPage.tsx` | Paginated submissions table with filters + CSV export |
+| `src/components/forms/FormAnalyticsPage.tsx` | Analytics dashboard with sparkline + UTM breakdown |
+| `src/components/forms/builder/ConditionalLogicEditor.tsx` | Conditional logic rule editor |
+| `src/components/forms/builder/StepManager.tsx` | Multi-step form manager |
+
+#### Files Modified (18)
+
+| File | Changes |
+|------|---------|
+| `convex/schema.ts` | 6 new field types, conditionalLogic, steps, expanded settings, new index |
+| `convex/formSubmissions.ts` | Paginated query, analytics, server validation, dedup, conditional logic eval, confirmation email |
+| `convex/forms.ts` | Step validation in publish, steps in update/duplicate, layout field filtering |
+| `convex/router.ts` | Steps + success settings in GET, 422/409 responses in submit |
+| `convex/email.ts` | `sendConfirmationEmail` internal mutation |
+| `convex/emailTemplates.ts` | `buildFormConfirmationTemplate` + dispatcher case |
+| `src/main.tsx` | 2 new lazy routes (submissions, analytics) |
+| `src/components/forms/FormBuilderPage.tsx` | Steps state, StepManager tab, allFields to config panel |
+| `src/components/forms/FormListPage.tsx` | Quick links (submissions, analytics) |
+| `src/components/forms/builder/types.ts` | FieldType union, ConditionalLogic, FormStep, expanded FormSettings |
+| `src/components/forms/builder/FieldPalette.tsx` | Grouped sections, 6 new field buttons |
+| `src/components/forms/builder/FieldCard.tsx` | 6 new icon/label entries |
+| `src/components/forms/builder/FieldConfigPanel.tsx` | Per-type configs, ConditionalLogicEditor integration |
+| `src/components/forms/builder/FormSettingsPanel.tsx` | Success page + confirmation email settings |
+| `src/components/forms/renderer/FormField.tsx` | 6 new field renderers (rating, radio, url, hidden, heading, divider) |
+| `src/components/forms/renderer/FormRenderer.tsx` | Conditional logic, multi-step, new field types, error handling |
+| `src/components/forms/renderer/FormSuccess.tsx` | Variable replacement, CTA button |
+
+---
+
+## [0.23.0] - 2026-03-01
+
+### Landing Page & Developer Portal — GitHub + Open-Source Overhaul
+
+GitHub presence, open-source credibility, and community links added across landing page and developer portal. Shared footer, extracted hook, and section reorder for better conversion flow.
+
+#### New Files
+
+- **`src/hooks/useInView.ts`** — Extracted shared `useInView` IntersectionObserver hook (was inline in LandingPage)
+- **`src/components/landing/OpenSourceSection.tsx`** — Replaces SocialProofBar with open-source credibility section: MIT License badge, 3 stat cards (v0.22.0, 44+ MCP tools, TypeScript 99%), tech stack badges (React, Convex, TailwindCSS, TypeScript), centered GitHub CTA
+- **`src/components/landing/Footer.tsx`** — Shared 4-column footer used by both LandingPage and DevelopersPage: Brand column, Produto (Funcionalidades, Precos, Roadmap, Entrar), Desenvolvedores (Docs, Playground, MCP, Agent Skills), Comunidade (GitHub, npm, Contribuir, Seguranca). Copyright 2026 + MIT License link
+
+#### Landing Page (`src/components/LandingPage.tsx`)
+
+- **Header** — Added GitHub icon link (lucide-react `Github`) before Developers/Entrar nav items
+- **Hero CTAs** — Replaced "Ver Funcionalidades" scroll button with "Ver no GitHub" external link with Github icon
+- **Section reorder** — `OpenSourceSection → Features → Developer → HowItWorks → ComingSoon → Pricing → CTA` (HowItWorks moved before ComingSoon for better conversion flow)
+- **DeveloperSection** — Added 5th card "Codigo Aberto" linking to GitHub repo; grid updated to `lg:grid-cols-5`; external link handling for non-internal routes
+- **CTASection** — Added "ou explore o codigo no GitHub" soft text link below primary CTA button
+- **Footer** — Replaced inline footer with shared `<Footer />` component
+- **Cleanup** — Removed `SocialProofBar` function, inline `useInView` hook, unused imports (`Sparkles`, `TrendingUp`, `Zap as Lightning`)
+
+#### Developer Portal (`src/pages/DevelopersPage.tsx`)
+
+- **Header** — Added GitHub icon link before "Voltar" button
+- **Desktop sidebar** — Added GitHub external link at bottom with divider separator
+- **Hero section** — Added "Open Source — MIT License" badge linking to GitHub and "npm: hnbcrm-mcp" linking to npmjs.com
+- **Quick Start** — Added self-host card before existing steps: `git clone`, `npm install`, `npm run dev` in CodeBlock
+- **Footer** — Replaced inline footer with shared `<Footer />` component
+
+#### Links
+
+- All GitHub links → `github.com/ericmil87/hnbcrm` (new tab)
+- All npm links → `npmjs.com/package/hnbcrm-mcp` (new tab)
+- Copyright updated from 2025 to 2026
+
+---
+
+## [0.22.0] - 2026-02-19
+
+### Form Builder — WYSIWYG Editor, Public Forms & Embeds
+
+Complete embeddable form system: visual form builder with drag-and-drop fields, customizable themes, CRM field mapping, public form URLs, honeypot spam protection, and iframe/script embed codes.
+
+#### Schema — 2 New Tables (`convex/schema.ts`)
+
+- **`forms` table** — Form definitions with embedded field array, theme config, lead creation settings, assignment modes
+  - **8 field types**: text, email, phone, number, select, textarea, checkbox, date
+  - **CRM mapping**: Each field optionally maps to a contact or lead entity field
+  - **Theme object**: primaryColor, backgroundColor, textColor, borderRadius, showBranding
+  - **Settings object**: submitButtonText, successMessage, redirectUrl, leadTitle template, boardId/stageId/sourceId, assignmentMode (none/specific/round_robin), defaultPriority, defaultTemperature, tags, honeypotEnabled, submissionLimit, notifyOnSubmission, notifyMemberIds
+  - **4 indexes**: `by_organization`, `by_organization_and_status`, `by_slug`, `by_organization_and_slug`
+- **`formSubmissions` table** — Submission data with lead/contact linkage, UTM tracking, spam detection
+  - **Processing statuses**: processed, spam, error
+  - **3 indexes**: `by_form`, `by_form_and_created`, `by_organization_and_created`
+
+#### Backend — `convex/forms.ts` (10 functions)
+
+- **Queries**: `getForms`, `getForm`, `checkSlugAvailability`, `internalGetPublishedForm`
+- **Mutations**: `createForm` (with default fields + auto-slug), `updateForm`, `publishForm`, `unpublishForm`, `archiveForm`, `deleteForm` (cascade deletes submissions), `duplicateForm`
+- All mutations include audit logging and webhook triggers
+
+#### Backend — `convex/formSubmissions.ts` (3 functions)
+
+- **`internalProcessSubmission`** — Processes public submission: validates honeypot, extracts CRM-mapped fields, finds/creates contact, creates lead (with assignment mode logic), stores submission, logs activity/audit, triggers webhooks, sends email notifications
+- **`getFormSubmissions`** — Paginated submission list per form
+- **`getFormStats`** — Submission analytics: total, processed, spam, error, last 7d, last 30d
+
+#### HTTP API — 2 Public Endpoints (`convex/router.ts`)
+
+- **`GET /api/v1/forms/public?slug=xxx`** — Fetch published form by slug (no auth required, returns sanitized fields/theme/settings)
+- **`POST /api/v1/forms/public/submit`** — Submit form data (no auth, body: `{ slug, data, _honeypot }`), returns `{ success, leadId, contactId }`
+- CORS preflight routes for both endpoints
+
+#### Frontend — 14 New Components (`src/components/forms/`)
+
+**Builder components** (`builder/`):
+- **FieldPalette.tsx** — Sidebar palette with 8 draggable field types
+- **FieldCanvas.tsx** — Drag-and-drop canvas for arranging form fields
+- **FieldCard.tsx** — Individual field card in the canvas (draggable, click to configure)
+- **FieldConfigPanel.tsx** — Property editor for selected field (label, placeholder, required, validation, width)
+- **CrmMappingSelect.tsx** — Contact/lead field mapping selector
+- **FormSettingsPanel.tsx** — Lead creation settings (title template, board, stage, source, assignment, priority, temperature, tags)
+- **ThemePanel.tsx** — Visual theme editor (colors, border radius, branding toggle) with live preview
+- **PublishDialog.tsx** — Publish confirmation with shareable URL, iframe embed code, and script embed code
+- **types.ts** — Shared TypeScript types for the builder
+
+**Renderer components** (`renderer/`):
+- **FormRenderer.tsx** — Renders form from field definitions with validation and submission
+- **FormField.tsx** — Individual field renderer (8 types) with error states
+- **FormSuccess.tsx** — Post-submission success screen with custom message
+
+**Page components**:
+- **FormListPage.tsx** — Form management list with status badges, submission counts, quick actions (route: `/app/formularios`)
+- **FormBuilderPage.tsx** — Full WYSIWYG form builder with tabbed panels (Fields, Settings, Theme), live preview, auto-save (route: `/app/formularios/:id`)
+
+#### Public Form Page (`src/pages/PublicFormPage.tsx`)
+
+- Standalone page at `/f/:slug` — fetches form via public HTTP endpoint, renders with FormRenderer
+- No authentication required — accessible to anyone with the link
+- Honeypot field for spam protection, UTM parameter tracking
+- SEO meta tags via `<SEO />` component
+
+#### Navigation
+
+- New `/app/formularios` route in `src/lib/routes.ts`
+- New `/app/formularios/:id` route for form builder
+- New `/f/:slug` public route for form rendering
+- "Formularios" tab added to Sidebar (desktop) and BottomTabBar (mobile)
+
+#### Documentation Updates
+
+- **`convex/CLAUDE.md`** — Added `forms.ts` and `formSubmissions.ts` to file layout table
+- **`src/CLAUDE.md`** — Added `forms/` directory tree and `PublicFormPage.tsx` to component structure
+- **`convex/llmsTxt.ts`** — Added Form and FormSubmission data models, public form endpoints
+- **`README.md`** — Added "Embeddable Forms" to features list
+- **`.claude/skills/hnbcrm/SKILL.md`** — Mentioned form submission workflow
+- **`.claude/skills/hnbcrm/references/WORKFLOWS.md`** — Added Workflow 8: Form Submission
+- **`.claude/skills/hnbcrm/references/API_REFERENCE.md`** — Added public form endpoints
+- **`.claude/skills/hnbcrm/references/DATA_MODEL.md`** — Added Form and FormSubmission entities
+
+---
+
+## [0.21.0] - 2026-02-19
+
+### Email Notification System — Resend Integration, Templates & Preferences
+
+Complete transactional email system using `@convex-dev/resend` with 8 PT-BR templates, per-member opt-out preferences, daily digest cron, and full MCP/REST API integration.
+
+#### Backend — Email Infrastructure
+
+**`convex/email.ts`** — Central email module
+- **Resend component instance** — `@convex-dev/resend` wrapper with `testMode: true` (dev safety) and event webhook handler
+- **`dispatchNotification` internal mutation** — Single entry point for all email sends; checks recipient is human with email, checks opt-out preferences, builds template, sends via Resend
+- **`sendDailyDigest` internal mutation** — Iterates all orgs, gathers 24h stats (new leads, completed tasks, pending handoffs, overdue tasks), sends digest to eligible members
+- **`handleEmailEvent`** — Resend webhook handler for delivery status tracking
+
+**`convex/emailTemplates.ts`** — 8 PT-BR dark-theme email templates
+- **`invite`** — Welcome email with temp credentials and CTA button
+- **`handoffRequested`** — Handoff request with lead details and suggested actions
+- **`handoffResolved`** — Handoff accepted/rejected notification with status color
+- **`taskOverdue`** — Overdue task reminder with due date
+- **`taskAssigned`** — New task assignment notification
+- **`leadAssigned`** — Lead assignment with value and contact info
+- **`newMessage`** — New inbound message with preview and channel label
+- **`dailyDigest`** — 4-metric summary card (new leads, completed tasks, pending handoffs, overdue tasks)
+- All templates use shared `baseTemplate` with HNBCRM branding (orange accent, dark card, pill CTA button)
+
+**`convex/convex.config.ts`** — Convex component registration
+- Registers `@convex-dev/resend` component for email delivery
+
+#### Schema & Preferences (`convex/schema.ts`, `convex/notificationPreferences.ts`)
+
+- **`notificationPreferences` table** — Per-member opt-out model (no row = all enabled)
+- **8 boolean fields** — `invite`, `handoffRequested`, `handoffResolved`, `taskOverdue`, `taskAssigned`, `leadAssigned`, `newMessage`, `dailyDigest`
+- **3 indexes** — `by_organization`, `by_organization_and_member`, `by_member`
+- **Public queries/mutations** — `getMyPreferences`, `updateMyPreferences` (upsert), `getMemberPreferences` (admin)
+- **Internal functions** — `shouldNotify`, `internalGetPreferences`, `internalUpsertPreferences`
+
+#### Email Triggers Wired (4 backend files, 10 call sites)
+
+- **`handoffs.ts`** — `requestHandoff` → `handoffRequested` to target member; `acceptHandoff`/`rejectHandoff` → `handoffResolved` to requester (both public + internal variants)
+- **`leads.ts`** — `assignLead` → `leadAssigned` to assignee (both public + internal)
+- **`tasks.ts`** — `createTask`/`assignTask` → `taskAssigned` to assignee; `processOverdueReminders` → `taskOverdue` to assignee (both public + internal)
+- **`nodeActions.ts`** — `inviteHumanMember` → `invite` email with org name, credentials, and login URL
+
+#### Cron Job (`convex/crons.ts`)
+
+- **Daily digest** — `sendDailyDigest` scheduled at 11:00 UTC (08:00 BRT) via `crons.daily()`
+
+#### HTTP API (`convex/router.ts`)
+
+- **`GET /api/v1/notifications/preferences`** — Get notification preferences for authenticated API key's team member
+- **`PUT /api/v1/notifications/preferences`** — Update notification preferences (partial update, upsert)
+- **`POST /api/v1/webhooks/resend`** — Resend email delivery webhook endpoint (authenticated via RESEND_WEBHOOK_SECRET)
+- CORS preflight routes added for both new paths
+
+#### MCP Server — Notification Tools (`mcp-server/src/tools/notifications.ts`)
+
+- **`crm_get_notification_preferences`** — Get current agent's email notification preferences
+- **`crm_update_notification_preferences`** — Update preferences (e.g., disable `dailyDigest`)
+- **`HnbCrmClient.put()` method** — Added PUT support to MCP client
+- Tool count updated: 44 → **46 tools across 9 categories**
+
+#### Frontend — Notification Preferences (`src/components/notifications/NotificationPreferences.tsx`)
+
+- **NotificationsSection** — Settings tab with toggle switches for each notification type
+- Integrated into `Settings.tsx` as "Notificacoes" section tab
+
+#### Documentation Updates
+
+- **`CLAUDE.md`** — Added Email/Notifications section with env vars, domain config, dispatch pattern
+- **`convex/CLAUDE.md`** — Added `email.ts`, `emailTemplates.ts`, `convex.config.ts`, `notificationPreferences.ts` to file layout; added email dispatch to mutation side-effects checklist
+- **`src/CLAUDE.md`** — Added `notifications/NotificationPreferences.tsx` to component tree
+- **`README.md`** — Added full "Email Setup (Resend)" section with domain config, env vars, webhook setup, test mode, and architecture overview
+- **`convex/llmsTxt.ts`** — Added `notificationPreferences` data model, notification preference endpoints, event type reference table; updated MCP tool count to 46
+- **`.claude/skills/hnbcrm/SKILL.md`** — Added "Email Notifications" section with MCP tool references
+- **`.claude/skills/hnbcrm/references/API_REFERENCE.md`** — Added notification tools mapping
+- **`.claude/skills/hnbcrm/references/DATA_MODEL.md`** — Added notification preferences entity and `Notification Event Type` enum
+- **`.claude/skills/hnbcrm/references/WORKFLOWS.md`** — Added workflow 7: Email Notifications
+- **`mcp-server/README.md`** — Added Notifications category (2 tools), updated totals to 46 tools / 9 categories
+
+#### Dependencies Added
+
+- `@convex-dev/resend` ^0.2.3 — Convex component for Resend email delivery
+- `convex-helpers` ^0.1.112 — Convex utility helpers (peer dep)
+
+#### Docs Housekeeping
+
+- **Archived** — `docs/GOING-PUBLIC.md` and `docs/OPTIMIZATION-RESULTS.md` moved to `docs/archive/`
+- **New** — `docs/PRODUCTION-DEPLOYMENT-PLAN.md` — Production deployment checklist
+
+---
+
 ## [0.20.0] - 2026-02-19
 
 ### MCP Server Published to npm + OpenClaw Integration

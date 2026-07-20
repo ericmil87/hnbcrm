@@ -8,6 +8,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -727,11 +728,10 @@ function TaskRow({
       )}
     >
       {/* Select checkbox */}
-      <input
-        type="checkbox"
+      <Checkbox
         checked={isSelected}
         onChange={onToggleSelect}
-        className="shrink-0 h-4 w-4 rounded border-border-strong text-brand-500 focus:ring-brand-500 cursor-pointer"
+        containerClassName="shrink-0"
         aria-label="Selecionar tarefa"
       />
 

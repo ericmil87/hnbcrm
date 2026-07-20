@@ -6,11 +6,23 @@
 |------|---------|
 | `schema.ts` | All table definitions, indexes, validators |
 | `auth.ts` / `auth.config.ts` | Auth providers (Password + Anonymous) |
+| `convex.config.ts` | Convex component registration (Resend email) |
+| `crons.ts` | Scheduled jobs (overdue reminders, recurring tasks, daily digest) |
 | `http.ts` | Wires HTTP routes from `router.ts` |
 | `router.ts` | RESTful API endpoints (`/api/v1/*`), API key auth |
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD |
-| `conversations.ts` | Multi-channel conversations + messages |
+| `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
+| `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest) |
+| `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
+| `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
+| `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |
+| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch, branched by provider |
+| `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET` |
+| `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification (no ctx) |
+| `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
+| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
+| `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
 | `handoffs.ts` | AI-to-human handoff workflow |
 | `boards.ts` | Kanban boards and stages |
 | `organizations.ts` | Organization CRUD + settings |
@@ -19,6 +31,8 @@
 | `activities.ts` | Activity timeline events on leads |
 | `auditLogs.ts` | Audit trail queries |
 | `dashboard.ts` | Aggregation queries for dashboard |
+| `email.ts` | Central email dispatch, Resend instance, daily digest handler |
+| `emailTemplates.ts` | Pure TS email template builders (8 templates, PT-BR) |
 | `webhooks.ts` | Webhook CRUD |
 | `webhookTrigger.ts` | Internal action that fires webhooks |
 | `lib/auth.ts` | Shared `requireAuth()` + `requirePermission()` helpers |
@@ -26,6 +40,9 @@
 | `lib/batchGet.ts` | Utility for batch-fetching documents by IDs |
 | `authHelpers.ts` | Internal queries/mutations for auth table operations (user/authAccount CRUD) |
 | `nodeActions.ts` | Node.js actions: API key hashing, webhook dispatch, invite, password change |
+| `forms.ts` | Form builder CRUD: create, update, publish, archive, duplicate, slug check |
+| `formSubmissions.ts` | Form submission processing, stats, spam detection |
+| `notificationPreferences.ts` | Per-member notification preferences CRUD |
 | `apiKeys.ts` | API key generation, validation, revocation, permission scoping |
 | `leadSources.ts` / `fieldDefinitions.ts` | Lead sources + custom fields |
 | `llmsTxt.ts` | `/llms.txt` and `/llms-full.txt` endpoint content |
@@ -70,6 +87,7 @@ When writing mutations that create/update/delete entities, include all three:
 1. **Activity log** — `ctx.db.insert("activities", { organizationId, leadId, type, actorId, actorType, content, metadata, createdAt })`
 2. **Audit log** — `ctx.db.insert("auditLogs", { organizationId, entityType, entityId, action, actorId, actorType, changes: { before, after }, description: buildAuditDescription({...}), severity, createdAt })`
 3. **Webhook trigger** — `ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, { organizationId, event: "entity.action", payload })`
+4. **Email notification** — `ctx.scheduler.runAfter(0, internal.email.dispatchNotification, { organizationId, recipientMemberId, eventType, templateData })`
 
 ## Key Indexes
 

@@ -27,6 +27,22 @@ export class HnbCrmClient {
     return res.json();
   }
 
+  async put(path: string, body: Record<string, any>): Promise<any> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": this.apiKey,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
   async post(path: string, body: Record<string, any>): Promise<any> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",

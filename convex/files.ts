@@ -283,7 +283,7 @@ export const getFile = query({
         v.literal("import_file"),
         v.literal("other")
       ),
-      uploadedBy: v.id("teamMembers"),
+      uploadedBy: v.optional(v.id("teamMembers")),
       createdAt: v.number(),
       url: v.union(v.string(), v.null()),
     }),

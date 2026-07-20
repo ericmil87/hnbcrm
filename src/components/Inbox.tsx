@@ -1,72 +1,557 @@
-import React, { useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOutletContext } from "react-router";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { toast } from "sonner";
-import { Send, ArrowLeft } from "lucide-react";
+import { Send, ArrowLeft, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { MentionTextarea } from "@/components/ui/MentionTextarea";
-import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { extractMentionIds } from "@/lib/mentions";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
+import { FileUploadButton, type UploadedFile } from "@/components/ui/FileUploadButton";
+import { MessageBubble } from "@/components/inbox/MessageBubble";
+import { ForwardModal } from "@/components/inbox/ForwardModal";
+import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
+import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
+import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
+import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
+import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
 export function Inbox() {
   const { organizationId } = useOutletContext<AppOutletContext>();
-  const { can } = usePermissions(organizationId);
+  const { can, member } = usePermissions(organizationId);
+  const currentMemberId = member?._id ?? null;
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
   const [showMessages, setShowMessages] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<UploadedFile[]>([]);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Arquivadas + filtro por etiqueta na lista de conversas.
+  const [showArchived, setShowArchived] = useState(false);
+  const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
+
+  // Seleção múltipla na lista (arquivar/etiquetar em lote).
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
+  const [confirmBulk, setConfirmBulk] = useState<
+    null | { action: "archive" | "label"; labelId?: string }
+  >(null);
+
+  // Busca em mensagens (lista de conversas vira lista de resultados).
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedTerm, setDebouncedTerm] = useState("");
+  const [searchMonth, setSearchMonth] = useState(""); // "YYYY-MM" ou ""
+
+  // Onda 2 interaction state.
+  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
+  const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
+  const [recorderActive, setRecorderActive] = useState(false);
+
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Debounce da busca para não disparar uma query por tecla.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedTerm(searchTerm), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchTerm]);
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
+    ...(showArchived ? { archived: true } : {}),
   });
+
+  const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
 
   const messages = useQuery(
     api.conversations.getMessages,
     selectedConversation ? { conversationId: selectedConversation as Id<"conversations"> } : "skip"
   );
 
+  // Recorte do mês selecionado → range [início, fim] em ms.
+  const monthRange = (() => {
+    if (!/^\d{4}-\d{2}$/.test(searchMonth)) return null;
+    const [y, m] = searchMonth.split("-").map(Number);
+    return {
+      dateFrom: new Date(y, m - 1, 1).getTime(),
+      dateTo: new Date(y, m, 1).getTime() - 1,
+    };
+  })();
+
+  const isSearching = debouncedTerm.trim().length >= 2;
+  const searchResults = useQuery(
+    api.conversations.searchMessages,
+    isSearching
+      ? {
+          organizationId,
+          searchQuery: debouncedTerm,
+          ...(monthRange ?? {}),
+        }
+      : "skip"
+  );
+
+  const scheduledPending = useQuery(
+    api.scheduledMessages.listPending,
+    selectedConversation ? { conversationId: selectedConversation as Id<"conversations"> } : "skip"
+  );
+  const scheduleMessage = useMutation(api.scheduledMessages.schedule);
+  const cancelScheduled = useMutation(api.scheduledMessages.cancel);
+
+  const bulkArchiveConversations = useMutation(api.conversations.bulkSetConversationsArchived);
+  const bulkLabelConversations = useMutation(api.conversations.bulkApplyConversationLabel);
+
   const sendMessage = useMutation(api.conversations.sendMessage);
+  const reactToMessage = useMutation(api.conversations.reactToMessage);
+  const markConversationRead = useMutation(api.conversations.markConversationRead);
+  const sendTypingState = useMutation(api.conversations.sendTypingState);
+  const transcribe = useAction(api.transcription.transcribe);
+
+  // Typing indicator throttle bookkeeping.
+  const typingLastSentRef = useRef(0);
+  const typingPauseTimerRef = useRef<number | null>(null);
+  // markConversationRead de-dupe: last "conversationId:newestInboundId" acted on.
+  const lastReadSigRef = useRef<string | null>(null);
+
+  // Composer textarea — usado para inserir emoji na posição do cursor.
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const insertEmoji = (emoji: string) => {
+    const el = composerInputRef.current;
+    if (!el) {
+      setNewMessage((v) => v + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? newMessage.length;
+    const end = el.selectionEnd ?? start;
+    setNewMessage(newMessage.slice(0, start) + emoji + newMessage.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  // Agendamento de mensagem — popover com datetime no composer.
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleValue, setScheduleValue] = useState("");
+
+  const toLocalInputValue = (d: Date) => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const openSchedule = () => {
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    d.setMinutes(0, 0, 0);
+    setScheduleValue(toLocalInputValue(d));
+    setScheduleOpen(true);
+  };
+
+  const handleSchedule = async () => {
+    if (!selectedConversation || !newMessage.trim() || !scheduleValue) return;
+    const scheduledAt = new Date(scheduleValue).getTime();
+    if (Number.isNaN(scheduledAt)) return;
+    try {
+      await scheduleMessage({
+        conversationId: selectedConversation as Id<"conversations">,
+        content: newMessage.trim(),
+        scheduledAt,
+      });
+      toast.success(
+        `Mensagem agendada para ${new Date(scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+      );
+      setNewMessage("");
+      setScheduleOpen(false);
+      stopTyping();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Falha ao agendar");
+    }
+  };
+
+  const handleCancelScheduled = async (id: string) => {
+    try {
+      await cancelScheduled({ scheduledMessageId: id as Id<"scheduledMessages"> });
+      toast.success("Agendamento cancelado");
+    } catch {
+      toast.error("Falha ao cancelar agendamento");
+    }
+  };
+
+  // Respostas rápidas — "/" no composer (fora do modo nota interna).
+  const quickReplies = useQuickReplies({
+    organizationId,
+    value: newMessage,
+    enabled: !isInternal,
+    onApply: (content) => {
+      setNewMessage(content);
+      requestAnimationFrame(() => composerInputRef.current?.focus());
+    },
+  });
+
+  // Auto-scroll bookkeeping for the message thread (WhatsApp-style anchoring).
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const scrolledConvRef = useRef<string | null>(null);
+
+  const handleMessagesScroll = () => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    // Considera "perto do fim" quando falta menos de 120px para o rodapé.
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+
+  // On conversation switch: force-scroll to the newest message. On new messages:
+  // only stick to the bottom if the user was already near it (reading history stays put).
+  useLayoutEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el || !messages) return;
+    const switched = scrolledConvRef.current !== selectedConversation;
+    if (switched) {
+      scrolledConvRef.current = selectedConversation;
+      nearBottomRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [messages, selectedConversation]);
+
+  const validConversations = (conversations ?? []).filter(
+    (c): c is NonNullable<typeof c> => c !== null
+  );
+  const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
+  const listedConversations = filterLabelId
+    ? validConversations.filter((c) => ((c.labelIds ?? []) as string[]).includes(filterLabelId))
+    : validConversations;
+  const currentConversation = validConversations.find((c) => c._id === selectedConversation);
+  const channelIsWhatsapp = currentConversation?.channel === "whatsapp";
+  const contactName =
+    `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
+
+  // "digitando..." do contato — TTL de 12s no cliente (o "paused" pode se perder).
+  const contactPresence = currentConversation?.contactPresence as
+    | { state: "composing" | "paused"; at: number }
+    | undefined;
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (contactPresence?.state !== "composing") return;
+    setPresenceNow(Date.now());
+    const interval = setInterval(() => setPresenceNow(Date.now()), 4000);
+    return () => clearInterval(interval);
+  }, [contactPresence?.state, contactPresence?.at]);
+  const contactTyping =
+    contactPresence?.state === "composing" && presenceNow - contactPresence.at < 12_000;
+
+  // Content type is derived from the first staged file; the bridge only sends
+  // one attachment per message, so the first drives how it's classified.
+  const deriveContentType = (
+    files: UploadedFile[]
+  ): "text" | "image" | "audio" | "file" => {
+    const first = files[0];
+    if (!first) return "text";
+    if (first.mimeType.startsWith("image/")) return "image";
+    if (first.mimeType.startsWith("audio/")) return "audio";
+    return "file";
+  };
+
+  const stopTyping = () => {
+    if (typingPauseTimerRef.current !== null) {
+      window.clearTimeout(typingPauseTimerRef.current);
+      typingPauseTimerRef.current = null;
+    }
+    if (typingLastSentRef.current !== 0 && selectedConversation && channelIsWhatsapp) {
+      typingLastSentRef.current = 0;
+      sendTypingState({
+        conversationId: selectedConversation as Id<"conversations">,
+        state: "paused",
+      }).catch(() => {});
+    }
+  };
+
+  // Throttled "composing" on keystroke; "paused" after 3s idle. WhatsApp only.
+  const handleComposerActivity = () => {
+    if (!selectedConversation || !channelIsWhatsapp || isInternal) return;
+    const ts = Date.now();
+    if (ts - typingLastSentRef.current > 4000) {
+      typingLastSentRef.current = ts;
+      sendTypingState({
+        conversationId: selectedConversation as Id<"conversations">,
+        state: "composing",
+      }).catch(() => {});
+    }
+    if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
+    typingPauseTimerRef.current = window.setTimeout(() => {
+      typingLastSentRef.current = 0;
+      typingPauseTimerRef.current = null;
+      if (selectedConversation) {
+        sendTypingState({
+          conversationId: selectedConversation as Id<"conversations">,
+          state: "paused",
+        }).catch(() => {});
+      }
+    }, 3000);
+  };
+
+  // Mark inbound messages read when a conversation is open and a new newest
+  // inbound arrives. The signature guard prevents re-firing on our own patch.
+  useEffect(() => {
+    if (!selectedConversation || !messages) return;
+    const msgs = messages as InboxMessage[];
+    let newestInbound: InboxMessage | undefined;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].direction === "inbound") {
+        newestInbound = msgs[i];
+        break;
+      }
+    }
+    if (!newestInbound) return;
+    const sig = `${selectedConversation}:${newestInbound._id}`;
+    if (lastReadSigRef.current === sig) return;
+    lastReadSigRef.current = sig;
+    const conversationId = selectedConversation as Id<"conversations">;
+    const timer = window.setTimeout(() => {
+      markConversationRead({ conversationId }).catch(() => {});
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [selectedConversation, messages, markConversationRead]);
+
+  // Cancel any pending typing timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
+    };
+  }, []);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedConversation) return;
+    const trimmed = newMessage.trim();
+    if ((!trimmed && stagedFiles.length === 0) || !selectedConversation) return;
 
     try {
-      const trimmed = newMessage.trim();
       const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
+      const attachments = stagedFiles.map((f) => f.fileId);
 
       await sendMessage({
         conversationId: selectedConversation as Id<"conversations">,
         content: trimmed,
-        contentType: "text",
+        contentType: attachments.length ? deriveContentType(stagedFiles) : "text",
         isInternal,
+        attachments: attachments.length ? attachments : undefined,
         mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
+        replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
       });
       setNewMessage("");
+      setStagedFiles([]);
+      setReplyTo(null);
+      stopTyping();
     } catch (error) {
       toast.error("Falha ao enviar mensagem");
     }
   };
 
+  const handleSendVoice = async (file: UploadedFile) => {
+    if (!selectedConversation) throw new Error("no conversation");
+    await sendMessage({
+      conversationId: selectedConversation as Id<"conversations">,
+      content: "",
+      contentType: "audio",
+      attachments: [file.fileId],
+      replyToMessageId: replyTo ? (replyTo._id as Id<"messages">) : undefined,
+    });
+    setReplyTo(null);
+    stopTyping();
+  };
+
+  const handleReact = async (message: InboxMessage, emoji: string) => {
+    const mine = getReactions(message).find((r) => r.sender === currentMemberId)?.emoji ?? null;
+    const next = mine === emoji ? "" : emoji;
+    try {
+      await reactToMessage({ messageId: message._id as Id<"messages">, emoji: next });
+    } catch {
+      toast.error("Falha ao reagir à mensagem");
+    }
+  };
+
+  const handleTranscribe = async (message: InboxMessage) => {
+    setTranscribingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await transcribe({ organizationId, messageId: message._id as Id<"messages"> });
+      if (result.status === "failed") toast.error("Falha na transcrição");
+    } catch {
+      toast.error("Falha na transcrição");
+    } finally {
+      setTranscribingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(message._id);
+        return nextSet;
+      });
+    }
+  };
+
+  // Salto pendente para um resultado da busca — efetivado quando o thread carrega.
+  const pendingJumpRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const target = pendingJumpRef.current;
+    if (!target || !messages) return;
+    const el = document.getElementById(`msg-${target}`);
+    if (!el) return;
+    pendingJumpRef.current = null;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(target);
+    window.setTimeout(() => {
+      setHighlightId((cur) => (cur === target ? null : cur));
+    }, 2000);
+  }, [messages]);
+
+  const handleJumpToMessage = (messageId: string) => {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (!el) {
+      toast("A mensagem original não está carregada");
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(messageId);
+    window.setTimeout(() => {
+      setHighlightId((cur) => (cur === messageId ? null : cur));
+    }, 2000);
+  };
+
+  const resetConversationState = () => {
+    setStagedFiles([]);
+    setReplyTo(null);
+    setNewMessage("");
+    setRecorderActive(false);
+    stopTyping();
+    lastReadSigRef.current = null;
+  };
+
   const handleSelectConversation = (conversationId: string) => {
+    stopTyping();
     setSelectedConversation(conversationId);
     setShowMessages(true);
+    setStagedFiles([]);
+    setReplyTo(null);
+    setNewMessage("");
+    setRecorderActive(false);
+    lastReadSigRef.current = null;
   };
 
   const handleBackToList = () => {
+    resetConversationState();
     setShowMessages(false);
     setSelectedConversation(null);
+  };
+
+  // ── Seleção múltipla: arquivar/etiquetar em lote ──
+
+  const exitSelection = () => {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+    setBulkLabelOpen(false);
+  };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runBulkArchive = async () => {
+    const ids = Array.from(selectedIds) as Id<"conversations">[];
+    try {
+      await bulkArchiveConversations({
+        organizationId,
+        conversationIds: ids,
+        archived: !showArchived,
+      });
+      toast.success(
+        `${ids.length} conversa${ids.length === 1 ? "" : "s"} ${showArchived ? "desarquivada" : "arquivada"}${ids.length === 1 ? "" : "s"}`
+      );
+      exitSelection();
+    } catch {
+      toast.error("Falha na ação em lote");
+    }
+  };
+
+  const runBulkLabel = async (labelId: string) => {
+    const ids = Array.from(selectedIds) as Id<"conversations">[];
+    try {
+      await bulkLabelConversations({
+        organizationId,
+        conversationIds: ids,
+        labelId: labelId as Id<"conversationLabels">,
+      });
+      toast.success(`Etiqueta aplicada a ${ids.length} conversa${ids.length === 1 ? "" : "s"}`);
+      exitSelection();
+    } catch {
+      toast.error("Falha ao aplicar etiqueta");
+    }
+  };
+
+  // Acima de 5 conversas, pede confirmação antes de executar.
+  const handleBulkArchiveClick = () => {
+    if (selectedIds.size > 5) setConfirmBulk({ action: "archive" });
+    else void runBulkArchive();
+  };
+
+  const handleBulkLabelClick = (labelId: string) => {
+    setBulkLabelOpen(false);
+    if (selectedIds.size > 5) setConfirmBulk({ action: "label", labelId });
+    else void runBulkLabel(labelId);
+  };
+
+  const handleOpenSearchResult = (result: { _id: string; conversationId: string }) => {
+    if (result.conversationId === selectedConversation) {
+      setShowMessages(true);
+      handleJumpToMessage(result._id);
+      return;
+    }
+    pendingJumpRef.current = result._id;
+    handleSelectConversation(result.conversationId);
+  };
+
+  const clearSearch = () => {
+    setSearchTerm("");
+    setDebouncedTerm("");
+    setSearchMonth("");
+  };
+
+  // Trecho do resultado com o termo destacado (janela em volta do 1º match).
+  const renderSnippet = (content: string, term: string) => {
+    const idx = content.toLowerCase().indexOf(term.toLowerCase());
+    if (idx === -1) return content.slice(0, 90);
+    const start = Math.max(0, idx - 24);
+    return (
+      <>
+        {start > 0 ? "…" : ""}
+        {content.slice(start, idx)}
+        <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">
+          {content.slice(idx, idx + term.length)}
+        </mark>
+        {content.slice(idx + term.length, idx + term.length + 60)}
+      </>
+    );
   };
 
   if (!conversations) {
@@ -76,51 +561,6 @@ export function Inbox() {
       </div>
     );
   }
-
-  const validConversations = conversations.filter((c): c is NonNullable<typeof c> => c !== null);
-
-  // Message bubble styling based on sender type
-  const getMessageStyle = (message: {
-    isInternal: boolean;
-    direction: string;
-    senderType: string;
-  }) => {
-    if (message.isInternal) {
-      return {
-        align: "justify-end" as const,
-        bg: "bg-surface-overlay border border-dashed border-semantic-warning/30 text-text-primary",
-        rounded: "rounded-lg rounded-br-none",
-        label: "Nota Interna",
-        labelColor: "text-semantic-warning",
-      };
-    }
-    if (message.direction === "inbound" || message.senderType === "contact") {
-      return {
-        align: "justify-start" as const,
-        bg: "bg-surface-raised text-text-primary",
-        rounded: "rounded-lg rounded-bl-none",
-        label: "Contato",
-        labelColor: "text-text-secondary",
-      };
-    }
-    if (message.senderType === "ai") {
-      return {
-        align: "justify-end" as const,
-        bg: "bg-purple-600/80 text-white",
-        rounded: "rounded-lg rounded-br-none",
-        label: "Agente IA",
-        labelColor: "text-purple-300",
-      };
-    }
-    // Human team member
-    return {
-      align: "justify-end" as const,
-      bg: "bg-brand-600 text-white",
-      rounded: "rounded-lg rounded-br-none",
-      label: "Equipe",
-      labelColor: "text-brand-200",
-    };
-  };
 
   const getChannelBadgeVariant = (channel: string) => {
     switch (channel) {
@@ -135,39 +575,299 @@ export function Inbox() {
     }
   };
 
+  // Media icon for the last-message preview in the conversation list
+  const getPreviewIcon = (contentType: string | null, bridgeType: string | null) => {
+    if (contentType === "audio" || bridgeType === "audio") return Mic;
+    if (contentType === "image" || bridgeType === "sticker" || bridgeType === "image") return ImageIcon;
+    if (bridgeType === "video") return Video;
+    if (contentType === "file") return FileText;
+    return null;
+  };
+
+  // 24h WhatsApp service window label for the conversation header
+  const getServiceWindowInfo = (serviceWindowExpiresAt: number | null) => {
+    if (!serviceWindowExpiresAt || serviceWindowExpiresAt <= now) {
+      return {
+        text: "Janela fechada — requer template",
+        tone: "text-semantic-warning" as const,
+      };
+    }
+    const remainingMs = serviceWindowExpiresAt - now;
+    const remainingMinutes = Math.max(1, Math.round(remainingMs / 60_000));
+    const label =
+      remainingMinutes < 60
+        ? `Janela fecha em ${remainingMinutes}min`
+        : `Janela fecha em ${Math.round(remainingMinutes / 60)}h`;
+    return { text: label, tone: "text-text-secondary" as const };
+  };
+
+  // The 24h window + template CTA only apply to the official Cloud API. Bridge
+  // (unofficial) conversations report serviceWindowApplies === false — hide it.
+  const windowInfo =
+    currentConversation?.channel === "whatsapp" &&
+    currentConversation.serviceWindowApplies !== false
+      ? getServiceWindowInfo(currentConversation.serviceWindowExpiresAt)
+      : null;
+
+  const canReply = can("inbox", "reply");
+  // Voice recorder / mic replaces the send button when there's nothing typed.
+  const composerEmpty = newMessage.trim() === "" && stagedFiles.length === 0;
+  const showVoice =
+    channelIsWhatsapp && !isInternal && canReply && (recorderActive || composerEmpty);
+
+  // Compact preview for the composer reply citation bar.
+  const replyPreview = replyTo
+    ? replyTo.content && !isMediaPlaceholder(replyTo.content)
+      ? replyTo.content
+      : isVoiceNote(replyTo)
+        ? "Mensagem de voz"
+        : "Mídia"
+    : "";
+  const replyAuthor =
+    replyTo && (replyTo.direction === "inbound" || replyTo.senderType === "contact")
+      ? contactName || "Contato"
+      : "Você";
+
   return (
-    <>
-      <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
-      <div className="h-full flex flex-col md:flex-row">
+    <div className="fixed top-0 left-0 right-0 h-[calc(100dvh-64px-env(safe-area-inset-bottom,0px))] md:left-16 lg:left-56 md:h-[100dvh] flex flex-col bg-surface-base">
+      {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
+      <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
+        <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
+      </div>
+
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row">
       {/* Conversations List */}
       <div
         className={cn(
-          "w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col",
+          "w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0",
           showMessages && "hidden md:flex"
         )}
       >
-        <div className="p-4 border-b border-border">
+        <div className="p-4 border-b border-border space-y-2.5">
           <h2 className="text-lg font-semibold text-text-primary">Conversas</h2>
+          <div className="relative">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+            />
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Buscar nas mensagens..."
+              className={cn(
+                "w-full h-9 pl-9 pr-8 rounded-full text-sm bg-surface-sunken border border-border-strong",
+                "text-text-primary placeholder:text-text-muted",
+                "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
+                "[&::-webkit-search-cancel-button]:hidden"
+              )}
+              aria-label="Buscar nas mensagens"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+                aria-label="Limpar busca"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          {!isSearching && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <button
+                type="button"
+                onClick={() => setShowArchived(false)}
+                className={cn(
+                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
+                  !showArchived
+                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                    : "border-border-strong text-text-muted hover:text-text-primary"
+                )}
+              >
+                Ativas
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowArchived(true)}
+                className={cn(
+                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
+                  showArchived
+                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                    : "border-border-strong text-text-muted hover:text-text-primary"
+                )}
+              >
+                Arquivadas
+              </button>
+              {conversationLabels && conversationLabels.length > 0 && (
+                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
+              )}
+              {(conversationLabels ?? []).map((label) => (
+                <button
+                  key={label._id}
+                  type="button"
+                  onClick={() =>
+                    setFilterLabelId((cur) => (cur === label._id ? null : label._id))
+                  }
+                  className={cn(
+                    "shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
+                    filterLabelId === label._id
+                      ? "bg-surface-overlay border-border-strong text-text-primary font-medium"
+                      : "border-border-strong text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: label.color }}
+                  />
+                  {label.name}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
+                className={cn(
+                  "ml-auto shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
+                  selectionMode
+                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                    : "border-border-strong text-text-muted hover:text-text-primary"
+                )}
+                title="Selecionar várias conversas"
+              >
+                <CheckSquare size={12} />
+                {selectionMode ? "Cancelar" : "Selecionar"}
+              </button>
+            </div>
+          )}
+          {isSearching && (
+            <div className="flex items-center gap-2">
+              <input
+                type="month"
+                value={searchMonth}
+                onChange={(e) => setSearchMonth(e.target.value)}
+                className={cn(
+                  "h-8 px-2.5 rounded-full text-xs bg-surface-sunken border border-border-strong text-text-secondary",
+                  "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
+                  searchMonth && "border-brand-500 text-text-primary"
+                )}
+                aria-label="Filtrar por mês"
+              />
+              {searchMonth && (
+                <button
+                  type="button"
+                  onClick={() => setSearchMonth("")}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  Limpar mês
+                </button>
+              )}
+              <span className="ml-auto text-xs text-text-muted tabular-nums">
+                {searchResults === undefined ? "…" : `${searchResults.length} resultado${searchResults.length === 1 ? "" : "s"}`}
+              </span>
+            </div>
+          )}
         </div>
 
         <div className="overflow-y-auto flex-1">
-          {validConversations.length === 0 ? (
-            <div className="p-4 text-center text-text-muted">Nenhuma conversa ainda</div>
+          {isSearching ? (
+            searchResults === undefined ? (
+              <div className="p-6 flex justify-center">
+                <Spinner size="md" />
+              </div>
+            ) : searchResults.length === 0 ? (
+              <div className="p-4 text-center text-text-muted text-sm">
+                Nada encontrado{searchMonth ? " nesse mês" : ""} para "{debouncedTerm}"
+              </div>
+            ) : (
+              searchResults.map((result) => (
+                <button
+                  key={result._id}
+                  type="button"
+                  onClick={() => handleOpenSearchResult(result)}
+                  className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-0.5">
+                    <span className="text-sm font-medium text-text-primary truncate">
+                      {result.contactName}
+                      {result.direction !== "inbound" && (
+                        <span className="text-text-muted font-normal"> · você</span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-xs text-text-muted tabular-nums">
+                      {new Date(result.createdAt).toLocaleDateString("pt-BR", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-secondary truncate flex items-center gap-1">
+                    {result.matchedTranscript && (
+                      <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
+                    )}
+                    <span className="truncate">
+                      {renderSnippet(result.snippetText, debouncedTerm.trim())}
+                    </span>
+                  </p>
+                </button>
+              ))
+            )
+          ) : listedConversations.length === 0 ? (
+            <div className="p-4 text-center text-text-muted">
+              {showArchived
+                ? "Nenhuma conversa arquivada"
+                : filterLabelId
+                  ? "Nenhuma conversa com essa etiqueta"
+                  : "Nenhuma conversa ainda"}
+            </div>
           ) : (
-            validConversations.map((conversation) => (
+            listedConversations.map((conversation) => (
               <div
                 key={conversation._id}
-                onClick={() => handleSelectConversation(conversation._id)}
+                onClick={() =>
+                  selectionMode
+                    ? toggleSelected(conversation._id)
+                    : handleSelectConversation(conversation._id)
+                }
                 className={cn(
                   "p-4 border-b border-border cursor-pointer transition-colors",
                   "hover:bg-surface-overlay active:bg-surface-overlay",
-                  selectedConversation === conversation._id &&
-                    "bg-brand-500/10 border-l-2 border-l-brand-500"
+                  !selectionMode &&
+                    selectedConversation === conversation._id &&
+                    "bg-brand-500/10 border-l-2 border-l-brand-500",
+                  selectionMode && selectedIds.has(conversation._id) && "bg-brand-500/10"
                 )}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-text-primary truncate">
-                    {conversation.contact?.firstName} {conversation.contact?.lastName}
+                  {selectionMode && (
+                    <span
+                      className={cn(
+                        "mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                        selectedIds.has(conversation._id)
+                          ? "bg-brand-500 border-brand-500 text-white"
+                          : "border-border-strong"
+                      )}
+                      aria-hidden
+                    >
+                      {selectedIds.has(conversation._id) && <Check size={11} />}
+                    </span>
+                  )}
+                  <h3 className="flex items-center gap-1.5 min-w-0 flex-1 font-medium text-text-primary truncate">
+                    <span className="truncate">
+                      {conversation.contact?.firstName} {conversation.contact?.lastName}
+                    </span>
+                    {((conversation.labelIds ?? []) as string[]).map((labelId) => {
+                      const label = labelById.get(labelId);
+                      return label ? (
+                        <span
+                          key={labelId}
+                          className="h-2 w-2 rounded-full shrink-0"
+                          style={{ backgroundColor: label.color }}
+                          title={label.name}
+                        />
+                      ) : null;
+                    })}
                   </h3>
                   <Badge variant={getChannelBadgeVariant(conversation.channel)}>
                     {conversation.channel}
@@ -178,11 +878,27 @@ export function Inbox() {
                   <p className="text-sm text-text-secondary mb-1 truncate">{conversation.lead.title}</p>
                 )}
 
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-text-muted tabular-nums">
-                    {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
-                  </span>
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  {conversation.lastMessagePreview ? (
+                    <span className="flex items-center gap-1 min-w-0 text-xs text-text-muted">
+                      {(() => {
+                        const PreviewIcon = getPreviewIcon(
+                          conversation.lastMessageContentType ?? null,
+                          conversation.lastMessageBridgeType ?? null
+                        );
+                        return PreviewIcon ? <PreviewIcon className="w-3.5 h-3.5 shrink-0" /> : null;
+                      })()}
+                      <span className="truncate">
+                        {conversation.lastMessageDirection === "outbound" ? "Você: " : ""}
+                        {conversation.lastMessagePreview}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-text-muted tabular-nums">
+                      {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
+                    </span>
+                  )}
+                  <div className="flex items-center gap-2 shrink-0">
                     {conversation.assignee && (
                       <Avatar
                         name={conversation.assignee.name || "?"}
@@ -208,127 +924,335 @@ export function Inbox() {
             </div>
           )}
         </div>
+
+        {selectionMode && (
+          <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex items-center gap-2">
+            <span className="flex-1 text-xs text-text-secondary tabular-nums">
+              {selectedIds.size} selecionada{selectedIds.size === 1 ? "" : "s"}
+            </span>
+            <div className="relative">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={selectedIds.size === 0}
+                onClick={() => setBulkLabelOpen((v) => !v)}
+              >
+                Etiquetar
+              </Button>
+              {bulkLabelOpen && (
+                <div className="absolute bottom-full right-0 mb-1 z-40 w-52 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
+                  {(conversationLabels ?? []).length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-text-muted">
+                      Nenhuma etiqueta — crie uma no menu ⋯ de uma conversa
+                    </p>
+                  ) : (
+                    (conversationLabels ?? []).map((label) => (
+                      <button
+                        key={label._id}
+                        type="button"
+                        onClick={() => handleBulkLabelClick(label._id)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+                      >
+                        <span
+                          className="h-2.5 w-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: label.color }}
+                        />
+                        {label.name}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              disabled={selectedIds.size === 0}
+              onClick={handleBulkArchiveClick}
+            >
+              {showArchived ? "Desarquivar" : "Arquivar"}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
       <div
         className={cn(
-          "flex-1 flex flex-col bg-surface-base",
+          "flex-1 flex flex-col bg-surface-base min-h-0",
           !showMessages && "hidden md:flex"
         )}
       >
         {selectedConversation ? (
           <>
             {/* Mobile header with back button */}
-            <div className="md:hidden p-4 border-b border-border bg-surface-raised flex items-center gap-3">
-              <button
-                onClick={handleBackToList}
-                className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
-                aria-label="Voltar"
-              >
-                <ArrowLeft size={20} />
-              </button>
-              <h2 className="text-base font-semibold text-text-primary">
-                {validConversations.find((c) => c._id === selectedConversation)?.contact?.firstName}{" "}
-                {validConversations.find((c) => c._id === selectedConversation)?.contact?.lastName}
-              </h2>
+            <div className="md:hidden shrink-0 p-4 border-b border-border bg-surface-raised flex flex-col gap-1">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleBackToList}
+                  className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
+                  aria-label="Voltar"
+                >
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
+                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
+                </h2>
+                {currentConversation && (
+                  <ConversationActionsMenu
+                    organizationId={organizationId}
+                    conversationId={currentConversation._id as Id<"conversations">}
+                    archivedAt={currentConversation.archivedAt}
+                    labelIds={(currentConversation.labelIds ?? []) as string[]}
+                    onArchivedChange={(archived) => {
+                      if (archived && !showArchived) handleBackToList();
+                    }}
+                  />
+                )}
+              </div>
+              {contactTyping && (
+                <span className="pl-11 text-xs text-brand-500 animate-pulse">digitando…</span>
+              )}
+              {windowInfo && (
+                <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  {windowInfo.text}
+                </div>
+              )}
+            </div>
+
+            {/* Desktop header */}
+            <div className="hidden md:flex shrink-0 p-4 border-b border-border bg-surface-raised items-center justify-between">
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold text-text-primary truncate">
+                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
+                </h2>
+                {contactTyping && (
+                  <span className="text-xs text-brand-500 animate-pulse">digitando…</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {windowInfo && (
+                  <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
+                    <Clock className="h-4 w-4 shrink-0" />
+                    {windowInfo.text}
+                  </div>
+                )}
+                {currentConversation && (
+                  <ConversationActionsMenu
+                    organizationId={organizationId}
+                    conversationId={currentConversation._id as Id<"conversations">}
+                    archivedAt={currentConversation.archivedAt}
+                    labelIds={(currentConversation.labelIds ?? []) as string[]}
+                    onArchivedChange={(archived) => {
+                      if (archived && !showArchived) handleBackToList();
+                    }}
+                  />
+                )}
+              </div>
             </div>
 
             {/* Messages List */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {messages && messages.length === 500 && (
-                <div className="text-center py-2 mb-2">
-                  <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
-                    Exibindo as últimas 500 mensagens
-                  </span>
-                </div>
-              )}
-              {messages?.map((message) => {
-                const style = getMessageStyle(message);
-                return (
-                  <div key={message._id} className={`flex ${style.align}`}>
-                    <div className={cn("max-w-xs lg:max-w-md px-4 py-2", style.bg, style.rounded)}>
-                      {/* Sender type label */}
-                      <div className={cn("text-xs font-medium mb-0.5", style.labelColor)}>
-                        {message.sender?.name || style.label}
-                      </div>
-                      {message.isInternal ? (
-                        <MentionRenderer content={message.content} className="text-sm" />
-                      ) : (
-                        <p className="text-sm">{message.content}</p>
-                      )}
-                      <div className="flex items-center justify-end mt-1">
-                        <span className="text-xs opacity-75">
-                          {new Date(message.createdAt).toLocaleTimeString("pt-BR", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                      </div>
-                    </div>
+            <div
+              ref={messagesScrollRef}
+              onScroll={handleMessagesScroll}
+              className="flex-1 min-h-0 overflow-y-auto"
+            >
+              <div className="min-h-full flex flex-col justify-end max-w-4xl mx-auto w-full p-4 space-y-4">
+                {messages && messages.length === 500 && (
+                  <div className="text-center py-2 mb-2">
+                    <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
+                      Exibindo as últimas 500 mensagens
+                    </span>
                   </div>
-                );
-              })}
+                )}
+                {(messages as InboxMessage[] | undefined)?.map((message) => (
+                  <MessageBubble
+                    key={message._id}
+                    message={message}
+                    channelIsWhatsapp={channelIsWhatsapp}
+                    canInteract={canReply}
+                    currentMemberId={currentMemberId}
+                    contactName={contactName}
+                    transcribing={transcribingIds.has(message._id)}
+                    highlighted={highlightId === message._id}
+                    onReply={setReplyTo}
+                    onReact={handleReact}
+                    onForward={setForwardTarget}
+                    onTranscribe={handleTranscribe}
+                    onJumpToMessage={handleJumpToMessage}
+                  />
+                ))}
+              </div>
             </div>
 
             {/* Message Input */}
-            {can("inbox", "reply") ? (
-              <form onSubmit={handleSendMessage} className="p-4 border-t border-border bg-surface-raised">
+            {canReply ? (
+              <form onSubmit={handleSendMessage} className="shrink-0 border-t border-border bg-surface-raised">
+                <div className="max-w-4xl mx-auto w-full p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <label className="flex items-center gap-1.5 text-sm text-text-secondary cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isInternal}
-                      onChange={(e) => setIsInternal(e.target.checked)}
-                      className="rounded accent-brand-500"
-                    />
-                    Nota interna
-                  </label>
+                  <Checkbox
+                    checked={isInternal}
+                    onChange={(e) => setIsInternal(e.target.checked)}
+                    label="Nota interna"
+                  />
                   {isInternal && (
                     <Badge variant="warning">Visível apenas para membros da equipe</Badge>
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <MentionTextarea
-                    value={newMessage}
-                    onChange={setNewMessage}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        if (newMessage.trim()) {
-                          handleSendMessage(e as unknown as React.FormEvent);
-                        }
-                      }
-                    }}
-                    teamMembers={teamMembers ?? []}
-                    mentionEnabled={isInternal}
-                    placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
-                    rows={1}
-                    className={cn(
-                      "bg-surface-sunken",
-                      isInternal
-                        ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
-                        : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
-                    )}
+
+                {/* Reply citation bar */}
+                {replyTo && !isInternal && (
+                  <div className="flex items-center gap-2 mb-2 pl-2 pr-1 py-1.5 border-l-2 border-brand-500 bg-surface-sunken rounded-r-lg">
+                    <Reply size={15} className="shrink-0 text-brand-400" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-brand-400">
+                        Respondendo {replyAuthor}
+                      </p>
+                      <p className="text-xs text-text-secondary truncate">{replyPreview}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReplyTo(null)}
+                      className="shrink-0 p-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+                      aria-label="Cancelar resposta"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                )}
+
+                {scheduledPending && scheduledPending.length > 0 && (
+                  <div className="mb-2 space-y-1">
+                    {scheduledPending.map((item) => (
+                      <ScheduledPendingRow
+                        key={item._id}
+                        item={item}
+                        onCancel={() => handleCancelScheduled(item._id)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {stagedFiles.length > 1 && channelIsWhatsapp && (
+                  <p className="text-xs text-text-muted mb-2">
+                    WhatsApp: apenas o primeiro anexo será enviado
+                  </p>
+                )}
+                <div className="relative flex gap-2 items-end">
+                  <QuickReplyDropdown
+                    open={quickReplies.open}
+                    items={quickReplies.items}
+                    activeIndex={quickReplies.activeIndex}
+                    onPick={quickReplies.pick}
+                    onManage={() => quickReplies.setManageOpen(true)}
                   />
-                  <Button
-                    type="submit"
-                    disabled={!newMessage.trim()}
-                    variant={isInternal ? "secondary" : "primary"}
-                    size="md"
-                    className={cn(
-                      "shrink-0",
-                      isInternal && "bg-semantic-warning hover:bg-amber-600 text-white"
-                    )}
-                    aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
-                  >
-                    <Send size={16} />
-                    <span className="hidden sm:inline">{isInternal ? "Adicionar Nota" : "Enviar"}</span>
-                  </Button>
+                  {!recorderActive && (
+                    <>
+                      <FileUploadButton
+                        organizationId={organizationId}
+                        uploadedFiles={stagedFiles}
+                        onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
+                        onFilesRemoved={(fileId) =>
+                          setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))
+                        }
+                        className="shrink-0"
+                      />
+                      <EmojiPickerButton onPick={insertEmoji} />
+                      <MentionTextarea
+                        inputRef={composerInputRef}
+                        value={newMessage}
+                        onChange={(value) => {
+                          setNewMessage(value);
+                          handleComposerActivity();
+                        }}
+                        onKeyDown={(e) => {
+                          if (quickReplies.handleKeyDown(e)) return;
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            if (newMessage.trim() || stagedFiles.length > 0) {
+                              handleSendMessage(e as unknown as React.FormEvent);
+                            }
+                          }
+                        }}
+                        teamMembers={teamMembers ?? []}
+                        mentionEnabled={isInternal}
+                        placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
+                        rows={1}
+                        className={cn(
+                          "bg-surface-sunken",
+                          isInternal
+                            ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
+                            : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
+                        )}
+                      />
+                    </>
+                  )}
+
+                  {!showVoice && !isInternal && newMessage.trim() && (
+                    <div className="relative shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => (scheduleOpen ? setScheduleOpen(false) : openSchedule())}
+                        className={cn(
+                          "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+                          scheduleOpen && "text-brand-500 bg-brand-500/10"
+                        )}
+                        aria-label="Agendar mensagem"
+                        title="Agendar mensagem"
+                      >
+                        <Clock size={18} />
+                      </button>
+                      {scheduleOpen && (
+                        <div className="absolute bottom-full right-0 mb-2 z-40 w-64 p-3 bg-surface-overlay border border-border rounded-xl shadow-elevated space-y-2.5">
+                          <p className="text-xs font-medium text-text-primary">Enviar em</p>
+                          <input
+                            type="datetime-local"
+                            value={scheduleValue}
+                            onChange={(e) => setScheduleValue(e.target.value)}
+                            className="w-full h-9 px-2.5 rounded-lg text-sm bg-surface-sunken border border-border-strong text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                          />
+                          <div className="flex justify-end gap-2">
+                            {/* type="button" obrigatório: dentro do form, o default
+                                "submit" dispararia o envio imediato junto do agendamento */}
+                            <Button type="button" variant="ghost" size="sm" onClick={() => setScheduleOpen(false)}>
+                              Cancelar
+                            </Button>
+                            <Button type="button" size="sm" onClick={handleSchedule}>
+                              Agendar
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {showVoice ? (
+                    <VoiceRecorder
+                      organizationId={organizationId}
+                      onActiveChange={setRecorderActive}
+                      onRecorded={handleSendVoice}
+                    />
+                  ) : (
+                    <Button
+                      type="submit"
+                      disabled={!newMessage.trim() && stagedFiles.length === 0}
+                      variant={isInternal ? "secondary" : "primary"}
+                      size="md"
+                      className={cn(
+                        "shrink-0",
+                        isInternal && "bg-semantic-warning hover:bg-amber-600 text-white"
+                      )}
+                      aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
+                    >
+                      <Send size={16} />
+                      <span className="hidden sm:inline">{isInternal ? "Adicionar Nota" : "Enviar"}</span>
+                    </Button>
+                  )}
+                </div>
                 </div>
               </form>
             ) : (
-              <div className="p-4 border-t border-border bg-surface-raised text-center">
+              <div className="shrink-0 p-4 border-t border-border bg-surface-raised text-center">
                 <p className="text-sm text-text-muted">Voce nao tem permissao para enviar mensagens.</p>
               </div>
             )}
@@ -340,6 +1264,108 @@ export function Inbox() {
         )}
       </div>
     </div>
-    </>
+
+      <ForwardModal
+        open={!!forwardTarget}
+        organizationId={organizationId}
+        message={forwardTarget}
+        currentConversationId={selectedConversation}
+        onClose={() => setForwardTarget(null)}
+      />
+      <QuickRepliesModal
+        organizationId={organizationId}
+        open={quickReplies.manageOpen}
+        onClose={() => quickReplies.setManageOpen(false)}
+      />
+      <ConfirmDialog
+        open={!!confirmBulk}
+        onClose={() => setConfirmBulk(null)}
+        onConfirm={() => {
+          const pending = confirmBulk;
+          setConfirmBulk(null);
+          if (!pending) return;
+          if (pending.action === "archive") void runBulkArchive();
+          else if (pending.labelId) void runBulkLabel(pending.labelId);
+        }}
+        title={
+          confirmBulk?.action === "archive"
+            ? `${showArchived ? "Desarquivar" : "Arquivar"} ${selectedIds.size} conversas?`
+            : `Etiquetar ${selectedIds.size} conversas?`
+        }
+        description={
+          confirmBulk?.action === "archive"
+            ? showArchived
+              ? "As conversas selecionadas voltam para a lista de ativas."
+              : "As conversas selecionadas saem da lista de ativas. Dá para desarquivar depois."
+            : "A etiqueta será aplicada a todas as conversas selecionadas."
+        }
+        confirmLabel="Confirmar"
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mensagem agendada pendente — linha com contagem regressiva         */
+/* ------------------------------------------------------------------ */
+
+function ScheduledPendingRow({
+  item,
+  onCancel,
+}: {
+  item: { _id: string; content: string; scheduledAt: number; createdAt: number };
+  onCancel: () => void;
+}) {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setTick(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const total = Math.max(1, item.scheduledAt - item.createdAt);
+  const elapsed = Math.min(total, Math.max(0, tick - item.createdAt));
+  const progress = (elapsed / total) * 100;
+  const remainingMs = Math.max(0, item.scheduledAt - tick);
+
+  const remainingLabel = (() => {
+    const s = Math.ceil(remainingMs / 1000);
+    if (s <= 0) return "enviando…";
+    if (s < 60) return `em ${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `em ${m}min ${String(s % 60).padStart(2, "0")}s`;
+    const h = Math.floor(m / 60);
+    return `em ${h}h${String(m % 60).padStart(2, "0")}`;
+  })();
+
+  return (
+    <div className="rounded-lg bg-surface-sunken border border-border overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
+        <Clock size={12} className="shrink-0 text-brand-500" />
+        <span className="shrink-0 text-text-secondary tabular-nums">
+          {new Date(item.scheduledAt).toLocaleString("pt-BR", {
+            day: "2-digit",
+            month: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+        <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
+        <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="shrink-0 p-1 rounded-full text-text-muted hover:text-semantic-error hover:bg-surface-raised transition-colors"
+          aria-label="Cancelar agendamento"
+        >
+          <X size={12} />
+        </button>
+      </div>
+      <div className="h-0.5 bg-surface-raised">
+        <div
+          className="h-full bg-brand-500 transition-[width] duration-1000 ease-linear"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+    </div>
   );
 }

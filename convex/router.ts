@@ -3,8 +3,15 @@ import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
+import { EMBED_SCRIPT } from "./embedScript";
 import { OPENAPI_SPEC } from "./openapiSpec";
 import { resolvePermissions, type Role, type Permissions } from "./lib/permissions";
+import { resend } from "./email";
+import {
+  webhookVerify as whatsappWebhookVerify,
+  webhookReceive as whatsappWebhookReceive,
+} from "./whatsapp";
+import { webhookReceive as bridgeWebhookReceive } from "./bridge";
 
 const http = httpRouter();
 
@@ -22,8 +29,11 @@ function handleOptions() {
 
 // Standard error response
 function errorResponse(message: string, status: number = 500) {
-  return new Response(JSON.stringify({ error: message, code: status }), {
-    status,
+  // Rate-limit failures bubble up as thrown errors from authenticateApiKey —
+  // map them to 429 here so every /api/v1 route answers correctly
+  const finalStatus = message.includes("Rate limit exceeded") ? 429 : status;
+  return new Response(JSON.stringify({ error: message, code: finalStatus }), {
+    status: finalStatus,
     headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }
@@ -600,20 +610,114 @@ http.route({
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const body = await request.json();
-      if (!body.conversationId || !body.content) {
-        return errorResponse("conversationId and content required", 400);
+      // Attachments (file ids) — the mutation validates they belong to the org.
+      const attachments = Array.isArray(body.attachments)
+        ? (body.attachments as Id<"files">[])
+        : undefined;
+      if (!body.conversationId || (!body.content && !(attachments && attachments.length > 0))) {
+        return errorResponse("conversationId and content (or attachments) required", 400);
       }
 
       const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
         conversationId: body.conversationId as Id<"conversations">,
-        content: body.content,
+        content: body.content ?? "",
         contentType: body.contentType || "text",
         isInternal: body.isInternal || false,
+        attachments,
         mentionedUserIds: body.mentionedUserIds,
+        replyToMessageId: body.replyToMessageId
+          ? (body.replyToMessageId as Id<"messages">)
+          : undefined,
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
       return jsonResponse({ success: true, messageId }, 201);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Send a WhatsApp template message (re-engagement outside the 24h window)
+http.route({
+  path: "/api/v1/conversations/send-template",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      if (!body.conversationId || !body.templateName || !body.languageCode) {
+        return errorResponse("conversationId, templateName and languageCode required", 400);
+      }
+
+      const messageId = await ctx.runMutation(internal.conversations.internalSendTemplate, {
+        conversationId: body.conversationId as Id<"conversations">,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        templateName: body.templateName,
+        languageCode: body.languageCode,
+        components: body.components,
+      });
+
+      return jsonResponse({ success: true, messageId }, 201);
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Receive an inbound message from a contact (external bridges for any channel)
+http.route({
+  path: "/api/v1/conversations/receive",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+
+      if (!body.content) {
+        return errorResponse("content required", 400);
+      }
+      if (!body.contactId && !body.contactPhone) {
+        return errorResponse("contactId or contactPhone required", 400);
+      }
+      const channel = body.channel || "whatsapp";
+
+      // Resolve contact
+      let contactId: Id<"contacts">;
+      if (body.contactId) {
+        contactId = body.contactId as Id<"contacts">;
+        const contact = await ctx.runQuery(internal.contacts.internalGetContact, { contactId });
+        if (!contact || contact.organizationId !== apiKeyRecord.organizationId) {
+          return errorResponse("Contact not found", 404);
+        }
+      } else {
+        contactId = await ctx.runMutation(internal.contacts.internalFindOrCreateContact, {
+          organizationId: apiKeyRecord.organizationId,
+          phone: body.contactPhone,
+          firstName: body.contactFirstName,
+          lastName: body.contactLastName,
+        });
+      }
+
+      // Find the contact's most recent lead, or create one on the default board
+      // (shared inbound routing — same logic as the WhatsApp webhook ingress)
+      const leadId: Id<"leads"> = await ctx.runMutation(internal.leads.internalEnsureLeadForContact, {
+        organizationId: apiKeyRecord.organizationId,
+        contactId,
+        title: body.leadTitle,
+      });
+
+      const messageId = await ctx.runMutation(internal.conversations.internalReceiveMessage, {
+        organizationId: apiKeyRecord.organizationId,
+        leadId,
+        channel,
+        content: body.content,
+        contentType: body.contentType || "text",
+        externalId: body.externalId,
+        metadata: body.metadata,
+      });
+
+      return jsonResponse({ success: true, messageId, leadId, contactId }, 201);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
@@ -1044,6 +1148,301 @@ http.route({
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
+  }),
+});
+
+// ---- Public Form Endpoints (no auth) ----
+
+// Get published form by slug — GET /api/v1/forms/public?slug=xxx
+http.route({
+  path: "/api/v1/forms/public",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const url = new URL(request.url);
+      const slug = url.searchParams.get("slug");
+
+      if (!slug) return errorResponse("slug query parameter is required", 400);
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Return sanitized form data (strip internal fields)
+      const sanitized = {
+        name: form.name,
+        description: form.description,
+        fields: form.fields,
+        steps: form.steps,
+        theme: form.theme,
+        settings: {
+          submitButtonText: form.settings.submitButtonText,
+          successMessage: form.settings.successMessage,
+          redirectUrl: form.settings.redirectUrl,
+          honeypotEnabled: form.settings.honeypotEnabled,
+          successTitle: form.settings.successTitle,
+          successSubtitle: form.settings.successSubtitle,
+          successCta: form.settings.successCta,
+          partialCaptureEnabled: form.settings.partialCaptureEnabled,
+        },
+      };
+
+      // Check for active A/B experiment on this form
+      const experiment = await ctx.runQuery(internal.formExperiments.internalGetActiveExperiment, { formId: form._id });
+
+      return jsonResponse({ form: sanitized, experiment: experiment ?? undefined });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// Track A/B experiment view — POST /api/v1/forms/experiment/view
+http.route({
+  path: "/api/v1/forms/experiment/view",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { variantId } = body;
+
+      if (!variantId) return errorResponse("variantId is required", 400);
+
+      await ctx.runMutation(internal.formExperiments.internalRecordView, {
+        variantId: variantId as Id<"formExperimentVariants">,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/forms/experiment/view",
+  method: "OPTIONS",
+  handler: httpAction(async () => handleOptions()),
+});
+
+// Submit form — POST /api/v1/forms/public/submit { slug, data, _honeypot }
+http.route({
+  path: "/api/v1/forms/public/submit",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const body = await request.json();
+      const { slug, data, _honeypot, sessionId } = body;
+
+      if (!slug || typeof slug !== "string") {
+        return errorResponse("slug is required", 400);
+      }
+
+      if (!data || typeof data !== "object") {
+        return errorResponse("data object is required", 400);
+      }
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Extract metadata from request
+      const ipAddress = request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined;
+      const userAgent = request.headers.get("user-agent") || undefined;
+      const referrer = request.headers.get("referer") || undefined;
+
+      // Extract UTM params from referrer as fallback
+      let utmSource: string | undefined;
+      let utmMedium: string | undefined;
+      let utmCampaign: string | undefined;
+
+      if (referrer) {
+        try {
+          const refUrl = new URL(referrer);
+          utmSource = refUrl.searchParams.get("utm_source") || undefined;
+          utmMedium = refUrl.searchParams.get("utm_medium") || undefined;
+          utmCampaign = refUrl.searchParams.get("utm_campaign") || undefined;
+        } catch {
+          // Invalid referrer URL, ignore
+        }
+      }
+
+      // Body UTM values take priority over referrer-parsed ones
+      utmSource = body.utmSource || utmSource;
+      utmMedium = body.utmMedium || utmMedium;
+      utmCampaign = body.utmCampaign || utmCampaign;
+      const utmContent: string | undefined = body.utmContent || undefined;
+      const utmTerm: string | undefined = body.utmTerm || undefined;
+
+      const honeypotTriggered = !!_honeypot;
+
+      const result = await ctx.runMutation(internal.formSubmissions.internalProcessSubmission, {
+        formId: form._id,
+        data,
+        ipAddress,
+        userAgent,
+        referrer,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        utmContent,
+        utmTerm,
+        honeypotTriggered,
+        sessionId: sessionId || undefined,
+        experimentId: body.experimentId || undefined,
+        variantId: body.variantId || undefined,
+        visitorId: body.visitorId || undefined,
+      });
+
+      // Phase 6: Return proper status codes for validation/duplicate errors
+      if (result && result.validation === true) {
+        return new Response(JSON.stringify(result), {
+          status: 422,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      if (result && result.duplicate === true) {
+        return new Response(JSON.stringify(result), {
+          status: 409,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return jsonResponse(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Internal server error";
+      const status = message.includes("not found") ? 404 : message.includes("limit") ? 400 : 500;
+      return errorResponse(message, status);
+    }
+  }),
+});
+
+// Save partial form submission — POST /api/v1/forms/public/partial
+http.route({
+  path: "/api/v1/forms/public/partial",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      // Parse body — sendBeacon sends as text/plain, so always parse as JSON string
+      const contentType = request.headers.get("content-type") || "";
+      let body: any;
+      if (contentType.includes("text/plain")) {
+        const text = await request.text();
+        body = JSON.parse(text);
+      } else {
+        body = await request.json();
+      }
+
+      const { slug, sessionId, data, completedFieldIds, currentStep, totalFields } = body;
+
+      if (!slug || typeof slug !== "string") {
+        return errorResponse("slug is required", 400);
+      }
+      if (!sessionId || typeof sessionId !== "string") {
+        return errorResponse("sessionId is required", 400);
+      }
+      if (!data || typeof data !== "object") {
+        return errorResponse("data object is required", 400);
+      }
+      if (!Array.isArray(completedFieldIds)) {
+        return errorResponse("completedFieldIds array is required", 400);
+      }
+      if (typeof totalFields !== "number") {
+        return errorResponse("totalFields number is required", 400);
+      }
+
+      const form = await ctx.runQuery(internal.forms.internalGetPublishedForm, { slug });
+      if (!form) return errorResponse("Form not found", 404);
+
+      // Check if partial capture is enabled for this form
+      if (!form.settings.partialCaptureEnabled) {
+        return jsonResponse({ ignored: true });
+      }
+
+      // Extract metadata from request headers
+      const ipAddress = request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined;
+      const userAgent = request.headers.get("user-agent") || undefined;
+      const referrer = request.headers.get("referer") || undefined;
+
+      // Extract UTM params from referrer as fallback
+      let utmSource: string | undefined;
+      let utmMedium: string | undefined;
+      let utmCampaign: string | undefined;
+
+      if (referrer) {
+        try {
+          const refUrl = new URL(referrer);
+          utmSource = refUrl.searchParams.get("utm_source") || undefined;
+          utmMedium = refUrl.searchParams.get("utm_medium") || undefined;
+          utmCampaign = refUrl.searchParams.get("utm_campaign") || undefined;
+        } catch {
+          // Invalid referrer URL, ignore
+        }
+      }
+
+      // Body UTM values take priority over referrer-parsed ones
+      utmSource = body.utmSource || utmSource;
+      utmMedium = body.utmMedium || utmMedium;
+      utmCampaign = body.utmCampaign || utmCampaign;
+      const utmContent: string | undefined = body.utmContent || undefined;
+      const utmTerm: string | undefined = body.utmTerm || undefined;
+
+      await ctx.runMutation(internal.formPartials.internalSavePartial, {
+        formId: form._id,
+        sessionId,
+        data,
+        completedFieldIds,
+        totalFields,
+        currentStep,
+        ipAddress,
+        userAgent,
+        referrer,
+        utmSource,
+        utmMedium,
+        utmCampaign,
+        utmContent,
+        utmTerm,
+        experimentId: body.experimentId || undefined,
+        variantId: body.variantId || undefined,
+        visitorId: body.visitorId || undefined,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Internal server error";
+      const status = message.includes("not found") ? 404 : 500;
+      return errorResponse(message, status);
+    }
+  }),
+});
+
+// ---- Embed Script ----
+
+http.route({
+  path: "/api/v1/embed.js",
+  method: "GET",
+  handler: httpAction(async () => {
+    return new Response(EMBED_SCRIPT, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/v1/embed.js",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
   }),
 });
 
@@ -1651,6 +2050,67 @@ http.route({
   }),
 });
 
+// ---- Notification Preferences Endpoints ----
+
+http.route({
+  path: "/api/v1/notifications/preferences",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const prefs = await ctx.runQuery(internal.notificationPreferences.internalGetPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ preferences: prefs });
+    } catch (e: any) {
+      return errorResponse(e.message, e.message.includes("API key") ? 401 : 400);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/notifications/preferences",
+  method: "PUT",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const body = await request.json();
+      await ctx.runMutation(internal.notificationPreferences.internalUpsertPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        updates: body,
+      });
+      // Return the updated preferences
+      const prefs = await ctx.runQuery(internal.notificationPreferences.internalGetPreferences, {
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ preferences: prefs });
+    } catch (e: any) {
+      return errorResponse(e.message, e.message.includes("API key") ? 401 : 400);
+    }
+  }),
+});
+
+// ---- Resend Webhook Endpoint ----
+
+http.route({
+  path: "/api/v1/webhooks/resend",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return await resend.handleResendEventWebhook(ctx, request);
+  }),
+});
+
+// ---- WhatsApp Cloud API webhooks (multi-tenant: routed by phone_number_id) ----
+
+http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
+http.route({ path: "/webhooks/whatsapp", method: "POST", handler: whatsappWebhookReceive });
+http.route({ path: "/webhooks/bridge", method: "POST", handler: bridgeWebhookReceive });
+
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());
 
@@ -1671,6 +2131,8 @@ http.route({ path: "/api/v1/contacts/gaps", method: "OPTIONS", handler: optionsH
 http.route({ path: "/api/v1/conversations", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/messages", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/send", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/receive", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/send-template", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/pending", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/accept", method: "OPTIONS", handler: optionsHandler });
@@ -1709,5 +2171,10 @@ http.route({ path: "/api/v1/files/upload-url", method: "OPTIONS", handler: optio
 http.route({ path: "/api/v1/files", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/notifications/preferences", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

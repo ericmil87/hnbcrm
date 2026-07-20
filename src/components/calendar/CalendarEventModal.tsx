@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Modal } from "../ui/Modal";
+import { Checkbox } from "../ui/Checkbox";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import { cn } from "@/lib/utils";
@@ -233,15 +234,11 @@ export function CalendarEventModal({
         </div>
 
         {/* All Day Toggle */}
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={allDay}
-            onChange={(e) => setAllDay(e.target.checked)}
-            className="w-4 h-4 rounded border-border-strong bg-surface-raised text-brand-500 focus:ring-2 focus:ring-brand-500/20"
-          />
-          <span className="text-sm text-text-primary">Dia Inteiro</span>
-        </label>
+        <Checkbox
+          checked={allDay}
+          onChange={(e) => setAllDay(e.target.checked)}
+          label={<span className="text-text-primary">Dia Inteiro</span>}
+        />
 
         {/* Description */}
         <div>

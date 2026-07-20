@@ -319,3 +319,42 @@ Leads can have conversations across multiple channels (whatsapp, telegram, email
 1. List all conversations for the lead
 2. Read messages across channels to get the full picture
 3. Respond in the same channel the contact used last
+
+---
+
+## 7. Email Notifications
+
+- After requesting a handoff, the target human receives an email notification automatically.
+- After a handoff is accepted/rejected, the requester is notified by email.
+- When a lead or task is assigned, the assignee receives an email.
+- Overdue tasks trigger email reminders to assignees.
+- A daily digest email summarizes CRM activity at 08:00 BRT.
+- Members can opt out of specific notification types via Settings > Notificacoes.
+- AI agents are never sent emails (type !== "human" check).
+
+---
+
+## 8. Form Submission Workflow
+
+When a visitor submits a public form at `/f/:slug`:
+
+### What Happens Automatically
+
+1. **Spam check** — If the honeypot field is filled, the submission is silently stored as spam (no lead created)
+2. **Contact find-or-create** — The system searches for an existing contact by email/phone; if none found, creates a new one using CRM-mapped fields
+3. **Lead creation** — A new lead is created with:
+   - Title from the form's `leadTitle` template (supports `{email}`, `{name}`, `{firstName}`, `{lastName}`, `{company}`, `{phone}` placeholders)
+   - Board/stage from form settings (or default board's first stage)
+   - Priority, temperature, and tags from form settings
+   - Assignment based on form's `assignmentMode`: none, specific (fixed member), or round-robin (least-loaded active human)
+4. **Activity log** — "Formulario 'X' submetido" logged on the lead timeline
+5. **Audit log** — Form submission recorded with IP address and user agent
+6. **Webhook trigger** — `form.submitted` event fired with formId, formName, leadId, contactId
+7. **Email notifications** — If configured, specified team members are notified
+
+### For AI Agents
+
+- Leads from form submissions appear in `crm_list_leads` like any other lead
+- Check the lead's activity feed (`crm_get_activities`) — form submissions show as `type: "created"` with content "Formulario 'X' submetido"
+- The lead's contact will have fields populated from the form's CRM mappings
+- Process these leads through the normal intake workflow (qualify, enrich contact, advance pipeline)

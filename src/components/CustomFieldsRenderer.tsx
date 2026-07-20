@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/Badge";
+import { Checkbox } from "@/components/ui/Checkbox";
 
 interface FieldDefinition {
   _id: string;
@@ -119,15 +120,11 @@ function renderEditField(
       );
     case "boolean":
       return (
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={!!value}
-            onChange={(e) => onChange(field.key, e.target.checked)}
-            className="rounded border-border-strong bg-surface-raised text-brand-600 focus:ring-brand-500"
-          />
-          <span className="text-sm text-text-secondary">{value ? "Sim" : "Nao"}</span>
-        </label>
+        <Checkbox
+          checked={!!value}
+          onChange={(e) => onChange(field.key, e.target.checked)}
+          label={value ? "Sim" : "Nao"}
+        />
       );
     case "date":
       return (

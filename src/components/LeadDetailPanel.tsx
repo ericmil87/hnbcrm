@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "convex/react";
+import React, { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -27,14 +28,24 @@ import {
   Users,
   Microscope,
   ClipboardList,
+  Send,
+  Reply,
 } from "lucide-react";
 import { MentionTextarea } from "@/components/ui/MentionTextarea";
-import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
+import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { extractMentionIds } from "@/lib/mentions";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { LeadDocuments } from "./LeadDocuments";
 import { FileUploadButton, UploadedFile } from "@/components/ui/FileUploadButton";
-import { AttachmentPreview } from "@/components/ui/AttachmentPreview";
+import { MessageBubble } from "@/components/inbox/MessageBubble";
+import { ForwardModal } from "@/components/inbox/ForwardModal";
+import {
+  getReactions,
+  isMediaPlaceholder,
+  isVoiceNote,
+  type InboxMessage,
+} from "@/components/inbox/types";
 
 interface LeadDetailPanelProps {
   leadId: Id<"leads">;
@@ -55,9 +66,14 @@ export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailP
   };
 
   return (
-    <SlideOver open={true} onClose={onClose} title="Detalhes do Lead">
+    <SlideOver
+      open={true}
+      onClose={onClose}
+      title="Detalhes do Lead"
+      bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
+    >
       {/* Tab Bar */}
-      <div className="flex border-b border-border bg-surface-raised">
+      <div className="flex shrink-0 border-b border-border bg-surface-raised">
         {(["conversation", "details", "tasks", "activity"] as Tab[]).map((tab) => (
           <button
             key={tab}
@@ -75,7 +91,7 @@ export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailP
       </div>
 
       {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0">
         {activeTab === "conversation" && (
           <ConversationTab
             leadId={leadId}
@@ -83,13 +99,19 @@ export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailP
           />
         )}
         {activeTab === "details" && (
-          <DetailsTab leadId={leadId} organizationId={organizationId} />
+          <div className="h-full overflow-y-auto">
+            <DetailsTab leadId={leadId} organizationId={organizationId} />
+          </div>
         )}
         {activeTab === "tasks" && (
-          <TasksTab leadId={leadId} organizationId={organizationId} />
+          <div className="h-full overflow-y-auto">
+            <TasksTab leadId={leadId} organizationId={organizationId} />
+          </div>
         )}
         {activeTab === "activity" && (
-          <ActivityTab leadId={leadId} />
+          <div className="h-full overflow-y-auto">
+            <ActivityTab leadId={leadId} />
+          </div>
         )}
       </div>
     </SlideOver>
@@ -107,11 +129,20 @@ function ConversationTab({
   leadId: Id<"leads">;
   organizationId: Id<"organizations">;
 }) {
+  const { can, member } = usePermissions(organizationId);
+  const currentMemberId = member?._id ?? null;
+  const canInteract = can("inbox", "reply");
+
   const [messageText, setMessageText] = useState("");
   const [isInternal, setIsInternal] = useState(false);
   const [sending, setSending] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<UploadedFile[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Inbox-parity interaction state.
+  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
+  const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
@@ -125,14 +156,159 @@ function ConversationTab({
   const messages = useQuery(
     api.conversations.getMessages,
     firstConversation ? { conversationId: firstConversation._id } : "skip"
-  );
+  ) as InboxMessage[] | undefined;
 
   const sendMessage = useMutation(api.conversations.sendMessage);
   const createConversation = useMutation(api.conversations.createConversation);
+  const reactToMessage = useMutation(api.conversations.reactToMessage);
+  const markConversationRead = useMutation(api.conversations.markConversationRead);
+  const sendTypingState = useMutation(api.conversations.sendTypingState);
+  const transcribe = useAction(api.transcription.transcribe);
+
+  const channelIsWhatsapp = firstConversation?.channel === "whatsapp";
+  const contactName =
+    `${firstConversation?.contact?.firstName ?? ""} ${firstConversation?.contact?.lastName ?? ""}`.trim();
+
+  // ── Paridade com o Inbox: markread + presença nossa + "digitando…" do contato ──
+
+  // Marca inbound como lida quando o painel está aberto e chega inbound novo
+  // (mesma guarda por assinatura do Inbox, para não re-disparar no próprio patch).
+  const lastReadSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!firstConversation || !messages) return;
+    let newestInbound: InboxMessage | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].direction === "inbound") {
+        newestInbound = messages[i];
+        break;
+      }
+    }
+    if (!newestInbound) return;
+    const sig = `${firstConversation._id}:${newestInbound._id}`;
+    if (lastReadSigRef.current === sig) return;
+    lastReadSigRef.current = sig;
+    const conversationId = firstConversation._id as Id<"conversations">;
+    const timer = window.setTimeout(() => {
+      markConversationRead({ conversationId }).catch(() => {});
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [firstConversation, messages, markConversationRead]);
+
+  // Nossa presença: "composing" ao digitar (throttle 4s), "paused" após 3s parado.
+  const typingLastSentRef = useRef(0);
+  const typingPauseTimerRef = useRef<number | null>(null);
+
+  const stopTyping = () => {
+    if (typingPauseTimerRef.current !== null) {
+      window.clearTimeout(typingPauseTimerRef.current);
+      typingPauseTimerRef.current = null;
+    }
+    if (typingLastSentRef.current !== 0 && firstConversation && channelIsWhatsapp) {
+      typingLastSentRef.current = 0;
+      sendTypingState({
+        conversationId: firstConversation._id as Id<"conversations">,
+        state: "paused",
+      }).catch(() => {});
+    }
+  };
+
+  const handleComposerActivity = () => {
+    if (!firstConversation || !channelIsWhatsapp || isInternal) return;
+    const ts = Date.now();
+    if (ts - typingLastSentRef.current > 4000) {
+      typingLastSentRef.current = ts;
+      sendTypingState({
+        conversationId: firstConversation._id as Id<"conversations">,
+        state: "composing",
+      }).catch(() => {});
+    }
+    if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
+    typingPauseTimerRef.current = window.setTimeout(() => {
+      typingLastSentRef.current = 0;
+      typingPauseTimerRef.current = null;
+      sendTypingState({
+        conversationId: firstConversation._id as Id<"conversations">,
+        state: "paused",
+      }).catch(() => {});
+    }, 3000);
+  };
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    return () => {
+      if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
+    };
+  }, []);
+
+  // "digitando…" do contato — TTL de 12s (mesmo comportamento do Inbox).
+  const contactPresence = firstConversation?.contactPresence as
+    | { state: "composing" | "paused"; at: number }
+    | undefined;
+  const [presenceNow, setPresenceNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (contactPresence?.state !== "composing") return;
+    setPresenceNow(Date.now());
+    const interval = setInterval(() => setPresenceNow(Date.now()), 4000);
+    return () => clearInterval(interval);
+  }, [contactPresence?.state, contactPresence?.at]);
+  const contactTyping =
+    contactPresence?.state === "composing" && presenceNow - contactPresence.at < 12_000;
+
+  // Auto-scroll bookkeeping mirroring the Inbox thread (WhatsApp-style anchoring).
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const scrolledConvRef = useRef<string | null>(null);
+
+  // Composer textarea — usado para inserir emoji na posição do cursor.
+  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const insertEmoji = (emoji: string) => {
+    const el = composerInputRef.current;
+    if (!el) {
+      setMessageText((v) => v + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? messageText.length;
+    const end = el.selectionEnd ?? start;
+    setMessageText(messageText.slice(0, start) + emoji + messageText.slice(end));
+    requestAnimationFrame(() => {
+      el.focus();
+      const pos = start + emoji.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  // Respostas rápidas — "/" no composer (fora do modo nota interna).
+  const quickReplies = useQuickReplies({
+    organizationId,
+    value: messageText,
+    enabled: !isInternal,
+    onApply: (content) => {
+      setMessageText(content);
+      requestAnimationFrame(() => composerInputRef.current?.focus());
+    },
+  });
+
+  const handleMessagesScroll = () => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
+
+  // On conversation switch: force-scroll to newest. On new messages: only stick
+  // to the bottom when the user was already near it.
+  useLayoutEffect(() => {
+    const el = messagesScrollRef.current;
+    if (!el || !messages) return;
+    const convId = firstConversation?._id ?? null;
+    const switched = scrolledConvRef.current !== convId;
+    if (switched) {
+      scrolledConvRef.current = convId;
+      nearBottomRef.current = true;
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
+  }, [messages, firstConversation?._id]);
 
   const handleSend = async () => {
     if ((!messageText.trim() && stagedFiles.length === 0) || sending) return;
@@ -173,125 +349,162 @@ function ConversationTab({
         isInternal,
         attachments: attachmentIds,
         mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
+        replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
       });
 
       setMessageText("");
       setStagedFiles([]);
+      setReplyTo(null);
+      stopTyping();
     } catch (error) {
       console.error("Failed to send message:", error);
+      toast.error("Falha ao enviar mensagem");
     } finally {
       setSending(false);
     }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (quickReplies.handleKeyDown(e)) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
   };
 
-  const getSenderLabel = (senderType: string): string => {
-    const labels: Record<string, string> = {
-      contact: "Contato",
-      ai: "IA",
-      human: "Humano",
-    };
-    return labels[senderType] || senderType;
+  const handleReact = async (message: InboxMessage, emoji: string) => {
+    const mine = getReactions(message).find((r) => r.sender === currentMemberId)?.emoji ?? null;
+    const next = mine === emoji ? "" : emoji;
+    try {
+      await reactToMessage({ messageId: message._id as Id<"messages">, emoji: next });
+    } catch {
+      toast.error("Falha ao reagir à mensagem");
+    }
   };
+
+  const handleTranscribe = async (message: InboxMessage) => {
+    setTranscribingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await transcribe({ organizationId, messageId: message._id as Id<"messages"> });
+      if (result.status === "failed") toast.error("Falha na transcrição");
+    } catch {
+      toast.error("Falha na transcrição");
+    } finally {
+      setTranscribingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(message._id);
+        return nextSet;
+      });
+    }
+  };
+
+  const handleJumpToMessage = (messageId: string) => {
+    const el = document.getElementById(`msg-${messageId}`);
+    if (!el) {
+      toast("A mensagem original não está carregada");
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(messageId);
+    window.setTimeout(() => {
+      setHighlightId((cur) => (cur === messageId ? null : cur));
+    }, 2000);
+  };
+
+  // Compact preview for the composer reply citation bar.
+  const replyPreview = replyTo
+    ? replyTo.content && !isMediaPlaceholder(replyTo.content)
+      ? replyTo.content
+      : isVoiceNote(replyTo)
+        ? "Mensagem de voz"
+        : "Mídia"
+    : "";
+  const replyAuthor =
+    replyTo && (replyTo.direction === "inbound" || replyTo.senderType === "contact")
+      ? contactName || "Contato"
+      : "Você";
 
   return (
     <div className="flex flex-col h-full">
+      {contactTyping && (
+        <div className="shrink-0 px-4 py-1.5 border-b border-border bg-surface-raised">
+          <span className="text-xs text-brand-500 animate-pulse">
+            {contactName || "Contato"} está digitando…
+          </span>
+        </div>
+      )}
       {/* Messages List */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {!conversations && (
-          <div className="flex justify-center py-8">
-            <Spinner size="md" />
-          </div>
-        )}
+      <div
+        ref={messagesScrollRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 min-h-0 overflow-y-auto"
+      >
+        <div className="min-h-full flex flex-col justify-end p-4 space-y-4">
+          {!conversations && (
+            <div className="flex justify-center py-8">
+              <Spinner size="md" />
+            </div>
+          )}
 
-        {conversations && conversations.length === 0 && (
-          <div className="text-center py-12 text-text-muted text-sm">
-            Nenhuma conversa ainda. Envie uma mensagem para iniciar.
-          </div>
-        )}
+          {conversations && conversations.length === 0 && (
+            <div className="text-center py-12 text-text-muted text-sm">
+              Nenhuma conversa ainda. Envie uma mensagem para iniciar.
+            </div>
+          )}
 
-        {messages &&
-          messages.map((msg) => {
-            const isOutbound = msg.direction === "outbound";
-            const isInternalMsg = msg.direction === "internal";
-
-            return (
-              <div
-                key={msg._id}
-                className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={cn(
-                    "max-w-[75%] rounded-lg px-3 py-2 text-sm",
-                    isInternalMsg
-                      ? "bg-surface-overlay border-2 border-dashed border-semantic-warning/40 text-text-primary"
-                      : isOutbound
-                      ? "bg-brand-600 text-white"
-                      : "bg-surface-sunken text-text-primary"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "text-xs font-medium mb-1",
-                      isInternalMsg
-                        ? "text-semantic-warning"
-                        : isOutbound
-                        ? "text-brand-100"
-                        : "text-text-muted"
-                    )}
-                  >
-                    {getSenderLabel(msg.senderType)}
-                    {isInternalMsg && " (nota interna)"}
-                  </div>
-                  {isInternalMsg ? (
-                    <MentionRenderer content={msg.content} className="whitespace-pre-wrap" />
-                  ) : (
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                  )}
-                  {msg.attachmentFiles && msg.attachmentFiles.length > 0 && (
-                    <AttachmentPreview files={msg.attachmentFiles} />
-                  )}
-                  <div
-                    className={cn(
-                      "text-xs mt-1",
-                      isInternalMsg
-                        ? "text-semantic-warning/80"
-                        : isOutbound
-                        ? "text-brand-100"
-                        : "text-text-muted"
-                    )}
-                  >
-                    {new Date(msg.createdAt).toLocaleTimeString("pt-BR", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        <div ref={messagesEndRef} />
+          {messages?.map((message) => (
+            <MessageBubble
+              key={message._id}
+              message={message}
+              channelIsWhatsapp={!!channelIsWhatsapp}
+              canInteract={canInteract}
+              currentMemberId={currentMemberId}
+              contactName={contactName}
+              transcribing={transcribingIds.has(message._id)}
+              highlighted={highlightId === message._id}
+              onReply={setReplyTo}
+              onReact={handleReact}
+              onForward={setForwardTarget}
+              onTranscribe={handleTranscribe}
+              onJumpToMessage={handleJumpToMessage}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Composer */}
-      <div className="border-t border-border p-4 bg-surface-raised">
+      <div className="shrink-0 border-t border-border p-4 bg-surface-raised">
         <div className="flex items-center gap-2 mb-2">
-          <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={isInternal}
-              onChange={(e) => setIsInternal(e.target.checked)}
-              className="rounded border-border-strong text-semantic-warning focus:ring-semantic-warning accent-semantic-warning"
-            />
-            Nota interna
-          </label>
+          <Checkbox
+            checked={isInternal}
+            onChange={(e) => setIsInternal(e.target.checked)}
+            label={<span className="text-xs">Nota interna</span>}
+            className="peer-checked:border-semantic-warning peer-checked:bg-semantic-warning"
+          />
+          {isInternal && (
+            <Badge variant="warning" className="text-[10px]">Visível apenas para a equipe</Badge>
+          )}
         </div>
+
+        {/* Reply citation bar */}
+        {replyTo && !isInternal && (
+          <div className="flex items-center gap-2 mb-2 pl-2 pr-1 py-1.5 border-l-2 border-brand-500 bg-surface-sunken rounded-r-lg">
+            <Reply size={15} className="shrink-0 text-brand-400" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-brand-400">Respondendo {replyAuthor}</p>
+              <p className="text-xs text-text-secondary truncate">{replyPreview}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setReplyTo(null)}
+              className="shrink-0 p-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+              aria-label="Cancelar resposta"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
         {/* Staged file previews */}
         {stagedFiles.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2">
@@ -313,34 +526,68 @@ function ConversationTab({
             ))}
           </div>
         )}
-        <div className="flex gap-2 items-end">
+        <div className="relative flex gap-2 items-end">
+          <QuickReplyDropdown
+            open={quickReplies.open}
+            items={quickReplies.items}
+            activeIndex={quickReplies.activeIndex}
+            onPick={quickReplies.pick}
+            onManage={() => quickReplies.setManageOpen(true)}
+          />
           <FileUploadButton
             organizationId={organizationId}
             uploadedFiles={stagedFiles}
             onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
             onFilesRemoved={(fileId) => setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))}
             disabled={sending}
+            className="shrink-0"
           />
+          <EmojiPickerButton onPick={insertEmoji} disabled={sending} />
           <MentionTextarea
+            inputRef={composerInputRef}
             value={messageText}
-            onChange={setMessageText}
+            onChange={(value) => {
+              setMessageText(value);
+              handleComposerActivity();
+            }}
             onKeyDown={handleKeyDown}
             teamMembers={teamMembers ?? []}
             mentionEnabled={isInternal}
             placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
-            rows={2}
+            rows={1}
+            className={cn(
+              "bg-surface-sunken",
+              isInternal
+                ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
+                : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
+            )}
           />
           <Button
             onClick={handleSend}
             disabled={(!messageText.trim() && stagedFiles.length === 0) || sending}
-            variant="primary"
+            variant={isInternal ? "secondary" : "primary"}
             size="md"
-            className="self-end"
+            className={cn("shrink-0", isInternal && "bg-semantic-warning hover:bg-amber-600 text-white")}
+            aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
           >
-            {sending ? "Enviando..." : "Enviar"}
+            <Send size={16} />
+            <span className="hidden sm:inline">{isInternal ? "Adicionar Nota" : "Enviar"}</span>
           </Button>
         </div>
       </div>
+
+      <ForwardModal
+        open={!!forwardTarget}
+        organizationId={organizationId}
+        message={forwardTarget}
+        currentConversationId={firstConversation?._id ?? null}
+        onClose={() => setForwardTarget(null)}
+      />
+      <QuickRepliesModal
+        organizationId={organizationId}
+        open={quickReplies.manageOpen}
+        onClose={() => quickReplies.setManageOpen(false)}
+      />
     </div>
   );
 }
@@ -994,28 +1241,30 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
           <BantInfoTooltip />
         </div>
         <div className="space-y-3">
-          {([
-            { key: "budget" as const, label: "Orçamento", desc: "O prospect tem verba disponível?", checked: budget, setter: setBudget },
-            { key: "authority" as const, label: "Autoridade", desc: "Está falando com o decisor?", checked: authority, setter: setAuthority },
-            { key: "need" as const, label: "Necessidade", desc: "Existe uma dor real a resolver?", checked: need, setter: setNeed },
-            { key: "timeline" as const, label: "Prazo", desc: "Há urgência ou prazo definido?", checked: timeline, setter: setTimeline },
-          ] as const).map(({ key, label, desc, checked, setter }) => (
-            <label
-              key={key}
-              className="flex items-start gap-2.5 cursor-pointer select-none group"
-            >
-              <input
-                type="checkbox"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 auto-rows-fr">
+            {([
+              { key: "budget" as const, label: "Orçamento", desc: "O prospect tem verba disponível?", checked: budget, setter: setBudget },
+              { key: "authority" as const, label: "Autoridade", desc: "Está falando com o decisor?", checked: authority, setter: setAuthority },
+              { key: "need" as const, label: "Necessidade", desc: "Existe uma dor real a resolver?", checked: need, setter: setNeed },
+              { key: "timeline" as const, label: "Prazo", desc: "Há urgência ou prazo definido?", checked: timeline, setter: setTimeline },
+            ] as const).map(({ key, label, desc, checked, setter }) => (
+              <Checkbox
+                key={key}
                 checked={checked}
                 onChange={(e) => setter(e.target.checked)}
-                className="mt-0.5 rounded border-border-strong text-brand-500 focus:ring-brand-500 accent-brand-500"
+                containerClassName={cn(
+                  "flex h-full w-full rounded-lg border p-3 transition-colors",
+                  checked
+                    ? "border-brand-500/40 bg-brand-500/5"
+                    : "border-border bg-surface-sunken hover:border-border-strong"
+                )}
+                label={
+                  <span className="text-sm font-medium text-text-primary">{label}</span>
+                }
+                description={desc}
               />
-              <div className="flex-1 min-w-0">
-                <span className="text-sm text-text-primary font-medium">{label}</span>
-                <p className="text-xs text-text-muted leading-tight">{desc}</p>
-              </div>
-            </label>
-          ))}
+            ))}
+          </div>
 
           {/* Score bar */}
           <div className="pt-1">
@@ -1229,6 +1478,7 @@ const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   stage_change: { color: "bg-purple-500", letter: "S" },
   assignment: { color: "bg-indigo-500", letter: "A" },
   message_sent: { color: "bg-brand-500", letter: "M" },
+  message_received: { color: "bg-cyan-500", letter: "R" },
   handoff: { color: "bg-brand-600", letter: "H" },
   qualification_update: { color: "bg-semantic-warning", letter: "Q" },
   note: { color: "bg-surface-overlay", letter: "N" },

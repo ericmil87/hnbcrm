@@ -134,6 +134,18 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 - **Internal notes**: Use `isInternal: true` for AI reasoning, observations, or team coordination — the contact won't see these
 - **Don't over-respond**: If a human team member is already handling the conversation, don't jump in unless explicitly asked
 
+### 7. Email Notifications
+
+- **Email Notifications:** The system automatically sends email notifications on key CRM events (handoff requests, task assignments, lead assignments, overdue tasks). AI agents can check/update their notification preferences via `crm_get_notification_preferences` and `crm_update_notification_preferences` MCP tools.
+
+### 8. Form Submissions
+
+- **Embeddable forms** create leads and contacts automatically when visitors submit data through public form URLs (`/f/:slug`).
+- Each form has CRM field mappings — form fields map to contact or lead entity fields, so submitted data flows directly into the CRM.
+- Forms support assignment modes: none (unassigned), specific (fixed team member), or round-robin (least-loaded active human).
+- Honeypot spam protection is enabled by default — submissions with the honeypot field filled are silently marked as spam.
+- Form submissions trigger webhook events (`form.submitted`) and optional email notifications to configured team members.
+
 ## Best Practices
 
 1. **Always check for duplicates** before creating contacts — search by email, phone, and name

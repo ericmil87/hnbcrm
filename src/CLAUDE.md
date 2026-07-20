@@ -24,7 +24,10 @@ src/
     │   ├── Skeleton.tsx       # Shimmer loading placeholder
     │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
     │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
+    │   ├── Checkbox.tsx       # Styled checkbox with label/description
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
+    ├── notifications/
+    │   └── NotificationPreferences.tsx  # Email notification preferences (Settings tab)
     ├── SEO.tsx                # Dynamic meta tags (react-helmet-async) — NEW
     ├── StructuredData.tsx     # JSON-LD structured data for rich results — NEW
     ├── layout/                # App shell and navigation
@@ -34,14 +37,20 @@ src/
     │   └── BottomTabBar.tsx   # Mobile bottom tabs — URL-based (exports Tab type)
     ├── LandingPage.tsx         # Public sales landing page at /
     ├── AuthPage.tsx            # Auth screen at /entrar with back link
-├── pages/
-│   └── DevelopersPage.tsx      # Public developer portal at /developers
     ├── Dashboard.tsx           # (legacy, unused — superseded by Outlet routing)
     ├── DashboardOverview.tsx   # Metrics overview (route: /app/painel)
     ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline)
     ├── LeadDetailPanel.tsx     # SlideOver for lead details
     ├── CreateLeadModal.tsx     # Modal for creating new leads
-    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada)
+    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select
+    ├── inbox/                  # Inbox building blocks (shared with LeadDetailPanel)
+    │   ├── MessageBubble.tsx        # Message rendering (media, quotes, reactions, ticks)
+    │   ├── VoiceRecorder.tsx        # Mic recording + upload of voice notes
+    │   ├── VoiceTranscription.tsx   # Transcription display / "Transcrever" action
+    │   ├── EmojiPickerButton.tsx    # Emoji picker for the composer
+    │   ├── QuickReplies.tsx         # "/" quick replies (hook + dropdown + manage modal)
+    │   ├── ConversationActionsMenu.tsx  # Archive + labels menu ("..." in conversation header)
+    │   └── ...                      # ReactionPicker, ForwardModal, AudioPlayer, etc.
     ├── HandoffQueue.tsx        # AI-to-human handoff management (route: /app/repasses)
     ├── TeamPage.tsx            # Team member management (route: /app/equipe)
     ├── Settings.tsx            # Organization settings (route: /app/configuracoes)
@@ -62,6 +71,26 @@ src/
     │   ├── CalendarFilters.tsx       # Filter popover (team member, type)
     │   ├── useCalendarState.ts       # Custom hook for calendar state
     │   └── constants.ts              # Color mappings, labels, PT-BR names
+    ├── forms/                  # Form builder & renderer
+    │   ├── FormListPage.tsx   # Form management list (route: /app/formularios)
+    │   ├── FormBuilderPage.tsx # WYSIWYG form builder (route: /app/formularios/:id)
+    │   ├── builder/           # Builder components
+    │   │   ├── types.ts       # Shared types for form builder
+    │   │   ├── FieldPalette.tsx    # Drag-to-add field type palette
+    │   │   ├── FieldCard.tsx       # Draggable field card in canvas
+    │   │   ├── FieldCanvas.tsx     # Drop zone for form fields
+    │   │   ├── FieldConfigPanel.tsx # Field property editor
+    │   │   ├── CrmMappingSelect.tsx # CRM entity/field mapping selector
+    │   │   ├── FormSettingsPanel.tsx # Lead creation & assignment settings
+    │   │   ├── ThemePanel.tsx      # Visual theme customization
+    │   │   └── PublishDialog.tsx   # Publish confirmation with embed codes
+    │   └── renderer/          # Public form renderer
+    │       ├── FormRenderer.tsx    # Renders form from field definitions
+    │       ├── FormField.tsx       # Individual field renderer
+    │       └── FormSuccess.tsx     # Post-submit success screen
+├── pages/
+│   ├── DevelopersPage.tsx      # Public developer portal at /developers
+│   └── PublicFormPage.tsx      # Public form page at /f/:slug (no auth)
     ├── ErrorBoundary.tsx       # Error boundary wrapper
     └── OrganizationSelector.tsx # Org switcher dropdown
 ```

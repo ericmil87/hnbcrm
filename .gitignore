@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+dist-embed
 dist-ssr
 *.local
 
@@ -23,6 +24,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+*.bak
 
 # Environment files
 .env
@@ -36,5 +38,6 @@ temp/
 # Internal planning docs (not for public repo)
 docs/EXPORT-IMPORT-PLAN.md
 docs/FEATURE-ROADMAP-RESEARCH.md
+docs/FORM_BUILDER_ROADMAP_V3.md
 docs/I18N-IMPLEMENTATION-PLAN.md
 docs/MCP-PUBLISHING-PLAN.md

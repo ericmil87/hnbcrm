@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **44 tools across 8 categories** to manage leads, contacts, pipeline, tasks, and calendar via AI agents.
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **46 tools across 9 categories** to manage leads, contacts, pipeline, tasks, calendar, and notification preferences via AI agents.
 
 ## Prerequisites
 
@@ -218,6 +218,13 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | `calendar_update_event` | Update event properties |
 | `calendar_delete_event` | Delete an event |
 | `calendar_reschedule_event` | Quickly reschedule an event |
+
+### Notifications (2 tools)
+
+| Tool | Description |
+|------|-------------|
+| `crm_get_notification_preferences` | Get email notification preferences for the current agent |
+| `crm_update_notification_preferences` | Update email notification preferences (e.g., disable dailyDigest) |
 
 ## Resources
 
