@@ -279,7 +279,14 @@ export function MessageBubble({
           )}
         >
           <div className={cn("text-xs font-medium", style.labelColor)}>
-            {message.sender?.name || style.label}
+            {/* Mensagem de contato não tem sender (team member) — usa o nome do
+                contato (pushName do WhatsApp ou nome editado no lead) e só cai
+                no rótulo genérico "Contato" quando o nome não está disponível. */}
+            {message.sender?.name ||
+              (!message.isInternal &&
+              (message.direction === "inbound" || message.senderType === "contact")
+                ? contactName || style.label
+                : style.label)}
           </div>
 
           {quoted && (
