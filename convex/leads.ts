@@ -15,6 +15,7 @@ export const getLeads = query({
     stageId: v.optional(v.id("stages")),
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
+    archivedOnly: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -36,7 +37,12 @@ export const getLeads = query({
       );
     }
 
-    const leads = await query.take(args.limit ?? 200);
+    const rawLeads = await query.take(args.limit ?? 200);
+
+    // Soft-delete filtering: exclude archived by default; return only archived when requested
+    const leads = args.archivedOnly
+      ? rawLeads.filter((l) => l.archivedAt !== undefined)
+      : rawLeads.filter((l) => l.archivedAt === undefined);
 
     // Batch fetch related data
     const [contactMap, stageMap, assigneeMap] = await Promise.all([
@@ -787,10 +793,10 @@ export const internalGetLeads = internalQuery({
     // Over-read to detect hasMore
     const rawLeads = await query.order("desc").take(limit + 1 + (cursor ? limit * 3 : 0));
 
-    // Apply cursor filter
-    let filtered = rawLeads;
+    // Exclude soft-deleted (archived) leads
+    let filtered = rawLeads.filter((l) => l.archivedAt === undefined);
     if (cursor) {
-      filtered = rawLeads.filter(
+      filtered = filtered.filter(
         (l) =>
           l._creationTime < cursor.ts ||
           (l._creationTime === cursor.ts && l._id < cursor.id)
@@ -860,7 +866,7 @@ export const internalGetLeadsByContact = internalQuery({
       .order("desc")
       .take(50);
 
-    return leads.filter((l) => l.organizationId === args.organizationId);
+    return leads.filter((l) => l.organizationId === args.organizationId && l.archivedAt === undefined);
   },
 });
 
@@ -1253,5 +1259,361 @@ export const internalAssignLead = internalMutation({
     }
 
     return null;
+  },
+});
+
+// ===== Bulk mutations (list view + bulk operations) =====
+
+// Bulk move leads to a stage
+export const bulkMoveLeads = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    stageId: v.id("stages"),
+  },
+  returns: v.object({ moved: v.number() }),
+  handler: async (ctx, args) => {
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+
+    const newStage = await ctx.db.get(args.stageId);
+    if (!newStage || newStage.organizationId !== args.organizationId) {
+      throw new Error("Stage not found");
+    }
+
+    const now = Date.now();
+    let moved = 0;
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      // Skip leads that don't belong to the org or aren't on the stage's board
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+      if (lead.boardId !== newStage.boardId) continue;
+      if (lead.stageId === args.stageId) continue;
+
+      const oldStageId = lead.stageId;
+      const oldStage = await ctx.db.get(oldStageId);
+
+      const patch: Record<string, any> = {
+        stageId: args.stageId,
+        lastActivityAt: now,
+        updatedAt: now,
+      };
+
+      // Mirror single moveLeadToStage's closed-stage handling (minimal, no forced reason)
+      if (newStage.isClosedWon) {
+        patch.closedAt = now;
+        patch.closedType = "won";
+      } else if (newStage.isClosedLost) {
+        patch.closedAt = now;
+        patch.closedType = "lost";
+      } else {
+        patch.closedAt = undefined;
+        patch.closedReason = undefined;
+        patch.closedType = undefined;
+      }
+
+      await ctx.db.patch(leadId, patch);
+
+      // Audit log
+      await ctx.db.insert("auditLogs", {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "move",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        changes: {
+          before: { stageId: oldStageId },
+          after: { stageId: args.stageId },
+        },
+        metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage.name },
+        description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
+        severity: "medium",
+        createdAt: now,
+      });
+
+      // Activity log
+      await ctx.db.insert("activities", {
+        organizationId: lead.organizationId,
+        leadId,
+        type: "stage_change",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        content: `Moved from "${oldStage?.name || "Unknown"}" to "${newStage.name}"`,
+        metadata: { oldStageId, newStageId: args.stageId },
+        createdAt: now,
+      });
+
+      // Trigger webhooks
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: lead.organizationId,
+        event: "lead.stage_changed",
+        payload: { leadId, oldStageId, newStageId: args.stageId, oldStageName: oldStage?.name, newStageName: newStage.name },
+      });
+
+      moved += 1;
+    }
+
+    return { moved };
+  },
+});
+
+// Bulk assign (or unassign) leads
+export const bulkAssignLeads = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    assignedTo: v.optional(v.id("teamMembers")),
+  },
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx, args) => {
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+
+    const now = Date.now();
+    const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
+    let updated = 0;
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+      if (lead.assignedTo === args.assignedTo) continue;
+
+      const oldAssignedTo = lead.assignedTo;
+
+      await ctx.db.patch(leadId, {
+        assignedTo: args.assignedTo,
+        lastActivityAt: now,
+        updatedAt: now,
+      });
+
+      // Audit log
+      await ctx.db.insert("auditLogs", {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "assign",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        changes: {
+          before: { assignedTo: oldAssignedTo },
+          after: { assignedTo: args.assignedTo },
+        },
+        metadata: { title: lead.title, assigneeName: newAssignee?.name },
+        description: buildAuditDescription({ action: "assign", entityType: "lead", metadata: { title: lead.title, assigneeName: newAssignee?.name }, changes: { before: { assignedTo: oldAssignedTo }, after: { assignedTo: args.assignedTo } } }),
+        severity: "medium",
+        createdAt: now,
+      });
+
+      // Activity log
+      await ctx.db.insert("activities", {
+        organizationId: lead.organizationId,
+        leadId,
+        type: "assignment",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        content: newAssignee ? `Assigned to ${newAssignee.name}` : "Unassigned",
+        metadata: { oldAssignedTo, newAssignedTo: args.assignedTo },
+        createdAt: now,
+      });
+
+      // Trigger webhooks
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: lead.organizationId,
+        event: "lead.assigned",
+        payload: { leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
+      });
+
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
+
+// Bulk add tags (union-merge, no duplicates)
+export const bulkAddTags = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    tags: v.array(v.string()),
+  },
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx, args) => {
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+
+    const now = Date.now();
+    let updated = 0;
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+
+      const existing = lead.tags ?? [];
+      const merged = Array.from(new Set([...existing, ...args.tags]));
+      // Only count/patch when something actually changed
+      if (merged.length === existing.length) continue;
+
+      await ctx.db.patch(leadId, {
+        tags: merged,
+        lastActivityAt: now,
+        updatedAt: now,
+      });
+
+      // Audit log (mirror updateLead: audit + webhook, no activity)
+      await ctx.db.insert("auditLogs", {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "update",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        changes: { before: { tags: existing }, after: { tags: merged } },
+        metadata: { title: lead.title },
+        description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before: { tags: existing }, after: { tags: merged } } }),
+        severity: "low",
+        createdAt: now,
+      });
+
+      // Trigger webhooks
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: lead.organizationId,
+        event: "lead.updated",
+        payload: { leadId, changes: { tags: merged } },
+      });
+
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
+
+// Bulk remove tags
+export const bulkRemoveTags = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    tags: v.array(v.string()),
+  },
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx, args) => {
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+
+    const now = Date.now();
+    const removeSet = new Set(args.tags);
+    let updated = 0;
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+
+      const existing = lead.tags ?? [];
+      const filtered = existing.filter((t) => !removeSet.has(t));
+      // Only count/patch when something actually changed
+      if (filtered.length === existing.length) continue;
+
+      await ctx.db.patch(leadId, {
+        tags: filtered,
+        lastActivityAt: now,
+        updatedAt: now,
+      });
+
+      // Audit log (mirror updateLead: audit + webhook, no activity)
+      await ctx.db.insert("auditLogs", {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "update",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        changes: { before: { tags: existing }, after: { tags: filtered } },
+        metadata: { title: lead.title },
+        description: buildAuditDescription({ action: "update", entityType: "lead", metadata: { title: lead.title }, changes: { before: { tags: existing }, after: { tags: filtered } } }),
+        severity: "low",
+        createdAt: now,
+      });
+
+      // Trigger webhooks
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: lead.organizationId,
+        event: "lead.updated",
+        payload: { leadId, changes: { tags: filtered } },
+      });
+
+      updated += 1;
+    }
+
+    return { updated };
+  },
+});
+
+// Bulk archive / unarchive leads (soft-delete)
+export const bulkArchiveLeads = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    archived: v.boolean(),
+  },
+  returns: v.object({ updated: v.number() }),
+  handler: async (ctx, args) => {
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+
+    const now = Date.now();
+    let updated = 0;
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+
+      const alreadyArchived = lead.archivedAt !== undefined;
+      // Skip no-op transitions
+      if (args.archived === alreadyArchived) continue;
+
+      await ctx.db.patch(leadId, {
+        archivedAt: args.archived ? now : undefined,
+        updatedAt: now,
+      });
+
+      // Audit log. Note: auditLogs.action is a constrained union (no archive verb),
+      // so we record it as "update" with a custom PT-BR description + metadata flag.
+      await ctx.db.insert("auditLogs", {
+        organizationId: lead.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "update",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        changes: {
+          before: { archivedAt: lead.archivedAt },
+          after: { archivedAt: args.archived ? now : undefined },
+        },
+        metadata: { title: lead.title, archived: args.archived },
+        description: `${args.archived ? "Arquivou" : "Restaurou"} o lead${lead.title ? ` '${lead.title}'` : ""}`,
+        severity: "medium",
+        createdAt: now,
+      });
+
+      // Activity log
+      await ctx.db.insert("activities", {
+        organizationId: lead.organizationId,
+        leadId,
+        type: "note",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        content: args.archived ? "Lead arquivado" : "Lead restaurado",
+        createdAt: now,
+      });
+
+      // Trigger webhooks
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: lead.organizationId,
+        event: args.archived ? "lead.archived" : "lead.unarchived",
+        payload: { leadId, title: lead.title },
+      });
+
+      updated += 1;
+    }
+
+    return { updated };
   },
 });

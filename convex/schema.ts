@@ -269,6 +269,8 @@ const applicationTables = {
     closedAt: v.optional(v.number()),
     closedReason: v.optional(v.string()),
     closedType: v.optional(v.union(v.literal("won"), v.literal("lost"))),
+    // Soft-delete timestamp: undefined = active, set = archived
+    archivedAt: v.optional(v.number()),
     lastActivityAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -281,6 +283,7 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_organization_and_stage", ["organizationId", "stageId"])
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
+    .index("by_organization_and_archived", ["organizationId", "archivedAt"])
     .index("by_handoff_status", ["handoffState.status"])
     .index("by_last_activity", ["lastActivityAt"]),
 

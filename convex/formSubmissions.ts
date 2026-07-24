@@ -344,12 +344,12 @@ export const internalProcessSubmission = internalMutation({
         let selectedMember = activeMembers[0];
 
         for (const member of activeMembers) {
-          const leads = await ctx.db
+          const leads = (await ctx.db
             .query("leads")
             .withIndex("by_organization_and_assigned", (q) =>
               q.eq("organizationId", form.organizationId).eq("assignedTo", member._id)
             )
-            .collect();
+            .collect()).filter((l) => l.archivedAt === undefined);
           if (leads.length < minLeads) {
             minLeads = leads.length;
             selectedMember = member;

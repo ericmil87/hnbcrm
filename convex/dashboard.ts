@@ -27,12 +27,12 @@ export const getDashboardStats = query({
           .collect();
         const sortedStages = [...boardStages].sort((a, b) => a.order - b.order);
 
-        const boardLeads = await ctx.db
+        const boardLeads = (await ctx.db
           .query("leads")
           .withIndex("by_organization_and_board", (q) =>
             q.eq("organizationId", args.organizationId).eq("boardId", board._id)
           )
-          .take(500);
+          .take(500)).filter((l) => l.archivedAt === undefined);
 
         let boardTotalLeads = 0;
         let boardTotalValue = 0;
@@ -73,10 +73,10 @@ export const getDashboardStats = query({
     );
 
     // Capped leads fetch for source + team stats
-    const leads = await ctx.db
+    const leads = (await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(2000);
+      .take(2000)).filter((l) => l.archivedAt === undefined);
 
     // Leads by source
     const leadSources = await ctx.db
@@ -184,12 +184,12 @@ export const getPipelineStats = query({
           .collect();
         const sortedStages = [...boardStages].sort((a, b) => a.order - b.order);
 
-        const boardLeads = await ctx.db
+        const boardLeads = (await ctx.db
           .query("leads")
           .withIndex("by_organization_and_board", (q) =>
             q.eq("organizationId", args.organizationId).eq("boardId", board._id)
           )
-          .take(500);
+          .take(500)).filter((l) => l.archivedAt === undefined);
 
         let boardTotalLeads = 0;
         let boardTotalValue = 0;
@@ -238,10 +238,10 @@ export const getLeadsBySource = query({
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
 
-    const leads = await ctx.db
+    const leads = (await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(2000);
+      .take(2000)).filter((l) => l.archivedAt === undefined);
 
     const leadSources = await ctx.db
       .query("leadSources")
@@ -269,10 +269,10 @@ export const getTeamPerformance = query({
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
 
-    const leads = await ctx.db
+    const leads = (await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(2000);
+      .take(2000)).filter((l) => l.archivedAt === undefined);
 
     const teamMembers = await ctx.db
       .query("teamMembers")
@@ -360,12 +360,12 @@ export const internalGetDashboardStats = internalQuery({
           .collect();
         const sortedStages = [...boardStages].sort((a, b) => a.order - b.order);
 
-        const boardLeads = await ctx.db
+        const boardLeads = (await ctx.db
           .query("leads")
           .withIndex("by_organization_and_board", (q) =>
             q.eq("organizationId", args.organizationId).eq("boardId", board._id)
           )
-          .take(500);
+          .take(500)).filter((l) => l.archivedAt === undefined);
 
         let boardTotalLeads = 0;
         let boardTotalValue = 0;
@@ -405,10 +405,10 @@ export const internalGetDashboardStats = internalQuery({
       })
     );
 
-    const leads = await ctx.db
+    const leads = (await ctx.db
       .query("leads")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(2000);
+      .take(2000)).filter((l) => l.archivedAt === undefined);
 
     const leadSources = await ctx.db
       .query("leadSources")

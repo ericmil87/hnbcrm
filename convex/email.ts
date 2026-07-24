@@ -132,7 +132,9 @@ export const sendDailyDigest = internalMutation({
         .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
         .order("desc")
         .take(500);
-      const newLeadsCount = recentLeads.filter((l) => l.createdAt >= oneDayAgo).length;
+      const newLeadsCount = recentLeads.filter(
+        (l) => l.createdAt >= oneDayAgo && l.archivedAt === undefined
+      ).length;
 
       const recentTasks = await ctx.db
         .query("tasks")

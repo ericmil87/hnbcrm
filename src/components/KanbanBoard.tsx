@@ -16,8 +16,10 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { LeadsListView, type LeadSortKey } from "./leads/LeadsListView";
+import { LeadsBulkActionBar } from "./leads/LeadsBulkActionBar";
 import { cn } from "@/lib/utils";
-import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2 } from "lucide-react";
+import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2, LayoutGrid, List, Archive } from "lucide-react";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import {
   DndContext,
@@ -665,6 +667,16 @@ export function KanbanBoard() {
   const [temperatureFilter, setTemperatureFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
 
+  // View mode (Kanban/List) + list-view selection + archiving
+  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
+  const [showArchived, setShowArchived] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(() => new Set());
+  const [sortKey, setSortKey] = useState<LeadSortKey>("updatedAt");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
+  const [pendingBulk, setPendingBulk] = useState<
+    { run: () => Promise<void>; title: string; description: string } | null
+  >(null);
+
   const boards = useQuery(api.boards.getBoards, { organizationId });
   const stages = useQuery(
     api.boards.getStages,
@@ -672,14 +684,16 @@ export function KanbanBoard() {
   );
   const leads = useQuery(
     api.leads.getLeads,
-    selectedBoardId ? { organizationId, boardId: selectedBoardId } : "skip"
+    selectedBoardId
+      ? { organizationId, boardId: selectedBoardId, archivedOnly: showArchived }
+      : "skip"
   );
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
   const moveLeadToStage = useMutation(api.leads.moveLeadToStage).withOptimisticUpdate(
     (localStore, args) => {
       if (!selectedBoardId) return;
-      const queryArgs = { organizationId, boardId: selectedBoardId };
+      const queryArgs = { organizationId, boardId: selectedBoardId, archivedOnly: showArchived };
       const existing = localStore.getQuery(api.leads.getLeads, queryArgs);
       if (!existing) return;
       localStore.setQuery(
@@ -697,6 +711,10 @@ export function KanbanBoard() {
   const updateStage = useMutation(api.boards.updateStage);
   const deleteStage = useMutation(api.boards.deleteStage);
   const createStage = useMutation(api.boards.createStage);
+  const bulkMoveLeads = useMutation(api.leads.bulkMoveLeads);
+  const bulkAssignLeads = useMutation(api.leads.bulkAssignLeads);
+  const bulkAddTags = useMutation(api.leads.bulkAddTags);
+  const bulkArchiveLeads = useMutation(api.leads.bulkArchiveLeads);
 
   // Suppress the click that fires immediately after a drag ends.
   const justDraggedRef = useRef(false);
@@ -751,6 +769,120 @@ export function KanbanBoard() {
       return true;
     });
   }, [leads, searchQuery, priorityFilter, temperatureFilter, assigneeFilter]);
+
+  // Sort for the list view (Kanban keeps stage-grouped order)
+  const sortedLeads = useMemo(() => {
+    const sortValue = (lead: any): string | number => {
+      switch (sortKey) {
+        case "title": return (lead.title ?? "").toLowerCase();
+        case "value": return lead.value ?? 0;
+        case "stage": return (lead.stage?.name ?? "").toLowerCase();
+        case "priority": return ({ urgent: 4, high: 3, medium: 2, low: 1 } as Record<string, number>)[lead.priority] ?? 0;
+        case "temperature": return ({ hot: 3, warm: 2, cold: 1 } as Record<string, number>)[lead.temperature] ?? 0;
+        case "assignee": return (lead.assignee?.name ?? "").toLowerCase();
+        case "updatedAt":
+        default: return lead.updatedAt ?? lead.lastActivityAt ?? 0;
+      }
+    };
+    const dir = sortOrder === "asc" ? 1 : -1;
+    return [...filteredLeads].sort((a, b) => {
+      const av = sortValue(a);
+      const bv = sortValue(b);
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), "pt-BR") * dir;
+    });
+  }, [filteredLeads, sortKey, sortOrder]);
+
+  // ── List-view selection ──
+  const toggleSelectLead = (id: string) => {
+    setSelectedLeadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedLeadIds(new Set());
+  const allSelected = sortedLeads.length > 0 && selectedLeadIds.size === sortedLeads.length;
+  const toggleSelectAll = () => {
+    setSelectedLeadIds(allSelected ? new Set() : new Set(sortedLeads.map((l: any) => l._id as string)));
+  };
+
+  const handleSort = (key: LeadSortKey) => {
+    if (key === sortKey) {
+      setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // Text columns default asc; numeric/recency columns default desc
+      setSortOrder(key === "title" || key === "stage" || key === "assignee" ? "asc" : "desc");
+    }
+  };
+
+  // ── Bulk actions (confirm above 5, mirroring the Inbox pattern) ──
+  const runBulk = async (
+    fn: (ids: Id<"leads">[]) => Promise<unknown>,
+    successMsg: (n: number) => string
+  ) => {
+    const ids = Array.from(selectedLeadIds) as Id<"leads">[];
+    if (ids.length === 0) return;
+    try {
+      await fn(ids);
+      toast.success(successMsg(ids.length));
+      clearSelection();
+    } catch {
+      toast.error("Falha na ação em lote");
+    }
+  };
+  const guardBulk = (run: () => Promise<void>, title: string, description: string) => {
+    if (selectedLeadIds.size > 5) setPendingBulk({ run, title, description });
+    else void run();
+  };
+  const handleBulkMove = (stageId: string) =>
+    guardBulk(
+      () =>
+        runBulk(
+          (ids) => bulkMoveLeads({ organizationId, leadIds: ids, stageId: stageId as Id<"stages"> }),
+          (n) => `${n} lead${n === 1 ? "" : "s"} movido${n === 1 ? "" : "s"}`
+        ),
+      "Mover leads",
+      `Mover ${selectedLeadIds.size} leads para outra etapa?`
+    );
+  const handleBulkAssign = (memberId: string | null) =>
+    guardBulk(
+      () =>
+        runBulk(
+          (ids) =>
+            bulkAssignLeads({
+              organizationId,
+              leadIds: ids,
+              assignedTo: memberId ? (memberId as Id<"teamMembers">) : undefined,
+            }),
+          (n) => `${n} lead${n === 1 ? "" : "s"} atualizado${n === 1 ? "" : "s"}`
+        ),
+      "Atribuir leads",
+      `Alterar o responsável de ${selectedLeadIds.size} leads?`
+    );
+  const handleBulkAddTag = (tag: string) =>
+    guardBulk(
+      () =>
+        runBulk(
+          (ids) => bulkAddTags({ organizationId, leadIds: ids, tags: [tag] }),
+          (n) => `Etiqueta aplicada a ${n} lead${n === 1 ? "" : "s"}`
+        ),
+      "Etiquetar leads",
+      `Aplicar a etiqueta "${tag}" a ${selectedLeadIds.size} leads?`
+    );
+  const handleBulkArchive = () =>
+    guardBulk(
+      () =>
+        runBulk(
+          (ids) => bulkArchiveLeads({ organizationId, leadIds: ids, archived: !showArchived }),
+          (n) =>
+            `${n} lead${n === 1 ? "" : "s"} ${showArchived ? "restaurado" : "arquivado"}${n === 1 ? "" : "s"}`
+        ),
+      showArchived ? "Restaurar leads" : "Arquivar leads",
+      `${showArchived ? "Restaurar" : "Arquivar"} ${selectedLeadIds.size} leads?`
+    );
 
   const handleDragStart = (event: DragStartEvent) => {
     setDraggedLeadId(event.active.id as Id<"leads">);
@@ -1038,10 +1170,58 @@ export function KanbanBoard() {
             </select>
             <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
+
+          {/* View toggle (Kanban / Lista) + Arquivados */}
+          <div className="flex items-center gap-2 ml-auto">
+            <div className="flex items-center gap-0.5 bg-surface-raised border border-border-strong rounded-field p-0.5">
+              <button
+                onClick={() => setViewMode("kanban")}
+                className={cn(
+                  "p-1.5 rounded-[0.4rem] transition-colors",
+                  viewMode === "kanban"
+                    ? "bg-brand-600 text-white"
+                    : "text-text-secondary hover:text-text-primary"
+                )}
+                aria-label="Visão Kanban"
+                title="Visão Kanban"
+              >
+                <LayoutGrid size={16} />
+              </button>
+              <button
+                onClick={() => setViewMode("list")}
+                className={cn(
+                  "p-1.5 rounded-[0.4rem] transition-colors",
+                  viewMode === "list"
+                    ? "bg-brand-600 text-white"
+                    : "text-text-secondary hover:text-text-primary"
+                )}
+                aria-label="Visão Lista"
+                title="Visão Lista"
+              >
+                <List size={16} />
+              </button>
+            </div>
+            <button
+              onClick={() => {
+                setShowArchived((v) => !v);
+                clearSelection();
+              }}
+              className={cn(
+                "px-3 py-2 rounded-field border text-sm flex items-center gap-1.5 transition-colors whitespace-nowrap",
+                showArchived
+                  ? "bg-brand-600/15 border-brand-500 text-brand-300"
+                  : "bg-surface-raised border-border-strong text-text-secondary hover:text-text-primary"
+              )}
+              title="Mostrar leads arquivados"
+            >
+              <Archive size={15} />
+              Arquivados
+            </button>
+          </div>
         </div>
 
         {/* Kanban Board */}
-        {stages && (
+        {stages && viewMode === "kanban" && (
           <div className="flex-1 overflow-x-auto">
             <div
               className={cn(
@@ -1129,11 +1309,43 @@ export function KanbanBoard() {
           </div>
         )}
 
+        {/* List view */}
+        {viewMode === "list" && (
+          <div className="flex-1 overflow-y-auto pb-24">
+            <LeadsListView
+              leads={sortedLeads}
+              selectedIds={selectedLeadIds}
+              onToggleSelect={toggleSelectLead}
+              onToggleSelectAll={toggleSelectAll}
+              allSelected={allSelected}
+              sortKey={sortKey}
+              sortOrder={sortOrder}
+              onSort={handleSort}
+              onRowClick={(id) => setSelectedLeadId(id as Id<"leads">)}
+            />
+          </div>
+        )}
+
         {/* Drag Overlay */}
         <DragOverlay>
           {draggedLead ? <LeadCardView lead={draggedLead} variant="overlay" /> : null}
         </DragOverlay>
       </div>
+
+      {/* Bulk action bar (list view) */}
+      {viewMode === "list" && selectedLeadIds.size > 0 && (
+        <LeadsBulkActionBar
+          count={selectedLeadIds.size}
+          stages={(stages ?? []).map((s) => ({ _id: s._id, name: s.name, color: s.color }))}
+          teamMembers={(teamMembers ?? []).map((m) => ({ _id: m._id, name: m.name, type: m.type }))}
+          onMove={handleBulkMove}
+          onAssign={handleBulkAssign}
+          onAddTag={handleBulkAddTag}
+          onArchive={handleBulkArchive}
+          archiveLabel={showArchived ? "Desarquivar" : "Arquivar"}
+          onClear={clearSelection}
+        />
+      )}
 
       {/* Lead Detail Panel */}
       {selectedLeadId && (
@@ -1233,6 +1445,19 @@ export function KanbanBoard() {
         description="Tem certeza que deseja excluir este pipeline? Esta ação não pode ser desfeita."
         confirmLabel="Excluir"
         variant="danger"
+      />
+
+      {/* Bulk action confirm (above 5 leads) */}
+      <ConfirmDialog
+        open={pendingBulk !== null}
+        onClose={() => setPendingBulk(null)}
+        onConfirm={() => {
+          const p = pendingBulk;
+          if (p) void p.run();
+        }}
+        title={pendingBulk?.title ?? ""}
+        description={pendingBulk?.description}
+        confirmLabel="Confirmar"
       />
 
       {/* Close Reason Modal */}

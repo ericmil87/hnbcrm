@@ -135,10 +135,12 @@ export const getContactWithLeads = query({
       }
     }
 
-    const leads = await ctx.db
+    const allLeads = await ctx.db
       .query("leads")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
       .take(100);
+    // Exclude soft-deleted (archived) leads from the linked-leads list
+    const leads = allLeads.filter((l) => l.archivedAt === undefined);
 
     const [stageMap, assigneeMap] = await Promise.all([
       batchGet(ctx.db, leads.map(l => l.stageId)),
