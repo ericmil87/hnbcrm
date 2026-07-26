@@ -9,6 +9,7 @@ import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
+import { isResetCommand, phoneAllowedForReset } from "./testReset";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -1184,7 +1185,7 @@ export const internalReceiveMessage = internalMutation({
     externalId: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
   },
-  returns: v.id("messages"),
+  returns: v.union(v.id("messages"), v.null()),
   handler: async (ctx, args) => {
     // Idempotency: providers redeliver webhooks; the same externalId must not duplicate
     if (args.externalId) {
@@ -1200,6 +1201,22 @@ export const internalReceiveMessage = internalMutation({
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
     if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
+
+    // Reset de teste ("/resetme"): hard delete do contato/lead/conversas do
+    // remetente. Triplo gate em testReset.ts — sem a env WA_TEST_RESET_PHONES
+    // (default) nada é interceptado; telefone precisa estar na allowlist.
+    // A mensagem de comando NÃO é persistida.
+    if (isResetCommand(args.content)) {
+      const contact = lead.contactId ? await ctx.db.get(lead.contactId) : null;
+      const phone = contact?.whatsappNumber ?? contact?.phone;
+      if (phoneAllowedForReset(phone)) {
+        await ctx.scheduler.runAfter(0, internal.testReset.internalHardResetByPhone, {
+          organizationId: args.organizationId,
+          phone: phone!,
+        });
+        return null;
+      }
+    }
 
     const conversationId = await getOrCreateConversation(ctx, {
       organizationId: args.organizationId,

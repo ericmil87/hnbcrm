@@ -86,6 +86,7 @@ import type * as seed from "../seed.js";
 import type * as taskComments from "../taskComments.js";
 import type * as tasks from "../tasks.js";
 import type * as teamMembers from "../teamMembers.js";
+import type * as testReset from "../testReset.js";
 import type * as transcription from "../transcription.js";
 import type * as webhookTrigger from "../webhookTrigger.js";
 import type * as webhooks from "../webhooks.js";
@@ -176,6 +177,7 @@ declare const fullApi: ApiFromModules<{
   taskComments: typeof taskComments;
   tasks: typeof tasks;
   teamMembers: typeof teamMembers;
+  testReset: typeof testReset;
   transcription: typeof transcription;
   webhookTrigger: typeof webhookTrigger;
   webhooks: typeof webhooks;

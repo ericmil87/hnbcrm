@@ -112,7 +112,7 @@ describe("internalReceiveMessage", () => {
     });
 
     const { message, conversation, activities } = await t.run(async (ctx) => {
-      const message = await ctx.db.get(messageId);
+      const message = await ctx.db.get(messageId!);
       const conversation = message ? await ctx.db.get(message.conversationId) : null;
       const activities = await ctx.db
         .query("activities")
