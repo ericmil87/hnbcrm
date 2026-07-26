@@ -12,8 +12,31 @@ import {
   webhookReceive as whatsappWebhookReceive,
 } from "./whatsapp";
 import { webhookReceive as bridgeWebhookReceive } from "./bridge";
+import { copilotStream } from "./copilotHttp";
 
 const http = httpRouter();
+
+// ── Copiloto: streaming SSE autenticado (JWT do Convex auth no Authorization) ──
+http.route({
+  path: "/api/copilot/stream",
+  method: "POST",
+  handler: copilotStream,
+});
+http.route({
+  path: "/api/copilot/stream",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }),
+});
 
 // CORS headers
 const corsHeaders = {
@@ -210,13 +233,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const leadId = url.searchParams.get("id");
       if (!leadId) return errorResponse("Lead ID required", 400);
 
       const lead = await ctx.runQuery(internal.leads.internalGetLead, {
         leadId: leadId as Id<"leads">,
+        organizationId: apiKeyRecord.organizationId,
       });
 
       if (!lead) return errorResponse("Lead not found", 404);
@@ -433,13 +457,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const contactId = url.searchParams.get("id");
       if (!contactId) return errorResponse("Contact ID required", 400);
 
       const contact = await ctx.runQuery(internal.contacts.internalGetContact, {
         contactId: contactId as Id<"contacts">,
+        organizationId: apiKeyRecord.organizationId,
       });
 
       if (!contact) return errorResponse("Contact not found", 404);
@@ -535,13 +560,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const contactId = url.searchParams.get("id");
       if (!contactId) return errorResponse("Contact ID required", 400);
 
       const result = await ctx.runQuery(internal.contacts.internalGetContactEnrichmentGaps, {
         contactId: contactId as Id<"contacts">,
+        organizationId: apiKeyRecord.organizationId,
       });
 
       if (!result) return errorResponse("Contact not found", 404);
@@ -586,13 +612,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const conversationId = url.searchParams.get("conversationId");
       if (!conversationId) return errorResponse("conversationId required", 400);
 
       const messages = await ctx.runQuery(internal.conversations.internalGetMessages, {
         conversationId: conversationId as Id<"conversations">,
+        organizationId: apiKeyRecord.organizationId,
       });
 
       return jsonResponse({ messages });
@@ -686,8 +713,11 @@ http.route({
       let contactId: Id<"contacts">;
       if (body.contactId) {
         contactId = body.contactId as Id<"contacts">;
-        const contact = await ctx.runQuery(internal.contacts.internalGetContact, { contactId });
-        if (!contact || contact.organizationId !== apiKeyRecord.organizationId) {
+        const contact = await ctx.runQuery(internal.contacts.internalGetContact, {
+          contactId,
+          organizationId: apiKeyRecord.organizationId,
+        });
+        if (!contact) {
           return errorResponse("Contact not found", 404);
         }
       } else {

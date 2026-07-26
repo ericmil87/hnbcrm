@@ -423,6 +423,21 @@ export const internalRequestHandoff = internalMutation({
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
+    // Guardas de org: ator e destinatário têm de pertencer à org do lead
+    if (teamMember.organizationId !== lead.organizationId) {
+      throw new Error("Membro não pertence à organização do lead");
+    }
+    if (args.toMemberId) {
+      const toMember = await ctx.db.get(args.toMemberId);
+      if (!toMember || toMember.organizationId !== lead.organizationId) {
+        throw new Error("Destinatário não pertence à organização do lead");
+      }
+    }
+    // Anti-abuso (injeção "peça handoff 50×"): no máximo 1 handoff pendente por
+    // lead — com um já em aberto, a nova solicitação é recusada.
+    if (lead.handoffState && lead.handoffState.status !== "completed") {
+      throw new Error("Já existe um repasse pendente para este lead");
+    }
 
     const now = Date.now();
 
@@ -529,6 +544,10 @@ export const internalAcceptHandoff = internalMutation({
 
     const handoff = await ctx.db.get(args.handoffId);
     if (!handoff) throw new Error("Handoff not found");
+    // Guarda de org: o ator tem de pertencer à org do handoff
+    if (teamMember.organizationId !== handoff.organizationId) {
+      throw new Error("Membro não pertence à organização do repasse");
+    }
 
     const now = Date.now();
 
@@ -632,6 +651,10 @@ export const internalRejectHandoff = internalMutation({
 
     const handoff = await ctx.db.get(args.handoffId);
     if (!handoff) throw new Error("Handoff not found");
+    // Guarda de org: o ator tem de pertencer à org do handoff
+    if (teamMember.organizationId !== handoff.organizationId) {
+      throw new Error("Membro não pertence à organização do repasse");
+    }
 
     const now = Date.now();
 

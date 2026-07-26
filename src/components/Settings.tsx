@@ -19,8 +19,9 @@ import { cn } from "@/lib/utils";
 import { ShieldAlert } from "lucide-react";
 import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
 import { ChannelsSection } from "@/components/settings/ChannelsSection";
+import { AiSection } from "@/components/settings/AiSection";
 
-type SettingsSection = "general" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "notifications";
+type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "notifications";
 
 export function Settings() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -38,6 +39,7 @@ export function Settings() {
 
   const sections = [
     { id: "general", name: "Geral" },
+    { id: "ai", name: "IA" },
     { id: "apikeys", name: "Chaves API" },
     { id: "fields", name: "Campos Personalizados" },
     { id: "sources", name: "Fontes de Leads" },
@@ -69,6 +71,7 @@ export function Settings() {
       </div>
 
       {activeSection === "general" && <OrgProfileSection organizationId={organizationId} />}
+      {activeSection === "ai" && <AiSection organizationId={organizationId} />}
       {activeSection === "apikeys" && <ApiKeysSection organizationId={organizationId} />}
       {activeSection === "fields" && <CustomFieldsSection organizationId={organizationId} />}
       {activeSection === "sources" && <LeadSourcesSection organizationId={organizationId} />}

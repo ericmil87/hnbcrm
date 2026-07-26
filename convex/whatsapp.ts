@@ -22,8 +22,14 @@ import {
   parseWebhookPayload,
   verifyWebhookSignature,
 } from "./lib/whatsappParse";
-import { findOrCreateContactByPhone, ensureLeadForContact } from "./lib/inboundRouting";
+import {
+  findOrCreateContactByPhone,
+  ensureLeadForContact,
+  findAttendantForChannel,
+} from "./lib/inboundRouting";
 import { configProvider } from "./channelConfigs";
+import { resolveConversationChannelConfig } from "./lib/channelResolve";
+import { claimChannelSlot } from "./lib/whatsappDispatch";
 import {
   BridgeQuote,
   BridgeSendRequest,
@@ -253,9 +259,17 @@ export const internalRouteInbound = internalMutation({
       phone: args.waId,
       firstName: args.profileName,
     });
+    // v4.1 P4: se o canal tem um atendente IA com pipelineConfig, o lead novo
+    // nasce no board/estágio configurados (resolvido ANTES do lead — o filtro
+    // de board do atendente não se aplica aqui, o lead ainda não existe).
+    const org = await ctx.db.get(config.organizationId);
+    const attendant = await findAttendantForChannel(ctx, org, config);
+    const pipeline = attendant?.agentProfile?.pipelineConfig;
     const leadId = await ensureLeadForContact(ctx, {
       organizationId: config.organizationId,
       contactId,
+      preferredBoardId: pipeline?.boardId,
+      preferredStageId: pipeline?.initialStageId,
     });
     return { contactId, leadId };
   },
@@ -274,17 +288,10 @@ export const internalGetDispatchContext = internalQuery({
     const conversation = await ctx.db.get(message.conversationId);
     if (!conversation) return null;
 
-    // Per-conversation config, falling back to the org's default active one
-    let config = conversation.channelConfigId
-      ? await ctx.db.get(conversation.channelConfigId)
-      : null;
-    if (!config) {
-      const configs = await ctx.db
-        .query("channelConfigs")
-        .withIndex("by_organization", (q) => q.eq("organizationId", conversation.organizationId))
-        .collect();
-      config = configs.find((c) => c.channel === "whatsapp" && c.status === "active") ?? null;
-    }
+    // Per-conversation config, falling back deterministically (prefer meta) via
+    // the SAME helper the scheduler/attendant use — scheduling and dispatch must
+    // never resolve different configs for the same conversation (v4.1 DIFF 3).
+    const config = await resolveConversationChannelConfig(ctx, conversation);
 
     const lead = await ctx.db.get(conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
@@ -376,6 +383,7 @@ async function dispatchViaBridge(
     config: any;
     toPhone: string | null;
     attachmentFiles: any[];
+    typingDelayMs?: number;
   }
 ): Promise<void> {
   const { messageId, message, config, toPhone, attachmentFiles } = args;
@@ -408,6 +416,30 @@ async function dispatchViaBridge(
   }
 
   const token = await decryptSecret(config.bridgeTokenEncrypted);
+
+  // Humanização (v4.1 P2): envios de IA/agendados no bridge sinalizam
+  // "digitando…" e aguardam o delay JÁ CONTABILIZADO no cursor do canal pelo
+  // scheduling (claimChannelSlot somou o mesmo valor ao avanço). Best-effort:
+  // falha de presence nunca falha o envio. Envio manual não passa por aqui
+  // (typingDelayMs só é agendado para senderType "ai" ou metadata.scheduled).
+  if (args.typingDelayMs && args.typingDelayMs > 0 && toPhone) {
+    try {
+      const presence = buildBridgePresenceRequest({
+        baseUrl: config.bridgeBaseUrl,
+        token,
+        toPhone,
+        state: "composing",
+      });
+      await fetch(presence.url, {
+        method: "POST",
+        headers: presence.headers,
+        body: presence.body,
+      });
+    } catch {
+      // presence é cosmético
+    }
+    await new Promise((resolve) => setTimeout(resolve, args.typingDelayMs));
+  }
 
   // Reply/quote: the outbound message carries metadata.quoted.externalId (the
   // whatsmeow id of the quoted message) resolved when the message was created.
@@ -535,7 +567,12 @@ async function dispatchViaBridge(
 
 // Internal: dispatch one outbound message to the Graph API
 export const internalDispatchMessage = internalAction({
-  args: { messageId: v.id("messages") },
+  args: {
+    messageId: v.id("messages"),
+    // Humanização bridge (v4.1 P2): delay de "digitando…" calculado no claim do
+    // slot (scheduleWhatsappDispatch) e repassado aqui para a espera real.
+    typingDelayMs: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
@@ -565,6 +602,7 @@ export const internalDispatchMessage = internalAction({
         config,
         toPhone,
         attachmentFiles,
+        typingDelayMs: args.typingDelayMs,
       });
       return null;
     }
@@ -676,12 +714,44 @@ export const internalDispatchMessage = internalAction({
       }
     } else {
       const code = body?.error?.code as number | undefined;
+
+      // Classificação em duas famílias (v4.1 P2 DIFF 7):
+      // — Throttling benigno (131056 pair rate, 130429 throughput, 80007 WABA
+      //   rate limit): re-agenda com o backoff OFICIAL 4^X da doc Meta, dentro
+      //   do teto de tentativas. Só cai no mark-failed quando esgota.
+      if (code === 131056 || code === 130429 || code === 80007) {
+        const rescheduled = await ctx.runMutation(
+          internal.whatsapp.internalRescheduleDispatch,
+          {
+            messageId: args.messageId,
+            errorCode: code,
+            ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
+          }
+        );
+        if (rescheduled) return null;
+      }
+      // — Sinal de risco de qualidade (131048: número restringido por mensagens
+      //   bloqueadas/denunciadas como spam): NUNCA re-tentar automaticamente —
+      //   insistir agrava o quality rating. Congela a fila do canal + alerta.
+      if (code === 131048) {
+        await ctx.runMutation(internal.whatsapp.internalFreezeChannelPacing, {
+          messageId: args.messageId,
+          freezeMs: QUALITY_FREEZE_MS,
+        });
+      }
+
       const detail =
         code === 131026
           ? "Fora da janela de 24h — é necessário enviar um template aprovado (erro 131026)"
           : code === 131056
-            ? "Limite de envio para este destinatário — aguarde alguns segundos (erro 131056)"
-            : body?.error?.message ?? `Falha no envio (HTTP ${response.status})`;
+            ? "Limite de envio para este destinatário — tentativas esgotadas (erro 131056)"
+            : code === 130429
+              ? "Limite de vazão do número atingido — tentativas esgotadas (erro 130429)"
+              : code === 80007
+                ? "Limite de envio da conta WhatsApp atingido — tentativas esgotadas (erro 80007)"
+                : code === 131048
+                  ? "A Meta restringiu envios deste número por qualidade (mensagens bloqueadas/denunciadas como spam — erro 131048). Fila do canal pausada por 30 minutos"
+                  : body?.error?.message ?? `Falha no envio (HTTP ${response.status})`;
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId: args.messageId,
         errorCode: code,
@@ -751,6 +821,120 @@ export const internalMarkDispatchFailed = internalMutation({
       metadata: { conversationId: message.conversationId, messageId: args.messageId },
       createdAt: Date.now(),
     });
+    return null;
+  },
+});
+
+// ── Retry pacing-aware (v4.1 P2 DIFF 6/7) ──
+
+const MAX_DISPATCH_RETRIES = 3; // backoff oficial 4^X: 1s, 4s, 16s
+const QUALITY_FREEZE_MS = 30 * 60 * 1000;
+
+// Re-agenda um envio que levou throttling da Meta. NÃO toca deliveryStatus —
+// a guarda de idempotência do internalDispatchMessage ("já tem status? no-op")
+// é exatamente o que deixaria um retry morto se marcássemos failed antes.
+// Retorna null quando o teto estourou (o chamador aí marca failed).
+export const internalRescheduleDispatch = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    errorCode: v.number(),
+    typingDelayMs: v.optional(v.number()),
+  },
+  returns: v.union(v.object({ retryInMs: v.number() }), v.null()),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    // Mensagem já em estado terminal (despachada por uma action duplicada, ou
+    // já marcada) → devolve "tratado" SEM re-agendar: retornar null aqui faria
+    // o chamador sobrescrever um possível "sent" com failed.
+    if (!message || message.externalId || message.deliveryStatus) {
+      return { retryInMs: 0 };
+    }
+    const attempts = ((message.metadata?.dispatchAttempts as number | undefined) ?? 0) + 1;
+    if (attempts > MAX_DISPATCH_RETRIES) return null; // teto: o chamador marca failed
+
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation) return null;
+
+    const now = Date.now();
+    const backoffMs = Math.pow(4, attempts - 1) * 1000;
+
+    await ctx.db.patch(args.messageId, {
+      metadata: { ...(message.metadata ?? {}), dispatchAttempts: attempts },
+    });
+
+    // Reivindica um NOVO slot no cursor do canal (senão o retry vira burst).
+    // 130429/80007 são throttling do NÚMERO/conta inteira — o floor empurra a
+    // fila TODA do canal para depois do backoff, não só esta mensagem.
+    const config = await resolveConversationChannelConfig(ctx, conversation);
+    let slot = now + backoffMs;
+    if (config) {
+      slot = await claimChannelSlot(ctx, {
+        config,
+        conversation,
+        earliestAt: now + backoffMs,
+        now,
+        ...(args.errorCode !== 131056 ? { floorMs: now + backoffMs } : {}),
+      });
+    }
+
+    await ctx.scheduler.runAfter(slot - now, internal.whatsapp.internalDispatchMessage, {
+      messageId: args.messageId,
+      ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
+    });
+    return { retryInMs: slot - now };
+  },
+});
+
+// 131048: a Meta restringiu o número por qualidade (bloqueios/denúncias).
+// Congela a fila do canal e alerta o operador — sem retry automático.
+export const internalFreezeChannelPacing = internalMutation({
+  args: { messageId: v.id("messages"), freezeMs: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) return null;
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation) return null;
+    const config = await resolveConversationChannelConfig(ctx, conversation);
+    if (!config) return null;
+
+    const now = Date.now();
+    const until = now + args.freezeMs;
+    const row = await ctx.db
+      .query("channelPacing")
+      .withIndex("by_channel_config", (q) => q.eq("channelConfigId", config._id))
+      .first();
+    // Congelado há pouco (outras mensagens da mesma rajada falhando): estende
+    // o cursor sem repetir o alerta.
+    const recentlyFrozen = (row?.nextDispatchAt ?? 0) > until - 5 * 60 * 1000;
+
+    if (row) {
+      if (row.nextDispatchAt < until) await ctx.db.patch(row._id, { nextDispatchAt: until });
+    } else {
+      await ctx.db.insert("channelPacing", {
+        organizationId: config.organizationId,
+        channelConfigId: config._id,
+        nextDispatchAt: until,
+      });
+    }
+
+    if (!recentlyFrozen) {
+      await ctx.db.insert("activities", {
+        organizationId: message.organizationId,
+        leadId: message.leadId,
+        type: "note",
+        actorType: "system",
+        content: `Fila do canal WhatsApp "${config.displayName}" pausada por ${Math.round(
+          args.freezeMs / 60000
+        )} minutos: a Meta restringiu envios deste número por qualidade (erro 131048 — mensagens bloqueadas ou denunciadas como spam). Reduza o volume e verifique a qualidade do número no WhatsApp Manager.`,
+        metadata: {
+          conversationId: conversation._id,
+          channelConfigId: config._id,
+          errorCode: 131048,
+        },
+        createdAt: now,
+      });
+    }
     return null;
   },
 });

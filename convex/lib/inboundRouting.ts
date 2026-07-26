@@ -5,8 +5,49 @@
  * endpoint (same logic as the /api/v1/inbound/lead flow).
  */
 import { MutationCtx } from "../_generated/server";
-import { Id } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
 import { buildSearchText } from "./searchText";
+import { orgAiActive } from "./agentSecurity";
+import { configProvider } from "../channelConfigs";
+
+/**
+ * Atendente IA responsável por um CANAL (v4.1 P4 — resolvido ANTES do lead
+ * existir, então sem filtro de board). Usado pelo roteamento inbound para
+ * aplicar o pipelineConfig do atendente na criação do lead. Mesmos gates do
+ * runtime: org com IA ativa, toggle do atendente ligado, bridge só com o
+ * aceite de risco vigente.
+ */
+export async function findAttendantForChannel(
+  ctx: MutationCtx,
+  org: Doc<"organizations"> | null,
+  config: Doc<"channelConfigs">
+): Promise<Doc<"teamMembers"> | null> {
+  if (!orgAiActive(org)) return null;
+  const aiConfig = org!.settings.aiConfig;
+  if (aiConfig?.attendantEnabled === false) return null;
+  if (config.status !== "active") return null;
+  if (configProvider(config) === "bridge" && aiConfig?.bridgeAiAck === undefined) return null;
+
+  const aiMembers = await ctx.db
+    .query("teamMembers")
+    .withIndex("by_organization_and_type", (q) =>
+      q.eq("organizationId", config.organizationId).eq("type", "ai")
+    )
+    .collect();
+  for (const member of aiMembers) {
+    const profile = member.agentProfile;
+    if (member.status !== "active" || profile?.kind !== "attendant") continue;
+    if (
+      profile.channelConfigIds &&
+      profile.channelConfigIds.length > 0 &&
+      !profile.channelConfigIds.includes(config._id)
+    ) {
+      continue;
+    }
+    return member;
+  }
+  return null;
+}
 
 export async function findOrCreateContactByPhone(
   ctx: MutationCtx,
@@ -56,6 +97,10 @@ export async function ensureLeadForContact(
     organizationId: Id<"organizations">;
     contactId: Id<"contacts">;
     title?: string;
+    // v4.1 P4: board/estágio preferidos (pipelineConfig do atendente do canal).
+    // Inválidos/deletados NUNCA quebram o ingest — fallback ao default + aviso.
+    preferredBoardId?: Id<"boards">;
+    preferredStageId?: Id<"stages">;
   }
 ): Promise<Id<"leads">> {
   // Most recent lead for this contact in this org
@@ -75,12 +120,31 @@ export async function ensureLeadForContact(
   const defaultBoard = boards.find((b) => b.isDefault) ?? boards[0];
   if (!defaultBoard) throw new Error("No boards configured");
 
+  let pipelineFallback: string | null = null;
+  let board = defaultBoard;
+  if (args.preferredBoardId) {
+    const preferred = boards.find((b) => b._id === args.preferredBoardId);
+    if (preferred) {
+      board = preferred;
+    } else {
+      pipelineFallback = "funil configurado no atendente não existe mais";
+    }
+  }
+
   const stages = await ctx.db
     .query("stages")
-    .withIndex("by_board_and_order", (q) => q.eq("boardId", defaultBoard._id))
+    .withIndex("by_board_and_order", (q) => q.eq("boardId", board._id))
     .collect();
-  const firstStage = stages[0];
+  let firstStage = stages[0];
   if (!firstStage) throw new Error("No stages configured");
+  if (args.preferredStageId && !pipelineFallback) {
+    const preferredStage = stages.find((s) => s._id === args.preferredStageId);
+    if (preferredStage) {
+      firstStage = preferredStage;
+    } else {
+      pipelineFallback = "estágio inicial configurado no atendente não existe mais neste funil";
+    }
+  }
 
   // Auto-assign to an active AI member if the org opted in
   let assignedTo: Id<"teamMembers"> | undefined;
@@ -108,7 +172,7 @@ export async function ensureLeadForContact(
     organizationId: args.organizationId,
     title,
     contactId: args.contactId,
-    boardId: defaultBoard._id,
+    boardId: board._id,
     stageId: firstStage._id,
     assignedTo,
     value: 0,
@@ -132,6 +196,18 @@ export async function ensureLeadForContact(
     metadata: { contactId: args.contactId },
     createdAt: now,
   });
+
+  if (pipelineFallback) {
+    await ctx.db.insert("activities", {
+      organizationId: args.organizationId,
+      leadId,
+      type: "note",
+      actorType: "system",
+      content: `Configuração de funil do atendente ignorada (${pipelineFallback}) — lead criado no funil padrão. Revise as Opções avançadas do atendente.`,
+      metadata: { contactId: args.contactId, pipelineConfigFallback: true },
+      createdAt: now,
+    });
+  }
 
   await ctx.db.insert("auditLogs", {
     organizationId: args.organizationId,

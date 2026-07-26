@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth, requirePermission } from "./lib/auth";
+import { assertAgentCan } from "./lib/agentSecurity";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -824,13 +825,15 @@ export const internalGetLeads = internalQuery({
   },
 });
 
-// Internal: Get lead by ID (no auth check)
+// Internal: Get lead by ID. Sem sessão de auth, mas COM guarda de org: o
+// chamador (REST/runtime de IA) informa a org autenticada e um lead de outra
+// org responde como inexistente (não vaza existência cross-tenant).
 export const internalGetLead = internalQuery({
-  args: { leadId: v.id("leads") },
+  args: { leadId: v.id("leads"), organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId);
-    if (!lead) return null;
+    if (!lead || lead.organizationId !== args.organizationId) return null;
 
     // Get related data
     const [contact, stage, board, assignee, source] = await Promise.all([
@@ -905,6 +908,14 @@ export const internalCreateLead = internalMutation({
   handler: async (ctx, args) => {
     const teamMember = await ctx.db.get(args.teamMemberId);
     if (!teamMember) throw new Error("Team member not found");
+    // Guardas de org: ator e board têm de pertencer à org informada
+    if (teamMember.organizationId !== args.organizationId) {
+      throw new Error("Membro não pertence a esta organização");
+    }
+    const board = await ctx.db.get(args.boardId);
+    if (!board || board.organizationId !== args.organizationId) {
+      throw new Error("Board não pertence a esta organização");
+    }
 
     // Get default stage if not provided
     let stageId = args.stageId;
@@ -996,6 +1007,10 @@ export const internalUpdateLead = internalMutation({
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
+    // Guarda de org: o ator tem de pertencer à org do lead
+    if (teamMember.organizationId !== lead.organizationId) {
+      throw new Error("Membro não pertence à organização do lead");
+    }
 
     const now = Date.now();
     const changes: Record<string, any> = {};
@@ -1077,6 +1092,10 @@ export const internalDeleteLead = internalMutation({
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
+    // Guarda de org: o ator tem de pertencer à org do lead
+    if (teamMember.organizationId !== lead.organizationId) {
+      throw new Error("Membro não pertence à organização do lead");
+    }
 
     const now = Date.now();
 
@@ -1121,6 +1140,13 @@ export const internalMoveLeadToStage = internalMutation({
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
+    // Camada 1 (assertAgentCan): RBAC do ator + org do ator == org do lead.
+    // Vale para qualquer chamador desta internal (REST, runtime de IA).
+    await assertAgentCan(ctx, args.teamMemberId, "leads", "edit_own", lead);
+    const targetStage = await ctx.db.get(args.stageId);
+    if (!targetStage || targetStage.organizationId !== lead.organizationId) {
+      throw new Error("Estágio não pertence à organização do lead");
+    }
 
     const oldStageId = lead.stageId;
     const now = Date.now();
@@ -1192,6 +1218,16 @@ export const internalAssignLead = internalMutation({
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
+    // Guardas de org: ator e novo responsável na org do lead
+    if (teamMember.organizationId !== lead.organizationId) {
+      throw new Error("Membro não pertence à organização do lead");
+    }
+    if (args.assignedTo) {
+      const assignee = await ctx.db.get(args.assignedTo);
+      if (!assignee || assignee.organizationId !== lead.organizationId) {
+        throw new Error("Responsável não pertence à organização do lead");
+      }
+    }
 
     const oldAssignedTo = lead.assignedTo;
     const now = Date.now();

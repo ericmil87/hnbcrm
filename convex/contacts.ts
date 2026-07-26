@@ -441,12 +441,13 @@ export const internalGetContacts = internalQuery({
   },
 });
 
+// Guarda de org: contato de outra org responde como inexistente.
 export const internalGetContact = internalQuery({
-  args: { contactId: v.id("contacts") },
+  args: { contactId: v.id("contacts"), organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const contact = await ctx.db.get(args.contactId);
-    if (!contact) return null;
+    if (!contact || contact.organizationId !== args.organizationId) return null;
     return contact;
   },
 });
@@ -521,6 +522,10 @@ export const internalCreateContact = internalMutation({
   handler: async (ctx, args) => {
     const teamMember = await ctx.db.get(args.teamMemberId);
     if (!teamMember) throw new Error("Team member not found");
+    // Guarda de org: o ator tem de pertencer à org informada
+    if (teamMember.organizationId !== args.organizationId) {
+      throw new Error("Membro não pertence a esta organização");
+    }
 
     const now = Date.now();
     const searchText = buildSearchText(args);
@@ -604,6 +609,10 @@ export const internalUpdateContact = internalMutation({
 
     const contact = await ctx.db.get(args.contactId);
     if (!contact) throw new Error("Contact not found");
+    // Guarda de org: o ator tem de pertencer à org do contato
+    if (teamMember.organizationId !== contact.organizationId) {
+      throw new Error("Membro não pertence à organização do contato");
+    }
 
     const now = Date.now();
     const { changes, before } = diffChanges(args, contact);
@@ -651,6 +660,10 @@ export const enrichContact = internalMutation({
 
     const contact = await ctx.db.get(args.contactId);
     if (!contact) throw new Error("Contact not found");
+    // Guarda de org: o ator tem de pertencer à org do contato
+    if (teamMember.organizationId !== contact.organizationId) {
+      throw new Error("Membro não pertence à organização do contato");
+    }
 
     const now = Date.now();
     const before: Record<string, any> = {};
@@ -751,13 +764,13 @@ export const updateContactPhoto = mutation({
   },
 });
 
-// Internal query for enrichment gaps
+// Internal query for enrichment gaps (guarda de org: cross-tenant = inexistente)
 export const internalGetContactEnrichmentGaps = internalQuery({
-  args: { contactId: v.id("contacts") },
+  args: { contactId: v.id("contacts"), organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const contact = await ctx.db.get(args.contactId);
-    if (!contact) return null;
+    if (!contact || contact.organizationId !== args.organizationId) return null;
 
     const allFields = [
       "firstName", "lastName", "email", "phone", "company", "title",

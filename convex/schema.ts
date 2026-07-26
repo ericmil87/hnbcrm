@@ -17,6 +17,111 @@ const permissionsValidator = v.object({
 
 export { permissionsValidator };
 
+// ── AI Agent Config (opt-in total: enabled default false, nada roda sem ativação) ──
+
+// IDs de modelo CANÔNICOS — o adapter em lib/llm mapeia para o id de cada provider.
+const aiModelsValidator = v.object({
+  copilot: v.string(), // default "kimi-k2.7-code"
+  attendant: v.string(), // default "deepseek-v4-flash"
+  classify: v.string(), // default "deepseek-v4-flash"
+  complex: v.optional(v.string()), // default "deepseek-v4-pro"
+});
+
+// Config de provider por-org. mode "platform" (default) usa as keys da plataforma
+// (OpenCode Go → fallback OpenRouter); "byo" usa a key da org em orgSecrets.
+const providerConfigValidator = v.object({
+  mode: v.union(v.literal("platform"), v.literal("byo")),
+  byo: v.optional(
+    v.object({
+      provider: v.union(
+        v.literal("opencode-go"),
+        v.literal("openrouter"),
+        v.literal("openai"),
+        v.literal("anthropic"),
+        v.literal("custom")
+      ),
+      baseUrl: v.optional(v.string()), // só para "custom"
+      apiKeyRef: v.object({ kind: v.literal("orgSecret"), id: v.id("orgSecrets") }),
+    })
+  ),
+  // ZDR é transparência + aviso, não bloqueio (a org é a controladora). O caminho
+  // padrão da plataforma já é zero-retention; o aviso só aparece ao sair do padrão.
+  zdr: v.boolean(), // default true
+  strictZdr: v.optional(v.boolean()), // modo estrito opcional: backend RECUSA rotas não-ZDR
+  // Aceite explícito registrado quando o admin escolhe uma rota não-ZDR sob zdr:true.
+  nonZdrAck: v.optional(
+    v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers"), route: v.string() })
+  ),
+  models: aiModelsValidator,
+});
+
+const aiConfigValidator = v.object({
+  // Kill-switch global. DEFAULT FALSE — nenhuma inferência dispara sem o admin
+  // ativar E registrar o aceite LGPD (o runtime exige ambos).
+  enabled: v.boolean(),
+  autoAssign: v.boolean(),
+  handoffThreshold: v.number(),
+  // Gate de reconhecimento LGPD ("minha política divulga uso de IA + transferência
+  // internacional"). Obrigatório para o runtime rodar — orgs legadas com
+  // enabled:true mas sem lgpdAck continuam com a IA desligada.
+  lgpdAck: v.optional(v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })),
+  // Toggles por produto sob o mestre. undefined = ligado (compat com orgs que
+  // ativaram antes de existirem os toggles).
+  copilotEnabled: v.optional(v.boolean()),
+  attendantEnabled: v.optional(v.boolean()),
+  // Aceite org-level de risco do canal bridge (API não-oficial, banimento
+  // permanente possível). Sem ele o atendente NUNCA atende canal bridge — é
+  // condição de elegibilidade re-checada no commit (revogação vale já para runs
+  // em voo). Revogar remove o objeto; o histórico fica no auditLog.
+  bridgeAiAck: v.optional(
+    v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
+  ),
+  providerConfig: v.optional(providerConfigValidator),
+  // Teto amigável de uso mensal (nº de conversas atendidas). Kill-switch de custo.
+  monthlyConversationBudget: v.optional(v.number()),
+});
+
+export { aiConfigValidator };
+
+// Perfil de agente em teamMembers (só para type:"ai" ou config do copiloto).
+const agentProfileValidator = v.object({
+  kind: v.union(v.literal("copilot"), v.literal("attendant")),
+  // Todo atendente começa em "suggest" (gera rascunho, não auto-envia).
+  mode: v.union(v.literal("suggest"), v.literal("autopilot")),
+  systemPrompt: v.optional(v.string()),
+  knowledge: v.optional(v.string()),
+  language: v.optional(v.string()), // default "pt-BR"
+  // Escopo de atuação: canais (só Meta até HMAC por-tenant no bridge) e boards.
+  channelConfigIds: v.optional(v.array(v.id("channelConfigs"))),
+  boardIds: v.optional(v.array(v.id("boards"))),
+  schedule: v.optional(
+    v.object({
+      timezone: v.string(), // default "America/Sao_Paulo"
+      startHour: v.number(),
+      endHour: v.number(),
+      days: v.optional(v.array(v.number())), // 0=Dom … 6=Sáb; ausente = todos
+    })
+  ),
+  handoffKeywords: v.optional(v.array(v.string())), // ex.: ["humano", "atendente"]
+  maxRepliesPerConversation: v.optional(v.number()), // default 20
+  maxRepliesPerHour: v.optional(v.number()), // teto por janela (cliente-que-é-bot)
+  maxToolCallsPerRun: v.optional(v.number()), // default 6
+  model: v.optional(v.string()), // override do id canônico da org
+  temperature: v.optional(v.number()),
+  disclosure: v.optional(v.string()), // divulgação LGPD na 1ª resposta ao cliente
+  // Regras de pipeline do atendente (P4 v4.1). Tudo opcional = comportamento atual.
+  pipelineConfig: v.optional(
+    v.object({
+      boardId: v.optional(v.id("boards")), // board p/ novos leads dos canais do atendente
+      initialStageId: v.optional(v.id("stages")), // deve pertencer a boardId
+      advanceRules: v.optional(v.string()), // linguagem natural → seção "REGRAS DO FUNIL" do prompt
+      qualifiedStageId: v.optional(v.id("stages")), // movimento DETERMINÍSTICO pós-qualificação
+      qualifyThreshold: v.optional(v.number()), // score BANT mínimo p/ mover (default 3)
+      allowMoveStages: v.optional(v.boolean()), // default true; false remove moveThisLead da run E recusa no executor
+    })
+  ),
+});
+
 const applicationTables = {
   // Organizations
   organizations: defineTable({
@@ -25,11 +130,7 @@ const applicationTables = {
     settings: v.object({
       timezone: v.string(),
       currency: v.string(),
-      aiConfig: v.optional(v.object({
-        enabled: v.boolean(),
-        autoAssign: v.boolean(),
-        handoffThreshold: v.number(),
-      })),
+      aiConfig: v.optional(aiConfigValidator),
     }),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
@@ -53,6 +154,8 @@ const applicationTables = {
     avatarFileId: v.optional(v.id("files")),
     capabilities: v.optional(v.array(v.string())),
     permissions: v.optional(permissionsValidator),
+    // Perfil do agente IA (persona, modo suggest/autopilot, escopo, guardrails).
+    agentProfile: v.optional(agentProfileValidator),
     mustChangePassword: v.optional(v.boolean()),
     invitedBy: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
@@ -216,6 +319,10 @@ const applicationTables = {
     // Flexible overflow for future AI-discovered data
     enrichmentExtra: v.optional(v.record(v.string(), v.any())),
 
+    // Opt-out de IA (LGPD art. 18): 9ª condição de elegibilidade do atendente —
+    // contato com aiOptOut nunca recebe resposta automática (escala p/ humano).
+    aiOptOut: v.optional(v.boolean()),
+
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -365,6 +472,12 @@ const applicationTables = {
     ),
     archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
     labelIds: v.optional(v.array(v.id("conversationLabels"))),
+    // Lock/lease OCC do turno de IA — evita resposta dupla de dois inbounds
+    // concorrentes. Claims concorrentes leem+escrevem o mesmo doc → só uma commita.
+    aiTurnLock: v.optional(v.object({ runId: v.string(), leaseUntil: v.number() })),
+    // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
+    // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
+    aiPausedUntil: v.optional(v.number()),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -996,6 +1109,171 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
     .index("by_storage_id", ["storageId"]),
+
+  // ── AI Agent Config: tabelas do runtime ──
+
+  // Registro de operações de IA (LGPD art. 37) SEM transcrições/PII — só
+  // tokens, custo, nomes de tools e ponteiros. A conversa em si já vive em
+  // messages/copilotMessages; não duplicamos conteúdo aqui.
+  agentRuns: defineTable({
+    organizationId: v.id("organizations"),
+    // Atendente: o teamMember IA. Copiloto: o teamMember HUMANO que comandou.
+    memberId: v.id("teamMembers"),
+    kind: v.union(v.literal("copilot"), v.literal("attendant"), v.literal("simulator")),
+    status: v.union(
+      v.literal("running"),
+      v.literal("done"),
+      v.literal("error"),
+      v.literal("aborted")
+    ),
+    conversationId: v.optional(v.id("conversations")),
+    leadId: v.optional(v.id("leads")),
+    triggerMessageId: v.optional(v.id("messages")),
+    threadId: v.optional(v.id("copilotThreads")),
+    provider: v.optional(v.string()), // provider efetivo (ex. "opencode-go")
+    model: v.optional(v.string()), // id canônico do modelo
+    requestCount: v.number(), // nº de chamadas /chat/completions na run
+    toolCallNames: v.optional(v.array(v.string())), // só NOMES — nunca argumentos
+    promptTokens: v.optional(v.number()),
+    completionTokens: v.optional(v.number()),
+    cachedPromptTokens: v.optional(v.number()),
+    costUsdEstimate: v.optional(v.number()),
+    confidence: v.optional(v.number()),
+    // Erro SANITIZADO (lib/llm/sanitize) — nunca contém keys/headers.
+    error: v.optional(v.string()),
+    resultMessageId: v.optional(v.id("messages")),
+    startedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_organization_and_started", ["organizationId", "startedAt"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_organization_and_kind_and_started", ["organizationId", "kind", "startedAt"]),
+
+  // Fila de respostas do atendente. O gatilho de ingest ENFILEIRA aqui (nunca
+  // runAfter(0) direto na inferência) — pacing por-org + debounce + backoff.
+  aiReplyQueue: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    triggerMessageId: v.id("messages"),
+    agentMemberId: v.id("teamMembers"),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("processing"),
+      v.literal("done"),
+      v.literal("skipped"),
+      v.literal("failed")
+    ),
+    attempts: v.number(),
+    nextAttemptAt: v.number(), // slot de pacing/backoff (debounce incluído)
+    // Uma única mensagem de fallback por item em instabilidade (flag anti-spam).
+    fallbackSentAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_status_and_next_attempt", ["status", "nextAttemptAt"]),
+
+  // Cursor de pacing de inferência por org (espelha o nextDispatchAt do WhatsApp,
+  // mas em doc próprio para não contender no doc da organização).
+  aiPacing: defineTable({
+    organizationId: v.id("organizations"),
+    nextInferenceAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Cursor de pacing de envio por NÚMERO WhatsApp (anti-burst, P2 v4.1). Doc
+  // próprio (não um campo em channelConfigs) de propósito: um cursor quente no
+  // doc do config re-executaria as queries da UI de Canais a cada envio e
+  // ampliaria o conflito OCC de todo sendMessage.
+  channelPacing: defineTable({
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    nextDispatchAt: v.number(),
+    // Métrica-only (SEM enforcement): envios do dia UTC, p/ calibrar um futuro
+    // warm-up/cap de canal bridge com dados reais.
+    dailyCount: v.optional(v.object({ day: v.string(), sent: v.number() })),
+  }).index("by_channel_config", ["channelConfigId"]),
+
+  // Segredos por-org (BYO API key de LLM), cifrados via lib/secretCrypto.
+  // NUNCA retornar encryptedValue a clientes — masking via last4.
+  orgSecrets: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(), // rótulo dado pelo admin
+    purpose: v.union(v.literal("llm-api-key")),
+    provider: v.optional(v.string()),
+    encryptedValue: v.string(),
+    last4: v.string(),
+    createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Ações destrutivas propostas pelo copiloto — two-phase server-side: a tool
+  // grava a proposta; a execução real é uma mutation disparada por humano.
+  pendingActions: defineTable({
+    organizationId: v.id("organizations"),
+    requestedBy: v.id("teamMembers"), // o humano dono da sessão do copiloto
+    threadId: v.optional(v.id("copilotThreads")),
+    tool: v.string(), // nome da tool destrutiva (ex. "deleteLead")
+    args: v.record(v.string(), v.any()),
+    preview: v.string(), // efeito em PT-BR ("Vou excluir o lead 'X'")
+    status: v.union(
+      v.literal("pending"),
+      v.literal("executed"),
+      v.literal("canceled"),
+      v.literal("expired")
+    ),
+    expiresAt: v.number(), // TTL
+    createdAt: v.number(),
+    executedAt: v.optional(v.number()),
+  }).index("by_organization_and_status", ["organizationId", "status"]),
+
+  // Threads do copiloto (chat in-app por membro humano).
+  copilotThreads: defineTable({
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"), // dono humano — só ele lê/escreve
+    title: v.optional(v.string()),
+    // Continuação de run longa: estado serializado para re-scheduling (>8 min).
+    pendingContinuation: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization_and_member", ["organizationId", "memberId"]),
+
+  // Mensagens do copiloto — histórico OpenAI-compatible re-hidratável.
+  copilotMessages: defineTable({
+    organizationId: v.id("organizations"),
+    threadId: v.id("copilotThreads"),
+    role: v.union(
+      v.literal("user"),
+      v.literal("assistant"),
+      v.literal("tool")
+    ),
+    content: v.string(),
+    // tool_calls emitidas pelo assistant (arguments como JSON string, formato OpenAI).
+    toolCalls: v.optional(
+      v.array(v.object({ id: v.string(), name: v.string(), arguments: v.string() }))
+    ),
+    toolCallId: v.optional(v.string()), // para role:"tool"
+    status: v.optional(
+      v.union(v.literal("streaming"), v.literal("done"), v.literal("error"))
+    ),
+    agentRunId: v.optional(v.id("agentRuns")),
+    createdAt: v.number(),
+  }).index("by_thread_and_created", ["threadId", "createdAt"]),
+
+  // Golden conversations para regressão de persona (F5).
+  agentEvals: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    transcript: v.array(
+      v.object({ role: v.union(v.literal("customer"), v.literal("agent")), content: v.string() })
+    ),
+    expectation: v.string(),
+    tags: v.optional(v.array(v.string())),
+    createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   // Lead Documents (join table for lead ↔ document relationships)
   leadDocuments: defineTable({

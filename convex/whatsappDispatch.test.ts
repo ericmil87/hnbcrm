@@ -4,6 +4,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { computeTypingDelayMs } from "./lib/whatsappDispatch";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -251,32 +252,27 @@ describe("internalDispatchMessage", () => {
     expect(activities.some((a) => String(a.content).includes("Falha ao enviar"))).toBe(true);
   });
 
-  test("maps 131026 (24h window) and 131056 (pair rate limit) to clear failures", async () => {
+  test("maps 131026 (24h window) to a clear immediate failure", async () => {
     const t = setup();
     const { aiMemberId, conversationId } = await seedFullPipeline(t);
 
-    for (const [code, needle] of [
-      [131026, "janela de 24h"],
-      [131056, "131056"],
-    ] as const) {
-      const messageId = await sendAndGetMessageId(t, conversationId, aiMemberId);
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () =>
-          new Response(JSON.stringify({ error: { code, message: `error ${code}` } }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          })
-        )
-      );
+    const messageId = await sendAndGetMessageId(t, conversationId, aiMemberId);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { code: 131026, message: "error 131026" } }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+    );
 
-      await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
-      const message = await t.run(async (ctx) => ctx.db.get(messageId));
-      expect(message!.deliveryStatus).toBe("failed");
-      expect(String(message!.metadata!.deliveryError)).toContain(needle);
-      expect(message!.metadata!.deliveryErrorCode).toBe(code);
-    }
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBe("failed");
+    expect(String(message!.metadata!.deliveryError)).toContain("janela de 24h");
+    expect(message!.metadata!.deliveryErrorCode).toBe(131026);
   });
 
   test("does not double-send an already dispatched message", async () => {
@@ -364,5 +360,326 @@ describe("templates + service window", () => {
     expect(conversation.serviceWindowExpiresAt).toBe(
       conversation.lastInboundAt! + 24 * 60 * 60 * 1000
     );
+  });
+});
+
+// ── v4.1 P2: pacing por CANAL (anti-burst), humanização e retry pacing-aware ──
+
+async function insertConversation(
+  t: TestConvex<typeof schema>,
+  seed: { organizationId: Id<"organizations">; leadId: Id<"leads"> },
+  configId: Id<"channelConfigs"> | undefined,
+  extra: { lastInboundAt?: number } = {}
+) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    return await ctx.db.insert("conversations", {
+      organizationId: seed.organizationId,
+      leadId: seed.leadId,
+      channel: "whatsapp",
+      ...(configId ? { channelConfigId: configId } : {}),
+      status: "active",
+      messageCount: 0,
+      ...extra,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
+async function insertBridgeConfig(
+  t: TestConvex<typeof schema>,
+  organizationId: Id<"organizations">
+) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    return await ctx.db.insert("channelConfigs", {
+      organizationId,
+      channel: "whatsapp",
+      provider: "bridge",
+      displayName: "Bridge de teste",
+      bridgeBaseUrl: "https://wuzapi.example.com",
+      bridgeInstanceId: "inst_test",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
+describe("pacing por canal (v4.1)", () => {
+  beforeEach(() => {
+    // Jitter determinístico: gap Meta = 1s exato; bridge reativo = 4s; frio = 8s.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+  });
+
+  test("conversas DIFERENTES do mesmo canal Meta são espaçadas pelo cursor do canal", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+
+    const conv2 = await insertConversation(t, seed, seed.configId);
+    const conv3 = await insertConversation(t, seed, seed.configId);
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "a", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: conv2, content: "b", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: conv3, content: "c", teamMemberId: seed.aiMemberId,
+    });
+
+    const dispatches = (await getScheduledDispatches(t)).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime
+    );
+    expect(dispatches).toHaveLength(3);
+    // 1ª imediata (canal ocioso), depois estritamente ≥ 1s entre conversas distintas.
+    expect(dispatches[1].scheduledTime - dispatches[0].scheduledTime).toBeGreaterThanOrEqual(1000);
+    expect(dispatches[2].scheduledTime - dispatches[1].scheduledTime).toBeGreaterThanOrEqual(1000);
+  });
+
+  test("canal ocioso envia imediatamente (pacing só morde em rajada)", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const before = Date.now();
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "única", teamMemberId: seed.aiMemberId,
+    });
+    const [dispatch] = await getScheduledDispatches(t);
+    expect(dispatch.scheduledTime).toBeLessThanOrEqual(before + 50);
+  });
+
+  test("canais diferentes não se bloqueiam", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const bridgeConfigId = await insertBridgeConfig(t, seed.organizationId);
+    const bridgeConv = await insertConversation(t, seed, bridgeConfigId, {
+      lastInboundAt: Date.now(),
+    });
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "meta", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: bridgeConv, content: "bridge", teamMemberId: seed.aiMemberId,
+    });
+
+    const dispatches = (await getScheduledDispatches(t)).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime
+    );
+    expect(dispatches).toHaveLength(2);
+    // O 2º canal está ocioso — o cursor do 1º não o atrasa.
+    expect(dispatches[1].scheduledTime - dispatches[0].scheduledTime).toBeLessThan(1000);
+  });
+
+  test("bridge FRIO (sem inbound recente) usa a faixa pesada de 8s+", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const bridgeConfigId = await insertBridgeConfig(t, seed.organizationId);
+    const cold1 = await insertConversation(t, seed, bridgeConfigId); // sem lastInboundAt
+    const cold2 = await insertConversation(t, seed, bridgeConfigId);
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: cold1, content: "frio 1", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: cold2, content: "frio 2", teamMemberId: seed.aiMemberId,
+    });
+
+    const dispatches = (await getScheduledDispatches(t)).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime
+    );
+    // Com jitter zerado, o avanço mínimo do frio é 8s (+ typing do envio de IA).
+    expect(dispatches[1].scheduledTime - dispatches[0].scheduledTime).toBeGreaterThanOrEqual(8000);
+  });
+
+  test("bridge REATIVO usa a faixa leve (≥4s) e envio de IA carrega typingDelayMs", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const bridgeConfigId = await insertBridgeConfig(t, seed.organizationId);
+    const reactive1 = await insertConversation(t, seed, bridgeConfigId, {
+      lastInboundAt: Date.now(),
+    });
+    const reactive2 = await insertConversation(t, seed, bridgeConfigId, {
+      lastInboundAt: Date.now(),
+    });
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: reactive1, content: "resposta da IA", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: reactive2, content: "outra resposta", teamMemberId: seed.aiMemberId,
+    });
+
+    const dispatches = (await getScheduledDispatches(t)).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime
+    );
+    const gap = dispatches[1].scheduledTime - dispatches[0].scheduledTime;
+    // Reativo: mínimo 4s + typingDelay do 1º envio somado ao cursor.
+    const typing1 = computeTypingDelayMs({
+      senderType: "ai", contentType: "text", content: "resposta da IA",
+    });
+    expect(gap).toBeGreaterThanOrEqual(4000 + typing1);
+
+    // O agendamento carrega o typingDelayMs p/ a action aguardar "digitando…".
+    const args0 = dispatches[0].args[0] as { typingDelayMs?: number };
+    expect(args0.typingDelayMs).toBe(typing1);
+  });
+
+  test("envio MANUAL humano no bridge não ganha atraso de digitação artificial", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const humanMemberId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("teamMembers", {
+        organizationId: seed.organizationId, name: "Atendente Humano", role: "agent",
+        type: "human", status: "active", createdAt: now, updatedAt: now,
+      });
+    });
+    const bridgeConfigId = await insertBridgeConfig(t, seed.organizationId);
+    const conv = await insertConversation(t, seed, bridgeConfigId, {
+      lastInboundAt: Date.now(),
+    });
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: conv, content: "mensagem manual", teamMemberId: humanMemberId,
+    });
+    const [dispatch] = await getScheduledDispatches(t);
+    const args = dispatch.args[0] as { typingDelayMs?: number };
+    expect(args.typingDelayMs).toBeUndefined();
+  });
+
+  test("channelPacing registra a métrica diária de envios (sem enforcement)", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "1", teamMemberId: seed.aiMemberId,
+    });
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "2", teamMemberId: seed.aiMemberId,
+    });
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query("channelPacing").collect())[0]
+    );
+    expect(row.dailyCount?.sent).toBe(2);
+  });
+});
+
+describe("computeTypingDelayMs (puro)", () => {
+  test("IA texto: base 1,5s + 55ms/char, teto 8s; manual = 0; mídia de IA = base", () => {
+    expect(
+      computeTypingDelayMs({ senderType: "ai", contentType: "text", content: "x".repeat(10) })
+    ).toBe(1500 + 550);
+    expect(
+      computeTypingDelayMs({ senderType: "ai", contentType: "text", content: "x".repeat(500) })
+    ).toBe(8000);
+    expect(
+      computeTypingDelayMs({ senderType: "human", contentType: "text", content: "oi" })
+    ).toBe(0);
+    expect(
+      computeTypingDelayMs({
+        senderType: "human", contentType: "text", content: "agendada",
+        metadata: { scheduled: true },
+      })
+    ).toBe(1500 + 8 * 55);
+    expect(
+      computeTypingDelayMs({ senderType: "ai", contentType: "audio", content: "" })
+    ).toBe(1500);
+  });
+});
+
+describe("retry pacing-aware (v4.1)", () => {
+  function graphErrorMock(code: number) {
+    return vi.fn(async () =>
+      new Response(JSON.stringify({ error: { code, message: `error ${code}` } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+  }
+
+  test("131056 re-agenda com backoff 4^X SEM tocar deliveryStatus (idempotência viva)", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const messageId = await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "olá", teamMemberId: seed.aiMemberId,
+    });
+    vi.stubGlobal("fetch", graphErrorMock(131056));
+
+    const before = Date.now();
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBeUndefined(); // NÃO marcou failed
+    expect(message!.metadata!.dispatchAttempts).toBe(1);
+
+    // Um retry agendado ≥ 1s no futuro (4^0).
+    const dispatches = (await getScheduledDispatches(t)).sort(
+      (a, b) => a.scheduledTime - b.scheduledTime
+    );
+    expect(dispatches.length).toBe(2); // agendamento original + retry
+    expect(dispatches[1].scheduledTime).toBeGreaterThanOrEqual(before + 1000);
+  });
+
+  test("teto de tentativas esgota → failed com motivo claro", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const messageId = await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "olá", teamMemberId: seed.aiMemberId,
+    });
+    vi.stubGlobal("fetch", graphErrorMock(131056));
+
+    for (let i = 0; i < 4; i++) {
+      await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+    }
+
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.metadata!.dispatchAttempts).toBe(3);
+    expect(message!.deliveryStatus).toBe("failed");
+    expect(String(message!.metadata!.deliveryError)).toContain("tentativas esgotadas");
+  });
+
+  test("130429 (throughput do número) empurra o cursor do canal inteiro", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const messageId = await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "olá", teamMemberId: seed.aiMemberId,
+    });
+    vi.stubGlobal("fetch", graphErrorMock(130429));
+
+    const before = Date.now();
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const row = await t.run(async (ctx) =>
+      (await ctx.db.query("channelPacing").collect())[0]
+    );
+    // floor: fila TODA do canal espera ≥ o backoff (1s) — não só esta mensagem.
+    expect(row.nextDispatchAt).toBeGreaterThanOrEqual(before + 1000);
+  });
+
+  test("131048 (spam-flag do número) NÃO re-tenta: failed + canal congelado + alerta", async () => {
+    const t = setup();
+    const seed = await seedFullPipeline(t);
+    const messageId = await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: seed.conversationId, content: "olá", teamMemberId: seed.aiMemberId,
+    });
+    vi.stubGlobal("fetch", graphErrorMock(131048));
+
+    const before = Date.now();
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const { message, row, activities } = await t.run(async (ctx) => ({
+      message: await ctx.db.get(messageId),
+      row: (await ctx.db.query("channelPacing").collect())[0],
+      activities: await ctx.db
+        .query("activities")
+        .withIndex("by_lead", (q) => q.eq("leadId", seed.leadId))
+        .collect(),
+    }));
+    expect(message!.deliveryStatus).toBe("failed"); // sem retry automático
+    expect(message!.metadata!.dispatchAttempts).toBeUndefined();
+    expect(row.nextDispatchAt).toBeGreaterThanOrEqual(before + 30 * 60 * 1000 - 50);
+    expect(activities.some((a) => String(a.content).includes("131048"))).toBe(true);
   });
 });

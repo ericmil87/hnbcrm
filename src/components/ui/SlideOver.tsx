@@ -6,6 +6,10 @@ interface SlideOverProps {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /** Optional icon rendered immediately before the title text. */
+  titleIcon?: React.ReactNode;
+  /** Optional extra actions rendered in the header, before the close button. */
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
   /**
@@ -16,7 +20,16 @@ interface SlideOverProps {
   bodyClassName?: string;
 }
 
-export function SlideOver({ open, onClose, title, children, className, bodyClassName }: SlideOverProps) {
+export function SlideOver({
+  open,
+  onClose,
+  title,
+  titleIcon,
+  headerActions,
+  children,
+  className,
+  bodyClassName,
+}: SlideOverProps) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -71,9 +84,13 @@ export function SlideOver({ open, onClose, title, children, className, bodyClass
             <ArrowLeft size={20} />
           </button>
 
+          {titleIcon}
+
           {title && (
             <h2 className="text-lg font-semibold text-text-primary flex-1">{title}</h2>
           )}
+
+          {headerActions}
 
           {/* Desktop: close X */}
           <button

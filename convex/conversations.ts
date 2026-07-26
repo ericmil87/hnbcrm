@@ -7,6 +7,7 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
@@ -219,83 +220,6 @@ async function getOrCreateConversation(
     createdAt: now,
     updatedAt: now,
   });
-}
-
-// Side effects shared by outbound-message mutations (currently forwardMessage):
-// bump the conversation + lead activity, write the audit + activity rows, fire
-// the message.sent webhook and schedule the WhatsApp dispatch. The message row
-// itself (and any attachment linking) is inserted by the caller beforehand.
-async function applyOutboundMessageSideEffects(
-  ctx: MutationCtx,
-  args: {
-    conversation: Doc<"conversations">;
-    member: Doc<"teamMembers">;
-    messageId: Id<"messages">;
-    now: number;
-  }
-): Promise<void> {
-  const { conversation, member, messageId, now } = args;
-  const actorType = member.type === "ai" ? "ai" : "human";
-
-  await ctx.db.patch(conversation._id, {
-    lastMessageAt: now,
-    messageCount: conversation.messageCount + 1,
-    updatedAt: now,
-  });
-
-  const lead = await ctx.db.get(conversation.leadId);
-  if (lead) {
-    await ctx.db.patch(conversation.leadId, {
-      lastActivityAt: now,
-      updatedAt: now,
-      conversationStatus: "active",
-    });
-  }
-
-  await ctx.db.insert("auditLogs", {
-    organizationId: conversation.organizationId,
-    entityType: "message",
-    entityId: messageId,
-    action: "create",
-    actorId: member._id,
-    actorType,
-    metadata: { conversationId: conversation._id, leadId: conversation.leadId },
-    description: buildAuditDescription({
-      action: "create",
-      entityType: "message",
-      metadata: { conversationId: conversation._id, leadId: conversation.leadId },
-    }),
-    severity: "low",
-    createdAt: now,
-  });
-
-  await ctx.db.insert("activities", {
-    organizationId: conversation.organizationId,
-    leadId: conversation.leadId,
-    type: "message_sent",
-    actorId: member._id,
-    actorType,
-    content: `Message forwarded via ${conversation.channel}`,
-    metadata: { conversationId: conversation._id },
-    createdAt: now,
-  });
-
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-    organizationId: conversation.organizationId,
-    event: "message.sent",
-    payload: {
-      messageId,
-      conversationId: conversation._id,
-      leadId: conversation.leadId,
-      channel: conversation.channel,
-      senderType: actorType,
-      senderId: member._id,
-    },
-  });
-
-  if (conversation.channel === "whatsapp") {
-    await scheduleWhatsappDispatch(ctx, conversation, messageId);
-  }
 }
 
 // Get conversations for organization
@@ -1041,13 +965,14 @@ export const internalGetConversations = internalQuery({
   },
 });
 
-// Internal: Get messages for conversation
+// Internal: Get messages for conversation. Guarda de org: conversa de outra
+// org responde vazia (o chamador REST/runtime informa a org autenticada).
 export const internalGetMessages = internalQuery({
-  args: { conversationId: v.id("conversations") },
+  args: { conversationId: v.id("conversations"), organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) return [];
+    if (!conversation || conversation.organizationId !== args.organizationId) return [];
 
     const messages = await ctx.db
       .query("messages")
@@ -1113,6 +1038,10 @@ export const internalSendMessage = internalMutation({
 
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
+    // Guarda de org: o ator tem de pertencer à org da conversa (isolação de tenant)
+    if (teamMember.organizationId !== conversation.organizationId) {
+      throw new Error("Membro não pertence à organização da conversa");
+    }
 
     await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
     const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
@@ -1354,6 +1283,13 @@ export const internalReceiveMessage = internalMutation({
       await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
     }
 
+    // Atendente IA: ENFILEIRA (aiReplyQueue) — nunca inferência direta daqui.
+    // O enqueue re-checa elegibilidade (org opt-in, agente, pausa, opt-out…)
+    // e é um no-op barato quando a IA está desligada.
+    await ctx.scheduler.runAfter(0, internal.attendant.internalEnqueueFromInbound, {
+      messageId,
+    });
+
     return messageId;
   },
 });
@@ -1374,6 +1310,10 @@ export const internalSendTemplate = internalMutation({
 
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
+    // Guarda de org: o ator tem de pertencer à org da conversa (isolação de tenant)
+    if (teamMember.organizationId !== conversation.organizationId) {
+      throw new Error("Membro não pertence à organização da conversa");
+    }
     if (conversation.channel !== "whatsapp") {
       throw new Error("Template messages are only supported on the whatsapp channel");
     }
@@ -1686,6 +1626,97 @@ export const markConversationRead = mutation({
         });
       }
     }
+    return null;
+  },
+});
+
+// ── Controle explícito da IA por conversa (flag durável — nada de heurística
+// de "escanear mensagens recentes"; a elegibilidade do atendente lê isto) ──
+
+// Pausa/retoma o atendente IA nesta conversa. Pausa = indefinida até reativar.
+export const setAiPaused = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    paused: v.boolean(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new Error("Conversa não encontrada");
+    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
+
+    const now = Date.now();
+    await ctx.db.patch(args.conversationId, {
+      aiPausedUntil: args.paused ? Number.MAX_SAFE_INTEGER : undefined,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "note",
+      actorId: member._id,
+      actorType: "human",
+      content: args.paused ? "IA pausada nesta conversa" : "IA reativada nesta conversa",
+      metadata: { conversationId: args.conversationId },
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+// "Assumir conversa": pausa a IA E atribui o lead ao humano numa só transação.
+// O commit transacional do atendente (internalCommitAiReply) relê estes campos —
+// uma run de IA em voo aborta o envio ao ver a pausa/atribuição.
+export const assumeConversation = mutation({
+  args: { conversationId: v.id("conversations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new Error("Conversa não encontrada");
+    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
+
+    const now = Date.now();
+    await ctx.db.patch(args.conversationId, {
+      aiPausedUntil: Number.MAX_SAFE_INTEGER,
+      updatedAt: now,
+    });
+
+    const lead = await ctx.db.get(conversation.leadId);
+    if (lead && lead.assignedTo !== member._id) {
+      await ctx.db.patch(conversation.leadId, {
+        assignedTo: member._id,
+        lastActivityAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("auditLogs", {
+        organizationId: conversation.organizationId,
+        entityType: "lead",
+        entityId: conversation.leadId,
+        action: "assign",
+        actorId: member._id,
+        actorType: "human",
+        changes: {
+          before: { assignedTo: lead.assignedTo },
+          after: { assignedTo: member._id },
+        },
+        metadata: { title: lead.title, assumedConversation: true },
+        description: `Assumiu a conversa e o lead '${lead.title}'`,
+        severity: "medium",
+        createdAt: now,
+      });
+    }
+
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "assignment",
+      actorId: member._id,
+      actorType: "human",
+      content: `${member.name} assumiu a conversa (IA pausada)`,
+      metadata: { conversationId: args.conversationId },
+      createdAt: now,
+    });
     return null;
   },
 });

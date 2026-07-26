@@ -24,6 +24,7 @@ import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
+import { AiDraftCard, AiConversationControls, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
 export function Inbox() {
@@ -73,6 +74,8 @@ export function Inbox() {
   }, [searchTerm]);
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
+  // IA da org (opt-in): controla os controles de IA no header + rascunhos.
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
 
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
@@ -609,6 +612,12 @@ export function Inbox() {
       ? getServiceWindowInfo(currentConversation.serviceWindowExpiresAt)
       : null;
 
+  // Controles de IA (pausar/retomar) aparecem em canais oficiais sempre, e em
+  // canais bridge (não-oficiais) só depois do aceite de risco específico do
+  // atendente — não mexe na janela de 24h/templates do composer acima.
+  const aiControlsAllowed =
+    currentConversation?.serviceWindowApplies !== false || aiStatus?.bridgeAiAckDone === true;
+
   const canReply = can("inbox", "reply");
   // Voice recorder / mic replaces the send button when there's nothing typed.
   const composerEmpty = newMessage.trim() === "" && stagedFiles.length === 0;
@@ -1014,6 +1023,15 @@ export function Inbox() {
               {contactTyping && (
                 <span className="pl-11 text-xs text-brand-500 animate-pulse">digitando…</span>
               )}
+              {aiStatus?.active && currentConversation && channelIsWhatsapp &&
+                aiControlsAllowed && (
+                <div className="pl-11">
+                  <AiConversationControls
+                    conversationId={currentConversation._id as Id<"conversations">}
+                    aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
+                  />
+                </div>
+              )}
               {windowInfo && (
                 <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
                   <Clock className="h-3.5 w-3.5 shrink-0" />
@@ -1033,6 +1051,13 @@ export function Inbox() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                {aiStatus?.active && currentConversation && channelIsWhatsapp &&
+                aiControlsAllowed && (
+                  <AiConversationControls
+                    conversationId={currentConversation._id as Id<"conversations">}
+                    aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
+                  />
+                )}
                 {windowInfo && (
                   <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
                     <Clock className="h-4 w-4 shrink-0" />
@@ -1067,23 +1092,28 @@ export function Inbox() {
                     </span>
                   </div>
                 )}
-                {(messages as InboxMessage[] | undefined)?.map((message) => (
-                  <MessageBubble
-                    key={message._id}
-                    message={message}
-                    channelIsWhatsapp={channelIsWhatsapp}
-                    canInteract={canReply}
-                    currentMemberId={currentMemberId}
-                    contactName={contactName}
-                    transcribing={transcribingIds.has(message._id)}
-                    highlighted={highlightId === message._id}
-                    onReply={setReplyTo}
-                    onReact={handleReact}
-                    onForward={setForwardTarget}
-                    onTranscribe={handleTranscribe}
-                    onJumpToMessage={handleJumpToMessage}
-                  />
-                ))}
+                {(messages as InboxMessage[] | undefined)?.map((message) =>
+                  getAiDraft(message) ? (
+                    // Rascunho do atendente IA (modo sugestão): revisão humana
+                    <AiDraftCard key={message._id} message={message} />
+                  ) : (
+                    <MessageBubble
+                      key={message._id}
+                      message={message}
+                      channelIsWhatsapp={channelIsWhatsapp}
+                      canInteract={canReply}
+                      currentMemberId={currentMemberId}
+                      contactName={contactName}
+                      transcribing={transcribingIds.has(message._id)}
+                      highlighted={highlightId === message._id}
+                      onReply={setReplyTo}
+                      onReact={handleReact}
+                      onForward={setForwardTarget}
+                      onTranscribe={handleTranscribe}
+                      onJumpToMessage={handleJumpToMessage}
+                    />
+                  )
+                )}
               </div>
             </div>
 

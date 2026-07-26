@@ -1,6 +1,10 @@
 import { useState } from "react";
+import { useQuery } from "convex/react";
+import { Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
+import { CopilotPanel } from "@/components/copilot/CopilotPanel";
+import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 
 interface AppShellProps {
@@ -12,6 +16,10 @@ interface AppShellProps {
 
 export function AppShell({ onSignOut, organizationId, orgSelector, children }: AppShellProps) {
   const [showMore, setShowMore] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
+
+  // IA é opt-in por organização — sem status "active", o gatilho nem renderiza.
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
 
   return (
     <div className="min-h-screen bg-surface-base">
@@ -37,6 +45,25 @@ export function AppShell({ onSignOut, organizationId, orgSelector, children }: A
         showMore={showMore}
         onToggleMore={() => setShowMore(!showMore)}
       />
+
+      {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}
+      {aiStatus?.active && aiStatus.copilotEnabled && (
+        <>
+          <button
+            onClick={() => setCopilotOpen(true)}
+            className="fixed z-40 bottom-20 right-4 md:bottom-6 md:right-6 h-14 w-14 flex items-center justify-center rounded-full bg-brand-600 text-white shadow-elevated hover:bg-brand-700 active:bg-brand-800 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base"
+            aria-label="Abrir Copiloto IA"
+            title="Copiloto IA"
+          >
+            <Sparkles size={22} />
+          </button>
+          <CopilotPanel
+            organizationId={organizationId}
+            open={copilotOpen}
+            onClose={() => setCopilotOpen(false)}
+          />
+        </>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { aiConfigValidator } from "./schema";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -59,8 +60,10 @@ export const createOrganization = mutation({
       settings: {
         timezone: "UTC",
         currency: "USD",
+        // IA é opt-in total: nasce DESLIGADA; o admin ativa na seção IA
+        // (que também exige o aceite LGPD antes de qualquer inferência).
         aiConfig: {
-          enabled: true,
+          enabled: false,
           autoAssign: false,
           handoffThreshold: 0.8,
         },
@@ -181,11 +184,7 @@ export const updateOrganization = mutation({
     settings: v.optional(v.object({
       timezone: v.string(),
       currency: v.string(),
-      aiConfig: v.optional(v.object({
-        enabled: v.boolean(),
-        autoAssign: v.boolean(),
-        handoffThreshold: v.number(),
-      })),
+      aiConfig: v.optional(aiConfigValidator),
     })),
   },
   returns: v.null(),
