@@ -12,6 +12,8 @@ src/
 ├── lib/
 │   ├── utils.ts               # cn() utility (clsx + tailwind-merge)
 │   └── routes.ts              # TAB_ROUTES / PATH_TO_TAB route mapping constants
+├── hooks/
+│   └── useCopilotStream.ts    # SSE client hook for the in-app Copilot chat stream (tool-call loop, pendingActions)
 └── components/
     ├── ui/                    # Reusable UI primitives
     │   ├── Button.tsx         # Pill button (primary, secondary, ghost, dark, danger)
@@ -28,6 +30,8 @@ src/
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── notifications/
     │   └── NotificationPreferences.tsx  # Email notification preferences (Settings tab)
+    ├── copilot/
+    │   └── CopilotPanel.tsx   # Copilot chat SlideOver — streams via useCopilotStream, renders tool calls + pendingAction confirmations
     ├── SEO.tsx                # Dynamic meta tags (react-helmet-async) — NEW
     ├── StructuredData.tsx     # JSON-LD structured data for rich results — NEW
     ├── layout/                # App shell and navigation
@@ -42,6 +46,9 @@ src/
     ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline)
     ├── LeadDetailPanel.tsx     # SlideOver for lead details
     ├── CreateLeadModal.tsx     # Modal for creating new leads
+    ├── leads/                  # Alternate list view for leads (shared with KanbanBoard)
+    │   ├── LeadsListView.tsx        # Sortable/filterable table view of leads with row selection
+    │   └── LeadsBulkActionBar.tsx   # Bulk move/assign/archive bar for selected leads
     ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select
     ├── inbox/                  # Inbox building blocks (shared with LeadDetailPanel)
     │   ├── MessageBubble.tsx        # Message rendering (media, quotes, reactions, ticks)
@@ -50,10 +57,15 @@ src/
     │   ├── EmojiPickerButton.tsx    # Emoji picker for the composer
     │   ├── QuickReplies.tsx         # "/" quick replies (hook + dropdown + manage modal)
     │   ├── ConversationActionsMenu.tsx  # Archive + labels menu ("..." in conversation header)
+    │   ├── AiDraftCard.tsx          # AI attendant draft review (suggest mode) + AiConversationControls (pause/resume)
     │   └── ...                      # ReactionPicker, ForwardModal, AudioPlayer, etc.
     ├── HandoffQueue.tsx        # AI-to-human handoff management (route: /app/repasses)
     ├── TeamPage.tsx            # Team member management (route: /app/equipe)
     ├── Settings.tsx            # Organization settings (route: /app/configuracoes)
+    ├── settings/                # Settings section panels
+    │   ├── AiSection.tsx            # AI config: activation/LGPD ack, Copiloto/Atendente toggles, bridge risk ack, attendant profile
+    │   ├── ChannelsSection.tsx      # WhatsApp channel configs (Meta Cloud API + bridge), QR pairing, risk ack
+    │   └── ChannelHealthPanel.tsx   # 7-day delivery/health stats per WhatsApp channel
     ├── AuditLogs.tsx           # Audit log viewer (route: /app/auditoria)
     ├── ContactsPage.tsx        # Contacts management (route: /app/contatos)
     ├── calendar/               # Calendar views (day/week/month, event CRUD, DnD)
@@ -88,11 +100,14 @@ src/
     │       ├── FormRenderer.tsx    # Renders form from field definitions
     │       ├── FormField.tsx       # Individual field renderer
     │       └── FormSuccess.tsx     # Post-submit success screen
-├── pages/
-│   ├── DevelopersPage.tsx      # Public developer portal at /developers
-│   └── PublicFormPage.tsx      # Public form page at /f/:slug (no auth)
     ├── ErrorBoundary.tsx       # Error boundary wrapper
     └── OrganizationSelector.tsx # Org switcher dropdown
+└── pages/
+    ├── DevelopersPage.tsx      # Public developer portal at /developers
+    ├── PlaygroundPage.tsx      # Full-screen interactive REST API playground at /developers/playground
+    ├── PrivacyPage.tsx         # Public privacy policy page at /privacidade
+    ├── TermsPage.tsx           # Public terms of use page at /termos
+    └── PublicFormPage.tsx      # Public form page at /f/:slug (no auth)
 ```
 
 ## Patterns

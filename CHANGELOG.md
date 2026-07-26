@@ -2,6 +2,39 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.36.0] - 2026-07-26
+
+### AI Agent Config — Copiloto in-app + Atendente WhatsApp (opt-in total)
+
+Dois produtos de IA nativos num runtime LLM provider-agnostic (OpenAI-compatible; default OpenCode Go, fallback OpenRouter implementado e inativo sem key). Tudo opt-in por organização: `aiConfig.enabled` nasce `false` e a ativação exige aceite LGPD.
+
+- **Copiloto** — chat SSE autenticado que age COMO o usuário logado (RBAC dele, auditoria `via:"copilot"`); tools de leitura/escrita; ações destrutivas via confirmação two-phase
+- **Atendente WhatsApp** — fila com debounce/coalescing, lock OCC por conversa e commit transacional que re-checa 11 condições de elegibilidade (TOCTOU); modo sugestão default (rascunho revisado no inbox); autopilot com gate server-side (10+ sugestões revisadas, 60%+ aceitação)
+- **Segurança em 4 camadas** — `assertAgentCan` (RBAC+org), escopo por registro, TOOL_DENYLIST com teste de build, envelope de dado não-confiável
+- **Bridge opt-in** — atendente atua em canais não-oficiais SOMENTE com aceite de risco org-level (`bridgeAiAck`), re-checado no commit (revogar aborta runs em voo)
+- **Fila de envio anti-ban (todos os envios WhatsApp)** — pacing em dois níveis: cursor por conversa (pair rate Meta 6,5s) + cursor por número (`channelPacing`; Meta 1–3s, bridge reativo 4–10s / frio 8–15s com jitter); typing simulado no bridge para envios de IA/agendados; retry com backoff oficial 4^X (131056/130429/80007); erro 131048 (spam-flag) congela o canal 30min + alerta
+- **Toggles separados** Copiloto × Atendente sob o mestre
+- **Regras de pipeline do atendente** — board/estágio inicial no roteamento inbound, avanço determinístico por qualificação BANT, `allowMoveStages` com enforcement server-side, regras de funil em linguagem natural no prompt
+- **Config/UX** — Configurações → IA: ativação com modal LGPD, atendente 1-toque com personas por indústria, simulador sandbox, medidor de uso/custo, budget mensal, seletor de modelos com selo ZDR/residência, BYO key cifrada
+- 257 testes verdes (18 arquivos) · lint completo · E2E browser 10/10
+
+## [0.35.0] - 2026-07-24
+
+### Lista de Leads + Operações em Massa + Arquivamento
+
+- Visão de lista dos leads (alternável com o kanban) com ordenação e seleção múltipla
+- Barra de ações em massa: mover estágio, atribuir, etiquetar, arquivar
+- Arquivamento de leads fora do fluxo padrão
+- Form-builder page legada removida
+
+## [0.29.0 – 0.34.0] - 2026-07-19
+
+### Canal WhatsApp (Cloud API + Bridge) + Upgrade do Inbox
+
+- **WhatsApp oficial (Meta Cloud API)** — configs por organização com credenciais cifradas, ingress multi-tenant (`/webhooks/whatsapp` roteado por `phoneNumberId`), janela de 24h com templates, painel de saúde do canal
+- **WhatsApp bridge (não-oficial, opt-in)** — gateway wuzapi self-hosted (whatsmeow), pareamento por QR, ingress HMAC-SHA256, mídia bidirecional, presença de digitação e recibos nos dois sentidos; aceite de risco obrigatório
+- **Inbox** — transcrição de notas de voz via Whisper self-hosted (busca inclui transcrições), busca full-text de mensagens, respostas rápidas (`/`), mensagens agendadas com contagem regressiva, etiquetas + arquivamento com ações em massa, reações/replies/encaminhamento
+
 ## [0.26.0] - 2026-03-01
 
 ### Full UTM Capture + Native A/B Testing for Forms

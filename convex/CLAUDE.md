@@ -17,13 +17,31 @@
 | `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
 | `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |
-| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch, branched by provider |
+| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch branched by provider; retry pacing-aware (backoff oficial 4^X p/ 131056/130429/80007) e congelamento de canal em 131048 (spam-flag) |
 | `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET` |
 | `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification (no ctx) |
 | `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
 | `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
 | `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
 | `handoffs.ts` | AI-to-human handoff workflow |
+| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições — inclui toggle, aceite bridge e janela 24h por transporte), lock/lease OCC, commits transacionais, runtime de inferência, simulador, rascunhos (accept/discard) |
+| `lib/channelResolve.ts` | Resolução ÚNICA do channelConfig de uma conversa (fallback determinístico, prefere Meta) — usada por atendente E dispatch |
+| `lib/inboundRouting.ts` | Roteamento inbound → contato/lead; aplica o pipelineConfig do atendente do canal (board/estágio inicial) com fallback auditado |
+| `lib/whatsappDispatch.ts` | Pacing de envio em 2 níveis: cursor por conversa (pair rate 6,5s) + cursor por número (`channelPacing`; Meta 1-3s, bridge reativo 4-10s / frio 8-15s), typing humanizado no bridge, claim OCC |
+| `copilot.ts` | Copiloto: threads/mensagens + executores de tools (leitura via query, escrita via mutation com via:"copilot", destrutivo → pendingActions) |
+| `copilotHttp.ts` | Streaming SSE autenticado do copiloto (`POST /api/copilot/stream`) com loop de tool_calls |
+| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas |
+| `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
+| `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
+| `agentEvals.ts` | Golden conversations + replay (regressão de persona via simulador) |
+| `orgSecrets.ts` | BYO API keys por org (cifradas; leitura sempre mascarada) |
+| `lib/agentSecurity.ts` | 4 camadas: assertAgentCan, escopo por registro, TOOL_DENYLIST + SECRET_FIELD_PATTERN, orgAiActive |
+| `lib/agentTools.ts` | Registry ESTÁTICO de tools de IA (specs + projeção de resultado por whitelist) |
+| `lib/agentRoutes.ts` | Resolve rotas LLM da org (platform chain ou BYO + strictZdr) |
+| `lib/agentPersonas.ts` | Personas de atendente por indústria (sementes do 1-toque) |
+| `lib/promptEnvelope.ts` | Envelope de dado não-confiável (`<crm_data untrusted>`) |
+| `lib/outboundSideEffects.ts` | Side effects compartilhados de outbound (usado por conversations + attendant; evita ciclo de módulos) |
+| `lib/llm/` | Camada LLM pura: types, registry (modelos/ZDR/capacidades), openaiCompatible (chat/stream/retry), index (chains/fallback), sanitize |
 | `boards.ts` | Kanban boards and stages |
 | `organizations.ts` | Organization CRUD + settings |
 | `teamMembers.ts` | Human + AI team member management |

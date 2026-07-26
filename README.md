@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.34.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.36.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -24,6 +24,9 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 ## Features
 
 - **AI-Human Collaboration** — Human team members and AI bots are equal participants with shared context
+- **AI Copilot** — In-app assistant (opt-in per org) that reads and edits the CRM as the logged-in user (their RBAC), with streaming chat, tool use, and two-phase confirmation for destructive actions
+- **AI WhatsApp Attendant** — Virtual attendant that drafts replies to customers (suggest mode with human review by default; autopilot gated behind acceptance metrics), with per-record scoping, LGPD disclosure, deterministic human-handoff keywords and configurable pipeline rules
+- **Anti-ban Send Queue** — Two-level pacing per conversation (Meta pair rate) and per phone number, humanized typing simulation on unofficial channels, official 4^X retry backoff, and automatic channel freeze on quality flags
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
 - **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions
 - **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel
@@ -31,7 +34,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
 - **REST API** — Full CRUD at `/api/v1/` with API key authentication and HMAC webhooks
-- **MCP Server** — AI agents connect via Model Context Protocol with 26 tools for full CRM access
+- **MCP Server** — AI agents connect via Model Context Protocol with 46 tools for full CRM access
 - **Agent Skills** — Open skill package (AgentSkills.io standard) with workflows, data model, and setup guides
 - **Multi-tenant** — Organization-level isolation with role-based access (Admin, Manager, Agent, AI)
 - **Real-time** — Powered by Convex for instant updates across all connected clients
@@ -96,6 +99,11 @@ convex/
   quickReplies.ts   Quick replies ("/" shortcuts in the composer)
   scheduledMessages.ts  Scheduled message delivery
   handoffs.ts       AI-to-human handoff workflow
+  attendant.ts      AI WhatsApp attendant (queue, eligibility, transactional commits)
+  copilot.ts        AI copilot tools + threads (SSE streaming in copilotHttp.ts)
+  aiSettings.ts     Org AI config: activation + LGPD ack, toggles, models, budget
+  lib/llm/          Provider-agnostic LLM layer (OpenAI-compatible, ZDR registry)
+  lib/whatsappDispatch.ts  Two-level anti-burst send pacing + humanized typing
   llmsTxt.ts        /llms.txt endpoint content
   seed.ts           Development seed data
 mcp-server/         MCP server package (hnbcrm-mcp)
@@ -107,7 +115,7 @@ public/             Logo assets
 
 **REST API** — RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. Covers leads, contacts, conversations, handoffs, boards, and team members. See `convex/router.ts` for the full reference.
 
-**MCP Server** — The `mcp-server/` directory contains an MCP server (`hnbcrm-mcp`) with 26 tools and 4 resources for AI agent integration. See [mcp-server/README.md](mcp-server/README.md) for setup.
+**MCP Server** — The `mcp-server/` directory contains an MCP server (`hnbcrm-mcp`) with 46 tools and 4 resources for AI agent integration. See [mcp-server/README.md](mcp-server/README.md) for setup.
 
 **Agent Skills** — The `.claude/skills/hnbcrm/` directory contains a portable Agent Skill following the [AgentSkills.io](https://agentskills.io) open standard. Includes workflows, data model reference, API mapping, and platform setup guides. Copy the skill into any compatible agent workspace to get started.
 

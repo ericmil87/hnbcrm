@@ -26,6 +26,14 @@ WhatsApp connects per organization through one of two providers on the same "wha
 - meta — official WhatsApp Cloud API (Meta Graph API). Enforces the 24-hour customer service window and requires approved templates to reopen it.
 - bridge — self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. No 24-hour window and no templates. Opt-in per organization; it uses a protocol not sanctioned by Meta and carries a permanent-ban risk the organization accepts.
 
+Outbound sends are paced by an anti-burst queue: per-conversation cursor (Meta pair rate, ~1 msg/6s per recipient) plus a per-phone-number cursor with random jitter, humanized typing simulation on bridge for AI/scheduled sends, official 4^X retry backoff on Meta throttling errors, and an automatic 30-minute channel freeze on quality-flag error 131048.
+
+## Built-in AI (Copilot & Attendant)
+
+HNBCRM also ships two NATIVE AI products, separate from external AI agents connected via API key/MCP. Both are opt-in per organization (disabled by default, LGPD acknowledgment required) and are NOT exposed through the public REST API — they are configured in-app (Settings → IA):
+- Copilot — in-app assistant that acts AS the logged-in user (their RBAC permissions), with streaming chat, read/write tools, and two-phase human confirmation for destructive actions.
+- Attendant — WhatsApp virtual attendant. Default mode is "suggest" (drafts replies for human review in the inbox); "autopilot" unlocks only after acceptance metrics (10+ reviewed suggestions, 60%+ acceptance). Serves official Meta channels always; bridge channels only after an explicit organization-level ban-risk acceptance. Supports per-attendant pipeline rules (initial board/stage for new leads, deterministic stage advance on BANT qualification, natural-language funnel rules).
+
 ## Agent Skill (for AI Agents)
 
 HNBCRM ships an open-standard Agent Skill that teaches any AI agent to operate as a CRM team member. The skill covers lead management, contact enrichment, conversation handling, and AI-to-human handoffs.
@@ -1232,6 +1240,36 @@ WhatsApp is delivered per organization through channel configs (the \`channelCon
 - Uses a self-hosted wuzapi gateway (WhatsApp Web protocol via whatsmeow), paired by QR code. Inbound webhook: \`POST /webhooks/bridge\`, verified by HMAC-SHA256 (\`WA_BRIDGE_HMAC_SECRET\`).
 - No 24-hour window and no templates — conversations can be replied to at any time.
 - Opt-in per organization. It relies on a protocol not sanctioned by Meta, violates WhatsApp's Terms of Service, and the number may be permanently banned; the organization accepts this risk.
+
+### Outbound pacing (anti-burst)
+Every WhatsApp send claims a slot on two cursors before dispatch:
+- Per conversation: 6.5s between messages to the same recipient (Meta pair rate limit, error 131056, with safety margin). Applies to both providers.
+- Per phone number: Meta 1s + 0–2s jitter; bridge 4s + 0–6s jitter when the conversation is reactive (customer inbound within 24h) or 8s + 0–7s jitter for cold sends. Bridge values are engineering estimates, not official limits.
+- Bridge sends from the AI attendant or the scheduler simulate typing ("composing" presence) proportional to message length before sending. Manual sends are never artificially delayed.
+- Meta throttling errors (131056 pair rate, 130429 throughput, 80007 account rate limit) are retried with the officially documented 4^X-second backoff (max 3 retries). Error 131048 (number restricted after spam reports) is NOT retried: the message fails, the channel queue freezes for 30 minutes, and operators are alerted.
+
+---
+
+## Built-in AI (Copilot & Attendant)
+
+Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults to false; activation requires an LGPD acknowledgment). They are configured in-app (Settings → IA) and are NOT exposed through the public REST API. External AI agents via API key/MCP are a separate, unrelated mechanism.
+
+### Copilot (in-app assistant)
+- Authenticated SSE chat (\`POST /api/copilot/stream\`, Convex JWT). Acts AS the logged-in user: every tool call runs under that user's RBAC permissions and is audited with \`via: "copilot"\`.
+- Read and write tools over the CRM; destructive actions (e.g. delete lead) require a two-phase pending-action confirmed by the same human.
+- Can be toggled independently per organization (\`copilotEnabled\`).
+
+### Attendant (WhatsApp virtual attendant)
+- Replies to customer conversations on WhatsApp. Default mode \`suggest\`: generates an internal draft reviewed in the inbox (send/edit/discard). \`autopilot\` (sends without review) is server-gated behind acceptance metrics: 10+ reviewed suggestions with 60%+ acceptance.
+- Channel eligibility: official Meta channels always; bridge channels ONLY after an explicit organization-level ban-risk acceptance, revocable at any time (revocation aborts in-flight generations).
+- Safety: record-scoped tools (only the triggering conversation/lead/contact), static tool registry with denylist, untrusted-data envelope around CRM content, LGPD disclosure on first reply, deterministic pre-LLM handoff keywords ("humano"), reply caps per conversation/hour, monthly conversation budget.
+- Pipeline rules per attendant (\`pipelineConfig\`): initial board/stage for new inbound leads, deterministic stage advance when BANT qualification reaches a threshold, natural-language funnel rules injected into the prompt, and an \`allowMoveStages\` switch enforced server-side.
+- Audited runs in \`agentRuns\` (tokens/cost/tools — no transcripts/PII).
+
+### AI enums
+- Attendant mode: \`suggest\` | \`autopilot\`
+- AI draft status (message metadata): \`pending\` | \`sent\` | \`sent_edited\` | \`discarded\`
+- Provider mode: \`platform\` | \`byo\`
 
 ---
 

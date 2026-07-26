@@ -221,9 +221,19 @@ function FeaturesSection() {
       description: "Todas as conversas em um só lugar, em tempo real.",
     },
     {
+      icon: Radio,
+      title: "Canal WhatsApp",
+      description: "API oficial (Cloud API) ou bridge não-oficial — mensagens, voz, mídia e templates.",
+    },
+    {
       icon: ArrowRightLeft,
       title: "Repasses IA ↔ Humano",
       description: "Handoffs inteligentes entre agentes de IA e vendedores.",
+    },
+    {
+      icon: Bot,
+      title: "IA Copiloto & Atendente",
+      description: "Assistente in-app que opera o CRM com seu time e atendente virtual que responde no WhatsApp em modo sugestão.",
     },
     {
       icon: Users,
@@ -274,6 +284,11 @@ function FeaturesSection() {
       icon: Layers,
       title: "Formularios",
       description: "Crie formularios embeddable com builder visual, mapeamento de campos e protecao anti-spam.",
+    },
+    {
+      icon: Paperclip,
+      title: "Armazenamento de Arquivos",
+      description: "Anexe documentos, imagens e áudios a leads e conversas com upload direto.",
     },
     {
       icon: Server,
@@ -348,14 +363,14 @@ function DeveloperSection() {
     {
       icon: Globe,
       title: "API REST Completa",
-      description: "44 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticacao via API Key.",
+      description: "64 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticacao via API Key.",
       link: "/developers#rest-api",
       linkText: "Ver Documentacao",
     },
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "44 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code e OpenClaw.",
+      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
@@ -472,21 +487,6 @@ function ComingSoonSection() {
       icon: Zap,
       title: "Motor de Automações",
       description: "Automatize fluxos de trabalho sem escrever código.",
-    },
-    {
-      icon: Bot,
-      title: "IA Co-piloto",
-      description: "Assistente inteligente que sugere próximos passos.",
-    },
-    {
-      icon: Radio,
-      title: "Integrações de Canais",
-      description: "WhatsApp, email, SMS e mais em breve.",
-    },
-    {
-      icon: Paperclip,
-      title: "Armazenamento de Arquivos",
-      description: "Anexe documentos e imagens aos seus leads.",
     },
     {
       icon: Search,
@@ -811,9 +811,7 @@ function PricingSection() {
               </li>
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary flex items-center gap-2">
-                  IA Co-piloto <Badge variant="warning">Em Breve</Badge>
-                </span>
+                <span className="text-text-secondary">IA Copiloto & Atendente</span>
               </li>
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />

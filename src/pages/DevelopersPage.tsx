@@ -90,7 +90,7 @@ export function DevelopersPage() {
     <>
       <SEO
         title="Developer Documentation"
-        description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 44 endpoints documentados com playground interativo."
+        description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 64 endpoints documentados com playground interativo."
         keywords="api, rest, mcp, webhooks, developer, integration, ai agents"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -497,7 +497,7 @@ npm run dev`}</CodeBlock>
               Tools MCP — Referencia
             </h2>
             <p className="text-text-secondary">
-              O servidor MCP expoe 44 ferramentas organizadas por categoria. Cada
+              O servidor MCP expoe 46 ferramentas organizadas por categoria. Cada
               ferramenta corresponde a uma acao no CRM.
             </p>
 
@@ -728,6 +728,31 @@ npm run dev`}</CodeBlock>
                 </table>
               </div>
             </Card>
+
+            {/* Notifications */}
+            <Card className="p-0 overflow-hidden">
+              <div className="px-4 py-3 bg-surface-overlay border-b border-border">
+                <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                  Notificacoes
+                  <Badge variant="brand">2 tools</Badge>
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-surface-sunken/50">
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <ToolRow name="crm_get_notification_preferences" description="Retorna as preferencias de notificacao por email do agente atual" params="—" />
+                    <ToolRow name="crm_update_notification_preferences" description="Atualiza preferencias de notificacao por email (ex.: desativar resumo diario)" params="invite?, taskAssigned?, newMessage?, ..." />
+                  </tbody>
+                </table>
+              </div>
+            </Card>
           </section>
 
           {/* OpenClaw Integration */}
@@ -908,7 +933,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
             <p className="text-sm text-text-secondary">
               Todos os endpoints requerem o header{" "}
               <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">X-API-Key</code>.
-              Respostas em JSON. Total: {ALL_ENDPOINTS.length} endpoints.
+              Respostas em JSON. {ALL_ENDPOINTS.length} endpoints documentados no playground (64 no total — referência completa em /llms-full.txt).
             </p>
 
             {API_CATEGORIES.map((category) => {

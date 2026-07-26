@@ -1,0 +1,151 @@
+========================================================================
+PROMPT DE IMPLEMENTAÇÃO — AI Agent Config (ClawCRM / HNBCRM)
+Cole isto numa nova sessão do Claude Code (Fable 5, effort xhigh) na raiz do
+repo clawcrm-repo/jiaolong. Objetivo: IMPLEMENTAR as features de IA até
+completar, com você orquestrando sub/multi-agentes. Habilite ultracode/workflows
+se possível — o trabalho é paralelizável por dimensão.
+========================================================================
+
+Você é um engenheiro sênior e ORQUESTRADOR. Sua missão é implementar, de ponta a
+ponta e até estar pronto para produção, o "AI Agent Config" deste CRM Convex +
+React multi-tenant (PT-BR, mercado BR): dois produtos de IA que compartilham um
+runtime — (1) um COPILOTO in-app que opera o CRM e serve de agente de onboarding
+(cria/ajusta pipelines, leads, campos, canais conversando com o usuário) e (2) um
+ATENDENTE VIRTUAL que responde clientes no WhatsApp com handoff para humano.
+
+LEIA PRIMEIRO, NA ORDEM (não pule):
+  1. docs/AI-AGENT-CONFIG-PLAN-v3.md   ← O PLANO CANÔNICO. Siga-o.
+  2. docs/AI-AGENT-CONFIG-PLAN-v2.md   ← detalhe de segurança/concorrência/UX que o v3 herda por referência.
+  3. CLAUDE.md, convex/CLAUDE.md, src/CLAUDE.md ← regras OBRIGATÓRIAS (Convex, RBAC, side-effects, estilo, PT-BR).
+  4. docs/AI-AGENT-CONFIG-PLAN.md (v1) ← só como histórico.
+
+PROVIDER (mudou — NÃO é Anthropic por padrão):
+  - Provider-agnostic. Core = API OpenAI-compatible (Chat Completions). NÃO use a
+    skill claude-api como referência principal (ela é Claude/Anthropic); ela só
+    vale se/quando construir o adapter Anthropic opcional.
+  - Default = OpenCode Go: base https://opencode.ai/zen/go/v1/ , POST /chat/completions,
+    Bearer auth, ZERO-RETENTION anunciado. Modelos default: copiloto
+    "kimi-k2.7-code", atendente/chat "deepseek-v4-flash", complexo "deepseek-v4-pro".
+    CONFIRME os IDs com GET https://opencode.ai/zen/go/v1/models antes de fixar.
+  - Camada `convex/lib/llm/`: interface LlmProvider + adapter `openaiCompatible`
+    (cobre OpenCode Go, OpenRouter, OpenAI, DeepSeek/Moonshot diretos, custom baseUrl)
+    + adapter `anthropic` opcional. Config por-org: aiConfig.providerConfig com
+    mode:"platform"|"byo" (default "platform").
+  - MODO PLATAFORMA (default) = CADEIA DE FALLBACK com as keys da plataforma (env do
+    deployment): 1º OpenCode Go (OPENCODE_GO_API — JÁ SETADA) → fallback OpenRouter
+    (OPENROUTER_API_KEY — AINDA NÃO SETADA: implemente o caminho mas deixe INATIVO até
+    a key existir; até lá roda só OpenCode Go). Fallback dispara em 429/5xx/timeout E no
+    esgotamento do tier de uso do OpenCode Go (é assinatura+limite, não por-token).
+    Precisa de MAPA DE EQUIVALÊNCIA de modelo (id canônico → id por provider, ex.:
+    deepseek-v4-flash → OpenCode Go "deepseek-v4-flash", OpenRouter "deepseek/deepseek-v4-flash").
+  - MODO BYO = a org traz provider+key própria (cifrada em orgSecrets via secretCrypto.ts;
+    NÃO há maskConfig lá — escreva masker próprio). Sem fallback p/ keys da plataforma.
+  - models{copilot,attendant,classify,complex} são IDs CANÔNICOS; o adapter mapeia por provider.
+  - ZDR = AVISO, NÃO BLOQUEIO (decisão de produto). aiConfig.providerConfig.zdr=true por
+    padrão, mas o caminho padrão da PLATAFORMA já é zero-retention (OpenCode Go pago →
+    OpenRouter ZDR), então no default o usuário não vê aviso. O aviso só aparece ao SAIR
+    do padrão (BYO com provider não-ZDR, ou modelo com retenção): a UI avisa e PEDE ACEITE;
+    o backend NÃO bloqueia por padrão (a org é a controladora). Ofereça um modo "estrito"
+    opcional por org que recusa rotas não-ZDR no backend. Fonte da verdade = Registry de
+    ROTAS {zdrCapable, dataResidency, retention} (zdrCapable por rota, não por provider).
+    Fatos p/ o registry/aviso: ZDR-safe = modelos PAGOS do OpenCode Go (US) e OpenRouter
+    endpoints ZDR; NÃO-ZDR = modelos FREE do Zen (treinam), OpenAI/Anthropic VIA Zen (30d),
+    DeepSeek-direto (China, treina), Kimi/Moonshot-direto (SG, sem opt-out); Fable 5 nunca
+    é ZDR. Quando a plataforma usar OpenRouter (fallback), aplique a trava dupla ZDR: conta
+    "ZDR Endpoints only" + por-request provider:{data_collection:"deny",require_parameters:
+    true,allow_fallbacks:false}. Expor residência/retenção/ZDR por modelo ao admin.
+    (Verificar suporte a json_schema strict por modelo — fallback json_object + validação zod.)
+  - Runtime = internalAction com fetch SEM "use node" (espelhe convex/transcription.ts).
+    Loop de tool-use sobre `tool_calls` (formato OpenAI): ver §4 do v3. Handoff é uma
+    TOOL (não passo de structured-output separado). Streaming do copiloto via
+    httpAction SSE AUTENTICADO. NÃO adote @convex-dev/agent.
+
+INVARIANTES DE ARQUITETURA — NÃO NEGOCIÁVEIS (são o cerne do v2/v3; não re-derive nem pule):
+  A. OPT-IN TOTAL. O CRM comum funciona sem IA. aiConfig.enabled default FALSE.
+     Nenhuma inferência dispara, nenhum custo, até o admin ativar.
+  B. SEGURANÇA — 4 camadas: (1) wrapper server-side `assertAgentCan(ctx, agentMemberId,
+     category, level, entity)` em TODA função chamável por IA (as internal.* NÃO têm
+     enforcement hoje — verificado; siga o precedente channelConfigs.ts:697); (2) ESCOPO
+     POR REGISTRO (o atendente só opera sobre o lead/contato/conversa do gatilho);
+     (3) DENYLIST de tools + TESTE DE BUILD que falha se uma tool exposta retornar
+     campo casando /(Encrypted|token|secret|apiKey|verifyToken)/i (denylist mínima:
+     internalGetConfig, internalGetBridgeCredentials, decryptSecret); (4) dado do CRM
+     e do cliente SEMPRE não-confiável, em envelope delimitado — nunca no system.
+  C. SUPERFÍCIE DE TOOLS POR INJEÇÃO DE CONTEXTO. O atendente NÃO recebe tools de
+     listagem org-wide (internalGetContacts/SearchContacts/GetConversations). O runtime
+     monta o contexto do conversationId do gatilho e injeta como dado. Isso mata a
+     exfiltração intra-org — crítico porque deepseek-v4-flash (barato) é mais suscetível
+     a prompt-injection. Tools de escrita do atendente = escopadas ao registro do
+     atendimento: replyToCustomer, moveThisLead, scheduleFollowUp, qualifyThisLead,
+     requestHandoff. ZERO tools destrutivas/settings/equipe/apiKeys/config-de-canal.
+  D. CONCORRÊNCIA/IDEMPOTÊNCIA. Gatilho em conversations.ts (ao lado do autoTranscribe,
+     ~1354) ENFILEIRA (aiReplyQueue), não runAfter(0) direto. Pacing por-org via cursor
+     OCC (espelhe whatsappDispatch.ts). Lock/lease OCC por conversa (aiTurnLock). Envio
+     via `internalCommitAiReply` TRANSACIONAL que RE-CHECA elegibilidade (handoffState,
+     assignedTo, outbound human recente, maxReplies) — resolve o TOCTOU; a checagem da
+     action NÃO conta. Debounce + coalescing de inbounds. Mutation explícita
+     assumeConversation/pauseAi. Contar respostas filtrando direction:"outbound".
+  E. GUARDAS DE ORG. Toda internal.* de leitura/escrita recebe organizationId e assevera
+     entity.organizationId === organizationId (hoje internalGetLead/Contact/Messages e
+     internalSendMessage NÃO checam — verificado). HMAC do bridge é hoje um segredo único
+     do deployment → atendente só em canais Meta até existir HMAC por-tenant.
+  F. IDENTIDADE/ATRIBUIÇÃO. Copiloto age COMO O USUÁRIO: actorType:"human" +
+     metadata.via:"copilot" (NÃO actorType:"ai" — preservar accountability). Atendente =
+     teamMember IA dedicado, actorType:"ai".
+  G. LIMITE DE ACTION = 10 MIN. Atendente cabe (maxToolCallsPerRun 4–6, resposta curta).
+     Copiloto agêntico longo: persistir messages no DB e re-agendar continuação.
+  H. LGPD. Toggle master (default OFF) com gate de reconhecimento; divulgação ao cliente
+     ("assistente virtual… digite 'humano'"); opt-out por contato (aiOptOut = 9ª condição
+     de elegibilidade); NÃO persistir transcrições em agentRuns (só tokens/custo/tools/
+     messageId).
+
+MÉTODO DE TRABALHO:
+  - Implemente por FASES na ordem do v3 §7 (F0→F5). NÃO avance sem passar o gate de
+    "pronto p/ produção" de cada fase. O gate de F3 (antes de qualquer cliente real) é o
+    mais crítico.
+  - MODO SUGESTÃO primeiro: o atendente começa em mode:"suggest" (gera rascunho, NÃO
+    auto-envia). autopilot só depois de métricas de aceitação.
+  - TESTES: existe infra (vitest + convex-test; package.json). Escreva testes de
+    concorrência (dois inbounds simultâneos; humano-assume-durante-geração; claim de lock)
+    e do teste-de-build da denylist. Rode `npm run lint` (tsc convex + tsc app + convex
+    dev --once + vite build) e `npm run test` a cada fase; não deixe quebrado.
+  - REGRAS CONVEX (obrigatórias): new function syntax com args+returns validators; nunca
+    .filter() em queries (use .withIndex); nunca Date.now() em queries; só agendar
+    internal.*; internalAction/Query/Mutation p/ não-público; índices by_<field>; "skip"
+    pattern no front. Use ctx7/context7 para docs de libs quando precisar (Convex, etc.).
+  - PARALELIZE com sub/multi-agentes onde as dimensões são independentes (ex.: schema +
+    camada llm + tool registry podem ir junto; UI da seção IA em paralelo ao runtime).
+    VERIFIQUE adversarialmente o trabalho dos agentes (file:line) antes de aceitar.
+  - Você opera autonomamente: aja em ações reversíveis que seguem do plano; NÃO peça
+    permissão para o que já está decidido. Pare só em ação destrutiva/irreversível ou
+    mudança de escopo. NÃO commite nem dê push a menos que eu peça; se estiver na branch
+    main, crie uma branch antes de qualquer commit.
+  - Modelos: teste no MÁXIMO 5 além de kimi-k2.7-code e deepseek-v4-flash (matriz do v3
+    §2: Grok 4.5, GLM-5.2, Qwen 3.7 Plus, MiniMax M3, Kimi K3). Rode o mini-eval PT-BR
+    (deepseek-v4-flash vs Qwen 3.7 Plus vs GLM-5.2) antes de fixar o atendente.
+  - UI em PT-BR, design system existente (src/components/ui/, cores/tokens do src/CLAUDE.md).
+  - Ao terminar cada fase, faça um resumo curto do que ficou pronto + o que o gate provou.
+
+QUANDO PARAR: quando F0→F5 estiverem implementadas, testadas (lint+testes verdes) e com
+os gates passados — OU quando estiver bloqueado por um item [blocked] abaixo. Não pare por
+contexto/sessão longa; continue até completar ou bloquear.
+
+------------------------------------------------------------------------
+[blocked] — O QUE PRECISO DE VOCÊ (só isto depende de mim/do usuário):
+------------------------------------------------------------------------
+[RESOLVIDO] 1. OPENCODE_GO_API já setada no deployment Convex. (Lembrete p/ keys futuras:
+   sempre `npx convex env set`, nunca .env.local nem prefixo VITE_ — vazaria pro browser.)
+[blocked] 2. Confirmar os IDs de modelo do seu tier: GET https://opencode.ai/zen/go/v1/models
+   (com a key). Confirmar kimi-k2.7-code, deepseek-v4-flash, deepseek-v4-pro.
+[blocked] 3. Escolher o tier/assinatura do OpenCode Go (limites de uso 5h/semanal/mensal)
+   pelo volume esperado de conversas.
+[blocked] 4. LGPD: fornecer/aprovar a cláusula da política de privacidade (uso de IA +
+   transferência internacional + residência se BYO usar DeepSeek/Kimi diretos). Necessária
+   para o gate de ativação do atendente com clientes reais.
+[diferido] 5. OPENROUTER_API_KEY (fallback da plataforma) — você deixou p/ depois. O caminho
+   de fallback é implementado mas fica INATIVO até a key existir; até lá roda só OpenCode Go.
+   Keys de OpenAI/Anthropic idem, só se quiser esses providers.
+[blocked-opcional] 6. Confirmar a matriz de teste (≤5) e o mini-eval PT-BR.
+[RESOLVIDO] 7. ZDR = aviso, não bloqueio (padrão da plataforma já é zero-retention; aviso+aceite
+   ao sair do padrão; modo estrito opcional).
+========================================================================

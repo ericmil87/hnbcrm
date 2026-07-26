@@ -314,7 +314,7 @@ HNBCRM (Humans & Bots CRM) is a **realtime-first, AI-native, multi-tenant CRM** 
 | Quick stats (pipeline value, leads, handoffs, team) | Done | 4 metric cards |
 | Quick actions nav | Done | Horizontal-scroll mobile, grid desktop |
 | Feature overview grid | Done | 10 cards with live data badges |
-| Coming soon section | Done | 8 planned feature cards |
+| Coming soon section | Done | Pruned in v0.36.0 — delivered features (AI copilot, MCP, files, bulk ops, notifications) removed from the list |
 | Pipeline by stage (board-grouped) | Done | Pill-tab board selector, per-board summary |
 | Leads by source | Done | Count badges |
 | Team performance | Done | Per-member lead counts with type badges |
@@ -529,6 +529,30 @@ Real channel dispatch for WhatsApp, delivered per organization via two transport
 
 ---
 
+### 2.24 AI Agent Config (Copilot + WhatsApp Attendant) — DONE (v0.36.0)
+
+Two native AI products on a provider-agnostic LLM runtime (OpenAI-compatible; default OpenCode Go, OpenRouter fallback implemented but inactive without key). Fully opt-in: `aiConfig.enabled` defaults to false and activation requires an LGPD acknowledgment.
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| In-app Copilot (SSE streaming chat) | Done | Acts AS the user (their RBAC, `via:"copilot"`); read/write tools; destructive → two-phase pending action |
+| WhatsApp Attendant (suggest mode default) | Done | Queue + debounce/coalescing, per-conversation OCC lock, transactional commit re-checking 11 eligibility conditions (TOCTOU) |
+| Autopilot gate (server-side) | Done | 10+ reviewed suggestions with 60%+ acceptance |
+| Security layers (4) | Done | `assertAgentCan`, per-record scope, TOOL_DENYLIST + build test, untrusted-data envelope |
+| Bridge channel opt-in (ban-risk acceptance) | Done | `aiConfig.bridgeAiAck` org-level; eligibility condition re-checked at commit (revocation aborts in-flight runs) |
+| Anti-burst send queue (all WhatsApp sends) | Done | Two-level cursors (`channelPacing`); Meta 1–3s, bridge reactive 4–10s / cold 8–15s; humanized typing on bridge |
+| Pacing-aware retry / quality freeze | Done | Official 4^X backoff for 131056/130429/80007; 131048 freezes channel 30min + operator alert |
+| Copilot × Attendant separate toggles | Done | `copilotEnabled` / `attendantEnabled` under the master switch |
+| Attendant pipeline rules | Done | Initial board/stage on inbound routing, deterministic BANT-threshold stage advance, `allowMoveStages` enforced server-side, funnel rules in prompt |
+| Settings → IA UI | Done | LGPD activation modal, 1-click attendant (personas), simulator, usage meter, budget, model/ZDR selector, bridge risk modal, advanced pipeline options |
+| Evals + diagnostics | Done | Golden conversations (`agentEvals`), `aiDiagnostics:pingProvider` |
+
+**Validation:** 257 tests green (18 files) · full lint · browser E2E 10/10 (2026-07-26). See `docs/AI-AGENT-CONFIG-STATUS.md`.
+
+**Files:** `convex/attendant.ts`, `convex/copilot.ts`, `convex/copilotHttp.ts`, `convex/aiSettings.ts`, `convex/lib/agentSecurity.ts`, `convex/lib/agentTools.ts`, `convex/lib/llm/`, `convex/lib/whatsappDispatch.ts`, `convex/lib/channelResolve.ts`, `src/components/settings/AiSection.tsx`, `src/components/copilot/CopilotPanel.tsx`, `src/components/inbox/AiDraftCard.tsx`
+
+---
+
 ### 2.21 Frontend Layout & Responsiveness — DONE
 
 | Feature | Status | Notes |
@@ -659,7 +683,7 @@ Real channel dispatch for WhatsApp, delivered per organization via two transport
 | Automation rules engine | Phase 2 | Trigger → condition → action system |
 | AI lead scoring | Phase 2 | Configurable scoring rules |
 | AI conversation summarization | Phase 2 | Auto-generate lead context |
-| AI co-pilot mode | Phase 3 | Suggest responses, human approves |
+| ~~AI co-pilot mode~~ | ~~Phase 3~~ | **DONE** — Copilot + WhatsApp attendant in suggest mode (see 2.24) |
 | Multi-agent workflows | Phase 3 | Agent A → Agent B → Human chains |
 | Sentiment analysis | Phase 3 | On conversations |
 | ~~Calendar integration~~ | ~~Phase 3~~ | **DONE** — Day/week/month views, drag-to-reschedule, merged tasks+events, REST API, MCP tools |

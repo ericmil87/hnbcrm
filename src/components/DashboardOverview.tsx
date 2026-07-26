@@ -29,13 +29,9 @@ import {
   Globe,
   Webhook,
   Bookmark,
-  Server,
-  Paperclip,
   Zap,
   Search,
-  Layers,
-  Bot,
-  Bell,
+  Sparkles,
   FileUp,
   CheckSquare,
   ChevronRight,
@@ -179,7 +175,7 @@ export function DashboardOverview() {
           <Badge variant="warning">Próximas funcionalidades</Badge>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {comingSoonFeatures.map((feature, idx) => (
+          {comingSoonFeatures(() => onTabChange("settings")).map((feature, idx) => (
             <ComingSoonCard key={idx} {...feature} />
           ))}
         </div>
@@ -504,21 +500,35 @@ interface ComingSoonCardProps {
   icon: React.ElementType;
   title: string;
   description: string;
+  /** Cards de features já disponíveis usam badge/estilo "novidade" em vez de "Em Breve". */
+  available?: boolean;
+  onClick?: () => void;
 }
 
-function ComingSoonCard({ icon: Icon, title, description }: ComingSoonCardProps) {
+function ComingSoonCard({ icon: Icon, title, description, available, onClick }: ComingSoonCardProps) {
   return (
-    <Card className="flex flex-col gap-3 opacity-60">
+    <Card
+      variant={available ? "interactive" : "default"}
+      onClick={available ? onClick : undefined}
+      className={cn("flex flex-col gap-3", !available && "opacity-60")}
+    >
       <div className="flex items-start justify-between">
-        <div className="h-10 w-10 rounded-xl bg-surface-overlay flex items-center justify-center shrink-0">
-          <Icon size={20} className="text-text-muted" />
+        <div
+          className={cn(
+            "h-10 w-10 rounded-xl flex items-center justify-center shrink-0",
+            available ? "bg-brand-500/10" : "bg-surface-overlay"
+          )}
+        >
+          <Icon size={20} className={available ? "text-brand-400" : "text-text-muted"} />
         </div>
-        <Badge variant="warning" className="text-xs">
-          Em Breve
+        <Badge variant={available ? "success" : "warning"} className="text-xs">
+          {available ? "Novidade" : "Em Breve"}
         </Badge>
       </div>
       <div>
-        <h4 className="text-sm font-semibold text-text-secondary">{title}</h4>
+        <h4 className={cn("text-sm font-semibold", available ? "text-text-primary" : "text-text-secondary")}>
+          {title}
+        </h4>
         <p className="text-xs text-text-muted mt-1 line-clamp-2">{description}</p>
       </div>
     </Card>
@@ -626,8 +636,8 @@ function existingFeatures(
     {
       icon: Globe,
       title: "API REST",
-      description: "19 endpoints autenticados para integrações externas via X-API-Key",
-      dataBadge: "19 endpoints",
+      description: "64 endpoints autenticados para integrações externas via X-API-Key",
+      dataBadge: "64 endpoints",
       tab: "settings" as Tab,
       onClick: () => onTabChange("settings"),
     },
@@ -649,48 +659,32 @@ function existingFeatures(
   ];
 }
 
-const comingSoonFeatures = [
-  {
-    icon: Server,
-    title: "Servidor MCP",
-    description: "Protocolo de integração com agentes de IA externos e ferramentas",
-  },
-  {
-    icon: Paperclip,
-    title: "Arquivos e Anexos",
-    description: "Upload e armazenamento de documentos vinculados a leads e conversas",
-  },
-  {
-    icon: Zap,
-    title: "Motor de Automações",
-    description: "Regras automáticas para mover leads, atribuir e notificar a equipe",
-  },
-  {
-    icon: Search,
-    title: "Paleta de Comandos",
-    description: "Busca rápida com Cmd+K para acessar qualquer recurso do CRM",
-  },
-  {
-    icon: Layers,
-    title: "Operações em Massa",
-    description: "Atualizar, mover ou atribuir múltiplos leads de uma vez",
-  },
-  {
-    icon: Bot,
-    title: "Co-piloto IA",
-    description: "Sugestões inteligentes de respostas e próximos passos para leads",
-  },
-  {
-    icon: Bell,
-    title: "Notificações",
-    description: "Alertas em tempo real sobre leads, repasses e atividades da equipe",
-  },
-  {
-    icon: FileUp,
-    title: "Importar/Exportar",
-    description: "Importação de CSV e exportação de dados em massa para planilhas",
-  },
-];
+function comingSoonFeatures(onOpenAiSettings: () => void) {
+  return [
+    {
+      icon: Sparkles,
+      title: "IA Copiloto & Atendente",
+      description: "Já disponível — ative em Configurações → IA",
+      available: true,
+      onClick: onOpenAiSettings,
+    },
+    {
+      icon: Zap,
+      title: "Motor de Automações",
+      description: "Regras automáticas para mover leads, atribuir e notificar a equipe",
+    },
+    {
+      icon: Search,
+      title: "Paleta de Comandos",
+      description: "Busca rápida com Cmd+K para acessar qualquer recurso do CRM",
+    },
+    {
+      icon: FileUp,
+      title: "Importar/Exportar",
+      description: "Importação de CSV e exportação de dados em massa para planilhas",
+    },
+  ];
+}
 
 function formatCurrency(value: number): string {
   if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)}M`;
