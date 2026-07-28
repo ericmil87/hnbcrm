@@ -238,7 +238,7 @@ describe("fila do atendente (enqueue + coalescing)", () => {
     expect(items).toHaveLength(0);
   });
 
-  test("contato com aiOptOut nunca entra na fila", async () => {
+  test("contato com aiOptOut nunca é processado — skip com rastro (v4.2)", async () => {
     const t = setup();
     const seed = await seedAttendantOrg(t);
     await t.run(async (ctx) => ctx.db.patch(seed.contactId, { aiOptOut: true }));
@@ -246,8 +246,11 @@ describe("fila do atendente (enqueue + coalescing)", () => {
 
     await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
 
+    // v4.2: o skip DEIXA RASTRO (item "skipped" com a razão) p/ o inbox exibir
+    // "IA em espera" — mas nada pendente/processável é criado.
     const items = await t.run(async (ctx) => ctx.db.query("aiReplyQueue").collect());
-    expect(items).toHaveLength(0);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ status: "skipped", error: "opt_out" });
   });
 
   test("keyword 'humano' → handoff determinístico + IA pausada + sem fila", async () => {
@@ -508,7 +511,13 @@ describe("commit transacional (TOCTOU)", () => {
       runId: "run-suggest",
       agentRunId: context.agentRunId,
       text: "Sugestão de resposta ao cliente",
-      proposedActions: ['moveThisLead({"stageName":"Qualificado"})'],
+      proposedActions: [
+        {
+          name: "moveThisLead",
+          argsJson: '{"stageName":"Qualificado"}',
+          label: 'Mover o lead para "Qualificado"',
+        },
+      ],
       needsDisclosure: true,
       disclosure: "Você fala com um assistente virtual.",
     });

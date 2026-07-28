@@ -3,6 +3,27 @@
 **Data:** 2026-07-26 · **Planos:** `AI-AGENT-CONFIG-PLAN-v4.1.md` (rodada atual) + v3 (canônico da base) + v2 (segurança/concorrência)
 **Fases F0→F5 (v3) + P1→P4 (v4.1) implementadas.** Lint verde (tsc convex + tsc app + convex push + vite build) · **257 testes verdes** (18 arquivos).
 
+## Rodada v4.2 (2026-07-28) — ativação 1-fluxo + IA que preenche o CRM
+
+Plano: `AI-AGENT-CONFIG-PLAN-v4.2.md`. **270 testes verdes (20 arquivos), lint completo.**
+- **Wizard `activateOneFlow`** (mutation única: mestre+LGPD+bridge ack+atendente;
+  mesma auditoria) + CTA no Painel; atendente nasce **sem horário (24h)** — aviso
+  de horário migrou para o toggle de autopilot.
+- **Skip com rastro**: elegibilidade reprovada grava item `skipped` na fila
+  (só com org AI-ativa + atendente resolvido); `getConversationAiState` alimenta
+  o chip "IA em espera: <motivo>" / "IA preparando resposta…" no inbox.
+- **Captura de dados**: tools `updateThisContact` e `updateThisLeadInfo`
+  (custom fields com whitelist `pipelineConfig.captureFields`, validação de
+  chave/tipo/opções no executor; prompt injeta "DADOS A CAPTURAR").
+- **Ações aprováveis**: `proposedActions` estruturadas `{name,argsJson,label}`;
+  `acceptAiDraft(actionIndexes)` executa as marcadas via
+  `executeAttendantToolCore` COMPARTILHADO com o autopilot (mesmas barreiras);
+  cliente só envia índices; resultados em `aiDraft.appliedActions`.
+- **Descoberta do lead**: funil→estágio + "Ver no funil" no inbox, `?board=` e
+  último board lembrado no pipeline, "Leads novos caem em: X→Y" no card.
+- Nota de operação: rastro de skip cresce 1 row/inbound inelegível em orgs com
+  IA ativa — considerar limpeza por cron se virar volume.
+
 ## Rodada v4.1 (2026-07-26) — bridge + fila humanizada + toggles + pipeline
 
 ### P1 — Atendente no canal bridge (aceite de risco)

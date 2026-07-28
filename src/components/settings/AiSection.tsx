@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { toast } from "sonner";
 import {
@@ -12,6 +13,8 @@ import {
   ChevronDown,
   SlidersHorizontal,
   AlertTriangle,
+  Check,
+  Clock,
 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -24,6 +27,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { Spinner } from "@/components/ui/Spinner";
+import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 
 // Switch grande do design system (role="switch") — a área clicável é maior que
@@ -86,11 +90,17 @@ export function AiSection({ organizationId }: { organizationId: Id<"organization
     );
   }
 
+  // v4.2: enquanto a IA não está totalmente pronta (ativa + com atendente), a
+  // seção mostra só o wizard de ativação em 1 fluxo — nada de cards soltos.
+  const needsActivation = !status.active || !status.hasAttendant;
+
   return (
     <div className="space-y-6">
-      <ActivationCard organizationId={organizationId} status={status} />
-      {status.active && (
+      {needsActivation ? (
+        <ActivationWizardCard organizationId={organizationId} status={status} />
+      ) : (
         <>
+          <ActivationCard organizationId={organizationId} status={status} />
           <FeatureTogglesCard organizationId={organizationId} status={status} />
           <BridgeAiCard organizationId={organizationId} status={status} />
           <AttendantCard organizationId={organizationId} />
@@ -109,10 +119,191 @@ type AiStatus = {
   copilotEnabled: boolean;
   attendantEnabled: boolean;
   bridgeAiAckDone: boolean;
+  hasAttendant: boolean;
+  hasBridgeChannel: boolean;
   models: { copilot: string; attendant: string; classify: string; complex?: string };
   strictZdr: boolean;
   monthlyConversationBudget: number | null;
 };
+
+// ── Wizard de ativação em 1 fluxo (v4.2): liga IA + LGPD + atendente + bridge
+// numa única mutation (activateOneFlow). Some assim que a IA fica ativa E com
+// atendente — a partir daí a seção volta aos cards individuais de sempre. ──
+
+function ActivationWizardCard({
+  organizationId,
+  status,
+}: {
+  organizationId: Id<"organizations">;
+  status: AiStatus;
+}) {
+  const [showWizard, setShowWizard] = useState(false);
+
+  return (
+    <Card>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <div className="h-10 w-10 shrink-0 rounded-full bg-brand-500/10 flex items-center justify-center">
+            <Sparkles size={20} className="text-brand-500" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-text-primary">Ativar atendente IA</h3>
+            <p className="text-sm text-text-secondary mt-1">
+              Um atendente virtual responde clientes no WhatsApp em modo sugestão — cada resposta
+              é revisada por você antes de sair. Leva menos de um minuto para configurar.
+            </p>
+          </div>
+        </div>
+        <Button onClick={() => setShowWizard(true)} className="shrink-0 w-full sm:w-auto">
+          <Bot size={16} className="mr-1.5" />
+          Ativar atendente IA
+        </Button>
+      </div>
+
+      {showWizard && (
+        <ActivationWizardModal
+          organizationId={organizationId}
+          status={status}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function ActivationWizardModal({
+  organizationId,
+  status,
+  onClose,
+}: {
+  organizationId: Id<"organizations">;
+  status: AiStatus;
+  onClose: () => void;
+}) {
+  const activateOneFlow = useMutation(api.aiSettings.activateOneFlow);
+  const [personaId, setPersonaId] = useState("");
+  const [bridgeRiskChecked, setBridgeRiskChecked] = useState(false);
+  const [lgpdChecked, setLgpdChecked] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const needsLgpdAck = !status.lgpdAckDone;
+  const canSubmit = !needsLgpdAck || lgpdChecked;
+
+  const handleActivate = async () => {
+    if (!canSubmit) return;
+    setBusy(true);
+    try {
+      const result = await activateOneFlow({
+        organizationId,
+        lgpdAck: true,
+        ...(status.hasBridgeChannel && bridgeRiskChecked ? { bridgeRiskAck: true } : {}),
+        ...(personaId ? { personaId } : {}),
+      });
+      toast.success(
+        result.bridgeEnabled
+          ? "Atendente IA ativado — inclusive em canais bridge"
+          : "Atendente IA ativado em modo sugestão"
+      );
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao ativar");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Ativar atendente IA">
+      <div className="space-y-5">
+        <ul className="space-y-2">
+          {[
+            "Um atendente virtual é criado em modo sugestão — nada é enviado ao cliente sem a sua revisão",
+            "Você pode personalizar persona, conhecimento e funil depois",
+            "Desativável a qualquer momento",
+          ].map((bullet) => (
+            <li key={bullet} className="flex items-start gap-2 text-sm text-text-secondary">
+              <Check size={15} className="shrink-0 text-semantic-success mt-0.5" />
+              {bullet}
+            </li>
+          ))}
+        </ul>
+
+        <div>
+          <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+            Persona
+          </label>
+          <select
+            value={personaId}
+            onChange={(e) => setPersonaId(e.target.value)}
+            className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
+          >
+            <option value="">Automática (pelo meu ramo)</option>
+            {PERSONAS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {status.hasBridgeChannel && (
+          <div className="space-y-2.5">
+            <div className="flex items-start gap-2.5 p-3.5 rounded-lg border border-semantic-error/40 bg-semantic-error/10">
+              <AlertTriangle size={18} className="shrink-0 text-semantic-error mt-0.5" />
+              <p className="text-sm font-semibold text-text-primary">
+                Aceito e reconheço que a API não-oficial viola os Termos do WhatsApp e pode causar
+                banimento permanente do número, inclusive com uso de IA.
+              </p>
+            </div>
+            <Checkbox
+              checked={bridgeRiskChecked}
+              onChange={(e) => setBridgeRiskChecked(e.target.checked)}
+              label="Li e aceito o risco acima"
+            />
+            <p className="text-xs text-text-muted">
+              Sem o aceite, a IA atende apenas canais oficiais.
+            </p>
+          </div>
+        )}
+
+        {needsLgpdAck ? (
+          <div className="space-y-2.5 pt-3 border-t border-border">
+            <p className="text-sm text-text-secondary">
+              Ao ativar, dados de clientes (mensagens, nomes, contexto do CRM) são processados por
+              provedores de IA nos EUA em modo <strong>zero-retention</strong> (não são retidos nem
+              usados para treino no caminho padrão da plataforma). Sua organização é a
+              controladora dos dados; confirme que sua política de privacidade divulga o uso de IA
+              e a transferência internacional de dados (LGPD, art. 33).
+            </p>
+            <Checkbox
+              checked={lgpdChecked}
+              onChange={(e) => setLgpdChecked(e.target.checked)}
+              label="Confirmo que minha política de privacidade divulga o uso de IA e a transferência internacional de dados"
+            />
+          </div>
+        ) : (
+          <p className="flex items-center gap-1.5 text-xs text-text-muted pt-3 border-t border-border">
+            <ShieldCheck size={14} className="text-semantic-success" />
+            Reconhecimento LGPD já registrado
+          </p>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} className="flex-1">
+            Cancelar
+          </Button>
+          <Button
+            onClick={() => void handleActivate()}
+            disabled={!canSubmit || busy}
+            className="flex-1"
+          >
+            Ativar agora
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 // ── Toggles por produto (Copiloto × Atendente) — sob o mestre ──
 
@@ -446,6 +637,7 @@ type Attendant = {
       qualifiedStageId?: Id<"stages">;
       qualifyThreshold?: number;
       allowMoveStages?: boolean;
+      captureFields?: string[];
     };
   };
 };
@@ -547,6 +739,7 @@ function AttendantConfig({
   organizationId: Id<"organizations">;
   attendant: Attendant;
 }) {
+  const navigate = useNavigate();
   const metrics = useQuery(api.aiSettings.getAttendantMetrics, {
     organizationId,
     agentMemberId: attendant._id,
@@ -578,6 +771,9 @@ function AttendantConfig({
   const [pcAllowMoveStages, setPcAllowMoveStages] = useState<boolean>(
     pipelineConfig?.allowMoveStages ?? true
   );
+  const [pcCaptureFields, setPcCaptureFields] = useState<string[]>(
+    pipelineConfig?.captureFields ?? []
+  );
 
   const pcBoards = useQuery(api.boards.getBoards, { organizationId }) as
     | { _id: Id<"boards">; name: string }[]
@@ -586,6 +782,25 @@ function AttendantConfig({
     api.boards.getStages,
     pcBoardId ? { boardId: pcBoardId as Id<"boards"> } : "skip"
   ) as { _id: Id<"stages">; name: string }[] | undefined;
+  // Resolução independente do formulário de personalização — reflete sempre o
+  // pipelineConfig SALVO (não o rascunho em edição) na linha informativa.
+  const infoStages = useQuery(
+    api.boards.getStages,
+    pipelineConfig?.boardId ? { boardId: pipelineConfig.boardId } : "skip"
+  ) as { _id: Id<"stages">; name: string }[] | undefined;
+  const infoBoardName = pcBoards?.find((b) => b._id === pipelineConfig?.boardId)?.name;
+  const infoStageName = infoStages?.find((s) => s._id === pipelineConfig?.initialStageId)?.name;
+
+  // Campos personalizados de lead — usados no multiselect "campos que a IA captura".
+  const leadFieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
+    organizationId,
+    entityType: "lead",
+  }) as { _id: string; name: string; key: string }[] | undefined;
+  const toggleCaptureField = (key: string) => {
+    setPcCaptureFields((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+    );
+  };
 
   const isAutopilot = profile.mode === "autopilot";
 
@@ -612,7 +827,8 @@ function AttendantConfig({
       !pcInitialStageId &&
       !pcQualifiedStageId &&
       !trimmedAdvanceRules &&
-      pcAllowMoveStages;
+      pcAllowMoveStages &&
+      pcCaptureFields.length === 0;
     try {
       await updateProfile({
         agentMemberId: attendant._id,
@@ -635,6 +851,7 @@ function AttendantConfig({
                 advanceRules: trimmedAdvanceRules || undefined,
                 qualifyThreshold: pcQualifyThreshold,
                 allowMoveStages: pcAllowMoveStages,
+                captureFields: pcCaptureFields.length > 0 ? pcCaptureFields : undefined,
               },
         },
       });
@@ -664,6 +881,22 @@ function AttendantConfig({
                 ? "Responde clientes automaticamente (com repasse para humanos quando preciso)."
                 : "Gera rascunhos que sua equipe revisa e envia — nada sai sozinho."}
             </p>
+            {pipelineConfig?.boardId ? (
+              <button
+                type="button"
+                onClick={() => navigate(`${TAB_ROUTES.board}?board=${pipelineConfig.boardId}`)}
+                className="mt-1.5 block text-left text-xs text-text-muted hover:text-brand-500 transition-colors"
+              >
+                Leads novos caem em:{" "}
+                <span className="font-medium text-text-secondary">{infoBoardName ?? "…"}</span>
+                {" → "}
+                <span className="font-medium text-text-secondary">
+                  {infoStageName ?? "primeiro estágio"}
+                </span>
+              </button>
+            ) : (
+              <p className="mt-1.5 text-xs text-text-muted">Leads novos caem no funil padrão.</p>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -706,6 +939,20 @@ function AttendantConfig({
               <Lock size={13} />
               Autopilot libera com 10+ sugestões revisadas e 60%+ de aceitação
             </span>
+          )}
+          {(isAutopilot || metrics.autopilotUnlocked) && (
+            <p className="w-full flex items-center gap-1.5 text-xs text-text-muted">
+              <Clock size={12} className="shrink-0" />
+              Em autopilot, considere definir um horário de atendimento (
+              <button
+                type="button"
+                onClick={() => setShowCustomize(true)}
+                className="text-brand-500 hover:text-brand-400 font-medium"
+              >
+                Personalizar
+              </button>
+              ) se não quiser envios de madrugada.
+            </p>
           )}
         </div>
       )}
@@ -882,6 +1129,38 @@ function AttendantConfig({
                   onChange={() => setPcAllowMoveStages((v) => !v)}
                   label="Atendente pode mover leads no funil"
                 />
+              </div>
+
+              <div>
+                <p className="text-sm font-medium text-text-primary mb-1">
+                  Campos que a IA captura
+                </p>
+                <p className="text-xs text-text-muted mb-2">
+                  A IA preenche estes campos conforme a conversa revela (com validação de opções).
+                </p>
+                {leadFieldDefs === undefined ? (
+                  <Spinner size="sm" />
+                ) : leadFieldDefs.length === 0 ? (
+                  <p className="text-xs text-text-muted">
+                    Nenhum campo personalizado de lead cadastrado.
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {leadFieldDefs.map((f) => (
+                      <Checkbox
+                        key={f._id}
+                        checked={pcCaptureFields.includes(f.key)}
+                        onChange={() => toggleCaptureField(f.key)}
+                        label={
+                          <span className="text-xs text-text-secondary">
+                            {f.name}{" "}
+                            <span className="text-text-muted">({f.key})</span>
+                          </span>
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </CollapsibleSection>

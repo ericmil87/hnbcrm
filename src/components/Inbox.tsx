@@ -1,10 +1,11 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutletContext } from "react-router";
+import { useOutletContext, useNavigate } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
 import { Send, ArrowLeft, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,8 +28,47 @@ import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsM
 import { AiDraftCard, AiConversationControls, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
+// v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
+// estado da IA no header da conversa.
+const AI_STATE_REASON_LABELS: Record<string, string> = {
+  fora_do_horario: "fora do horário de atendimento",
+  lead_de_humano: "lead atribuído a um humano",
+  ia_pausada: "IA pausada nesta conversa",
+  handoff_pendente: "aguardando atendimento humano (repasse)",
+  opt_out: "contato optou por não falar com IA",
+  teto_hora: "limite de respostas por hora atingido",
+  teto_conversa: "limite de respostas da conversa atingido",
+  janela_24h: "janela de 24h fechada",
+  bridge_sem_aceite: "canal não-oficial sem aceite de risco",
+  atendente_desativado: "atendente desativado",
+  ia_desativada: "IA desativada",
+  sem_atendente: "sem atendente configurado",
+  budget_mensal: "limite mensal de conversas atingido",
+};
+
+type AiConvState = {
+  status: string;
+  reason: string | null;
+  at: number;
+  afterLastInbound: boolean;
+} | null | undefined;
+
+// "done" ou item antigo (já superado por uma mensagem inbound mais nova) → sem chip.
+function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing" | "waiting" } | null {
+  if (!state || state.status === "done") return null;
+  if (state.status === "pending" || state.status === "processing") {
+    return { label: "IA preparando resposta…", tone: "processing" };
+  }
+  if ((state.status === "skipped" || state.status === "failed") && state.afterLastInbound) {
+    const reasonLabel = state.reason ? AI_STATE_REASON_LABELS[state.reason] ?? state.reason : "motivo desconhecido";
+    return { label: `IA em espera: ${reasonLabel}`, tone: "waiting" };
+  }
+  return null;
+}
+
 export function Inbox() {
   const { organizationId } = useOutletContext<AppOutletContext>();
+  const navigate = useNavigate();
   const { can, member } = usePermissions(organizationId);
   const currentMemberId = member?._id ?? null;
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -76,6 +116,13 @@ export function Inbox() {
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
   // IA da org (opt-in): controla os controles de IA no header + rascunhos.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
+  const aiConvState = useQuery(
+    api.attendant.getConversationAiState,
+    selectedConversation && aiStatus?.active
+      ? { conversationId: selectedConversation as Id<"conversations"> }
+      : "skip"
+  );
 
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
@@ -247,6 +294,33 @@ export function Inbox() {
   const channelIsWhatsapp = currentConversation?.channel === "whatsapp";
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
+
+  // Funil do lead da conversa aberta (C2): "Funil: <board> → <estágio>" com link.
+  const leadBoardId = currentConversation?.lead?.boardId as Id<"boards"> | undefined;
+  const leadStageId = currentConversation?.lead?.stageId as Id<"stages"> | undefined;
+  const leadBoards = useQuery(api.boards.getBoards, leadBoardId ? { organizationId } : "skip") as
+    | { _id: Id<"boards">; name: string }[]
+    | undefined;
+  const leadStages = useQuery(
+    api.boards.getStages,
+    leadBoardId ? { boardId: leadBoardId } : "skip"
+  ) as { _id: Id<"stages">; name: string }[] | undefined;
+  const leadBoardName = leadBoards?.find((b) => b._id === leadBoardId)?.name;
+  const leadStageName = leadStages?.find((s) => s._id === leadStageId)?.name;
+  const funnelLine = leadBoardId ? (
+    <button
+      type="button"
+      onClick={() => navigate(`${TAB_ROUTES.board}?board=${leadBoardId}`)}
+      className="block text-left text-xs text-text-muted hover:text-brand-500 transition-colors truncate"
+    >
+      Funil: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
+      {" → "}
+      <span className="text-text-secondary font-medium">{leadStageName ?? "…"}</span>
+      <span className="ml-1.5 text-brand-500">Ver no funil</span>
+    </button>
+  ) : null;
+
+  const aiChip = aiStateChipInfo(aiConvState);
 
   // "digitando..." do contato — TTL de 12s no cliente (o "paused" pode se perder).
   const contactPresence = currentConversation?.contactPresence as
@@ -1020,16 +1094,29 @@ export function Inbox() {
                   />
                 )}
               </div>
+              {funnelLine && <div className="pl-11">{funnelLine}</div>}
               {contactTyping && (
                 <span className="pl-11 text-xs text-brand-500 animate-pulse">digitando…</span>
               )}
               {aiStatus?.active && currentConversation && channelIsWhatsapp &&
                 aiControlsAllowed && (
-                <div className="pl-11">
+                <div className="pl-11 flex flex-wrap items-center gap-2">
                   <AiConversationControls
                     conversationId={currentConversation._id as Id<"conversations">}
                     aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
                   />
+                  {aiChip && (
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                        aiChip.tone === "processing"
+                          ? "bg-brand-500/10 text-brand-400"
+                          : "bg-surface-overlay text-text-muted"
+                      )}
+                    >
+                      {aiChip.label}
+                    </span>
+                  )}
                 </div>
               )}
               {windowInfo && (
@@ -1046,6 +1133,7 @@ export function Inbox() {
                 <h2 className="text-base font-semibold text-text-primary truncate">
                   {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
                 </h2>
+                {funnelLine}
                 {contactTyping && (
                   <span className="text-xs text-brand-500 animate-pulse">digitando…</span>
                 )}
@@ -1053,10 +1141,24 @@ export function Inbox() {
               <div className="flex items-center gap-2">
                 {aiStatus?.active && currentConversation && channelIsWhatsapp &&
                 aiControlsAllowed && (
-                  <AiConversationControls
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
-                  />
+                  <>
+                    <AiConversationControls
+                      conversationId={currentConversation._id as Id<"conversations">}
+                      aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
+                    />
+                    {aiChip && (
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                          aiChip.tone === "processing"
+                            ? "bg-brand-500/10 text-brand-400"
+                            : "bg-surface-overlay text-text-muted"
+                        )}
+                      >
+                        {aiChip.label}
+                      </span>
+                    )}
+                  </>
                 )}
                 {windowInfo && (
                   <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>

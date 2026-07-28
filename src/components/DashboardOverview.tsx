@@ -43,6 +43,8 @@ export function DashboardOverview() {
   const onTabChange = (tab: Tab) => navigate(TAB_ROUTES[tab]);
   const stats = useQuery(api.dashboard.getDashboardStats, { organizationId });
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, { organizationId });
+  // Banner discreto de ativação da IA — só aparece quando a IA ainda não está ativa.
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
 
   if (!stats || !currentMember) {
     return <LoadingSkeleton />;
@@ -66,6 +68,11 @@ export function DashboardOverview() {
           </p>
         </div>
       </div>
+
+      {/* Banner discreto — ativação da IA (só quando ainda não está ativa) */}
+      {aiStatus?.active === false && (
+        <AiActivationBanner onClick={() => onTabChange("settings")} />
+      )}
 
       {/* Onboarding Checklist */}
       <OnboardingChecklist organizationId={organizationId} />
@@ -421,6 +428,22 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
         })}
       </div>
     </Card>
+  );
+}
+
+function AiActivationBanner({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="w-full flex items-center gap-3 rounded-card border border-brand-500/30 bg-brand-500/5 px-4 py-3 text-left hover:bg-brand-500/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
+    >
+      <Sparkles size={18} className="shrink-0 text-brand-500" />
+      <span className="flex-1 min-w-0 text-sm text-text-primary">
+        Ative o atendente IA — responda clientes no WhatsApp com revisão humana
+      </span>
+      <ChevronRight size={16} className="shrink-0 text-text-muted" />
+    </button>
   );
 }
 

@@ -2,6 +2,18 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.37.0] - 2026-07-28
+
+### IA v4.2 — Ativação em 1 fluxo + atendente que preenche o CRM
+
+- **Wizard de ativação única**: liga a IA, registra LGPD + aceite de risco do bridge e cria o atendente numa tela só (`activateOneFlow`, mesma auditoria do caminho em passos); CTA no Painel quando a IA está desligada
+- **Atendente nasce 24h** (sem horário) — em modo sugestão nada sai sem revisão; o aviso de horário migrou para o toggle de autopilot
+- **Fim do skip silencioso**: elegibilidade reprovada deixa rastro e o inbox mostra "IA em espera: <motivo>" / "IA preparando resposta…" (`getConversationAiState`)
+- **Captura de dados pela IA**: tools `updateThisContact` (nome/e-mail) e `updateThisLeadInfo` (título/valor/temperatura + custom fields com whitelist `captureFields` validada por tipo/opções no servidor)
+- **Ações aprováveis no rascunho**: as ações propostas viram checkboxes com rótulo humano; aprovar envia o texto E executa as marcadas pelo mesmo executor gated do autopilot (`acceptAiDraft` + `actionIndexes`; resultados em `appliedActions`)
+- **Descoberta do lead**: inbox mostra funil→estágio com "Ver no funil" (deep-link `?board=`), pipeline lembra o último board por org, card do atendente mostra onde os leads novos caem
+- 270 testes verdes (20 arquivos) · lint completo
+
 ## [0.36.0] - 2026-07-26
 
 ### AI Agent Config — Copiloto in-app + Atendente WhatsApp (opt-in total)

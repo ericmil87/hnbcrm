@@ -109,6 +109,50 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     resultFields: ["status", "score", "movedTo"],
   },
   {
+    name: "updateThisContact",
+    description:
+      "Salva nome e/ou e-mail do contato deste atendimento assim que a pessoa se apresentar (ex.: 'meu nome é Maria').",
+    parameters: schema(
+      {
+        firstName: { type: "string", description: "Primeiro nome do contato" },
+        lastName: { type: "string", description: "Sobrenome (se informado)" },
+        email: { type: "string", description: "E-mail (apenas se a pessoa informar)" },
+      },
+      []
+    ),
+    permission: { category: "contacts", level: "edit" },
+    audience: "attendant",
+    effect: "write",
+    resultFields: ["status"],
+  },
+  {
+    name: "updateThisLeadInfo",
+    description:
+      "Atualiza dados do lead deste atendimento conforme a conversa revela: título, valor estimado, temperatura e os CAMPOS A CAPTURAR listados no contexto (use exatamente as chaves e opções listadas).",
+    parameters: schema(
+      {
+        title: { type: "string", description: "Título curto do lead (ex.: nome + interesse)" },
+        value: { type: "number", description: "Valor estimado do negócio (número, se souber)" },
+        temperature: {
+          type: "string",
+          enum: ["cold", "warm", "hot"],
+          description: "Temperatura do lead",
+        },
+        fields: {
+          type: "object",
+          description:
+            "Campos a capturar: objeto {chave: valor} usando SOMENTE as chaves/opções listadas no contexto",
+          additionalProperties: true,
+        },
+      },
+      []
+    ),
+    permission: { category: "leads", level: "edit_own" },
+    audience: "attendant",
+    effect: "write",
+    resultFields: ["status", "updated"],
+  },
+  {
     name: "requestHandoff",
     description:
       "Escala este atendimento para um humano AGORA (cliente pediu, assunto sensível, fora do escopo, ou baixa confiança). Inclua um resumo útil — o humano que assumir vê seu contexto.",

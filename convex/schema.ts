@@ -118,6 +118,10 @@ const agentProfileValidator = v.object({
       qualifiedStageId: v.optional(v.id("stages")), // movimento DETERMINÍSTICO pós-qualificação
       qualifyThreshold: v.optional(v.number()), // score BANT mínimo p/ mover (default 3)
       allowMoveStages: v.optional(v.boolean()), // default true; false remove moveThisLead da run E recusa no executor
+      // v4.2: whitelist de custom fields (keys de fieldDefinitions, entity lead)
+      // que a IA pode preencher via updateThisLeadInfo. O executor valida chave
+      // E opção server-side — o modelo nunca escreve fora desta lista.
+      captureFields: v.optional(v.array(v.string())),
     })
   ),
 });

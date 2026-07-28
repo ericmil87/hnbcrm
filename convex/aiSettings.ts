@@ -7,8 +7,8 @@
  * O runtime (orgAiActive) só roda com enabled && lgpdAck.
  */
 import { v } from "convex/values";
-import { query, mutation, QueryCtx } from "./_generated/server";
-import { Id } from "./_generated/dataModel";
+import { query, mutation, MutationCtx, QueryCtx } from "./_generated/server";
+import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { DEFAULT_MODELS, OPENCODE_GO_MODELS, routeInfo } from "./lib/llm/registry";
@@ -25,6 +25,9 @@ export const getAiStatus = query({
     attendantEnabled: v.boolean(),
     // Aceite de risco do canal bridge (P1): habilita atendente em canais não-oficiais.
     bridgeAiAckDone: v.boolean(),
+    // v4.2: estado p/ o wizard de ativação em 1 fluxo.
+    hasAttendant: v.boolean(),
+    hasBridgeChannel: v.boolean(),
     models: v.object({
       copilot: v.string(),
       attendant: v.string(),
@@ -40,6 +43,16 @@ export const getAiStatus = query({
     const aiConfig = org?.settings.aiConfig;
     const enabled = aiConfig?.enabled === true;
     const lgpdAckDone = aiConfig?.lgpdAck !== undefined;
+    const aiMembers = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) =>
+        q.eq("organizationId", args.organizationId).eq("type", "ai")
+      )
+      .collect();
+    const channelConfigs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .collect();
     return {
       enabled,
       lgpdAckDone,
@@ -47,6 +60,12 @@ export const getAiStatus = query({
       copilotEnabled: aiConfig?.copilotEnabled !== false,
       attendantEnabled: aiConfig?.attendantEnabled !== false,
       bridgeAiAckDone: aiConfig?.bridgeAiAck !== undefined,
+      hasAttendant: aiMembers.some(
+        (m) => m.status === "active" && m.agentProfile?.kind === "attendant"
+      ),
+      hasBridgeChannel: channelConfigs.some(
+        (c) => c.channel === "whatsapp" && c.provider === "bridge" && c.status === "active"
+      ),
       models: {
         copilot: aiConfig?.providerConfig?.models.copilot ?? DEFAULT_MODELS.copilot,
         attendant: aiConfig?.providerConfig?.models.attendant ?? DEFAULT_MODELS.attendant,
@@ -326,6 +345,7 @@ const agentProfilePatchValidator = v.object({
         qualifiedStageId: v.optional(v.id("stages")),
         qualifyThreshold: v.optional(v.number()),
         allowMoveStages: v.optional(v.boolean()),
+        captureFields: v.optional(v.array(v.string())),
       })
     )
   ),
@@ -353,9 +373,70 @@ export const listAttendants = query({
   },
 });
 
-// Ativação em 1 toque: cria o teamMember IA já semeado — persona por indústria,
-// conhecimento das quickReplies existentes, horário comercial de São Paulo,
-// modo SUGESTÃO. O avançado personaliza depois.
+// Semente do atendente (compartilhada pelo 1-toque e pelo wizard de ativação):
+// persona por indústria, conhecimento das quickReplies, modo SUGESTÃO e SEM
+// horário (24h) — em sugestão nada é enviado sozinho, então restrição de
+// horário vira decisão de quem liga o autopilot, não default que silencia a IA.
+async function seedAttendant(
+  ctx: MutationCtx,
+  org: Doc<"organizations">,
+  actor: Doc<"teamMembers">,
+  opts: { personaId?: string; name?: string }
+): Promise<Id<"teamMembers">> {
+  const persona = opts.personaId
+    ? personaById(opts.personaId)
+    : personaForIndustry(org.onboardingMeta?.industry);
+
+  const quickReplies = await ctx.db
+    .query("quickReplies")
+    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+    .take(50);
+  const knowledge =
+    quickReplies.length > 0
+      ? "Perguntas e respostas frequentes do time:\n" +
+        quickReplies.map((r) => `- ${r.shortcut}: ${r.content}`).join("\n")
+      : undefined;
+
+  const now = Date.now();
+  const attendantId = await ctx.db.insert("teamMembers", {
+    organizationId: org._id,
+    name: opts.name?.trim() || "Atendente IA",
+    role: "ai",
+    type: "ai",
+    status: "active",
+    agentProfile: {
+      kind: "attendant",
+      mode: "suggest", // atendente começa SEMPRE em sugestão
+      systemPrompt: persona.systemPrompt,
+      knowledge,
+      language: "pt-BR",
+      handoffKeywords: persona.handoffKeywords,
+      // P4: regra de avanço default coerente com a persona (editável em
+      // Opções avançadas). Só a instrução em linguagem natural — board e
+      // estágios ficam no default da org até o admin configurar.
+      pipelineConfig: { advanceRules: persona.advanceRules },
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await ctx.db.insert("auditLogs", {
+    organizationId: org._id,
+    entityType: "teamMember",
+    entityId: attendantId,
+    action: "create",
+    actorId: actor._id,
+    actorType: "human",
+    metadata: { type: "ai", kind: "attendant", persona: persona.id },
+    description: `Criou o atendente IA (persona ${persona.label}, modo sugestão)`,
+    severity: "high",
+    createdAt: now,
+  });
+
+  return attendantId;
+}
+
+// Ativação em 1 toque: cria o teamMember IA já semeado — modo SUGESTÃO, 24h.
 export const createAttendantOneClick = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -371,60 +452,125 @@ export const createAttendantOneClick = mutation({
     if (!aiConfig?.enabled || !aiConfig.lgpdAck) {
       throw new Error("Ative a IA (com o aceite LGPD) antes de criar o atendente");
     }
+    return await seedAttendant(ctx, org, member, args);
+  },
+});
 
-    const persona = args.personaId
-      ? personaById(args.personaId)
-      : personaForIndustry(org.onboardingMeta?.industry);
-
-    // Conhecimento semente: as respostas rápidas já são "o que o time responde".
-    const quickReplies = await ctx.db
-      .query("quickReplies")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(50);
-    const knowledge =
-      quickReplies.length > 0
-        ? "Perguntas e respostas frequentes do time:\n" +
-          quickReplies.map((r) => `- ${r.shortcut}: ${r.content}`).join("\n")
-        : undefined;
-
+// ── v4.2: ativação em UM fluxo — liga a IA, registra os aceites e cria o
+// atendente numa única mutation transacional. MESMOS aceites e auditoria do
+// caminho em passos; só a UX muda. Bridge sem aceite → ativa mesmo assim,
+// apenas com o bridge de fora (o card continua disponível depois).
+export const activateOneFlow = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    lgpdAck: v.boolean(),
+    bridgeRiskAck: v.optional(v.boolean()),
+    personaId: v.optional(v.string()),
+    attendantName: v.optional(v.string()),
+  },
+  returns: v.object({
+    attendantId: v.id("teamMembers"),
+    bridgeEnabled: v.boolean(),
+    createdAttendant: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new Error("Organização não encontrada");
+    const current = org.settings.aiConfig ?? {
+      enabled: false,
+      autoAssign: false,
+      handoffThreshold: 0.8,
+    };
     const now = Date.now();
-    const attendantId = await ctx.db.insert("teamMembers", {
-      organizationId: args.organizationId,
-      name: args.name?.trim() || "Atendente IA",
-      role: "ai",
-      type: "ai",
-      status: "active",
-      agentProfile: {
-        kind: "attendant",
-        mode: "suggest", // TODO atendente começa SEMPRE em sugestão
-        systemPrompt: persona.systemPrompt,
-        knowledge,
-        language: "pt-BR",
-        schedule: { timezone: "America/Sao_Paulo", startHour: 9, endHour: 18 },
-        handoffKeywords: persona.handoffKeywords,
-        // P4: regra de avanço default coerente com a persona (editável em
-        // Opções avançadas). Só a instrução em linguagem natural — board e
-        // estágios ficam no default da org até o admin configurar.
-        pipelineConfig: { advanceRules: persona.advanceRules },
+
+    let lgpdAck = current.lgpdAck;
+    if (!lgpdAck) {
+      if (args.lgpdAck !== true) {
+        throw new Error(
+          "Para ativar a IA, confirme que sua política de privacidade divulga o uso de IA e a transferência internacional de dados"
+        );
+      }
+      lgpdAck = { acceptedAt: now, acceptedBy: member._id };
+    }
+
+    const channels = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .collect();
+    const hasBridge = channels.some(
+      (c) => c.channel === "whatsapp" && c.provider === "bridge" && c.status === "active"
+    );
+    let bridgeAiAck = current.bridgeAiAck;
+    if (hasBridge && args.bridgeRiskAck === true && !bridgeAiAck) {
+      bridgeAiAck = { acceptedAt: now, acceptedBy: member._id };
+    }
+
+    await ctx.db.patch(args.organizationId, {
+      settings: {
+        ...org.settings,
+        aiConfig: {
+          ...current,
+          enabled: true,
+          lgpdAck,
+          attendantEnabled: true,
+          ...(bridgeAiAck ? { bridgeAiAck } : {}),
+        },
       },
-      createdAt: now,
       updatedAt: now,
     });
 
+    // Reusa atendente existente (não duplica em re-ativação).
+    const aiMembers = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) =>
+        q.eq("organizationId", args.organizationId).eq("type", "ai")
+      )
+      .collect();
+    const existing = aiMembers.find((m) => m.agentProfile?.kind === "attendant");
+    let attendantId: Id<"teamMembers">;
+    let createdAttendant = false;
+    if (existing) {
+      attendantId = existing._id;
+      if (existing.status !== "active") {
+        await ctx.db.patch(existing._id, { status: "active", updatedAt: now });
+      }
+    } else {
+      const orgFresh = (await ctx.db.get(args.organizationId))!;
+      attendantId = await seedAttendant(ctx, orgFresh, member, {
+        personaId: args.personaId,
+        name: args.attendantName,
+      });
+      createdAttendant = true;
+    }
+
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
-      entityType: "teamMember",
-      entityId: attendantId,
-      action: "create",
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
       actorId: member._id,
       actorType: "human",
-      metadata: { type: "ai", kind: "attendant", persona: persona.id },
-      description: `Criou o atendente IA (persona ${persona.label}, modo sugestão)`,
+      changes: {
+        before: { aiEnabled: current.enabled },
+        after: { aiEnabled: true },
+      },
+      metadata: {
+        aiConfig: true,
+        oneFlow: true,
+        lgpdAckRecorded: !current.lgpdAck,
+        bridgeAckRecorded: hasBridge && args.bridgeRiskAck === true && !current.bridgeAiAck,
+        attendantCreated: createdAttendant,
+      },
+      description:
+        "Ativou a IA em fluxo único (atendente em modo sugestão" +
+        (bridgeAiAck && !current.bridgeAiAck ? ", com aceite de risco do bridge" : "") +
+        ")",
       severity: "high",
       createdAt: now,
     });
 
-    return attendantId;
+    return { attendantId, bridgeEnabled: hasBridge && bridgeAiAck !== undefined, createdAttendant };
   },
 });
 

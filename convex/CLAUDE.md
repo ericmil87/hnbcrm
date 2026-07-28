@@ -24,7 +24,7 @@
 | `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
 | `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
 | `handoffs.ts` | AI-to-human handoff workflow |
-| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições — inclui toggle, aceite bridge e janela 24h por transporte), lock/lease OCC, commits transacionais, runtime de inferência, simulador, rascunhos (accept/discard) |
+| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições), lock/lease OCC, commits transacionais, runtime, simulador, rascunhos com AÇÕES APROVÁVEIS (acceptAiDraft+actionIndexes → executor compartilhado), captura de dados (updateThisContact/updateThisLeadInfo com whitelist captureFields), estado por conversa (getConversationAiState), skip com rastro |
 | `lib/channelResolve.ts` | Resolução ÚNICA do channelConfig de uma conversa (fallback determinístico, prefere Meta) — usada por atendente E dispatch |
 | `lib/inboundRouting.ts` | Roteamento inbound → contato/lead; aplica o pipelineConfig do atendente do canal (board/estágio inicial) com fallback auditado |
 | `lib/whatsappDispatch.ts` | Pacing de envio em 2 níveis: cursor por conversa (pair rate 6,5s) + cursor por número (`channelPacing`; Meta 1-3s, bridge reativo 4-10s / frio 8-15s), typing humanizado no bridge, claim OCC |

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from "react";
-import { useOutletContext } from "react-router";
+import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -641,6 +641,8 @@ function AddStageColumn({
 export function KanbanBoard() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
+  const [searchParams] = useSearchParams();
+  const boardParam = searchParams.get("board");
   const [selectedBoardId, setSelectedBoardId] = useState<Id<"boards"> | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -678,6 +680,13 @@ export function KanbanBoard() {
   >(null);
 
   const boards = useQuery(api.boards.getBoards, { organizationId });
+  // Reaproveita a agregação existente do dashboard (sem query nova no backend)
+  // só para exibir a contagem de leads por board no seletor.
+  const dashboardStats = useQuery(api.dashboard.getDashboardStats, { organizationId });
+  const leadCountByBoard = useMemo(
+    () => new Map((dashboardStats?.pipelineStats ?? []).map((b) => [b.boardId, b.totalLeads])),
+    [dashboardStats]
+  );
   const stages = useQuery(
     api.boards.getStages,
     selectedBoardId ? { boardId: selectedBoardId } : "skip"
@@ -729,12 +738,21 @@ export function KanbanBoard() {
     })
   );
 
-  // Select first board by default
+  // Board inicial: query param (?board=) > último visto (localStorage por org) > primeiro board.
   React.useEffect(() => {
-    if (boards && boards.length > 0 && !selectedBoardId) {
-      setSelectedBoardId(boards[0]._id);
-    }
-  }, [boards, selectedBoardId]);
+    if (!boards || boards.length === 0 || selectedBoardId) return;
+    const fromParam = boardParam && boards.some((b) => b._id === boardParam) ? boardParam : null;
+    const storageKey = `hnbcrm.lastBoard.${organizationId}`;
+    const stored = fromParam ? null : window.localStorage.getItem(storageKey);
+    const fromStorage = stored && boards.some((b) => b._id === stored) ? stored : null;
+    setSelectedBoardId((fromParam ?? fromStorage ?? boards[0]._id) as Id<"boards">);
+  }, [boards, selectedBoardId, boardParam, organizationId]);
+
+  // Lembra o último board visto por org, para a próxima visita sem query param.
+  React.useEffect(() => {
+    if (!selectedBoardId) return;
+    window.localStorage.setItem(`hnbcrm.lastBoard.${organizationId}`, selectedBoardId);
+  }, [selectedBoardId, organizationId]);
 
   // Filter leads client-side
   const filteredLeads = useMemo(() => {
@@ -1034,6 +1052,11 @@ export function KanbanBoard() {
                     style={{ backgroundColor: board.color }}
                   />
                   {board.name}
+                  {leadCountByBoard.has(board._id) && (
+                    <span className="text-xs font-normal tabular-nums opacity-75">
+                      ({leadCountByBoard.get(board._id)})
+                    </span>
+                  )}
                 </button>
               ))}
               <button

@@ -315,12 +315,14 @@ describe("P1: janela de 24h por transporte (evaluateEligibility pura)", () => {
 });
 
 describe("P3: toggles separados", () => {
-  test("attendantEnabled:false → enqueue não cria item", async () => {
+  test("attendantEnabled:false → nada processável; skip com rastro (v4.2)", async () => {
     const t = setup();
     const seed = await seedOrg(t, { provider: "meta", attendantEnabled: false });
     const messageId = await insertInbound(t, seed, "Oi!");
     await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
-    expect(await queueItems(t)).toHaveLength(0);
+    const items = await queueItems(t);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ status: "skipped", error: "atendente_desativado" });
   });
 
   test("attendantEnabled desligado APÓS o enqueue → claim skipa (re-check)", async () => {

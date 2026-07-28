@@ -5,12 +5,26 @@ import { Sparkles, Send, Pencil, Trash2, Check, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { cn } from "@/lib/utils";
 import { InboxMessage } from "./types";
 
+// v4.2: proposedActions estruturadas (aprováveis, uma a uma). Rascunhos
+// antigos ainda guardam string[] — sem checkbox, apenas informativo.
+type ProposedActionStructured = { name: string; argsJson: string; label: string };
+type ProposedAction = ProposedActionStructured | string;
+
+type AppliedAction = {
+  index: number;
+  label: string;
+  ok: boolean;
+  error?: string;
+};
+
 type AiDraftMeta = {
   status: "pending" | "sent" | "sent_edited" | "discarded";
-  proposedActions?: string[];
+  proposedActions?: ProposedAction[];
+  appliedActions?: AppliedAction[];
   confidence?: number;
 };
 
@@ -19,7 +33,11 @@ export function getAiDraft(message: InboxMessage): AiDraftMeta | null {
   return draft && typeof draft.status === "string" ? draft : null;
 }
 
-// Rótulo PT-BR amigável para um movimento proposto ("moveThisLead({...})").
+function isStructuredAction(action: ProposedAction): action is ProposedActionStructured {
+  return typeof action === "object" && action !== null && typeof action.name === "string";
+}
+
+// Rótulo PT-BR amigável para um movimento proposto legado ("moveThisLead({...})").
 function actionLabel(raw: string): string {
   const name = raw.split("(")[0];
   const labels: Record<string, string> = {
@@ -45,6 +63,8 @@ function actionLabel(raw: string): string {
 /**
  * Rascunho do atendente IA (modo sugestão) dentro da conversa: o humano revisa
  * e decide — Enviar / Editar e enviar / Descartar. Nada sai sem esse clique.
+ * v4.2: ações propostas estruturadas viram checkboxes aprováveis (marcadas por
+ * padrão) e são executadas junto do envio via `actionIndexes`.
  */
 export function AiDraftCard({ message }: { message: InboxMessage }) {
   const draft = getAiDraft(message)!;
@@ -55,14 +75,31 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
   const [editedText, setEditedText] = useState(message.content);
   const [busy, setBusy] = useState(false);
 
+  const proposedActions = draft.proposedActions ?? [];
+  const hasStructuredActions = proposedActions.some(isStructuredAction);
+  // Marcadas por padrão — o humano desmarca o que não quer executar.
+  const [selectedActions, setSelectedActions] = useState<Set<number>>(
+    () => new Set(proposedActions.map((a, i) => (isStructuredAction(a) ? i : -1)).filter((i) => i >= 0))
+  );
+  const toggleAction = (i: number) => {
+    setSelectedActions((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
   const resolved = draft.status !== "pending";
 
   const handleSend = async (text?: string) => {
     setBusy(true);
     try {
+      const actionIndexes = hasStructuredActions ? Array.from(selectedActions) : undefined;
       await acceptDraft({
         draftMessageId: message._id as Id<"messages">,
         ...(text !== undefined ? { editedText: text } : {}),
+        ...(actionIndexes ? { actionIndexes } : {}),
       });
       toast.success("Resposta enviada ao cliente");
       setEditing(false);
@@ -94,10 +131,31 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
           : "Sugestão da IA enviada";
     return (
       <div className="flex justify-end">
-        <span className="inline-flex items-center gap-1.5 text-xs text-text-muted bg-surface-overlay px-3 py-1.5 rounded-full">
-          <Sparkles size={12} />
-          {resolvedLabel}
-        </span>
+        <div className="flex flex-col items-end gap-1.5 max-w-md">
+          <span className="inline-flex items-center gap-1.5 text-xs text-text-muted bg-surface-overlay px-3 py-1.5 rounded-full">
+            <Sparkles size={12} />
+            {resolvedLabel}
+          </span>
+          {draft.appliedActions && draft.appliedActions.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1.5">
+              {draft.appliedActions.map((a) => (
+                <span
+                  key={a.index}
+                  title={a.error}
+                  className={cn(
+                    "inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full",
+                    a.ok
+                      ? "bg-semantic-success/10 text-semantic-success"
+                      : "bg-semantic-error/10 text-semantic-error"
+                  )}
+                >
+                  {a.ok ? <Check size={11} /> : <X size={11} />}
+                  {a.label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -126,16 +184,28 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
             </p>
           )}
 
-          {draft.proposedActions && draft.proposedActions.length > 0 && (
+          {proposedActions.length > 0 && (
             <div className="mt-3 pt-3 border-t border-border">
-              <p className="text-xs text-text-muted mb-1.5">Movimentos que a IA faria:</p>
-              <ul className="space-y-1">
-                {draft.proposedActions.map((action, i) => (
-                  <li key={i} className="text-xs text-text-secondary flex items-center gap-1.5">
-                    <span className="h-1 w-1 rounded-full bg-purple-400 shrink-0" />
-                    {actionLabel(action)}
-                  </li>
-                ))}
+              <p className="text-xs text-text-muted mb-1.5">
+                {hasStructuredActions ? "Ações que a IA faria — desmarque o que não quer executar:" : "Movimentos que a IA faria:"}
+              </p>
+              <ul className="space-y-1.5">
+                {proposedActions.map((action, i) =>
+                  isStructuredAction(action) ? (
+                    <li key={i}>
+                      <Checkbox
+                        checked={selectedActions.has(i)}
+                        onChange={() => toggleAction(i)}
+                        label={<span className="text-xs text-text-secondary">{action.label}</span>}
+                      />
+                    </li>
+                  ) : (
+                    <li key={i} className="text-xs text-text-secondary flex items-center gap-1.5">
+                      <span className="h-1 w-1 rounded-full bg-purple-400 shrink-0" />
+                      {actionLabel(action)}
+                    </li>
+                  )
+                )}
               </ul>
             </div>
           )}
