@@ -2110,8 +2110,9 @@ export const simulateAttendant = action({
             }
             messages.push({ role: "tool", tool_call_id: tc.id, content: '{"status":"ok"}' });
           } else {
-            // NUNCA executa de verdade — só relata o movimento que faria.
-            actions.push(`${tc.function.name}(${tc.function.arguments})`);
+            // NUNCA executa de verdade — só relata, com rótulo humano (v4.2),
+            // o movimento que faria (inclusive os valores capturados).
+            actions.push(describeAttendantAction(tc.function.name, tc.function.arguments));
             messages.push({
               role: "tool",
               tool_call_id: tc.id,

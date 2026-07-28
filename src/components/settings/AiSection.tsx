@@ -1254,7 +1254,10 @@ function SimulatorModal({
                   <div className="mt-2 pt-2 border-t border-purple-500/30">
                     {m.actions.map((a, j) => (
                       <p key={j} className="text-xs text-purple-300">
-                        ⚙ {a.split("(")[0]}
+                        {/* v4.2: o backend manda rótulo humano com os VALORES
+                            (ex.: 'Atualizar lead: cerimonia = X') — mostre inteiro;
+                            formato legado name(args) cai no nome limpo. */}
+                        ⚙ {a.includes("(") && a.endsWith(")") ? a.split("(")[0] : a}
                       </p>
                     ))}
                   </div>
