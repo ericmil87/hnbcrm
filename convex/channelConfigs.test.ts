@@ -538,6 +538,87 @@ describe("channelConfigs bridge provider", () => {
     ).rejects.toThrow(/Permissão insuficiente/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  test("managed provisioning uses the env gateway URL + admin token (client sends neither)", async () => {
+    process.env.WA_BRIDGE_HMAC_SECRET = "fake-hmac-secret-with-at-least-32-chars!";
+    vi.stubEnv("WA_BRIDGE_DEFAULT_URL", "https://managed.hnbcrm.example");
+    vi.stubEnv("WA_BRIDGE_ADMIN_TOKEN", "env_admin_token");
+    const t = setup();
+    const { organizationId, adminUserId } = await seedOrgWithMembers(t);
+    const asAdmin = t.withIdentity({ subject: `${adminUserId}|session1` });
+
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      if (url === "https://managed.hnbcrm.example/admin/users") {
+        // The ADMIN token must be the env one — the client never supplied it.
+        expect((init.headers as Record<string, string>).Authorization).toBe("env_admin_token");
+        return new Response(JSON.stringify({ id: 9 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      expect(url).toBe("https://managed.hnbcrm.example/session/hmac/config");
+      return new Response(JSON.stringify({ Details: "ok" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const configId = await asAdmin.action(api.channelConfigs.provisionBridgeChannel, {
+      organizationId,
+      displayName: "Managed bridge",
+      webhookUrl: "https://deploy.convex.site/webhooks/bridge",
+      useManagedGateway: true,
+    });
+
+    const stored = await t.run(async (ctx) => ctx.db.get(configId));
+    expect(stored!.provider).toBe("bridge");
+    expect(stored!.bridgeBaseUrl).toBe("https://managed.hnbcrm.example");
+    // The env admin token must never be persisted.
+    expect(JSON.stringify(stored)).not.toContain("env_admin_token");
+  });
+
+  test("managed provisioning fails fast when the env is not configured", async () => {
+    process.env.WA_BRIDGE_HMAC_SECRET = "fake-hmac-secret-with-at-least-32-chars!";
+    const t = setup();
+    const { organizationId, adminUserId } = await seedOrgWithMembers(t);
+    const asAdmin = t.withIdentity({ subject: `${adminUserId}|session1` });
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      asAdmin.action(api.channelConfigs.provisionBridgeChannel, {
+        organizationId,
+        displayName: "Managed bridge",
+        webhookUrl: "https://deploy.convex.site/webhooks/bridge",
+        useManagedGateway: true,
+      })
+    ).rejects.toThrow(/Servidor gerenciado indisponível/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("getBridgeProvisionDefaults reflects env availability", async () => {
+    const t = setup();
+    const { organizationId, adminUserId } = await seedOrgWithMembers(t);
+    const asAdmin = t.withIdentity({ subject: `${adminUserId}|session1` });
+
+    // Only the URL set → not available (the admin token is required too).
+    vi.stubEnv("WA_BRIDGE_DEFAULT_URL", "https://managed.hnbcrm.example");
+    let defaults = await asAdmin.query(api.channelConfigs.getBridgeProvisionDefaults, {
+      organizationId,
+    });
+    expect(defaults).toEqual({ managedAvailable: false, managedGatewayUrl: null });
+
+    vi.stubEnv("WA_BRIDGE_ADMIN_TOKEN", "env_admin_token");
+    defaults = await asAdmin.query(api.channelConfigs.getBridgeProvisionDefaults, {
+      organizationId,
+    });
+    expect(defaults).toEqual({
+      managedAvailable: true,
+      managedGatewayUrl: "https://managed.hnbcrm.example",
+    });
+  });
 });
 
 describe("channelConfigs admin-only enforcement", () => {

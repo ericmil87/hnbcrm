@@ -9,7 +9,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import {
@@ -592,17 +592,38 @@ export const getBridgeQrCode = action({
   },
 });
 
+// Managed provisioning availability: the platform can host its own wuzapi
+// gateway (env WA_BRIDGE_DEFAULT_URL + WA_BRIDGE_ADMIN_TOKEN). When both are
+// set, users can provision without typing a URL or admin token — the admin
+// token stays server-side; only availability + the public URL reach clients.
+export const getBridgeProvisionDefaults = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.object({
+    managedAvailable: v.boolean(),
+    managedGatewayUrl: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const url = process.env.WA_BRIDGE_DEFAULT_URL?.trim() || null;
+    const managedAvailable = !!url && !!process.env.WA_BRIDGE_ADMIN_TOKEN?.trim();
+    return { managedAvailable, managedGatewayUrl: managedAvailable ? url : null };
+  },
+});
+
 // Assisted provisioning: create a wuzapi instance via POST /admin/users (admin
 // token is EPHEMERAL — passed straight to the gateway, never persisted), then
 // create the bridge channelConfig with the generated per-instance token encrypted.
+// Two modes: managed (useManagedGateway — URL + admin token come from the env,
+// never from the client) or custom (client supplies both, as before).
 // Permission: settings/manage (checked up-front, before hitting the gateway).
 export const provisionBridgeChannel = action({
   args: {
     organizationId: v.id("organizations"),
     displayName: v.string(),
-    bridgeBaseUrl: v.string(),
-    adminToken: v.string(),
+    bridgeBaseUrl: v.optional(v.string()),
+    adminToken: v.optional(v.string()),
     webhookUrl: v.string(),
+    useManagedGateway: v.optional(v.boolean()),
   },
   returns: v.id("channelConfigs"),
   handler: async (ctx, args): Promise<Id<"channelConfigs">> => {
@@ -611,9 +632,25 @@ export const provisionBridgeChannel = action({
       organizationId: args.organizationId,
     });
 
-    const baseUrl = normalizeBridgeBaseUrl(args.bridgeBaseUrl);
-    const adminToken = args.adminToken.trim();
-    if (!adminToken) throw new Error("Admin token é obrigatório para provisionar a instância");
+    // The env admin token is only ever sent to the env URL — never to a
+    // client-supplied one (a client URL + env token would leak the token).
+    let baseUrl: string;
+    let adminToken: string;
+    if (args.useManagedGateway) {
+      const managedUrl = process.env.WA_BRIDGE_DEFAULT_URL?.trim();
+      const managedToken = process.env.WA_BRIDGE_ADMIN_TOKEN?.trim();
+      if (!managedUrl || !managedToken) {
+        throw new Error(
+          "Servidor gerenciado indisponível — WA_BRIDGE_DEFAULT_URL e WA_BRIDGE_ADMIN_TOKEN precisam estar configurados no Convex"
+        );
+      }
+      baseUrl = normalizeBridgeBaseUrl(managedUrl);
+      adminToken = managedToken;
+    } else {
+      baseUrl = normalizeBridgeBaseUrl(args.bridgeBaseUrl ?? "");
+      adminToken = (args.adminToken ?? "").trim();
+      if (!adminToken) throw new Error("Admin token é obrigatório para provisionar a instância");
+    }
     const webhook = args.webhookUrl.trim();
     if (!webhook) throw new Error("URL de webhook é obrigatória para provisionar a instância");
 

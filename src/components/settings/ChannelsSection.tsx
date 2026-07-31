@@ -740,9 +740,10 @@ type UpdateChannelConfigFn = (args: {
 type ProvisionBridgeFn = (args: {
   organizationId: Id<"organizations">;
   displayName: string;
-  bridgeBaseUrl: string;
-  adminToken: string;
+  bridgeBaseUrl?: string;
+  adminToken?: string;
   webhookUrl: string;
+  useManagedGateway?: boolean;
 }) => Promise<Id<"channelConfigs">>;
 
 // --- Create/edit form modal (provider-aware) ---
@@ -1049,11 +1050,22 @@ function BridgeForm({
   onBack?: () => void;
 }) {
   const isEditing = !!config;
+  // Managed defaults: when the platform hosts a wuzapi gateway, beginners can
+  // provision with zero server config — advanced users still switch to their own.
+  const bridgeDefaults = useQuery(
+    api.channelConfigs.getBridgeProvisionDefaults,
+    isEditing ? "skip" : { organizationId }
+  );
+  const managedAvailable = bridgeDefaults?.managedAvailable ?? false;
   // "manual" = paste an existing instance's credentials; "assisted" = provision a
-  // new instance via the gateway admin token. Editing is always manual.
-  const [mode, setMode] = useState<"manual" | "assisted">("manual");
+  // new instance via the gateway admin token. Editing is always manual. Defaults
+  // follow managed availability until the user picks explicitly.
+  const [modeOverride, setModeOverride] = useState<"manual" | "assisted" | null>(null);
+  const mode = modeOverride ?? (managedAvailable ? "assisted" : "manual");
+  const [gatewayOverride, setGatewayOverride] = useState<"managed" | "custom" | null>(null);
+  const gatewayChoice = gatewayOverride ?? (managedAvailable ? "managed" : "custom");
   const [form, setForm] = useState(() => ({
-    displayName: config?.displayName ?? "",
+    displayName: config?.displayName ?? "WhatsApp",
     bridgeBaseUrl: config?.bridgeBaseUrl ?? "",
     bridgeInstanceId: config?.bridgeInstanceId ?? "",
     bridgeToken: "",
@@ -1093,9 +1105,10 @@ function BridgeForm({
           provisionBridgeChannel({
             organizationId,
             displayName: form.displayName,
-            bridgeBaseUrl: form.bridgeBaseUrl,
-            adminToken: form.adminToken,
             webhookUrl: BRIDGE_WEBHOOK_URL,
+            ...(gatewayChoice === "managed"
+              ? { useManagedGateway: true }
+              : { bridgeBaseUrl: form.bridgeBaseUrl, adminToken: form.adminToken }),
           }),
           {
             loading: "Provisionando instância no gateway...",
@@ -1128,6 +1141,15 @@ function BridgeForm({
       setSaving(false);
     }
   };
+
+  // Avoid flicker: the default mode/gateway depend on managed availability.
+  if (!isEditing && bridgeDefaults === undefined) {
+    return (
+      <div className="flex justify-center py-10">
+        <Spinner />
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -1177,7 +1199,7 @@ function BridgeForm({
         <div className="flex gap-1 rounded-lg bg-surface-sunken p-1">
           <button
             type="button"
-            onClick={() => setMode("manual")}
+            onClick={() => setModeOverride("manual")}
             className={cn(
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
               mode === "manual"
@@ -1189,7 +1211,7 @@ function BridgeForm({
           </button>
           <button
             type="button"
-            onClick={() => setMode("assisted")}
+            onClick={() => setModeOverride("assisted")}
             className={cn(
               "flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
               mode === "assisted"
@@ -1210,14 +1232,16 @@ function BridgeForm({
         placeholder="ex: WhatsApp Vendas (não oficial)"
         required
       />
-      <Input
-        label="URL do gateway"
-        type="text"
-        value={form.bridgeBaseUrl}
-        onChange={(e) => setForm({ ...form, bridgeBaseUrl: e.target.value })}
-        placeholder="ex: https://wa-gw.seudominio.com.br"
-        required
-      />
+      {(isEditing || mode === "manual" || gatewayChoice === "custom") && (
+        <Input
+          label="URL do gateway"
+          type="text"
+          value={form.bridgeBaseUrl}
+          onChange={(e) => setForm({ ...form, bridgeBaseUrl: e.target.value })}
+          placeholder="ex: https://wa-gw.seudominio.com.br"
+          required
+        />
+      )}
 
       {isEditing || mode === "manual" ? (
         <>
@@ -1244,6 +1268,28 @@ function BridgeForm({
             </p>
           )}
         </>
+      ) : gatewayChoice === "managed" ? (
+        <div className="rounded-lg border border-border bg-surface-sunken p-3.5 space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium text-text-primary">
+              Servidor HNBCRM (recomendado)
+            </span>
+            <button
+              type="button"
+              onClick={() => setGatewayOverride("custom")}
+              className="text-xs text-brand-500 hover:text-brand-400 whitespace-nowrap"
+            >
+              Usar meu próprio servidor
+            </button>
+          </div>
+          <p className="text-xs text-text-secondary">
+            A instância será criada automaticamente no servidor gerenciado do HNBCRM{" "}
+            {bridgeDefaults?.managedGatewayUrl && (
+              <span className="font-mono break-all">({bridgeDefaults.managedGatewayUrl})</span>
+            )}{" "}
+            — sem URL nem token para configurar. Depois é só escanear o QR para parear o número.
+          </p>
+        </div>
       ) : (
         <>
           <Input
@@ -1259,6 +1305,15 @@ function BridgeForm({
             webhook apontando para{" "}
             <span className="font-mono break-all text-text-secondary">{BRIDGE_WEBHOOK_URL}</span>.
           </p>
+          {managedAvailable && (
+            <button
+              type="button"
+              onClick={() => setGatewayOverride("managed")}
+              className="text-xs text-brand-500 hover:text-brand-400"
+            >
+              ← Voltar ao servidor HNBCRM (recomendado)
+            </button>
+          )}
         </>
       )}
 
