@@ -32,7 +32,7 @@
 | `copilotHttp.ts` | Streaming SSE autenticado do copiloto (`POST /api/copilot/stream`) com loop de tool_calls |
 | `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas |
 | `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
-| `testReset.ts` | Reset de teste via WhatsApp ("/resetme"): hard delete do contato/lead/conversas do remetente — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
+| `testReset.ts` | Comandos de teste via WhatsApp — `/resetme` (hard delete do próprio remetente), `/resetlist` (10 leads mais recentes, numerados) e `/resetother <nº\|sufixo do telefone>` (hard delete de outro lead, com confirmação no WhatsApp) — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
 | `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
 | `agentEvals.ts` | Golden conversations + replay (regressão de persona via simulador) |
 | `orgSecrets.ts` | BYO API keys por org (cifradas; leitura sempre mascarada) |

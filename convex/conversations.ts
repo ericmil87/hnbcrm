@@ -9,7 +9,7 @@ import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
-import { isResetCommand, phoneAllowedForReset } from "./testReset";
+import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -1202,18 +1202,36 @@ export const internalReceiveMessage = internalMutation({
     if (!lead) throw new Error("Lead not found");
     if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
 
-    // Reset de teste ("/resetme"): hard delete do contato/lead/conversas do
-    // remetente. Triplo gate em testReset.ts — sem a env WA_TEST_RESET_PHONES
-    // (default) nada é interceptado; telefone precisa estar na allowlist.
-    // A mensagem de comando NÃO é persistida.
-    if (isResetCommand(args.content)) {
+    // Comandos de teste ("/resetme", "/resetlist", "/resetother"): hard delete e
+    // consulta dos leads da org de teste. Triplo gate em testReset.ts — sem a env
+    // WA_TEST_RESET_PHONES (default) nada é interceptado; o telefone do remetente
+    // precisa estar na allowlist. A mensagem de comando NÃO é persistida.
+    const testCommand = parseTestCommand(args.content);
+    if (testCommand) {
       const contact = lead.contactId ? await ctx.db.get(lead.contactId) : null;
       const phone = contact?.whatsappNumber ?? contact?.phone;
       if (phoneAllowedForReset(phone)) {
-        await ctx.scheduler.runAfter(0, internal.testReset.internalHardResetByPhone, {
-          organizationId: args.organizationId,
-          phone: phone!,
-        });
+        if (testCommand.kind === "resetme") {
+          await ctx.scheduler.runAfter(0, internal.testReset.internalHardResetByPhone, {
+            organizationId: args.organizationId,
+            phone: phone!,
+          });
+        } else {
+          // A resposta volta pelo mesmo canal: garante a conversa aqui (o
+          // comando não persiste, então ela pode ainda não existir).
+          const conversationId = await getOrCreateConversation(ctx, {
+            organizationId: args.organizationId,
+            leadId: args.leadId,
+            channel: args.channel,
+          });
+          await ctx.scheduler.runAfter(0, internal.testReset.internalRunTestCommand, {
+            organizationId: args.organizationId,
+            conversationId,
+            senderPhone: phone!,
+            command: testCommand.kind,
+            arg: testCommand.kind === "resetother" ? testCommand.arg : "",
+          });
+        }
         return null;
       }
     }
