@@ -48,6 +48,16 @@ const providerConfigValidator = v.object({
   // padrão da plataforma já é zero-retention; o aviso só aparece ao sair do padrão.
   zdr: v.boolean(), // default true
   strictZdr: v.optional(v.boolean()), // modo estrito opcional: backend RECUSA rotas não-ZDR
+  // Ordem da cadeia no modo "platform": auto (OpenCode Go → OpenRouter),
+  // openrouter-first inverte o primário, *-only remove o fallback.
+  platformOrder: v.optional(
+    v.union(
+      v.literal("auto"),
+      v.literal("openrouter-first"),
+      v.literal("opencode-only"),
+      v.literal("openrouter-only")
+    )
+  ),
   // Aceite explícito registrado quando o admin escolhe uma rota não-ZDR sob zdr:true.
   nonZdrAck: v.optional(
     v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers"), route: v.string() })

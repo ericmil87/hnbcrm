@@ -11,6 +11,8 @@ import { Id } from "../_generated/dataModel";
 import { decryptSecret } from "./secretCrypto";
 import { resolvePlatformChain, resolveByoRoute, ResolvedRoute } from "./llm";
 
+export type PlatformOrder = "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
+
 export interface OrgProviderConfig {
   mode?: "platform" | "byo";
   byo?: {
@@ -19,6 +21,40 @@ export interface OrgProviderConfig {
     apiKeyRef: { kind: "orgSecret"; id: Id<"orgSecrets"> };
   };
   strictZdr?: boolean;
+  platformOrder?: PlatformOrder;
+}
+
+const PLATFORM_ORDERS: PlatformOrder[] = [
+  "auto",
+  "openrouter-first",
+  "opencode-only",
+  "openrouter-only",
+];
+
+// Override de ops no deployment (vale para orgs SEM escolha própria salva).
+function envPlatformOrder(): PlatformOrder | undefined {
+  const raw = process.env.LLM_PLATFORM_ORDER?.trim();
+  return PLATFORM_ORDERS.includes(raw as PlatformOrder) ? (raw as PlatformOrder) : undefined;
+}
+
+// Reordena/filtra a cadeia da plataforma conforme a preferência da org.
+// "auto" (default) mantém a ordem do env: OpenCode Go → OpenRouter.
+export function applyPlatformOrder(
+  routes: ResolvedRoute[],
+  order: PlatformOrder | undefined
+): ResolvedRoute[] {
+  switch (order) {
+    case "openrouter-first": {
+      const openrouter = routes.filter((r) => r.providerId === "openrouter");
+      return [...openrouter, ...routes.filter((r) => r.providerId !== "openrouter")];
+    }
+    case "openrouter-only":
+      return routes.filter((r) => r.providerId === "openrouter");
+    case "opencode-only":
+      return routes.filter((r) => r.providerId === "opencode-go");
+    default:
+      return routes;
+  }
 }
 
 type RunQueryCtx = {
@@ -54,10 +90,16 @@ export async function resolveOrgRoutes(
       ),
     ];
   } else {
-    routes = resolvePlatformChain(canonicalModel, {
-      opencodeGoKey: process.env.OPENCODE_GO_API,
-      openrouterKey: process.env.OPENROUTER_API_KEY,
-    });
+    // Precedência: escolha da org > override de ops do deployment (env
+    // LLM_PLATFORM_ORDER, p/ ex. "openrouter-first" enquanto a quota do
+    // OpenCode Go está esgotada) > auto.
+    routes = applyPlatformOrder(
+      resolvePlatformChain(canonicalModel, {
+        opencodeGoKey: process.env.OPENCODE_GO_API,
+        openrouterKey: process.env.OPENROUTER_API_KEY,
+      }),
+      providerConfig?.platformOrder ?? envPlatformOrder()
+    );
   }
 
   if (providerConfig?.strictZdr) {

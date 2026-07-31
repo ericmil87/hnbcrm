@@ -660,10 +660,10 @@ describe("falha + backoff + escalada (F4)", () => {
       queueItemId: item._id,
       conversationId: seed.conversationId,
       runId: "run-leak",
-      error: "401 Unauthorized: Bearer sk-6WLizaG1fEllhrz1iN7muU8JUQ6Ot1LqoNngosGGRgNPRFMJpqX9",
+      error: "401 Unauthorized: Bearer sk-fake-not-a-real-key-0000",
     });
     const updated = await t.run(async (ctx) => ctx.db.get(item._id));
-    expect(updated!.error).not.toContain("sk-6WLiza");
+    expect(updated!.error).not.toContain("sk-fake");
     expect(updated!.error).toContain("[REDACTED]");
   });
 });

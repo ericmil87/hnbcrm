@@ -7,7 +7,7 @@
  * O runtime (orgAiActive) só roda com enabled && lgpdAck.
  */
 import { v } from "convex/values";
-import { query, mutation, MutationCtx, QueryCtx } from "./_generated/server";
+import { query, mutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
@@ -36,6 +36,17 @@ export const getAiStatus = query({
     }),
     strictZdr: v.boolean(),
     monthlyConversationBudget: v.union(v.number(), v.null()),
+    // Roteamento de provider (UI de Configurações → IA).
+    providerMode: v.union(v.literal("platform"), v.literal("byo")),
+    platformOrder: v.string(), // "auto" | "openrouter-first" | "opencode-only" | "openrouter-only"
+    byo: v.union(
+      v.object({
+        provider: v.string(),
+        baseUrl: v.union(v.string(), v.null()),
+        keyLast4: v.union(v.string(), v.null()),
+      }),
+      v.null()
+    ),
   }),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
@@ -74,6 +85,18 @@ export const getAiStatus = query({
       },
       strictZdr: aiConfig?.providerConfig?.strictZdr === true,
       monthlyConversationBudget: aiConfig?.monthlyConversationBudget ?? null,
+      providerMode: aiConfig?.providerConfig?.mode ?? "platform",
+      platformOrder: aiConfig?.providerConfig?.platformOrder ?? "auto",
+      byo: await (async () => {
+        const pc = aiConfig?.providerConfig;
+        if (pc?.mode !== "byo" || !pc.byo) return null;
+        const secret = await ctx.db.get(pc.byo.apiKeyRef.id);
+        return {
+          provider: pc.byo.provider,
+          baseUrl: pc.byo.baseUrl ?? null,
+          keyLast4: secret?.last4 ?? null,
+        };
+      })(),
     };
   },
 });
@@ -898,6 +921,7 @@ export const setModels = mutation({
       byo: current.providerConfig?.byo,
       zdr: zdrOn,
       strictZdr: current.providerConfig?.strictZdr,
+      platformOrder: current.providerConfig?.platformOrder,
       nonZdrAck,
       models: args.models,
     };
@@ -1001,6 +1025,7 @@ export const setProviderMode = mutation({
       byo: args.mode === "byo" ? byo : undefined,
       zdr: current.providerConfig?.zdr ?? true,
       strictZdr: current.providerConfig?.strictZdr,
+      platformOrder: current.providerConfig?.platformOrder,
       nonZdrAck,
       models: current.providerConfig?.models ?? { ...DEFAULT_MODELS },
     };
@@ -1028,5 +1053,72 @@ export const setProviderMode = mutation({
       createdAt: Date.now(),
     });
     return null;
+  },
+});
+
+// ── Roteamento da cadeia da plataforma (primário/fallback) ──
+// Só afeta mode "platform" — em BYO a org usa uma rota única com a própria key.
+export const setPlatformOrder = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    platformOrder: v.union(
+      v.literal("auto"),
+      v.literal("openrouter-first"),
+      v.literal("opencode-only"),
+      v.literal("openrouter-only")
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new Error("Organização não encontrada");
+    const current = org.settings.aiConfig;
+    if (!current) throw new Error("Ative a IA primeiro");
+
+    const providerConfig = current.providerConfig ?? {
+      mode: "platform" as const,
+      zdr: true,
+      models: { ...DEFAULT_MODELS },
+    };
+
+    const now = Date.now();
+    await ctx.db.patch(args.organizationId, {
+      settings: {
+        ...org.settings,
+        aiConfig: {
+          ...current,
+          providerConfig: { ...providerConfig, platformOrder: args.platformOrder },
+        },
+      },
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { platformOrder: current.providerConfig?.platformOrder ?? "auto" },
+        after: { platformOrder: args.platformOrder },
+      },
+      description: "Atualizou o roteamento de provider da IA",
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+// Internal: providerConfig cru para actions (diagnóstico de conexão).
+export const internalGetProviderConfig = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    return org?.settings.aiConfig?.providerConfig ?? null;
   },
 });
