@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Check,
   Clock,
+  Mic,
 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -1196,23 +1197,24 @@ function SimulatorModal({
 }) {
   const simulate = useAction(api.attendant.simulateAttendant);
   const [transcript, setTranscript] = useState<
-    { role: "customer" | "agent"; content: string; actions?: string[] }[]
+    { role: "customer" | "agent"; content: string; audio?: boolean; actions?: string[] }[]
   >([]);
   const [input, setInput] = useState("");
+  const [asAudio, setAsAudio] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
-    const next = [...transcript, { role: "customer" as const, content: text }];
+    const next = [...transcript, { role: "customer" as const, content: text, audio: asAudio }];
     setTranscript(next);
     setBusy(true);
     try {
       const result = await simulate({
         organizationId,
         agentMemberId,
-        transcript: next.map(({ role, content }) => ({ role, content })),
+        transcript: next.map(({ role, content, audio }) => ({ role, content, audio })),
       });
       if (result.error) {
         toast.error(result.error);
@@ -1234,7 +1236,8 @@ function SimulatorModal({
       <div className="space-y-3">
         <p className="text-xs text-text-muted">
           Sandbox: nada aqui toca o WhatsApp nem altera dados do CRM. Escreva como se fosse o
-          cliente.
+          cliente. Com o microfone ligado, a mensagem entra como nota de voz — o texto digitado
+          faz o papel da transcrição.
         </p>
         <div className="h-72 overflow-y-auto space-y-2 rounded-lg bg-surface-sunken p-3">
           {transcript.length === 0 && (
@@ -1252,6 +1255,11 @@ function SimulatorModal({
                     : "bg-purple-600/20 text-text-primary border border-purple-500/30"
                 )}
               >
+                {m.audio && (
+                  <span className="mb-1 flex items-center gap-1 text-[11px] opacity-80">
+                    <Mic size={11} /> nota de voz (transcrita)
+                  </span>
+                )}
                 {m.content}
                 {m.actions && m.actions.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-purple-500/30">
@@ -1277,13 +1285,29 @@ function SimulatorModal({
           )}
         </div>
         <div className="flex gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={asAudio}
+            aria-label="Enviar como nota de voz"
+            title="Enviar como nota de voz — o texto vira a transcrição"
+            onClick={() => setAsAudio((v) => !v)}
+            className={cn(
+              "px-3 rounded-field border transition-colors",
+              asAudio
+                ? "bg-brand-600 border-brand-600 text-white"
+                : "bg-surface-raised border-border-strong text-text-muted hover:text-text-primary"
+            )}
+          >
+            <Mic size={15} />
+          </button>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleSend();
             }}
-            placeholder="Mensagem do cliente..."
+            placeholder={asAudio ? "Transcrição da nota de voz..." : "Mensagem do cliente..."}
             className="flex-1 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
           />
           <Button onClick={() => void handleSend()} disabled={busy || !input.trim()}>

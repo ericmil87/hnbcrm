@@ -1179,6 +1179,9 @@ const applicationTables = {
     ),
     attempts: v.number(),
     nextAttemptAt: v.number(), // slot de pacing/backoff (debounce incluído)
+    // Teto da espera pela transcrição de áudio (D1): setado no 1º requeue por
+    // transcrição; estourado, a run acontece com o marcador de indisponível.
+    transcriptWaitUntil: v.optional(v.number()),
     // Uma única mensagem de fallback por item em instabilidade (flag anti-spam).
     fallbackSentAt: v.optional(v.number()),
     error: v.optional(v.string()),
@@ -1281,7 +1284,12 @@ const applicationTables = {
     organizationId: v.id("organizations"),
     name: v.string(),
     transcript: v.array(
-      v.object({ role: v.union(v.literal("customer"), v.literal("agent")), content: v.string() })
+      v.object({
+        role: v.union(v.literal("customer"), v.literal("agent")),
+        content: v.string(),
+        // Turno que chegou como nota de voz: o content é a transcrição.
+        audio: v.optional(v.boolean()),
+      })
     ),
     expectation: v.string(),
     tags: v.optional(v.array(v.string())),

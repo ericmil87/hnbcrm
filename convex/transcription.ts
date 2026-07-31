@@ -11,17 +11,26 @@
 // Two entry points:
 //   - `transcribe`      — public action, user-triggered (permission-checked).
 //   - `autoTranscribe`  — internalAction, meant to be scheduled by the ingest
-//     pipeline right after an inbound audio attachment is saved. It is a
-//     no-op unless the message's channel config has autoTranscribeAudio set.
-//     NOT wired into convex/bridge.ts or convex/whatsapp.ts yet — call it with
+//     pipeline right after an inbound audio attachment is saved. It is a no-op
+//     unless the message's channel config has autoTranscribeAudio set OR the
+//     org's AI attendant is active (it needs the transcript to answer what was
+//     said). Called from the ingest with
 //     `ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId })`
-//     from the ingest code path once an audio message + its file are persisted.
+//     once an audio message + its file are persisted.
 
 import { v } from "convex/values";
-import { action, internalAction, internalMutation, internalQuery, ActionCtx } from "./_generated/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  ActionCtx,
+  QueryCtx,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
+import { orgAiActive } from "./lib/agentSecurity";
 
 const ENGINE = "faster-whisper";
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000; // don't duplicate an in-flight transcription
@@ -84,7 +93,7 @@ export const autoTranscribe = internalAction({
   args: { messageId: v.id("messages") },
   returns: transcribeResultValidator,
   handler: async (ctx, args): Promise<TranscribeResult> => {
-    const message = await ctx.runQuery(internal.transcription.internalGetAudioMessageIfAutoEnabled, {
+    const message = await ctx.runQuery(internal.transcription.internalGetAudioMessageIfEligible, {
       messageId: args.messageId,
     });
     if (!message) return { status: "skipped" };
@@ -236,10 +245,25 @@ export const internalGetAudioMessageForMember = internalQuery({
   },
 });
 
+// O atendente IA tem ouvidos próprios (D2 do plano de áudio): org com IA ativa
+// (enabled + aceite LGPD) e atendente não desligado transcreve mesmo sem o
+// toggle de conveniência do inbox — sem transcrição ele responderia "não
+// consigo ouvir áudio". Sem novo operador de dados: o Whisper é self-hosted e o
+// áudio já está no nosso storage.
+async function attendantNeedsTranscription(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">
+): Promise<boolean> {
+  const org = await ctx.db.get(organizationId);
+  if (!orgAiActive(org)) return false;
+  return org!.settings.aiConfig?.attendantEnabled !== false;
+}
+
 // Unauthenticated lookup for the ingest pipeline's `autoTranscribe`. Returns
-// null (a clean skip) unless the message is audio AND its channel config has
-// autoTranscribeAudio enabled — so it's safe to call unconditionally.
-export const internalGetAudioMessageIfAutoEnabled = internalQuery({
+// null (a clean skip) unless the message is audio AND either the channel config
+// has autoTranscribeAudio enabled OR the org's AI attendant needs to hear it —
+// so it's safe to call unconditionally.
+export const internalGetAudioMessageIfEligible = internalQuery({
   args: { messageId: v.id("messages") },
   returns: v.union(audioMessageResultValidator, v.null()),
   handler: async (ctx, args) => {
@@ -255,7 +279,12 @@ export const internalGetAudioMessageIfAutoEnabled = internalQuery({
     const config = conversation?.channelConfigId
       ? await ctx.db.get(conversation.channelConfigId)
       : null;
-    if (!config?.autoTranscribeAudio) return null;
+    if (
+      !config?.autoTranscribeAudio &&
+      !(await attendantNeedsTranscription(ctx, message.organizationId))
+    ) {
+      return null;
+    }
 
     return {
       messageId: message._id,
