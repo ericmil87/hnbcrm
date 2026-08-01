@@ -115,6 +115,9 @@ const agentProfileValidator = v.object({
   handoffKeywords: v.optional(v.array(v.string())), // ex.: ["humano", "atendente"]
   maxRepliesPerConversation: v.optional(v.number()), // default 20
   maxRepliesPerHour: v.optional(v.number()), // teto por janela (cliente-que-é-bot)
+  // Silêncio que fecha a rajada de inbounds antes da IA responder (default 5s).
+  // Quem digita fragmentado ("Oi" / "tudo" / "bem?") pede valores maiores.
+  messageDebounceSeconds: v.optional(v.number()),
   maxToolCallsPerRun: v.optional(v.number()), // default 6
   model: v.optional(v.string()), // override do id canônico da org
   temperature: v.optional(v.number()),

@@ -354,6 +354,7 @@ const agentProfilePatchValidator = v.object({
   handoffKeywords: v.optional(v.array(v.string())),
   maxRepliesPerConversation: v.optional(v.number()),
   maxRepliesPerHour: v.optional(v.number()),
+  messageDebounceSeconds: v.optional(v.number()),
   model: v.optional(v.string()),
   temperature: v.optional(v.number()),
   disclosure: v.optional(v.string()),
@@ -633,6 +634,13 @@ export const updateAgentProfile = mutation({
       if (!Number.isInteger(value) || value < 0) {
         throw new Error(`${label}: use um número inteiro maior ou igual a zero (0 = sem limite)`);
       }
+    }
+
+    // Agrupamento de mensagens: 1s a 120s. Zero não faz sentido (responderia no
+    // meio da digitação) e o teto evita conversa que nunca recebe resposta.
+    const debounce = args.patch.messageDebounceSeconds;
+    if (debounce !== undefined && (!Number.isInteger(debounce) || debounce < 1 || debounce > 120)) {
+      throw new Error("Agrupar mensagens por: use um número inteiro de segundos entre 1 e 120");
     }
 
     // P4: integridade do pipelineConfig — board da org; estágios do board certo.

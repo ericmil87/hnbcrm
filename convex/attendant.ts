@@ -48,7 +48,9 @@ import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 
 // ── Constantes de runtime ──
-const DEBOUNCE_MS = 5_000; // coalescing de inbounds em rajada
+// Silêncio que fecha a rajada de inbounds antes da IA responder. Default do
+// produto; cada atendente pode ajustar (agentProfile.messageDebounceSeconds).
+const DEFAULT_DEBOUNCE_SECONDS = 5;
 const PACING_INTERVAL_MS = 1_000; // ≥1s entre inferências por org
 const TRANSCRIPT_RECHECK_MS = 8_000; // re-checagem enquanto o Whisper transcreve
 const TRANSCRIPT_MAX_WAIT_MS = 60_000; // teto da espera pela transcrição, por item
@@ -462,6 +464,12 @@ export const internalEnqueueFromInbound = internalMutation({
       return null;
     }
 
+    // Janela de agrupamento configurável por atendente: cada inbound novo empurra
+    // o slot, então quem digita fragmentado ("Oi" / "tudo" / "bem?") recebe UMA
+    // resposta no fim da rajada em vez de uma por fragmento.
+    const debounceMs =
+      (agent.agentProfile?.messageDebounceSeconds ?? DEFAULT_DEBOUNCE_SECONDS) * 1_000;
+
     // Coalescing: item pendente para a mesma conversa só empurra o debounce.
     const pending = await ctx.db
       .query("aiReplyQueue")
@@ -472,10 +480,10 @@ export const internalEnqueueFromInbound = internalMutation({
     if (pending) {
       await ctx.db.patch(pending._id, {
         triggerMessageId: args.messageId,
-        nextAttemptAt: now + DEBOUNCE_MS,
+        nextAttemptAt: now + debounceMs,
         updatedAt: now,
       });
-      await ctx.scheduler.runAfter(DEBOUNCE_MS, internal.attendant.internalProcessQueueItem, {
+      await ctx.scheduler.runAfter(debounceMs, internal.attendant.internalProcessQueueItem, {
         queueItemId: pending._id,
       });
       return null;
@@ -497,11 +505,11 @@ export const internalEnqueueFromInbound = internalMutation({
       agentMemberId: agent._id,
       status: "pending",
       attempts: 0,
-      nextAttemptAt: now + DEBOUNCE_MS,
+      nextAttemptAt: now + debounceMs,
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.scheduler.runAfter(DEBOUNCE_MS, internal.attendant.internalProcessQueueItem, {
+    await ctx.scheduler.runAfter(debounceMs, internal.attendant.internalProcessQueueItem, {
       queueItemId,
     });
     return null;

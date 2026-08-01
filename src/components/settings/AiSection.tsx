@@ -636,6 +636,7 @@ type Attendant = {
     disclosure?: string;
     maxRepliesPerConversation?: number;
     maxRepliesPerHour?: number;
+    messageDebounceSeconds?: number;
     pipelineConfig?: {
       boardId?: Id<"boards">;
       initialStageId?: Id<"stages">;
@@ -738,10 +739,78 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
   );
 }
 
+// Grupo de campos do editor do atendente: título + descrição curta, separado do
+// grupo anterior por uma linha (o primeiro não precisa — o bloco já tem borda).
+function FieldGroup({
+  title,
+  description,
+  divided = true,
+  children,
+}: {
+  title: string;
+  description?: string;
+  divided?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={cn("space-y-3", divided && "pt-4 border-t border-border")}>
+      <div>
+        <p className="text-sm font-medium text-text-primary">{title}</p>
+        {description && <p className="text-xs text-text-muted mt-0.5">{description}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function WarningNote({ messages }: { messages: string[] }) {
+  if (messages.length === 0) return null;
+  return (
+    <div className="flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
+      <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
+      <div className="space-y-0.5 min-w-0">
+        {messages.map((m) => (
+          <p key={m} className="text-xs text-text-secondary break-words">
+            {m}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // Tetos de resposta do atendente — espelham a condição 9 de evaluateEligibility
 // (convex/attendant.ts): vazio = default do servidor, 0 = sem limite.
 const DEFAULT_REPLIES_PER_CONVERSATION = 20;
 const DEFAULT_REPLIES_PER_HOUR = 10;
+// Agrupamento de mensagens (agentProfile.messageDebounceSeconds): vazio =
+// default do servidor; a mutation aceita de 1 a 120 segundos.
+const DEFAULT_DEBOUNCE_SECONDS = 5;
+const MAX_DEBOUNCE_SECONDS = 120;
+const SLOW_DEBOUNCE_SECONDS = 30;
+
+function readDebounceSeconds(
+  raw: string
+): { ok: true; value: number | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_DEBOUNCE_SECONDS) {
+    return {
+      ok: false,
+      message: `Agrupar mensagens por: use um número inteiro de segundos entre 1 e ${MAX_DEBOUNCE_SECONDS}.`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+function debounceWarning(raw: string): string | null {
+  const parsed = Number(raw.trim());
+  if (raw.trim() === "" || !Number.isInteger(parsed)) return null;
+  return parsed > SLOW_DEBOUNCE_SECONDS
+    ? `Agrupar por ${parsed}s: as respostas vão demorar mais para sair.`
+    : null;
+}
 
 function readReplyLimit(
   raw: string,
@@ -801,6 +870,9 @@ function AttendantConfig({
   const [maxPerHour, setMaxPerHour] = useState(
     profile.maxRepliesPerHour !== undefined ? String(profile.maxRepliesPerHour) : ""
   );
+  const [debounceSeconds, setDebounceSeconds] = useState(
+    profile.messageDebounceSeconds !== undefined ? String(profile.messageDebounceSeconds) : ""
+  );
 
   // Opções avançadas — regras de pipeline (P4).
   const pipelineConfig = profile.pipelineConfig;
@@ -854,6 +926,9 @@ function AttendantConfig({
     replyLimitWarning(maxPerConversation, "Por conversa"),
     replyLimitWarning(maxPerHour, "Por hora"),
   ].filter((w): w is string => w !== null);
+  const debounceWarnings = [debounceWarning(debounceSeconds)].filter(
+    (w): w is string => w !== null
+  );
 
   const handleModeToggle = async () => {
     try {
@@ -880,6 +955,11 @@ function AttendantConfig({
       toast.error(limitePorHora.message);
       return;
     }
+    const agrupamento = readDebounceSeconds(debounceSeconds);
+    if (!agrupamento.ok) {
+      toast.error(agrupamento.message);
+      return;
+    }
 
     const trimmedAdvanceRules = pcAdvanceRules.trim();
     // "Vazio" só se allowMoveStages também está no default (true) — desligar o
@@ -904,6 +984,7 @@ function AttendantConfig({
             .filter(Boolean),
           maxRepliesPerConversation: limitePorConversa.value,
           maxRepliesPerHour: limitePorHora.value,
+          messageDebounceSeconds: agrupamento.value,
           pipelineConfig: pipelineIsEmpty
             ? null
             : {
@@ -1022,58 +1103,153 @@ function AttendantConfig({
       )}
 
       {showCustomize && (
-        <div className="mt-4 pt-4 border-t border-border space-y-4">
-          <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Conhecimento do negócio (a IA só afirma o que estiver aqui)
-            </label>
-            <textarea
-              value={knowledge}
-              onChange={(e) => setKnowledge(e.target.value)}
-              rows={5}
-              placeholder="Preços, serviços, horários, políticas, diferenciais..."
-              className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
-            />
-          </div>
-          <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Persona (instruções de comportamento)
-            </label>
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              rows={4}
-              className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
-            />
-          </div>
-          <div className="flex flex-wrap gap-4">
+        <div className="mt-4 pt-4 border-t border-border space-y-5">
+          <FieldGroup
+            title="Persona"
+            description="Quem é o atendente e o que ele pode afirmar ao cliente."
+            divided={false}
+          >
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Início (h)
+                Conhecimento do negócio (a IA só afirma o que estiver aqui)
               </label>
-              <input
-                type="number"
-                min={0}
-                max={23}
-                value={startHour}
-                onChange={(e) => setStartHour(Number(e.target.value))}
-                className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+              <textarea
+                value={knowledge}
+                onChange={(e) => setKnowledge(e.target.value)}
+                rows={5}
+                placeholder="Preços, serviços, horários, políticas, diferenciais..."
+                className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
             </div>
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Fim (h)
+                Persona (instruções de comportamento)
               </label>
-              <input
-                type="number"
-                min={1}
-                max={24}
-                value={endHour}
-                onChange={(e) => setEndHour(Number(e.target.value))}
-                className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={4}
+                className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
             </div>
-            <div className="flex-1 min-w-[220px]">
+          </FieldGroup>
+
+          <FieldGroup
+            title="Horário de atendimento"
+            description="Fora dessa janela a IA não responde — a conversa espera por um humano."
+          >
+            <div className="flex flex-wrap gap-4">
+              <div>
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Início (h)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={startHour}
+                  onChange={(e) => setStartHour(Number(e.target.value))}
+                  className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+              <div>
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Fim (h)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={24}
+                  value={endHour}
+                  onChange={(e) => setEndHour(Number(e.target.value))}
+                  className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+          </FieldGroup>
+
+          <FieldGroup
+            title="Comportamento da conversa"
+            description="Como a IA junta as mensagens do cliente e quantas vezes ela responde."
+          >
+            <div>
+              <div className="w-52">
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Agrupar mensagens por (segundos)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_DEBOUNCE_SECONDS}
+                  step={1}
+                  value={debounceSeconds}
+                  onChange={(e) => setDebounceSeconds(e.target.value)}
+                  placeholder={String(DEFAULT_DEBOUNCE_SECONDS)}
+                  className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+              <p className="text-xs text-text-muted mt-1.5">
+                Mensagens que chegam dentro desse intervalo de silêncio viram uma resposta só.
+                Aumente (10–15s) se seus clientes digitam fragmentado, uma palavra por linha. Em
+                branco = padrão ({DEFAULT_DEBOUNCE_SECONDS}s).
+              </p>
+              {debounceWarnings.length > 0 && (
+                <div className="mt-2">
+                  <WarningNote messages={debounceWarnings} />
+                </div>
+              )}
+            </div>
+
+            <div className="pt-1">
+              <p className="text-[13px] font-medium text-text-secondary">Limites de resposta</p>
+              <p className="text-xs text-text-muted mt-0.5">
+                Guarda-corpos anti-loop (para quando o outro lado também é um bot), contados por
+                conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por conversa,{" "}
+                {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
+              </p>
+              <div className="flex flex-wrap gap-4 mt-2">
+                <div className="w-40">
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Máx. por conversa
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={maxPerConversation}
+                    onChange={(e) => setMaxPerConversation(e.target.value)}
+                    placeholder={String(DEFAULT_REPLIES_PER_CONVERSATION)}
+                    className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+                <div className="w-40">
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Máx. por hora
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={maxPerHour}
+                    onChange={(e) => setMaxPerHour(e.target.value)}
+                    placeholder={String(DEFAULT_REPLIES_PER_HOUR)}
+                    className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                </div>
+              </div>
+              {limitWarnings.length > 0 && (
+                <div className="mt-2">
+                  <WarningNote messages={limitWarnings} />
+                </div>
+              )}
+            </div>
+          </FieldGroup>
+
+          <FieldGroup
+            title="Repasse para humanos"
+            description="Palavras que fazem a IA parar na hora e chamar alguém do time."
+          >
+            <div className="max-w-md">
               <Input
                 label="Palavras de repasse (separadas por vírgula)"
                 type="text"
@@ -1082,203 +1258,154 @@ function AttendantConfig({
                 placeholder="humano, atendente"
               />
             </div>
-          </div>
+          </FieldGroup>
 
-          <div>
-            <p className="text-sm font-medium text-text-primary">Limites de resposta</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              Guarda-corpos anti-loop (para quando o outro lado também é um bot), contados por
-              conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por conversa,{" "}
-              {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
-            </p>
-            <div className="flex flex-wrap gap-4 mt-2">
-              <div className="w-40">
-                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Máx. por conversa
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={maxPerConversation}
-                  onChange={(e) => setMaxPerConversation(e.target.value)}
-                  placeholder={String(DEFAULT_REPLIES_PER_CONVERSATION)}
-                  className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
-                />
-              </div>
-              <div className="w-40">
-                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Máx. por hora
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={maxPerHour}
-                  onChange={(e) => setMaxPerHour(e.target.value)}
-                  placeholder={String(DEFAULT_REPLIES_PER_HOUR)}
-                  className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
-                />
-              </div>
-            </div>
-            {limitWarnings.length > 0 && (
-              <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
-                <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
-                <div className="space-y-0.5 min-w-0">
-                  {limitWarnings.map((w) => (
-                    <p key={w} className="text-xs text-text-secondary break-words">
-                      {w}
-                    </p>
-                  ))}
+          <div className="pt-2 border-t border-border">
+            <CollapsibleSection title="Opções avançadas">
+              <div className="space-y-4">
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex-1 min-w-[220px]">
+                    <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                      Funil para novos leads
+                    </label>
+                    <select
+                      value={pcBoardId}
+                      onChange={(e) => {
+                        setPcBoardId(e.target.value);
+                        setPcInitialStageId("");
+                        setPcQualifiedStageId("");
+                      }}
+                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
+                    >
+                      <option value="">Sem funil dedicado (comportamento atual)</option>
+                      {(pcBoards ?? []).map((b) => (
+                        <option key={b._id} value={b._id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex-1 min-w-[220px]">
+                    <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                      Estágio inicial
+                    </label>
+                    <select
+                      value={pcInitialStageId}
+                      onChange={(e) => setPcInitialStageId(e.target.value)}
+                      disabled={!pcBoardId}
+                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
+                    >
+                      <option value="">Primeiro estágio do funil</option>
+                      {(pcStages ?? []).map((s) => (
+                        <option key={s._id} value={s._id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
 
-          <CollapsibleSection title="Opções avançadas">
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-4">
-                <div className="flex-1 min-w-[220px]">
-                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Funil para novos leads
-                  </label>
-                  <select
-                    value={pcBoardId}
-                    onChange={(e) => {
-                      setPcBoardId(e.target.value);
-                      setPcInitialStageId("");
-                      setPcQualifiedStageId("");
-                    }}
-                    className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
-                  >
-                    <option value="">Sem funil dedicado (comportamento atual)</option>
-                    {(pcBoards ?? []).map((b) => (
-                      <option key={b._id} value={b._id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
+                <div className="flex flex-wrap gap-4 items-end">
+                  <div className="flex-1 min-w-[220px]">
+                    <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                      Mover para este estágio ao qualificar
+                    </label>
+                    <select
+                      value={pcQualifiedStageId}
+                      onChange={(e) => setPcQualifiedStageId(e.target.value)}
+                      disabled={!pcBoardId}
+                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
+                    >
+                      <option value="">Não mover automaticamente</option>
+                      {(pcStages ?? []).map((s) => (
+                        <option key={s._id} value={s._id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-28">
+                    <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                      Limiar BANT
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={4}
+                      value={pcQualifyThreshold}
+                      onChange={(e) => setPcQualifyThreshold(Number(e.target.value))}
+                      className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
                 </div>
-                <div className="flex-1 min-w-[220px]">
-                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Estágio inicial
-                  </label>
-                  <select
-                    value={pcInitialStageId}
-                    onChange={(e) => setPcInitialStageId(e.target.value)}
-                    disabled={!pcBoardId}
-                    className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
-                  >
-                    <option value="">Primeiro estágio do funil</option>
-                    {(pcStages ?? []).map((s) => (
-                      <option key={s._id} value={s._id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+                <p className="text-xs text-text-muted -mt-2">
+                  Ao atingir o limiar, o lead é movido automaticamente (apenas em autopilot).
+                </p>
 
-              <div className="flex flex-wrap gap-4 items-end">
-                <div className="flex-1 min-w-[220px]">
+                <div>
                   <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Mover para este estágio ao qualificar
+                    Quando avançar o lead
                   </label>
-                  <select
-                    value={pcQualifiedStageId}
-                    onChange={(e) => setPcQualifiedStageId(e.target.value)}
-                    disabled={!pcBoardId}
-                    className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
-                  >
-                    <option value="">Não mover automaticamente</option>
-                    {(pcStages ?? []).map((s) => (
-                      <option key={s._id} value={s._id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="w-28">
-                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Limiar BANT
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={4}
-                    value={pcQualifyThreshold}
-                    onChange={(e) => setPcQualifyThreshold(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  <textarea
+                    value={pcAdvanceRules}
+                    onChange={(e) => setPcAdvanceRules(e.target.value)}
+                    rows={3}
+                    placeholder='Ex.: mova para "Proposta" quando o cliente pedir orçamento; para "Agendado" quando marcar visita.'
+                    className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
                   />
                 </div>
-              </div>
-              <p className="text-xs text-text-muted -mt-2">
-                Ao atingir o limiar, o lead é movido automaticamente (apenas em autopilot).
-              </p>
 
-              <div>
-                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Quando avançar o lead
-                </label>
-                <textarea
-                  value={pcAdvanceRules}
-                  onChange={(e) => setPcAdvanceRules(e.target.value)}
-                  rows={3}
-                  placeholder='Ex.: mova para "Proposta" quando o cliente pedir orçamento; para "Agendado" quando marcar visita.'
-                  className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-text-primary">
-                    Atendente pode mover leads no funil
-                  </p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    Desligado, a IA não move estágios por conta própria; a regra de qualificação
-                    acima continua valendo.
-                  </p>
-                </div>
-                <Switch
-                  checked={pcAllowMoveStages}
-                  onChange={() => setPcAllowMoveStages((v) => !v)}
-                  label="Atendente pode mover leads no funil"
-                />
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-text-primary mb-1">
-                  Campos que a IA captura
-                </p>
-                <p className="text-xs text-text-muted mb-2">
-                  A IA preenche estes campos conforme a conversa revela (com validação de opções).
-                </p>
-                {leadFieldDefs === undefined ? (
-                  <Spinner size="sm" />
-                ) : leadFieldDefs.length === 0 ? (
-                  <p className="text-xs text-text-muted">
-                    Nenhum campo personalizado de lead cadastrado.
-                  </p>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {leadFieldDefs.map((f) => (
-                      <Checkbox
-                        key={f._id}
-                        checked={pcCaptureFields.includes(f.key)}
-                        onChange={() => toggleCaptureField(f.key)}
-                        label={
-                          <span className="text-xs text-text-secondary">
-                            {f.name}{" "}
-                            <span className="text-text-muted">({f.key})</span>
-                          </span>
-                        }
-                      />
-                    ))}
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-text-primary">
+                      Atendente pode mover leads no funil
+                    </p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Desligado, a IA não move estágios por conta própria; a regra de qualificação
+                      acima continua valendo.
+                    </p>
                   </div>
-                )}
+                  <Switch
+                    checked={pcAllowMoveStages}
+                    onChange={() => setPcAllowMoveStages((v) => !v)}
+                    label="Atendente pode mover leads no funil"
+                  />
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-text-primary mb-1">
+                    Campos que a IA captura
+                  </p>
+                  <p className="text-xs text-text-muted mb-2">
+                    A IA preenche estes campos conforme a conversa revela (com validação de opções).
+                  </p>
+                  {leadFieldDefs === undefined ? (
+                    <Spinner size="sm" />
+                  ) : leadFieldDefs.length === 0 ? (
+                    <p className="text-xs text-text-muted">
+                      Nenhum campo personalizado de lead cadastrado.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {leadFieldDefs.map((f) => (
+                        <Checkbox
+                          key={f._id}
+                          checked={pcCaptureFields.includes(f.key)}
+                          onChange={() => toggleCaptureField(f.key)}
+                          label={
+                            <span className="text-xs text-text-secondary">
+                              {f.name}{" "}
+                              <span className="text-text-muted">({f.key})</span>
+                            </span>
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </CollapsibleSection>
+            </CollapsibleSection>
+          </div>
 
           <Button onClick={() => void handleSaveCustomization()}>Salvar</Button>
         </div>

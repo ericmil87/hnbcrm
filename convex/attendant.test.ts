@@ -227,6 +227,40 @@ describe("fila do atendente (enqueue + coalescing)", () => {
     expect(items[0].triggerMessageId).toEqual(m2);
   });
 
+  test("debounce configurável: o slot usa os segundos do perfil", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    await t.run(async (ctx) => {
+      const agent = (await ctx.db.get(seed.agentId))!;
+      await ctx.db.patch(seed.agentId, {
+        agentProfile: { ...agent.agentProfile!, messageDebounceSeconds: 15 },
+      });
+    });
+
+    const m1 = await insertInbound(t, seed, "Oi");
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId: m1 });
+    const criado = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    expect(criado.nextAttemptAt).toBe(Date.now() + 15_000);
+
+    // Rajada: o inbound seguinte empurra o slot pelo MESMO valor configurado.
+    vi.setSystemTime(Date.now() + 3_000);
+    const m2 = await insertInbound(t, seed, "tudo bem?");
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId: m2 });
+    const items = await t.run(async (ctx) => ctx.db.query("aiReplyQueue").collect());
+    expect(items).toHaveLength(1); // coalesceu
+    expect(items[0].nextAttemptAt).toBe(Date.now() + 15_000);
+  });
+
+  test("sem configuração o debounce segue em 5s (regressão)", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertInbound(t, seed, "Oi");
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
+
+    const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    expect(item.nextAttemptAt).toBe(Date.now() + 5_000);
+  });
+
   test("IA desligada: enqueue é no-op total", async () => {
     const t = setup();
     const seed = await seedAttendantOrg(t, { aiEnabled: false });
@@ -802,6 +836,26 @@ describe("tetos de resposta: validação na mutation", () => {
       maxRepliesPerConversation: 0,
       maxRepliesPerHour: 200,
     });
+  });
+
+  test("agrupamento de mensagens: aceita 1..120, recusa 0, negativo, fracionário e 121", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const admin = await adminClient(t, seed);
+    const salvar = (messageDebounceSeconds: number) =>
+      admin.mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: { messageDebounceSeconds },
+      });
+
+    for (const invalido of [0, -5, 2.5, 121]) {
+      await expect(salvar(invalido)).rejects.toThrow(/entre 1 e 120/);
+    }
+
+    await salvar(1);
+    await salvar(120);
+    const agent = await t.run(async (ctx) => ctx.db.get(seed.agentId));
+    expect(agent!.agentProfile).toMatchObject({ messageDebounceSeconds: 120 });
   });
 });
 
