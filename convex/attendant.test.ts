@@ -11,7 +11,7 @@
  */
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { evaluateEligibility, isWithinSchedule } from "./attendant";
@@ -592,6 +592,73 @@ describe("elegibilidade (unit)", () => {
     });
   });
 
+  // Tetos configuráveis (Configurações → IA). Sem valor no perfil valem os
+  // defaults 20/hora-10; 0 desliga o guarda-corpo (escape hatch de teste).
+  function withProfile(profilePatch: Record<string, unknown>, counts: Record<string, number>) {
+    return withOverrides({
+      agent: {
+        _id: "agent1",
+        status: "active",
+        type: "ai",
+        agentProfile: { kind: "attendant", mode: "suggest", ...profilePatch },
+      },
+      ...counts,
+    });
+  }
+
+  test("defaults sem configuração: 20 por conversa e 10 por hora", () => {
+    expect(evaluateEligibility(withProfile({}, { aiReplyCountConversation: 19 }))).toEqual({
+      ok: true,
+    });
+    expect(evaluateEligibility(withProfile({}, { aiReplyCountConversation: 20 }))).toEqual({
+      ok: false,
+      reason: "teto_conversa",
+    });
+    expect(evaluateEligibility(withProfile({}, { aiReplyCountLastHour: 9 }))).toEqual({ ok: true });
+    expect(evaluateEligibility(withProfile({}, { aiReplyCountLastHour: 10 }))).toEqual({
+      ok: false,
+      reason: "teto_hora",
+    });
+  });
+
+  test("teto custom é respeitado nos dois campos", () => {
+    const perConversation = { maxRepliesPerConversation: 3 };
+    expect(
+      evaluateEligibility(withProfile(perConversation, { aiReplyCountConversation: 2 }))
+    ).toEqual({ ok: true });
+    expect(
+      evaluateEligibility(withProfile(perConversation, { aiReplyCountConversation: 3 }))
+    ).toEqual({ ok: false, reason: "teto_conversa" });
+
+    const perHour = { maxRepliesPerHour: 2 };
+    expect(evaluateEligibility(withProfile(perHour, { aiReplyCountLastHour: 1 }))).toEqual({
+      ok: true,
+    });
+    expect(evaluateEligibility(withProfile(perHour, { aiReplyCountLastHour: 2 }))).toEqual({
+      ok: false,
+      reason: "teto_hora",
+    });
+  });
+
+  test("0 = sem limite nos dois campos", () => {
+    expect(
+      evaluateEligibility(
+        withProfile({ maxRepliesPerConversation: 0 }, { aiReplyCountConversation: 999 })
+      )
+    ).toEqual({ ok: true });
+    expect(
+      evaluateEligibility({
+        ...withProfile({ maxRepliesPerHour: 0 }, { aiReplyCountLastHour: 999 }),
+      })
+    ).toEqual({ ok: true });
+    // Zerar só um dos dois mantém o outro no default.
+    expect(
+      evaluateEligibility(
+        withProfile({ maxRepliesPerHour: 0 }, { aiReplyCountConversation: 20 })
+      )
+    ).toEqual({ ok: false, reason: "teto_conversa" });
+  });
+
   test("lead atribuído a humano recusa", () => {
     expect(evaluateEligibility(withOverrides({ lead: { assignedTo: "humano1" } }))).toEqual({
       ok: false,
@@ -690,6 +757,51 @@ describe("gate do autopilot (F4)", () => {
     await expect(
       t.mutation(api_aiSettings_updateAgentProfile_unauthed(seed))
     ).rejects.toThrow();
+  });
+});
+
+describe("tetos de resposta: validação na mutation", () => {
+  async function adminClient(
+    t: TestConvex<typeof schema>,
+    seed: Awaited<ReturnType<typeof seedAttendantOrg>>
+  ) {
+    const userId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("users", { email: "admin@limites.dev" });
+      await ctx.db.patch(seed.humanId, { userId: id, role: "admin" });
+      return id;
+    });
+    return t.withIdentity({ subject: `${userId}|s1` });
+  }
+
+  test("negativo e fracionário são recusados; 0 e valor alto são aceitos", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const admin = await adminClient(t, seed);
+
+    await expect(
+      admin.mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: { maxRepliesPerHour: -1 },
+      })
+    ).rejects.toThrow(/inteiro maior ou igual a zero/);
+
+    await expect(
+      admin.mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: { maxRepliesPerConversation: 2.5 },
+      })
+    ).rejects.toThrow(/inteiro maior ou igual a zero/);
+
+    // 0 = sem limite; o teto alto é decisão do usuário (a UI só avisa).
+    await admin.mutation(api.aiSettings.updateAgentProfile, {
+      agentMemberId: seed.agentId,
+      patch: { maxRepliesPerConversation: 0, maxRepliesPerHour: 200 },
+    });
+    const agent = await t.run(async (ctx) => ctx.db.get(seed.agentId));
+    expect(agent!.agentProfile).toMatchObject({
+      maxRepliesPerConversation: 0,
+      maxRepliesPerHour: 200,
+    });
   });
 });
 

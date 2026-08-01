@@ -161,14 +161,19 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   if (contact?.aiOptOut === true) return { ok: false, reason: "opt_out" };
   // 8. dentro do horário de atendimento
   if (!isWithinSchedule(profile.schedule, now)) return { ok: false, reason: "fora_do_horario" };
-  // 9. tetos de resposta (conversa + janela de 1h — cliente-que-é-bot)
+  // 9. tetos de resposta (conversa + janela de 1h — cliente-que-é-bot).
+  // 0 = SEM teto (escape hatch de teste, configurável em Configurações → IA):
+  // antes 0 travava tudo, e ninguém configura 0 querendo isso — ressignificar é
+  // seguro. `undefined` continua caindo nos defaults (20 por conversa, 10/hora).
   const maxPerConversation =
     profile.maxRepliesPerConversation ?? DEFAULT_MAX_REPLIES_PER_CONVERSATION;
-  if (input.aiReplyCountConversation >= maxPerConversation) {
+  if (maxPerConversation > 0 && input.aiReplyCountConversation >= maxPerConversation) {
     return { ok: false, reason: "teto_conversa" };
   }
   const maxPerHour = profile.maxRepliesPerHour ?? DEFAULT_MAX_REPLIES_PER_HOUR;
-  if (input.aiReplyCountLastHour >= maxPerHour) return { ok: false, reason: "teto_hora" };
+  if (maxPerHour > 0 && input.aiReplyCountLastHour >= maxPerHour) {
+    return { ok: false, reason: "teto_hora" };
+  }
   // 10. canal bridge exige o aceite de risco org-level VIGENTE (P1). Condição de
   // elegibilidade (não só gate de enqueue) de propósito: revogação do aceite
   // aborta runs em voo no re-check do commit (TOCTOU).

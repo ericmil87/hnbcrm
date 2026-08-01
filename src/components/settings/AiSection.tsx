@@ -634,6 +634,8 @@ type Attendant = {
     schedule?: { timezone: string; startHour: number; endHour: number };
     handoffKeywords?: string[];
     disclosure?: string;
+    maxRepliesPerConversation?: number;
+    maxRepliesPerHour?: number;
     pipelineConfig?: {
       boardId?: Id<"boards">;
       initialStageId?: Id<"stages">;
@@ -736,6 +738,37 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
   );
 }
 
+// Tetos de resposta do atendente — espelham a condição 9 de evaluateEligibility
+// (convex/attendant.ts): vazio = default do servidor, 0 = sem limite.
+const DEFAULT_REPLIES_PER_CONVERSATION = 20;
+const DEFAULT_REPLIES_PER_HOUR = 10;
+
+function readReplyLimit(
+  raw: string,
+  label: string
+): { ok: true; value: number | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    return {
+      ok: false,
+      message: `${label}: use um número inteiro maior ou igual a zero (0 = sem limite).`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+function replyLimitWarning(raw: string, label: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) return null; // erro tratado no salvar
+  if (parsed === 0) return `${label}: sem limite — a IA responde indefinidamente. Só para testes.`;
+  if (parsed > 100) return `${label}: ${parsed} é alto demais para servir de guarda-corpo.`;
+  return null;
+}
+
 function AttendantConfig({
   organizationId,
   attendant,
@@ -758,6 +791,16 @@ function AttendantConfig({
   const [startHour, setStartHour] = useState(profile.schedule?.startHour ?? 9);
   const [endHour, setEndHour] = useState(profile.schedule?.endHour ?? 18);
   const [keywords, setKeywords] = useState((profile.handoffKeywords ?? []).join(", "));
+  // Tetos: string (não number) porque campo VAZIO = manter o default do
+  // servidor, que é diferente de 0 (0 = sem limite).
+  const [maxPerConversation, setMaxPerConversation] = useState(
+    profile.maxRepliesPerConversation !== undefined
+      ? String(profile.maxRepliesPerConversation)
+      : ""
+  );
+  const [maxPerHour, setMaxPerHour] = useState(
+    profile.maxRepliesPerHour !== undefined ? String(profile.maxRepliesPerHour) : ""
+  );
 
   // Opções avançadas — regras de pipeline (P4).
   const pipelineConfig = profile.pipelineConfig;
@@ -807,6 +850,10 @@ function AttendantConfig({
   };
 
   const isAutopilot = profile.mode === "autopilot";
+  const limitWarnings = [
+    replyLimitWarning(maxPerConversation, "Por conversa"),
+    replyLimitWarning(maxPerHour, "Por hora"),
+  ].filter((w): w is string => w !== null);
 
   const handleModeToggle = async () => {
     try {
@@ -823,6 +870,17 @@ function AttendantConfig({
   };
 
   const handleSaveCustomization = async () => {
+    const limitePorConversa = readReplyLimit(maxPerConversation, "Máx. respostas por conversa");
+    const limitePorHora = readReplyLimit(maxPerHour, "Máx. respostas por hora");
+    if (!limitePorConversa.ok) {
+      toast.error(limitePorConversa.message);
+      return;
+    }
+    if (!limitePorHora.ok) {
+      toast.error(limitePorHora.message);
+      return;
+    }
+
     const trimmedAdvanceRules = pcAdvanceRules.trim();
     // "Vazio" só se allowMoveStages também está no default (true) — desligar o
     // switch com o resto vazio é uma restrição REAL e não pode virar null.
@@ -844,6 +902,8 @@ function AttendantConfig({
             .split(",")
             .map((k) => k.trim())
             .filter(Boolean),
+          maxRepliesPerConversation: limitePorConversa.value,
+          maxRepliesPerHour: limitePorHora.value,
           pipelineConfig: pipelineIsEmpty
             ? null
             : {
@@ -1022,6 +1082,57 @@ function AttendantConfig({
                 placeholder="humano, atendente"
               />
             </div>
+          </div>
+
+          <div>
+            <p className="text-sm font-medium text-text-primary">Limites de resposta</p>
+            <p className="text-xs text-text-muted mt-0.5">
+              Guarda-corpos anti-loop (para quando o outro lado também é um bot), contados por
+              conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por conversa,{" "}
+              {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
+            </p>
+            <div className="flex flex-wrap gap-4 mt-2">
+              <div className="w-40">
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Máx. por conversa
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={maxPerConversation}
+                  onChange={(e) => setMaxPerConversation(e.target.value)}
+                  placeholder={String(DEFAULT_REPLIES_PER_CONVERSATION)}
+                  className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+              <div className="w-40">
+                <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                  Máx. por hora
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={maxPerHour}
+                  onChange={(e) => setMaxPerHour(e.target.value)}
+                  placeholder={String(DEFAULT_REPLIES_PER_HOUR)}
+                  className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+            {limitWarnings.length > 0 && (
+              <div className="mt-2 flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
+                <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
+                <div className="space-y-0.5 min-w-0">
+                  {limitWarnings.map((w) => (
+                    <p key={w} className="text-xs text-text-secondary break-words">
+                      {w}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <CollapsibleSection title="Opções avançadas">

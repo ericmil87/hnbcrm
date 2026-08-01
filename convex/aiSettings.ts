@@ -623,6 +623,18 @@ export const updateAgentProfile = mutation({
       }
     }
 
+    // Tetos de resposta: inteiro >= 0, com 0 = sem limite (ver a condição 9 de
+    // evaluateEligibility). Fracionário/negativo viraria um teto silencioso.
+    for (const [label, value] of [
+      ["Máx. respostas por conversa", args.patch.maxRepliesPerConversation],
+      ["Máx. respostas por hora", args.patch.maxRepliesPerHour],
+    ] as const) {
+      if (value === undefined) continue;
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`${label}: use um número inteiro maior ou igual a zero (0 = sem limite)`);
+      }
+    }
+
     // P4: integridade do pipelineConfig — board da org; estágios do board certo.
     const pipelineConfig = args.patch.pipelineConfig;
     if (pipelineConfig !== undefined && pipelineConfig !== null) {
