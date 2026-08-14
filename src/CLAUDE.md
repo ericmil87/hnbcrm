@@ -45,13 +45,13 @@ src/
     ├── AuthPage.tsx            # Auth screen at /entrar with back link
     ├── Dashboard.tsx           # (legacy, unused — superseded by Outlet routing)
     ├── DashboardOverview.tsx   # Metrics overview (route: /app/painel)
-    ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline)
+    ├── KanbanBoard.tsx         # Pipeline board with drag-and-drop (route: /app/pipeline) — deep-link ?board=<id> e ?lead=<id> (abre LeadDetailPanel; param sincronizado no abrir/fechar p/ o back do browser)
     ├── LeadDetailPanel.tsx     # SlideOver for lead details
     ├── CreateLeadModal.tsx     # Modal for creating new leads
     ├── leads/                  # Alternate list view for leads (shared with KanbanBoard)
     │   ├── LeadsListView.tsx        # Sortable/filterable table view of leads with row selection
     │   └── LeadsBulkActionBar.tsx   # Bulk move/assign/archive bar for selected leads
-    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select
+    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select, deep-link ?conversation=<id>
     ├── inbox/                  # Inbox building blocks (shared with LeadDetailPanel)
     │   ├── MessageBubble.tsx        # Message rendering (media, quotes, reactions, ticks)
     │   ├── VoiceRecorder.tsx        # Mic recording + upload of voice notes
@@ -71,8 +71,8 @@ src/
     ├── AuditLogs.tsx           # Audit log viewer (route: /app/auditoria)
     ├── ContactsPage.tsx        # Contacts management (route: /app/contatos)
     ├── TasksPage.tsx           # Task manager (route: /app/tarefas) — list/kanban per project, deep-link ?task=<id>
-    ├── CreateTaskModal.tsx     # Task creation — project, labels, multi-assignee, reminder
-    ├── TaskDetailSlideOver.tsx # Task detail — subtasks, dependencies, mentions, stacked navigation
+    ├── CreateTaskModal.tsx     # Task creation — project, lead, labels, multi-assignee, reminder
+    ├── TaskDetailSlideOver.tsx # Task detail — subtasks, dependencies, mentions, stacked navigation, seção Lead (vincular/trocar/remover + abrir no funil + pular p/ conversa)
     ├── tasks/                  # Task manager building blocks (used by TasksPage, CreateTaskModal, TaskDetailSlideOver)
     │   ├── ProjectSwitcher.tsx      # Task project selector/switcher
     │   ├── ProjectFormModal.tsx     # Create/edit task project modal
