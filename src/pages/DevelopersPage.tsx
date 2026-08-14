@@ -1021,6 +1021,15 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "handoff.requested",
                   "handoff.accepted",
                   "handoff.rejected",
+                  "task.moved",
+                  "task.due_soon",
+                  "task_project.created",
+                  "task_project.updated",
+                  "task_project.archived",
+                  "task_project.deleted",
+                  "task_label.created",
+                  "task_label.updated",
+                  "task_label.deleted",
                 ].map((event) => (
                   <code
                     key={event}

@@ -268,7 +268,7 @@ Where leads come from.
 | isActive | boolean | Whether currently active |
 
 ### Task
-A task or reminder in the CRM, optionally linked to leads/contacts.
+A task or reminder in the CRM, optionally linked to leads/contacts, and optionally organized into a project/kanban.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -283,12 +283,66 @@ A task or reminder in the CRM, optionally linked to leads/contacts.
 | snoozedUntil | number | Snoozed until timestamp |
 | leadId | Id<leads> | Associated lead (optional) |
 | contactId | Id<contacts> | Associated contact (optional) |
-| assignedTo | Id<teamMembers> | Assigned team member |
+| assignedTo | Id<teamMembers> | Primary assignee — always mirrors assigneeIds[0] |
+| assigneeIds | Id<teamMembers>[] | All assignees, human or AI (P1) |
 | createdBy | Id<teamMembers> | Creator |
 | recurrence | object | {pattern: daily/weekly/biweekly/monthly, endDate?} |
-| parentTaskId | Id<tasks> | Parent task for recurrence instances |
-| checklist | array | [{id, title, completed}] embedded subtasks |
-| tags | string[] | Tags for categorization |
+| recurrenceSourceId | Id<tasks> | Previous instance in a recurrence chain (lineage only) |
+| parentTaskId | Id<tasks> | Parent task — real subtask hierarchy (P1) |
+| blockedBy | Id<tasks>[] | Tasks that block this one — informational only, not enforced server-side (P1) |
+| projectId | Id<taskProjects> | Project/list this task belongs to (P1) |
+| columnId | Id<taskColumns> | Kanban column within the project (P1) |
+| order | number | Manual sort position within the column (P1) |
+| labelIds | Id<taskLabels>[] | Colored labels (P1) |
+| reminderMinutesBefore | number | Minutes before dueDate to fire an early reminder, in addition to the due-date reminder (P1) |
+| preDueReminderSentAt | number | Timestamp the early reminder was sent (internal bookkeeping) |
+| checklist | array | [{id, title, completed}] embedded checklist items (not the same as subtasks) |
+| tags | string[] | Free-form tags for categorization (legacy — labelIds is the P1 primary way to categorize) |
+
+### Task Project
+A project/list that groups tasks with its own kanban columns (P1).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | string | Project name |
+| description | string | Optional description |
+| color | string | Optional color |
+| order | number | Display order |
+| archivedAt | number | Set when archived (optional) |
+| createdBy | Id<teamMembers> | Creator |
+
+### Task Column
+A kanban column belonging to a task project (P1). New projects get 3 default columns.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| projectId | Id<taskProjects> | Owning project |
+| name | string | Column name |
+| order | number | Display order |
+| color | string | Optional color |
+| isDoneColumn | boolean | Moving a task here completes it (and reopens it if moved out) |
+| wipLimit | number | Informational work-in-progress limit — not enforced server-side |
+
+### Task Label
+An org-wide colored label usable on any task (P1).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| name | string | Label name (unique per org, case-insensitive) |
+| color | string | Label color |
+
+### Notification
+An in-app notification (bell in the header), created alongside e-mail notifications (P1).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| memberId | Id<teamMembers> | Recipient |
+| type | enum | task_assigned, task_comment_mention, task_due_soon, task_overdue |
+| title | string | Notification title |
+| body | string | Optional body text |
+| taskId | Id<tasks> | Related task (optional) |
+| actorId | Id<teamMembers> | Who triggered it (optional) |
+| readAt | number | Set when marked read (optional) |
 
 ### Calendar Event
 A time-ranged event on the calendar, optionally linked to leads/contacts.
@@ -323,7 +377,7 @@ A comment on a task.
 | authorId | Id<teamMembers> | Comment author |
 | authorType | enum | human, ai |
 | content | string | Comment text |
-| mentionedUserIds | Id<teamMembers>[] | @mentioned team members |
+| mentionedUserIds | Id<teamMembers>[] | @mentioned team members — each gets an in-app notification + taskCommentMention e-mail (P1) |
 
 ### File
 File metadata for uploaded files (attachments, photos, documents).
@@ -344,7 +398,7 @@ File metadata for uploaded files (attachments, photos, documents).
 
 ### notificationPreferences
 Per-member email notification preferences (opt-out model).
-Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, createdAt, updatedAt
+Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, taskCommentMention, taskDueSoon, createdAt, updatedAt
 Indexes: by_organization, by_organization_and_member, by_member
 
 ### Lead Document
@@ -619,6 +673,8 @@ Create an activity on a lead.
 **Response:** \`{ success: true, activityId }\`
 
 ### Task Endpoints
+
+Note (P1): task responses from every GET/list endpoint below now include the raw P1 document fields (\`projectId\`, \`columnId\`, \`order\`, \`labelIds\`, \`assigneeIds\`, \`blockedBy\`, \`recurrenceSourceId\`, \`reminderMinutesBefore\`, \`preDueReminderSentAt\`) when present, since these are plain fields on the task document. They are returned as raw IDs, not resolved objects. None of the write endpoints below (create/update) accept new P1 params yet — projects, columns, labels, and multi-assignee are managed only through the app UI for now.
 
 #### GET /api/v1/tasks
 List tasks with optional filters and cursor-based pagination.
@@ -1098,11 +1154,11 @@ List tasks with optional filters.
 Get a single task by ID.
 - **taskId** (string, required): The task ID
 
-#### crm_get_my_tasks
-Get the authenticated agent's pending and in-progress tasks.
+#### crm_list_my_tasks
+Get the authenticated agent's pending and in-progress tasks, sorted by urgency.
+- **limit** (number, optional): Max results
 
-#### crm_get_overdue_tasks
-List overdue tasks (past due date, not completed).
+Note: overdue tasks and task assignment are REST-only (\`GET /api/v1/tasks/overdue\`, \`POST /api/v1/tasks/assign\`) — there is no \`crm_get_overdue_tasks\` or \`crm_assign_task\` MCP tool.
 
 #### crm_search_tasks
 Search tasks by text.
@@ -1136,20 +1192,15 @@ Mark a task as completed.
 Delete a task.
 - **taskId** (string, required): The task ID
 
-#### crm_assign_task
-Assign or unassign a task.
-- **taskId** (string, required): The task ID
-- **assignedTo** (string, optional): Team member ID (omit to unassign)
-
 #### crm_snooze_task
 Snooze a task until a future date.
 - **taskId** (string, required): The task ID
 - **snoozedUntil** (number, required): Timestamp to snooze until
 
-#### crm_bulk_task_update
-Bulk operations on multiple tasks.
+#### crm_bulk_complete_tasks
+Complete multiple tasks at once.
 - **taskIds** (string[], required): Task IDs
-- **action** (string, required): complete, delete, assign
+- **action** (string, optional): Bulk action to perform (default: complete)
 
 #### crm_list_task_comments
 List comments on a task.
@@ -1223,6 +1274,15 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | handoff.requested | Handoff requested |
 | handoff.accepted | Handoff accepted |
 | handoff.rejected | Handoff rejected |
+| task.moved | Task moved to a different kanban column (P1) |
+| task.due_soon | Early reminder (reminderMinutesBefore) fired for a task (P1) |
+| task_project.created | Task project created (P1) |
+| task_project.updated | Task project or one of its columns updated (P1) |
+| task_project.archived | Task project archived (P1) |
+| task_project.deleted | Task project deleted (P1) |
+| task_label.created | Task label created (P1) |
+| task_label.updated | Task label updated (P1) |
+| task_label.deleted | Task label deleted (P1) |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
 

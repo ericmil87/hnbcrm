@@ -12,6 +12,8 @@ const DEFAULTS = {
   leadAssigned: true,
   newMessage: true,
   dailyDigest: true,
+  taskCommentMention: true,
+  taskDueSoon: true,
 };
 
 // Get current member's notification preferences
@@ -41,6 +43,8 @@ export const getMyPreferences = query({
       leadAssigned: prefs.leadAssigned,
       newMessage: prefs.newMessage,
       dailyDigest: prefs.dailyDigest,
+      taskCommentMention: prefs.taskCommentMention ?? DEFAULTS.taskCommentMention,
+      taskDueSoon: prefs.taskDueSoon ?? DEFAULTS.taskDueSoon,
       _id: prefs._id,
       _exists: true,
     };
@@ -59,6 +63,8 @@ export const updateMyPreferences = mutation({
     leadAssigned: v.optional(v.boolean()),
     newMessage: v.optional(v.boolean()),
     dailyDigest: v.optional(v.boolean()),
+    taskCommentMention: v.optional(v.boolean()),
+    taskDueSoon: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -81,6 +87,9 @@ export const updateMyPreferences = mutation({
       leadAssigned: args.leadAssigned ?? existing?.leadAssigned ?? DEFAULTS.leadAssigned,
       newMessage: args.newMessage ?? existing?.newMessage ?? DEFAULTS.newMessage,
       dailyDigest: args.dailyDigest ?? existing?.dailyDigest ?? DEFAULTS.dailyDigest,
+      taskCommentMention:
+        args.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
+      taskDueSoon: args.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
     };
 
     if (existing) {
@@ -175,6 +184,8 @@ export const internalGetPreferences = internalQuery({
       leadAssigned: prefs.leadAssigned,
       newMessage: prefs.newMessage,
       dailyDigest: prefs.dailyDigest,
+      taskCommentMention: prefs.taskCommentMention ?? DEFAULTS.taskCommentMention,
+      taskDueSoon: prefs.taskDueSoon ?? DEFAULTS.taskDueSoon,
       _exists: true,
     };
   },
@@ -206,6 +217,9 @@ export const internalUpsertPreferences = internalMutation({
       leadAssigned: args.updates.leadAssigned ?? existing?.leadAssigned ?? DEFAULTS.leadAssigned,
       newMessage: args.updates.newMessage ?? existing?.newMessage ?? DEFAULTS.newMessage,
       dailyDigest: args.updates.dailyDigest ?? existing?.dailyDigest ?? DEFAULTS.dailyDigest,
+      taskCommentMention:
+        args.updates.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
+      taskDueSoon: args.updates.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
     };
 
     if (existing) {

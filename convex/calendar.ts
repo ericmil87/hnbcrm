@@ -678,11 +678,15 @@ export const internalGetEvents = internalQuery({
 
 // Internal: Get single event
 export const internalGetEvent = internalQuery({
-  args: { eventId: v.id("calendarEvents") },
+  args: {
+    eventId: v.id("calendarEvents"),
+    // Org da API key autenticada — sem isso uma key da Org A leria evento da Org B
+    organizationId: v.id("organizations"),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
     const event = await ctx.db.get(args.eventId);
-    if (!event) return null;
+    if (!event || event.organizationId !== args.organizationId) return null;
 
     const [assignee, lead, contact, creator] = await Promise.all([
       event.assignedTo ? ctx.db.get(event.assignedTo) : null,
@@ -808,6 +812,8 @@ export const internalUpdateEvent = internalMutation({
 
     const event = await ctx.db.get(args.eventId);
     if (!event) throw new Error("Event not found");
+    // Isolamento multi-tenant: a API key só alcança eventos da própria org
+    if (event.organizationId !== teamMember.organizationId) throw new Error("Event not found");
 
     const now = Date.now();
     const changes: Record<string, any> = {};
@@ -871,6 +877,8 @@ export const internalDeleteEvent = internalMutation({
 
     const event = await ctx.db.get(args.eventId);
     if (!event) throw new Error("Event not found");
+    // Isolamento multi-tenant: a API key só alcança eventos da própria org
+    if (event.organizationId !== teamMember.organizationId) throw new Error("Event not found");
 
     const now = Date.now();
 
@@ -923,6 +931,8 @@ export const internalRescheduleEvent = internalMutation({
 
     const event = await ctx.db.get(args.eventId);
     if (!event) throw new Error("Event not found");
+    // Isolamento multi-tenant: a API key só alcança eventos da própria org
+    if (event.organizationId !== teamMember.organizationId) throw new Error("Event not found");
 
     const now = Date.now();
     const duration = event.endTime - event.startTime;
@@ -971,6 +981,8 @@ export const internalCompleteEvent = internalMutation({
 
     const event = await ctx.db.get(args.eventId);
     if (!event) throw new Error("Event not found");
+    // Isolamento multi-tenant: a API key só alcança eventos da própria org
+    if (event.organizationId !== teamMember.organizationId) throw new Error("Event not found");
 
     const now = Date.now();
 

@@ -2,6 +2,22 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.43.0] - 2026-08-14
+
+### Gestor de tarefas completo — projetos, kanban, etiquetas, multi-responsável e notificações
+
+- **Projetos/listas de tarefas** (`taskProjects`) com kanban por colunas customizáveis (`taskColumns`, coluna de conclusão, WIP limit informativo, 3 colunas padrão ao criar: "A fazer", "Em andamento", "Concluído") e ordenação manual dos cards por drag-and-drop
+- **Etiquetas org-wide com cor** (`taskLabels`), substituindo o antigo campo livre `tags` como forma primária de categorizar
+- **Múltiplos responsáveis por tarefa** (`assigneeIds`, humanos e IA) — `assignedTo` continua espelhando o primeiro responsável para compatibilidade
+- **Subtarefas reais** (`parentTaskId` promovido a hierarquia de verdade, com progresso agregado) e **dependências informativas** (`blockedBy` — não bloqueia conclusão, só avisa na UI); linhagem de recorrência passou a usar `recurrenceSourceId`
+- **Lembrete antecipado** configurável por tarefa (`reminderMinutesBefore`) além do aviso no vencimento, com e-mail `taskDueSoon`
+- **Menções `@` em comentários de tarefa** agora notificam de verdade — in-app e e-mail `taskCommentMention`
+- **Notificações in-app** — sino no cabeçalho (tabela `notifications`), cobrindo atribuição, menção, lembrete antecipado e atraso
+- **Busca full-text de tarefas na UI** (antes só client-side por título), **filtros salvos** (`savedViews` para `entityType: "tasks"`) e deep-link `/app/tarefas?task=<id>`
+- **Webhooks novos**: `task.moved`, `task.due_soon`, `task_project.created/updated/archived/deleted`, `task_label.created/updated/deleted`
+- Migração `tasks:migrateTasksP1` (linhagem de recorrência existente movida de `parentTaskId` para `recurrenceSourceId`, backfill de `assigneeIds`) e fix de `updateTask` para gravar `completedAt` corretamente
+- 348 testes verdes (26 arquivos) · lint completo · E2E vivo validado
+
 ## [0.37.0] - 2026-07-28
 
 ### IA v4.2 — Ativação em 1 fluxo + atendente que preenche o CRM

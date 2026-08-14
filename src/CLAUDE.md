@@ -29,7 +29,9 @@ src/
     │   ├── Checkbox.tsx       # Styled checkbox with label/description
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── notifications/
-    │   └── NotificationPreferences.tsx  # Email notification preferences (Settings tab)
+    │   ├── NotificationBell.tsx        # Header bell — unread count, opens NotificationPanel
+    │   ├── NotificationPanel.tsx       # In-app notification list (task_assigned/task_comment_mention/task_due_soon/task_overdue), mark read
+    │   └── NotificationPreferences.tsx # Email notification preferences (Settings tab)
     ├── copilot/
     │   └── CopilotPanel.tsx   # Copilot chat SlideOver — streams via useCopilotStream, renders tool calls + pendingAction confirmations
     ├── SEO.tsx                # Dynamic meta tags (react-helmet-async) — NEW
@@ -68,6 +70,21 @@ src/
     │   └── ChannelHealthPanel.tsx   # 7-day delivery/health stats per WhatsApp channel
     ├── AuditLogs.tsx           # Audit log viewer (route: /app/auditoria)
     ├── ContactsPage.tsx        # Contacts management (route: /app/contatos)
+    ├── TasksPage.tsx           # Task manager (route: /app/tarefas) — list/kanban per project, deep-link ?task=<id>
+    ├── CreateTaskModal.tsx     # Task creation — project, labels, multi-assignee, reminder
+    ├── TaskDetailSlideOver.tsx # Task detail — subtasks, dependencies, mentions, stacked navigation
+    ├── tasks/                  # Task manager building blocks (used by TasksPage, CreateTaskModal, TaskDetailSlideOver)
+    │   ├── ProjectSwitcher.tsx      # Task project selector/switcher
+    │   ├── ProjectFormModal.tsx     # Create/edit task project modal
+    │   ├── ColumnsEditorModal.tsx   # Kanban columns editor (add/reorder, WIP limit, done column)
+    │   ├── TaskKanbanBoard.tsx      # Kanban board with drag-and-drop columns/cards, manual order
+    │   ├── TaskFiltersBar.tsx       # Filter bar (status, priority, project, labels, assignee, due)
+    │   ├── SavedFiltersMenu.tsx     # Saved filter views (savedViews entityType "tasks")
+    │   ├── LabelPicker.tsx          # Task label multi-select with color
+    │   ├── AssigneesPicker.tsx      # Multi-assignee picker (human + AI)
+    │   ├── ReminderSelect.tsx       # Early reminder (reminderMinutesBefore) selector
+    │   ├── SubtasksSection.tsx      # Subtasks list + progress (parentTaskId hierarchy)
+    │   └── DependenciesSection.tsx  # Informational blockedBy dependencies (not enforced)
     ├── calendar/               # Calendar views (day/week/month, event CRUD, DnD)
     │   ├── CalendarPage.tsx    # Main page: view state, DnD context, data queries
     │   ├── CalendarHeader.tsx  # View toggle (Dia/Semana/Mes), date nav, filters

@@ -47,6 +47,12 @@
 | `organizations.ts` | Organization CRUD + settings |
 | `teamMembers.ts` | Human + AI team member management |
 | `calendar.ts` | Calendar events CRUD (time-ranged events with recurrence) |
+| `tasks.ts` | Task CRUD (projects/columns, labels, multi-assignee `assigneeIds`, real subtasks via `parentTaskId` + `getSubtasks`, informative `blockedBy` deps, manual kanban order, pre-due reminders, recurrence via `recurrenceSourceId`); `internal*` variants power the REST API + MCP (write params unchanged by P1 — see `router.ts`) |
+| `taskComments.ts` | Task comments, `authorType` human\|ai, `@mention` → in-app + e-mail notification via `lib/notify.ts` |
+| `taskProjects.ts` | Task projects (CRUD, archive/reorder) + kanban columns per project (CRUD/reorder, done column, WIP limit) — admin/manager only for management |
+| `taskLabels.ts` | Org-wide task labels with color (CRUD) — any member |
+| `notifications.ts` | In-app notifications: list/unreadCount/markRead/markAllRead (bell in `AppShell`) |
+| `lib/notify.ts` | `createNotification()` — inserts an in-app notification in the same transaction as the triggering mutation; skips AI members and self-notification |
 | `activities.ts` | Activity timeline events on leads |
 | `auditLogs.ts` | Audit trail queries |
 | `dashboard.ts` | Aggregation queries for dashboard |

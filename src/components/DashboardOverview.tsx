@@ -15,6 +15,7 @@ import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist
 import { RecentActivityWidget } from "@/components/RecentActivityWidget";
 import { UpcomingTasksWidget } from "@/components/UpcomingTasksWidget";
 import { UpcomingEventsWidget } from "@/components/UpcomingEventsWidget";
+import { TaskLabelChips } from "@/components/tasks/TaskKanbanBoard";
 import { toast } from "sonner";
 import {
   Handshake,
@@ -267,7 +268,12 @@ function MyTasksWidget({
                   className="shrink-0 w-5 h-5 rounded-full border-2 border-border-strong hover:border-brand-500 flex items-center justify-center transition-colors"
                   aria-label="Concluir tarefa"
                 />
-                <span className="flex-1 text-sm text-text-primary truncate">{task.title}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-text-primary truncate block">{task.title}</span>
+                  {task.labels?.length > 0 && (
+                    <TaskLabelChips labels={task.labels} max={3} className="mt-0.5 flex-wrap" />
+                  )}
+                </div>
                 <Badge variant={pb.variant} className="text-[10px] shrink-0">{pb.label}</Badge>
                 {task.dueDate && (
                   <span

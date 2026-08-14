@@ -23,6 +23,7 @@ import {
   Target,
   Layers,
   Check,
+  CheckSquare,
   Code2,
   Play,
   BookOpen,
@@ -67,7 +68,7 @@ export function LandingPage() {
       <SEO
         title="HNBCRM — CRM com Colaboração Humano-IA"
         description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e integre agentes de IA via API REST e MCP."
-        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest"
+        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas"
       />
       <OrganizationStructuredData />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -209,6 +210,11 @@ function FeaturesSection() {
       icon: Kanban,
       title: "Pipeline Kanban",
       description: "Arraste e solte leads entre etapas. Visual, rápido e intuitivo.",
+    },
+    {
+      icon: CheckSquare,
+      title: "Gestão de Tarefas",
+      description: "Quadros com colunas personalizáveis, etiquetas e subtarefas — tarefas para times de humanos e agentes de IA, no mesmo quadro.",
     },
     {
       icon: Contact2,

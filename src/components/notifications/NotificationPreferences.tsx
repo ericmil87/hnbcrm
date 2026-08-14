@@ -15,6 +15,8 @@ const NOTIFICATION_EVENTS = [
   { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
   { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuida a voce esta atrasada" },
   { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa e atribuida a voce" },
+  { key: "taskCommentMention", label: "Mencao em comentario de tarefa", desc: "Quando alguem te menciona em um comentario de tarefa" },
+  { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuida a voce esta prestes a vencer" },
   { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead e atribuido a voce" },
   { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
   { key: "dailyDigest", label: "Resumo diario", desc: "Resumo das atividades do dia anterior, enviado as 08:00" },

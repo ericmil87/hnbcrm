@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { useOutletContext } from "react-router";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -10,11 +10,36 @@ import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
-import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import {
+  ProjectSwitcher,
+  type TaskProjectSummary,
+} from "@/components/tasks/ProjectSwitcher";
+import { ProjectFormModal } from "@/components/tasks/ProjectFormModal";
+import { ColumnsEditorModal } from "@/components/tasks/ColumnsEditorModal";
+import {
+  TaskKanbanBoard,
+  TaskAssigneeStack,
+  TaskLabelChips,
+  ACTIVITY_ICONS,
+  ACTIVITY_LABELS,
+  PRIORITY_BADGE,
+  formatRelativeDate,
+  type TaskColumnDoc,
+  type TaskListItem,
+} from "@/components/tasks/TaskKanbanBoard";
+import {
+  TaskFiltersBar,
+  EMPTY_TASK_FILTERS,
+  type TaskFilters,
+} from "@/components/tasks/TaskFiltersBar";
+import {
+  SavedFiltersMenu,
+  type TaskSavedFilters,
+} from "@/components/tasks/SavedFiltersMenu";
 import {
   Plus,
   Search,
@@ -23,18 +48,9 @@ import {
   CheckSquare,
   ChevronDown,
   ChevronRight,
-  Phone,
-  Mail,
-  CalendarClock,
-  Users,
-  Microscope,
   ClipboardList,
-  Circle,
-  Clock,
-  AlertCircle,
   Trash2,
-  UserPlus,
-  Flag,
+  X,
 } from "lucide-react";
 import {
   DndContext,
@@ -58,60 +74,10 @@ import { toast } from "sonner";
 type ViewMode = "list" | "board";
 type SmartFilter = "all" | "today" | "overdue" | "week" | "unassigned" | "reminders";
 type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
+type TaskPriority = "low" | "medium" | "high" | "urgent";
+type ActivityType = "todo" | "call" | "email" | "follow_up" | "meeting" | "research";
 
-interface TaskItem {
-  _id: Id<"tasks">;
-  title: string;
-  description?: string;
-  type: "task" | "reminder";
-  status: TaskStatus;
-  priority: "low" | "medium" | "high" | "urgent";
-  activityType?: string;
-  dueDate?: number;
-  completedAt?: number;
-  snoozedUntil?: number;
-  assignedTo?: Id<"teamMembers">;
-  leadId?: Id<"leads">;
-  contactId?: Id<"contacts">;
-  createdBy: Id<"teamMembers">;
-  checklist?: { id: string; title: string; completed: boolean }[];
-  tags?: string[];
-  recurrence?: { pattern: string };
-  createdAt: number;
-  updatedAt: number;
-}
-
-const ACTIVITY_ICONS: Record<string, React.ElementType> = {
-  todo: ClipboardList,
-  call: Phone,
-  email: Mail,
-  follow_up: CalendarClock,
-  meeting: Users,
-  research: Microscope,
-};
-
-const ACTIVITY_LABELS: Record<string, string> = {
-  todo: "Tarefa",
-  call: "Ligação",
-  email: "E-mail",
-  follow_up: "Follow-up",
-  meeting: "Reunião",
-  research: "Pesquisa",
-};
-
-const PRIORITY_BADGE: Record<string, { variant: "default" | "info" | "warning" | "error"; label: string }> = {
-  low: { variant: "default", label: "Baixa" },
-  medium: { variant: "info", label: "Média" },
-  high: { variant: "warning", label: "Alta" },
-  urgent: { variant: "error", label: "Urgente" },
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: "Pendente",
-  in_progress: "Em Progresso",
-  completed: "Concluída",
-  cancelled: "Cancelada",
-};
+const SEARCH_DEBOUNCE_MS = 300;
 
 // ============================================================================
 // TasksPage
@@ -119,44 +85,140 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function TasksPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
-  const { can } = usePermissions(organizationId);
+  const { can, role } = usePermissions(organizationId);
+  const canEdit = can("tasks", "edit_own");
+  const canManageProjects = role === "admin" || role === "manager";
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedTaskId = (searchParams.get("task") as Id<"tasks"> | null) ?? null;
+
+  const [selectedProjectId, setSelectedProjectId] =
+    useState<Id<"taskProjects"> | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<TaskFilters>(() => ({
+    ...EMPTY_TASK_FILTERS,
+  }));
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [selectedTaskId, setSelectedTaskId] = useState<Id<"tasks"> | null>(null);
-  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set());
-  const [showFilters, setShowFilters] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<string>("");
-  const [filterPriority, setFilterPriority] = useState<string>("");
-  const [filterAssignee, setFilterAssignee] = useState<string>("");
-  const [filterActivityType, setFilterActivityType] = useState<string>("");
-  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(() => new Set());
+  const [showBulkCancelConfirm, setShowBulkCancelConfirm] = useState(false);
+
+  // Gestão de projetos
+  const [projectFormOpen, setProjectFormOpen] = useState(false);
+  const [projectBeingEdited, setProjectBeingEdited] =
+    useState<TaskProjectSummary | null>(null);
+  const [columnsProject, setColumnsProject] = useState<TaskProjectSummary | null>(
+    null
+  );
+  const [pendingProjectAction, setPendingProjectAction] = useState<{
+    type: "archive" | "delete";
+    project: TaskProjectSummary;
+  } | null>(null);
 
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
-  const tasks = useQuery(api.tasks.getTasks, { organizationId });
-  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+
+  // Busca server-side (full-text) com debounce
+  useEffect(() => {
+    const timeout = setTimeout(
+      () => setSearch(searchInput.trim()),
+      SEARCH_DEBOUNCE_MS
+    );
+    return () => clearTimeout(timeout);
+  }, [searchInput]);
+
+  const projects = useQuery(api.taskProjects.getProjects, { organizationId }) as
+    | TaskProjectSummary[]
+    | undefined;
+  const labels = useQuery(api.taskLabels.getLabels, { organizationId }) as
+    | { _id: Id<"taskLabels">; name: string; color: string }[]
+    | undefined;
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
+  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+  const columns = useQuery(
+    api.taskProjects.getColumns,
+    selectedProjectId ? { projectId: selectedProjectId } : "skip"
+  ) as TaskColumnDoc[] | undefined;
+
+  const selectedProject =
+    projects?.find((p) => p._id === selectedProjectId) ?? null;
+  const isProjectBoard = selectedProjectId !== null && viewMode === "board";
+
+  // Filtro efetivo de projeto: o seletor manda; na visão "Todas" vale o select.
+  const projectFilterId =
+    selectedProjectId ??
+    (filters.projectId ? (filters.projectId as Id<"taskProjects">) : null);
+
+  const taskQueryArgs = useMemo(
+    () => ({
+      organizationId,
+      ...(projectFilterId ? { projectId: projectFilterId } : {}),
+      ...(search ? { search } : {}),
+      ...(filters.status ? { status: filters.status as TaskStatus } : {}),
+      ...(filters.priority ? { priority: filters.priority as TaskPriority } : {}),
+      ...(filters.assigneeId
+        ? { assigneeId: filters.assigneeId as Id<"teamMembers"> }
+        : {}),
+      ...(filters.activityType
+        ? { activityType: filters.activityType as ActivityType }
+        : {}),
+      ...(filters.labelIds.length > 0 ? { labelIds: filters.labelIds } : {}),
+      ...(isProjectBoard ? { sortBy: "order", sortOrder: "asc" as const } : {}),
+    }),
+    [organizationId, projectFilterId, search, filters, isProjectBoard]
+  );
+
+  const tasks = useQuery(api.tasks.getTasks, taskQueryArgs) as
+    | TaskListItem[]
+    | undefined;
+
   const completeTask = useMutation(api.tasks.completeTask);
   const bulkUpdateTasks = useMutation(api.tasks.bulkUpdateTasks);
+  const archiveProject = useMutation(api.taskProjects.archiveProject);
+  const deleteProject = useMutation(api.taskProjects.deleteProject);
 
-  // Build team member map for display
-  const memberMap = useMemo(() => {
-    const map = new Map<string, { name: string; type: "human" | "ai" }>();
-    teamMembers?.forEach((m) => map.set(m._id, { name: m.name, type: m.type }));
+  const projectMap = useMemo(() => {
+    const map = new Map<string, { name: string; color?: string }>();
+    projects?.forEach((p) => map.set(p._id, { name: p.name, color: p.color }));
     return map;
-  }, [teamMembers]);
+  }, [projects]);
 
-  // Filter tasks
+  // Deep-link ?task=<id> — o sino e os e-mails apontam para /app/tarefas?task=…
+  const openTaskDetail = useCallback(
+    (taskId: Id<"tasks">) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("task", taskId);
+          return next;
+        },
+        { preventScrollReset: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const closeTaskDetail = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("task");
+        return next;
+      },
+      { replace: true, preventScrollReset: true }
+    );
+  }, [setSearchParams]);
+
+  // Smart filters continuam no cliente (dependem do relógio local)
   const filteredTasks = useMemo(() => {
     if (!tasks) return [];
     let result = [...tasks];
 
-    // Smart filter
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const endOfToday = new Date();
@@ -165,46 +227,46 @@ export function TasksPage() {
     endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
     endOfWeek.setHours(23, 59, 59, 999);
 
+    const isOpen = (t: TaskListItem) =>
+      t.status !== "completed" && t.status !== "cancelled";
+
     switch (smartFilter) {
       case "today":
         result = result.filter(
-          (t) => t.dueDate && t.dueDate >= startOfToday.getTime() && t.dueDate <= endOfToday.getTime() && t.status !== "completed" && t.status !== "cancelled"
+          (t) =>
+            t.dueDate &&
+            t.dueDate >= startOfToday.getTime() &&
+            t.dueDate <= endOfToday.getTime() &&
+            isOpen(t)
         );
         break;
       case "overdue":
-        result = result.filter(
-          (t) => t.dueDate && t.dueDate < now && t.status !== "completed" && t.status !== "cancelled"
-        );
+        result = result.filter((t) => t.dueDate && t.dueDate < now && isOpen(t));
         break;
       case "week":
         result = result.filter(
-          (t) => t.dueDate && t.dueDate >= startOfToday.getTime() && t.dueDate <= endOfWeek.getTime() && t.status !== "completed" && t.status !== "cancelled"
+          (t) =>
+            t.dueDate &&
+            t.dueDate >= startOfToday.getTime() &&
+            t.dueDate <= endOfWeek.getTime() &&
+            isOpen(t)
         );
         break;
       case "unassigned":
-        result = result.filter((t) => !t.assignedTo && t.status !== "completed" && t.status !== "cancelled");
+        result = result.filter(
+          (t) =>
+            (t.assigneeIds?.length ?? 0) === 0 && !t.assignedTo && isOpen(t)
+        );
         break;
       case "reminders":
-        result = result.filter((t) => t.type === "reminder" && t.status !== "completed" && t.status !== "cancelled");
+        result = result.filter((t) => t.type === "reminder" && isOpen(t));
         break;
-    }
-
-    // Dropdown filters
-    if (filterStatus) result = result.filter((t) => t.status === filterStatus);
-    if (filterPriority) result = result.filter((t) => t.priority === filterPriority);
-    if (filterAssignee) result = result.filter((t) => t.assignedTo === filterAssignee);
-    if (filterActivityType) result = result.filter((t) => t.activityType === filterActivityType);
-
-    // Search
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      result = result.filter((t) => t.title.toLowerCase().includes(q));
     }
 
     return result;
-  }, [tasks, smartFilter, filterStatus, filterPriority, filterAssignee, filterActivityType, searchQuery, now]);
+  }, [tasks, smartFilter, now]);
 
-  // Group tasks by due date buckets for list view
+  // Agrupamento por vencimento (visão em lista)
   const groupedTasks = useMemo(() => {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -214,7 +276,13 @@ export function TasksPage() {
     endOfWeek.setDate(endOfWeek.getDate() + (7 - endOfWeek.getDay()));
     endOfWeek.setHours(23, 59, 59, 999);
 
-    const groups: { key: string; label: string; tasks: TaskItem[]; color?: string; defaultOpen: boolean }[] = [
+    const groups: {
+      key: string;
+      label: string;
+      tasks: TaskListItem[];
+      color?: string;
+      defaultOpen: boolean;
+    }[] = [
       { key: "overdue", label: "Atrasadas", tasks: [], color: "text-semantic-error", defaultOpen: true },
       { key: "today", label: "Hoje", tasks: [], color: "text-brand-500", defaultOpen: true },
       { key: "week", label: "Esta Semana", tasks: [], defaultOpen: true },
@@ -225,28 +293,71 @@ export function TasksPage() {
 
     for (const task of filteredTasks) {
       if (task.status === "completed" || task.status === "cancelled") {
-        groups[5].tasks.push(task as TaskItem);
+        groups[5].tasks.push(task);
       } else if (!task.dueDate) {
-        groups[4].tasks.push(task as TaskItem);
+        groups[4].tasks.push(task);
       } else if (task.dueDate < startOfToday.getTime()) {
-        groups[0].tasks.push(task as TaskItem);
+        groups[0].tasks.push(task);
       } else if (task.dueDate <= endOfToday.getTime()) {
-        groups[1].tasks.push(task as TaskItem);
+        groups[1].tasks.push(task);
       } else if (task.dueDate <= endOfWeek.getTime()) {
-        groups[2].tasks.push(task as TaskItem);
+        groups[2].tasks.push(task);
       } else {
-        groups[3].tasks.push(task as TaskItem);
+        groups[3].tasks.push(task);
       }
     }
 
     return groups.filter((g) => g.tasks.length > 0);
   }, [filteredTasks]);
 
+  // Filtros atuais no formato de savedViews
+  const currentSavedFilters = useMemo<TaskSavedFilters>(() => {
+    const saved: TaskSavedFilters = {};
+    if (filters.status) saved.statuses = [filters.status as TaskStatus];
+    if (filters.priority) saved.priorities = [filters.priority as TaskPriority];
+    if (filters.activityType)
+      saved.activityType = filters.activityType as ActivityType;
+    if (filters.assigneeId)
+      saved.assigneeIds = [filters.assigneeId as Id<"teamMembers">];
+    if (filters.labelIds.length > 0) saved.labelIds = filters.labelIds;
+    if (projectFilterId) saved.projectId = projectFilterId;
+    if (smartFilter === "reminders") saved.taskType = "reminder";
+    if (smartFilter === "today" || smartFilter === "overdue" || smartFilter === "week") {
+      saved.dueFilter = smartFilter;
+    }
+    return saved;
+  }, [filters, projectFilterId, smartFilter]);
+
+  const applySavedFilters = useCallback((saved: TaskSavedFilters) => {
+    setSelectedProjectId(saved.projectId ?? null);
+    setFilters({
+      status: saved.statuses?.[0] ?? "",
+      priority: saved.priorities?.[0] ?? "",
+      assigneeId: saved.assigneeIds?.[0] ?? "",
+      activityType: saved.activityType ?? "",
+      labelIds: saved.labelIds ?? [],
+      projectId: "",
+    });
+    if (saved.taskType === "reminder") {
+      setSmartFilter("reminders");
+    } else if (
+      saved.dueFilter === "today" ||
+      saved.dueFilter === "overdue" ||
+      saved.dueFilter === "week"
+    ) {
+      setSmartFilter(saved.dueFilter);
+    } else {
+      setSmartFilter("all");
+    }
+    setSelectedTasks(new Set());
+    toast.success("Filtro aplicado");
+  }, []);
+
   const handleCompleteTask = async (taskId: Id<"tasks">) => {
     try {
       await completeTask({ taskId });
       toast.success("Tarefa concluída!");
-    } catch (err) {
+    } catch {
       toast.error("Falha ao concluir tarefa");
     }
   };
@@ -273,7 +384,7 @@ export function TasksPage() {
     }
   };
 
-  const handleBulkDelete = async () => {
+  const handleBulkCancel = async () => {
     try {
       await bulkUpdateTasks({
         taskIds: Array.from(selectedTasks) as Id<"tasks">[],
@@ -286,13 +397,42 @@ export function TasksPage() {
     }
   };
 
-  if (tasks === undefined) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
+  const handleSelectProject = (projectId: Id<"taskProjects"> | null) => {
+    setSelectedProjectId(projectId);
+    setSelectedTasks(new Set());
+    // Sem projeto não existe kanban de colunas; o filtro de projeto é exclusivo
+    // da visão "Todas as tarefas".
+    if (projectId) setFilters((prev) => ({ ...prev, projectId: "" }));
+  };
+
+  const handleConfirmProjectAction = async () => {
+    if (!pendingProjectAction) return;
+    const { type, project } = pendingProjectAction;
+    try {
+      if (type === "archive") {
+        await archiveProject({ projectId: project._id });
+        toast.success("Projeto arquivado");
+      } else {
+        await deleteProject({ projectId: project._id });
+        toast.success("Projeto excluído");
+      }
+      if (selectedProjectId === project._id) setSelectedProjectId(null);
+    } catch (error: any) {
+      toast.error(error?.message || "Falha ao atualizar projeto");
+    } finally {
+      setPendingProjectAction(null);
+    }
+  };
+
+  const hasActiveQuery =
+    !!search ||
+    smartFilter !== "all" ||
+    !!filters.status ||
+    !!filters.priority ||
+    !!filters.assigneeId ||
+    !!filters.activityType ||
+    filters.labelIds.length > 0 ||
+    !!filters.projectId;
 
   return (
     <div className="space-y-4 max-w-7xl">
@@ -300,23 +440,40 @@ export function TasksPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <h1 className="text-2xl font-bold text-text-primary">Tarefas</h1>
         <div className="flex items-center gap-2">
-          {/* Search */}
+          {/* Busca (full-text no servidor) */}
           <div className="relative flex-1 md:w-64 md:flex-none">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+            <Search
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
+              aria-hidden="true"
+            />
             <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Buscar tarefas..."
-              className="w-full pl-9 pr-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
+              aria-label="Buscar tarefas"
+              className="w-full pl-9 pr-9 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
               style={{ fontSize: "16px" }}
             />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => setSearchInput("")}
+                aria-label="Limpar busca"
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
-          {/* View toggle */}
+          {/* Alternância de visualização */}
           <div className="flex bg-surface-raised border border-border rounded-lg overflow-hidden">
             <button
+              type="button"
               onClick={() => setViewMode("list")}
+              aria-pressed={viewMode === "list"}
               className={cn(
                 "p-2 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center",
                 viewMode === "list"
@@ -328,7 +485,9 @@ export function TasksPage() {
               <List size={18} />
             </button>
             <button
+              type="button"
               onClick={() => setViewMode("board")}
+              aria-pressed={viewMode === "board"}
               className={cn(
                 "p-2 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center",
                 viewMode === "board"
@@ -341,7 +500,7 @@ export function TasksPage() {
             </button>
           </div>
 
-          {can("tasks", "edit_own") && (
+          {canEdit && (
             <Button
               variant="primary"
               size="md"
@@ -354,6 +513,35 @@ export function TasksPage() {
         </div>
       </div>
 
+      {/* Seletor de projetos */}
+      <ProjectSwitcher
+        projects={projects}
+        selectedProjectId={selectedProjectId}
+        onSelect={handleSelectProject}
+        canManage={canManageProjects}
+        onCreate={() => {
+          setProjectBeingEdited(null);
+          setProjectFormOpen(true);
+        }}
+        onEdit={(project) => {
+          setProjectBeingEdited(project);
+          setProjectFormOpen(true);
+        }}
+        onManageColumns={(project) => setColumnsProject(project)}
+        onArchive={(project) =>
+          setPendingProjectAction({ type: "archive", project })
+        }
+        onDelete={(project) =>
+          setPendingProjectAction({ type: "delete", project })
+        }
+      />
+
+      {selectedProject?.description && (
+        <p className="text-sm text-text-secondary">
+          {selectedProject.description}
+        </p>
+      )}
+
       {/* Smart list pills */}
       <div className="flex gap-2 overflow-x-auto pb-1">
         <SmartPill
@@ -363,7 +551,7 @@ export function TasksPage() {
         />
         <SmartPill
           label="Hoje"
-          count={taskCounts?.today}
+          count={taskCounts?.dueToday}
           active={smartFilter === "today"}
           onClick={() => setSmartFilter("today")}
         />
@@ -391,92 +579,26 @@ export function TasksPage() {
         />
       </div>
 
-      {/* Filter bar toggle */}
-      <button
-        onClick={() => setShowFilters(!showFilters)}
-        className="flex items-center gap-1 text-sm text-text-secondary hover:text-text-primary transition-colors"
-      >
-        <ChevronDown
-          size={16}
-          className={cn("transition-transform", showFilters && "rotate-180")}
-        />
-        Filtros
-        {(filterStatus || filterPriority || filterAssignee || filterActivityType) && (
-          <span className="ml-1 w-2 h-2 rounded-full bg-brand-500" />
-        )}
-      </button>
+      {/* Filtros + filtros salvos */}
+      <TaskFiltersBar
+        filters={filters}
+        onChange={setFilters}
+        teamMembers={teamMembers}
+        labels={labels}
+        projects={projects}
+        showProjectFilter={selectedProjectId === null}
+        trailing={
+          <SavedFiltersMenu
+            organizationId={organizationId}
+            currentFilters={currentSavedFilters}
+            onApply={applySavedFilters}
+          />
+        }
+      />
 
-      {showFilters && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-3 bg-surface-sunken rounded-card border border-border">
-          <div>
-            <label className="block text-xs font-medium text-text-muted mb-1">Status</label>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="w-full px-2 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="">Todos</option>
-              <option value="pending">Pendente</option>
-              <option value="in_progress">Em Progresso</option>
-              <option value="completed">Concluída</option>
-              <option value="cancelled">Cancelada</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-muted mb-1">Prioridade</label>
-            <select
-              value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value)}
-              className="w-full px-2 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="">Todas</option>
-              <option value="low">Baixa</option>
-              <option value="medium">Média</option>
-              <option value="high">Alta</option>
-              <option value="urgent">Urgente</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-muted mb-1">Responsável</label>
-            <select
-              value={filterAssignee}
-              onChange={(e) => setFilterAssignee(e.target.value)}
-              className="w-full px-2 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="">Todos</option>
-              {teamMembers?.map((m) => (
-                <option key={m._id} value={m._id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-text-muted mb-1">Tipo de Atividade</label>
-            <select
-              value={filterActivityType}
-              onChange={(e) => setFilterActivityType(e.target.value)}
-              className="w-full px-2 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="">Todos</option>
-              <option value="todo">Tarefa</option>
-              <option value="call">Ligação</option>
-              <option value="email">E-mail</option>
-              <option value="follow_up">Follow-up</option>
-              <option value="meeting">Reunião</option>
-              <option value="research">Pesquisa</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Bulk actions bar */}
-      {selectedTasks.size > 0 && can("tasks", "edit_own") && (
-        <div className="sticky top-0 z-10 flex items-center gap-3 p-3 bg-surface-overlay border border-border rounded-card animate-fade-in-up">
+      {/* Ações em massa */}
+      {selectedTasks.size > 0 && canEdit && (
+        <div className="sticky top-14 md:top-16 z-10 flex items-center gap-3 p-3 bg-surface-overlay border border-border rounded-card animate-fade-in-up">
           <span className="text-sm font-medium text-text-primary">
             {selectedTasks.size} selecionada{selectedTasks.size > 1 ? "s" : ""}
           </span>
@@ -485,32 +607,46 @@ export function TasksPage() {
             <CheckSquare size={14} />
             Concluir
           </Button>
-          <Button size="sm" variant="danger" onClick={() => setShowBulkDeleteConfirm(true)}>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => setShowBulkCancelConfirm(true)}
+          >
             <Trash2 size={14} />
             Cancelar
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => setSelectedTasks(new Set())}
-          >
+          <Button size="sm" variant="ghost" onClick={() => setSelectedTasks(new Set())}>
             Limpar
           </Button>
         </div>
       )}
 
-      {/* Content */}
-      {filteredTasks.length === 0 ? (
+      {/* Conteúdo */}
+      {tasks === undefined ? (
+        <div className="flex justify-center items-center h-64">
+          <Spinner size="lg" />
+        </div>
+      ) : isProjectBoard ? (
+        <TaskKanbanBoard
+          columns={columns}
+          tasks={filteredTasks}
+          onOpenDetail={openTaskDetail}
+          now={now}
+          canEdit={canEdit}
+        />
+      ) : filteredTasks.length === 0 ? (
         <EmptyState
           icon={CheckSquare}
           title="Nenhuma tarefa encontrada"
           description={
-            tasks.length === 0
-              ? "Crie sua primeira tarefa para organizar seu trabalho."
-              : "Tente ajustar os filtros ou a busca."
+            hasActiveQuery
+              ? "Tente ajustar os filtros ou a busca."
+              : selectedProject
+                ? `Nenhuma tarefa em ${selectedProject.name} ainda.`
+                : "Crie sua primeira tarefa para organizar seu trabalho."
           }
           action={
-            tasks.length === 0 && can("tasks", "edit_own")
+            !hasActiveQuery && canEdit
               ? { label: "Nova Tarefa", onClick: () => setShowCreateModal(true) }
               : undefined
           }
@@ -518,27 +654,28 @@ export function TasksPage() {
       ) : viewMode === "list" ? (
         <ListView
           groupedTasks={groupedTasks}
-          memberMap={memberMap}
+          projectMap={projectMap}
+          showProject={selectedProjectId === null}
           selectedTasks={selectedTasks}
           onToggleSelect={toggleSelectTask}
           onComplete={handleCompleteTask}
-          onOpenDetail={setSelectedTaskId}
+          onOpenDetail={openTaskDetail}
           now={now}
         />
       ) : (
-        <BoardView
-          tasks={filteredTasks as TaskItem[]}
-          memberMap={memberMap}
-          onOpenDetail={setSelectedTaskId}
+        <StatusBoardView
+          tasks={filteredTasks}
+          onOpenDetail={openTaskDetail}
           now={now}
         />
       )}
 
-      {/* Modals */}
+      {/* Modais */}
       <CreateTaskModal
         organizationId={organizationId}
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
+        defaultProjectId={selectedProjectId ?? undefined}
       />
 
       {selectedTaskId && (
@@ -546,14 +683,49 @@ export function TasksPage() {
           taskId={selectedTaskId}
           organizationId={organizationId}
           isOpen={true}
-          onClose={() => setSelectedTaskId(null)}
+          onClose={closeTaskDetail}
         />
       )}
 
+      <ProjectFormModal
+        open={projectFormOpen}
+        onClose={() => setProjectFormOpen(false)}
+        organizationId={organizationId}
+        project={projectBeingEdited}
+        onCreated={(projectId) => handleSelectProject(projectId)}
+      />
+
+      <ColumnsEditorModal
+        open={columnsProject !== null}
+        onClose={() => setColumnsProject(null)}
+        projectId={columnsProject?._id ?? null}
+        projectName={columnsProject?.name}
+      />
+
       <ConfirmDialog
-        open={showBulkDeleteConfirm}
-        onClose={() => setShowBulkDeleteConfirm(false)}
-        onConfirm={handleBulkDelete}
+        open={pendingProjectAction !== null}
+        onClose={() => setPendingProjectAction(null)}
+        onConfirm={handleConfirmProjectAction}
+        title={
+          pendingProjectAction?.type === "delete"
+            ? "Excluir projeto"
+            : "Arquivar projeto"
+        }
+        description={
+          pendingProjectAction?.type === "delete"
+            ? `Excluir “${pendingProjectAction.project.name}”? As tarefas continuam existindo, mas saem do projeto e do quadro.`
+            : `Arquivar “${pendingProjectAction?.project.name}”? Ele sai da lista de projetos, sem afetar as tarefas.`
+        }
+        confirmLabel={
+          pendingProjectAction?.type === "delete" ? "Excluir" : "Arquivar"
+        }
+        variant={pendingProjectAction?.type === "delete" ? "danger" : "default"}
+      />
+
+      <ConfirmDialog
+        open={showBulkCancelConfirm}
+        onClose={() => setShowBulkCancelConfirm(false)}
+        onConfirm={handleBulkCancel}
         title="Cancelar Tarefas"
         description={`Deseja cancelar ${selectedTasks.size} tarefa${selectedTasks.size > 1 ? "s" : ""}?`}
         confirmLabel="Cancelar Tarefas"
@@ -582,7 +754,9 @@ function SmartPill({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={cn(
         "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors min-h-[36px]",
         active
@@ -611,15 +785,23 @@ function SmartPill({
 
 function ListView({
   groupedTasks,
-  memberMap,
+  projectMap,
+  showProject,
   selectedTasks,
   onToggleSelect,
   onComplete,
   onOpenDetail,
   now,
 }: {
-  groupedTasks: { key: string; label: string; tasks: TaskItem[]; color?: string; defaultOpen: boolean }[];
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  groupedTasks: {
+    key: string;
+    label: string;
+    tasks: TaskListItem[];
+    color?: string;
+    defaultOpen: boolean;
+  }[];
+  projectMap: Map<string, { name: string; color?: string }>;
+  showProject: boolean;
   selectedTasks: Set<string>;
   onToggleSelect: (id: string) => void;
   onComplete: (id: Id<"tasks">) => void;
@@ -640,7 +822,11 @@ function ListView({
             <TaskRow
               key={task._id}
               task={task}
-              memberMap={memberMap}
+              project={
+                showProject && task.projectId
+                  ? projectMap.get(task.projectId)
+                  : undefined
+              }
               isSelected={selectedTasks.has(task._id)}
               onToggleSelect={() => onToggleSelect(task._id)}
               onComplete={() => onComplete(task._id)}
@@ -676,10 +862,16 @@ function TaskGroup({
   return (
     <div className="rounded-card border border-border bg-surface-raised overflow-hidden">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         className="w-full flex items-center gap-2 px-4 py-3 hover:bg-surface-overlay transition-colors"
       >
-        {open ? <ChevronDown size={16} className="text-text-muted" /> : <ChevronRight size={16} className="text-text-muted" />}
+        {open ? (
+          <ChevronDown size={16} className="text-text-muted" aria-hidden="true" />
+        ) : (
+          <ChevronRight size={16} className="text-text-muted" aria-hidden="true" />
+        )}
         <span className={cn("text-sm font-semibold", color || "text-text-primary")}>
           {label}
         </span>
@@ -698,15 +890,15 @@ function TaskGroup({
 
 function TaskRow({
   task,
-  memberMap,
+  project,
   isSelected,
   onToggleSelect,
   onComplete,
   onClick,
   now,
 }: {
-  task: TaskItem;
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  task: TaskListItem;
+  project?: { name: string; color?: string };
   isSelected: boolean;
   onToggleSelect: () => void;
   onComplete: () => void;
@@ -714,8 +906,9 @@ function TaskRow({
   now: number;
 }) {
   const isCompleted = task.status === "completed" || task.status === "cancelled";
-  const ActivityIcon = task.activityType ? ACTIVITY_ICONS[task.activityType] || ClipboardList : ClipboardList;
-  const assignee = task.assignedTo ? memberMap.get(task.assignedTo) : null;
+  const ActivityIcon = task.activityType
+    ? ACTIVITY_ICONS[task.activityType] || ClipboardList
+    : ClipboardList;
   const priorityBadge = PRIORITY_BADGE[task.priority];
   const checklistTotal = task.checklist?.length ?? 0;
   const checklistDone = task.checklist?.filter((c) => c.completed).length ?? 0;
@@ -727,16 +920,15 @@ function TaskRow({
         isSelected && "bg-brand-500/5"
       )}
     >
-      {/* Select checkbox */}
       <Checkbox
         checked={isSelected}
         onChange={onToggleSelect}
         containerClassName="shrink-0"
-        aria-label="Selecionar tarefa"
+        aria-label={`Selecionar tarefa ${task.title}`}
       />
 
-      {/* Complete checkbox */}
       <button
+        type="button"
         onClick={(e) => {
           e.stopPropagation();
           if (!isCompleted) onComplete();
@@ -751,19 +943,24 @@ function TaskRow({
       >
         {isCompleted && (
           <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-white">
-            <path d="M1 4L3.5 6.5L9 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <path
+              d="M1 4L3.5 6.5L9 1"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
           </svg>
         )}
       </button>
 
-      {/* Activity type icon */}
-      <ActivityIcon size={16} className="shrink-0 text-text-muted" />
+      <ActivityIcon
+        size={16}
+        className="shrink-0 text-text-muted"
+        aria-label={task.activityType ? ACTIVITY_LABELS[task.activityType] : "Tarefa"}
+      />
 
-      {/* Title + meta */}
-      <button
-        onClick={onClick}
-        className="flex-1 min-w-0 text-left"
-      >
+      <button type="button" onClick={onClick} className="flex-1 min-w-0 text-left">
         <span
           className={cn(
             "text-sm font-medium truncate block",
@@ -772,26 +969,41 @@ function TaskRow({
         >
           {task.title}
         </span>
+        {(task.labels?.length || project) && (
+          <span className="mt-1 flex items-center gap-2 flex-wrap">
+            {project && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
+                <span
+                  className="w-1.5 h-1.5 rounded-full"
+                  style={{ backgroundColor: project.color || "#71717A" }}
+                  aria-hidden="true"
+                />
+                {project.name}
+              </span>
+            )}
+            <TaskLabelChips labels={task.labels} />
+          </span>
+        )}
       </button>
 
-      {/* Checklist progress */}
       {checklistTotal > 0 && (
         <span className="hidden md:inline text-xs text-text-muted tabular-nums shrink-0">
           {checklistDone}/{checklistTotal}
         </span>
       )}
 
-      {/* Priority badge */}
-      <Badge variant={priorityBadge.variant} className="hidden md:inline-flex shrink-0 text-[10px]">
+      <Badge
+        variant={priorityBadge.variant}
+        className="hidden md:inline-flex shrink-0 text-[10px]"
+      >
         {priorityBadge.label}
       </Badge>
 
-      {/* Assignee */}
-      {assignee && (
-        <Avatar name={assignee.name} type={assignee.type} size="sm" className="hidden md:inline-flex shrink-0" />
-      )}
+      <TaskAssigneeStack
+        assignees={task.assignees}
+        className="hidden md:flex shrink-0"
+      />
 
-      {/* Due date */}
       {task.dueDate && (
         <span
           className={cn(
@@ -813,17 +1025,15 @@ function TaskRow({
 }
 
 // ============================================================================
-// Board View
+// StatusBoardView — quadro por status (visão "Todas as tarefas")
 // ============================================================================
 
-function BoardView({
+function StatusBoardView({
   tasks,
-  memberMap,
   onOpenDetail,
   now,
 }: {
-  tasks: TaskItem[];
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  tasks: TaskListItem[];
   onOpenDetail: (id: Id<"tasks">) => void;
   now: number;
 }) {
@@ -842,7 +1052,7 @@ function BoardView({
   ];
 
   const tasksByStatus = useMemo(() => {
-    const map: Record<string, TaskItem[]> = {
+    const map: Record<string, TaskListItem[]> = {
       pending: [],
       in_progress: [],
       completed: [],
@@ -869,10 +1079,7 @@ function BoardView({
     if (!task || task.status === newStatus) return;
 
     try {
-      await updateTask({
-        taskId,
-        status: newStatus,
-      });
+      await updateTask({ taskId, status: newStatus });
     } catch {
       toast.error("Falha ao mover tarefa");
     }
@@ -889,13 +1096,12 @@ function BoardView({
     >
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {columns.map((col) => (
-          <BoardColumn
+          <StatusColumn
             key={col.status}
             status={col.status}
             label={col.label}
             color={col.color}
             tasks={tasksByStatus[col.status] || []}
-            memberMap={memberMap}
             onOpenDetail={onOpenDetail}
             now={now}
           />
@@ -904,82 +1110,63 @@ function BoardView({
 
       <DragOverlay>
         {activeTask && (
-          <BoardCard
-            task={activeTask as TaskItem}
-            memberMap={memberMap}
-            onOpenDetail={() => {}}
-            now={now}
-            isDragging
-          />
+          <StatusCard task={activeTask} onOpenDetail={() => {}} now={now} isDragging />
         )}
       </DragOverlay>
     </DndContext>
   );
 }
 
-// ============================================================================
-// BoardColumn
-// ============================================================================
-
-function BoardColumn({
+function StatusColumn({
   status,
   label,
   color,
   tasks,
-  memberMap,
   onOpenDetail,
   now,
 }: {
   status: TaskStatus;
   label: string;
   color: string;
-  tasks: TaskItem[];
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  tasks: TaskListItem[];
   onOpenDetail: (id: Id<"tasks">) => void;
   now: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
   return (
-    <div
+    <section
       ref={setNodeRef}
       className={cn(
         "rounded-card border border-border bg-surface-sunken min-h-[200px] transition-colors",
         isOver && "border-brand-500 bg-brand-500/5"
       )}
     >
-      <div className="flex items-center gap-2 px-4 py-3 border-b border-border">
-        <div className={cn("w-2 h-2 rounded-full", color)} />
-        <span className="text-sm font-semibold text-text-primary">{label}</span>
+      <header className="flex items-center gap-2 px-4 py-3 border-b border-border">
+        <span className={cn("w-2 h-2 rounded-full", color)} aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-text-primary">{label}</h3>
         <span className="text-xs text-text-muted tabular-nums">{tasks.length}</span>
-      </div>
+      </header>
       <div className="p-2 space-y-2">
         {tasks.map((task) => (
-          <DraggableBoardCard
+          <DraggableStatusCard
             key={task._id}
             task={task}
-            memberMap={memberMap}
             onOpenDetail={onOpenDetail}
             now={now}
           />
         ))}
       </div>
-    </div>
+    </section>
   );
 }
 
-// ============================================================================
-// DraggableBoardCard
-// ============================================================================
-
-function DraggableBoardCard({
+function DraggableStatusCard({
   task,
-  memberMap,
   onOpenDetail,
   now,
 }: {
-  task: TaskItem;
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  task: TaskListItem;
   onOpenDetail: (id: Id<"tasks">) => void;
   now: number;
 }) {
@@ -988,51 +1175,60 @@ function DraggableBoardCard({
   });
 
   const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`, opacity: isDragging ? 0.5 : 1 }
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        opacity: isDragging ? 0.5 : 1,
+      }
     : undefined;
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <BoardCard task={task} memberMap={memberMap} onOpenDetail={onOpenDetail} now={now} />
+    <div ref={setNodeRef} style={style} {...attributes} tabIndex={-1} {...listeners}>
+      <StatusCard task={task} onOpenDetail={onOpenDetail} now={now} />
     </div>
   );
 }
 
-// ============================================================================
-// BoardCard
-// ============================================================================
-
-function BoardCard({
+function StatusCard({
   task,
-  memberMap,
   onOpenDetail,
   now,
   isDragging,
 }: {
-  task: TaskItem;
-  memberMap: Map<string, { name: string; type: "human" | "ai" }>;
+  task: TaskListItem;
   onOpenDetail: (id: Id<"tasks">) => void;
   now: number;
   isDragging?: boolean;
 }) {
-  const ActivityIcon = task.activityType ? ACTIVITY_ICONS[task.activityType] || ClipboardList : ClipboardList;
-  const assignee = task.assignedTo ? memberMap.get(task.assignedTo) : null;
+  const ActivityIcon = task.activityType
+    ? ACTIVITY_ICONS[task.activityType] || ClipboardList
+    : ClipboardList;
   const priorityBadge = PRIORITY_BADGE[task.priority];
   const checklistTotal = task.checklist?.length ?? 0;
   const checklistDone = task.checklist?.filter((c) => c.completed).length ?? 0;
 
   return (
     <button
+      type="button"
       onClick={() => onOpenDetail(task._id)}
       className={cn(
-        "w-full text-left p-3 rounded-lg bg-surface-raised border border-border hover:border-brand-500/50 transition-colors",
+        "w-full text-left p-3 rounded-lg bg-surface-raised border border-border transition-colors",
+        "hover:border-brand-500/50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-sunken",
         isDragging && "shadow-elevated"
       )}
     >
       <div className="flex items-start gap-2 mb-2">
-        <ActivityIcon size={14} className="text-text-muted mt-0.5 shrink-0" />
-        <span className="text-sm font-medium text-text-primary line-clamp-2">{task.title}</span>
+        <ActivityIcon
+          size={14}
+          className="text-text-muted mt-0.5 shrink-0"
+          aria-hidden="true"
+        />
+        <span className="text-sm font-medium text-text-primary line-clamp-2">
+          {task.title}
+        </span>
       </div>
+
+      <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
+
       <div className="flex items-center gap-2 flex-wrap">
         <Badge variant={priorityBadge.variant} className="text-[10px]">
           {priorityBadge.label}
@@ -1045,7 +1241,7 @@ function BoardCard({
         {task.dueDate && (
           <span
             className={cn(
-              "text-[10px] font-medium tabular-nums ml-auto",
+              "text-[10px] font-medium tabular-nums",
               task.dueDate < now && task.status !== "completed"
                 ? "text-semantic-error"
                 : "text-text-muted"
@@ -1054,12 +1250,8 @@ function BoardCard({
             {formatRelativeDate(task.dueDate, now)}
           </span>
         )}
+        <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />
       </div>
-      {assignee && (
-        <div className="mt-2 flex justify-end">
-          <Avatar name={assignee.name} type={assignee.type} size="sm" />
-        </div>
-      )}
     </button>
   );
 }
@@ -1076,22 +1268,4 @@ function isDueToday(dueDate: number): boolean {
     due.getMonth() === today.getMonth() &&
     due.getDate() === today.getDate()
   );
-}
-
-function formatRelativeDate(dueDate: number, now: number): string {
-  const due = new Date(dueDate);
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-
-  const diffMs = dueDay.getTime() - today.getTime();
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atrás`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanhã";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return due.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
 }

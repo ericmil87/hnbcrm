@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
 import { CopilotPanel } from "@/components/copilot/CopilotPanel";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 
@@ -32,7 +33,12 @@ export function AppShell({ onSignOut, organizationId, orgSelector, children }: A
 
       {/* Main content area */}
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
-        <div className="min-h-screen pb-20 md:pb-0">
+        {/* Header — sino de notificações (desktop e mobile) */}
+        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-end px-4 md:px-6 bg-surface-raised/95 backdrop-blur border-b border-border">
+          <NotificationBell organizationId={organizationId} />
+        </header>
+
+        <div className="min-h-[calc(100vh-3.5rem)] md:min-h-[calc(100vh-4rem)] pb-20 md:pb-0">
           <div className="p-4 md:p-6">
             {children}
           </div>

@@ -1564,13 +1564,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const { organizationId } = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const taskId = url.searchParams.get("id");
       if (!taskId) return errorResponse("Task ID required", 400);
 
       const task = await ctx.runQuery(internal.tasks.internalGetTask, {
         taskId: taskId as Id<"tasks">,
+        organizationId,
       });
 
       if (!task) return errorResponse("Task not found", 404);
@@ -1832,7 +1833,7 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const { organizationId } = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const taskId = url.searchParams.get("taskId");
       if (!taskId) return errorResponse("taskId required", 400);
@@ -1841,6 +1842,7 @@ http.route({
 
       const result = await ctx.runQuery(internal.taskComments.internalGetComments, {
         taskId: taskId as Id<"tasks">,
+        organizationId,
         limit,
         cursor,
       });
@@ -1926,13 +1928,14 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const { organizationId } = await authenticateApiKey(ctx, request);
       const url = new URL(request.url);
       const eventId = url.searchParams.get("id");
       if (!eventId) return errorResponse("Event ID required", 400);
 
       const event = await ctx.runQuery(internal.calendar.internalGetEvent, {
         eventId: eventId as Id<"calendarEvents">,
+        organizationId,
       });
 
       if (!event) return errorResponse("Event not found", 404);

@@ -2,32 +2,13 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
-
-const filtersValidator = v.object({
-  boardId: v.optional(v.id("boards")),
-  stageIds: v.optional(v.array(v.id("stages"))),
-  assignedTo: v.optional(v.id("teamMembers")),
-  priority: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent"))),
-  temperature: v.optional(v.union(v.literal("cold"), v.literal("warm"), v.literal("hot"))),
-  tags: v.optional(v.array(v.string())),
-  hasContact: v.optional(v.boolean()),
-  company: v.optional(v.string()),
-  minValue: v.optional(v.number()),
-  maxValue: v.optional(v.number()),
-  channel: v.optional(v.union(
-    v.literal("whatsapp"),
-    v.literal("telegram"),
-    v.literal("email"),
-    v.literal("webchat"),
-    v.literal("internal")
-  )),
-});
+import { savedViewFiltersValidator } from "./schema";
 
 // Get saved views for organization
 export const getSavedViews = query({
   args: {
     organizationId: v.id("organizations"),
-    entityType: v.union(v.literal("leads"), v.literal("contacts")),
+    entityType: v.union(v.literal("leads"), v.literal("contacts"), v.literal("tasks")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -52,8 +33,8 @@ export const createSavedView = mutation({
   args: {
     organizationId: v.id("organizations"),
     name: v.string(),
-    entityType: v.union(v.literal("leads"), v.literal("contacts")),
-    filters: filtersValidator,
+    entityType: v.union(v.literal("leads"), v.literal("contacts"), v.literal("tasks")),
+    filters: savedViewFiltersValidator,
     isShared: v.optional(v.boolean()),
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
@@ -101,7 +82,7 @@ export const updateSavedView = mutation({
   args: {
     viewId: v.id("savedViews"),
     name: v.optional(v.string()),
-    filters: v.optional(filtersValidator),
+    filters: v.optional(savedViewFiltersValidator),
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
     columns: v.optional(v.array(v.string())),

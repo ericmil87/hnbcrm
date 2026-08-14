@@ -2,6 +2,52 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 
+// Shared saved-view filters validator — single source of truth, reused by
+// convex/savedViews.ts arg validators (never duplicate this shape inline).
+// Lead/contact fields and task fields live in the same flat optional object;
+// entityType decides which subset a view actually uses.
+export const savedViewFiltersValidator = v.object({
+  boardId: v.optional(v.id("boards")),
+  stageIds: v.optional(v.array(v.id("stages"))),
+  assignedTo: v.optional(v.id("teamMembers")),
+  priority: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent"))),
+  temperature: v.optional(v.union(v.literal("cold"), v.literal("warm"), v.literal("hot"))),
+  tags: v.optional(v.array(v.string())),
+  hasContact: v.optional(v.boolean()),
+  company: v.optional(v.string()),
+  minValue: v.optional(v.number()),
+  maxValue: v.optional(v.number()),
+  channel: v.optional(v.union(
+    v.literal("whatsapp"),
+    v.literal("telegram"),
+    v.literal("email"),
+    v.literal("webchat"),
+    v.literal("internal")
+  )),
+  // P1 — filtros de tarefas (entityType "tasks"); todos opcionais para
+  // não afetar views de leads existentes
+  statuses: v.optional(v.array(v.union(
+    v.literal("pending"), v.literal("in_progress"),
+    v.literal("completed"), v.literal("cancelled")
+  ))),
+  priorities: v.optional(v.array(v.union(
+    v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent")
+  ))),
+  taskType: v.optional(v.union(v.literal("task"), v.literal("reminder"))),
+  activityType: v.optional(v.union(
+    v.literal("todo"), v.literal("call"), v.literal("email"),
+    v.literal("follow_up"), v.literal("meeting"), v.literal("research")
+  )),
+  projectId: v.optional(v.id("taskProjects")),
+  labelIds: v.optional(v.array(v.id("taskLabels"))),
+  assigneeIds: v.optional(v.array(v.id("teamMembers"))),
+  dueFilter: v.optional(v.union(
+    v.literal("overdue"), v.literal("today"), v.literal("week"),
+    v.literal("month"), v.literal("none")
+  )),
+});
+
+
 // Shared permissions validator — used by teamMembers and apiKeys
 const permissionsValidator = v.object({
   leads: v.union(v.literal("none"), v.literal("view_own"), v.literal("view_all"), v.literal("edit_own"), v.literal("edit_all"), v.literal("full")),
@@ -702,7 +748,30 @@ const applicationTables = {
       endDate: v.optional(v.number()),
       lastGeneratedAt: v.optional(v.number()),
     })),
+    // Subtask hierarchy (parent of THIS task). Historically this held recurrence
+    // lineage; that moved to recurrenceSourceId (see migrateTasksP1).
     parentTaskId: v.optional(v.id("tasks")),
+    // Previous instance in a recurrence chain (lineage only, not hierarchy)
+    recurrenceSourceId: v.optional(v.id("tasks")),
+
+    // Projects & Kanban (P1)
+    projectId: v.optional(v.id("taskProjects")),
+    columnId: v.optional(v.id("taskColumns")),
+    order: v.optional(v.number()),
+
+    // Labels with color (P1) — legacy free-form `tags` kept below
+    labelIds: v.optional(v.array(v.id("taskLabels"))),
+
+    // Multi-assignee (P1). `assignedTo` stays as the primary assignee mirror
+    // (= assigneeIds[0]) so existing indexes/API/MCP keep working.
+    assigneeIds: v.optional(v.array(v.id("teamMembers"))),
+
+    // Dependencies (P1) — informational, completion is not blocked server-side
+    blockedBy: v.optional(v.array(v.id("tasks"))),
+
+    // Relative reminder (P1): fire N minutes before dueDate
+    reminderMinutesBefore: v.optional(v.number()),
+    preDueReminderSentAt: v.optional(v.number()),
 
     // Checklist (embedded subtasks)
     checklist: v.optional(v.array(v.object({
@@ -731,6 +800,11 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_assigned_to", ["assignedTo"])
     .index("by_parent_task", ["parentTaskId"])
+    .index("by_recurrence_source", ["recurrenceSourceId"])
+    .index("by_organization_and_project", ["organizationId", "projectId"])
+    .index("by_column", ["columnId"])
+    .index("by_column_and_order", ["columnId", "order"])
+    .index("by_project_and_status", ["projectId", "status"])
     .searchIndex("search_tasks", { searchField: "searchText", filterFields: ["organizationId"] }),
 
   // Task Comments
@@ -746,6 +820,65 @@ const applicationTables = {
   })
     .index("by_task", ["taskId"])
     .index("by_task_and_created", ["taskId", "createdAt"])
+    .index("by_organization", ["organizationId"]),
+
+  // Task Projects (P1) — listas/projetos de tarefas, um nível, sem hierarquia
+  taskProjects: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    color: v.optional(v.string()),
+    order: v.number(),
+    archivedAt: v.optional(v.number()),
+    createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Task Columns (P1) — colunas do kanban, por projeto
+  taskColumns: defineTable({
+    organizationId: v.id("organizations"),
+    projectId: v.id("taskProjects"),
+    name: v.string(),
+    order: v.number(),
+    color: v.optional(v.string()),
+    isDoneColumn: v.optional(v.boolean()),
+    wipLimit: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_and_order", ["projectId", "order"])
+    .index("by_organization", ["organizationId"]),
+
+  // Task Labels (P1) — labels org-wide com cor (tasks.labelIds)
+  taskLabels: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    color: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // In-app Notifications (P1) — sino no AppShell
+  notifications: defineTable({
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    type: v.union(
+      v.literal("task_assigned"),
+      v.literal("task_comment_mention"),
+      v.literal("task_due_soon"),
+      v.literal("task_overdue")
+    ),
+    title: v.string(),
+    body: v.optional(v.string()),
+    taskId: v.optional(v.id("tasks")),
+    actorId: v.optional(v.id("teamMembers")),
+    readAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_member_and_created", ["memberId", "createdAt"])
+    .index("by_member_and_read", ["memberId", "readAt"])
     .index("by_organization", ["organizationId"]),
 
   // Calendar Events
@@ -799,25 +932,7 @@ const applicationTables = {
     name: v.string(),
     entityType: v.union(v.literal("leads"), v.literal("contacts"), v.literal("tasks")),
     isShared: v.boolean(),
-    filters: v.object({
-      boardId: v.optional(v.id("boards")),
-      stageIds: v.optional(v.array(v.id("stages"))),
-      assignedTo: v.optional(v.id("teamMembers")),
-      priority: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent"))),
-      temperature: v.optional(v.union(v.literal("cold"), v.literal("warm"), v.literal("hot"))),
-      tags: v.optional(v.array(v.string())),
-      hasContact: v.optional(v.boolean()),
-      company: v.optional(v.string()),
-      minValue: v.optional(v.number()),
-      maxValue: v.optional(v.number()),
-      channel: v.optional(v.union(
-        v.literal("whatsapp"),
-        v.literal("telegram"),
-        v.literal("email"),
-        v.literal("webchat"),
-        v.literal("internal")
-      )),
-    }),
+    filters: savedViewFiltersValidator,
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.union(v.literal("asc"), v.literal("desc"))),
     columns: v.optional(v.array(v.string())),
@@ -855,6 +970,9 @@ const applicationTables = {
     leadAssigned: v.boolean(),
     newMessage: v.boolean(),
     dailyDigest: v.boolean(),
+    // P1 — opcionais (linhas existentes continuam válidas; ausente = habilitado)
+    taskCommentMention: v.optional(v.boolean()),
+    taskDueSoon: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

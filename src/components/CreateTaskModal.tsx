@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { LabelPicker } from "@/components/tasks/LabelPicker";
+import { AssigneesPicker } from "@/components/tasks/AssigneesPicker";
+import { ReminderSelect } from "@/components/tasks/ReminderSelect";
 import { cn } from "@/lib/utils";
 import {
   Plus,
@@ -47,6 +50,8 @@ interface CreateTaskModalProps {
   onClose: () => void;
   defaultLeadId?: Id<"leads">;
   defaultContactId?: Id<"contacts">;
+  /** Projeto pré-selecionado (ex.: aberto a partir de uma coluna do kanban). */
+  defaultProjectId?: Id<"taskProjects">;
 }
 
 export function CreateTaskModal({
@@ -55,6 +60,7 @@ export function CreateTaskModal({
   onClose,
   defaultLeadId,
   defaultContactId,
+  defaultProjectId,
 }: CreateTaskModalProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -63,7 +69,10 @@ export function CreateTaskModal({
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [priority, setPriority] = useState<"low" | "medium" | "high" | "urgent">("medium");
-  const [assignedTo, setAssignedTo] = useState("");
+  const [projectId, setProjectId] = useState<string>(defaultProjectId ?? "");
+  const [assigneeIds, setAssigneeIds] = useState<Id<"teamMembers">[]>([]);
+  const [labelIds, setLabelIds] = useState<Id<"taskLabels">[]>([]);
+  const [reminderMinutesBefore, setReminderMinutesBefore] = useState<number | undefined>(undefined);
   const [leadId, setLeadId] = useState<string>(defaultLeadId ?? "");
   const [contactId, setContactId] = useState<string>(defaultContactId ?? "");
   const [recurrence, setRecurrence] = useState("");
@@ -74,8 +83,8 @@ export function CreateTaskModal({
   const [submitting, setSubmitting] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
 
-  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
   const contacts = useQuery(api.contacts.getContacts, { organizationId });
+  const projects = useQuery(api.taskProjects.getProjects, { organizationId });
   const createTask = useMutation(api.tasks.createTask);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -98,7 +107,10 @@ export function CreateTaskModal({
         activityType: activityType as "todo" | "call" | "email" | "follow_up" | "meeting" | "research",
         dueDate: dueDateTs,
         priority,
-        assignedTo: assignedTo ? (assignedTo as Id<"teamMembers">) : undefined,
+        projectId: projectId ? (projectId as Id<"taskProjects">) : undefined,
+        assigneeIds: assigneeIds.length > 0 ? assigneeIds : undefined,
+        labelIds: labelIds.length > 0 ? labelIds : undefined,
+        reminderMinutesBefore: dueDateTs ? reminderMinutesBefore : undefined,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
         contactId: contactId ? (contactId as Id<"contacts">) : undefined,
         recurrence: recurrence
@@ -126,7 +138,10 @@ export function CreateTaskModal({
     setDueDate("");
     setDueTime("");
     setPriority("medium");
-    setAssignedTo("");
+    setProjectId(defaultProjectId ?? "");
+    setAssigneeIds([]);
+    setLabelIds([]);
+    setReminderMinutesBefore(undefined);
     setLeadId(defaultLeadId ?? "");
     setContactId(defaultContactId ?? "");
     setRecurrence("");
@@ -134,7 +149,17 @@ export function CreateTaskModal({
     setNewChecklistItem("");
     setTags([]);
     setTagInput("");
+    setLeadSearch("");
   };
+
+  // Reseta o formulário sempre que o modal é (re)aberto — sem isso, fechar
+  // (Esc/backdrop) sem enviar e reabrir mantinha o rascunho anterior.
+  useEffect(() => {
+    if (isOpen) {
+      resetForm();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, defaultLeadId, defaultContactId, defaultProjectId]);
 
   const addChecklistItem = () => {
     if (!newChecklistItem.trim()) return;
@@ -245,6 +270,26 @@ export function CreateTaskModal({
           </select>
         </div>
 
+        {/* Project */}
+        <div>
+          <label className="block text-[13px] font-medium text-text-secondary mb-1">
+            Projeto
+          </label>
+          <select
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+            style={{ fontSize: "16px" }}
+          >
+            <option value="">Sem projeto</option>
+            {projects?.map((p) => (
+              <option key={p._id} value={p._id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* Due date + time */}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -273,6 +318,18 @@ export function CreateTaskModal({
           </div>
         </div>
 
+        {/* Reminder */}
+        <div>
+          <label className="block text-[13px] font-medium text-text-secondary mb-1">
+            Lembrete antecipado
+          </label>
+          <ReminderSelect
+            value={reminderMinutesBefore}
+            onChange={setReminderMinutesBefore}
+            disabled={!dueDate}
+          />
+        </div>
+
         {/* Priority pill selector */}
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
@@ -297,24 +354,24 @@ export function CreateTaskModal({
           </div>
         </div>
 
-        {/* Assignee */}
+        {/* Assignees */}
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
-            Responsável
+            Responsáveis
           </label>
-          <select
-            value={assignedTo}
-            onChange={(e) => setAssignedTo(e.target.value)}
-            className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
-            style={{ fontSize: "16px" }}
-          >
-            <option value="">Sem responsável</option>
-            {teamMembers?.map((member) => (
-              <option key={member._id} value={member._id}>
-                {member.name} ({member.role})
-              </option>
-            ))}
-          </select>
+          <AssigneesPicker
+            organizationId={organizationId}
+            selectedIds={assigneeIds}
+            onChange={setAssigneeIds}
+          />
+        </div>
+
+        {/* Labels */}
+        <div>
+          <label className="block text-[13px] font-medium text-text-secondary mb-1">
+            Etiquetas
+          </label>
+          <LabelPicker organizationId={organizationId} selectedIds={labelIds} onChange={setLabelIds} />
         </div>
 
         {/* Contact */}

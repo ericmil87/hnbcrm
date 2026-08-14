@@ -1988,7 +1988,8 @@ export const OPENAPI_SPEC = `{
           "snoozedUntil": { "type": "number", "description": "Adiada até (timestamp ms)" },
           "leadId": { "type": "string", "description": "ID do lead associado" },
           "contactId": { "type": "string", "description": "ID do contato associado" },
-          "assignedTo": { "type": "string", "description": "ID do membro responsável" },
+          "assignedTo": { "type": "string", "description": "ID do membro responsável (sempre = assigneeIds[0])" },
+          "assigneeIds": { "type": "array", "items": { "type": "string" }, "description": "IDs de todos os responsáveis, humanos ou IA" },
           "createdBy": { "type": "string", "description": "ID do criador" },
           "recurrence": {
             "type": "object",
@@ -1997,6 +1998,15 @@ export const OPENAPI_SPEC = `{
               "endDate": { "type": "number" }
             }
           },
+          "recurrenceSourceId": { "type": "string", "description": "Instância anterior na cadeia de recorrência (linhagem)" },
+          "parentTaskId": { "type": "string", "description": "Tarefa pai — hierarquia de subtarefas" },
+          "blockedBy": { "type": "array", "items": { "type": "string" }, "description": "IDs de tarefas bloqueadoras — apenas informativo, não bloqueia conclusão" },
+          "projectId": { "type": "string", "description": "ID do projeto/lista de tarefas" },
+          "columnId": { "type": "string", "description": "ID da coluna do kanban dentro do projeto" },
+          "order": { "type": "number", "description": "Posição manual dentro da coluna" },
+          "labelIds": { "type": "array", "items": { "type": "string" }, "description": "IDs das etiquetas com cor" },
+          "reminderMinutesBefore": { "type": "number", "description": "Minutos antes do vencimento para disparar lembrete antecipado" },
+          "preDueReminderSentAt": { "type": "number", "description": "Timestamp em que o lembrete antecipado foi enviado (uso interno)" },
           "checklist": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "completed": { "type": "boolean" } } } },
           "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags" }
         }

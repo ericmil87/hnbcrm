@@ -218,6 +218,69 @@ export function buildTaskAssignedTemplate(data: {
   };
 }
 
+export function buildTaskCommentMentionTemplate(data: {
+  authorName: string;
+  taskTitle: string;
+  taskId?: string;
+  taskUrl?: string;
+  commentExcerpt?: string;
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || "https://app.hnbcrm.com.br";
+  const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
+  const excerptBlock = data.commentExcerpt
+    ? `<div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
+        <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${data.commentExcerpt}"</p>
+      </div>`
+    : "";
+  return {
+    subject: `${data.authorName} mencionou você em um comentário`,
+    html: baseTemplate({
+      preheader: `${data.authorName} mencionou você em um comentário na tarefa "${data.taskTitle}".`,
+      appUrl,
+      content: `
+        ${heading("Você foi mencionado")}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${data.authorName}</strong> mencionou você em um comentário na tarefa <strong style="color: ${TEXT_PRIMARY};">${data.taskTitle}</strong>.`)}
+        ${excerptBlock}
+        ${ctaButton("Ver Tarefa", taskUrl)}
+      `,
+    }),
+  };
+}
+
+export function buildTaskDueSoonTemplate(data: {
+  taskTitle: string;
+  taskId?: string;
+  taskUrl?: string;
+  dueDate: string;
+  minutesBefore?: number;
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || "https://app.hnbcrm.com.br";
+  const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
+  const leadTime = data.minutesBefore
+    ? data.minutesBefore >= 60
+      ? `${Math.round(data.minutesBefore / 60)} h`
+      : `${data.minutesBefore} min`
+    : undefined;
+  return {
+    subject: `Tarefa vence em breve: ${data.taskTitle}`,
+    html: baseTemplate({
+      preheader: `A tarefa "${data.taskTitle}" vence em ${data.dueDate}.`,
+      appUrl,
+      content: `
+        ${heading("Tarefa Vencendo em Breve")}
+        ${paragraph(`A tarefa <strong style="color: ${TEXT_PRIMARY};">${data.taskTitle}</strong> vence em breve${leadTime ? ` (lembrete de ${leadTime} antes)` : ""}.`)}
+        ${infoTable(`
+          ${infoRow("Tarefa", data.taskTitle)}
+          ${infoRow("Vencimento", data.dueDate)}
+        `)}
+        ${ctaButton("Ver Tarefa", taskUrl)}
+      `,
+    }),
+  };
+}
+
 export function buildLeadAssignedTemplate(data: {
   leadTitle: string;
   value?: string;
@@ -426,6 +489,10 @@ export function buildTemplate(
       return buildTaskOverdueTemplate(data as any);
     case "taskAssigned":
       return buildTaskAssignedTemplate(data as any);
+    case "taskCommentMention":
+      return buildTaskCommentMentionTemplate(data as any);
+    case "taskDueSoon":
+      return buildTaskDueSoonTemplate(data as any);
     case "leadAssigned":
       return buildLeadAssignedTemplate(data as any);
     case "newMessage":
