@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useMemo } from "react";
+import { useNavigate } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -21,6 +22,7 @@ import {
   STATUS_LABELS,
 } from "@/components/tasks/TaskKanbanBoard";
 import { cn } from "@/lib/utils";
+import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
 import {
   Check,
@@ -35,6 +37,9 @@ import {
   ArrowLeft,
   CornerUpLeft,
   Link2,
+  Target,
+  MessageSquare,
+  User,
 } from "lucide-react";
 
 // ============================================================================
@@ -106,6 +111,8 @@ export function TaskDetailSlideOver({
   isOpen,
   onClose,
 }: TaskDetailSlideOverProps) {
+  const navigate = useNavigate();
+
   // Navegação interna: permite abrir uma subtarefa (ou subir para a task-pai)
   // sem sair do slide-over. `activeTaskId` é a task exibida agora;
   // `navStack` guarda o histórico para o botão "voltar".
@@ -162,6 +169,24 @@ export function TaskDetailSlideOver({
     api.tasks.getTask,
     task?.parentTaskId ? { taskId: task.parentTaskId } : "skip"
   );
+  // Leads da org para vincular/trocar o lead da tarefa (mesmo padrão do
+  // select de contato do CreateTaskModal).
+  const leadOptions = useQuery(api.leads.getLeads, { organizationId, limit: 200 }) as
+    | { _id: Id<"leads">; title: string }[]
+    | undefined;
+  // Conversa do lead: alimenta o atalho "Conversa" (abre a Caixa de Entrada
+  // já na conversa certa). Só a mais recente interessa.
+  const leadConversations = useQuery(
+    api.conversations.getConversations,
+    task?.leadId ? { organizationId, leadId: task.leadId, limit: 20 } : "skip"
+  ) as { _id: Id<"conversations">; lastMessageAt?: number; updatedAt?: number }[] | undefined;
+  const leadConversationId = useMemo(() => {
+    if (!leadConversations || leadConversations.length === 0) return null;
+    const sorted = [...leadConversations].sort(
+      (a, b) => (b.lastMessageAt ?? b.updatedAt ?? 0) - (a.lastMessageAt ?? a.updatedAt ?? 0)
+    );
+    return sorted[0]._id;
+  }, [leadConversations]);
 
   const updateTask = useMutation(api.tasks.updateTask);
   const completeTask = useMutation(api.tasks.completeTask);
@@ -225,6 +250,10 @@ export function TaskDetailSlideOver({
   }
 
   const isCompleted = task.status === "completed" || task.status === "cancelled";
+  const linkedLead = task.lead as { _id: Id<"leads">; title: string } | null;
+  const linkedContact = task.contact as
+    | { firstName?: string; lastName?: string; email?: string }
+    | null;
   const ActivityIcon = task.activityType ? ACTIVITY_ICONS[task.activityType] || ClipboardList : ClipboardList;
   const priorityBadge = PRIORITY_BADGE[task.priority];
   const creator = memberMap.get(task.createdBy);
@@ -348,6 +377,19 @@ export function TaskDetailSlideOver({
       });
     } catch {
       toast.error("Falha ao mover de projeto");
+    }
+  };
+
+  // `updateTask` só aceita um id de lead (sem `null`), então o vínculo pode ser
+  const handleLeadChange = async (value: string) => {
+    try {
+      await updateTask({
+        taskId: activeTaskId,
+        leadId: value ? (value as Id<"leads">) : null,
+      });
+      toast.success(value ? "Lead vinculado à tarefa" : "Vínculo com o lead removido");
+    } catch {
+      toast.error("Falha ao atualizar o vínculo com o lead");
     }
   };
 
@@ -817,6 +859,71 @@ export function TaskDetailSlideOver({
                   </option>
                 ))}
               </select>
+            </FieldRow>
+          )}
+
+          {/* Lead vinculado + atalhos para o funil e a conversa */}
+          <div className="space-y-2">
+            <FieldRow label="Lead">
+              <select
+                value={task.leadId ?? ""}
+                onChange={(e) => handleLeadChange(e.target.value)}
+                aria-label="Lead vinculado à tarefa"
+                className="max-w-[14rem] px-2 py-1 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                style={{ fontSize: "16px" }}
+              >
+                <option value="">Sem lead</option>
+                {linkedLead && !leadOptions?.some((l) => l._id === linkedLead._id) && (
+                  <option value={linkedLead._id}>{linkedLead.title}</option>
+                )}
+                {leadOptions?.map((l) => (
+                  <option key={l._id} value={l._id}>
+                    {l.title}
+                  </option>
+                ))}
+              </select>
+            </FieldRow>
+
+            {task.leadId && (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-11 max-w-full"
+                  onClick={() => navigate(`${TAB_ROUTES.board}?lead=${task.leadId}`)}
+                  aria-label={`Abrir o lead ${linkedLead?.title ?? ""} no funil`}
+                  title={linkedLead?.title}
+                >
+                  <Target size={14} className="shrink-0" aria-hidden="true" />
+                  <span className="truncate">{linkedLead?.title ?? "Ver no funil"}</span>
+                </Button>
+                {leadConversationId && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-11"
+                    onClick={() =>
+                      navigate(`${TAB_ROUTES.inbox}?conversation=${leadConversationId}`)
+                    }
+                    aria-label="Abrir a conversa deste lead"
+                  >
+                    <MessageSquare size={14} aria-hidden="true" />
+                    Conversa
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Contato (sem rota própria por URL — só exibe o nome) */}
+          {linkedContact && (
+            <FieldRow label="Contato">
+              <span className="flex items-center gap-1.5 text-sm text-text-primary truncate">
+                <User size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
+                {[linkedContact.firstName, linkedContact.lastName].filter(Boolean).join(" ") ||
+                  linkedContact.email ||
+                  "Sem nome"}
+              </span>
             </FieldRow>
           )}
 

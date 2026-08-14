@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import { TAB_ROUTES } from "@/lib/routes";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import {
@@ -31,6 +33,8 @@ import {
   Mail,
   Microscope,
   Phone,
+  Target,
+  User,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -56,6 +60,19 @@ export interface TaskAssigneeRef {
   type: "human" | "ai";
 }
 
+/** Vínculos que o backend já devolve enriquecidos em cada task. */
+export interface TaskLeadRef {
+  _id: Id<"leads">;
+  title: string;
+}
+
+export interface TaskContactRef {
+  _id: Id<"contacts">;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+
 export interface TaskListItem {
   _id: Id<"tasks">;
   title: string;
@@ -77,6 +94,8 @@ export interface TaskListItem {
   order?: number;
   leadId?: Id<"leads">;
   contactId?: Id<"contacts">;
+  lead?: TaskLeadRef | null;
+  contact?: TaskContactRef | null;
   createdBy: Id<"teamMembers">;
   checklist?: { id: string; title: string; completed: boolean }[];
   tags?: string[];
@@ -156,6 +175,67 @@ export function formatRelativeDate(dueDate: number, now: number): string {
 // ============================================================================
 // Primitivas de card (usadas no kanban e na lista)
 // ============================================================================
+
+/**
+ * Chip do vínculo da tarefa: leva ao lead no funil (`?lead=`, que abre o painel
+ * do lead). Sem lead, mostra só o nome do contato — contatos não têm rota
+ * própria por URL.
+ */
+export function TaskLeadChip({
+  lead,
+  contact,
+  className,
+}: {
+  lead?: TaskLeadRef | null;
+  contact?: TaskContactRef | null;
+  className?: string;
+}) {
+  const navigate = useNavigate();
+
+  if (lead) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          navigate(`${TAB_ROUTES.board}?lead=${lead._id}`);
+        }}
+        title={lead.title}
+        aria-label={`Abrir o lead ${lead.title} no funil`}
+        className={cn(
+          "inline-flex items-center gap-1 max-w-[140px] min-h-[24px] px-1.5 -mx-1.5 rounded-full",
+          "text-[10px] text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+          "focus:outline-none focus:ring-2 focus:ring-brand-500",
+          className
+        )}
+      >
+        <Target size={11} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{lead.title}</span>
+      </button>
+    );
+  }
+
+  if (contact) {
+    const name =
+      [contact.firstName, contact.lastName].filter(Boolean).join(" ") ||
+      contact.email ||
+      "Sem nome";
+    return (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 max-w-[140px] text-[10px] text-text-muted",
+          className
+        )}
+        title={name}
+      >
+        <User size={11} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{name}</span>
+      </span>
+    );
+  }
+
+  return null;
+}
 
 export function TaskLabelChips({
   labels,
@@ -609,59 +689,72 @@ export function TaskCard({
   const checklistDone = task.checklist?.filter((c) => c.completed).length ?? 0;
   const isClosed = task.status === "completed" || task.status === "cancelled";
 
+  // O card é um <div> com um botão que cobre o conteúdo não-interativo; o chip
+  // do lead fica fora dele (um <button> não pode conter outro).
   return (
-    <button
-      type="button"
-      onClick={() => onOpenDetail(task._id)}
+    <div
       className={cn(
         "w-full text-left p-3 rounded-lg bg-surface-raised border border-border transition-colors",
-        "hover:border-brand-500/50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-sunken",
+        "hover:border-brand-500/50 focus-within:border-brand-500/50",
         isDragging && "shadow-elevated border-brand-500/50"
       )}
     >
-      <div className="flex items-start gap-2 mb-2">
-        <ActivityIcon
-          size={14}
-          className="text-text-muted mt-0.5 shrink-0"
-          aria-label={
-            task.activityType ? ACTIVITY_LABELS[task.activityType] : "Tarefa"
-          }
-        />
-        <span
-          className={cn(
-            "text-sm font-medium line-clamp-2",
-            isClosed ? "text-text-muted line-through" : "text-text-primary"
-          )}
-        >
-          {task.title}
-        </span>
-      </div>
-
-      <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <Badge variant={priorityBadge.variant} className="text-[10px]">
-          {priorityBadge.label}
-        </Badge>
-        {checklistTotal > 0 && (
-          <span className="text-[10px] text-text-muted tabular-nums">
-            {checklistDone}/{checklistTotal}
-          </span>
-        )}
-        {task.dueDate && (
+      <button
+        type="button"
+        onClick={() => onOpenDetail(task._id)}
+        aria-label={`Abrir tarefa ${task.title}`}
+        className="w-full text-left rounded focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-sunken"
+      >
+        <div className="flex items-start gap-2 mb-2">
+          <ActivityIcon
+            size={14}
+            className="text-text-muted mt-0.5 shrink-0"
+            aria-label={
+              task.activityType ? ACTIVITY_LABELS[task.activityType] : "Tarefa"
+            }
+          />
           <span
             className={cn(
-              "text-[10px] font-medium tabular-nums",
-              task.dueDate < now && !isClosed
-                ? "text-semantic-error"
-                : "text-text-muted"
+              "text-sm font-medium line-clamp-2",
+              isClosed ? "text-text-muted line-through" : "text-text-primary"
             )}
           >
-            {formatRelativeDate(task.dueDate, now)}
+            {task.title}
           </span>
-        )}
-        <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />
-      </div>
-    </button>
+        </div>
+
+        <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant={priorityBadge.variant} className="text-[10px]">
+            {priorityBadge.label}
+          </Badge>
+          {checklistTotal > 0 && (
+            <span className="text-[10px] text-text-muted tabular-nums">
+              {checklistDone}/{checklistTotal}
+            </span>
+          )}
+          {task.dueDate && (
+            <span
+              className={cn(
+                "text-[10px] font-medium tabular-nums",
+                task.dueDate < now && !isClosed
+                  ? "text-semantic-error"
+                  : "text-text-muted"
+              )}
+            >
+              {formatRelativeDate(task.dueDate, now)}
+            </span>
+          )}
+          <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />
+        </div>
+      </button>
+
+      {(task.lead || task.contact) && (
+        <div className="mt-2 flex">
+          <TaskLeadChip lead={task.lead} contact={task.contact} />
+        </div>
+      )}
+    </div>
   );
 }

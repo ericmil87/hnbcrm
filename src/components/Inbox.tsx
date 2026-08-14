@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutletContext, useNavigate } from "react-router";
+import { useOutletContext, useNavigate, useSearchParams } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -69,6 +69,8 @@ function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing
 export function Inbox() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const conversationParam = searchParams.get("conversation");
   const { can, member } = usePermissions(organizationId);
   const currentMemberId = member?._id ?? null;
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
@@ -310,7 +312,12 @@ export function Inbox() {
   const funnelLine = leadBoardId ? (
     <button
       type="button"
-      onClick={() => navigate(`${TAB_ROUTES.board}?board=${leadBoardId}`)}
+      onClick={() =>
+        navigate(
+          `${TAB_ROUTES.board}?board=${leadBoardId}` +
+            (currentConversation?.leadId ? `&lead=${currentConversation.leadId}` : "")
+        )
+      }
       className="block text-left text-xs text-text-muted hover:text-brand-500 transition-colors truncate"
     >
       Funil: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
@@ -520,6 +527,20 @@ export function Inbox() {
     lastReadSigRef.current = null;
   };
 
+  // A conversa aberta vive na URL (`?conversation=`), para dar/receber
+  // deep-link de outras telas (detalhe da tarefa, painel do lead).
+  const syncConversationParam = (conversationId: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (conversationId) next.set("conversation", conversationId);
+        else next.delete("conversation");
+        return next;
+      },
+      { replace: true }
+    );
+  };
+
   const handleSelectConversation = (conversationId: string) => {
     stopTyping();
     setSelectedConversation(conversationId);
@@ -529,13 +550,28 @@ export function Inbox() {
     setNewMessage("");
     setRecorderActive(false);
     lastReadSigRef.current = null;
+    syncConversationParam(conversationId);
   };
 
   const handleBackToList = () => {
     resetConversationState();
     setShowMessages(false);
     setSelectedConversation(null);
+    syncConversationParam(null);
   };
+
+  // URL → estado. Um id que não está na lista da org (inválido, de outra org
+  // ou arquivado) é ignorado em silêncio e sai da URL.
+  useEffect(() => {
+    if (!conversationParam || conversationParam === selectedConversation) return;
+    if (conversations === undefined) return;
+    if (validConversations.some((c) => c._id === conversationParam)) {
+      handleSelectConversation(conversationParam);
+    } else {
+      syncConversationParam(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationParam, conversations, selectedConversation]);
 
   // ── Seleção múltipla: arquivar/etiquetar em lote ──
 

@@ -1619,6 +1619,7 @@ function TasksTab({
   leadId: Id<"leads">;
   organizationId: Id<"organizations">;
 }) {
+  const navigate = useNavigate();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const leadTasks = useQuery(api.tasks.getTasksByLead, { leadId });
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
@@ -1681,7 +1682,7 @@ function TasksTab({
             return (
               <div
                 key={task._id}
-                className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-surface-sunken transition-colors"
+                className="flex items-center gap-2 px-2 rounded-lg hover:bg-surface-sunken transition-colors"
               >
                 {/* Complete checkbox */}
                 <button
@@ -1703,33 +1704,42 @@ function TasksTab({
                   )}
                 </button>
 
-                <ActivityIcon size={14} className="shrink-0 text-text-muted" />
-
-                <span
-                  className={cn(
-                    "flex-1 text-sm truncate",
-                    isCompleted ? "text-text-muted line-through" : "text-text-primary"
-                  )}
+                {/* A linha inteira abre o detalhe completo em Tarefas; voltar
+                    no browser traz de volta para este painel (`?lead=`). */}
+                <button
+                  type="button"
+                  onClick={() => navigate(`${TAB_ROUTES.tasks}?task=${task._id}`)}
+                  aria-label={`Abrir a tarefa ${task.title}`}
+                  className="flex flex-1 min-w-0 items-center gap-2 min-h-[44px] rounded-lg text-left focus:outline-none focus:ring-2 focus:ring-brand-500"
                 >
-                  {task.title}
-                </span>
+                  <ActivityIcon size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
 
-                <Badge variant={pb.variant} className="text-[10px] shrink-0">{pb.label}</Badge>
-
-                {assignee && (
-                  <Avatar name={assignee.name} type={assignee.type} size="sm" className="shrink-0" />
-                )}
-
-                {task.dueDate && (
                   <span
                     className={cn(
-                      "text-xs font-medium tabular-nums shrink-0",
-                      !isCompleted && task.dueDate < now ? "text-semantic-error" : "text-text-muted"
+                      "flex-1 text-sm truncate",
+                      isCompleted ? "text-text-muted line-through" : "text-text-primary"
                     )}
                   >
-                    {new Date(task.dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                    {task.title}
                   </span>
-                )}
+
+                  <Badge variant={pb.variant} className="text-[10px] shrink-0">{pb.label}</Badge>
+
+                  {assignee && (
+                    <Avatar name={assignee.name} type={assignee.type} size="sm" className="shrink-0" />
+                  )}
+
+                  {task.dueDate && (
+                    <span
+                      className={cn(
+                        "text-xs font-medium tabular-nums shrink-0",
+                        !isCompleted && task.dueDate < now ? "text-semantic-error" : "text-text-muted"
+                      )}
+                    >
+                      {new Date(task.dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                    </span>
+                  )}
+                </button>
               </div>
             );
           })}

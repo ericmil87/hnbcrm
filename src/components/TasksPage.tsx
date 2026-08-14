@@ -24,6 +24,7 @@ import {
   TaskKanbanBoard,
   TaskAssigneeStack,
   TaskLabelChips,
+  TaskLeadChip,
   ACTIVITY_ICONS,
   ACTIVITY_LABELS,
   PRIORITY_BADGE,
@@ -960,17 +961,24 @@ function TaskRow({
         aria-label={task.activityType ? ACTIVITY_LABELS[task.activityType] : "Tarefa"}
       />
 
-      <button type="button" onClick={onClick} className="flex-1 min-w-0 text-left">
-        <span
-          className={cn(
-            "text-sm font-medium truncate block",
-            isCompleted ? "text-text-muted line-through" : "text-text-primary"
-          )}
+      <div className="flex-1 min-w-0">
+        <button
+          type="button"
+          onClick={onClick}
+          className="w-full text-left rounded focus:outline-none focus:ring-2 focus:ring-brand-500"
         >
-          {task.title}
-        </span>
-        {(task.labels?.length || project) && (
-          <span className="mt-1 flex items-center gap-2 flex-wrap">
+          <span
+            className={cn(
+              "text-sm font-medium truncate block",
+              isCompleted ? "text-text-muted line-through" : "text-text-primary"
+            )}
+          >
+            {task.title}
+          </span>
+        </button>
+        {/* Meta fora do botão do título: o chip do lead é clicável por si. */}
+        {(task.labels?.length || project || task.lead || task.contact) && (
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
             {project && (
               <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
                 <span
@@ -981,10 +989,11 @@ function TaskRow({
                 {project.name}
               </span>
             )}
+            <TaskLeadChip lead={task.lead} contact={task.contact} />
             <TaskLabelChips labels={task.labels} />
-          </span>
+          </div>
         )}
-      </button>
+      </div>
 
       {checklistTotal > 0 && (
         <span className="hidden md:inline text-xs text-text-muted tabular-nums shrink-0">
@@ -1206,53 +1215,66 @@ function StatusCard({
   const checklistTotal = task.checklist?.length ?? 0;
   const checklistDone = task.checklist?.filter((c) => c.completed).length ?? 0;
 
+  // Mesmo arranjo do card do kanban: o botão cobre o conteúdo não-interativo e
+  // o chip do lead fica fora dele (um <button> não pode conter outro).
   return (
-    <button
-      type="button"
-      onClick={() => onOpenDetail(task._id)}
+    <div
       className={cn(
         "w-full text-left p-3 rounded-lg bg-surface-raised border border-border transition-colors",
-        "hover:border-brand-500/50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-sunken",
+        "hover:border-brand-500/50 focus-within:border-brand-500/50",
         isDragging && "shadow-elevated"
       )}
     >
-      <div className="flex items-start gap-2 mb-2">
-        <ActivityIcon
-          size={14}
-          className="text-text-muted mt-0.5 shrink-0"
-          aria-hidden="true"
-        />
-        <span className="text-sm font-medium text-text-primary line-clamp-2">
-          {task.title}
-        </span>
-      </div>
-
-      <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
-
-      <div className="flex items-center gap-2 flex-wrap">
-        <Badge variant={priorityBadge.variant} className="text-[10px]">
-          {priorityBadge.label}
-        </Badge>
-        {checklistTotal > 0 && (
-          <span className="text-[10px] text-text-muted tabular-nums">
-            {checklistDone}/{checklistTotal}
+      <button
+        type="button"
+        onClick={() => onOpenDetail(task._id)}
+        aria-label={`Abrir tarefa ${task.title}`}
+        className="w-full text-left rounded focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-sunken"
+      >
+        <div className="flex items-start gap-2 mb-2">
+          <ActivityIcon
+            size={14}
+            className="text-text-muted mt-0.5 shrink-0"
+            aria-hidden="true"
+          />
+          <span className="text-sm font-medium text-text-primary line-clamp-2">
+            {task.title}
           </span>
-        )}
-        {task.dueDate && (
-          <span
-            className={cn(
-              "text-[10px] font-medium tabular-nums",
-              task.dueDate < now && task.status !== "completed"
-                ? "text-semantic-error"
-                : "text-text-muted"
-            )}
-          >
-            {formatRelativeDate(task.dueDate, now)}
-          </span>
-        )}
-        <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />
-      </div>
-    </button>
+        </div>
+
+        <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant={priorityBadge.variant} className="text-[10px]">
+            {priorityBadge.label}
+          </Badge>
+          {checklistTotal > 0 && (
+            <span className="text-[10px] text-text-muted tabular-nums">
+              {checklistDone}/{checklistTotal}
+            </span>
+          )}
+          {task.dueDate && (
+            <span
+              className={cn(
+                "text-[10px] font-medium tabular-nums",
+                task.dueDate < now && task.status !== "completed"
+                  ? "text-semantic-error"
+                  : "text-text-muted"
+              )}
+            >
+              {formatRelativeDate(task.dueDate, now)}
+            </span>
+          )}
+          <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />
+        </div>
+      </button>
+
+      {(task.lead || task.contact) && (
+        <div className="mt-2 flex">
+          <TaskLeadChip lead={task.lead} contact={task.contact} />
+        </div>
+      )}
+    </div>
   );
 }
 

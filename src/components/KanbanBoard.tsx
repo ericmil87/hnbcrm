@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useRef } from "react";
+import React, { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { LeadDetailPanel } from "./LeadDetailPanel";
 import { CreateLeadModal } from "./CreateLeadModal";
 import { ManageStagesModal } from "./ManageStagesModal";
@@ -638,11 +639,36 @@ function AddStageColumn({
   );
 }
 
+/**
+ * Resolve o `?lead=` da URL sem quebrar a página quando o id é inválido ou de
+ * outra org: a query falha dentro deste filho, que fica sob um ErrorBoundary
+ * com fallback nulo (o deep-link é simplesmente ignorado).
+ */
+function LeadDeepLinkResolver({
+  leadId,
+  onResolve,
+}: {
+  leadId: Id<"leads">;
+  onResolve: (lead: { _id: Id<"leads">; boardId: Id<"boards"> }) => void;
+}) {
+  const lead = useQuery(api.leads.getLead, { leadId });
+  // Aplica uma vez só: depois disso o usuário manda no board/painel, e uma
+  // atualização reativa do lead não pode arrastá-lo de volta.
+  const appliedRef = useRef(false);
+  useEffect(() => {
+    if (!lead || appliedRef.current) return;
+    appliedRef.current = true;
+    onResolve(lead);
+  }, [lead, onResolve]);
+  return null;
+}
+
 export function KanbanBoard() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const boardParam = searchParams.get("board");
+  const leadParam = searchParams.get("lead");
   const [selectedBoardId, setSelectedBoardId] = useState<Id<"boards"> | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -753,6 +779,44 @@ export function KanbanBoard() {
     if (!selectedBoardId) return;
     window.localStorage.setItem(`hnbcrm.lastBoard.${organizationId}`, selectedBoardId);
   }, [selectedBoardId, organizationId]);
+
+  // O painel do lead vive na URL (`?lead=`): quem chega de Tarefas/Caixa de
+  // Entrada abre direto no lead certo, e voltar no browser reabre o painel.
+  const openLeadPanel = useCallback(
+    (leadId: Id<"leads">) => {
+      setSelectedLeadId(leadId);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("lead", leadId);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  const closeLeadPanel = useCallback(() => {
+    setSelectedLeadId(null);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("lead");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [setSearchParams]);
+
+  // Deep-link: troca para o board do lead (se preciso) e abre o painel.
+  const handleDeepLinkLead = useCallback(
+    (lead: { _id: Id<"leads">; boardId: Id<"boards"> }) => {
+      if (lead.boardId) setSelectedBoardId((cur) => (cur === lead.boardId ? cur : lead.boardId));
+      setSelectedLeadId((cur) => (cur === lead._id ? cur : lead._id));
+    },
+    []
+  );
 
   // Filter leads client-side
   const filteredLeads = useMemo(() => {
@@ -1274,7 +1338,7 @@ export function KanbanBoard() {
                       totalValue={totalValue}
                       isDragActive={draggedLeadId !== null}
                       justDraggedRef={justDraggedRef}
-                      onLeadClick={(leadId) => setSelectedLeadId(leadId)}
+                      onLeadClick={(leadId) => openLeadPanel(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}
                       onStageMenu={(e: React.MouseEvent) => {
                         const rect = e.currentTarget.getBoundingClientRect();
@@ -1344,7 +1408,7 @@ export function KanbanBoard() {
               sortKey={sortKey}
               sortOrder={sortOrder}
               onSort={handleSort}
-              onRowClick={(id) => setSelectedLeadId(id as Id<"leads">)}
+              onRowClick={(id) => openLeadPanel(id as Id<"leads">)}
             />
           </div>
         )}
@@ -1370,12 +1434,22 @@ export function KanbanBoard() {
         />
       )}
 
+      {/* Deep-link ?lead= (vindo de Tarefas, Caixa de Entrada, etc.) */}
+      {leadParam && (
+        <ErrorBoundary key={leadParam} fallback={<></>}>
+          <LeadDeepLinkResolver
+            leadId={leadParam as Id<"leads">}
+            onResolve={handleDeepLinkLead}
+          />
+        </ErrorBoundary>
+      )}
+
       {/* Lead Detail Panel */}
       {selectedLeadId && (
         <LeadDetailPanel
           leadId={selectedLeadId}
           organizationId={organizationId}
-          onClose={() => setSelectedLeadId(null)}
+          onClose={closeLeadPanel}
         />
       )}
 

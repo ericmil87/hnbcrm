@@ -1097,8 +1097,9 @@ export const updateTask = mutation({
     priority: v.optional(taskPriorityValidator),
     activityType: v.optional(activityTypeValidator),
     dueDate: v.optional(v.number()),
-    leadId: v.optional(v.id("leads")),
-    contactId: v.optional(v.id("contacts")),
+    // `null` limpa o vínculo com lead/contato
+    leadId: v.optional(v.union(v.id("leads"), v.null())),
+    contactId: v.optional(v.union(v.id("contacts"), v.null())),
     status: v.optional(taskStatusValidator),
     tags: v.optional(v.array(v.string())),
     recurrence: v.optional(recurrenceValidator),
@@ -1124,11 +1125,29 @@ export const updateTask = mutation({
     const changes: Record<string, any> = {};
     const before: Record<string, any> = {};
 
-    const fields = ["title", "description", "priority", "activityType", "dueDate", "leadId", "contactId", "status", "tags", "recurrence", "reminderMinutesBefore"] as const;
+    const fields = ["title", "description", "priority", "activityType", "dueDate", "status", "tags", "recurrence", "reminderMinutesBefore"] as const;
     for (const field of fields) {
       if (args[field] !== undefined && JSON.stringify(args[field]) !== JSON.stringify((task as any)[field])) {
         changes[field] = args[field];
         before[field] = (task as any)[field];
+      }
+    }
+
+    // Lead/contato: `null` limpa o vínculo; id novo precisa ser da mesma org
+    for (const field of ["leadId", "contactId"] as const) {
+      const value = args[field];
+      if (value === null) {
+        if ((task as any)[field] !== undefined) {
+          before[field] = (task as any)[field];
+          changes[field] = undefined;
+        }
+      } else if (value !== undefined && value !== (task as any)[field]) {
+        const linked = await ctx.db.get(value as any);
+        if (!linked || (linked as any).organizationId !== task.organizationId) {
+          throw new Error(field === "leadId" ? "Lead não encontrado" : "Contato não encontrado");
+        }
+        before[field] = (task as any)[field];
+        changes[field] = value;
       }
     }
 

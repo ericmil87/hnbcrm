@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -85,7 +85,19 @@ export function CreateTaskModal({
 
   const contacts = useQuery(api.contacts.getContacts, { organizationId });
   const projects = useQuery(api.taskProjects.getProjects, { organizationId });
+  const leads = useQuery(api.leads.getLeads, { organizationId, limit: 200 }) as
+    | { _id: Id<"leads">; title: string; contact?: { firstName?: string; lastName?: string } | null }[]
+    | undefined;
   const createTask = useMutation(api.tasks.createTask);
+
+  // Busca client-side na lista de leads; o lead já escolhido continua na lista
+  // mesmo quando não casa com o termo, para o select nunca ficar em branco.
+  const filteredLeads = useMemo(() => {
+    const all = leads ?? [];
+    const term = leadSearch.trim().toLowerCase();
+    if (!term) return all;
+    return all.filter((l) => l.title.toLowerCase().includes(term) || l._id === leadId);
+  }, [leads, leadSearch, leadId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -373,6 +385,52 @@ export function CreateTaskModal({
           </label>
           <LabelPicker organizationId={organizationId} selectedIds={labelIds} onChange={setLabelIds} />
         </div>
+
+        {/* Lead */}
+        {!defaultLeadId && (
+          <div>
+            <label className="block text-[13px] font-medium text-text-secondary mb-1">
+              Lead
+            </label>
+            {(leads?.length ?? 0) > 8 && (
+              <div className="relative mb-2">
+                <Search
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+                  aria-hidden="true"
+                />
+                <input
+                  type="text"
+                  value={leadSearch}
+                  onChange={(e) => setLeadSearch(e.target.value)}
+                  placeholder="Buscar lead pelo título..."
+                  aria-label="Buscar lead"
+                  className="w-full pl-9 pr-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+                  style={{ fontSize: "16px" }}
+                />
+              </div>
+            )}
+            <select
+              value={leadId}
+              onChange={(e) => setLeadId(e.target.value)}
+              className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+              style={{ fontSize: "16px" }}
+            >
+              <option value="">Sem lead</option>
+              {filteredLeads.map((l) => {
+                const contactName = [l.contact?.firstName, l.contact?.lastName]
+                  .filter(Boolean)
+                  .join(" ");
+                return (
+                  <option key={l._id} value={l._id}>
+                    {l.title}
+                    {contactName ? ` (${contactName})` : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
 
         {/* Contact */}
         {!defaultContactId && (

@@ -2,6 +2,18 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.44.0] - 2026-08-14
+
+### Vínculo tarefa ↔ lead visível e navegável
+
+- **Chip do lead** nas linhas da lista e nos cards do kanban de tarefas — clique leva direto ao lead
+- **Seção "Lead" no detalhe da tarefa**: vincular/trocar/remover o vínculo (select), abrir o lead no funil e pular direto para a **Conversa** no inbox
+- **Campo Lead no criar tarefa** (antes só dava para vincular pelo painel do lead)
+- **Deep-links novos**: `/app/pipeline?lead=<id>` abre o funil com o painel do lead; `/app/entrada?conversation=<id>` abre a conversa; "Ver no funil" do inbox agora cai no painel do lead
+- **Aba Tarefas do lead**: clicar numa tarefa abre o detalhe completo em Tarefas; o voltar do navegador refaz o caminho (painel do lead reabre)
+- `updateTask` aceita `null` para limpar lead/contato e valida a org do vínculo
+- 369 testes verdes · E2E vivo validado (ida e volta tarefa→lead→conversa)
+
 ## [0.43.0] - 2026-08-14
 
 ### Gestor de tarefas completo — projetos, kanban, etiquetas, multi-responsável e notificações
