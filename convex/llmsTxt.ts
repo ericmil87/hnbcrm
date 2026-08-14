@@ -33,6 +33,7 @@ Outbound sends are paced by an anti-burst queue: per-conversation cursor (Meta p
 HNBCRM also ships two NATIVE AI products, separate from external AI agents connected via API key/MCP. Both are opt-in per organization (disabled by default, LGPD acknowledgment required) and are NOT exposed through the public REST API — they are configured in-app (Settings → IA):
 - Copilot — in-app assistant that acts AS the logged-in user (their RBAC permissions), with streaming chat, read/write tools, and two-phase human confirmation for destructive actions.
 - Attendant — WhatsApp virtual attendant. Default mode is "suggest" (drafts replies for human review in the inbox); "autopilot" unlocks only after acceptance metrics (10+ reviewed suggestions, 60%+ acceptance). Serves official Meta channels always; bridge channels only after an explicit organization-level ban-risk acceptance. Supports per-attendant pipeline rules (initial board/stage for new leads, deterministic stage advance on BANT qualification, natural-language funnel rules).
+- Coaching loop (app UI only) — a human can instruct a draft in plain language and regenerate it, ask the AI for a draft from scratch, or hand a conversation back to the AI with an instruction. None of it is exposed over REST or MCP.
 
 ## Agent Skill (for AI Agents)
 
@@ -192,12 +193,13 @@ An AI-to-human (or human-to-human) handoff request.
 | Field | Type | Description |
 |-------|------|-------------|
 | leadId | Id<leads> | Lead being handed off |
+| conversationId | Id<conversations>? | Source conversation (fallback: lead's most recent) |
 | fromMemberId | Id<teamMembers> | Requester |
 | toMemberId | Id<teamMembers> | Target (optional, any human if null) |
 | reason | string | Why the handoff is needed |
 | summary | string | Conversation summary |
 | suggestedActions | string[] | Recommended next steps |
-| status | enum | pending, accepted, rejected |
+| status | enum | pending, accepted, rejected, canceled |
 
 ### Team Member
 A human or AI agent on the team.
@@ -398,7 +400,7 @@ File metadata for uploaded files (attachments, photos, documents).
 
 ### notificationPreferences
 Per-member email notification preferences (opt-out model).
-Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, taskCommentMention, taskDueSoon, createdAt, updatedAt
+Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, taskCommentMention, taskDueSoon, aiDraftPending, createdAt, updatedAt
 Indexes: by_organization, by_organization_and_member, by_member
 
 ### Lead Document
@@ -603,9 +605,9 @@ Inject an inbound message from a contact — for external bridges on any channel
 ### Handoff Endpoints
 
 #### GET /api/v1/handoffs
-List handoffs with cursor-based pagination.
+List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved).
 
-**Query params:** status, limit, cursor (all optional)
+**Query params:** status (pending, accepted, rejected, canceled), limit, cursor (all optional)
 
 **Response:** \`{ handoffs: [...], nextCursor, hasMore }\`
 
@@ -968,6 +970,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | leadAssigned | Lead assigned to member |
 | newMessage | New inbound message on assigned lead |
 | dailyDigest | Daily summary of CRM activity |
+| aiDraftPending | In-app: an AI draft is waiting for review on your lead |
 
 ---
 
@@ -1271,9 +1274,11 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | conversation.created | New conversation started |
 | message.sent | Message sent to conversation (payload includes senderType + senderId) |
 | message.received | Inbound message received from a contact |
-| handoff.requested | Handoff requested |
-| handoff.accepted | Handoff accepted |
+| handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure) |
+| handoff.accepted | Handoff accepted (payload includes conversationId) |
 | handoff.rejected | Handoff rejected |
+| handoff.canceled | Pending handoff canceled because the conversation was returned to the AI |
+| conversation.returned_to_ai | A human gave the conversation back to the AI attendant (optionally with an instruction) |
 | task.moved | Task moved to a different kanban column (P1) |
 | task.due_soon | Early reminder (reminderMinutesBefore) fired for a task (P1) |
 | task_project.created | Task project created (P1) |
@@ -1324,11 +1329,16 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 - Channel eligibility: official Meta channels always; bridge channels ONLY after an explicit organization-level ban-risk acceptance, revocable at any time (revocation aborts in-flight generations).
 - Safety: record-scoped tools (only the triggering conversation/lead/contact), static tool registry with denylist, untrusted-data envelope around CRM content, LGPD disclosure on first reply, deterministic pre-LLM handoff keywords ("humano"), reply caps per conversation/hour, monthly conversation budget.
 - Pipeline rules per attendant (\`pipelineConfig\`): initial board/stage for new inbound leads, deterministic stage advance when BANT qualification reaches a threshold, natural-language funnel rules injected into the prompt, and an \`allowMoveStages\` switch enforced server-side.
-- Audited runs in \`agentRuns\` (tokens/cost/tools — no transcripts/PII).
+- Audited runs in \`agentRuns\` (tokens/cost/tools — no transcripts/PII). Human-initiated runs are flagged \`humanInitiated\`.
+
+### Coaching loop (app UI only — no REST/MCP surface)
+- On a pending draft, a human can add a plain-language instruction ("shorter", "warmer", "offer an alternative") and regenerate it. The superseded draft becomes \`revised\` and is chained to the new one; \`revised\` drafts are excluded from the acceptance metrics that gate autopilot.
+- A human can also ask the attendant for a draft from scratch (with an optional instruction), or hand a conversation back to the AI — which unpauses it, reassigns it to the attendant, and cancels any pending handoff.
+- Coach-initiated turns ALWAYS produce a draft for review, even in organizations running autopilot.
 
 ### AI enums
 - Attendant mode: \`suggest\` | \`autopilot\`
-- AI draft status (message metadata): \`pending\` | \`sent\` | \`sent_edited\` | \`discarded\`
+- AI draft status (message metadata): \`pending\` | \`sent\` | \`sent_edited\` | \`discarded\` | \`revised\`
 - Provider mode: \`platform\` | \`byo\`
 
 ---
@@ -1357,7 +1367,7 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 \`contact\` | \`human\` | \`ai\`
 
 ### Handoff Status
-\`pending\` | \`accepted\` | \`rejected\`
+\`pending\` | \`accepted\` | \`rejected\` | \`canceled\`
 
 ### Team Member Role
 \`admin\` | \`manager\` | \`agent\` | \`ai\`

@@ -41,6 +41,7 @@ import { CreateTaskModal } from "./CreateTaskModal";
 import { LeadDocuments } from "./LeadDocuments";
 import { FileUploadButton, UploadedFile } from "@/components/ui/FileUploadButton";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
+import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { ForwardModal } from "@/components/inbox/ForwardModal";
 import {
   getReactions,
@@ -454,23 +455,28 @@ function ConversationTab({
             </div>
           )}
 
-          {messages?.map((message) => (
-            <MessageBubble
-              key={message._id}
-              message={message}
-              channelIsWhatsapp={!!channelIsWhatsapp}
-              canInteract={canInteract}
-              currentMemberId={currentMemberId}
-              contactName={contactName}
-              transcribing={transcribingIds.has(message._id)}
-              highlighted={highlightId === message._id}
-              onReply={setReplyTo}
-              onReact={handleReact}
-              onForward={setForwardTarget}
-              onTranscribe={handleTranscribe}
-              onJumpToMessage={handleJumpToMessage}
-            />
-          ))}
+          {messages?.map((message) =>
+            getAiDraft(message) ? (
+              // Rascunho do atendente IA (modo sugestão): revisão humana
+              <AiDraftCard key={message._id} message={message} />
+            ) : (
+              <MessageBubble
+                key={message._id}
+                message={message}
+                channelIsWhatsapp={!!channelIsWhatsapp}
+                canInteract={canInteract}
+                currentMemberId={currentMemberId}
+                contactName={contactName}
+                transcribing={transcribingIds.has(message._id)}
+                highlighted={highlightId === message._id}
+                onReply={setReplyTo}
+                onReact={handleReact}
+                onForward={setForwardTarget}
+                onTranscribe={handleTranscribe}
+                onJumpToMessage={handleJumpToMessage}
+              />
+            )
+          )}
         </div>
       </div>
 

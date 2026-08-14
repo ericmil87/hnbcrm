@@ -301,6 +301,47 @@ export const getConversations = query({
   },
 });
 
+/**
+ * Uma conversa pelo id, no MESMO formato de um item de `getConversations`.
+ *
+ * Existe para o deep-link `/app/entrada?conversation=<id>` alcançar conversas
+ * fora do take(200) da lista e conversas arquivadas. Retorna null se não existe;
+ * quem não é da org leva o erro do requireAuth (isolamento multi-tenant).
+ */
+export const getConversationById = query({
+  args: { conversationId: v.id("conversations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) return null;
+
+    await requireAuth(ctx, conversation.organizationId);
+
+    const lead = await ctx.db.get(conversation.leadId);
+    const [contact, assignee, config, lastMessage] = await Promise.all([
+      lead?.contactId ? ctx.db.get(lead.contactId) : null,
+      lead?.assignedTo ? ctx.db.get(lead.assignedTo) : null,
+      conversation.channelConfigId ? ctx.db.get(conversation.channelConfigId) : null,
+      ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) =>
+          q.eq("conversationId", conversation._id)
+        )
+        .order("desc")
+        .first(),
+    ]);
+
+    return {
+      ...conversation,
+      lead,
+      contact,
+      assignee,
+      ...serviceWindowFields(conversation, config),
+      ...lastMessageFields(lastMessage),
+    };
+  },
+});
+
 // Get messages for conversation
 export const getMessages = query({
   args: { conversationId: v.id("conversations") },

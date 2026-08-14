@@ -13,6 +13,7 @@ const NOTIFICATION_EVENTS = [
   { key: "invite", label: "Convites de equipe", desc: "Quando voce e convidado para uma organizacao", alwaysOn: true },
   { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um agente IA solicita repasse para voce" },
   { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
+  { key: "aiDraftPending", label: "Rascunho da IA aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
   { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuida a voce esta atrasada" },
   { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa e atribuida a voce" },
   { key: "taskCommentMention", label: "Mencao em comentario de tarefa", desc: "Quando alguem te menciona em um comentario de tarefa" },

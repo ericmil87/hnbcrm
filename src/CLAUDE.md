@@ -30,7 +30,7 @@ src/
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── notifications/
     │   ├── NotificationBell.tsx        # Header bell — unread count, opens NotificationPanel
-    │   ├── NotificationPanel.tsx       # In-app notification list (task_assigned/task_comment_mention/task_due_soon/task_overdue), mark read
+    │   ├── NotificationPanel.tsx       # In-app notification list (tarefas + handoff_requested/handoff_resolved/ai_draft_pending), navega pelo ponteiro do item, mark read
     │   └── NotificationPreferences.tsx # Email notification preferences (Settings tab)
     ├── copilot/
     │   └── CopilotPanel.tsx   # Copilot chat SlideOver — streams via useCopilotStream, renders tool calls + pendingAction confirmations
@@ -51,7 +51,7 @@ src/
     ├── leads/                  # Alternate list view for leads (shared with KanbanBoard)
     │   ├── LeadsListView.tsx        # Sortable/filterable table view of leads with row selection
     │   └── LeadsBulkActionBar.tsx   # Bulk move/assign/archive bar for selected leads
-    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select, deep-link ?conversation=<id>
+    ├── Inbox.tsx               # Conversation inbox (route: /app/entrada) — search, labels, scheduling, bulk select, banner âmbar + badge de repasse pendente (aceitar inline), deep-link ?conversation=<id> robusto (busca via getConversationById quando a conversa não está na lista carregada)
     ├── inbox/                  # Inbox building blocks (shared with LeadDetailPanel)
     │   ├── MessageBubble.tsx        # Message rendering (media, quotes, reactions, ticks)
     │   ├── VoiceRecorder.tsx        # Mic recording + upload of voice notes
@@ -59,9 +59,11 @@ src/
     │   ├── EmojiPickerButton.tsx    # Emoji picker for the composer
     │   ├── QuickReplies.tsx         # "/" quick replies (hook + dropdown + manage modal)
     │   ├── ConversationActionsMenu.tsx  # Archive + labels menu ("..." in conversation header)
-    │   ├── AiDraftCard.tsx          # AI attendant draft review (suggest mode) + AiConversationControls (pause/resume)
+    │   ├── AiDraftCard.tsx          # AI attendant draft review (suggest mode) + loop de coaching (chips + instrução → regenerar) + AiConversationControls (assumir / devolver para IA / pedir sugestão) + ReturnToAiButton
     │   └── ...                      # ReactionPicker, ForwardModal, AudioPlayer, etc.
-    ├── HandoffQueue.tsx        # AI-to-human handoff management (route: /app/repasses)
+    ├── HandoffQueue.tsx        # Fila de repasses IA→humano (route: /app/repasses) — "Espiar conversa" (peek read-only), deep-link ?handoff=<id>, aceitar assume e navega p/ /app/entrada?conversation=<id>
+    ├── handoffs/               # Peças da fila de repasses
+    │   └── HandoffPeekSlideOver.tsx # Espiada read-only na conversa do repasse (resumo estruturado + BANT, sem composer)
     ├── TeamPage.tsx            # Team member management (route: /app/equipe)
     ├── Settings.tsx            # Organization settings (route: /app/configuracoes)
     ├── settings/                # Settings section panels

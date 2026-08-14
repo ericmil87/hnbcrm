@@ -78,6 +78,22 @@ mai/2025 que atingiu whatsmeow e Baileys):
   canal; se um dia quiser o cap, a rampa de referência está no addendum do
   `AI-WHATSAPP-LIMITS.md` (20→680 em 7 dias).
 
+## 6. Novos em 2026-08-14 (repasses fluidos + bridge fora do ar)
+
+- [ ] **Rearmar o HMAC e os events da instância bridge no VPS** e validar que a
+  entrada volta a funcionar. O canal envia, mas não recebe: depois do
+  re-pareamento o wuzapi parou de assinar os webhooks e o ingress rejeita com
+  401. Passo a passo em `RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md` §6.1.
+- [ ] **Conferir uptime e logs do container wuzapi** no VPS enquanto estiver
+  lá — a sessão caiu e ficou 7 dias sem ninguém notar (§3.3 do relatório).
+- [ ] **Aprovar/priorizar a fase P3 do handoff** — SLA de resgate, timer de
+  reativação da IA, mensagem de transição para o cliente, abas
+  Minhas/Não-atribuídas no inbox e dashboard de repasses. Está desenhada e
+  parada esperando sua decisão.
+- [ ] **E2E vivo do fluxo de repasse + coaching** (pedir humano no WhatsApp →
+  sino → espiar → aceitar → responder → devolver para a IA com instrução).
+  Depende do item do HMAC acima: sem entrada no bridge, não dá para testar.
+
 ---
 *Resolvidos:* `OPENCODE_GO_API` ✅ · IDs de modelo confirmados ✅ · ZDR =
 aviso-não-bloqueio ✅ · matriz de modelos extras **cancelada** (ficamos com

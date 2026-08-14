@@ -1,13 +1,14 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { TAB_ROUTES } from "@/lib/routes";
 import { formatRelativeTime } from "@/lib/auditUtils";
 
 type NotificationDoc = Doc<"notifications">;
@@ -17,6 +18,9 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   task_comment_mention: AtSign,
   task_due_soon: Clock,
   task_overdue: AlertTriangle,
+  handoff_requested: ArrowLeftRight,
+  handoff_resolved: CheckCheck,
+  ai_draft_pending: Sparkles,
 };
 
 const PAGE_SIZE = 15;
@@ -73,6 +77,25 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       }
     }
     onClose();
+    // Repasse pendente abre a fila já com o peek da conversa aberto; resolvido
+    // leva direto à conversa (quando o repasse tinha uma).
+    if (n.type === "handoff_requested" && n.handoffId) {
+      navigate(`${TAB_ROUTES.handoffs}?handoff=${n.handoffId}`);
+      return;
+    }
+    if (n.type === "handoff_resolved") {
+      navigate(
+        n.conversationId
+          ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}`
+          : TAB_ROUTES.handoffs
+      );
+      return;
+    }
+    // Rascunho da IA esperando revisão → abre a conversa direto no inbox.
+    if (n.type === "ai_draft_pending" && n.conversationId) {
+      navigate(`${TAB_ROUTES.inbox}?conversation=${n.conversationId}`);
+      return;
+    }
     if (n.taskId) {
       navigate(`/app/tarefas?task=${n.taskId}`);
     }

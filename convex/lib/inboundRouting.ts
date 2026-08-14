@@ -156,7 +156,11 @@ export async function ensureLeadForContact(
         q.eq("organizationId", args.organizationId).eq("type", "ai")
       )
       .collect();
-    assignedTo = aiMembers.find((m) => m.status === "active")?._id;
+    // Só o atendente (não o copiloto) pode ser dono automático de um lead —
+    // atribuir ao copiloto trava a condição nº 6 da elegibilidade (lead_de_humano).
+    assignedTo = aiMembers.find(
+      (m) => m.status === "active" && m.agentProfile?.kind === "attendant"
+    )?._id;
   }
 
   const contact = await ctx.db.get(args.contactId);

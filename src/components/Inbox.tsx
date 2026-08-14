@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOutletContext, useNavigate, useSearchParams } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -7,8 +7,10 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -25,7 +27,7 @@ import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
-import { AiDraftCard, AiConversationControls, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
 // v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
@@ -45,6 +47,14 @@ const AI_STATE_REASON_LABELS: Record<string, string> = {
   sem_atendente: "sem atendente configurado",
   budget_mensal: "limite mensal de conversas atingido",
 };
+
+// `lead.handoffState` some quando nunca houve repasse; "completed" é repasse
+// já resolvido. Qualquer outro estado = alguém precisa assumir a conversa.
+type LeadHandoffState = { status: string; reason?: string } | undefined | null;
+
+function isHandoffPending(state: LeadHandoffState): boolean {
+  return !!state && state.status !== "completed";
+}
 
 type AiConvState = {
   status: string;
@@ -66,6 +76,27 @@ function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing
   return null;
 }
 
+/**
+ * Resolve o `?conversation=` que não está na lista carregada (fora do take(200)
+ * ou arquivada). Fica isolado num filho sob ErrorBoundary porque a query
+ * quebra para id malformado ou de outra org — nesse caso o deep-link é
+ * simplesmente ignorado, sem derrubar a caixa de entrada.
+ */
+function ConversationDeepLinkResolver({
+  conversationId,
+  onResolve,
+}: {
+  conversationId: Id<"conversations">;
+  onResolve: (conversation: Record<string, any> | null) => void;
+}) {
+  const conversation = useQuery(api.conversations.getConversationById, { conversationId });
+  useEffect(() => {
+    if (conversation === undefined) return;
+    onResolve(conversation as Record<string, any> | null);
+  }, [conversation, onResolve]);
+  return null;
+}
+
 export function Inbox() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
@@ -83,6 +114,10 @@ export function Inbox() {
   // Arquivadas + filtro por etiqueta na lista de conversas.
   const [showArchived, setShowArchived] = useState(false);
   const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
+
+  // Conversa alcançada por deep-link que não está na lista carregada — o
+  // resolver abaixo mantém este estado em dia (o documento continua reativo).
+  const [linkedConversation, setLinkedConversation] = useState<Record<string, any> | null>(null);
 
   // Seleção múltipla na lista (arquivar/etiquetar em lote).
   const [selectionMode, setSelectionMode] = useState(false);
@@ -289,10 +324,26 @@ export function Inbox() {
     (c): c is NonNullable<typeof c> => c !== null
   );
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
-  const listedConversations = filterLabelId
+  const filteredConversations = filterLabelId
     ? validConversations.filter((c) => ((c.labelIds ?? []) as string[]).includes(filterLabelId))
     : validConversations;
-  const currentConversation = validConversations.find((c) => c._id === selectedConversation);
+
+  // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
+  // fora da lista carregada (fora do take(200), ou arquivada ainda carregando).
+  const conversationInList =
+    conversationParam !== null && validConversations.some((c) => c._id === conversationParam);
+  const pinnedConversation =
+    linkedConversation &&
+    linkedConversation._id === selectedConversation &&
+    !validConversations.some((c) => c._id === linkedConversation._id)
+      ? linkedConversation
+      : null;
+  const listedConversations = pinnedConversation
+    ? [pinnedConversation, ...filteredConversations]
+    : filteredConversations;
+  const currentConversation =
+    validConversations.find((c) => c._id === selectedConversation) ??
+    (linkedConversation?._id === selectedConversation ? linkedConversation : undefined);
   const channelIsWhatsapp = currentConversation?.channel === "whatsapp";
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
@@ -326,6 +377,32 @@ export function Inbox() {
       <span className="ml-1.5 text-brand-500">Ver no funil</span>
     </button>
   ) : null;
+
+  // Repasse pendente do lead da conversa aberta → banner com ação inline.
+  const openHandoffState = currentConversation?.lead?.handoffState as LeadHandoffState;
+  const handoffPending = isHandoffPending(openHandoffState);
+  const openLeadId = currentConversation?.leadId as Id<"leads"> | undefined;
+  const pendingHandoff = useQuery(
+    api.handoffs.getPendingHandoffForLead,
+    handoffPending && openLeadId ? { leadId: openLeadId } : "skip"
+  ) as { _id: string } | null | undefined;
+
+  const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
+
+  const handleAcceptHandoff = () => {
+    if (!pendingHandoff) return;
+    toast.promise(acceptHandoff({ handoffId: pendingHandoff._id as Id<"handoffs"> }), {
+      loading: "Assumindo conversa…",
+      success: "Conversa assumida — IA pausada",
+      error: (e) => mutationErrorMessage(e, "Falha ao assumir o repasse"),
+    });
+  };
+
+  // Com um rascunho já aguardando revisão, pedir outra sugestão não faz
+  // sentido (o backend recusa um segundo turno enfileirado na mesma conversa).
+  const hasPendingDraft = ((messages ?? []) as InboxMessage[]).some(
+    (m) => getAiDraft(m)?.status === "pending"
+  );
 
   const aiChip = aiStateChipInfo(aiConvState);
 
@@ -527,19 +604,33 @@ export function Inbox() {
     lastReadSigRef.current = null;
   };
 
+  // Escrita nossa no `?conversation=` ainda em voo: o router aplica o
+  // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
+  // que `selectedConversation` já é a conversa nova e o param ainda é a antiga.
+  // `target` é o valor que pedimos e `stale` o que estava na URL na hora —
+  // enquanto a URL mostrar `stale`, o efeito URL → estado tem de ficar quieto
+  // (reaplicar o valor antigo desfazia o clique e travava a caixa no link).
+  const conversationParamSyncRef = useRef<{ target: string | null; stale: string | null } | null>(
+    null
+  );
+
   // A conversa aberta vive na URL (`?conversation=`), para dar/receber
   // deep-link de outras telas (detalhe da tarefa, painel do lead).
-  const syncConversationParam = (conversationId: string | null) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (conversationId) next.set("conversation", conversationId);
-        else next.delete("conversation");
-        return next;
-      },
-      { replace: true }
-    );
-  };
+  const syncConversationParam = useCallback(
+    (conversationId: string | null) => {
+      conversationParamSyncRef.current = { target: conversationId, stale: conversationParam };
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (conversationId) next.set("conversation", conversationId);
+          else next.delete("conversation");
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [conversationParam, setSearchParams]
+  );
 
   const handleSelectConversation = (conversationId: string) => {
     stopTyping();
@@ -560,18 +651,54 @@ export function Inbox() {
     syncConversationParam(null);
   };
 
-  // URL → estado. Um id que não está na lista da org (inválido, de outra org
-  // ou arquivado) é ignorado em silêncio e sai da URL.
+  // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
+  // (arquivada ou além do take(200)), o resolver busca o documento avulso:
+  // arquivada troca a aba da lista, ativa entra fixada no topo e um id
+  // inexistente sai da URL em silêncio.
   useEffect(() => {
+    // Antes de qualquer coisa: o param em mãos pode ser o eco velho de uma
+    // escrita nossa que o router ainda não aplicou (ver `conversationParamSyncRef`).
+    const pendingWrite = conversationParamSyncRef.current;
+    if (pendingWrite) {
+      if (conversationParam === pendingWrite.target) {
+        conversationParamSyncRef.current = null; // a URL alcançou o que pedimos
+      } else if (conversationParam === pendingWrite.stale) {
+        return; // ainda em voo — o param é o valor antigo, ignorar
+      } else {
+        conversationParamSyncRef.current = null; // mudou por fora no meio do caminho
+      }
+    }
+
     if (!conversationParam || conversationParam === selectedConversation) return;
     if (conversations === undefined) return;
-    if (validConversations.some((c) => c._id === conversationParam)) {
+
+    if (conversationInList) {
       handleSelectConversation(conversationParam);
-    } else {
-      syncConversationParam(null);
+      return;
     }
+    // aguarda o resolver responder sobre o id que está na URL
+    if (!linkedConversation || linkedConversation._id !== conversationParam) return;
+    // A aba da lista acompanha a conversa que chegou por link — só nesta
+    // abertura, para não arrastar o filtro do usuário depois.
+    const linkedArchived = Boolean(linkedConversation.archivedAt);
+    if (linkedArchived !== showArchived) setShowArchived(linkedArchived);
+    handleSelectConversation(conversationParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationParam, conversations, selectedConversation]);
+  }, [conversationParam, conversations, conversationInList, linkedConversation, selectedConversation, showArchived]);
+
+  // O resolver responde para o id que está na URL agora; um `null` significa
+  // conversa inexistente (ou apagada) — o param sai da URL.
+  const handleResolveLinkedConversation = useCallback(
+    (conversation: Record<string, any> | null) => {
+      if (!conversation) {
+        setLinkedConversation(null);
+        syncConversationParam(null);
+        return;
+      }
+      setLinkedConversation(conversation);
+    },
+    [syncConversationParam]
+  );
 
   // ── Seleção múltipla: arquivar/etiquetar em lote ──
 
@@ -994,7 +1121,20 @@ export function Inbox() {
                 </div>
 
                 {conversation.lead && (
-                  <p className="text-sm text-text-secondary mb-1 truncate">{conversation.lead.title}</p>
+                  <div className="flex items-center gap-1.5 mb-1 min-w-0">
+                    <p className="flex-1 min-w-0 text-sm text-text-secondary truncate">
+                      {conversation.lead.title}
+                    </p>
+                    {isHandoffPending(conversation.lead.handoffState) && (
+                      <span
+                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-semantic-warning"
+                        title="Repasse pendente — aguardando um humano assumir"
+                      >
+                        <ArrowLeftRight size={12} />
+                        Repasse
+                      </span>
+                    )}
+                  </div>
                 )}
 
                 <div className="flex items-center justify-between gap-2">
@@ -1140,6 +1280,7 @@ export function Inbox() {
                   <AiConversationControls
                     conversationId={currentConversation._id as Id<"conversations">}
                     aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
+                    hasPendingDraft={hasPendingDraft}
                   />
                   {aiChip && (
                     <span
@@ -1181,6 +1322,7 @@ export function Inbox() {
                     <AiConversationControls
                       conversationId={currentConversation._id as Id<"conversations">}
                       aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
+                      hasPendingDraft={hasPendingDraft}
                     />
                     {aiChip && (
                       <span
@@ -1215,6 +1357,53 @@ export function Inbox() {
                 )}
               </div>
             </div>
+
+            {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
+            {handoffPending && (
+              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
+                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
+                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
+                    <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
+                    <span className="min-w-0">
+                      <span className="font-medium text-semantic-warning">Repasse pendente</span>
+                      {openHandoffState?.reason && (
+                        <span className="text-text-secondary"> — {openHandoffState.reason}</span>
+                      )}
+                    </span>
+                  </p>
+                  {canReply && (
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!pendingHandoff}
+                        onClick={handleAcceptHandoff}
+                      >
+                        Aceitar e assumir
+                      </Button>
+                      {pendingHandoff && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            navigate(`${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`)
+                          }
+                        >
+                          Ver repasse
+                        </Button>
+                      )}
+                      {currentConversation && (
+                        <ReturnToAiButton
+                          conversationId={currentConversation._id as Id<"conversations">}
+                          variant="button"
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Messages List */}
             <div
@@ -1432,6 +1621,16 @@ export function Inbox() {
         )}
       </div>
     </div>
+
+      {/* Deep-link ?conversation= fora da lista carregada (arquivada ou antiga) */}
+      {conversationParam && !conversationInList && (
+        <ErrorBoundary key={conversationParam} fallback={<></>}>
+          <ConversationDeepLinkResolver
+            conversationId={conversationParam as Id<"conversations">}
+            onResolve={handleResolveLinkedConversation}
+          />
+        </ErrorBoundary>
+      )}
 
       <ForwardModal
         open={!!forwardTarget}

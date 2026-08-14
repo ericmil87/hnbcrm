@@ -46,6 +46,8 @@ import { chatWithFallback } from "./lib/llm";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
+import { createHandoffCore } from "./handoffs";
+import { createNotification } from "./lib/notify";
 
 // ── Constantes de runtime ──
 // Silêncio que fecha a rajada de inbounds antes da IA responder. Default do
@@ -63,6 +65,10 @@ const DEFAULT_MAX_REPLIES_PER_CONVERSATION = 20;
 const DEFAULT_MAX_REPLIES_PER_HOUR = 10;
 const DEFAULT_MAX_TOOL_CALLS = 6;
 const DEFAULT_HANDOFF_KEYWORDS = ["humano", "atendente", "pessoa de verdade", "falar com alguém"];
+// Holds que um item INICIADO POR HUMANO (coach/return_to_ai) pode atravessar.
+// NUNCA inclua opt_out (LGPD), janela_24h, tetos ou bridge_sem_aceite aqui.
+const HUMAN_HOLD_REASONS = ["ia_pausada", "lead_de_humano", "handoff_pendente"];
+const MAX_INSTRUCTION_CHARS = 2000;
 const DEFAULT_DISCLOSURE =
   "Você está falando com um assistente virtual. Digite 'humano' a qualquer momento para falar com uma pessoa.";
 
@@ -389,47 +395,19 @@ export const internalEnqueueFromInbound = internalMutation({
     // Caminho DETERMINÍSTICO de opt-out/handoff por palavra-chave — roda antes
     // de qualquer inferência (não depende do modelo obedecer).
     if (matchesHandoffKeyword(message.content, agent.agentProfile?.handoffKeywords)) {
-      if (!lead.handoffState || lead.handoffState.status === "completed") {
-        await ctx.db.patch(conversation._id, {
-          aiPausedUntil: Number.MAX_SAFE_INTEGER,
-          updatedAt: now,
-        });
-        const handoffId = await ctx.db.insert("handoffs", {
-          organizationId: conversation.organizationId,
-          leadId: lead._id,
-          fromMemberId: agent._id,
-          reason: "Cliente pediu atendimento humano",
-          summary: `Palavra-chave de repasse detectada na mensagem do cliente`,
-          suggestedActions: ["Assumir a conversa e responder o cliente"],
-          status: "pending",
-          createdAt: now,
-        });
-        await ctx.db.patch(lead._id, {
-          handoffState: {
-            status: "requested",
-            fromMemberId: agent._id,
-            reason: "Cliente pediu atendimento humano",
-            requestedAt: now,
-          },
-          lastActivityAt: now,
-          updatedAt: now,
-        });
-        await ctx.db.insert("activities", {
-          organizationId: conversation.organizationId,
-          leadId: lead._id,
-          type: "handoff",
-          actorId: agent._id,
-          actorType: "ai",
-          content: "Repasse automático: cliente pediu atendimento humano",
-          metadata: { handoffId, conversationId: conversation._id },
-          createdAt: now,
-        });
-        await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-          organizationId: conversation.organizationId,
-          event: "handoff.requested",
-          payload: { handoffId, leadId: lead._id, reason: "Cliente pediu atendimento humano" },
-        });
-      }
+      // NÃO pausa a conversa: a condição nº 5 da elegibilidade (handoff_pendente)
+      // segura a IA enquanto o repasse estiver aberto, e rejeitar o repasse a
+      // devolve ao atendimento — pausar aqui era a raiz das pausas órfãs.
+      await createHandoffCore(ctx, {
+        leadId: lead._id,
+        conversationId: conversation._id,
+        fromMemberId: agent._id,
+        reason: "Cliente pediu atendimento humano",
+        summary: "Palavra-chave de repasse detectada na mensagem do cliente",
+        suggestedActions: ["Assumir a conversa e responder o cliente"],
+        origin: "ai_keyword",
+        onDuplicate: "skip",
+      });
       return null;
     }
 
@@ -614,9 +592,62 @@ export const internalClaimForProcessing = internalMutation({
       aiReplyCountLastHour: counts.lastHour,
       now,
     });
+    // Itens INICIADOS POR HUMANO (coaching/devolução) atravessam só os holds
+    // "humanos": pausa, lead atribuído a humano e repasse pendente existem para
+    // a IA não agir SOZINHA — não para bloquear o que um humano pediu
+    // explicitamente. Os demais bloqueios (opt-out LGPD, janela 24h, tetos,
+    // bridge sem aceite, horário) valem SEMPRE, inclusive para o coach.
+    //
+    // ATENÇÃO: evaluateEligibility CURTO-CIRCUITA no primeiro motivo — e os
+    // holds humanos (nº 4/5/6) vêm ANTES de opt_out/horário/tetos/janela.
+    // Aceitar `reason ∈ HUMAN_HOLD_REASONS` sozinho deixaria as condições
+    // seguintes sem avaliação (vazaria opt-out LGPD pro LLM). Por isso o
+    // bypass RE-AVALIA a cadeia inteira com os holds humanos neutralizados e
+    // só libera se ela passar até o fim.
+    const humanInitiated = item.origin === "coach" || item.origin === "return_to_ai";
     if (!eligibility.ok) {
-      await ctx.db.patch(item._id, { status: "skipped", error: eligibility.reason, updatedAt: now });
-      return { kind: "skip" as const, reason: eligibility.reason };
+      let effectiveReason = eligibility.reason;
+      let bypassed = false;
+      if (humanInitiated && HUMAN_HOLD_REASONS.includes(eligibility.reason)) {
+        const recheck = evaluateEligibility({
+          org,
+          agent,
+          conversation: { ...conversation, aiPausedUntil: undefined },
+          lead: lead
+            ? { ...lead, assignedTo: agent?._id, handoffState: undefined }
+            : lead,
+          contact,
+          channelProvider: providerOf(channelConfig),
+          aiReplyCountConversation: counts.total,
+          aiReplyCountLastHour: counts.lastHour,
+          now,
+        });
+        if (recheck.ok) bypassed = true;
+        else effectiveReason = recheck.reason;
+      }
+      if (!bypassed) {
+        await ctx.db.patch(item._id, { status: "skipped", error: effectiveReason, updatedAt: now });
+        return { kind: "skip" as const, reason: effectiveReason };
+      }
+    }
+
+    // Regeneração: se o rascunho de origem já foi revisado enquanto o item
+    // esperava (humano enviou/descartou), a regeneração perdeu o objeto —
+    // encerra sem gastar inferência. O commit re-checa (TOCTOU).
+    let sourceDraft: Doc<"messages"> | null = null;
+    if (item.sourceDraftId) {
+      sourceDraft = await ctx.db.get(item.sourceDraftId);
+      const sourceStatus = (
+        sourceDraft?.metadata?.aiDraft as { status?: string } | undefined
+      )?.status;
+      if (!sourceDraft || sourceStatus !== "pending") {
+        await ctx.db.patch(item._id, {
+          status: "skipped",
+          error: "rascunho_ja_revisado",
+          updatedAt: now,
+        });
+        return { kind: "skip" as const, reason: "rascunho_ja_revisado" };
+      }
     }
 
     // D1 — o atendente ESPERA a transcrição do áudio (com prazo). Sem isso o
@@ -716,6 +747,7 @@ export const internalClaimForProcessing = internalMutation({
       conversationId: conversation._id,
       leadId: lead!._id,
       triggerMessageId: item.triggerMessageId,
+      ...(humanInitiated ? { humanInitiated: true } : {}),
       model:
         agent!.agentProfile?.model ??
         org!.settings.aiConfig?.providerConfig?.models.attendant ??
@@ -803,6 +835,16 @@ export const internalClaimForProcessing = internalMutation({
             }
           : null,
         history,
+        // Loop de coaching (P2): instrução do humano viaja no item da fila e
+        // entra no prompt como conteúdo CONFIÁVEL (fora do envelope).
+        humanInitiated,
+        humanInstruction: item.instruction ?? null,
+        instructedBy: item.instructedBy ?? null,
+        sourceDraftId: item.sourceDraftId ?? null,
+        previousDraftText: sourceDraft?.content ?? null,
+        // Coach SEMPRE commita como sugestão (quem instrui quer revisar),
+        // mesmo em org autopilot. return_to_ai respeita o modo do perfil.
+        forceSuggest: item.origin === "coach",
       },
     };
   },
@@ -1333,6 +1375,11 @@ export const internalCommitAiReply = internalMutation({
 });
 
 // Modo sugestão: o rascunho vira NOTA INTERNA na conversa (nada sai pro cliente).
+// P2: também é a porta de saída do loop de coaching — `humanInstructed` tolera a
+// pausa (o humano pediu explicitamente) e `supersedesDraftId` faz o supersede
+// TRANSACIONAL do rascunho de origem (regeneração): o antigo vira "revised"
+// (fora de `reviewed` nas métricas — instruir a IA não pune o gate do autopilot)
+// e os dois ficam encadeados por previousDraftId/nextDraftId.
 export const internalCommitAiSuggestion = internalMutation({
   args: {
     queueItemId: v.id("aiReplyQueue"),
@@ -1347,6 +1394,10 @@ export const internalCommitAiSuggestion = internalMutation({
     needsDisclosure: v.boolean(),
     disclosure: v.string(),
     confidence: v.optional(v.number()),
+    humanInstructed: v.optional(v.boolean()),
+    supersedesDraftId: v.optional(v.id("messages")),
+    instruction: v.optional(v.string()),
+    instructedBy: v.optional(v.id("teamMembers")),
   },
   returns: v.union(
     v.object({ committed: v.literal(true), messageId: v.id("messages") }),
@@ -1359,11 +1410,37 @@ export const internalCommitAiSuggestion = internalMutation({
     if (conversation.aiTurnLock?.runId !== args.runId) {
       return { committed: false as const, reason: "lock_perdido" };
     }
-    // Humano assumiu durante a geração? Rascunho vira ruído — descarta.
-    if (conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now) {
+    // Humano assumiu durante a geração? Rascunho vira ruído — descarta. Exceto
+    // no coaching: a conversa costuma ESTAR pausada (humano no volante) e o
+    // rascunho é justamente o que ele pediu.
+    if (
+      !args.humanInstructed &&
+      conversation.aiPausedUntil !== undefined &&
+      conversation.aiPausedUntil > now
+    ) {
       await ctx.db.patch(args.queueItemId, { status: "skipped", error: "ia_pausada", updatedAt: now });
       await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
       return { committed: false as const, reason: "ia_pausada" };
+    }
+
+    // TOCTOU do supersede: se o rascunho de origem foi resolvido DURANTE a
+    // geração (humano enviou/descartou), este resultado perdeu o objeto —
+    // aborta em vez de duplicar resposta pendente.
+    let supersededDraft: Doc<"messages"> | null = null;
+    if (args.supersedesDraftId) {
+      supersededDraft = await ctx.db.get(args.supersedesDraftId);
+      const sourceStatus = (
+        supersededDraft?.metadata?.aiDraft as { status?: string } | undefined
+      )?.status;
+      if (!supersededDraft || sourceStatus !== "pending") {
+        await ctx.db.patch(args.queueItemId, {
+          status: "skipped",
+          error: "rascunho_ja_revisado",
+          updatedAt: now,
+        });
+        await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
+        return { committed: false as const, reason: "rascunho_ja_revisado" };
+      }
     }
 
     const agent = await ctx.db.get(args.agentMemberId);
@@ -1388,10 +1465,32 @@ export const internalCommitAiSuggestion = internalMutation({
           agentRunId: args.agentRunId,
           proposedActions: args.proposedActions,
           ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
+          ...(args.instruction ? { instruction: args.instruction } : {}),
+          ...(args.instructedBy ? { instructedBy: args.instructedBy } : {}),
+          ...(supersededDraft ? { previousDraftId: supersededDraft._id } : {}),
         },
       },
       createdAt: now,
     });
+
+    // Encadeia o rascunho antigo → novo. Status "revised" fica FORA de
+    // `reviewed` em computeAcceptanceMetrics de propósito.
+    if (supersededDraft) {
+      const oldDraft = supersededDraft.metadata?.aiDraft as Record<string, unknown>;
+      await ctx.db.patch(supersededDraft._id, {
+        metadata: {
+          ...(supersededDraft.metadata ?? {}),
+          aiDraft: {
+            ...oldDraft,
+            status: "revised",
+            ...(args.instructedBy ? { revisedBy: args.instructedBy } : {}),
+            revisedAt: now,
+            nextDraftId: messageId,
+          },
+        },
+      });
+    }
+
     await ctx.db.patch(conversation._id, {
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
@@ -1404,11 +1503,54 @@ export const internalCommitAiSuggestion = internalMutation({
       type: "note",
       actorId: agent?._id,
       actorType: "ai",
-      content: "Atendente IA sugeriu uma resposta (aguardando revisão)",
+      content: args.humanInstructed
+        ? "Atendente IA propôs uma resposta a pedido do time (aguardando revisão)"
+        : "Atendente IA sugeriu uma resposta (aguardando revisão)",
       metadata: { conversationId: conversation._id, messageId },
       createdAt: now,
     });
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
+
+    // Sino: avisa quem deve REVISAR o rascunho. Dono humano do lead → ele
+    // (actorId = quem instruiu, então o instrutor com a conversa aberta não é
+    // auto-notificado). Dono é a IA ou ninguém (ex.: instrução via peek do
+    // repasse, sem assumir) → avisa o próprio instrutor, com actorId do agente
+    // para o self-skip do helper não engolir o aviso.
+    const lead = await ctx.db.get(conversation.leadId);
+    if (lead) {
+      const owner = lead.assignedTo ? await ctx.db.get(lead.assignedTo) : null;
+      const recipientId =
+        owner && owner.type === "human" ? owner._id : (args.instructedBy ?? null);
+      if (recipientId) {
+        const actorId =
+          recipientId === args.instructedBy
+            ? args.agentMemberId
+            : (args.instructedBy ?? args.agentMemberId);
+        // Dedupe: uma NÃO-LIDA por conversa basta (rajadas não empilham).
+        const recentUnread = await ctx.db
+          .query("notifications")
+          .withIndex("by_member_and_read", (q) =>
+            q.eq("memberId", recipientId).eq("readAt", undefined)
+          )
+          .order("desc")
+          .take(50);
+        const alreadyNotified = recentUnread.some(
+          (n) => n.type === "ai_draft_pending" && n.conversationId === conversation._id
+        );
+        if (!alreadyNotified) {
+          await createNotification(ctx, {
+            organizationId: conversation.organizationId,
+            memberId: recipientId,
+            type: "ai_draft_pending",
+            title: "Rascunho da IA aguardando revisão",
+            body: lead.title,
+            conversationId: conversation._id,
+            actorId,
+          });
+        }
+      }
+    }
+
     return { committed: true as const, messageId };
   },
 });
@@ -1462,31 +1604,18 @@ export const internalRecordQueueFailure = internalMutation({
       updatedAt: now,
     });
     const lead = conversation ? await ctx.db.get(conversation.leadId) : null;
-    if (lead && (!lead.handoffState || lead.handoffState.status === "completed")) {
-      const handoffId = await ctx.db.insert("handoffs", {
-        organizationId: item.organizationId,
+    // Item iniciado por humano (coach/devolução) não escala para repasse: quem
+    // pediu JÁ está na conversa — o erro aparece no estado da IA do inbox.
+    if (lead && item.origin === undefined) {
+      await createHandoffCore(ctx, {
         leadId: lead._id,
+        conversationId: args.conversationId,
         fromMemberId: item.agentMemberId,
         reason: "Atendente IA indisponível (falha técnica)",
         summary: "A IA não conseguiu responder após múltiplas tentativas — assumir o atendimento.",
         suggestedActions: ["Responder o cliente manualmente"],
-        status: "pending",
-        createdAt: now,
-      });
-      await ctx.db.patch(lead._id, {
-        handoffState: {
-          status: "requested",
-          fromMemberId: item.agentMemberId,
-          reason: "Atendente IA indisponível (falha técnica)",
-          requestedAt: now,
-        },
-        lastActivityAt: now,
-        updatedAt: now,
-      });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-        organizationId: item.organizationId,
-        event: "handoff.requested",
-        payload: { handoffId, leadId: lead._id, reason: "Atendente IA indisponível" },
+        origin: "ai_failure",
+        onDuplicate: "skip",
       });
     }
     return null;
@@ -1547,6 +1676,13 @@ type RunContext = {
   lead: Record<string, unknown>;
   contact: Record<string, unknown> | null;
   history: { de: string; texto: string; em: number }[];
+  // Loop de coaching (P2) — presentes só em itens iniciados por humano.
+  humanInitiated: boolean;
+  humanInstruction: string | null;
+  instructedBy: Id<"teamMembers"> | null;
+  sourceDraftId: Id<"messages"> | null;
+  previousDraftText: string | null;
+  forceSuggest: boolean;
 };
 
 // Subconjunto do contexto que o prompt de sistema realmente usa — permite que o
@@ -1564,6 +1700,8 @@ type PromptContext = Pick<
   | "stages"
   | "needsDisclosure"
   | "disclosure"
+  | "humanInstruction"
+  | "previousDraftText"
 >;
 
 // P4: allowMoveStages:false remove moveThisLead das tools da run (subtração do
@@ -1618,6 +1756,19 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
     context.needsDisclosure
       ? `Esta é a primeira resposta da IA neste atendimento: comece a resposta com exatamente: "${context.disclosure}"`
       : "",
+    // Instrução do atendente humano: conteúdo CONFIÁVEL (vem de um membro
+    // autenticado com inbox:reply) — deliberadamente FORA do envelope de dado
+    // não-confiável. Prioridade máxima, mas nunca acima das regras de segurança.
+    context.humanInstruction
+      ? `INSTRUÇÃO DO ATENDENTE HUMANO (prioridade máxima — siga-a, exceto se violar as REGRAS OBRIGATÓRIAS acima):\n${context.humanInstruction}`
+      : "",
+    context.previousDraftText
+      ? `Seu rascunho anterior foi:\n"${context.previousDraftText}"\n${
+          context.humanInstruction
+            ? "Reescreva-o seguindo a instrução do atendente humano."
+            : "Produza uma versão melhor e mais natural."
+        }`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -1646,6 +1797,9 @@ export const internalProcessQueueItem = internalAction({
     }
 
     const context = claim.context as RunContext;
+    // Coach commita SEMPRE como sugestão, mesmo com o perfil em autopilot —
+    // quem instruiu quer revisar a resposta antes de sair.
+    const effectiveMode = context.forceSuggest ? "suggest" : context.mode;
 
     try {
       // Rotas da org: platform chain OU BYO (key própria, sem fallback);
@@ -1770,7 +1924,7 @@ export const internalProcessQueueItem = internalAction({
               replyText = null;
             }
             result = replyText
-              ? { status: context.mode === "suggest" ? "rascunho_registrado" : "enfileirada" }
+              ? { status: effectiveMode === "suggest" ? "rascunho_registrado" : "enfileirada" }
               : { error: "text é obrigatório" };
           } else if (name === "requestHandoff") {
             // Handoff executa NOS DOIS modos (escalar pro humano é sempre seguro).
@@ -1778,6 +1932,7 @@ export const internalProcessQueueItem = internalAction({
               const parsed = JSON.parse(tc.function.arguments || "{}");
               await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
                 leadId: context.leadId,
+                conversationId: context.conversationId,
                 reason:
                   typeof parsed.reason === "string" ? parsed.reason.slice(0, 200) : "Escalado pela IA",
                 summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 1000) : undefined,
@@ -1785,6 +1940,7 @@ export const internalProcessQueueItem = internalAction({
                   ? parsed.suggestedActions.filter((a: unknown) => typeof a === "string").slice(0, 5)
                   : [],
                 teamMemberId: context.agentMemberId,
+                origin: "ai_tool",
               });
               handoffRequestedThisRun = true;
               result = { status: "repasse_criado" };
@@ -1795,7 +1951,7 @@ export const internalProcessQueueItem = internalAction({
                   : "Falha ao criar o repasse",
               };
             }
-          } else if (context.mode === "suggest") {
+          } else if (effectiveMode === "suggest") {
             // Modo sugestão: escreve NADA — registra como ação proposta que o
             // humano pode aprovar junto com o rascunho (v4.2).
             proposedActions.push({
@@ -1841,10 +1997,16 @@ export const internalProcessQueueItem = internalAction({
         disclosure: context.disclosure,
       };
       const commit =
-        context.mode === "suggest"
+        effectiveMode === "suggest"
           ? await ctx.runMutation(internal.attendant.internalCommitAiSuggestion, {
               ...commitArgsBase,
               proposedActions,
+              // Loop de coaching: o commit tolera a pausa (humano pediu) e faz
+              // o supersede transacional do rascunho de origem (TOCTOU).
+              ...(context.humanInitiated ? { humanInstructed: true } : {}),
+              ...(context.sourceDraftId ? { supersedesDraftId: context.sourceDraftId } : {}),
+              ...(context.humanInstruction ? { instruction: context.humanInstruction } : {}),
+              ...(context.instructedBy ? { instructedBy: context.instructedBy } : {}),
             })
           : await ctx.runMutation(internal.attendant.internalCommitAiReply, {
               ...commitArgsBase,
@@ -2127,6 +2289,262 @@ export const discardAiDraft = mutation({
   },
 });
 
+// ── Loop de coaching (P2): humano instrui, IA propõe, humano aprova/reinstrui ──
+
+// Pede à IA um rascunho de resposta para a conversa — do zero (`instruction`
+// opcional) ou REGENERANDO um rascunho pendente (`sourceDraftId`) com a
+// instrução do humano ("mais curto", "ofereça 10% de desconto"...).
+// Reutiliza a fila do atendente inteira (pacing, lock OCC, budget, agentRuns):
+// o item ganha origin "coach", que (a) atravessa só os holds humanos na
+// elegibilidade e (b) SEMPRE commita como sugestão, mesmo em org autopilot.
+export const requestAiDraft = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    instruction: v.optional(v.string()),
+    sourceDraftId: v.optional(v.id("messages")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new Error("Conversa não encontrada");
+    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
+
+    const org = await ctx.db.get(conversation.organizationId);
+    if (!orgAiActive(org)) throw new Error("A IA da organização não está ativa");
+    if (org!.settings.aiConfig?.attendantEnabled === false) {
+      throw new Error("O atendente IA está desativado nesta organização");
+    }
+    const lead = await ctx.db.get(conversation.leadId);
+    if (!lead) throw new Error("Lead da conversa não encontrado");
+    const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
+    const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
+    if (!agent) throw new Error("Nenhum atendente IA configurado para este canal");
+
+    const instruction = args.instruction?.trim() || undefined;
+    if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
+      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+    }
+
+    if (args.sourceDraftId) {
+      const source = await ctx.db.get(args.sourceDraftId);
+      if (!source || source.conversationId !== conversation._id) {
+        throw new Error("Rascunho não encontrado nesta conversa");
+      }
+      const status = (source.metadata?.aiDraft as { status?: string } | undefined)?.status;
+      if (status !== "pending") throw new Error("Rascunho já revisado");
+    }
+
+    // Anti duplo-clique / anti rascunho duplo: um item por vez por conversa
+    // (qualquer origem — a fila normal também produz rascunho).
+    for (const status of ["pending", "processing"] as const) {
+      const inFlight = await ctx.db
+        .query("aiReplyQueue")
+        .withIndex("by_conversation_and_status", (q) =>
+          q.eq("conversationId", conversation._id).eq("status", status)
+        )
+        .first();
+      if (inFlight) {
+        throw new Error("A IA já está preparando uma resposta para esta conversa — aguarde");
+      }
+    }
+
+    const lastMessage = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+      .order("desc")
+      .first();
+    if (!lastMessage) throw new Error("Conversa sem mensagens");
+
+    const now = Date.now();
+    const queueItemId = await ctx.db.insert("aiReplyQueue", {
+      organizationId: conversation.organizationId,
+      conversationId: conversation._id,
+      triggerMessageId: lastMessage._id,
+      agentMemberId: agent._id,
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: now, // pedido explícito: sem debounce
+      origin: "coach",
+      instruction,
+      instructedBy: member._id,
+      sourceDraftId: args.sourceDraftId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "note",
+      actorId: member._id,
+      actorType: "human",
+      content: args.sourceDraftId
+        ? `${member.name} pediu uma nova versão do rascunho da IA${instruction ? " com instrução" : ""}`
+        : `${member.name} pediu uma sugestão de resposta à IA${instruction ? " com instrução" : ""}`,
+      metadata: { conversationId: conversation._id, queueItemId },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
+      queueItemId,
+    });
+    return null;
+  },
+});
+
+// Devolve a conversa à IA numa transação só: despausa, reatribui o lead ao
+// atendente (ou limpa a atribuição), cancela repasse pendente e — com
+// `instruction` — já enfileira um turno da IA com o contexto do humano
+// ("faça follow-up amanhã oferecendo o plano anual"). Diferente do coach, o
+// turno respeita o MODO do perfil (suggest → rascunho; autopilot → envia).
+export const returnToAi = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    instruction: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new Error("Conversa não encontrada");
+    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
+
+    const org = await ctx.db.get(conversation.organizationId);
+    const lead = await ctx.db.get(conversation.leadId);
+    if (!lead) throw new Error("Lead da conversa não encontrado");
+    const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
+    const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
+
+    // Sem atendente resolvível no canal, "devolver para a IA" não devolve para
+    // ninguém — e o patch abaixo APAGARIA o dono humano do lead em silêncio.
+    // Erro claro em vez de conversa órfã.
+    if (!agent) {
+      throw new Error("Nenhum atendente IA configurado para este canal");
+    }
+    const instruction = args.instruction?.trim() || undefined;
+    if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
+      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+
+    // Lead volta para o atendente (condição nº 6 da elegibilidade).
+    // handoffState limpo encerra o episódio.
+    await ctx.db.patch(lead._id, {
+      assignedTo: agent._id,
+      handoffState: undefined,
+      lastActivityAt: now,
+      updatedAt: now,
+    });
+
+    // Repasse pendente do lead → cancelado (o humano decidiu devolver à IA).
+    const leadHandoffs = await ctx.db
+      .query("handoffs")
+      .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
+      .collect();
+    const pendingHandoff = leadHandoffs.find((h) => h.status === "pending");
+    if (pendingHandoff) {
+      await ctx.db.patch(pendingHandoff._id, {
+        status: "canceled",
+        resolvedBy: member._id,
+        resolvedAt: now,
+      });
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: conversation.organizationId,
+        event: "handoff.canceled",
+        payload: {
+          handoffId: pendingHandoff._id,
+          leadId: lead._id,
+          conversationId: conversation._id,
+          canceledBy: member._id,
+        },
+      });
+    }
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: conversation.organizationId,
+      entityType: "lead",
+      entityId: lead._id,
+      action: "assign",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { assignedTo: lead.assignedTo },
+        after: { assignedTo: agent?._id },
+      },
+      metadata: { title: lead.title, returnedToAi: true, hasInstruction: !!instruction },
+      description: `Devolveu a conversa e o lead '${lead.title}' para a IA`,
+      severity: "medium",
+      createdAt: now,
+    });
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: lead._id,
+      type: "assignment",
+      actorId: member._id,
+      actorType: "human",
+      content: `${member.name} devolveu a conversa para a IA${instruction ? " com instrução" : ""}`,
+      metadata: { conversationId: conversation._id },
+      createdAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: conversation.organizationId,
+      event: "conversation.returned_to_ai",
+      payload: {
+        conversationId: conversation._id,
+        leadId: lead._id,
+        memberId: member._id,
+        hasInstruction: !!instruction,
+      },
+    });
+
+    // Instrução → um turno da IA agora. Item pendente existente é reaproveitado
+    // (vira o turno instruído) em vez de disputar o lock com um novo.
+    if (instruction && agent) {
+      const lastMessage = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+        .order("desc")
+        .first();
+      const pendingItem = await ctx.db
+        .query("aiReplyQueue")
+        .withIndex("by_conversation_and_status", (q) =>
+          q.eq("conversationId", conversation._id).eq("status", "pending")
+        )
+        .first();
+      if (pendingItem) {
+        await ctx.db.patch(pendingItem._id, {
+          origin: "return_to_ai",
+          instruction,
+          instructedBy: member._id,
+          nextAttemptAt: now,
+          updatedAt: now,
+        });
+        await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
+          queueItemId: pendingItem._id,
+        });
+      } else if (lastMessage) {
+        const queueItemId = await ctx.db.insert("aiReplyQueue", {
+          organizationId: conversation.organizationId,
+          conversationId: conversation._id,
+          triggerMessageId: lastMessage._id,
+          agentMemberId: agent._id,
+          status: "pending",
+          attempts: 0,
+          nextAttemptAt: now,
+          origin: "return_to_ai",
+          instruction,
+          instructedBy: member._id,
+          createdAt: now,
+          updatedAt: now,
+        });
+        await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
+          queueItemId,
+        });
+      }
+    }
+    return null;
+  },
+});
+
 // ── Simulador (F4 usa; já nasce aqui por compartilhar o runtime) ──
 // Roda a persona SEM tocar o WhatsApp nem o banco: só inferência + relato.
 export const simulateAttendant = action({
@@ -2322,6 +2740,10 @@ export const internalGetSimulatorSetup = internalQuery({
         tags: [],
       },
       contact: { nome: "Cliente de teste", empresa: null },
+      // O simulador não tem loop de coaching — campos presentes só para o
+      // PromptContext ser o mesmo do runtime.
+      humanInstruction: null,
+      previousDraftText: null,
     };
   },
 });

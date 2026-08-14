@@ -5,7 +5,10 @@ export type NotificationType =
   | "task_assigned"
   | "task_comment_mention"
   | "task_due_soon"
-  | "task_overdue";
+  | "task_overdue"
+  | "handoff_requested"
+  | "handoff_resolved"
+  | "ai_draft_pending";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -14,6 +17,9 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   task_comment_mention: "taskCommentMention",
   task_due_soon: "taskDueSoon",
   task_overdue: "taskOverdue",
+  handoff_requested: "handoffRequested",
+  handoff_resolved: "handoffResolved",
+  ai_draft_pending: "aiDraftPending",
 };
 
 /**
@@ -56,6 +62,8 @@ export async function createNotification(
     title: string;
     body?: string;
     taskId?: Id<"tasks">;
+    handoffId?: Id<"handoffs">;
+    conversationId?: Id<"conversations">;
     actorId?: Id<"teamMembers">;
   }
 ): Promise<void> {
@@ -79,6 +87,8 @@ export async function createNotification(
     title: args.title,
     body: args.body,
     taskId: args.taskId,
+    handoffId: args.handoffId,
+    conversationId: args.conversationId,
     actorId: args.actorId,
     createdAt: Date.now(),
   });

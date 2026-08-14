@@ -12,6 +12,7 @@ export interface InboxAttachmentFile {
 
 export interface InboxMessage {
   _id: string;
+  conversationId: string;
   content: string;
   contentType?: "text" | "image" | "file" | "audio";
   direction: string;

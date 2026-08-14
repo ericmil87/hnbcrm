@@ -737,8 +737,16 @@ async function computeAcceptanceMetrics(
   let sent = 0;
   let sentEdited = 0;
   let discarded = 0;
+  let revised = 0;
+  let coached = 0;
   for (const run of relevant) {
     if (!run.resultMessageId) continue;
+    // Runs iniciadas por humano (requestAiDraft/returnToAi) medem o COACHING,
+    // não a autonomia da IA — fora do gate do autopilot, contadas à parte.
+    if (run.humanInitiated) {
+      coached++;
+      continue;
+    }
     const message = await ctx.db.get(run.resultMessageId);
     const draft = message?.metadata?.aiDraft as { status?: string } | undefined;
     if (!draft) continue;
@@ -746,6 +754,10 @@ async function computeAcceptanceMetrics(
     else if (draft.status === "sent") sent++;
     else if (draft.status === "sent_edited") sentEdited++;
     else if (draft.status === "discarded") discarded++;
+    // "revised" = substituído por instrução humana (loop de coaching). Fica
+    // FORA de `reviewed` de propósito: instruir a IA não é rejeição — contar
+    // como descarte derrubaria a taxa e travaria o gate do autopilot.
+    else if (draft.status === "revised") revised++;
   }
   const reviewed = sent + sentEdited + discarded;
   return {
@@ -753,6 +765,8 @@ async function computeAcceptanceMetrics(
     sent,
     sentEdited,
     discarded,
+    revised,
+    coached,
     reviewed,
     acceptanceRate: reviewed > 0 ? (sent + sentEdited) / reviewed : 0,
   };
@@ -768,6 +782,8 @@ export const getAttendantMetrics = query({
     sent: v.number(),
     sentEdited: v.number(),
     discarded: v.number(),
+    revised: v.number(),
+    coached: v.number(),
     reviewed: v.number(),
     acceptanceRate: v.number(),
     autopilotUnlocked: v.boolean(),

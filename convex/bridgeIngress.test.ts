@@ -65,6 +65,9 @@ async function seedOrgWithBridgeConfig(
       role: "ai",
       type: "ai",
       status: "active",
+      // autoAssign só atribui ao ATENDENTE (nunca ao copiloto) — o seed
+      // reflete o perfil exigido por lib/inboundRouting.ts.
+      agentProfile: { kind: "attendant", mode: "suggest" },
       createdAt: now,
       updatedAt: now,
     });

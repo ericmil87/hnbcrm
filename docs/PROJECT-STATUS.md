@@ -1,8 +1,31 @@
 # HNBCRM — Project Status & Roadmap
 
-**Last Updated:** 2026-07-19
-**Current Version:** v0.33.0
+**Last Updated:** 2026-08-14
+**Current Version:** v0.45.0
 **Based on:** PRD v2.0 (2025-02-11)
+
+---
+
+## Update 2026-08-14 (v0.34 → v0.45)
+
+The numbered sections below still describe the v0.33 snapshot. What shipped since then:
+
+- **v0.34 (2026-07-19)** — Canal WhatsApp oficial (Meta Cloud API) com configs por org, credenciais cifradas e janela de 24h; upgrade do inbox (transcrição Whisper, busca full-text, respostas rápidas, agendamento, etiquetas + arquivamento)
+- **v0.35 (2026-07-24)** — Visão de lista dos leads, operações em massa e arquivamento
+- **v0.36 (2026-07-26)** — IA nativa: Copiloto in-app + Atendente WhatsApp (fila anti-ban, lock OCC, modo sugestão default, autopilot com gate por métricas, bridge opt-in com aceite de risco)
+- **v0.37 (2026-07-28)** — Ativação da IA em 1 fluxo, atendente que preenche o CRM (captura de dados), ações aprováveis no rascunho, fim do skip silencioso
+- **v0.38 (2026-07-31)** — Provisionamento gerenciado do bridge ("Servidor HNBCRM") + roteamento de provider LLM configurável e guard anti-vazamento de keys
+- **v0.39 (2026-07-31)** — Atendente IA ouve notas de voz (espera pela transcrição, com gate próprio)
+- **v0.40–0.42 (2026-08-01)** — Comandos de teste `/resetlist` e `/resetother` via WhatsApp; tetos de resposta do atendente configuráveis (0 = sem limite); janela de agrupamento de mensagens + editor do atendente em seções
+- **v0.43 (2026-08-14)** — Gestor de tarefas completo: projetos/kanban, etiquetas, multi-responsável, subtarefas, menções e notificações in-app
+- **v0.44 (2026-08-14)** — Vínculo tarefa ↔ lead visível e navegável, com deep-links de pipeline e inbox
+- **v0.45 (2026-08-14)** — Repasses IA ↔ humano fluidos (sino → espiar → aceitar cai no chat, banner na conversa) + loop de coaching no rascunho da IA (instruir/regenerar, pedir sugestão, devolver para IA)
+
+### Pendências atuais
+
+- **P3 do handoff aguardando aprovação do Eric** — SLA de resgate, timer de reativação, mensagem de transição, abas Minhas/Não-atribuídas no inbox, dashboard de handoff
+- **Hotfix do gateway bridge** — entrada em 401 após re-pareamento (o wuzapi não re-assina o HMAC; o canal envia mas não recebe). Diagnóstico e runbook em `docs/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md`
+- **E2E vivo pendente** — validação ponta a ponta de repasse + coaching bloqueada até o gateway voltar a receber
 
 ---
 

@@ -14,6 +14,7 @@ const DEFAULTS = {
   dailyDigest: true,
   taskCommentMention: true,
   taskDueSoon: true,
+  aiDraftPending: true,
 };
 
 // Get current member's notification preferences
@@ -45,6 +46,7 @@ export const getMyPreferences = query({
       dailyDigest: prefs.dailyDigest,
       taskCommentMention: prefs.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: prefs.taskDueSoon ?? DEFAULTS.taskDueSoon,
+      aiDraftPending: prefs.aiDraftPending ?? DEFAULTS.aiDraftPending,
       _id: prefs._id,
       _exists: true,
     };
@@ -65,6 +67,7 @@ export const updateMyPreferences = mutation({
     dailyDigest: v.optional(v.boolean()),
     taskCommentMention: v.optional(v.boolean()),
     taskDueSoon: v.optional(v.boolean()),
+    aiDraftPending: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -90,6 +93,7 @@ export const updateMyPreferences = mutation({
       taskCommentMention:
         args.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: args.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
+      aiDraftPending: args.aiDraftPending ?? existing?.aiDraftPending ?? DEFAULTS.aiDraftPending,
     };
 
     if (existing) {

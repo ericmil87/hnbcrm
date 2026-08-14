@@ -23,14 +23,14 @@
 | `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
 | `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
 | `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
-| `handoffs.ts` | AI-to-human handoff workflow |
-| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições), lock/lease OCC, commits transacionais, runtime, simulador, rascunhos com AÇÕES APROVÁVEIS (acceptAiDraft+actionIndexes → executor compartilhado), captura de dados (updateThisContact/updateThisLeadInfo com whitelist captureFields), estado por conversa (getConversationAiState), skip com rastro |
+| `handoffs.ts` | Repasse IA→humano: caminho ÚNICO de criação `createHandoffCore` (todos os gatilhos — humano, palavra-chave, tool, falha) que resolve `conversationId` de origem, notifica in-app (destinatário ou broadcast p/ `inbox >= reply`) e dispara webhook; criar NÃO pausa a conversa; accept = assumir (pausa IA + atribui lead + desarquiva → UI navega p/ a conversa), reject devolve à IA, status `canceled` p/ repasse cancelado pelo returnToAi |
+| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições), lock/lease OCC, commits transacionais, runtime, simulador, rascunhos com AÇÕES APROVÁVEIS (acceptAiDraft+actionIndexes → executor compartilhado), captura de dados (updateThisContact/updateThisLeadInfo com whitelist captureFields), estado por conversa (getConversationAiState), skip com rastro; loop de coaching `requestAiDraft`/`returnToAi` (SÓ app UI) — itens `humanInitiated` (`origin` coach\|return_to_ai) têm bypass RESTRITO no claim e commitam SEMPRE como sugestão, e a regeneração supersede o rascunho de origem p/ status `revised` (encadeado previousDraftId/nextDraftId) |
 | `lib/channelResolve.ts` | Resolução ÚNICA do channelConfig de uma conversa (fallback determinístico, prefere Meta) — usada por atendente E dispatch |
 | `lib/inboundRouting.ts` | Roteamento inbound → contato/lead; aplica o pipelineConfig do atendente do canal (board/estágio inicial) com fallback auditado |
 | `lib/whatsappDispatch.ts` | Pacing de envio em 2 níveis: cursor por conversa (pair rate 6,5s) + cursor por número (`channelPacing`; Meta 1-3s, bridge reativo 4-10s / frio 8-15s), typing humanizado no bridge, claim OCC |
 | `copilot.ts` | Copiloto: threads/mensagens + executores de tools (leitura via query, escrita via mutation com via:"copilot", destrutivo → pendingActions) |
 | `copilotHttp.ts` | Streaming SSE autenticado do copiloto (`POST /api/copilot/stream`) com loop de tool_calls |
-| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas |
+| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas — contadores `revised` (rascunho substituído por instrução humana) e `coached` (turnos pedidos por humano) ficam FORA do cálculo de aceitação que libera o autopilot |
 | `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
 | `testReset.ts` | Comandos de teste via WhatsApp — `/resetme` (hard delete do próprio remetente), `/resetlist` (10 leads mais recentes, numerados) e `/resetother <nº\|sufixo do telefone>` (hard delete de outro lead, com confirmação no WhatsApp) — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
 | `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
@@ -51,8 +51,8 @@
 | `taskComments.ts` | Task comments, `authorType` human\|ai, `@mention` → in-app + e-mail notification via `lib/notify.ts` |
 | `taskProjects.ts` | Task projects (CRUD, archive/reorder) + kanban columns per project (CRUD/reorder, done column, WIP limit) — admin/manager only for management |
 | `taskLabels.ts` | Org-wide task labels with color (CRUD) — any member |
-| `notifications.ts` | In-app notifications: list/unreadCount/markRead/markAllRead (bell in `AppShell`) |
-| `lib/notify.ts` | `createNotification()` — inserts an in-app notification in the same transaction as the triggering mutation; skips AI members and self-notification |
+| `notifications.ts` | In-app notifications: list/unreadCount/markRead/markAllRead (bell in `AppShell`); tipos de tarefa + `handoff_requested`/`handoff_resolved`/`ai_draft_pending`, com ponteiros `handoffId`/`conversationId` p/ o deep-link do item |
+| `lib/notify.ts` | `createNotification()` — inserts an in-app notification in the same transaction as the triggering mutation; skips AI members and self-notification; `PREFERENCE_FLAG` mapeia cada tipo para o flag de opt-out, incluindo os novos de handoff e `ai_draft_pending` → `aiDraftPending` |
 | `activities.ts` | Activity timeline events on leads |
 | `auditLogs.ts` | Audit trail queries |
 | `dashboard.ts` | Aggregation queries for dashboard |

@@ -718,7 +718,7 @@ export const OPENAPI_SPEC = `{
         "description": "Retorna a lista de handoffs da organização com filtro opcional por status.",
         "operationId": "listHandoffs",
         "parameters": [
-          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected"] }, "description": "Filtrar por status" },
+          { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected", "canceled"] }, "description": "Filtrar por status" },
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
           { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
@@ -1879,12 +1879,13 @@ export const OPENAPI_SPEC = `{
           "_creationTime": { "type": "number", "description": "Timestamp de criação" },
           "organizationId": { "type": "string", "description": "ID da organização" },
           "leadId": { "type": "string", "description": "ID do lead" },
+          "conversationId": { "type": "string", "nullable": true, "description": "ID da conversa de origem (nulo quando não pôde ser resolvida)" },
           "fromMemberId": { "type": "string", "description": "ID do membro solicitante" },
           "toMemberId": { "type": "string", "description": "ID do membro destino" },
           "reason": { "type": "string", "description": "Motivo do handoff" },
           "summary": { "type": "string", "description": "Resumo da conversa" },
           "suggestedActions": { "type": "array", "items": { "type": "string" }, "description": "Ações sugeridas" },
-          "status": { "type": "string", "enum": ["pending", "accepted", "rejected"], "description": "Status do handoff" }
+          "status": { "type": "string", "enum": ["pending", "accepted", "rejected", "canceled"], "description": "Status do handoff" }
         }
       },
       "Board": {

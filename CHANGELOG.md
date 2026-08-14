@@ -2,6 +2,24 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.45.0] - 2026-08-14
+
+### Repasses IA ↔ Humano fluidos + loop de coaching
+
+- **Sino avisa o repasse**: quando a IA pede ajuda, uma notificação in-app chega para o destinatário (ou para todo mundo que pode responder no inbox, quando não há destinatário) — antes só existia e-mail
+- **Espiar antes de assumir**: em Repasses, "Espiar conversa" abre um painel só-leitura com o resumo estruturado e a qualificação BANT; deep-link `/app/repasses?handoff=<id>`
+- **Aceitar assume de verdade**: pausa a IA, atribui o lead, desarquiva a conversa e leva direto para o chat em Caixa de Entrada — sem procurar a conversa na lista
+- **Rejeitar devolve à IA na hora**; criar um repasse não pausa mais a conversa (a IA já segura sozinha enquanto o pedido está pendente)
+- **Banner na conversa** com repasse pendente, com aceitar sem sair do inbox
+- **Instruir e regenerar o rascunho da IA**: chips ("Mais formal", "Mais curto", "Mais caloroso", "Oferecer alternativa") e campo livre — o rascunho antigo fica registrado como revisado e não conta nas métricas que liberam o autopilot
+- **"Pedir sugestão à IA"**: rascunho do zero, com instrução opcional, mesmo sem mensagem nova do cliente
+- **"Devolver para IA"** com instrução opcional: despausa, reatribui ao atendente e cancela o repasse pendente
+- Rascunho pedido por humano **sempre** volta para revisão, mesmo em organização no autopilot
+- **Webhooks novos**: `handoff.canceled` e `conversation.returned_to_ai`; `handoff.requested` agora inclui `conversationId` e `origin`, `handoff.accepted` inclui `conversationId`
+- `GET /api/v1/handoffs` passa a devolver `conversationId` nos itens e aceita `status=canceled` (nenhuma rota nova; o coaching é só pela interface)
+- Nova preferência de notificação: "Rascunho da IA aguardando revisão"
+- 410 testes verdes
+
 ## [0.44.0] - 2026-08-14
 
 ### Vínculo tarefa ↔ lead visível e navegável

@@ -635,12 +635,20 @@ const applicationTables = {
   handoffs: defineTable({
     organizationId: v.id("organizations"),
     leadId: v.id("leads"),
+    // Conversa de origem do repasse — resolvida na criação (fallback: conversa
+    // mais recente não arquivada do lead). Repasses antigos não têm o campo.
+    conversationId: v.optional(v.id("conversations")),
     fromMemberId: v.id("teamMembers"),
     toMemberId: v.optional(v.id("teamMembers")),
     reason: v.string(),
     summary: v.optional(v.string()),
     suggestedActions: v.array(v.string()),
-    status: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("accepted"),
+      v.literal("rejected"),
+      v.literal("canceled")
+    ),
     acceptedBy: v.optional(v.id("teamMembers")),
     resolvedBy: v.optional(v.id("teamMembers")),
     notes: v.optional(v.string()),
@@ -868,11 +876,18 @@ const applicationTables = {
       v.literal("task_assigned"),
       v.literal("task_comment_mention"),
       v.literal("task_due_soon"),
-      v.literal("task_overdue")
+      v.literal("task_overdue"),
+      v.literal("handoff_requested"),
+      v.literal("handoff_resolved"),
+      v.literal("ai_draft_pending")
     ),
     title: v.string(),
     body: v.optional(v.string()),
+    // Ponteiros opcionais para a entidade de origem — a UI usa o que existir
+    // para montar o deep-link do item do sino.
     taskId: v.optional(v.id("tasks")),
+    handoffId: v.optional(v.id("handoffs")),
+    conversationId: v.optional(v.id("conversations")),
     actorId: v.optional(v.id("teamMembers")),
     readAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -973,6 +988,8 @@ const applicationTables = {
     // P1 — opcionais (linhas existentes continuam válidas; ausente = habilitado)
     taskCommentMention: v.optional(v.boolean()),
     taskDueSoon: v.optional(v.boolean()),
+    // P2 — rascunho da IA aguardando revisão (sino)
+    aiDraftPending: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1265,6 +1282,9 @@ const applicationTables = {
     leadId: v.optional(v.id("leads")),
     triggerMessageId: v.optional(v.id("messages")),
     threadId: v.optional(v.id("copilotThreads")),
+    // Run iniciada por humano (coach/return_to_ai): fica FORA das métricas de
+    // aceitação — rascunho ditado pelo time não mede "a IA sozinha acerta?".
+    humanInitiated: v.optional(v.boolean()),
     provider: v.optional(v.string()), // provider efetivo (ex. "opencode-go")
     model: v.optional(v.string()), // id canônico do modelo
     requestCount: v.number(), // nº de chamadas /chat/completions na run
@@ -1305,6 +1325,16 @@ const applicationTables = {
     transcriptWaitUntil: v.optional(v.number()),
     // Uma única mensagem de fallback por item em instabilidade (flag anti-spam).
     fallbackSentAt: v.optional(v.number()),
+    // ── Loop de coaching (P2): itens INICIADOS POR HUMANO ──
+    // `origin` ausente = fluxo normal (inbound do cliente). "coach" = humano
+    // pediu/regenerou um rascunho (commit SEMPRE como sugestão); "return_to_ai"
+    // = devolução da conversa à IA (respeita o modo do perfil). A instrução vive
+    // no ITEM (contrato da run) e é copiada ao metadata do rascunho no commit.
+    origin: v.optional(v.union(v.literal("coach"), v.literal("return_to_ai"))),
+    instruction: v.optional(v.string()),
+    instructedBy: v.optional(v.id("teamMembers")),
+    // Rascunho que esta run substitui (regeneração) — vira status "revised".
+    sourceDraftId: v.optional(v.id("messages")),
     error: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),

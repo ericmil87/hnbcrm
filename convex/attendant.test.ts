@@ -287,7 +287,7 @@ describe("fila do atendente (enqueue + coalescing)", () => {
     expect(items[0]).toMatchObject({ status: "skipped", error: "opt_out" });
   });
 
-  test("keyword 'humano' → handoff determinístico + IA pausada + sem fila", async () => {
+  test("keyword 'humano' → handoff determinístico SEM pausar + sem fila", async () => {
     const t = setup();
     const seed = await seedAttendantOrg(t);
     const messageId = await insertInbound(t, seed, "quero falar com um HUMANO por favor");
@@ -303,7 +303,9 @@ describe("fila do atendente (enqueue + coalescing)", () => {
     expect(items).toHaveLength(0);
     expect(handoffs).toHaveLength(1);
     expect(handoffs[0].status).toBe("pending");
-    expect(conversation!.aiPausedUntil).toBe(Number.MAX_SAFE_INTEGER);
+    // P0: criar repasse NÃO pausa a conversa — a elegibilidade nº 5
+    // (handoff_pendente) segura a IA; rejeitar o repasse a devolve na hora.
+    expect(conversation!.aiPausedUntil).toBeUndefined();
     expect(lead!.handoffState?.status).toBe("requested");
   });
 });
