@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navigate, Outlet, ScrollRestoration } from "react-router";
 import { useConvexAuth, useQuery, useMutation } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
@@ -22,23 +22,67 @@ export type AppOutletContext = {
   organizationId: Id<"organizations">;
 };
 
+const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
+
+function readStoredOrgId(): Id<"organizations"> | null {
+  try {
+    return localStorage.getItem(SELECTED_ORG_KEY) as Id<"organizations"> | null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthLayout() {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const [selectedOrgId, setSelectedOrgId] = useState<Id<"organizations"> | null>(null);
+  const [selectedOrgId, setSelectedOrgIdState] =
+    useState<Id<"organizations"> | null>(readStoredOrgId);
   const [wizardDone, setWizardDone] = useState(false);
   const { signOut } = useAuthActions();
+
+  const setSelectedOrgId = useCallback((orgId: Id<"organizations"> | null) => {
+    try {
+      if (orgId) localStorage.setItem(SELECTED_ORG_KEY, orgId);
+      else localStorage.removeItem(SELECTED_ORG_KEY);
+    } catch {
+      // localStorage indisponível (ex.: modo privado) — segue só em memória
+    }
+    setSelectedOrgIdState(orgId);
+  }, []);
 
   const loggedInUser = useQuery(
     api.auth.loggedInUser,
     isAuthenticated ? undefined : "skip"
   );
+  const organizations = useQuery(
+    api.organizations.getUserOrganizations,
+    isAuthenticated ? undefined : "skip"
+  );
+  // Só usa o org salvo/selecionado depois de validar que o usuário ainda é membro
+  const activeOrgId =
+    selectedOrgId &&
+    organizations?.some(
+      (org: { _id: Id<"organizations"> } | null) => org?._id === selectedOrgId
+    )
+      ? selectedOrgId
+      : null;
+
+  useEffect(() => {
+    if (organizations === undefined) return;
+    if (selectedOrgId && !activeOrgId) {
+      // Org salva inválida (removido da org / outro usuário) — descarta
+      setSelectedOrgId(null);
+    } else if (!selectedOrgId && organizations.length === 1 && organizations[0]) {
+      setSelectedOrgId(organizations[0]._id as Id<"organizations">);
+    }
+  }, [organizations, selectedOrgId, activeOrgId, setSelectedOrgId]);
+
   const onboardingProgress = useQuery(
     api.onboarding.getOnboardingProgress,
-    selectedOrgId ? { organizationId: selectedOrgId } : "skip"
+    activeOrgId ? { organizationId: activeOrgId } : "skip"
   );
   const currentMember = useQuery(
     api.teamMembers.getCurrentTeamMember,
-    selectedOrgId ? { organizationId: selectedOrgId } : "skip"
+    activeOrgId ? { organizationId: activeOrgId } : "skip"
   );
 
   if (isLoading) {
@@ -53,7 +97,7 @@ export function AuthLayout() {
     return <Navigate to="/entrar" replace />;
   }
 
-  if (loggedInUser === undefined) {
+  if (loggedInUser === undefined || organizations === undefined) {
     return (
       <div className="flex justify-center items-center h-screen bg-surface-base">
         <Spinner size="lg" />
@@ -61,7 +105,15 @@ export function AuthLayout() {
     );
   }
 
-  if (!selectedOrgId) {
+  if (!activeOrgId) {
+    // Com uma única org (ou org salva inválida a descartar), o useEffect acima resolve — evita flash da tela de seleção
+    if (organizations.length === 1 || selectedOrgId) {
+      return (
+        <div className="flex justify-center items-center h-screen bg-surface-base">
+          <Spinner size="lg" />
+        </div>
+      );
+    }
     return <WelcomeScreen onSelectOrg={setSelectedOrgId} />;
   }
 
@@ -73,7 +125,7 @@ export function AuthLayout() {
   ) {
     return (
       <OnboardingWizard
-        organizationId={selectedOrgId}
+        organizationId={activeOrgId}
         onComplete={() => setWizardDone(true)}
       />
     );
@@ -91,7 +143,7 @@ export function AuthLayout() {
   if (currentMember.mustChangePassword) {
     return (
       <ChangePasswordScreen
-        organizationId={selectedOrgId}
+        organizationId={activeOrgId}
         onSuccess={() => {
           // The currentMember query will reactively update when mustChangePassword is cleared
         }}
@@ -104,16 +156,16 @@ export function AuthLayout() {
       <ScrollRestoration />
       <AppShell
         onSignOut={() => signOut()}
-        organizationId={selectedOrgId}
+        organizationId={activeOrgId}
         orgSelector={
           <OrganizationSelector
-            selectedOrgId={selectedOrgId}
+            selectedOrgId={activeOrgId}
             onSelectOrg={setSelectedOrgId}
           />
         }
       >
         <ErrorBoundary>
-          <Outlet context={{ organizationId: selectedOrgId } satisfies AppOutletContext} />
+          <Outlet context={{ organizationId: activeOrgId } satisfies AppOutletContext} />
         </ErrorBoundary>
       </AppShell>
     </>
