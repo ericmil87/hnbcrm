@@ -1172,6 +1172,62 @@ function verifyWebhook(body, signature, secret) {
   }
 }`}</CodeBlock>
             </Card>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">
+                Integracao com Apointoo (agendamentos confirmados)
+              </h3>
+              <p className="text-sm text-text-secondary">
+                Exemplo de receiver que recebe eventos de agendamento confirmado do
+                Apointoo e cria o lead no CRM com a atribuicao da campanha. Nos
+                agendamentos seguintes do mesmo contato, move o lead para o estagio
+                de confirmado:
+              </p>
+              <CodeBlock language="javascript">{`// Mapa telefone -> leadId (use seu banco de dados em producao)
+const leadPorTelefone = new Map();
+
+async function handleApointooEvent(event) {
+  if (event.type !== "booking.confirmed") return;
+
+  const leadId = leadPorTelefone.get(event.contact.phone);
+
+  if (!leadId) {
+    // 1. Primeiro agendamento: cria o lead com a atribuicao da campanha
+    const res = await fetch(\`\${HNBCRM_URL}/api/v1/inbound/lead\`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": HNBCRM_API_KEY,
+      },
+      body: JSON.stringify({
+        title: \`Agendamento: \${event.service}\`,
+        contact: {
+          name: event.contact.name,
+          phone: event.contact.phone,
+        },
+        value: event.value || 0,
+        tags: ["apointoo", "agendamento-confirmado"],
+        customFields: {
+          campaign: event.attribution?.campaign,
+          utm_source: event.attribution?.utmSource,
+        },
+      }),
+    });
+    const data = await res.json();
+    leadPorTelefone.set(event.contact.phone, data.leadId);
+  } else {
+    // 2. Agendamentos seguintes: move o lead para o estagio de confirmado
+    await fetch(\`\${HNBCRM_URL}/api/v1/leads/move-stage\`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": HNBCRM_API_KEY,
+      },
+      body: JSON.stringify({ leadId, stageId: STAGE_CONFIRMACAO_ID }),
+    });
+  }
+}`}</CodeBlock>
+            </Card>
           </section>
 
           {/* Bottom spacer */}
