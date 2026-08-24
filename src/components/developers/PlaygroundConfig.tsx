@@ -47,7 +47,7 @@ export function PlaygroundConfig() {
         <div className="flex items-start gap-4 flex-col md:flex-row md:items-end">
           <div className="flex items-center gap-2 mb-2 md:mb-0">
             <Settings size={20} className="text-brand-500" />
-            <h2 className="text-sm font-semibold text-text-primary">Configuracao</h2>
+            <h2 className="text-sm font-semibold text-text-primary">Configuração</h2>
             <Badge variant={isConfigured ? "success" : "warning"}>
               {isConfigured ? "Configurado" : "Pendente"}
             </Badge>

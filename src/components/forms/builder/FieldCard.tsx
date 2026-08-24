@@ -49,17 +49,17 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
   text: "Texto",
   email: "Email",
   phone: "Telefone",
-  number: "Numero",
-  select: "Selecao",
-  textarea: "Area de Texto",
+  number: "Número",
+  select: "Seleção",
+  textarea: "Área de Texto",
   checkbox: "Checkbox",
   date: "Data",
   radio: "Radio",
   url: "URL",
   hidden: "Oculto",
-  heading: "Titulo",
+  heading: "Título",
   divider: "Divisor",
-  rating: "Avaliacao",
+  rating: "Avaliação",
 };
 
 export function FieldCard({ field, isSelected, onSelect, onDelete }: FieldCardProps) {
@@ -125,7 +125,7 @@ export function FieldCard({ field, isSelected, onSelect, onDelete }: FieldCardPr
       {/* Required badge */}
       {field.isRequired && (
         <span
-          aria-label="Obrigatorio"
+          aria-label="Obrigatório"
           className="flex-shrink-0 text-semantic-error text-[13px] font-bold leading-none"
         >
           *

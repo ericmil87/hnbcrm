@@ -91,11 +91,11 @@ function getStatusLabel(status: Experiment["status"]): string {
     case "draft":
       return "Rascunho";
     case "running":
-      return "Em execucao";
+      return "Em execução";
     case "paused":
       return "Pausado";
     case "concluded":
-      return "Concluido";
+      return "Concluído";
   }
 }
 
@@ -223,7 +223,7 @@ function TrafficSplitControls({
 
   async function handleSave() {
     if (totalWeight !== 10000) {
-      toast.error("Os pesos de trafego devem somar 100%.");
+      toast.error("Os pesos de tráfego devem somar 100%.");
       return;
     }
     setIsSaving(true);
@@ -235,7 +235,7 @@ function TrafficSplitControls({
           weight: weights[i],
         })),
       });
-      toast.success("Divisao de trafego atualizada.");
+      toast.success("Divisão de tráfego atualizada.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
       toast.error(`Falha ao atualizar: ${message}`);
@@ -249,7 +249,7 @@ function TrafficSplitControls({
       <div className="flex items-center gap-2 mb-4">
         <TrendingUp size={18} className="text-brand-400" />
         <h3 className="text-sm font-semibold text-text-primary">
-          Divisao de Trafego
+          Divisão de Tráfego
         </h3>
       </div>
 
@@ -279,7 +279,7 @@ function TrafficSplitControls({
                 value={weights[idx]}
                 onChange={(e) => handleChange(idx, Number(e.target.value))}
                 className="w-full h-2 rounded-full appearance-none bg-surface-overlay cursor-pointer accent-brand-600"
-                aria-label={`Peso de trafego para ${variant.name}`}
+                aria-label={`Peso de tráfego para ${variant.name}`}
               />
             </div>
           );
@@ -300,7 +300,7 @@ function TrafficSplitControls({
           onClick={handleSave}
           disabled={isSaving || totalWeight !== 10000}
         >
-          {isSaving ? "Salvando..." : "Salvar Divisao"}
+          {isSaving ? "Salvando..." : "Salvar Divisão"}
         </Button>
       </div>
     </div>
@@ -330,8 +330,8 @@ function WinnerDialog({
     <Modal open={open} onClose={onClose} title="Declarar Vencedor">
       <div className="space-y-4">
         <p className="text-sm text-text-secondary leading-relaxed">
-          Selecione a variante vencedora. O experimento sera encerrado e os
-          dados serao preservados.
+          Selecione a variante vencedora. O experimento será encerrado e os
+          dados serão preservados.
         </p>
 
         <div className="space-y-2">
@@ -495,7 +495,7 @@ export function FormExperimentPage() {
             navigate(`/app/formularios/${formId ?? ""}`)
           }
           className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors mb-6 min-h-[44px]"
-          aria-label="Voltar para o construtor de formulario"
+          aria-label="Voltar para o construtor de formulário"
         >
           <ArrowLeft size={18} />
           Voltar
@@ -503,7 +503,7 @@ export function FormExperimentPage() {
         <div className="text-center py-16">
           <FlaskConical size={40} className="text-text-muted mx-auto mb-4" />
           <p className="text-text-secondary text-base">
-            Experimento nao encontrado.
+            Experimento não encontrado.
           </p>
         </div>
       </div>
@@ -541,10 +541,10 @@ export function FormExperimentPage() {
               navigate(`/app/formularios/${formId ?? ""}`)
             }
             className="flex items-center gap-1.5 text-sm text-text-secondary hover:text-text-primary transition-colors min-h-[44px]"
-            aria-label="Voltar para o construtor de formulario"
+            aria-label="Voltar para o construtor de formulário"
           >
             <ArrowLeft size={18} />
-            Voltar ao formulario
+            Voltar ao formulário
           </button>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -616,7 +616,7 @@ export function FormExperimentPage() {
           />
           <SummaryCard
             icon={<Clock size={20} className="text-brand-400" />}
-            label="Duracao"
+            label="Duração"
             value={
               experiment.startedAt
                 ? durationDays === 0
@@ -627,7 +627,7 @@ export function FormExperimentPage() {
             subtext={
               experiment.startedAt
                 ? `Iniciado em ${new Date(experiment.startedAt).toLocaleDateString("pt-BR")}`
-                : "Ainda nao iniciado"
+                : "Ainda não iniciado"
             }
           />
           <SummaryCard
@@ -643,12 +643,12 @@ export function FormExperimentPage() {
         </section>
 
         {/* ── Variant Comparison Table ─────────────────────────────────────── */}
-        <section aria-label="Comparacao de variantes">
+        <section aria-label="Comparação de variantes">
           <div className="bg-surface-raised border border-border rounded-card overflow-hidden">
             <div className="px-4 py-3 md:px-6 md:py-4 border-b border-border flex items-center gap-2">
               <TrendingUp size={18} className="text-brand-400" />
               <h2 className="text-sm font-semibold text-text-primary">
-                Comparacao de Variantes
+                Comparação de Variantes
               </h2>
             </div>
 
@@ -831,11 +831,11 @@ export function FormExperimentPage() {
         {/* ── Probability Bar ──────────────────────────────────────────────── */}
         {variants.length > 0 && (
           <section
-            aria-label="Distribuicao de probabilidade"
+            aria-label="Distribuição de probabilidade"
             className="bg-surface-raised border border-border rounded-card p-4 md:p-6"
           >
             <h3 className="text-sm font-semibold text-text-primary mb-3">
-              Distribuicao de Probabilidade de Vitoria
+              Distribuição de Probabilidade de Vitória
             </h3>
             <ProbabilityBar variants={variants} />
             <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3">
@@ -865,7 +865,7 @@ export function FormExperimentPage() {
 
         {/* ── Traffic Split Controls (draft / paused) ──────────────────────── */}
         {canEditSplit && variants.length > 0 && (
-          <section aria-label="Controles de divisao de trafego">
+          <section aria-label="Controles de divisão de tráfego">
             <TrafficSplitControls
               variants={variants}
               experimentId={experiment._id}
@@ -891,7 +891,7 @@ export function FormExperimentPage() {
                     <span className="font-medium text-text-primary">
                       {winner.name}
                     </span>{" "}
-                    &mdash; taxa de conversao:{" "}
+                    &mdash; taxa de conversão:{" "}
                     <span className="font-semibold tabular-nums">
                       {formatPct(winner.stats?.conversionRate ?? 0)}
                     </span>
@@ -909,7 +909,7 @@ export function FormExperimentPage() {
         onClose={() => setShowPauseConfirm(false)}
         onConfirm={handlePause}
         title="Pausar Experimento"
-        description="O trafego sera interrompido e nenhum dado novo sera coletado enquanto o experimento estiver pausado. Voce pode retomar a qualquer momento."
+        description="O tráfego será interrompido e nenhum dado novo será coletado enquanto o experimento estiver pausado. Você pode retomar a qualquer momento."
         confirmLabel="Pausar"
         cancelLabel="Cancelar"
         variant="default"

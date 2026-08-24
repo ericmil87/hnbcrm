@@ -45,9 +45,9 @@ function slugify(text: string): string {
 }
 
 const HUMAN_ROLES: { value: Role; label: string; desc: string }[] = [
-  { value: "agent", label: "Agente", desc: "Acesso basico a leads e contatos" },
-  { value: "manager", label: "Gerente", desc: "Gerencia leads, equipe e relatorios" },
-  { value: "admin", label: "Admin", desc: "Acesso total a toda organizacao" },
+  { value: "agent", label: "Agente", desc: "Acesso básico a leads e contatos" },
+  { value: "manager", label: "Gerente", desc: "Gerencia leads, equipe e relatórios" },
+  { value: "admin", label: "Admin", desc: "Acesso total a toda organização" },
 ];
 
 export function InviteMemberModal({
@@ -103,7 +103,7 @@ export function InviteMemberModal({
     try {
       if (memberType === "human") {
         if (!email.trim()) {
-          toast.error("Email e obrigatorio para membros humanos.");
+          toast.error("Email é obrigatório para membros humanos.");
           setIsSubmitting(false);
           return;
         }
@@ -121,7 +121,7 @@ export function InviteMemberModal({
         toast.success(
           result.isNewUser
             ? "Membro convidado com sucesso!"
-            : "Membro adicionado a organizacao!"
+            : "Membro adicionado a organização!"
         );
       } else {
         // Create AI agent
@@ -201,7 +201,7 @@ export function InviteMemberModal({
           <div className="text-center">
             <p className="text-sm font-semibold text-text-primary">Humano</p>
             <p className="text-xs text-text-muted mt-1">
-              Convide por email com senha temporaria
+              Convide por email com senha temporária
             </p>
           </div>
         </button>
@@ -220,7 +220,7 @@ export function InviteMemberModal({
           <div className="text-center">
             <p className="text-sm font-semibold text-text-primary">Agente IA</p>
             <p className="text-xs text-text-muted mt-1">
-              Crie um agente com chave API para automacoes
+              Crie um agente com chave API para automações
             </p>
           </div>
         </button>
@@ -235,7 +235,7 @@ export function InviteMemberModal({
         label="Nome *"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Joao Silva"
+        placeholder="João Silva"
         required
       />
 
@@ -250,7 +250,7 @@ export function InviteMemberModal({
 
       <div>
         <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-          Funcao
+          Função
         </label>
         <div className="flex flex-wrap gap-2">
           {HUMAN_ROLES.map((r) => (
@@ -312,8 +312,8 @@ export function InviteMemberModal({
       <div className="flex items-start gap-3 p-3 bg-surface-sunken rounded-lg border border-border">
         <Sparkles size={18} className="text-semantic-warning shrink-0 mt-0.5" />
         <p className="text-xs text-text-secondary leading-relaxed">
-          Agentes IA operam via <strong>chave API</strong> para automacoes, bots e integracoes.
-          Apos criar, use a chave no header <code className="text-text-primary bg-surface-overlay px-1 rounded">X-API-Key</code> das requisicoes.
+          Agentes IA operam via <strong>chave API</strong> para automações, bots e integrações.
+          Após criar, use a chave no header <code className="text-text-primary bg-surface-overlay px-1 rounded">X-API-Key</code> das requisições.
         </p>
       </div>
 
@@ -321,7 +321,7 @@ export function InviteMemberModal({
         label="Nome do Agente *"
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Ex: Bot de Vendas, Agente de Qualificacao"
+        placeholder="Ex: Bot de Vendas, Agente de Qualificação"
         required
       />
 
@@ -357,7 +357,7 @@ export function InviteMemberModal({
         )}
         {!generateApiKey && (
           <p className="text-xs text-text-muted">
-            Voce pode gerar chaves depois em Configuracoes &gt; Chaves API.
+            Você pode gerar chaves depois em Configurações &gt; Chaves API.
           </p>
         )}
       </div>
@@ -388,7 +388,7 @@ export function InviteMemberModal({
 
       {!customPermissions && (
         <p className="text-xs text-text-muted -mt-2">
-          Padrao: acesso a leads, contatos e conversas do agente.
+          Padrão: acesso a leads, contatos e conversas do agente.
         </p>
       )}
 
@@ -453,7 +453,7 @@ export function InviteMemberModal({
         <>
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Senha temporaria
+              Senha temporária
             </label>
             <div className="flex items-center gap-2 bg-surface-sunken border border-border rounded-lg p-3">
               <code className="flex-1 text-sm font-mono text-text-primary break-all select-all">
@@ -482,7 +482,7 @@ export function InviteMemberModal({
           <div className="flex gap-3 bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-3">
             <ShieldAlert size={20} className="flex-shrink-0 text-semantic-warning mt-0.5" />
             <p className="text-sm text-text-secondary leading-relaxed">
-              Envie esta senha ao membro de forma segura. Ele sera obrigado a altera-la no primeiro acesso.
+              Envie esta senha ao membro de forma segura. Ele será obrigado a alterá-la no primeiro acesso.
             </p>
           </div>
         </>
@@ -522,8 +522,8 @@ export function InviteMemberModal({
           <div className="flex gap-3 bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-3">
             <ShieldAlert size={20} className="flex-shrink-0 text-semantic-warning mt-0.5" />
             <p className="text-sm text-text-secondary leading-relaxed">
-              Salve esta chave em local seguro. Voce nao podera ve-la novamente.
-              Use no header <code className="bg-surface-overlay px-1 rounded text-text-primary">X-API-Key</code> das requisicoes.
+              Salve esta chave em local seguro. Você não poderá vê-la novamente.
+              Use no header <code className="bg-surface-overlay px-1 rounded text-text-primary">X-API-Key</code> das requisições.
             </p>
           </div>
         </>

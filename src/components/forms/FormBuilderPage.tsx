@@ -49,7 +49,7 @@ const DEFAULT_SETTINGS: FormSettings = {
   submitButtonText: "Enviar",
   successMessage: "Obrigado! Sua resposta foi recebida com sucesso.",
   notifyOnSubmission: false,
-  leadTitle: "Lead via formulario",
+  leadTitle: "Lead via formulário",
   assignmentMode: "none",
   defaultPriority: "medium",
   defaultTemperature: "warm",
@@ -62,17 +62,17 @@ const DEFAULT_LABELS: Record<FormField["type"], string> = {
   text: "Texto",
   email: "Email",
   phone: "Telefone",
-  number: "Numero",
-  select: "Selecao",
+  number: "Número",
+  select: "Seleção",
   textarea: "Mensagem",
-  checkbox: "Caixa de selecao",
+  checkbox: "Caixa de seleção",
   date: "Data",
-  radio: "Opcoes",
+  radio: "Opções",
   url: "URL",
   hidden: "Campo oculto",
-  heading: "Titulo da secao",
+  heading: "Título da seção",
   divider: "Divisor",
-  rating: "Avaliacao",
+  rating: "Avaliação",
 };
 
 // Generate an 8-char alphanumeric ID
@@ -95,7 +95,7 @@ function createNewField(type: FormField["type"]): FormField {
   };
   // Add default options for select/radio
   if (OPTIONS_FIELD_TYPES.includes(type)) {
-    base.options = ["Opcao 1", "Opcao 2"];
+    base.options = ["Opção 1", "Opção 2"];
   }
   // Layout fields are never required
   if (LAYOUT_FIELD_TYPES.includes(type)) {
@@ -157,7 +157,7 @@ function EditableTitle({ value, onChange }: EditableTitleProps) {
           "bg-transparent border-b border-brand-500 text-text-primary font-semibold",
           "text-base md:text-lg focus:outline-none w-full max-w-[240px] md:max-w-xs"
         )}
-        aria-label="Nome do formulario"
+        aria-label="Nome do formulário"
       />
     );
   }
@@ -165,7 +165,7 @@ function EditableTitle({ value, onChange }: EditableTitleProps) {
   return (
     <button
       onClick={() => { setDraft(value); setEditing(true); }}
-      aria-label="Editar nome do formulario"
+      aria-label="Editar nome do formulário"
       className={cn(
         "group flex items-center gap-1.5 max-w-[200px] md:max-w-xs",
         "text-base md:text-lg font-semibold text-text-primary truncate",
@@ -210,7 +210,7 @@ function HeaderMenu({ status, onPublish, onUnpublish, onDelete }: HeaderMenuProp
     <div ref={menuRef} className="relative">
       <button
         onClick={() => setOpen((v) => !v)}
-        aria-label="Mais opcoes"
+        aria-label="Mais opções"
         className={cn(
           "p-2 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
           "text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors",
@@ -245,7 +245,7 @@ function HeaderMenu({ status, onPublish, onUnpublish, onDelete }: HeaderMenuProp
           <div className="my-1 border-t border-border-subtle" />
           <MenuItemRow
             icon={<Trash2 size={16} />}
-            label="Excluir formulario"
+            label="Excluir formulário"
             onClick={() => { setOpen(false); onDelete(); }}
             danger
           />
@@ -423,8 +423,8 @@ export function FormBuilderPage() {
       }).finally(() => setIsSaving(false)),
       {
         loading: "Salvando...",
-        success: "Formulario salvo!",
-        error: "Erro ao salvar formulario",
+        success: "Formulário salvo!",
+        error: "Erro ao salvar formulário",
       }
     );
   }, [formId, isDirty, name, description, slug, fields, steps, theme, settings, updateForm]);
@@ -454,7 +454,7 @@ export function FormBuilderPage() {
     if (!formId) return;
     toast.promise(unpublishForm({ formId: formId as Id<"forms"> }), {
       loading: "Despublicando...",
-      success: "Formulario despublicado!",
+      success: "Formulário despublicado!",
       error: "Erro ao despublicar",
     });
   }, [formId, unpublishForm]);
@@ -467,9 +467,9 @@ export function FormBuilderPage() {
         navigate("/app/formularios");
       }),
       {
-        loading: "Excluindo formulario...",
-        success: "Formulario excluido!",
-        error: "Erro ao excluir formulario",
+        loading: "Excluindo formulário...",
+        success: "Formulário excluído!",
+        error: "Erro ao excluir formulário",
       }
     );
     setShowDeleteConfirm(false);
@@ -487,10 +487,10 @@ export function FormBuilderPage() {
   if (form === null) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-surface-base gap-4">
-        <p className="text-text-secondary">Formulario nao encontrado.</p>
+        <p className="text-text-secondary">Formulário não encontrado.</p>
         <Button variant="secondary" onClick={() => navigate("/app/formularios")}>
           <ArrowLeft size={18} />
-          Voltar para formularios
+          Voltar para formulários
         </Button>
       </div>
     );
@@ -506,7 +506,7 @@ export function FormBuilderPage() {
       <div className="hidden md:flex items-center justify-center gap-1 py-3 border-b border-border-subtle shrink-0">
         <button
           onClick={() => setPreviewDevice("mobile")}
-          aria-label="Visualizar versao mobile"
+          aria-label="Visualizar versão mobile"
           className={cn(
             "p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center",
             previewDevice === "mobile"
@@ -518,7 +518,7 @@ export function FormBuilderPage() {
         </button>
         <button
           onClick={() => setPreviewDevice("desktop")}
-          aria-label="Visualizar versao desktop"
+          aria-label="Visualizar versão desktop"
           className={cn(
             "p-2 rounded-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center",
             previewDevice === "desktop"
@@ -598,7 +598,7 @@ export function FormBuilderPage() {
                   </span>
                   <button
                     onClick={() => setSelectedFieldId(null)}
-                    aria-label="Fechar configuracao do campo"
+                    aria-label="Fechar configuração do campo"
                     className={cn(
                       "p-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised",
                       "transition-colors min-w-[32px] min-h-[32px] flex items-center justify-center"
@@ -657,7 +657,7 @@ export function FormBuilderPage() {
         {/* Back */}
         <button
           onClick={() => navigate("/app/formularios")}
-          aria-label="Voltar para formularios"
+          aria-label="Voltar para formulários"
           className={cn(
             "p-2 rounded-full min-w-[44px] min-h-[44px] flex items-center justify-center",
             "text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors",
@@ -678,7 +678,7 @@ export function FormBuilderPage() {
               className="hidden sm:inline text-xs text-text-muted"
               aria-live="polite"
             >
-              Nao salvo
+              Não salvo
             </span>
           )}
         </div>
@@ -690,7 +690,7 @@ export function FormBuilderPage() {
             size="sm"
             onClick={handleSave}
             disabled={!isDirty || isSaving}
-            aria-label="Salvar formulario"
+            aria-label="Salvar formulário"
           >
             <Save size={16} />
             <span className="hidden sm:inline">
@@ -719,7 +719,7 @@ export function FormBuilderPage() {
               variant={experiment.status === "running" ? "success" : experiment.status === "paused" ? "default" : "warning"}
               className="shrink-0"
             >
-              {experiment.status === "running" ? "Em execucao" : experiment.status === "paused" ? "Pausado" : "Rascunho"}
+              {experiment.status === "running" ? "Em execução" : experiment.status === "paused" ? "Pausado" : "Rascunho"}
             </Badge>
             {experiment.variants && (
               <span className="text-xs text-text-muted tabular-nums hidden sm:inline">
@@ -809,8 +809,8 @@ export function FormBuilderPage() {
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDelete}
-        title="Excluir formulario"
-        description={`Tem certeza que deseja excluir "${name}"? Esta acao nao pode ser desfeita.`}
+        title="Excluir formulário"
+        description={`Tem certeza que deseja excluir "${name}"? Esta ação não pode ser desfeita.`}
         confirmLabel="Excluir"
         cancelLabel="Cancelar"
         variant="danger"

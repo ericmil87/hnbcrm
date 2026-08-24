@@ -70,7 +70,7 @@ export function FileUploadButton({
 
     // Validate count
     if (uploadedFiles.length + filesToUpload.length > MAX_FILES) {
-      toast.error(`Maximo de ${MAX_FILES} arquivos por mensagem`);
+      toast.error(`Máximo de ${MAX_FILES} arquivos por mensagem`);
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -178,7 +178,7 @@ export function FileUploadButton({
           uploading
             ? `Enviando... ${progress}%`
             : uploadedFiles.length >= MAX_FILES
-            ? `Maximo de ${MAX_FILES} arquivos`
+            ? `Máximo de ${MAX_FILES} arquivos`
             : "Anexar arquivo"
         }
         aria-label="Anexar arquivo"

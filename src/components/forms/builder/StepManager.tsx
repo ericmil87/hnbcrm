@@ -178,8 +178,8 @@ function StepCard({
           type="text"
           value={step.title}
           onChange={(e) => onUpdate({ ...step, title: e.target.value })}
-          aria-label={`Titulo da etapa ${index + 1}`}
-          placeholder="Titulo da etapa"
+          aria-label={`Título da etapa ${index + 1}`}
+          placeholder="Título da etapa"
           className={cn(
             "flex-1 min-w-0 bg-transparent text-sm font-medium text-text-primary",
             "placeholder:text-text-muted",
@@ -243,7 +243,7 @@ function StepCard({
               htmlFor={`step-desc-${step.id}`}
               className="block text-[12px] font-medium text-text-secondary mb-1.5"
             >
-              Descricao <span className="text-text-muted font-normal">(opcional)</span>
+              Descrição <span className="text-text-muted font-normal">(opcional)</span>
             </label>
             <textarea
               id={`step-desc-${step.id}`}
@@ -254,7 +254,7 @@ function StepCard({
                   description: e.target.value || undefined,
                 })
               }
-              placeholder="Instrucoes ou contexto exibidos ao usuario nesta etapa"
+              placeholder="Instruções ou contexto exibidos ao usuário nesta etapa"
               rows={2}
               className={cn(
                 "w-full bg-surface-sunken border border-border-strong rounded-lg",
@@ -272,7 +272,7 @@ function StepCard({
             </p>
             {stepFields.length === 0 ? (
               <p className="text-[12px] text-text-muted italic py-1">
-                Nenhum campo atribuido. Adicione campos abaixo.
+                Nenhum campo atribuído. Adicione campos abaixo.
               </p>
             ) : (
               <div className="flex flex-wrap gap-1.5">
@@ -305,7 +305,7 @@ function StepCard({
           {unassignedFields.length > 0 && (
             <div>
               <p className="text-[12px] font-medium text-text-secondary mb-2">
-                Campos disponiveis
+                Campos disponíveis
               </p>
               <div className="flex flex-wrap gap-1.5">
                 {unassignedFields.map((field) => (
@@ -412,16 +412,16 @@ export function StepManager({ steps, onChange, fields }: StepManagerProps) {
       <div className="flex items-center justify-between gap-3 px-4 py-3 bg-surface-raised border border-border rounded-lg">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-text-primary">
-            Formulario multi-etapas
+            Formulário multi-etapas
           </p>
           <p className="text-[12px] text-text-muted mt-0.5">
-            Divida o formulario em etapas para melhorar a experiencia do usuario
+            Divida o formulário em etapas para melhorar a experiência do usuário
           </p>
         </div>
         <ToggleSwitch
           checked={isEnabled}
           onToggle={handleToggle}
-          label="Ativar formulario multi-etapas"
+          label="Ativar formulário multi-etapas"
         />
       </div>
 
@@ -443,11 +443,11 @@ export function StepManager({ steps, onChange, fields }: StepManagerProps) {
                 <span className="font-semibold">
                   {unassignedFields.length}{" "}
                   {unassignedFields.length === 1
-                    ? "campo nao atribuido"
-                    : "campos nao atribuidos"}
+                    ? "campo não atribuído"
+                    : "campos não atribuídos"}
                 </span>
                 {" — "}
-                Campos sem etapa nao serao exibidos no formulario. Atribua-os a
+                Campos sem etapa não serão exibidos no formulário. Atribua-os a
                 uma etapa abaixo.
               </p>
             </div>
@@ -460,11 +460,11 @@ export function StepManager({ steps, onChange, fields }: StepManagerProps) {
                 Nenhuma etapa criada ainda.
               </p>
               <p className="text-[12px] text-text-muted mt-1">
-                Clique em "Adicionar etapa" para comecar.
+                Clique em "Adicionar etapa" para começar.
               </p>
             </div>
           ) : (
-            <div className="space-y-2" role="list" aria-label="Etapas do formulario">
+            <div className="space-y-2" role="list" aria-label="Etapas do formulário">
               {steps.map((step, index) => (
                 <div key={step.id} role="listitem">
                   <StepCard
@@ -490,7 +490,7 @@ export function StepManager({ steps, onChange, fields }: StepManagerProps) {
             size="sm"
             onClick={addStep}
             className="w-full"
-            aria-label="Adicionar nova etapa ao formulario"
+            aria-label="Adicionar nova etapa ao formulário"
           >
             <Plus size={15} aria-hidden="true" />
             Adicionar etapa

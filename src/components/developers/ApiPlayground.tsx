@@ -293,7 +293,7 @@ export function ApiPlayground({ initialEndpointId, fullPage, onEndpointChange }:
               Configure o Playground
             </h3>
             <p className="text-sm text-text-muted">
-              Insira a Base URL do seu deployment Convex e uma API Key valida para comecar a testar
+              Insira a Base URL do seu deployment Convex e uma API Key válida para começar a testar
               os endpoints.
             </p>
           </Card>
@@ -454,7 +454,7 @@ function EmptyState() {
   return (
     <div className="text-center space-y-4">
       <p className="text-text-muted text-sm mb-3">
-        Selecione um endpoint para comecar
+        Selecione um endpoint para começar
       </p>
       <div className="flex flex-wrap items-center gap-2 justify-center">
         {API_CATEGORIES.map((cat) => {
@@ -473,7 +473,7 @@ function EmptyState() {
         <Badge variant="success" className="text-xs">GET</Badge>
         <Badge variant="info" className="text-xs">POST</Badge>
         <span className="text-text-muted text-xs">
-          {ALL_ENDPOINTS.length} endpoints disponiveis
+          {ALL_ENDPOINTS.length} endpoints disponíveis
         </span>
       </div>
     </div>

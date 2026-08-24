@@ -52,17 +52,17 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
   text: "Texto",
   email: "E-mail",
   phone: "Telefone",
-  number: "Numero",
-  select: "Selecao",
-  textarea: "Area de Texto",
-  checkbox: "Caixa de Selecao",
+  number: "Número",
+  select: "Seleção",
+  textarea: "Área de Texto",
+  checkbox: "Caixa de Seleção",
   date: "Data",
   radio: "Radio",
   url: "URL",
   hidden: "Oculto",
-  heading: "Titulo",
+  heading: "Título",
   divider: "Divisor",
-  rating: "Avaliacao",
+  rating: "Avaliação",
 };
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
@@ -222,7 +222,7 @@ export function FieldConfigPanel({
         {/* ── Divisor: visual-only message ──────────────────────── */}
         {isDivider && (
           <p className="text-sm text-text-muted text-center py-4">
-            Este campo e apenas visual, sem configuracao adicional.
+            Este campo é apenas visual, sem configuração adicional.
           </p>
         )}
 
@@ -234,7 +234,7 @@ export function FieldConfigPanel({
 
               {/* Label — always shown; heading uses special label text */}
               <Input
-                label={isHeading ? "Texto do titulo *" : "Rotulo *"}
+                label={isHeading ? "Texto do título *" : "Rótulo *"}
                 value={field.label}
                 onChange={(e) => update({ label: e.target.value })}
                 placeholder={isHeading ? "Ex: Dados pessoais" : "Ex: Nome completo"}
@@ -276,7 +276,7 @@ export function FieldConfigPanel({
                     onChange={(e) =>
                       update({ helpText: e.target.value || undefined })
                     }
-                    placeholder="Instrucoes adicionais para o usuario"
+                    placeholder="Instruções adicionais para o usuário"
                     className={cn(
                       "w-full bg-surface-raised border border-border-strong rounded-field",
                       "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
@@ -290,8 +290,8 @@ export function FieldConfigPanel({
               {/* Required toggle — suppressed for heading, divider, hidden */}
               {showRequired && (
                 <ToggleRow
-                  label="Obrigatorio"
-                  description="O usuario deve preencher este campo"
+                  label="Obrigatório"
+                  description="O usuário deve preencher este campo"
                   checked={field.isRequired}
                   onToggle={() => update({ isRequired: !field.isRequired })}
                 />
@@ -327,12 +327,12 @@ export function FieldConfigPanel({
               {/* Default value — suppressed for heading, divider, rating, and hidden (shown above) */}
               {showDefaultValue && !isHidden && (
                 <Input
-                  label="Valor padrao"
+                  label="Valor padrão"
                   value={field.defaultValue ?? ""}
                   onChange={(e) =>
                     update({ defaultValue: e.target.value || undefined })
                   }
-                  placeholder="Valor pre-preenchido"
+                  placeholder="Valor pré-preenchido"
                 />
               )}
 
@@ -340,7 +340,7 @@ export function FieldConfigPanel({
               {showSelectOptions && (
                 <div>
                   <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Opcoes de selecao
+                    Opções de seleção
                   </label>
                   <div className="space-y-2">
                     {(field.options ?? []).map((opt, index) => (
@@ -349,7 +349,7 @@ export function FieldConfigPanel({
                           {opt}
                         </span>
                         <button
-                          aria-label={`Remover opcao ${opt}`}
+                          aria-label={`Remover opção ${opt}`}
                           onClick={() => removeOption(index)}
                           className={cn(
                             "p-2 rounded-lg text-text-muted",
@@ -374,7 +374,7 @@ export function FieldConfigPanel({
                             addOption();
                           }
                         }}
-                        placeholder="Nova opcao..."
+                        placeholder="Nova opção..."
                         className={cn(
                           "flex-1 bg-surface-raised border border-border-strong rounded-field",
                           "px-3.5 py-2.5 text-base md:text-sm text-text-primary placeholder:text-text-muted",
@@ -386,7 +386,7 @@ export function FieldConfigPanel({
                         variant="secondary"
                         size="md"
                         onClick={addOption}
-                        aria-label="Adicionar opcao"
+                        aria-label="Adicionar opção"
                       >
                         <Plus size={16} aria-hidden="true" />
                         <span className="hidden sm:inline">Adicionar</span>
@@ -395,7 +395,7 @@ export function FieldConfigPanel({
 
                     {(!field.options || field.options.length === 0) && (
                       <p className="text-[12px] text-text-muted text-center py-1">
-                        Nenhuma opcao adicionada ainda
+                        Nenhuma opção adicionada ainda
                       </p>
                     )}
                   </div>
@@ -407,8 +407,8 @@ export function FieldConfigPanel({
 
         {/* ── Validacao ─────────────────────────────────────────── */}
         {showValidation && (
-          <section aria-label="Validacao">
-            <SectionHeader>Validacao</SectionHeader>
+          <section aria-label="Validação">
+            <SectionHeader>Validação</SectionHeader>
             <div className="space-y-3">
               {showTextValidation && (
                 <div className="grid grid-cols-2 gap-3">
@@ -446,7 +446,7 @@ export function FieldConfigPanel({
               {showNumberValidation && (
                 <div className="grid grid-cols-2 gap-3">
                   <Input
-                    label="Minimo"
+                    label="Mínimo"
                     type="number"
                     value={field.validation?.min ?? ""}
                     onChange={(e) =>
@@ -459,7 +459,7 @@ export function FieldConfigPanel({
                     placeholder="0"
                   />
                   <Input
-                    label="Maximo"
+                    label="Máximo"
                     type="number"
                     value={field.validation?.max ?? ""}
                     onChange={(e) =>
@@ -476,7 +476,7 @@ export function FieldConfigPanel({
 
               {showPatternInput && (
                 <Input
-                  label="Padrao (Regex)"
+                  label="Padrão (Regex)"
                   value={field.validation?.pattern ?? ""}
                   onChange={(e) =>
                     updateValidation({
@@ -504,8 +504,8 @@ export function FieldConfigPanel({
 
         {/* ── Logica condicional ─────────────────────────────────── */}
         {!isLayoutOnly && allFields && allFields.length > 1 && (
-          <section aria-label="Logica condicional">
-            <SectionHeader>Logica condicional</SectionHeader>
+          <section aria-label="Lógica condicional">
+            <SectionHeader>Lógica condicional</SectionHeader>
             <ConditionalLogicEditor
               logic={field.conditionalLogic}
               onChange={(logic) => update({ conditionalLogic: logic })}

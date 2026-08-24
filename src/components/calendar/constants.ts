@@ -9,8 +9,8 @@ export const EVENT_TYPE_COLORS: Record<string, { bg: string; border: string; tex
 };
 
 export const EVENT_TYPE_LABELS: Record<string, string> = {
-  call: "Ligacao",
-  meeting: "Reuniao",
+  call: "Ligação",
+  meeting: "Reunião",
   follow_up: "Follow-up",
   demo: "Demo",
   task: "Tarefa",
@@ -20,23 +20,23 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
 
 export const EVENT_STATUS_LABELS: Record<string, string> = {
   scheduled: "Agendado",
-  completed: "Concluido",
+  completed: "Concluído",
   cancelled: "Cancelado",
 };
 
 export const RECURRENCE_OPTIONS = [
   { value: "none", label: "Nenhuma" },
-  { value: "daily", label: "Diaria" },
+  { value: "daily", label: "Diária" },
   { value: "weekly", label: "Semanal" },
   { value: "biweekly", label: "Quinzenal" },
   { value: "monthly", label: "Mensal" },
 ];
 
 export const WEEKDAYS_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
-export const WEEKDAYS_LONG = ["Domingo", "Segunda", "Terca", "Quarta", "Quinta", "Sexta", "Sabado"];
+export const WEEKDAYS_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 export const MONTHS_LONG = [
-  "Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho",
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
 ];
 

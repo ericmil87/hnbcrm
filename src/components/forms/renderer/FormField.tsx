@@ -474,7 +474,7 @@ function RatingInput({
   return (
     <div
       role="radiogroup"
-      aria-label="Avaliacao"
+      aria-label="Avaliação"
       aria-required={isRequired}
       aria-invalid={error}
       aria-describedby={error ? errorId : helpTextId}

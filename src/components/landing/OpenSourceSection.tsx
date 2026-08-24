@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { useInView } from "@/hooks/useInView";
 
 const stats = [
-  { label: "Versao", value: "v0.22.0" },
+  { label: "Versão", value: "v0.22.0" },
   { label: "MCP Tools", value: "44+" },
   { label: "TypeScript", value: "99%" },
 ];
@@ -39,7 +39,7 @@ export function OpenSourceSection() {
               isInView && "animate-fade-in-up [animation-delay:100ms]"
             )}
           >
-            100% do codigo e aberto, auditavel e extensivel. Faca fork, contribua
+            100% do código é aberto, auditável e extensível. Faça fork, contribua
             ou use como base para seu proprio CRM.
           </p>
         </div>

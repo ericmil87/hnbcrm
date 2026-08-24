@@ -1610,7 +1610,7 @@ export function Inbox() {
               </form>
             ) : (
               <div className="shrink-0 p-4 border-t border-border bg-surface-raised text-center">
-                <p className="text-sm text-text-muted">Voce nao tem permissao para enviar mensagens.</p>
+                <p className="text-sm text-text-muted">Você não tem permissão para enviar mensagens.</p>
               </div>
             )}
           </>

@@ -99,7 +99,7 @@ export function CalendarEventModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
-      toast.error("Titulo e obrigatorio");
+      toast.error("Título é obrigatório");
       return;
     }
 
@@ -173,7 +173,7 @@ export function CalendarEventModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Title */}
         <Input
-          label="Titulo"
+          label="Título"
           placeholder="Nome do evento"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -216,14 +216,14 @@ export function CalendarEventModal({
           {!allDay && (
             <>
               <Input
-                label="Horario Inicio"
+                label="Horário Início"
                 type="time"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
                 required
               />
               <Input
-                label="Horario Fim"
+                label="Horário Fim"
                 type="time"
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
@@ -243,7 +243,7 @@ export function CalendarEventModal({
         {/* Description */}
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Descricao
+            Descrição
           </label>
           <textarea
             value={description}
@@ -300,7 +300,7 @@ export function CalendarEventModal({
         {teamMembers && teamMembers.length > 0 && (
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Responsavel
+              Responsável
             </label>
             <select
               value={assignedTo}
@@ -346,14 +346,14 @@ export function CalendarEventModal({
         {/* Location */}
         <Input
           label="Local"
-          placeholder="Endereco ou sala"
+          placeholder="Endereço ou sala"
           value={location}
           onChange={(e) => setLocation(e.target.value)}
         />
 
         {/* Meeting URL */}
         <Input
-          label="Link da Reuniao"
+          label="Link da Reunião"
           type="url"
           placeholder="https://..."
           value={meetingUrl}
@@ -363,7 +363,7 @@ export function CalendarEventModal({
         {/* Recurrence */}
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Recorrencia
+            Recorrência
           </label>
           <select
             value={recurrence}

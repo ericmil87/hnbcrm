@@ -15,7 +15,7 @@ export interface MilestoneConfig {
 export const MILESTONES: Record<MilestoneId, MilestoneConfig> = {
   first_lead: {
     title: "Primeiro Lead!",
-    description: "Voce criou seu primeiro lead no CRM.",
+    description: "Você criou seu primeiro lead no CRM.",
   },
   first_contact: {
     title: "Primeiro Contato!",
@@ -23,7 +23,7 @@ export const MILESTONES: Record<MilestoneId, MilestoneConfig> = {
   },
   first_invite: {
     title: "Equipe Crescendo!",
-    description: "Voce convidou seu primeiro membro.",
+    description: "Você convidou seu primeiro membro.",
   },
   first_webhook: {
     title: "Integrado!",
@@ -35,11 +35,11 @@ export const MILESTONES: Record<MilestoneId, MilestoneConfig> = {
   },
   wizard_complete: {
     title: "Tudo Pronto!",
-    description: "Seu CRM esta configurado e pronto para usar.",
+    description: "Seu CRM está configurado e pronto para usar.",
   },
   checklist_complete: {
-    title: "Missao Cumprida!",
-    description: "Todos os passos iniciais foram concluidos!",
+    title: "Missão Cumprida!",
+    description: "Todos os passos iniciais foram concluídos!",
   },
 };
 
@@ -66,7 +66,7 @@ export const SPOTLIGHTS: SpotlightConfig[] = [
     id: "inbox",
     title: "Caixa de Entrada",
     description:
-      "Todas as conversas em um so lugar — WhatsApp, email e webchat.",
+      "Todas as conversas em um só lugar — WhatsApp, email e webchat.",
   },
   {
     id: "handoffs",

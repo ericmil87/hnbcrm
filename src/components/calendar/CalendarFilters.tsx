@@ -68,7 +68,7 @@ export function CalendarFilters({
             {/* Team member filter */}
             <div>
               <label className="block text-sm font-medium text-text-primary mb-2">
-                Responsavel
+                Responsável
               </label>
               <select
                 value={selectedMemberId || ""}

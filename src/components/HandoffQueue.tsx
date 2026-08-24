@@ -109,7 +109,7 @@ export function HandoffQueue() {
   if (!can("inbox", "view_own")) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
-        <p className="text-text-secondary text-sm">Voce nao tem permissao para acessar os repasses.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os repasses.</p>
       </div>
     );
   }

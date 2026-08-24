@@ -70,7 +70,7 @@ function renderViewValue(field: FieldDefinition, value: any): React.ReactNode {
 
   switch (field.type) {
     case "boolean":
-      return value ? "Sim" : "Nao";
+      return value ? "Sim" : "Não";
     case "date":
       return new Date(value).toLocaleDateString("pt-BR");
     case "multiselect":
@@ -123,7 +123,7 @@ function renderEditField(
         <Checkbox
           checked={!!value}
           onChange={(e) => onChange(field.key, e.target.checked)}
-          label={value ? "Sim" : "Nao"}
+          label={value ? "Sim" : "Não"}
         />
       );
     case "date":

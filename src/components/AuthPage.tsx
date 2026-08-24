@@ -35,7 +35,7 @@ export function AuthPage() {
             className="inline-flex items-center gap-1.5 text-sm text-text-muted hover:text-text-primary transition-colors mb-6"
           >
             <ArrowLeft size={16} />
-            Voltar ao inicio
+            Voltar ao início
           </Link>
           <img
             src="/orange_icon_logo_transparent-bg-528x488.png"

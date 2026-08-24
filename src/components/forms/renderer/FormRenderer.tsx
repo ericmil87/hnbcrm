@@ -618,7 +618,7 @@ export function FormRenderer({
             className="mt-4 text-center text-[11px] leading-relaxed"
             style={{ color: "var(--form-text)", opacity: 0.4 }}
           >
-            Ao preencher, seus dados sao salvos automaticamente para facilitar o preenchimento.
+            Ao preencher, seus dados são salvos automaticamente para facilitar o preenchimento.
           </p>
         )}
 

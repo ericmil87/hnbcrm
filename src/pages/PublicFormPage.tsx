@@ -138,7 +138,7 @@ export function PublicFormPage() {
           const body = await res.text().catch(() => "");
           setPageState({
             kind: "error",
-            message: body || `Erro ${res.status} ao carregar o formulario`,
+            message: body || `Erro ${res.status} ao carregar o formulário`,
           });
           return;
         }
@@ -190,7 +190,7 @@ export function PublicFormPage() {
       } catch (err) {
         if (cancelled) return;
         const message =
-          err instanceof Error ? err.message : "Nao foi possivel carregar o formulario";
+          err instanceof Error ? err.message : "Não foi possível carregar o formulário";
         setPageState({ kind: "error", message });
       }
     }
@@ -289,7 +289,7 @@ export function PublicFormPage() {
     );
 
     if (!res.ok) {
-      let message = "Ocorreu um erro ao enviar o formulario. Tente novamente.";
+      let message = "Ocorreu um erro ao enviar o formulário. Tente novamente.";
       try {
         const body = await res.json();
         if (body?.message) message = body.message;
@@ -310,7 +310,7 @@ export function PublicFormPage() {
     return (
       <main
         className={isEmbed ? "flex items-center justify-center p-4" : "min-h-screen bg-surface-base flex items-center justify-center p-4"}
-        aria-label="Carregando formulario"
+        aria-label="Carregando formulário"
       >
         <Spinner size="lg" />
       </main>
@@ -322,7 +322,7 @@ export function PublicFormPage() {
     if (isEmbed) {
       return (
         <main className="flex items-center justify-center p-4">
-          <p className="text-sm text-text-secondary">Formulario nao encontrado</p>
+          <p className="text-sm text-text-secondary">Formulário não encontrado</p>
         </main>
       );
     }
@@ -330,8 +330,8 @@ export function PublicFormPage() {
     return (
       <>
         <SEO
-          title="Formulario nao encontrado"
-          description="O formulario que voce esta procurando nao existe ou foi removido."
+          title="Formulário não encontrado"
+          description="O formulário que você está procurando não existe ou foi removido."
           noindex
         />
         <main className="min-h-screen bg-surface-base flex items-center justify-center p-4">
@@ -345,11 +345,11 @@ export function PublicFormPage() {
               />
             </div>
             <h1 className="text-xl font-bold text-text-primary">
-              Formulario nao encontrado
+              Formulário não encontrado
             </h1>
             <p className="text-sm text-text-secondary leading-relaxed">
-              O formulario que voce esta procurando nao existe, foi removido ou o link
-              esta incorreto.
+              O formulário que você está procurando não existe, foi removido ou o link
+              está incorreto.
             </p>
             <Link
               to="/"
@@ -358,7 +358,7 @@ export function PublicFormPage() {
                 hover:bg-brand-700 active:bg-brand-800 transition-all duration-150
                 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base"
             >
-              Ir para a pagina inicial
+              Ir para a página inicial
             </Link>
           </div>
         </main>
@@ -379,14 +379,14 @@ export function PublicFormPage() {
     return (
       <>
         <SEO
-          title="Erro ao carregar formulario"
-          description="Ocorreu um erro ao carregar este formulario."
+          title="Erro ao carregar formulário"
+          description="Ocorreu um erro ao carregar este formulário."
           noindex
         />
         <main className="min-h-screen bg-surface-base flex items-center justify-center p-4">
           <div className="w-full max-w-sm text-center space-y-4 animate-fade-in-up">
             <h1 className="text-xl font-bold text-text-primary">
-              Nao foi possivel carregar o formulario
+              Não foi possível carregar o formulário
             </h1>
             <p className="text-sm text-text-secondary leading-relaxed">
               {pageState.message}
@@ -442,7 +442,7 @@ export function PublicFormPage() {
         title={form.name}
         description={
           form.description ??
-          `Preencha o formulario "${form.name}" e envie sua resposta.`
+          `Preencha o formulário "${form.name}" e envie sua resposta.`
         }
         noindex={false}
       />

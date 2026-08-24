@@ -288,8 +288,8 @@ function FeaturesSection() {
     },
     {
       icon: Layers,
-      title: "Formularios",
-      description: "Crie formularios embeddable com builder visual, mapeamento de campos e protecao anti-spam.",
+      title: "Formulários",
+      description: "Crie formulários embeddable com builder visual, mapeamento de campos e proteção anti-spam.",
     },
     {
       icon: Paperclip,
@@ -369,21 +369,21 @@ function DeveloperSection() {
     {
       icon: Globe,
       title: "API REST Completa",
-      description: "64 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticacao via API Key.",
+      description: "64 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticação via API Key.",
       link: "/developers#rest-api",
-      linkText: "Ver Documentacao",
+      linkText: "Ver Documentação",
     },
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
+      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compatível com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
     {
       icon: Play,
       title: "API Playground",
-      description: "Teste endpoints direto do navegador. Preencha formularios, envie requisicoes e veja respostas em tempo real.",
+      description: "Teste endpoints direto do navegador. Preencha formulários, envie requisições e veja respostas em tempo real.",
       link: "/developers#playground",
       linkText: "Abrir Playground",
       primary: true,
@@ -391,14 +391,14 @@ function DeveloperSection() {
     {
       icon: BookOpen,
       title: "Agent Skills",
-      description: "Skill portavel que ensina qualquer agente de IA a operar como membro da equipe. Compativel com Claude Code, Cursor, Hermes Agent, OpenClaw, Gemini e mais.",
+      description: "Skill portável que ensina qualquer agente de IA a operar como membro da equipe. Compatível com Claude Code, Cursor, Hermes Agent, OpenClaw, Gemini e mais.",
       link: "/developers#agent-skills",
       linkText: "Ver Skill",
     },
     {
       icon: Github,
-      title: "Codigo Aberto",
-      description: "100% open source, MIT License. Faca fork, contribua ou use como base para seu projeto.",
+      title: "Código Aberto",
+      description: "100% open source, MIT License. Faça fork, contribua ou use como base para seu projeto.",
       link: "https://github.com/ericmil87/hnbcrm",
       linkText: "Ver no GitHub",
       external: true,
@@ -878,7 +878,7 @@ function CTASection() {
               rel="noopener noreferrer"
               className="text-text-secondary hover:text-text-primary transition-colors inline-flex items-center gap-1"
             >
-              explore o codigo no GitHub
+              explore o código no GitHub
               <Github size={14} />
             </a>
           </p>

@@ -30,7 +30,7 @@ import { Footer } from "@/components/landing/Footer";
 const sections = [
   { id: "quick-start", label: "Quick Start", icon: Rocket },
   { id: "playground", label: "Playground", icon: Play },
-  { id: "auth", label: "Autenticacao", icon: Key },
+  { id: "auth", label: "Autenticação", icon: Key },
   { id: "mcp", label: "Servidor MCP", icon: Server },
   { id: "mcp-tools", label: "Tools MCP", icon: Table2 },
   { id: "hermes", label: "Hermes Agent", icon: Bot },
@@ -290,7 +290,7 @@ npm run dev`}</CodeBlock>
                 </div>
                 <h3 className="font-semibold text-text-primary">Gere sua API Key</h3>
                 <p className="text-sm text-text-secondary">
-                  Acesse <span className="text-brand-400">Configuracoes &gt; API Keys</span> no app e crie uma nova chave.
+                  Acesse <span className="text-brand-400">Configurações &gt; API Keys</span> no app e crie uma nova chave.
                 </p>
               </Card>
 
@@ -299,7 +299,7 @@ npm run dev`}</CodeBlock>
                 <div className="w-8 h-8 rounded-full bg-brand-500/10 border border-brand-500 flex items-center justify-center">
                   <span className="text-sm font-bold text-brand-500">2</span>
                 </div>
-                <h3 className="font-semibold text-text-primary">Faca sua primeira chamada</h3>
+                <h3 className="font-semibold text-text-primary">Faça sua primeira chamada</h3>
                 <p className="text-sm text-text-secondary">
                   Use cURL ou qualquer HTTP client:
                 </p>
@@ -341,7 +341,7 @@ npm run dev`}</CodeBlock>
                   Teste endpoints em tempo real
                 </h3>
                 <p className="text-sm text-text-secondary">
-                  Configure sua Base URL e API Key, selecione um endpoint e envie requisicoes — tudo direto do navegador.
+                  Configure sua Base URL e API Key, selecione um endpoint e envie requisições — tudo direto do navegador.
                 </p>
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
@@ -365,13 +365,13 @@ npm run dev`}</CodeBlock>
           <section id="auth" className="space-y-6 scroll-mt-24">
             <h2 className="text-2xl font-bold flex items-center gap-3">
               <Key className="text-brand-400" size={24} />
-              Autenticacao
+              Autenticação
             </h2>
             <p className="text-text-secondary">
-              Todas as chamadas a API REST e ao servidor MCP sao autenticadas via
+              Todas as chamadas a API REST e ao servidor MCP são autenticadas via
               chave de API. Gere suas chaves em{" "}
               <span className="text-brand-400 font-medium">
-                Configuracoes &gt; API Keys
+                Configurações &gt; API Keys
               </span>{" "}
               dentro do app.
             </p>
@@ -380,13 +380,13 @@ npm run dev`}</CodeBlock>
               <h3 className="font-semibold text-text-primary">Como usar</h3>
               <p className="text-sm text-text-secondary">
                 Envie o header <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">X-API-Key</code> em
-                todas as requisicoes:
+                todas as requisições:
               </p>
               <p className="text-sm text-text-secondary">
-                Cada rota exige a permissao RBAC correspondente do membro dono da chave (as mesmas
+                Cada rota exige a permissão RBAC correspondente do membro dono da chave (as mesmas
                 da interface — ex.: excluir lead exige <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">leads: full</code>,
                 exportar/importar dados exige <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">settings: manage</code>).
-                A tabela completa rota → permissao esta no <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">/llms-full.txt</code>.
+                A tabela completa rota → permissão está no <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">/llms-full.txt</code>.
               </p>
               <CodeBlock language="bash">{`curl -X GET "https://SEU-DEPLOYMENT.convex.site/api/v1/leads" \\
   -H "X-API-Key: sua_chave_aqui"`}</CodeBlock>
@@ -397,15 +397,15 @@ npm run dev`}</CodeBlock>
               <div className="text-sm text-text-secondary space-y-2">
                 <p>
                   <code className="text-semantic-error bg-surface-overlay px-1.5 py-0.5 rounded text-xs">401</code>{" "}
-                  — Chave invalida ou ausente
+                  — Chave inválida ou ausente
                 </p>
                 <p>
                   <code className="text-semantic-error bg-surface-overlay px-1.5 py-0.5 rounded text-xs">403</code>{" "}
-                  — Sem permissao para o recurso
+                  — Sem permissão para o recurso
                 </p>
                 <p>
                   <code className="text-semantic-error bg-surface-overlay px-1.5 py-0.5 rounded text-xs">429</code>{" "}
-                  — Rate limit excedido (300 requisicoes/minuto por chave)
+                  — Rate limit excedido (300 requisições/minuto por chave)
                 </p>
               </div>
             </Card>
@@ -423,10 +423,10 @@ npm run dev`}</CodeBlock>
             </p>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Instalacao</h3>
+              <h3 className="font-semibold text-text-primary">Instalação</h3>
               <CodeBlock language="bash">{`npx hnbcrm-mcp`}</CodeBlock>
               <p className="text-sm text-text-muted">
-                Disponivel via{" "}
+                Disponível via{" "}
                 <a href="https://www.npmjs.com/package/hnbcrm-mcp" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
                   npm
                 </a>.
@@ -435,7 +435,7 @@ npm run dev`}</CodeBlock>
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Configuracao — Claude Desktop
+                Configuração — Claude Desktop
               </h3>
               <p className="text-sm text-text-secondary">
                 Adicione ao seu <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">claude_desktop_config.json</code>:
@@ -456,7 +456,7 @@ npm run dev`}</CodeBlock>
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Configuracao — Claude Code
+                Configuração — Claude Code
               </h3>
               <p className="text-sm text-text-secondary">
                 No seu <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">.mcp.json</code> do projeto:
@@ -477,7 +477,7 @@ npm run dev`}</CodeBlock>
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Configuracao — Cursor / VS Code
+                Configuração — Cursor / VS Code
               </h3>
               <p className="text-sm text-text-secondary">
                 Adicione ao <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">.cursor/mcp.json</code> ou <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">.vscode/mcp.json</code>:
@@ -501,11 +501,11 @@ npm run dev`}</CodeBlock>
           <section id="mcp-tools" className="space-y-6 scroll-mt-24">
             <h2 className="text-2xl font-bold flex items-center gap-3">
               <Table2 className="text-brand-400" size={24} />
-              Tools MCP — Referencia
+              Tools MCP — Referência
             </h2>
             <p className="text-text-secondary">
-              O servidor MCP expoe 46 ferramentas organizadas por categoria. Cada
-              ferramenta corresponde a uma acao no CRM.
+              O servidor MCP expõe 46 ferramentas organizadas por categoria. Cada
+              ferramenta corresponde a uma ação no CRM.
             </p>
 
             {/* Leads */}
@@ -521,8 +521,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -551,8 +551,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -581,8 +581,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -607,8 +607,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -634,8 +634,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -660,13 +660,13 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
                     <ToolRow name="crm_get_activities" description="Timeline de atividades do lead" params="leadId, limit?" />
-                    <ToolRow name="crm_create_activity" description="Registra nota, ligacao ou email" params="leadId, type, content?" />
+                    <ToolRow name="crm_create_activity" description="Registra nota, ligação ou email" params="leadId, type, content?" />
                   </tbody>
                 </table>
               </div>
@@ -685,8 +685,8 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -695,12 +695,12 @@ npm run dev`}</CodeBlock>
                     <ToolRow name="crm_create_task" description="Cria nova tarefa ou lembrete" params="title, type?, dueDate?" />
                     <ToolRow name="crm_update_task" description="Atualiza campos da tarefa" params="taskId, title?, priority?" />
                     <ToolRow name="crm_delete_task" description="Remove tarefa permanentemente" params="taskId" />
-                    <ToolRow name="crm_complete_task" description="Marca tarefa como concluida" params="taskId" />
-                    <ToolRow name="crm_snooze_task" description="Adia tarefa ate data futura" params="taskId, snoozedUntil" />
+                    <ToolRow name="crm_complete_task" description="Marca tarefa como concluída" params="taskId" />
+                    <ToolRow name="crm_snooze_task" description="Adia tarefa até data futura" params="taskId, snoozedUntil" />
                     <ToolRow name="crm_archive_task" description="Arquiva tarefa completada" params="taskId" />
                     <ToolRow name="crm_unarchive_task" description="Restaura tarefa arquivada" params="taskId" />
-                    <ToolRow name="crm_add_task_comment" description="Adiciona comentario a tarefa" params="taskId, content" />
-                    <ToolRow name="crm_list_task_comments" description="Lista comentarios de uma tarefa" params="taskId" />
+                    <ToolRow name="crm_add_task_comment" description="Adiciona comentário a tarefa" params="taskId, content" />
+                    <ToolRow name="crm_list_task_comments" description="Lista comentários de uma tarefa" params="taskId" />
                     <ToolRow name="crm_search_tasks" description="Busca tarefas por texto" params="query, limit?" />
                   </tbody>
                 </table>
@@ -711,7 +711,7 @@ npm run dev`}</CodeBlock>
             <Card className="p-0 overflow-hidden">
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">
                 <h3 className="font-semibold text-text-primary flex items-center gap-2">
-                  Calendario
+                  Calendário
                   <Badge variant="brand">6 tools</Badge>
                 </h3>
               </div>
@@ -720,17 +720,17 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="calendar_list_events" description="Lista eventos em periodo" params="startDate, endDate, assignedTo?" />
+                    <ToolRow name="calendar_list_events" description="Lista eventos em período" params="startDate, endDate, assignedTo?" />
                     <ToolRow name="calendar_get_event" description="Retorna detalhes do evento" params="eventId" />
-                    <ToolRow name="calendar_create_event" description="Cria novo evento no calendario" params="title, eventType, startTime, endTime" />
+                    <ToolRow name="calendar_create_event" description="Cria novo evento no calendário" params="title, eventType, startTime, endTime" />
                     <ToolRow name="calendar_update_event" description="Atualiza campos do evento" params="eventId, title?, startTime?" />
                     <ToolRow name="calendar_delete_event" description="Remove evento permanentemente" params="eventId" />
-                    <ToolRow name="calendar_reschedule_event" description="Reagenda evento para novo horario" params="eventId, newStartTime" />
+                    <ToolRow name="calendar_reschedule_event" description="Reagenda evento para novo horário" params="eventId, newStartTime" />
                   </tbody>
                 </table>
               </div>
@@ -740,7 +740,7 @@ npm run dev`}</CodeBlock>
             <Card className="p-0 overflow-hidden">
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">
                 <h3 className="font-semibold text-text-primary flex items-center gap-2">
-                  Notificacoes
+                  Notificações
                   <Badge variant="brand">2 tools</Badge>
                 </h3>
               </div>
@@ -749,13 +749,13 @@ npm run dev`}</CodeBlock>
                   <thead>
                     <tr className="border-b border-border bg-surface-sunken/50">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
-                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parametros chave</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="crm_get_notification_preferences" description="Retorna as preferencias de notificacao por email do agente atual" params="—" />
-                    <ToolRow name="crm_update_notification_preferences" description="Atualiza preferencias de notificacao por email (ex.: desativar resumo diario)" params="invite?, taskAssigned?, newMessage?, ..." />
+                    <ToolRow name="crm_get_notification_preferences" description="Retorna as preferências de notificação por email do agente atual" params="—" />
+                    <ToolRow name="crm_update_notification_preferences" description="Atualiza preferências de notificação por email (ex.: desativar resumo diário)" params="invite?, taskAssigned?, newMessage?, ..." />
                   </tbody>
                 </table>
               </div>
@@ -769,17 +769,17 @@ npm run dev`}</CodeBlock>
               Hermes Agent
             </h2>
             <p className="text-text-secondary">
-              O HNBCRM e compativel nativamente com o{" "}
+              O HNBCRM é compatível nativamente com o{" "}
               <a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
                 Hermes Agent
               </a>
-              {" "}&mdash; o agente open-source da Nous Research com memoria persistente, skills
+              {" "}&mdash; o agente open-source da Nous Research com memória persistente, skills
               que evoluem com o uso e suporte a MCP nativo. Roda no WhatsApp, Telegram, Slack,
               Discord, e-mail e CLI. Conecte seu CRM em minutos.
             </p>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Setup Rapido</h3>
+              <h3 className="font-semibold text-text-primary">Setup Rápido</h3>
               <div className="space-y-4">
                 <div>
                   <p className="text-sm text-text-secondary mb-2">
@@ -803,7 +803,7 @@ npm run dev`}</CodeBlock>
                 </div>
                 <div>
                   <p className="text-sm text-text-secondary mb-2">
-                    <span className="text-brand-400 font-semibold">3.</span> Copie o Agent Skill (opcional — o skill segue o padrao agentskills.io, o mesmo do Hermes):
+                    <span className="text-brand-400 font-semibold">3.</span> Copie o Agent Skill (opcional — o skill segue o padrão agentskills.io, o mesmo do Hermes):
                   </p>
                   <CodeBlock language="bash">{`cp -r .claude/skills/hnbcrm/ ~/.hermes/skills/hnbcrm/`}</CodeBlock>
                 </div>
@@ -816,10 +816,10 @@ npm run dev`}</CodeBlock>
                 {[
                   "Gerenciar leads no pipeline automaticamente",
                   "Responder conversas e solicitar handoffs para humanos",
-                  "Criar tarefas e agendar eventos no calendario",
-                  "Exportar/importar dados via API (com permissao settings: manage)",
-                  "Aprender seus fluxos e criar skills proprias a partir do uso do CRM",
-                  "Operar 24/7 com cron jobs e memoria entre sessoes",
+                  "Criar tarefas e agendar eventos no calendário",
+                  "Exportar/importar dados via API (com permissão settings: manage)",
+                  "Aprender seus fluxos e criar skills próprias a partir do uso do CRM",
+                  "Operar 24/7 com cron jobs e memória entre sessões",
                 ].map((capability) => (
                   <div key={capability} className="flex items-start gap-2 text-sm text-text-secondary">
                     <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={16} />
@@ -837,7 +837,7 @@ npm run dev`}</CodeBlock>
               OpenClaw
             </h2>
             <p className="text-text-secondary">
-              O HNBCRM e compativel nativamente com{" "}
+              O HNBCRM é compatível nativamente com{" "}
               <a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
                 OpenClaw
               </a>
@@ -846,7 +846,7 @@ npm run dev`}</CodeBlock>
             </p>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Setup Rapido</h3>
+              <h3 className="font-semibold text-text-primary">Setup Rápido</h3>
               <div className="space-y-4">
                 <div>
                   <p className="text-sm text-text-secondary mb-2">
@@ -888,8 +888,8 @@ npm run dev`}</CodeBlock>
                   "Enriquecer contatos com dados de pesquisa web",
                   "Responder conversas e enviar mensagens",
                   "Solicitar handoffs para vendedores humanos",
-                  "Criar tarefas e agendar eventos no calendario",
-                  "Gerar relatorios de analytics do pipeline",
+                  "Criar tarefas e agendar eventos no calendário",
+                  "Gerar relatórios de analytics do pipeline",
                 ].map((capability) => (
                   <div key={capability} className="flex items-start gap-2 text-sm text-text-secondary">
                     <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={16} />
@@ -913,18 +913,18 @@ npm run dev`}</CodeBlock>
             </p>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Conteudo do Skill</h3>
+              <h3 className="font-semibold text-text-primary">Conteúdo do Skill</h3>
               <p className="text-sm text-text-secondary">
                 O skill vive em <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">.claude/skills/hnbcrm/</code> e
-                segue o padrao <span className="text-brand-400">AgentSkills.io</span>. Pode ser copiado para qualquer plataforma.
+                segue o padrão <span className="text-brand-400">AgentSkills.io</span>. Pode ser copiado para qualquer plataforma.
               </p>
               <div className="space-y-2">
                 {[
-                  { file: "SKILL.md", desc: "Skill principal — papel do agente, bootstrap, workflows, boas praticas" },
-                  { file: "references/WORKFLOWS.md", desc: "Playbooks passo a passo: intake, qualificacao, enrichment, handoffs" },
+                  { file: "SKILL.md", desc: "Skill principal — papel do agente, bootstrap, workflows, boas práticas" },
+                  { file: "references/WORKFLOWS.md", desc: "Playbooks passo a passo: intake, qualificação, enrichment, handoffs" },
                   { file: "references/API_REFERENCE.md", desc: "Mapeamento completo MCP tools <> REST endpoints" },
                   { file: "references/DATA_MODEL.md", desc: "Tabelas, campos e valores de enum" },
-                  { file: "references/SETUP.md", desc: "Configuracao por plataforma (Claude, Cursor, VS Code, Gemini, Hermes, OpenClaw)" },
+                  { file: "references/SETUP.md", desc: "Configuração por plataforma (Claude, Cursor, VS Code, Gemini, Hermes, OpenClaw)" },
                 ].map((item) => (
                   <div key={item.file} className="flex items-start gap-3 p-3 rounded-lg bg-surface-overlay border border-border">
                     <code className="text-xs font-mono text-brand-400 whitespace-nowrap mt-0.5">{item.file}</code>
@@ -939,20 +939,20 @@ npm run dev`}</CodeBlock>
               <div className="space-y-4">
                 <div>
                   <p className="text-sm text-text-secondary mb-2">
-                    <span className="text-brand-400 font-semibold">1.</span> Configure o servidor MCP (necessario para as tools):
+                    <span className="text-brand-400 font-semibold">1.</span> Configure o servidor MCP (necessário para as tools):
                   </p>
                   <CodeBlock language="bash">{`# Defina as variaveis de ambiente
 export HNBCRM_API_URL="https://seu-deployment.convex.site"
 export HNBCRM_API_KEY="sua_chave_aqui"
 
-# Teste a conexao
+# Teste a conexão
 npx hnbcrm-mcp`}</CodeBlock>
                 </div>
                 <div>
                   <p className="text-sm text-text-secondary mb-2">
                     <span className="text-brand-400 font-semibold">2.</span> Copie o skill para seu agente:
                   </p>
-                  <CodeBlock language="bash">{`# Claude Code (ja detecta automaticamente)
+                  <CodeBlock language="bash">{`# Claude Code (já detecta automaticamente)
 # Para outras plataformas:
 cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                 </div>
@@ -969,7 +969,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
             </Card>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Plataformas Compativeis</h3>
+              <h3 className="font-semibold text-text-primary">Plataformas Compatíveis</h3>
               <div className="flex flex-wrap gap-2">
                 {[
                   "Claude Code",
@@ -992,7 +992,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
               <p className="text-sm text-text-muted">
                 O skill funciona com qualquer plataforma que suporte MCP ou REST API. Veja{" "}
                 <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">references/SETUP.md</code>{" "}
-                para instrucoes detalhadas.
+                para instruções detalhadas.
               </p>
             </Card>
           </section>
@@ -1038,7 +1038,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                         <tr className="border-b border-border bg-surface-sunken/50">
                           <th className="py-2 px-3 text-xs font-semibold text-text-muted w-16">Metodo</th>
                           <th className="py-2 px-3 text-xs font-semibold text-text-muted w-56">Path</th>
-                          <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descricao</th>
+                          <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1075,15 +1075,15 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
               Webhooks
             </h2>
             <p className="text-text-secondary">
-              Receba notificacoes em tempo real quando eventos acontecem no CRM.
+              Receba notificações em tempo real quando eventos acontecem no CRM.
               Configure webhooks em{" "}
               <span className="text-brand-400 font-medium">
-                Configuracoes &gt; Webhooks
+                Configurações &gt; Webhooks
               </span>.
             </p>
 
             <Card className="p-6 space-y-4">
-              <h3 className="font-semibold text-text-primary">Eventos disponiveis</h3>
+              <h3 className="font-semibold text-text-primary">Eventos disponíveis</h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {[
                   "lead.created",
@@ -1127,7 +1127,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Verificacao de assinatura — HMAC-SHA256
+                Verificação de assinatura — HMAC-SHA256
               </h3>
               <p className="text-sm text-text-secondary">
                 Cada request de webhook inclui o header{" "}
@@ -1157,7 +1157,7 @@ function verifyWebhook(body, signature, secret) {
   "timestamp": "2026-02-15T12:00:00.000Z",
   "data": {
     "id": "jd7x...",
-    "title": "Novo lead via formulario",
+    "title": "Novo lead via formulário",
     "boardId": "kn8y...",
     "stageId": "m2a4...",
     "contactId": "p5b7...",
@@ -1173,15 +1173,15 @@ function verifyWebhook(body, signature, secret) {
           <section id="examples" className="space-y-6 scroll-mt-24">
             <h2 className="text-2xl font-bold flex items-center gap-3">
               <Code2 className="text-brand-400" size={24} />
-              Exemplos de Codigo
+              Exemplos de Código
             </h2>
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Criar lead a partir de formulario web
+                Criar lead a partir de formulário web
               </h3>
               <p className="text-sm text-text-secondary">
-                Envie dados de um formulario de contato direto para o CRM:
+                Envie dados de um formulário de contato direto para o CRM:
               </p>
               <CodeBlock language="javascript">{`async function createLeadFromForm(formData) {
   const response = await fetch(
@@ -1212,14 +1212,14 @@ function verifyWebhook(body, signature, secret) {
 
             <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">
-                Integracao com agente de IA
+                Integração com agente de IA
               </h3>
               <p className="text-sm text-text-secondary">
                 Exemplo de um agente que monitora leads e solicita handoff quando
-                necessario:
+                necessário:
               </p>
               <CodeBlock language="javascript">{`async function aiAgentCheckLeads(apiKey, baseUrl) {
-  // 1. Listar leads nao atribuidos
+  // 1. Listar leads não atribuídos
   const res = await fetch(\`\${baseUrl}/api/v1/leads\`, {
     headers: { "X-API-Key": apiKey },
   });
@@ -1244,7 +1244,7 @@ function verifyWebhook(body, signature, secret) {
           },
           body: JSON.stringify({
             leadId: lead._id,
-            reason: "Lead com conversas ativas sem atribuicao",
+            reason: "Lead com conversas ativas sem atribuição",
           }),
         });
         console.log(\`Handoff solicitado para lead: \${lead.title}\`);

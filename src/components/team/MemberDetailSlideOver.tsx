@@ -301,7 +301,7 @@ export function MemberDetailSlideOver({
           {isEditing && member.type === "human" && (
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Funcao
+                Função
               </label>
               <div className="flex flex-wrap gap-2">
                 {(["agent", "manager", "admin"] as Role[]).map((r) => (
@@ -448,7 +448,7 @@ export function MemberDetailSlideOver({
                   </Button>
                   <div className="flex gap-2 items-start text-xs text-semantic-warning bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-2">
                     <ShieldAlert size={14} className="flex-shrink-0 mt-0.5" />
-                    <span>Salve em local seguro. Nao sera exibida novamente.</span>
+                    <span>Salve em local seguro. Não será exibida novamente.</span>
                   </div>
                   <Button
                     variant="secondary"
@@ -598,7 +598,7 @@ export function MemberDetailSlideOver({
         onClose={() => setShowRemoveConfirm(false)}
         onConfirm={handleRemove}
         title="Remover Membro"
-        description={`Tem certeza que deseja remover ${member.name} da equipe? O status sera alterado para inativo.`}
+        description={`Tem certeza que deseja remover ${member.name} da equipe? O status será alterado para inativo.`}
         confirmLabel="Remover"
         variant="danger"
       />
@@ -608,7 +608,7 @@ export function MemberDetailSlideOver({
         onClose={() => setRevokeKeyId(null)}
         onConfirm={handleRevokeApiKey}
         title="Revogar Chave API"
-        description="Esta acao e irreversivel. Qualquer integracao usando esta chave parara de funcionar imediatamente."
+        description="Esta ação é irreversível. Qualquer integração usando esta chave parará de funcionar imediatamente."
         confirmLabel="Revogar"
         variant="danger"
       />

@@ -10,17 +10,17 @@ import { toast } from "sonner";
 import { Bell } from "lucide-react";
 
 const NOTIFICATION_EVENTS = [
-  { key: "invite", label: "Convites de equipe", desc: "Quando voce e convidado para uma organizacao", alwaysOn: true },
-  { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um agente IA solicita repasse para voce" },
+  { key: "invite", label: "Convites de equipe", desc: "Quando você é convidado para uma organização", alwaysOn: true },
+  { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um agente IA solicita repasse para você" },
   { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
   { key: "aiDraftPending", label: "Rascunho da IA aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
-  { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuida a voce esta atrasada" },
-  { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa e atribuida a voce" },
-  { key: "taskCommentMention", label: "Mencao em comentario de tarefa", desc: "Quando alguem te menciona em um comentario de tarefa" },
-  { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuida a voce esta prestes a vencer" },
-  { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead e atribuido a voce" },
+  { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuída a você está atrasada" },
+  { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa é atribuída a você" },
+  { key: "taskCommentMention", label: "Menção em comentário de tarefa", desc: "Quando alguém te menciona em um comentário de tarefa" },
+  { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuída a você está prestes a vencer" },
+  { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead é atribuído a você" },
   { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
-  { key: "dailyDigest", label: "Resumo diario", desc: "Resumo das atividades do dia anterior, enviado as 08:00" },
+  { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },
 ] as const;
 
 type PreferenceKey = typeof NOTIFICATION_EVENTS[number]["key"];
@@ -72,9 +72,9 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         organizationId,
         ...localPrefs,
       });
-      toast.success("Preferencias salvas com sucesso");
+      toast.success("Preferências salvas com sucesso");
     } catch {
-      toast.error("Erro ao salvar preferencias");
+      toast.error("Erro ao salvar preferências");
     } finally {
       setSaving(false);
     }
@@ -85,10 +85,10 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
       <div className="p-6">
         <div className="flex items-center gap-3 mb-1">
           <Bell size={20} className="text-brand-500" />
-          <h3 className="text-lg font-semibold text-text-primary">Preferencias de Notificacao por Email</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Preferências de Notificação por Email</h3>
         </div>
         <p className="text-sm text-text-secondary mb-6">
-          Escolha quais eventos devem gerar notificacoes por email.
+          Escolha quais eventos devem gerar notificações por email.
         </p>
 
         {/* Header row — desktop only */}
@@ -125,7 +125,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
                     type="button"
                     role="switch"
                     aria-checked={isOn}
-                    aria-label={`Notificacao por email: ${event.label}`}
+                    aria-label={`Notificação por email: ${event.label}`}
                     disabled={isAlwaysOn}
                     onClick={() => !isAlwaysOn && handleToggle(event.key)}
                     className={cn(
@@ -155,7 +155,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
             onClick={handleSave}
             disabled={!isDirty || saving}
           >
-            {saving ? "Salvando..." : "Salvar alteracoes"}
+            {saving ? "Salvando..." : "Salvar alterações"}
           </Button>
         </div>
       </div>

@@ -24,11 +24,11 @@ const CONTACT_FIELDS: { field: string; label: string }[] = [
   { field: "whatsappNumber", label: "WhatsApp" },
   { field: "city", label: "Cidade" },
   { field: "state", label: "Estado" },
-  { field: "country", label: "Pais" },
+  { field: "country", label: "País" },
 ];
 
 const LEAD_FIELDS: { field: string; label: string }[] = [
-  { field: "title", label: "Titulo" },
+  { field: "title", label: "Título" },
   { field: "value", label: "Valor" },
 ];
 

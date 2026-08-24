@@ -48,7 +48,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
     if (!eventId) return;
     try {
       await completeEvent({ eventId: eventId as Id<"calendarEvents"> });
-      toast.success("Evento concluido!");
+      toast.success("Evento concluído!");
       onClose();
     } catch (error) {
       toast.error("Erro ao concluir evento");
@@ -72,7 +72,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
     if (!eventId) return;
     try {
       await deleteEvent({ eventId: eventId as Id<"calendarEvents"> });
-      toast.success("Evento excluido!");
+      toast.success("Evento excluído!");
       setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
@@ -157,7 +157,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
                   rel="noopener noreferrer"
                   className="text-sm text-brand-500 hover:text-brand-400 transition-colors flex items-center gap-1"
                 >
-                  Link da reuniao
+                  Link da reunião
                   <ExternalLink size={14} />
                 </a>
               </div>
@@ -167,7 +167,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
           {/* Description */}
           {event.description && (
             <div>
-              <h3 className="text-sm font-medium text-text-secondary mb-2">Descricao</h3>
+              <h3 className="text-sm font-medium text-text-secondary mb-2">Descrição</h3>
               <p className="text-sm text-text-primary whitespace-pre-wrap">{event.description}</p>
             </div>
           )}
@@ -202,7 +202,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
           {/* Assignee */}
           {event.assignee && (
             <div>
-              <h3 className="text-sm font-medium text-text-secondary mb-2">Responsavel</h3>
+              <h3 className="text-sm font-medium text-text-secondary mb-2">Responsável</h3>
               <div className="flex items-center gap-2">
                 <Avatar name={event.assignee.name} type={event.assignee.type} size="sm" />
                 <span className="text-sm text-text-primary">{event.assignee.name}</span>
@@ -289,7 +289,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDelete}
         title="Excluir Evento"
-        description="Tem certeza que deseja excluir este evento? Esta acao nao pode ser desfeita."
+        description="Tem certeza que deseja excluir este evento? Esta ação não pode ser desfeita."
         confirmLabel="Excluir"
         variant="danger"
       />

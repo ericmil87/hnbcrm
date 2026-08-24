@@ -115,7 +115,7 @@ function Sparkline({ data }: SparklineProps) {
         preserveAspectRatio="none"
         className="w-full"
         style={{ height: 120 }}
-        aria-label="Grafico de submissoes diarias nos ultimos 30 dias"
+        aria-label="Gráfico de submissões diárias nos últimos 30 dias"
         role="img"
       >
         <defs>
@@ -242,7 +242,7 @@ function UtmBarList({ items, total }: UtmBarListProps) {
   if (items.length === 0) {
     return (
       <div className="flex items-center justify-center py-8 text-text-muted text-sm">
-        Sem dados para esta dimensao
+        Sem dados para esta dimensão
       </div>
     );
   }
@@ -290,9 +290,9 @@ function UtmBarList({ items, total }: UtmBarListProps) {
 
 const UTM_TABS = [
   { key: "source", label: "Fonte" },
-  { key: "medium", label: "Midia" },
+  { key: "medium", label: "Mídia" },
   { key: "campaign", label: "Campanha" },
-  { key: "content", label: "Conteudo" },
+  { key: "content", label: "Conteúdo" },
   { key: "term", label: "Termo" },
 ] as const;
 
@@ -325,14 +325,14 @@ function UtmTabbedSection({ analytics }: UtmTabbedSectionProps) {
   return (
     <section
       className="bg-surface-raised border border-border rounded-card overflow-hidden"
-      aria-label="Parametros UTM"
+      aria-label="Parâmetros UTM"
     >
       <div className="px-4 py-3 md:px-5 md:py-4 border-b border-border">
         <h2 className="text-sm font-semibold text-text-primary">
-          Parametros UTM
+          Parâmetros UTM
         </h2>
         <p className="text-xs text-text-muted mt-0.5">
-          Detalhamento por dimensao de trafego
+          Detalhamento por dimensão de tráfego
         </p>
       </div>
 
@@ -405,10 +405,10 @@ function EmptyAnalytics({ formId }: { formId: string }) {
         <BarChart3 size={28} className="text-text-muted" />
       </div>
       <h2 className="text-base font-semibold text-text-primary mb-1">
-        Sem dados de analitica ainda
+        Sem dados de analítica ainda
       </h2>
       <p className="text-sm text-text-secondary max-w-xs mb-6">
-        As metricas aparecerão aqui quando o formulario receber suas primeiras submissoes.
+        As métricas aparecerão aqui quando o formulário receber suas primeiras submissões.
       </p>
       <Link
         to={`/app/formularios/${formId}/submissoes`}
@@ -420,7 +420,7 @@ function EmptyAnalytics({ formId }: { formId: string }) {
         )}
       >
         <ExternalLink size={16} />
-        Ver submissoes
+        Ver submissões
       </Link>
     </div>
   );
@@ -454,7 +454,7 @@ export function FormAnalyticsPage() {
   if (!typedFormId) {
     return (
       <main className="min-h-screen bg-surface-base flex items-center justify-center">
-        <p className="text-text-muted text-sm">Formulario nao encontrado.</p>
+        <p className="text-text-muted text-sm">Formulário não encontrado.</p>
       </main>
     );
   }
@@ -475,7 +475,7 @@ export function FormAnalyticsPage() {
             variant="ghost"
             size="sm"
             onClick={() => navigate(`/app/formularios/${typedFormId}`)}
-            aria-label="Voltar para o formulario"
+            aria-label="Voltar para o formulário"
             className="shrink-0 mt-0.5"
           >
             <ArrowLeft size={18} />
@@ -487,10 +487,10 @@ export function FormAnalyticsPage() {
               <div className="h-6 w-40 bg-surface-raised rounded animate-pulse" />
             ) : (
               <h1 className="text-lg font-bold text-text-primary md:text-xl leading-tight truncate">
-                {form?.name ?? "Formulario"}
+                {form?.name ?? "Formulário"}
               </h1>
             )}
-            <p className="text-sm text-text-muted mt-0.5">Analitica</p>
+            <p className="text-sm text-text-muted mt-0.5">Analítica</p>
           </div>
 
           <Link
@@ -503,8 +503,8 @@ export function FormAnalyticsPage() {
             )}
           >
             <ExternalLink size={15} />
-            <span className="hidden sm:inline">Ver submissoes</span>
-            <span className="sm:hidden">Submissoes</span>
+            <span className="hidden sm:inline">Ver submissões</span>
+            <span className="sm:hidden">Submissões</span>
           </Link>
         </header>
 
@@ -522,20 +522,20 @@ export function FormAnalyticsPage() {
 
             {/* Summary cards — 2-col mobile, 4-col desktop */}
             <section
-              aria-label="Resumo de submissoes"
+              aria-label="Resumo de submissões"
               className="grid grid-cols-2 gap-3 lg:grid-cols-4"
             >
               <SummaryCard
-                label="Total de submissoes"
+                label="Total de submissões"
                 value={formatNumber(analytics.total)}
                 valueClassName="text-brand-400"
               />
               <SummaryCard
-                label="Ultimos 7 dias"
+                label="Últimos 7 dias"
                 value={formatNumber(analytics.last7Days)}
               />
               <SummaryCard
-                label="Ultimos 30 dias"
+                label="Últimos 30 dias"
                 value={formatNumber(analytics.last30Days)}
               />
               <SummaryCard
@@ -546,7 +546,7 @@ export function FormAnalyticsPage() {
                 }
                 sub={
                   spamRateHigh
-                    ? "Acima de 5% — considere reforcar a protecao"
+                    ? "Acima de 5% — considere reforçar a proteção"
                     : "Dentro do limite normal"
                 }
               />
@@ -556,20 +556,20 @@ export function FormAnalyticsPage() {
             {analytics.dailySubmissions.length > 0 && (
               <section
                 className="bg-surface-raised border border-border rounded-card p-4 md:p-5"
-                aria-label="Grafico de submissoes diarias"
+                aria-label="Gráfico de submissões diárias"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div>
                     <h2 className="text-sm font-semibold text-text-primary flex items-center gap-2">
                       <TrendingUp size={16} className="text-brand-400" />
-                      Submissoes por Dia
+                      Submissões por Dia
                     </h2>
                     <p className="text-xs text-text-muted mt-0.5">
-                      Ultimos 30 dias
+                      Últimos 30 dias
                     </p>
                   </div>
                   <span className="text-xs text-text-muted tabular-nums">
-                    {formatNumber(analytics.last30Days)} submissoes
+                    {formatNumber(analytics.last30Days)} submissões
                   </span>
                 </div>
 

@@ -97,7 +97,7 @@ function getDayGroupLabel(date: Date): string {
   const diffDays = Math.round(diffMs / 86_400_000);
 
   if (diffDays === 0) return "HOJE";
-  if (diffDays === 1) return "AMANHA";
+  if (diffDays === 1) return "AMANHÃ";
   if (diffDays >= 2 && diffDays <= 6) return WEEKDAYS_LONG[target.getDay()].toUpperCase();
 
   return target.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }).toUpperCase();
@@ -224,12 +224,12 @@ export function UpcomingEventsWidget({
     <Card>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Proximos Eventos</h3>
+        <h3 className="text-lg font-semibold text-text-primary">Próximos Eventos</h3>
         <button
           onClick={() => navigate("/app/calendario")}
           className="flex items-center gap-1 text-sm text-brand-500 hover:text-brand-400 transition-colors font-medium"
         >
-          Ver calendario
+          Ver calendário
           <ChevronRight size={16} />
         </button>
       </div>
@@ -497,7 +497,7 @@ export function UpcomingEventsWidget({
               className="w-full"
               onClick={() => navigate("/app/calendario")}
             >
-              Ver todos no calendario
+              Ver todos no calendário
               <ChevronRight size={14} />
             </Button>
           </div>

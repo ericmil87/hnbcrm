@@ -55,7 +55,7 @@ export function Footer() {
             <h4 className="text-sm font-semibold text-text-primary">Produto</h4>
             <div className="flex flex-col gap-2">
               <InternalLink to="/#funcionalidades">Funcionalidades</InternalLink>
-              <InternalLink to="/#precos">Precos</InternalLink>
+              <InternalLink to="/#precos">Preços</InternalLink>
               <ExtLink href={`${GITHUB_URL}/blob/main/ROADMAP.md`}>Roadmap</ExtLink>
               <InternalLink to="/entrar">Entrar</InternalLink>
             </div>
@@ -65,7 +65,7 @@ export function Footer() {
           <div className="space-y-3">
             <h4 className="text-sm font-semibold text-text-primary">Desenvolvedores</h4>
             <div className="flex flex-col gap-2">
-              <InternalLink to="/developers">Documentacao</InternalLink>
+              <InternalLink to="/developers">Documentação</InternalLink>
               <InternalLink to="/developers/playground">Playground</InternalLink>
               <InternalLink to="/developers#mcp">Servidor MCP</InternalLink>
               <InternalLink to="/developers#agent-skills">Agent Skills</InternalLink>
@@ -79,7 +79,7 @@ export function Footer() {
               <ExtLink href={GITHUB_URL}>GitHub</ExtLink>
               <ExtLink href={NPM_URL}>npm</ExtLink>
               <ExtLink href={`${GITHUB_URL}/blob/main/CONTRIBUTING.md`}>Contribuir</ExtLink>
-              <ExtLink href={`${GITHUB_URL}/security`}>Seguranca</ExtLink>
+              <ExtLink href={`${GITHUB_URL}/security`}>Segurança</ExtLink>
             </div>
           </div>
         </div>

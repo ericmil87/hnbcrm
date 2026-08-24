@@ -156,11 +156,11 @@ function timeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60_000);
   if (minutes < 1) return "agora";
-  if (minutes < 60) return `${minutes}min atras`;
+  if (minutes < 60) return `${minutes}min atrás`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h atras`;
+  if (hours < 24) return `${hours}h atrás`;
   const days = Math.floor(hours / 24);
-  return `${days}d atras`;
+  return `${days}d atrás`;
 }
 
 // ── Filter tabs ───────────────────────────────────────────────────────────────
@@ -222,7 +222,7 @@ function exportToCsv(
       escape(formatDate(s.createdAt)),
       escape(label),
       ...dataKeys.map((k) => escape(s.data[k])),
-      escape(s.leadId ? "Sim" : "Nao"),
+      escape(s.leadId ? "Sim" : "Não"),
     ].join(",");
   });
 
@@ -367,7 +367,7 @@ function SubmissionRow({
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {dataEntries.length === 0 ? (
                 <p className="text-sm text-text-muted col-span-full">
-                  Nenhum dado disponivel nesta submissao.
+                  Nenhum dado disponível nesta submissão.
                 </p>
               ) : (
                 dataEntries.map(([key, value]) => (
@@ -377,10 +377,10 @@ function SubmissionRow({
                     </span>
                     <span className="text-sm text-text-primary break-words">
                       {typeof value === "boolean"
-                        ? value
-                          ? "Sim"
-                          : "Nao"
-                        : String(value)}
+? value
+                        ? "Sim"
+                        : "Não"
+                      : String(value)}
                     </span>
                   </div>
                 ))
@@ -546,7 +546,7 @@ function SubmissionCard({
           <div className="grid grid-cols-1 gap-3">
             {dataEntries.length === 0 ? (
               <p className="text-sm text-text-muted">
-                Nenhum dado disponivel nesta submissao.
+                Nenhum dado disponível nesta submissão.
               </p>
             ) : (
               dataEntries.map(([key, value]) => (
@@ -558,7 +558,7 @@ function SubmissionCard({
                     {typeof value === "boolean"
                       ? value
                         ? "Sim"
-                        : "Nao"
+                        : "Não"
                       : String(value)}
                   </span>
                 </div>
@@ -693,7 +693,7 @@ export function FormSubmissionsPage() {
     return (
       <main className="min-h-screen bg-surface-base flex items-center justify-center px-4">
         <p className="text-text-secondary text-sm">
-          Formulario nao encontrado.
+          Formulário não encontrado.
         </p>
       </main>
     );
@@ -707,7 +707,7 @@ export function FormSubmissionsPage() {
         <header className="flex items-start gap-3 mb-6 md:mb-8">
           <button
             onClick={() => navigate(`/app/formularios/${formId}`)}
-            aria-label="Voltar para o formulario"
+            aria-label="Voltar para o formulário"
             className={cn(
               "inline-flex items-center justify-center rounded-full shrink-0",
               "min-h-[44px] min-w-[44px]",
@@ -727,7 +727,7 @@ export function FormSubmissionsPage() {
               </div>
             ) : form === null ? (
               <p className="text-text-muted text-sm">
-                Formulario nao encontrado.
+                Formulário não encontrado.
               </p>
             ) : (
               <>
@@ -737,8 +737,8 @@ export function FormSubmissionsPage() {
                 <p className="text-sm text-text-secondary mt-0.5 tabular-nums">
                   {(form.submissionCount ?? 0).toLocaleString("pt-BR")}{" "}
                   {(form.submissionCount ?? 0) === 1
-                    ? "submissao"
-                    : "submissoes"}{" "}
+                    ? "submissão"
+                    : "submissões"}{" "}
                   no total
                 </p>
               </>
@@ -751,7 +751,7 @@ export function FormSubmissionsPage() {
             size="sm"
             onClick={handleExportCsv}
             disabled={submissions.length === 0}
-            aria-label="Exportar submissoes visíveis para CSV"
+            aria-label="Exportar submissões visíveis para CSV"
             className="shrink-0"
           >
             <Download size={16} />
@@ -771,7 +771,7 @@ export function FormSubmissionsPage() {
                 : "border-transparent text-text-secondary hover:text-text-primary"
             )}
           >
-            Submissoes
+            Submissões
           </button>
           <button
             onClick={() => { setMainTab("partials"); setExpandedPartialId(null); }}
@@ -802,7 +802,7 @@ export function FormSubmissionsPage() {
           <>
         {/* ── Status filter tabs ──────────────────────────────────────────── */}
         <nav
-          aria-label="Filtrar submissoes por status"
+          aria-label="Filtrar submissões por status"
           className="flex gap-1 mb-5 overflow-x-auto scrollbar-none"
         >
           {STATUS_TABS.map(({ key, label }) => (
@@ -835,7 +835,7 @@ export function FormSubmissionsPage() {
         {!isLoadingForm && form === null && (
           <div className="flex flex-col items-center justify-center py-24 text-center">
             <p className="text-text-secondary text-sm">
-              Formulario nao encontrado ou voce nao tem permissao para visualiza-lo.
+              Formulário não encontrado ou você não tem permissão para visualizá-lo.
             </p>
           </div>
         )}
@@ -848,12 +848,12 @@ export function FormSubmissionsPage() {
             </div>
             <h2 className="text-base font-semibold text-text-primary mb-1">
               {activeFilter === "all"
-                ? "Nenhuma submissao ainda"
-                : "Nenhuma submissao com este filtro"}
+                ? "Nenhuma submissão ainda"
+                : "Nenhuma submissão com este filtro"}
             </h2>
             <p className="text-sm text-text-secondary max-w-xs">
               {activeFilter === "all"
-                ? "Quando alguem preencher o formulario, as submissoes aparecerão aqui."
+                ? "Quando alguém preencher o formulário, as submissões aparecerão aqui."
                 : "Tente selecionar outro filtro de status."}
             </p>
           </div>
@@ -931,7 +931,7 @@ export function FormSubmissionsPage() {
                   size="md"
                   onClick={() => loadMore(PAGE_SIZE)}
                   disabled={status === "LoadingMore"}
-                  aria-label="Carregar mais submissoes"
+                  aria-label="Carregar mais submissões"
                 >
                   {status === "LoadingMore" ? (
                     <>
@@ -949,8 +949,8 @@ export function FormSubmissionsPage() {
             <p className="text-center text-xs text-text-muted mt-4 tabular-nums">
               {submissions.length.toLocaleString("pt-BR")}{" "}
               {submissions.length === 1
-                ? "submissao exibida"
-                : "submissoes exibidas"}
+                ? "submissão exibida"
+                : "submissões exibidas"}
             </p>
           </>
         )}
@@ -967,7 +967,7 @@ export function FormSubmissionsPage() {
                 <StatCard label="Abandonados" value={partialStats.abandoned} />
                 <StatCard label="Convertidos" value={partialStats.converted} />
                 <StatCard
-                  label="Taxa conversao"
+                  label="Taxa de conversão"
                   value={`${Math.round(partialStats.conversionRate)}%`}
                 />
               </div>
@@ -1011,10 +1011,10 @@ export function FormSubmissionsPage() {
                   <Clock size={28} className="text-text-muted" />
                 </div>
                 <h2 className="text-base font-semibold text-text-primary mb-1">
-                  Nenhuma submissao parcial
+                  Nenhuma submissão parcial
                 </h2>
                 <p className="text-sm text-text-secondary max-w-xs">
-                  Ative a captura parcial nas configuracoes do formulario para comecar a recuperar dados de visitantes que nao completam o envio.
+                  Ative a captura parcial nas configurações do formulário para começar a recuperar dados de visitantes que não completam o envio.
                 </p>
               </div>
             )}
@@ -1028,7 +1028,7 @@ export function FormSubmissionsPage() {
                     <thead>
                       <tr className="border-b border-border">
                         <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-text-muted uppercase tracking-wide whitespace-nowrap">
-                          Ultima atividade
+                          Última atividade
                         </th>
                         <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-text-muted uppercase tracking-wide whitespace-nowrap">
                           Progresso
@@ -1139,8 +1139,8 @@ export function FormSubmissionsPage() {
                                     )}
                                   </div>
                                   <div className="mt-3 pt-3 border-t border-border-subtle flex flex-wrap gap-4 text-xs text-text-muted">
-                                    <span>Sessao: <span className="font-mono">{partial.sessionId.slice(0, 8)}...</span></span>
-                                    <span>Inicio: {formatDate(partial.firstInteractionAt)}</span>
+                                    <span>Sessão: <span className="font-mono">{partial.sessionId.slice(0, 8)}...</span></span>
+                                    <span>Início: {formatDate(partial.firstInteractionAt)}</span>
                                     {partial.currentStep !== undefined && (
                                       <span>Etapa: {partial.currentStep + 1}</span>
                                     )}

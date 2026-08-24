@@ -24,12 +24,12 @@ interface ConditionalLogicEditorProps {
 type Operator = ConditionalLogic["conditions"][number]["operator"];
 
 const OPERATOR_LABELS: Record<Operator, string> = {
-  equals: "e igual a",
-  not_equals: "nao e igual a",
-  contains: "contem",
-  not_contains: "nao contem",
-  is_empty: "esta vazio",
-  is_not_empty: "nao esta vazio",
+  equals: "é igual a",
+  not_equals: "não é igual a",
+  contains: "contém",
+  not_contains: "não contém",
+  is_empty: "está vazio",
+  is_not_empty: "não está vazio",
   greater_than: "maior que",
   less_than: "menor que",
 };
@@ -154,16 +154,16 @@ function ConditionRow({
     <div
       className="rounded-lg bg-surface-sunken border border-border-subtle p-3 space-y-2"
       role="group"
-      aria-label={`Condicao ${index + 1}`}
+      aria-label={`Condição ${index + 1}`}
     >
       {/* Row header: condition index + remove button */}
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
-          Condicao {index + 1}
+          Condição {index + 1}
         </span>
         <button
           type="button"
-          aria-label={`Remover condicao ${index + 1}`}
+          aria-label={`Remover condição ${index + 1}`}
           onClick={onRemove}
           className={cn(
             "p-1.5 rounded-md text-text-muted transition-colors",
@@ -191,12 +191,12 @@ function ConditionRow({
         >
           {availableFields.length === 0 ? (
             <option value="" disabled>
-              Nenhum campo disponivel
+              Nenhum campo disponível
             </option>
           ) : (
             availableFields.map((f) => (
               <option key={f.id} value={f.id}>
-                {f.label || "(sem rotulo)"}
+                {f.label || "(sem rótulo)"}
               </option>
             ))
           )}
@@ -324,7 +324,7 @@ export function ConditionalLogicEditor({
 
   return (
     <section
-      aria-label="Logica condicional"
+      aria-label="Lógica condicional"
       className="rounded-lg border border-border-subtle overflow-hidden"
     >
       {/* ── Section header / enable toggle ──────────────────────── */}
@@ -352,7 +352,7 @@ export function ConditionalLogicEditor({
                 isEnabled ? "text-text-primary" : "text-text-secondary"
               )}
             >
-              Logica condicional
+              Lógica condicional
             </p>
             {!isEnabled && (
               <p className="text-[12px] text-text-muted mt-0.5 hidden sm:block">
@@ -365,7 +365,7 @@ export function ConditionalLogicEditor({
         <ToggleSwitch
           checked={isEnabled}
           onToggle={handleToggle}
-          label="Ativar logica condicional"
+          label="Ativar lógica condicional"
         />
       </div>
 
@@ -376,10 +376,10 @@ export function ConditionalLogicEditor({
           {/* ── Action selector ───────────────────────────────────── */}
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Acao
+Ação
             </label>
             <SegmentControl
-              label="Acao condicional"
+              label="Ação condicional"
               value={logic.action}
               options={[
                 { value: "show", label: "Mostrar" },
@@ -395,11 +395,11 @@ export function ConditionalLogicEditor({
               Este campo quando
             </label>
             <SegmentControl
-              label="Combinador de condicoes"
+              label="Combinador de condições"
               value={logic.logic}
               options={[
-                { value: "all", label: "Todas as condicoes" },
-                { value: "any", label: "Qualquer condicao" },
+                { value: "all", label: "Todas as condições" },
+                { value: "any", label: "Qualquer condição" },
               ]}
               onChange={(v) => updateLogic({ logic: v })}
             />
@@ -407,7 +407,7 @@ export function ConditionalLogicEditor({
 
           {/* ── Condition rows ────────────────────────────────────── */}
           {logic.conditions.length > 0 ? (
-            <div className="space-y-2" role="list" aria-label="Condicoes">
+            <div className="space-y-2" role="list" aria-label="Condições">
               {logic.conditions.map((condition, index) => (
                 <div key={index} role="listitem">
                   <ConditionRow
@@ -422,7 +422,7 @@ export function ConditionalLogicEditor({
             </div>
           ) : (
             <p className="text-[12px] text-text-muted text-center py-3 bg-surface-sunken rounded-lg border border-border-subtle">
-              Nenhuma condicao adicionada. Clique em "Adicionar condicao" abaixo.
+              Nenhuma condição adicionada. Clique em "Adicionar condição" abaixo.
             </p>
           )}
 
@@ -433,16 +433,16 @@ export function ConditionalLogicEditor({
             size="sm"
             onClick={addCondition}
             disabled={availableFields.length === 0}
-            aria-label="Adicionar condicao"
+            aria-label="Adicionar condição"
             className="w-full"
           >
             <Plus size={14} aria-hidden="true" />
-            Adicionar condicao
+            Adicionar condição
           </Button>
 
           {availableFields.length === 0 && (
             <p className="text-[12px] text-text-muted text-center -mt-2">
-              Adicione outros campos ao formulario para criar condicoes.
+              Adicione outros campos ao formulário para criar condições.
             </p>
           )}
         </div>

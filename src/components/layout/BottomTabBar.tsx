@@ -33,7 +33,7 @@ interface NavItem {
 const primaryTabs: NavItem[] = [
   { id: "dashboard", label: "Painel", icon: LayoutDashboard },
   { id: "board", label: "Pipeline", icon: Kanban, permission: { category: "leads", level: "view_own" } },
-  { id: "calendar", label: "Calendario", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
+  { id: "calendar", label: "Calendário", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
   { id: "inbox", label: "Entrada", icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
   { id: "tasks", label: "Tarefas", icon: CheckSquare, permission: { category: "tasks", level: "view_own" } },
 ];
@@ -44,7 +44,7 @@ const moreTabs: NavItem[] = [
   { id: "handoffs", label: "Repasses", icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
-  { id: "forms", label: "Formularios", icon: FileText, permission: { category: "settings", level: "manage" } },
+  { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 
@@ -133,7 +133,7 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
                 "flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
                 isMoreActive ? "text-brand-500" : "text-text-muted"
               )}
-              aria-label="Mais opcoes"
+              aria-label="Mais opções"
             >
               <MoreHorizontal size={20} />
               <span className="text-[11px] font-medium">Mais</span>

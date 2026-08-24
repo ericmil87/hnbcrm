@@ -66,7 +66,7 @@ export function PermissionsEditor({
             size="sm"
             onClick={handleResetToDefaults}
           >
-            Restaurar padrao
+            Restaurar padrão
           </Button>
         )}
       </div>

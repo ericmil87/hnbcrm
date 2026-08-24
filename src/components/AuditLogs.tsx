@@ -261,7 +261,7 @@ export function AuditLogs() {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
         <Shield size={48} className="text-text-muted" />
-        <p className="text-text-secondary text-sm">Voce nao tem permissao para acessar os logs de auditoria.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os logs de auditoria.</p>
       </div>
     );
   }

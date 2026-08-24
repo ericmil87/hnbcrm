@@ -42,7 +42,7 @@ function CopyField({
       toast.success("Link copiado!");
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Nao foi possivel copiar");
+      toast.error("Não foi possível copiar");
     }
   }
 
@@ -125,7 +125,7 @@ export function PublishDialog({
     setIsLoading(true);
     try {
       await onPublish();
-      toast.success("Formulario publicado com sucesso!");
+      toast.success("Formulário publicado com sucesso!");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro ao publicar";
       toast.error(message);
@@ -138,7 +138,7 @@ export function PublishDialog({
     setIsLoading(true);
     try {
       await onUnpublish();
-      toast.success("Formulario despublicado");
+      toast.success("Formulário despublicado");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro ao despublicar";
       toast.error(message);
@@ -148,7 +148,7 @@ export function PublishDialog({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Publicar Formulario">
+    <Modal open={open} onClose={onClose} title="Publicar Formulário">
       <div className="space-y-5">
         {/* Status card */}
         <div className="flex items-center justify-between py-3 px-4 rounded-lg bg-surface-sunken border border-border">
@@ -186,7 +186,7 @@ export function PublishDialog({
                   : "border-transparent text-text-secondary hover:text-text-primary"
               )}
             >
-              Incorporacao
+              Incorporação
             </button>
           </div>
         )}
@@ -197,8 +197,8 @@ export function PublishDialog({
             <div className="flex items-start gap-3 p-4 rounded-lg bg-surface-sunken border border-border">
               <div className="w-2 h-2 rounded-full bg-text-muted mt-1.5 flex-shrink-0" aria-hidden="true" />
               <p className="text-sm text-text-secondary leading-relaxed">
-                Este formulario esta em rascunho. Publique para comecar a receber envios — o
-                formulario ficara acessivel publicamente via link e incorporacao (iframe).
+                Este formulário está em rascunho. Publique para começar a receber envios — o
+                formulário ficará acessível publicamente via link e incorporação (iframe).
               </p>
             </div>
             <Button
@@ -219,13 +219,13 @@ export function PublishDialog({
             {/* Green status indicator */}
             <div className="flex items-center gap-2.5 px-4 py-3 rounded-lg bg-semantic-success/10 border border-semantic-success/20">
               <div className="w-2 h-2 rounded-full bg-semantic-success flex-shrink-0" aria-hidden="true" />
-              <span className="text-sm font-medium text-semantic-success">Formulario publicado</span>
+              <span className="text-sm font-medium text-semantic-success">Formulário publicado</span>
             </div>
 
             {/* Copy fields */}
             <div className="space-y-4">
               <h3 className="text-sm font-semibold text-text-primary">
-                Link publico
+                Link público
               </h3>
               <CopyField
                 label="URL"
@@ -248,7 +248,7 @@ export function PublishDialog({
               )}
             >
               <ExternalLink size={14} aria-hidden="true" />
-              Abrir formulario
+              Abrir formulário
             </a>
 
             {/* Unpublish */}

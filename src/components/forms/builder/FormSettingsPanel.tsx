@@ -125,7 +125,7 @@ const ASSIGNMENT_OPTIONS: {
   label: string;
 }[] = [
   { value: "none", label: "Nenhum" },
-  { value: "specific", label: "Especifico" },
+  { value: "specific", label: "Específico" },
   { value: "round_robin", label: "Rodizio" },
 ];
 
@@ -139,7 +139,7 @@ function AssignmentModeToggle({
   return (
     <div>
       <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-        Modo de atribuicao
+        Modo de atribuição
       </label>
       <div className="flex gap-1 p-1 rounded-lg bg-surface-sunken border border-border">
         {ASSIGNMENT_OPTIONS.map((opt) => (
@@ -228,12 +228,12 @@ function TagEditor({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={() => { if (input) addTag(input); }}
-          placeholder={tags.length === 0 ? "formulario, site, lead" : ""}
+          placeholder={tags.length === 0 ? "formulário, site, lead" : ""}
           className="flex-1 min-w-[80px] bg-transparent text-base md:text-sm text-text-primary placeholder:text-text-muted outline-none"
         />
       </div>
       <p className="mt-1 text-[12px] text-text-muted">
-        Pressione Enter ou virgula para adicionar
+        Pressione Enter ou vírgula para adicionar
       </p>
     </div>
   );
@@ -274,15 +274,15 @@ export function FormSettingsPanel({
   return (
     <div className="space-y-8 pb-6">
       {/* ── 1. Lead ─────────────────────────────────────────────── */}
-      <section aria-label="Configuracoes de lead">
+      <section aria-label="Configurações de lead">
         <SectionHeader>Lead</SectionHeader>
         <div className="space-y-4">
           <div>
             <Input
-              label="Titulo do lead"
+              label="Título do lead"
               value={settings.leadTitle}
               onChange={(e) => update({ leadTitle: e.target.value })}
-              placeholder="Formulario - {email}"
+              placeholder="Formulário - {email}"
             />
             <p className="mt-1 text-[12px] text-text-muted">
               Variaveis: <span className="text-brand-400">{"{email}"}</span>,{" "}
@@ -306,12 +306,12 @@ export function FormSettingsPanel({
           </SelectField>
 
           <SelectField
-            label="Estagio"
+            label="Estágio"
             value={settings.stageId ?? ""}
             onChange={(v) => update({ stageId: v || undefined })}
             disabled={!settings.boardId}
           >
-            <option value="">Primeiro estagio</option>
+            <option value="">Primeiro estágio</option>
             {stages?.map((s: any) => (
               <option key={s._id} value={s._id}>
                 {s.name}
@@ -358,7 +358,7 @@ export function FormSettingsPanel({
           )}
 
           <SelectField
-            label="Prioridade padrao"
+            label="Prioridade padrão"
             value={settings.defaultPriority}
             onChange={(v) =>
               update({ defaultPriority: v as FormSettings["defaultPriority"] })
@@ -371,7 +371,7 @@ export function FormSettingsPanel({
           </SelectField>
 
           <SelectField
-            label="Temperatura padrao"
+            label="Temperatura padrão"
             value={settings.defaultTemperature}
             onChange={(v) =>
               update({
@@ -392,11 +392,11 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 2. Submissao ────────────────────────────────────────── */}
-      <section aria-label="Configuracoes de submissao">
-        <SectionHeader>Submissao</SectionHeader>
+      <section aria-label="Configurações de submissão">
+        <SectionHeader>Submissão</SectionHeader>
         <div className="space-y-4">
           <Input
-            label="Texto do botao de envio"
+            label="Texto do botão de envio"
             value={settings.submitButtonText}
             onChange={(e) => update({ submitButtonText: e.target.value })}
             placeholder="Enviar"
@@ -432,12 +432,12 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 3. Notificacoes ─────────────────────────────────────── */}
-      <section aria-label="Configuracoes de notificacoes">
-        <SectionHeader>Notificacoes</SectionHeader>
+      <section aria-label="Configurações de notificações">
+        <SectionHeader>Notificações</SectionHeader>
         <div className="space-y-4">
           <ToggleRow
-            label="Notificar ao receber submissao"
-            description="Envia email quando o formulario for preenchido"
+            label="Notificar ao receber submissão"
+            description="Envia email quando o formulário for preenchido"
             checked={settings.notifyOnSubmission}
             onToggle={() =>
               update({ notifyOnSubmission: !settings.notifyOnSubmission })
@@ -482,7 +482,7 @@ export function FormSettingsPanel({
                 })}
                 {humanMembers.length === 0 && (
                   <p className="text-[12px] text-text-muted text-center py-2">
-                    Nenhum membro humano ativo disponivel
+                    Nenhum membro humano ativo disponível
                   </p>
                 )}
               </div>
@@ -492,11 +492,11 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 4. Pagina de sucesso ──────────────────────────────── */}
-      <section aria-label="Pagina de sucesso">
-        <SectionHeader>Pagina de sucesso</SectionHeader>
+      <section aria-label="Página de sucesso">
+        <SectionHeader>Página de sucesso</SectionHeader>
         <div className="space-y-4">
           <Input
-            label="Titulo (opcional)"
+            label="Título (opcional)"
             value={settings.successTitle ?? ""}
             onChange={(e) =>
               update({ successTitle: e.target.value || undefined })
@@ -509,7 +509,7 @@ export function FormSettingsPanel({
           </p>
 
           <Input
-            label="Subtitulo (opcional)"
+            label="Subtítulo (opcional)"
             value={settings.successSubtitle ?? ""}
             onChange={(e) =>
               update({ successSubtitle: e.target.value || undefined })
@@ -519,7 +519,7 @@ export function FormSettingsPanel({
 
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Botao de acao (opcional)
+              Botão de ação (opcional)
             </label>
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -536,7 +536,7 @@ export function FormSettingsPanel({
                         : undefined,
                   })
                 }
-                placeholder="Texto do botao"
+                placeholder="Texto do botão"
               />
               <Input
                 label=""
@@ -560,12 +560,12 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 5. Email de confirmacao ──────────────────────────── */}
-      <section aria-label="Email de confirmacao">
-        <SectionHeader>Email de confirmacao</SectionHeader>
+      <section aria-label="Email de confirmação">
+        <SectionHeader>Email de confirmação</SectionHeader>
         <div className="space-y-4">
           <ToggleRow
             label="Enviar email de confirmacao"
-            description="Envia um email para quem preencher o formulario"
+            description="Envia um email para quem preencher o formulário"
             checked={settings.confirmationEmail?.enabled ?? false}
             onToggle={() =>
               update({
@@ -641,7 +641,7 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 6. Spam ─────────────────────────────────────────────── */}
-      <section aria-label="Configuracoes de spam">
+      <section aria-label="Configurações de spam">
         <SectionHeader>Spam</SectionHeader>
         <div className="space-y-4">
           <ToggleRow
@@ -676,7 +676,7 @@ export function FormSettingsPanel({
         <div className="space-y-4">
           <ToggleRow
             label="Captura parcial habilitada"
-            description="Salva dados automaticamente quando visitantes preenchem campos, mesmo que nao enviem o formulario"
+            description="Salva dados automaticamente quando visitantes preenchem campos, mesmo que não enviem o formulário"
             checked={settings.partialCaptureEnabled ?? false}
             onToggle={() =>
               update({ partialCaptureEnabled: !(settings.partialCaptureEnabled ?? false) })

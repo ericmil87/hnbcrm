@@ -33,7 +33,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
   { id: "webhooks", name: "Webhooks" },
   { id: "channels", name: "Canais" },
   { id: "data", name: "Dados" },
-  { id: "notifications", name: "Notificacoes" },
+  { id: "notifications", name: "Notificações" },
 ];
 
 function isSettingsSection(value: string | null): value is SettingsSection {
@@ -62,7 +62,7 @@ export function Settings() {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
         <ShieldAlert size={48} className="text-text-muted" />
-        <p className="text-text-secondary text-sm">Voce nao tem permissao para acessar as configuracoes.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para acessar as configurações.</p>
       </div>
     );
   }
@@ -287,7 +287,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
                 <p className="text-sm text-text-secondary">
                   {key.teamMemberName && <span className="text-text-muted">{key.teamMemberName} &bull; </span>}
                   Criada em {new Date(key.createdAt).toLocaleDateString("pt-BR")}
-                  {key.lastUsed && ` \u2022 Ultimo uso ${new Date(key.lastUsed).toLocaleDateString("pt-BR")}`}
+                  {key.lastUsed && ` \u2022 Último uso ${new Date(key.lastUsed).toLocaleDateString("pt-BR")}`}
                   {key.expiresAt && ` \u2022 Expira ${new Date(key.expiresAt).toLocaleDateString("pt-BR")}`}
                 </p>
               </div>
@@ -318,7 +318,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           if (confirmRevokeId) handleRevoke(confirmRevokeId);
         }}
         title="Revogar Chave API"
-        description="Tem certeza que deseja revogar esta chave? Todas as integracoes que a utilizam pararao de funcionar imediatamente."
+        description="Tem certeza que deseja revogar esta chave? Todas as integrações que a utilizam pararão de funcionar imediatamente."
         confirmLabel="Revogar"
         variant="danger"
       />
@@ -334,7 +334,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
             type="text"
             value={newApiKeyName}
             onChange={(e) => setNewApiKeyName(e.target.value)}
-            placeholder="ex: Chave de Producao"
+            placeholder="ex: Chave de Produção"
             required
           />
           {aiAgents.length > 1 && (
@@ -357,7 +357,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           )}
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Expiracao (opcional)
+              Expiração (opcional)
             </label>
             <input
               type="date"
@@ -370,7 +370,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           </div>
           {aiAgents.length === 0 && (
             <p className="text-sm text-semantic-warning">
-              Nenhum agente IA encontrado. Crie um membro IA na pagina de Equipe primeiro.
+              Nenhum agente IA encontrado. Crie um membro IA na página de Equipe primeiro.
             </p>
           )}
           <div className="flex gap-2 pt-4">

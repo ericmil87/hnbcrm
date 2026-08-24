@@ -106,7 +106,7 @@ export function CalendarHeader({
                 : "text-text-secondary hover:text-text-primary"
             )}
           >
-            Mes
+            Mês
           </button>
         </div>
 
@@ -148,7 +148,7 @@ export function CalendarHeader({
         <button
           onClick={onNavigateNext}
           className="p-1.5 md:p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-w-[36px] min-h-[36px] md:min-w-[44px] md:min-h-[44px] flex items-center justify-center"
-          aria-label="Proximo"
+          aria-label="Próximo"
         >
           <ChevronRight size={20} />
         </button>

@@ -31,17 +31,17 @@ const MODES: Array<{
   description: string;
   icon: React.ElementType;
 }> = [
-  { value: "inline", label: "Inline", description: "Incorporado na pagina", icon: Monitor },
+  { value: "inline", label: "Inline", description: "Incorporado na página", icon: Monitor },
   { value: "popup", label: "Popup", description: "Janela centralizada", icon: MessageSquare },
   { value: "slidein", label: "Slide-in", description: "Painel lateral inferior", icon: PanelRightClose },
-  { value: "sidetab", label: "Aba lateral", description: "Botao fixo na borda", icon: SidebarOpen },
+  { value: "sidetab", label: "Aba lateral", description: "Botão fixo na borda", icon: SidebarOpen },
 ];
 
 const TRIGGERS: Array<{ value: TriggerType; label: string }> = [
   { value: "click", label: "Clique" },
   { value: "delay", label: "Tempo" },
   { value: "scroll", label: "Scroll" },
-  { value: "exit_intent", label: "Intencao de saida" },
+  { value: "exit_intent", label: "Intenção de saída" },
 ];
 
 // ── Snippet generator ────────────────────────────────────────────────────────
@@ -82,7 +82,7 @@ function generateSnippet(config: EmbedConfig, slug: string, siteUrl: string): st
   }
 
   if ((config.mode === "popup" || config.mode === "slidein") && config.trigger === "click") {
-    lines.push(`<button data-hnbcrm-open="${slug}">Abrir formulario</button>`);
+    lines.push(`<button data-hnbcrm-open="${slug}">Abrir formulário</button>`);
   }
 
   lines.push(`<script src="${siteUrl}/api/v1/embed.js"\n  ${attrs.join("\n  ")}></script>`);
@@ -114,10 +114,10 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
     try {
       await navigator.clipboard.writeText(snippet);
       setCopied(true);
-      toast.success("Codigo copiado!");
+      toast.success("Código copiado!");
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Nao foi possivel copiar");
+      toast.error("Não foi possível copiar");
     }
   }
 
@@ -129,7 +129,7 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
       {/* Mode selector */}
       <div>
         <label className="block text-[13px] font-medium text-text-secondary mb-2">
-          Modo de exibicao
+          Modo de exibição
         </label>
         <div className="grid grid-cols-2 gap-2">
           {MODES.map(({ value, label, description, icon: Icon }) => (
@@ -225,7 +225,7 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
       {(showTrigger || showTabConfig) && (
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Dias de supressao
+            Dias de supressão
           </label>
           <input
             type="number"
@@ -241,7 +241,7 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
             )}
           />
           <p className="mt-1 text-[12px] text-text-muted">
-            Apos fechar ou enviar, o formulario nao reaparecera por este periodo
+            Após fechar ou enviar, o formulário não reaparecerá por este período
           </p>
         </div>
       )}
@@ -296,7 +296,7 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-[13px] font-medium text-text-secondary">
-            Codigo de incorporacao
+            Código de incorporação
           </label>
           <button
             onClick={handleCopy}

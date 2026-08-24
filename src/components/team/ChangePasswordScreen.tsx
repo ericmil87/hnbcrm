@@ -28,15 +28,15 @@ export function ChangePasswordScreen({
     const newErrors: Record<string, string> = {};
 
     if (!currentPassword) {
-      newErrors.currentPassword = "Senha atual e obrigatoria.";
+      newErrors.currentPassword = "Senha atual é obrigatória.";
     }
     if (!newPassword) {
-      newErrors.newPassword = "Nova senha e obrigatoria.";
+      newErrors.newPassword = "Nova senha é obrigatória.";
     } else if (newPassword.length < 8) {
       newErrors.newPassword = "A nova senha deve ter pelo menos 8 caracteres.";
     }
     if (newPassword !== confirmPassword) {
-      newErrors.confirmPassword = "As senhas nao coincidem.";
+      newErrors.confirmPassword = "As senhas não coincidem.";
     }
     if (newPassword === currentPassword && newPassword) {
       newErrors.newPassword = "A nova senha deve ser diferente da atual.";
@@ -77,7 +77,7 @@ export function ChangePasswordScreen({
             Alterar Senha
           </h1>
           <p className="text-text-secondary text-sm">
-            Voce precisa alterar sua senha temporaria antes de continuar.
+            Você precisa alterar sua senha temporária antes de continuar.
           </p>
         </div>
 

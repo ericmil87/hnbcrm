@@ -93,7 +93,7 @@ function FormCardMenu({ form, onEdit, onDuplicate, onArchive, onDelete }: FormCa
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        aria-label="Abrir menu de acoes"
+        aria-label="Abrir menu de ações"
         className={cn(
           "p-2 rounded-full transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center",
           "text-text-muted hover:text-text-primary hover:bg-surface-overlay",
@@ -195,9 +195,9 @@ export function FormListPage() {
         return newId;
       }).finally(() => setIsCreating(false)),
       {
-        loading: "Criando formulario...",
-        success: "Formulario criado!",
-        error: "Erro ao criar formulario",
+        loading: "Criando formulário...",
+        success: "Formulário criado!",
+        error: "Erro ao criar formulário",
       }
     );
   }
@@ -209,9 +209,9 @@ export function FormListPage() {
         return newId;
       }),
       {
-        loading: "Duplicando formulario...",
-        success: "Formulario duplicado!",
-        error: "Erro ao duplicar formulario",
+        loading: "Duplicando formulário...",
+        success: "Formulário duplicado!",
+        error: "Erro ao duplicar formulário",
       }
     );
   }
@@ -222,18 +222,18 @@ export function FormListPage() {
         form.status === "archived" ? "Desarquivando..." : "Arquivando...",
       success:
         form.status === "archived"
-          ? "Formulario desarquivado!"
-          : "Formulario arquivado!",
-      error: "Erro ao arquivar formulario",
+          ? "Formulário desarquivado!"
+          : "Formulário arquivado!",
+      error: "Erro ao arquivar formulário",
     });
   }
 
   function handleDeleteConfirm() {
     if (!deleteTarget) return;
     toast.promise(deleteForm({ formId: deleteTarget._id }), {
-      loading: "Excluindo formulario...",
-      success: "Formulario excluido!",
-      error: "Erro ao excluir formulario",
+      loading: "Excluindo formulário...",
+      success: "Formulário excluído!",
+      error: "Erro ao excluir formulário",
     });
     setDeleteTarget(null);
   }
@@ -248,10 +248,10 @@ export function FormListPage() {
         <header className="flex items-center justify-between mb-6 md:mb-8">
           <div>
             <h1 className="text-xl font-bold text-text-primary md:text-2xl">
-              Formularios
+              Formulários
             </h1>
             <p className="mt-0.5 text-sm text-text-secondary">
-              Crie formularios para capturar leads diretamente no seu pipeline
+              Crie formulários para capturar leads diretamente no seu pipeline
             </p>
           </div>
           <Button
@@ -261,7 +261,7 @@ export function FormListPage() {
             className="shrink-0"
           >
             <Plus size={18} />
-            <span className="hidden sm:inline">Novo Formulario</span>
+            <span className="hidden sm:inline">Novo Formulário</span>
             <span className="sm:hidden">Novo</span>
           </Button>
         </header>
@@ -280,14 +280,14 @@ export function FormListPage() {
               <FileText size={28} className="text-text-muted" />
             </div>
             <h2 className="text-base font-semibold text-text-primary mb-1">
-              Nenhum formulario criado
+              Nenhum formulário criado
             </h2>
             <p className="text-sm text-text-secondary max-w-xs mb-6">
-              Crie seu primeiro formulario para comecar a capturar leads automaticamente.
+              Crie seu primeiro formulário para começar a capturar leads automaticamente.
             </p>
             <Button variant="primary" onClick={() => setShowCreateModal(true)}>
               <Plus size={18} />
-              Criar primeiro formulario
+              Criar primeiro formulário
             </Button>
           </div>
         )}
@@ -306,7 +306,7 @@ export function FormListPage() {
                   onClick={() => navigate(`/app/formularios/${form._id}`)}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Editar formulario ${form.name}`}
+                  aria-label={`Editar formulário ${form.name}`}
                   onKeyDown={(e) => e.key === "Enter" && navigate(`/app/formularios/${form._id}`)}
                   className={cn(
                     "group relative flex flex-col gap-4 rounded-card p-4 md:p-5 cursor-pointer",
@@ -357,7 +357,7 @@ export function FormListPage() {
                       <span className="font-semibold text-text-primary">
                         {submissionCount.toLocaleString("pt-BR")}
                       </span>{" "}
-                      {submissionCount === 1 ? "submissao" : "submissoes"}
+                      {submissionCount === 1 ? "submissão" : "submissões"}
                     </span>
                     <span className="text-xs text-text-muted">
                       {lastSub
@@ -377,7 +377,7 @@ export function FormListPage() {
                         className="flex items-center gap-1 text-xs text-text-muted hover:text-brand-400 transition-colors"
                       >
                         <Inbox size={12} />
-                        Ver submissoes
+                        Ver submissões
                       </button>
                       <span className="text-border">|</span>
                       <button
@@ -408,12 +408,12 @@ export function FormListPage() {
             setNewFormName("");
           }
         }}
-        title="Novo Formulario"
+        title="Novo Formulário"
       >
         <div className="space-y-4">
           <Input
-            label="Nome do formulario"
-            placeholder="Ex: Formulario de contato, Solicitar orcamento..."
+            label="Nome do formulário"
+            placeholder="Ex: Formulário de contato, Solicitar orçamento..."
             value={newFormName}
             onChange={(e) => setNewFormName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleCreate()}
@@ -437,7 +437,7 @@ export function FormListPage() {
               className="flex-1"
               disabled={!newFormName.trim() || isCreating}
             >
-              {isCreating ? "Criando..." : "Criar formulario"}
+              {isCreating ? "Criando..." : "Criar formulário"}
             </Button>
           </div>
         </div>
@@ -448,8 +448,8 @@ export function FormListPage() {
         open={deleteTarget !== null}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConfirm}
-        title="Excluir formulario"
-        description={`Tem certeza que deseja excluir "${deleteTarget?.name}"? Esta acao nao pode ser desfeita e todas as configuracoes serao perdidas.`}
+        title="Excluir formulário"
+        description={`Tem certeza que deseja excluir "${deleteTarget?.name}"? Esta ação não pode ser desfeita e todas as configurações serão perdidas.`}
         confirmLabel="Excluir"
         cancelLabel="Cancelar"
         variant="danger"

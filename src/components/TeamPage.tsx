@@ -224,7 +224,7 @@ export function TeamPage() {
             {/* Role filter */}
             <div>
               <label className="block text-xs font-medium text-text-muted mb-1">
-                Funcao
+                Função
               </label>
               <div className="flex flex-wrap gap-1">
                 {(["all", "admin", "manager", "agent", "ai"] as RoleFilter[]).map((r) => (

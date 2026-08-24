@@ -176,7 +176,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
     const deletePromise = deleteContact({ contactId });
     toast.promise(deletePromise, {
       loading: "Excluindo...",
-      success: () => { onClose(); return "Contato excluido com sucesso"; },
+      success: () => { onClose(); return "Contato excluído com sucesso"; },
       error: "Falha ao excluir contato",
     });
   };
@@ -228,7 +228,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                   : "border-transparent text-text-secondary hover:text-text-primary"
               )}
             >
-              Informacoes
+              Informações
             </button>
             <button
               onClick={() => setActiveTab("leads")}
@@ -252,7 +252,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
               {!editing ? (
                 <div className="mb-4">
                   <Button variant="primary" size="md" onClick={() => setEditing(true)} className="w-full">
-                    Editar Informacoes
+                    Editar Informações
                   </Button>
                 </div>
               ) : (
@@ -324,7 +324,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                       <EditField label="Sobrenome" value={form.lastName} onChange={(v) => updateField("lastName", v)} />
                     </div>
                     <EditField label="Bio" value={form.bio} onChange={(v) => updateField("bio", v)} multiline />
-                    <EditField label="Tags (separadas por virgula)" value={form.tags} onChange={(v) => updateField("tags", v)} placeholder="cliente, vip, parceiro" />
+                    <EditField label="Tags (separadas por vírgula)" value={form.tags} onChange={(v) => updateField("tags", v)} placeholder="cliente, vip, parceiro" />
                   </div>
                 )}
               </CollapsibleSection>
@@ -393,7 +393,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                   <div className="space-y-3">
                     <ViewField label="Empresa" value={contact.company} enrichMeta={enrichMeta?.company} />
                     <ViewField label="Cargo" value={contact.title} enrichMeta={enrichMeta?.title} />
-                    <ViewField label="Industria" value={contact.industry} enrichMeta={enrichMeta?.industry} />
+                    <ViewField label="Indústria" value={contact.industry} enrichMeta={enrichMeta?.industry} />
                     <ViewField label="Porte da Empresa" value={contact.companySize} enrichMeta={enrichMeta?.companySize} />
                     <ViewField label="CNPJ" value={contact.cnpj} enrichMeta={enrichMeta?.cnpj} />
                     <ViewField label="Site da Empresa" value={contact.companyWebsite} enrichMeta={enrichMeta?.companyWebsite} link />
@@ -402,7 +402,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                   <div className="space-y-3">
                     <EditField label="Empresa" value={form.company} onChange={(v) => updateField("company", v)} />
                     <EditField label="Cargo" value={form.title} onChange={(v) => updateField("title", v)} />
-                    <EditField label="Industria" value={form.industry} onChange={(v) => updateField("industry", v)} />
+                    <EditField label="Indústria" value={form.industry} onChange={(v) => updateField("industry", v)} />
                     <div>
                       <label className="block text-xs font-medium text-text-secondary mb-1">Porte da Empresa</label>
                       <select
@@ -426,7 +426,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
 
               {/* Localizacao */}
               <CollapsibleSection
-                title="Localizacao"
+                title="Localização"
                 defaultOpen={countFilled(locationFields) > 0}
                 filledCount={countFilled(locationFields)}
                 totalCount={locationFields.length}
@@ -435,13 +435,13 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                   <div className="space-y-3">
                     <ViewField label="Cidade" value={contact.city} enrichMeta={enrichMeta?.city} />
                     <ViewField label="Estado" value={contact.state} enrichMeta={enrichMeta?.state} />
-                    <ViewField label="Pais" value={contact.country} enrichMeta={enrichMeta?.country} />
+                    <ViewField label="País" value={contact.country} enrichMeta={enrichMeta?.country} />
                   </div>
                 ) : (
                   <div className="space-y-3">
                     <EditField label="Cidade" value={form.city} onChange={(v) => updateField("city", v)} />
                     <EditField label="Estado" value={form.state} onChange={(v) => updateField("state", v)} />
-                    <EditField label="Pais" value={form.country} onChange={(v) => updateField("country", v)} />
+                    <EditField label="País" value={form.country} onChange={(v) => updateField("country", v)} />
                   </div>
                 )}
               </CollapsibleSection>
@@ -455,26 +455,26 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
               >
                 {!editing ? (
                   <div className="space-y-3">
-                    <ViewField label="Horario Preferido" value={
-                      contact.preferredContactTime === "morning" ? "Manha" :
+                    <ViewField label="Horário Preferido" value={
+                      contact.preferredContactTime === "morning" ? "Manhã" :
                       contact.preferredContactTime === "afternoon" ? "Tarde" :
                       contact.preferredContactTime === "evening" ? "Noite" : undefined
                     } enrichMeta={enrichMeta?.preferredContactTime} />
                     <ViewField label="Dispositivo" value={contact.deviceType} enrichMeta={enrichMeta?.deviceType} />
                     <ViewField label="UTM Source" value={contact.utmSource} enrichMeta={enrichMeta?.utmSource} />
-                    <ViewField label="Canal de Aquisicao" value={contact.acquisitionChannel} enrichMeta={enrichMeta?.acquisitionChannel} />
+                    <ViewField label="Canal de Aquisição" value={contact.acquisitionChannel} enrichMeta={enrichMeta?.acquisitionChannel} />
                   </div>
                 ) : (
                   <div className="space-y-3">
                     <div>
-                      <label className="block text-xs font-medium text-text-secondary mb-1">Horario Preferido</label>
+                      <label className="block text-xs font-medium text-text-secondary mb-1">Horário Preferido</label>
                       <select
                         value={form.preferredContactTime}
                         onChange={(e) => updateField("preferredContactTime", e.target.value)}
                         className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
                       >
                         <option value="">Selecionar...</option>
-                        <option value="morning">Manha</option>
+                        <option value="morning">Manhã</option>
                         <option value="afternoon">Tarde</option>
                         <option value="evening">Noite</option>
                       </select>
@@ -494,14 +494,14 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                       </select>
                     </div>
                     <EditField label="UTM Source" value={form.utmSource} onChange={(v) => updateField("utmSource", v)} />
-                    <EditField label="Canal de Aquisicao" value={form.acquisitionChannel} onChange={(v) => updateField("acquisitionChannel", v)} />
+                    <EditField label="Canal de Aquisição" value={form.acquisitionChannel} onChange={(v) => updateField("acquisitionChannel", v)} />
                   </div>
                 )}
               </CollapsibleSection>
 
               {/* Metricas Sociais */}
               <CollapsibleSection
-                title="Metricas Sociais"
+                title="Métricas Sociais"
                 defaultOpen={countFilled(metricsFields) > 0}
                 filledCount={countFilled(metricsFields)}
                 totalCount={metricsFields.length}
@@ -510,13 +510,13 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
                   <div className="space-y-3">
                     <ViewField label="Seguidores Instagram" value={contact.instagramFollowers != null ? String(contact.instagramFollowers) : undefined} enrichMeta={enrichMeta?.instagramFollowers} />
                     <ViewField label="Conexoes LinkedIn" value={contact.linkedinConnections != null ? String(contact.linkedinConnections) : undefined} enrichMeta={enrichMeta?.linkedinConnections} />
-                    <ViewField label="Score de Influencia (0-100)" value={contact.socialInfluenceScore != null ? String(contact.socialInfluenceScore) : undefined} enrichMeta={enrichMeta?.socialInfluenceScore} />
+                    <ViewField label="Score de Influência (0-100)" value={contact.socialInfluenceScore != null ? String(contact.socialInfluenceScore) : undefined} enrichMeta={enrichMeta?.socialInfluenceScore} />
                   </div>
                 ) : (
                   <div className="space-y-3">
                     <EditField label="Seguidores Instagram" value={form.instagramFollowers} onChange={(v) => updateField("instagramFollowers", v)} type="number" />
                     <EditField label="Conexoes LinkedIn" value={form.linkedinConnections} onChange={(v) => updateField("linkedinConnections", v)} type="number" />
-                    <EditField label="Score de Influencia (0-100)" value={form.socialInfluenceScore} onChange={(v) => updateField("socialInfluenceScore", v)} type="number" />
+                    <EditField label="Score de Influência (0-100)" value={form.socialInfluenceScore} onChange={(v) => updateField("socialInfluenceScore", v)} type="number" />
                   </div>
                 )}
               </CollapsibleSection>

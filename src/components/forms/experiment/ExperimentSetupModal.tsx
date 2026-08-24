@@ -81,7 +81,7 @@ export function ExperimentSetupModal({
         {/* Name field */}
         <Input
           label="Nome do experimento"
-          placeholder="Ex: Botao verde vs laranja"
+          placeholder="Ex: Botão verde vs laranja"
           value={name}
           onChange={(e) => setName(e.target.value)}
           autoFocus
@@ -95,12 +95,12 @@ export function ExperimentSetupModal({
             htmlFor="hypothesis"
             className="block text-[13px] font-medium text-text-secondary mb-1.5"
           >
-            Hipotese
+            Hipótese
             <span className="ml-1.5 text-text-muted font-normal">(opcional)</span>
           </label>
           <textarea
             id="hypothesis"
-            placeholder="O que voce espera que mude?"
+            placeholder="O que você espera que mude?"
             value={hypothesis}
             onChange={(e) => setHypothesis(e.target.value)}
             disabled={isCreating}
@@ -129,7 +129,7 @@ export function ExperimentSetupModal({
             aria-hidden="true"
           />
           <p className="text-xs text-text-muted leading-relaxed">
-            Uma copia do formulario sera criada como Variante B. Edite-a separadamente.
+            Uma cópia do formulário será criada como Variante B. Edite-a separadamente.
           </p>
         </div>
 

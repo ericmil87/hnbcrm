@@ -31,19 +31,19 @@ const INPUT_FIELD_TYPES: FieldTypeEntry[] = [
   { type: "text", label: "Texto", icon: Type },
   { type: "email", label: "Email", icon: Mail },
   { type: "phone", label: "Telefone", icon: Phone },
-  { type: "number", label: "Numero", icon: Hash },
-  { type: "select", label: "Selecao", icon: ChevronDown },
-  { type: "textarea", label: "Area de Texto", icon: AlignLeft },
+  { type: "number", label: "Número", icon: Hash },
+  { type: "select", label: "Seleção", icon: ChevronDown },
+  { type: "textarea", label: "Área de Texto", icon: AlignLeft },
   { type: "checkbox", label: "Checkbox", icon: CheckSquare },
   { type: "date", label: "Data", icon: Calendar },
   { type: "radio", label: "Radio", icon: CircleDot },
   { type: "url", label: "URL", icon: Link },
   { type: "hidden", label: "Oculto", icon: EyeOff },
-  { type: "rating", label: "Avaliacao", icon: Star },
+  { type: "rating", label: "Avaliação", icon: Star },
 ];
 
 const LAYOUT_FIELD_TYPES: FieldTypeEntry[] = [
-  { type: "heading", label: "Titulo", icon: Heading },
+  { type: "heading", label: "Título", icon: Heading },
   { type: "divider", label: "Divisor", icon: Minus },
 ];
 

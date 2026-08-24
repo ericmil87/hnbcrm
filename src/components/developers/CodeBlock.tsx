@@ -17,7 +17,7 @@ export function CodeBlock({ children, language = "bash" }: { children: string; l
         <button
           onClick={handleCopy}
           className="text-text-muted hover:text-text-secondary transition-colors p-1"
-          aria-label="Copiar codigo"
+          aria-label="Copiar código"
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}
         </button>

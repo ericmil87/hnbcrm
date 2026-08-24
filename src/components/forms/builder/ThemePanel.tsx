@@ -15,7 +15,7 @@ const RADIUS_OPTIONS: {
 }[] = [
   { value: "none", label: "Nenhum", className: "rounded-none" },
   { value: "sm", label: "Pequeno", className: "rounded-sm" },
-  { value: "md", label: "Medio", className: "rounded-md" },
+  { value: "md", label: "Médio", className: "rounded-md" },
   { value: "lg", label: "Grande", className: "rounded-lg" },
   { value: "full", label: "Arredondado", className: "rounded-full" },
 ];
@@ -237,7 +237,7 @@ export function ThemePanel({ theme, onChange }: ThemePanelProps) {
       </section>
 
       {/* ── 3. Marca ──────────────────────────────────────────────── */}
-      <section aria-label="Configuracoes de marca">
+      <section aria-label="Configurações de marca">
         <SectionHeader>Marca</SectionHeader>
         <div className="flex items-center justify-between gap-3">
           <div className="flex-1 min-w-0">
@@ -245,7 +245,7 @@ export function ThemePanel({ theme, onChange }: ThemePanelProps) {
               Mostrar "Feito com HNBCRM"
             </p>
             <p className="text-[12px] text-text-muted mt-0.5">
-              Exibe o logo HNBCRM no rodape do formulario
+              Exibe o logo HNBCRM no rodapé do formulário
             </p>
           </div>
           <ToggleSwitch
@@ -257,13 +257,13 @@ export function ThemePanel({ theme, onChange }: ThemePanelProps) {
       </section>
 
       {/* ── 4. Pre-visualizacao ───────────────────────────────────── */}
-      <section aria-label="Pre-visualizacao do tema">
-        <SectionHeader>Pre-visualizacao</SectionHeader>
+      <section aria-label="Pré-visualização do tema">
+        <SectionHeader>Pré-visualização</SectionHeader>
         <div
           className="rounded-xl border border-border p-4 transition-colors"
           style={{ backgroundColor: theme.backgroundColor }}
           role="img"
-          aria-label="Previa do formulario com o tema atual"
+          aria-label="Prévia do formulário com o tema atual"
         >
           {/* Mock field */}
           <p
@@ -281,7 +281,7 @@ export function ThemePanel({ theme, onChange }: ThemePanelProps) {
             }}
             aria-hidden="true"
           >
-            Ex: Joao Silva
+            Ex: João Silva
           </div>
 
           {/* Mock submit button */}
