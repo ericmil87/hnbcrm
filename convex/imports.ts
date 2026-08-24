@@ -483,7 +483,10 @@ function buildFailedRowsCsv(
     rows.push({ ...original, [errorColumn]: message });
   }
 
-  return serializeCsv([...parsed.headers, errorColumn], rows);
+  // escapeFormulas: as linhas com erro reproduzem o conteúdo original do
+  // arquivo enviado pelo usuário (dado não confiável) — neutraliza fórmula ao
+  // abrir de novo no Excel/Sheets.
+  return serializeCsv([...parsed.headers, errorColumn], rows, { escapeFormulas: true });
 }
 
 // ===== Superfície pública =====

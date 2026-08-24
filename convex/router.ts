@@ -5,7 +5,13 @@ import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
 import { EMBED_SCRIPT } from "./embedScript";
 import { OPENAPI_SPEC } from "./openapiSpec";
-import { hasPermission, resolvePermissions, type Role, type Permissions } from "./lib/permissions";
+import {
+  hasPermission,
+  resolvePermissions,
+  type Role,
+  type Permissions,
+  type PermissionCategory,
+} from "./lib/permissions";
 import { encodeHeaderKey } from "./lib/importKeys";
 import { resend } from "./email";
 import {
@@ -98,6 +104,175 @@ async function authenticateApiKey(ctx: any, request: Request) {
   return { ...apiKeyRecord, permissions };
 }
 
+// ---- Enforcement de permissão das rotas /api/v1 ----
+//
+// TODA rota autenticada por `X-API-Key` declara aqui a permissão mínima que a
+// chave precisa ter. O nível ESPELHA a função equivalente do app:
+//   • quando a função pública usa `requirePermission(ctx, org, cat, nível)`,
+//     a rota exige o MESMO par (ex.: leads.deleteLead → `leads: full`);
+//   • quando usa só `requireAuth` (qualquer membro da org), a rota exige o
+//     MENOR nível de leitura da categoria (ex.: `leads: view_own`) — a REST
+//     não fica mais frouxa nem mais rígida que a UI.
+// Rotas sem equivalente público (ingestão/enriquecimento) usam o nível de
+// escrita da categoria. Ver a tabela em `.claude/skills/hnbcrm/references/
+// API_REFERENCE.md` e em `/llms.txt`.
+
+/** Par categoria+nível de uma rota (o nível é validado contra a categoria pelo TS). */
+export type RoutePermission = {
+  [C in PermissionCategory]: { category: C; level: Permissions[C] };
+}[PermissionCategory];
+
+/**
+ * `"authenticated"` = basta uma API key válida, sem nível de categoria — usado
+ * SOMENTE onde a função equivalente do app usa `requireAuth` puro e a rota é
+ * de leitura da própria org / self-scoped. Não é mais permissivo que o app.
+ */
+export type RouteAccess = RoutePermission | "authenticated";
+
+/** Mensagem única de negação (o corpo do 403 é idêntico em todas as rotas). */
+export const PERMISSION_DENIED_MESSAGE = "Permissão insuficiente";
+
+/**
+ * Permissão exigida por rota. Chave = `"MÉTODO /caminho"`, com o caminho
+ * REGISTRADO em `http.route` (padrões com `:id`, não o caminho concreto).
+ * O comentário de cada entrada aponta a função do app que ditou o nível.
+ */
+export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
+  // Leads — convex/leads.ts
+  "POST /api/v1/inbound/lead": { category: "leads", level: "edit_own" }, // leads.createLead (captura universal)
+  "GET /api/v1/leads": { category: "leads", level: "view_own" }, // leads.getLeads (requireAuth)
+  "GET /api/v1/leads/get": { category: "leads", level: "view_own" }, // leads.getLead (requireAuth)
+  "POST /api/v1/leads/update": { category: "leads", level: "view_own" }, // leads.updateLead (requireAuth)
+  "POST /api/v1/leads/delete": { category: "leads", level: "full" }, // leads.deleteLead
+  "POST /api/v1/leads/move-stage": { category: "leads", level: "view_own" }, // leads.moveLeadToStage (requireAuth)
+  "POST /api/v1/leads/assign": { category: "leads", level: "view_own" }, // leads.assignLead (requireAuth)
+  "POST /api/v1/leads/handoff": { category: "inbox", level: "view_own" }, // handoffs.requestHandoff (requireAuth)
+
+  // Contatos — convex/contacts.ts
+  "GET /api/v1/contacts": { category: "contacts", level: "view" }, // contacts.getContacts (requireAuth)
+  "POST /api/v1/contacts/create": { category: "contacts", level: "edit" }, // contacts.createContact
+  "GET /api/v1/contacts/get": { category: "contacts", level: "view" }, // contacts.getContact (requireAuth)
+  "POST /api/v1/contacts/update": { category: "contacts", level: "view" }, // contacts.updateContact (requireAuth)
+  "POST /api/v1/contacts/enrich": { category: "contacts", level: "edit" }, // só internalMutation → nível de escrita
+  "GET /api/v1/contacts/gaps": { category: "contacts", level: "view" }, // contacts.getContactEnrichmentGaps (requireAuth)
+  "GET /api/v1/contacts/search": { category: "contacts", level: "view" }, // contacts.searchContacts (requireAuth)
+
+  // Conversas — convex/conversations.ts
+  "GET /api/v1/conversations": { category: "inbox", level: "view_own" }, // conversations.getConversations (requireAuth)
+  "GET /api/v1/conversations/messages": { category: "inbox", level: "view_own" }, // conversations.getMessages (requireAuth)
+  "POST /api/v1/conversations/send": { category: "inbox", level: "view_own" }, // conversations.sendMessage (requireAuth)
+  "POST /api/v1/conversations/send-template": { category: "inbox", level: "reply" }, // só internalMutation → nível de escrita
+  "POST /api/v1/conversations/receive": { category: "inbox", level: "reply" }, // ingestão externa, sem equivalente público
+
+  // Repasses — convex/handoffs.ts
+  "GET /api/v1/handoffs": { category: "inbox", level: "view_own" }, // handoffs.getHandoffs
+  "GET /api/v1/handoffs/pending": { category: "inbox", level: "view_own" }, // handoffs.getHandoffs
+  "POST /api/v1/handoffs/accept": { category: "inbox", level: "reply" }, // handoffs.acceptHandoff
+  "POST /api/v1/handoffs/reject": { category: "inbox", level: "reply" }, // handoffs.rejectHandoff
+
+  // Arquivos — convex/files.ts (a categoria do módulo é `leads`)
+  "POST /api/v1/files/upload-url": { category: "leads", level: "edit_own" }, // files.generateUploadUrl
+  "POST /api/v1/files": { category: "leads", level: "edit_own" }, // files.saveFile
+  "GET /api/v1/files/:id/url": { category: "leads", level: "view_own" }, // files.getFileUrl (requireAuth)
+  "DELETE /api/v1/files/:id": { category: "leads", level: "edit_own" }, // files.deleteFile
+
+  // Export / Import — convex/exports.ts + convex/imports.ts
+  "POST /api/v1/exports": { category: "settings", level: "manage" }, // exports.createExportJob
+  "GET /api/v1/exports": { category: "settings", level: "manage" }, // exports.listExportJobs
+  "GET /api/v1/exports/get": { category: "settings", level: "manage" }, // exports.getExportJob
+  "GET /api/v1/exports/download": { category: "settings", level: "manage" }, // exports.getDownloadUrl
+  "POST /api/v1/imports": { category: "settings", level: "manage" }, // imports.createImportJob
+  "GET /api/v1/imports": { category: "settings", level: "manage" }, // imports.listImportJobs
+  "GET /api/v1/imports/get": { category: "settings", level: "manage" }, // imports.getImportJob
+  "POST /api/v1/imports/mapping": { category: "settings", level: "manage" }, // imports.updateMapping
+  "POST /api/v1/imports/preview": { category: "settings", level: "manage" }, // imports.runPreview
+  "POST /api/v1/imports/confirm": { category: "settings", level: "manage" }, // imports.confirmImport
+  "POST /api/v1/imports/rollback": { category: "settings", level: "manage" }, // imports.rollbackImport
+  "GET /api/v1/imports/failed-rows": { category: "settings", level: "manage" }, // imports.getFailedRowsCsv
+
+  // Referência (leitura de configuração do funil)
+  "GET /api/v1/boards": { category: "leads", level: "view_own" }, // boards.getBoards (requireAuth)
+  "GET /api/v1/team-members": "authenticated", // teamMembers.getTeamMembers usa requireAuth puro — qualquer membro vê a equipe no app; team:view aqui seria MAIS rígido que o app e quebraria crm_list_team p/ keys ai/agent
+  "GET /api/v1/field-definitions": { category: "leads", level: "view_own" }, // fieldDefinitions.getFieldDefinitions (membro da org)
+  "GET /api/v1/lead-sources": { category: "leads", level: "view_own" }, // leadSources.getLeadSources (membro da org)
+
+  // Atividades — convex/activities.ts (membro da org)
+  "GET /api/v1/activities": { category: "leads", level: "view_own" }, // activities.getActivities
+  "POST /api/v1/activities": { category: "leads", level: "view_own" }, // activities.createActivity
+
+  // Painel e auditoria
+  "GET /api/v1/dashboard": { category: "reports", level: "view" }, // dashboard.getDashboardStats (requireAuth)
+  "GET /api/v1/audit-logs": { category: "auditLogs", level: "view" }, // auditLogs.getAuditLogs (requireAuth)
+
+  // Tarefas — convex/tasks.ts + convex/taskComments.ts (todas com requireAuth)
+  "GET /api/v1/tasks": { category: "tasks", level: "view_own" }, // tasks.getTasks
+  "GET /api/v1/tasks/get": { category: "tasks", level: "view_own" }, // tasks.getTask
+  "GET /api/v1/tasks/my": { category: "tasks", level: "view_own" }, // tasks.getMyTasks
+  "GET /api/v1/tasks/overdue": { category: "tasks", level: "view_own" }, // tasks.getTasks
+  "GET /api/v1/tasks/search": { category: "tasks", level: "view_own" }, // tasks.searchTasks
+  "POST /api/v1/tasks/create": { category: "tasks", level: "view_own" }, // tasks.createTask
+  "POST /api/v1/tasks/update": { category: "tasks", level: "view_own" }, // tasks.updateTask
+  "POST /api/v1/tasks/complete": { category: "tasks", level: "view_own" }, // tasks.completeTask
+  "POST /api/v1/tasks/delete": { category: "tasks", level: "view_own" }, // tasks.deleteTask
+  "POST /api/v1/tasks/assign": { category: "tasks", level: "view_own" }, // tasks.assignTask
+  "POST /api/v1/tasks/snooze": { category: "tasks", level: "view_own" }, // tasks.snoozeTask
+  "POST /api/v1/tasks/bulk": { category: "tasks", level: "view_own" }, // tasks.bulkUpdateTasks
+  "GET /api/v1/tasks/comments": { category: "tasks", level: "view_own" }, // taskComments.getComments
+  "POST /api/v1/tasks/comments/add": { category: "tasks", level: "view_own" }, // taskComments.addComment
+
+  // Agenda — convex/calendar.ts (requireAuth; a navegação do app usa `tasks`)
+  "GET /api/v1/calendar/events": { category: "tasks", level: "view_own" }, // calendar.getEvents
+  "GET /api/v1/calendar/events/get": { category: "tasks", level: "view_own" }, // calendar.getEvent
+  "POST /api/v1/calendar/events/create": { category: "tasks", level: "view_own" }, // calendar.createEvent
+  "POST /api/v1/calendar/events/update": { category: "tasks", level: "view_own" }, // calendar.updateEvent
+  "POST /api/v1/calendar/events/delete": { category: "tasks", level: "view_own" }, // calendar.deleteEvent
+  "POST /api/v1/calendar/events/reschedule": { category: "tasks", level: "view_own" }, // calendar.rescheduleEvent
+  "POST /api/v1/calendar/events/complete": { category: "tasks", level: "view_own" }, // calendar.completeEvent
+
+  // Preferências de notificação — convex/notificationPreferences.ts
+  "GET /api/v1/notifications/preferences": "authenticated", // rota self-scoped (preferências do PRÓPRIO membro da key) — espelha requireAuth de notificationPreferences.getMyPreferences; team:view no app é só p/ ver preferências de OUTRO membro
+  "PUT /api/v1/notifications/preferences": "authenticated", // idem (escrita self-scoped)
+};
+
+/**
+ * Rotas `/api/v1` que NÃO usam `X-API-Key` e por isso ficam fora do mapa:
+ * formulários públicos, script de embed, spec OpenAPI e o webhook do Resend
+ * (verificado pela assinatura do próprio componente).
+ */
+export const PUBLIC_API_ROUTES: readonly string[] = [
+  "GET /api/v1/forms/public",
+  "POST /api/v1/forms/public/submit",
+  "POST /api/v1/forms/public/partial",
+  "POST /api/v1/forms/experiment/view",
+  "GET /api/v1/embed.js",
+  "GET /api/v1/openapi.json",
+  "POST /api/v1/webhooks/resend",
+];
+
+/** Chave do mapa a partir do método + caminho registrado. */
+export function routeKey(method: string, path: string): string {
+  return `${method} ${path}`;
+}
+
+/**
+ * Gate ÚNICO das rotas `/api/v1` — chamado logo após `authenticateApiKey` em
+ * todo handler autenticado. Devolve `null` quando a chave tem a permissão e a
+ * `Response` 403 quando não tem. Rota fora de `ROUTE_PERMISSIONS` é negada
+ * (fail-closed: rota nova sem entrada no mapa não vaza dado).
+ */
+export function requireRoutePermission(
+  auth: { permissions: Permissions },
+  method: string,
+  path: string
+): Response | null {
+  const required = ROUTE_PERMISSIONS[routeKey(method, path)];
+  if (required === "authenticated") return null; // authenticateApiKey já validou a key
+  if (required && hasPermission(auth.permissions, required.category, required.level)) {
+    return null;
+  }
+  return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
+}
+
 // ---- Lead Endpoints ----
 
 // Universal lead capture endpoint
@@ -107,6 +282,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/inbound/lead");
+      if (denied) return denied;
       const body = await request.json();
 
       if (!body.title) {
@@ -204,6 +381,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/leads");
+      if (denied) return denied;
 
       const url = new URL(request.url);
       const boardId = url.searchParams.get("boardId");
@@ -235,6 +414,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/leads/get");
+      if (denied) return denied;
       const url = new URL(request.url);
       const leadId = url.searchParams.get("id");
       if (!leadId) return errorResponse("Lead ID required", 400);
@@ -259,6 +440,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/leads/update");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
@@ -288,6 +471,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/leads/delete");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
@@ -310,6 +495,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/leads/move-stage");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId || !body.stageId) return errorResponse("leadId and stageId required", 400);
 
@@ -333,6 +520,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/leads/assign");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
 
@@ -356,6 +545,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/leads/handoff");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId || !body.reason) return errorResponse("leadId and reason required", 400);
 
@@ -384,6 +575,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/contacts");
+      if (denied) return denied;
       const url = new URL(request.url);
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "500"), 500);
       const cursor = url.searchParams.get("cursor") || undefined;
@@ -408,6 +601,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/contacts/create");
+      if (denied) return denied;
       const body = await request.json();
 
       const contactId = await ctx.runMutation(internal.contacts.internalCreateContact, {
@@ -459,6 +654,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/contacts/get");
+      if (denied) return denied;
       const url = new URL(request.url);
       const contactId = url.searchParams.get("id");
       if (!contactId) return errorResponse("Contact ID required", 400);
@@ -483,6 +680,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/contacts/update");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.contactId) return errorResponse("contactId required", 400);
 
@@ -535,6 +734,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/contacts/enrich");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.contactId) return errorResponse("contactId required", 400);
       if (!body.fields || typeof body.fields !== "object") return errorResponse("fields object required", 400);
@@ -562,6 +763,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/contacts/gaps");
+      if (denied) return denied;
       const url = new URL(request.url);
       const contactId = url.searchParams.get("id");
       if (!contactId) return errorResponse("Contact ID required", 400);
@@ -588,6 +791,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/conversations");
+      if (denied) return denied;
       const url = new URL(request.url);
       const leadId = url.searchParams.get("leadId");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
@@ -614,6 +819,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/conversations/messages");
+      if (denied) return denied;
       const url = new URL(request.url);
       const conversationId = url.searchParams.get("conversationId");
       if (!conversationId) return errorResponse("conversationId required", 400);
@@ -637,6 +844,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/conversations/send");
+      if (denied) return denied;
       const body = await request.json();
       // Attachments (file ids) — the mutation validates they belong to the org.
       const attachments = Array.isArray(body.attachments)
@@ -673,6 +882,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/conversations/send-template");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.conversationId || !body.templateName || !body.languageCode) {
         return errorResponse("conversationId, templateName and languageCode required", 400);
@@ -700,6 +911,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/conversations/receive");
+      if (denied) return denied;
       const body = await request.json();
 
       if (!body.content) {
@@ -764,6 +977,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/handoffs");
+      if (denied) return denied;
       const url = new URL(request.url);
       const status = url.searchParams.get("status") as "pending" | "accepted" | "rejected" | null;
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
@@ -790,6 +1005,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/handoffs/pending");
+      if (denied) return denied;
 
       const handoffs = await ctx.runQuery(internal.handoffs.internalGetHandoffs, {
         organizationId: apiKeyRecord.organizationId,
@@ -810,6 +1027,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/handoffs/accept");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.handoffId) return errorResponse("handoffId required", 400);
 
@@ -833,6 +1052,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/handoffs/reject");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.handoffId) return errorResponse("handoffId required", 400);
 
@@ -859,6 +1080,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/files/upload-url");
+      if (denied) return denied;
 
       const uploadUrl = await ctx.runMutation(internal.files.internalGenerateUploadUrl, {
         organizationId: apiKeyRecord.organizationId,
@@ -880,6 +1103,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/files");
+      if (denied) return denied;
       const body = await request.json();
 
       if (!body.storageId || !body.name || !body.mimeType || !body.size || !body.fileType) {
@@ -915,6 +1140,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/files/:id/url");
+      if (denied) return denied;
       const url = new URL(request.url);
       const fileId = url.pathname.split("/")[4]; // Extract ID from path
 
@@ -942,6 +1169,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "DELETE", "/api/v1/files/:id");
+      if (denied) return denied;
       const url = new URL(request.url);
       const fileId = url.pathname.split("/")[4]; // Extract ID from path
 
@@ -962,10 +1191,10 @@ http.route({
 
 // ---- Export / Import Endpoints ----
 //
-// Estas rotas INAUGURAM o enforcement de permissão no router (plano
-// docs/EXPORT-IMPORT-PLAN-v2.md, regra 3): exportar/importar dados da
-// organização exige `settings: manage` na chave de API. As rotas antigas
-// seguem sem checagem — não retrofitar aqui.
+// Exportar/importar dados da organização exige `settings: manage` na chave de
+// API (plano docs/EXPORT-IMPORT-PLAN-v2.md, regra 3). O gate saiu do antigo
+// `denyDataOps` local e hoje vem do mecanismo único `ROUTE_PERMISSIONS` +
+// `requireRoutePermission`, compartilhado com todas as demais rotas.
 
 /** Teto do CSV embutido no corpo de POST /api/v1/imports. */
 const MAX_INLINE_CSV_BYTES = 5 * 1024 * 1024;
@@ -973,12 +1202,6 @@ const MAX_INLINE_CSV_BYTES = 5 * 1024 * 1024;
 const EXPORT_ENTITIES = ["contacts", "leads", "tasks"];
 const IMPORT_ENTITIES = ["contacts", "leads"];
 const DUPLICATE_STRATEGIES = ["skip", "update", "create"];
-
-/** Gate `settings:manage` das rotas de export/import (null = liberado). */
-function denyDataOps(auth: { permissions: Permissions }): Response | null {
-  if (hasPermission(auth.permissions, "settings", "manage")) return null;
-  return errorResponse("Permissão insuficiente", 403);
-}
 
 /**
  * Erro das rotas de export/import: chave ausente/inválida → 401; validação e
@@ -1038,7 +1261,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/exports");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1084,7 +1307,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/exports");
       if (denied) return denied;
 
       const jobs = await ctx.runQuery(internal.exports.internalListExportJobs, {
@@ -1106,7 +1329,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/exports/get");
       if (denied) return denied;
 
       const jobId = new URL(request.url).searchParams.get("id");
@@ -1133,7 +1356,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/exports/download");
       if (denied) return denied;
 
       const jobId = new URL(request.url).searchParams.get("id");
@@ -1182,7 +1405,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/imports");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1248,7 +1471,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/imports");
       if (denied) return denied;
 
       const jobs = await ctx.runQuery(internal.imports.internalListImportJobs, {
@@ -1270,7 +1493,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/imports/get");
       if (denied) return denied;
 
       const jobId = new URL(request.url).searchParams.get("id");
@@ -1297,7 +1520,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/imports/mapping");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1342,7 +1565,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/imports/preview");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1374,7 +1597,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/imports/confirm");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1406,7 +1629,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/imports/rollback");
       if (denied) return denied;
 
       const body = await request.json();
@@ -1438,7 +1661,7 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const auth = await authenticateApiKey(ctx, request);
-      const denied = denyDataOps(auth);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/imports/failed-rows");
       if (denied) return denied;
 
       const jobId = new URL(request.url).searchParams.get("id");
@@ -1479,6 +1702,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/boards");
+      if (denied) return denied;
       const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
         organizationId: apiKeyRecord.organizationId,
       });
@@ -1504,6 +1729,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/team-members");
+      if (denied) return denied;
       const members = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
         organizationId: apiKeyRecord.organizationId,
       });
@@ -1521,6 +1748,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/field-definitions");
+      if (denied) return denied;
       const fields = await ctx.runQuery(internal.fieldDefinitions.internalGetFieldDefinitions, {
         organizationId: apiKeyRecord.organizationId,
       });
@@ -1539,7 +1768,9 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      await authenticateApiKey(ctx, request);
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/activities");
+      if (denied) return denied;
       const url = new URL(request.url);
       const leadId = url.searchParams.get("leadId");
       if (!leadId) return errorResponse("leadId required", 400);
@@ -1566,6 +1797,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/activities");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.leadId) return errorResponse("leadId required", 400);
       if (!body.type) return errorResponse("type required", 400);
@@ -1594,6 +1827,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/dashboard");
+      if (denied) return denied;
 
       const stats = await ctx.runQuery(internal.dashboard.internalGetDashboardStats, {
         organizationId: apiKeyRecord.organizationId,
@@ -1615,6 +1850,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/contacts/search");
+      if (denied) return denied;
       const url = new URL(request.url);
       const q = url.searchParams.get("q");
       if (!q) return errorResponse("q (search query) required", 400);
@@ -1642,6 +1879,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/lead-sources");
+      if (denied) return denied;
 
       const sources = await ctx.runQuery(internal.leadSources.internalGetLeadSources, {
         organizationId: apiKeyRecord.organizationId,
@@ -1662,6 +1901,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/audit-logs");
+      if (denied) return denied;
       const url = new URL(request.url);
 
       const entityType = url.searchParams.get("entityType") || undefined;
@@ -2033,6 +2274,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/tasks");
+      if (denied) return denied;
       const url = new URL(request.url);
 
       const status = url.searchParams.get("status") as any || undefined;
@@ -2075,7 +2318,10 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      const { organizationId } = await authenticateApiKey(ctx, request);
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/tasks/get");
+      if (denied) return denied;
+      const organizationId = auth.organizationId;
       const url = new URL(request.url);
       const taskId = url.searchParams.get("id");
       if (!taskId) return errorResponse("Task ID required", 400);
@@ -2100,6 +2346,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/tasks/my");
+      if (denied) return denied;
 
       const tasks = await ctx.runQuery(internal.tasks.internalGetMyTasks, {
         organizationId: apiKeyRecord.organizationId,
@@ -2120,6 +2368,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/tasks/overdue");
+      if (denied) return denied;
       const url = new URL(request.url);
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
       const cursor = url.searchParams.get("cursor") || undefined;
@@ -2144,6 +2394,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/tasks/search");
+      if (denied) return denied;
       const url = new URL(request.url);
       const q = url.searchParams.get("q");
       if (!q) return errorResponse("q (search query) required", 400);
@@ -2169,6 +2421,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/create");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.title) return errorResponse("title required", 400);
 
@@ -2203,6 +2457,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/update");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId) return errorResponse("taskId required", 400);
 
@@ -2231,6 +2487,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/complete");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId) return errorResponse("taskId required", 400);
 
@@ -2253,6 +2511,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/delete");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId) return errorResponse("taskId required", 400);
 
@@ -2275,6 +2535,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/assign");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId) return errorResponse("taskId required", 400);
 
@@ -2298,6 +2560,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/snooze");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId || !body.snoozedUntil) return errorResponse("taskId and snoozedUntil required", 400);
 
@@ -2321,6 +2585,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/bulk");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskIds || !body.action) return errorResponse("taskIds and action required", 400);
 
@@ -2344,7 +2610,10 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      const { organizationId } = await authenticateApiKey(ctx, request);
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/tasks/comments");
+      if (denied) return denied;
+      const organizationId = auth.organizationId;
       const url = new URL(request.url);
       const taskId = url.searchParams.get("taskId");
       if (!taskId) return errorResponse("taskId required", 400);
@@ -2372,6 +2641,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/tasks/comments/add");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.taskId || !body.content) return errorResponse("taskId and content required", 400);
 
@@ -2399,6 +2670,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/calendar/events");
+      if (denied) return denied;
       const url = new URL(request.url);
 
       const startDate = url.searchParams.get("startDate");
@@ -2439,7 +2712,10 @@ http.route({
   method: "GET",
   handler: httpAction(async (ctx, request) => {
     try {
-      const { organizationId } = await authenticateApiKey(ctx, request);
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/calendar/events/get");
+      if (denied) return denied;
+      const organizationId = auth.organizationId;
       const url = new URL(request.url);
       const eventId = url.searchParams.get("id");
       if (!eventId) return errorResponse("Event ID required", 400);
@@ -2464,6 +2740,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/create");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.title) return errorResponse("title required", 400);
       if (!body.startTime || !body.endTime) return errorResponse("startTime and endTime required", 400);
@@ -2502,6 +2780,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/update");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.eventId) return errorResponse("eventId required", 400);
 
@@ -2533,6 +2813,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/delete");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.eventId) return errorResponse("eventId required", 400);
 
@@ -2555,6 +2837,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/reschedule");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.eventId || !body.newStartTime) return errorResponse("eventId and newStartTime required", 400);
 
@@ -2579,6 +2863,8 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/complete");
+      if (denied) return denied;
       const body = await request.json();
       if (!body.eventId) return errorResponse("eventId required", 400);
 
@@ -2603,6 +2889,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/notifications/preferences");
+      if (denied) return denied;
       const prefs = await ctx.runQuery(internal.notificationPreferences.internalGetPreferences, {
         organizationId: apiKeyRecord.organizationId,
         teamMemberId: apiKeyRecord.teamMemberId,
@@ -2621,6 +2909,8 @@ http.route({
     if (request.method === "OPTIONS") return handleOptions();
     try {
       const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "PUT", "/api/v1/notifications/preferences");
+      if (denied) return denied;
       const body = await request.json();
       await ctx.runMutation(internal.notificationPreferences.internalUpsertPreferences, {
         organizationId: apiKeyRecord.organizationId,

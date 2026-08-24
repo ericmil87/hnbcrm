@@ -400,6 +400,37 @@ describe("export CSV por entidade", () => {
     // Ordem canônica preservada, colunas desconhecidas ignoradas.
     expect(parseCsv(content!).headers).toEqual(["firstName", "email"]);
   });
+
+  test("neutraliza fórmula plantada em campo de contato (CSV formula injection)", async () => {
+    const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("contacts", {
+        organizationId: s.organizationId,
+        firstName: '=HYPERLINK("http://mal.example","x")',
+        email: "vitima@exemplo.com",
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const admin = asAdmin(t, s.admin.userId);
+
+    const jobId = await admin.mutation(api.exports.createExportJob, {
+      organizationId: s.organizationId,
+      format: "csv",
+      scope: "entity",
+      entity: "contacts",
+    });
+
+    const { job, content } = await runJob(t, jobId);
+    expect(job.status).toBe("completed");
+
+    const row = parseCsv(content!).rows[0];
+    // O escape prefixa `'`: ao abrir no Excel/Sheets a célula vira texto puro
+    // em vez de executar a fórmula.
+    expect(row.firstName).toBe('\'=HYPERLINK("http://mal.example","x")');
+  });
 });
 
 // ===== Backup completo =====

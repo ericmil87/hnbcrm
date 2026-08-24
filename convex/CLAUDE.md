@@ -9,7 +9,7 @@
 | `convex.config.ts` | Convex component registration (Resend email) |
 | `crons.ts` | Scheduled jobs (overdue reminders, recurring tasks, daily digest) |
 | `http.ts` | Wires HTTP routes from `router.ts` |
-| `router.ts` | RESTful API endpoints (`/api/v1/*`), API key auth |
+| `router.ts` | RESTful API endpoints (`/api/v1/*`), API key auth; RBAC em TODAS as rotas via `ROUTE_PERMISSIONS` + `requireRoutePermission` (fail-closed, 403 "Permissão insuficiente"; níveis espelham o app; `"authenticated"` só p/ self-scoped) — completude garantida por `routerPermissions.test.ts` |
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD |
 | `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
@@ -143,7 +143,9 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     if (request.method === "OPTIONS") return handleOptions();
     try {
-      const { organizationId, teamMemberId } = await authenticateApiKey(ctx, request);
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/endpoint"); // rota NOVA exige entrada em ROUTE_PERMISSIONS (fail-closed)
+      if (denied) return denied;
       // call ctx.runMutation / ctx.runQuery
       return jsonResponse(result);
     } catch (e: any) {

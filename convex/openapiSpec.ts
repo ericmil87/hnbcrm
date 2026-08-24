@@ -5,7 +5,7 @@ export const OPENAPI_SPEC = `{
   "openapi": "3.1.0",
   "info": {
     "title": "ClawCRM API",
-    "description": "API REST do ClawCRM — CRM multi-tenant com colaboração entre humanos e agentes de IA. Todos os endpoints requerem autenticação via header X-API-Key.",
+    "description": "API REST do ClawCRM — CRM multi-tenant com colaboração entre humanos e agentes de IA. Todos os endpoints requerem autenticação via header X-API-Key. Desde a v0.47 TODA rota também exige uma permissão mínima na chave (categoria + nível, indicados na descrição de cada operação): a chave recebe 403 com o corpo {\\\"error\\\": \\\"Permissão insuficiente\\\", \\\"code\\\": 403} quando não a tem. O nível de cada rota espelha a função equivalente do app — as permissões da chave vêm da própria chave, do membro vinculado ou do padrão do papel (admin, manager, agent, ai).",
     "version": "1.0.0",
     "contact": {
       "name": "ClawCRM"
@@ -41,7 +41,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Criar lead via captura universal",
-        "description": "Cria um novo lead com contato e mensagem opcionais. Se o contato não existir, será criado automaticamente. Se uma mensagem for fornecida, uma conversa será criada.",
+        "description": "Cria um novo lead com contato e mensagem opcionais. Se o contato não existir, será criado automaticamente. Se uma mensagem for fornecida, uma conversa será criada. Requer permissão leads: edit_own na chave de API.",
         "operationId": "createInboundLead",
         "requestBody": {
           "required": true,
@@ -95,6 +95,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -103,7 +104,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Leads"],
         "summary": "Listar leads",
-        "description": "Retorna a lista de leads da organização com filtros opcionais.",
+        "description": "Retorna a lista de leads da organização com filtros opcionais. Requer permissão leads: view_own na chave de API.",
         "operationId": "listLeads",
         "parameters": [
           { "name": "boardId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por board (pipeline)" },
@@ -129,6 +130,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -137,7 +139,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Leads"],
         "summary": "Obter lead",
-        "description": "Retorna os dados de um lead específico pelo ID.",
+        "description": "Retorna os dados de um lead específico pelo ID. Requer permissão leads: view_own na chave de API.",
         "operationId": "getLead",
         "parameters": [
           { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do lead" }
@@ -158,6 +160,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -167,7 +170,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Atualizar lead",
-        "description": "Atualiza os campos de um lead existente.",
+        "description": "Atualiza os campos de um lead existente. Requer permissão leads: view_own na chave de API.",
         "operationId": "updateLead",
         "requestBody": {
           "required": true,
@@ -194,6 +197,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -202,7 +206,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Excluir lead",
-        "description": "Remove um lead permanentemente.",
+        "description": "Remove um lead permanentemente. Requer permissão leads: full na chave de API.",
         "operationId": "deleteLead",
         "requestBody": {
           "required": true,
@@ -222,6 +226,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -230,7 +235,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Mover lead de estágio",
-        "description": "Move um lead para um estágio diferente no pipeline.",
+        "description": "Move um lead para um estágio diferente no pipeline. Requer permissão leads: view_own na chave de API.",
         "operationId": "moveLeadStage",
         "requestBody": {
           "required": true,
@@ -251,6 +256,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -259,7 +265,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Atribuir lead",
-        "description": "Atribui ou desatribui um lead a um membro da equipe. Omita assignedTo para desatribuir.",
+        "description": "Atribui ou desatribui um lead a um membro da equipe. Omita assignedTo para desatribuir. Requer permissão leads: view_own na chave de API.",
         "operationId": "assignLead",
         "requestBody": {
           "required": true,
@@ -280,6 +286,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -288,7 +295,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads", "Handoffs"],
         "summary": "Solicitar handoff",
-        "description": "Solicita uma transferência (handoff) do lead para outro membro da equipe.",
+        "description": "Solicita uma transferência (handoff) do lead para outro membro da equipe. Requer permissão inbox: view_own na chave de API.",
         "operationId": "requestHandoff",
         "requestBody": {
           "required": true,
@@ -325,6 +332,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -333,7 +341,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Contatos"],
         "summary": "Listar contatos",
-        "description": "Retorna a lista de contatos da organização.",
+        "description": "Retorna a lista de contatos da organização. Requer permissão contacts: view na chave de API.",
         "operationId": "listContacts",
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 500, "maximum": 500 }, "description": "Limite de resultados" },
@@ -356,6 +364,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -364,7 +373,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Contatos"],
         "summary": "Criar contato",
-        "description": "Cria um novo contato na organização.",
+        "description": "Cria um novo contato na organização. Requer permissão contacts: edit na chave de API.",
         "operationId": "createContact",
         "requestBody": {
           "required": true,
@@ -424,6 +433,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -432,7 +442,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Contatos"],
         "summary": "Obter contato",
-        "description": "Retorna os dados de um contato específico pelo ID.",
+        "description": "Retorna os dados de um contato específico pelo ID. Requer permissão contacts: view na chave de API.",
         "operationId": "getContact",
         "parameters": [
           { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do contato" }
@@ -453,6 +463,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -462,7 +473,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Contatos"],
         "summary": "Atualizar contato",
-        "description": "Atualiza os campos de um contato existente.",
+        "description": "Atualiza os campos de um contato existente. Requer permissão contacts: view na chave de API.",
         "operationId": "updateContact",
         "requestBody": {
           "required": true,
@@ -512,6 +523,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -520,7 +532,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Contatos"],
         "summary": "Enriquecer contato",
-        "description": "Enriquece um contato com dados de uma fonte externa. Usado por agentes de IA para adicionar informações descobertas.",
+        "description": "Enriquece um contato com dados de uma fonte externa. Usado por agentes de IA para adicionar informações descobertas. Requer permissão contacts: edit na chave de API.",
         "operationId": "enrichContact",
         "requestBody": {
           "required": true,
@@ -543,6 +555,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -551,7 +564,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Contatos"],
         "summary": "Lacunas de enriquecimento",
-        "description": "Identifica campos faltantes ou enriquecíveis em um contato.",
+        "description": "Identifica campos faltantes ou enriquecíveis em um contato. Requer permissão contacts: view na chave de API.",
         "operationId": "getContactGaps",
         "parameters": [
           { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do contato" }
@@ -572,6 +585,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -581,7 +595,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Contatos"],
         "summary": "Buscar contatos",
-        "description": "Busca contatos por texto (nome, email, empresa, etc).",
+        "description": "Busca contatos por texto (nome, email, empresa, etc). Requer permissão contacts: view na chave de API.",
         "operationId": "searchContacts",
         "parameters": [
           { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Texto de busca" },
@@ -603,6 +617,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -611,7 +626,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Conversas"],
         "summary": "Listar conversas",
-        "description": "Retorna a lista de conversas da organização com filtro opcional por lead.",
+        "description": "Retorna a lista de conversas da organização com filtro opcional por lead. Requer permissão inbox: view_own na chave de API.",
         "operationId": "listConversations",
         "parameters": [
           { "name": "leadId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por lead" },
@@ -635,6 +650,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -643,7 +659,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Conversas"],
         "summary": "Listar mensagens",
-        "description": "Retorna todas as mensagens de uma conversa.",
+        "description": "Retorna todas as mensagens de uma conversa. Requer permissão inbox: view_own na chave de API.",
         "operationId": "getMessages",
         "parameters": [
           { "name": "conversationId", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID da conversa" }
@@ -664,6 +680,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -672,7 +689,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Conversas"],
         "summary": "Enviar mensagem",
-        "description": "Envia uma mensagem em uma conversa existente.",
+        "description": "Envia uma mensagem em uma conversa existente. Requer permissão inbox: view_own na chave de API.",
         "operationId": "sendMessage",
         "requestBody": {
           "required": true,
@@ -708,6 +725,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -716,7 +734,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Handoffs"],
         "summary": "Listar handoffs",
-        "description": "Retorna a lista de handoffs da organização com filtro opcional por status.",
+        "description": "Retorna a lista de handoffs da organização com filtro opcional por status. Requer permissão inbox: view_own na chave de API.",
         "operationId": "listHandoffs",
         "parameters": [
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected", "canceled"] }, "description": "Filtrar por status" },
@@ -740,6 +758,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -748,7 +767,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Handoffs"],
         "summary": "Listar handoffs pendentes",
-        "description": "Atalho para listar apenas handoffs com status pendente.",
+        "description": "Atalho para listar apenas handoffs com status pendente. Requer permissão inbox: view_own na chave de API.",
         "operationId": "listPendingHandoffs",
         "responses": {
           "200": {
@@ -765,6 +784,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -773,7 +793,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Handoffs"],
         "summary": "Aceitar handoff",
-        "description": "Aceita uma solicitação de handoff pendente.",
+        "description": "Aceita uma solicitação de handoff pendente. Requer permissão inbox: reply na chave de API.",
         "operationId": "acceptHandoff",
         "requestBody": {
           "required": true,
@@ -794,6 +814,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -802,7 +823,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Handoffs"],
         "summary": "Rejeitar handoff",
-        "description": "Rejeita uma solicitação de handoff pendente.",
+        "description": "Rejeita uma solicitação de handoff pendente. Requer permissão inbox: reply na chave de API.",
         "operationId": "rejectHandoff",
         "requestBody": {
           "required": true,
@@ -823,6 +844,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -831,7 +853,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Referência"],
         "summary": "Listar boards com estágios",
-        "description": "Retorna todos os boards (pipelines) da organização com seus estágios.",
+        "description": "Retorna todos os boards (pipelines) da organização com seus estágios. Requer permissão leads: view_own na chave de API.",
         "operationId": "listBoards",
         "responses": {
           "200": {
@@ -861,6 +883,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -869,7 +892,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Referência"],
         "summary": "Listar membros da equipe",
-        "description": "Retorna todos os membros da equipe (humanos e agentes IA). Cada membro inclui um campo opcional 'permissions' com 9 categorias RBAC. Operacoes de gerenciamento (convite, edicao, remocao) sao mutacoes Convex e nao estao disponiveis via REST.",
+        "description": "Retorna todos os membros da equipe (humanos e agentes IA). Cada membro inclui um campo opcional 'permissions' com 9 categorias RBAC. Operacoes de gerenciamento (convite, edicao, remocao) sao mutacoes Convex e nao estao disponiveis via REST. Requer apenas API key válida (espelha o app: qualquer membro vê a equipe).",
         "operationId": "listTeamMembers",
         "responses": {
           "200": {
@@ -886,6 +909,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -894,7 +918,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Referência"],
         "summary": "Listar definições de campos",
-        "description": "Retorna as definições de campos personalizados da organização.",
+        "description": "Retorna as definições de campos personalizados da organização. Requer permissão leads: view_own na chave de API.",
         "operationId": "listFieldDefinitions",
         "responses": {
           "200": {
@@ -911,6 +935,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -919,7 +944,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Atividades"],
         "summary": "Listar atividades",
-        "description": "Retorna as atividades de um lead específico.",
+        "description": "Retorna as atividades de um lead específico. Requer permissão leads: view_own na chave de API.",
         "operationId": "listActivities",
         "parameters": [
           { "name": "leadId", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do lead" },
@@ -944,13 +969,14 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       },
       "post": {
         "tags": ["Atividades"],
         "summary": "Criar atividade",
-        "description": "Registra uma nova atividade em um lead.",
+        "description": "Registra uma nova atividade em um lead. Requer permissão leads: view_own na chave de API.",
         "operationId": "createActivity",
         "requestBody": {
           "required": true,
@@ -986,6 +1012,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -994,7 +1021,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Dashboard"],
         "summary": "Obter estatísticas do dashboard",
-        "description": "Retorna métricas agregadas da organização: total de leads, leads do mês, taxa de conversão, valor total e leads por estágio.",
+        "description": "Retorna métricas agregadas da organização: total de leads, leads do mês, taxa de conversão, valor total e leads por estágio. Requer permissão reports: view na chave de API.",
         "operationId": "getDashboardStats",
         "responses": {
           "200": {
@@ -1015,6 +1042,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1023,7 +1051,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Fontes"],
         "summary": "Listar fontes de leads",
-        "description": "Retorna todas as fontes de captação de leads da organização.",
+        "description": "Retorna todas as fontes de captação de leads da organização. Requer permissão leads: view_own na chave de API.",
         "operationId": "listLeadSources",
         "responses": {
           "200": {
@@ -1040,6 +1068,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1048,7 +1077,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Listar tarefas",
-        "description": "Retorna tarefas da organização com filtros opcionais.",
+        "description": "Retorna tarefas da organização com filtros opcionais. Requer permissão tasks: view_own na chave de API.",
         "operationId": "listTasks",
         "parameters": [
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "in_progress", "completed", "cancelled"] }, "description": "Filtrar por status" },
@@ -1080,6 +1109,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1088,7 +1118,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Obter tarefa",
-        "description": "Retorna os dados de uma tarefa específica pelo ID.",
+        "description": "Retorna os dados de uma tarefa específica pelo ID. Requer permissão tasks: view_own na chave de API.",
         "operationId": "getTask",
         "parameters": [
           { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID da tarefa" }
@@ -1109,6 +1139,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -1118,7 +1149,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Minhas tarefas",
-        "description": "Retorna tarefas pendentes e em andamento do agente autenticado.",
+        "description": "Retorna tarefas pendentes e em andamento do agente autenticado. Requer permissão tasks: view_own na chave de API.",
         "operationId": "getMyTasks",
         "responses": {
           "200": {
@@ -1135,6 +1166,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1143,7 +1175,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Tarefas atrasadas",
-        "description": "Lista tarefas com data de vencimento no passado e status pendente ou em andamento.",
+        "description": "Lista tarefas com data de vencimento no passado e status pendente ou em andamento. Requer permissão tasks: view_own na chave de API.",
         "operationId": "getOverdueTasks",
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
@@ -1166,6 +1198,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1174,7 +1207,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Buscar tarefas",
-        "description": "Busca tarefas por texto (título, descrição).",
+        "description": "Busca tarefas por texto (título, descrição). Requer permissão tasks: view_own na chave de API.",
         "operationId": "searchTasks",
         "parameters": [
           { "name": "q", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Texto de busca" },
@@ -1196,6 +1229,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1204,7 +1238,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Criar tarefa",
-        "description": "Cria uma nova tarefa ou lembrete.",
+        "description": "Cria uma nova tarefa ou lembrete. Requer permissão tasks: view_own na chave de API.",
         "operationId": "createTask",
         "requestBody": {
           "required": true,
@@ -1254,6 +1288,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1262,7 +1297,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Atualizar tarefa",
-        "description": "Atualiza campos de uma tarefa existente.",
+        "description": "Atualiza campos de uma tarefa existente. Requer permissão tasks: view_own na chave de API.",
         "operationId": "updateTask",
         "requestBody": {
           "required": true,
@@ -1288,6 +1323,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1296,7 +1332,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Concluir tarefa",
-        "description": "Marca uma tarefa como concluída.",
+        "description": "Marca uma tarefa como concluída. Requer permissão tasks: view_own na chave de API.",
         "operationId": "completeTask",
         "requestBody": {
           "required": true,
@@ -1316,6 +1352,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1324,7 +1361,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Excluir tarefa",
-        "description": "Remove uma tarefa permanentemente.",
+        "description": "Remove uma tarefa permanentemente. Requer permissão tasks: view_own na chave de API.",
         "operationId": "deleteTask",
         "requestBody": {
           "required": true,
@@ -1344,6 +1381,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1352,7 +1390,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Atribuir tarefa",
-        "description": "Atribui ou desatribui uma tarefa a um membro da equipe.",
+        "description": "Atribui ou desatribui uma tarefa a um membro da equipe. Requer permissão tasks: view_own na chave de API.",
         "operationId": "assignTask",
         "requestBody": {
           "required": true,
@@ -1373,6 +1411,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1381,7 +1420,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Definir lembrete",
-        "description": "Define um lembrete para uma tarefa.",
+        "description": "Define um lembrete para uma tarefa. Requer permissão tasks: view_own na chave de API.",
         "operationId": "snoozeTask",
         "requestBody": {
           "required": true,
@@ -1402,6 +1441,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1410,7 +1450,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Operações em lote",
-        "description": "Executa operações em lote em múltiplas tarefas (completar, deletar, atribuir).",
+        "description": "Executa operações em lote em múltiplas tarefas (completar, deletar, atribuir). Requer permissão tasks: view_own na chave de API.",
         "operationId": "bulkTaskUpdate",
         "requestBody": {
           "required": true,
@@ -1432,6 +1472,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1440,7 +1481,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Tarefas"],
         "summary": "Listar comentários de tarefa",
-        "description": "Retorna comentários de uma tarefa com paginação.",
+        "description": "Retorna comentários de uma tarefa com paginação. Requer permissão tasks: view_own na chave de API.",
         "operationId": "listTaskComments",
         "parameters": [
           { "name": "taskId", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID da tarefa" },
@@ -1465,6 +1506,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1473,7 +1515,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Tarefas"],
         "summary": "Adicionar comentário",
-        "description": "Adiciona um comentário a uma tarefa.",
+        "description": "Adiciona um comentário a uma tarefa. Requer permissão tasks: view_own na chave de API.",
         "operationId": "addTaskComment",
         "requestBody": {
           "required": true,
@@ -1508,6 +1550,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1516,7 +1559,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Auditoria"],
         "summary": "Listar logs de auditoria",
-        "description": "Retorna logs de auditoria da organização com filtros e paginação por cursor.",
+        "description": "Retorna logs de auditoria da organização com filtros e paginação por cursor. Requer permissão auditLogs: view na chave de API.",
         "operationId": "listAuditLogs",
         "parameters": [
           { "name": "entityType", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por tipo de entidade (ex: lead, contact)" },
@@ -1545,6 +1588,7 @@ export const OPENAPI_SPEC = `{
             }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1553,7 +1597,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Calendario"],
         "summary": "Listar eventos do calendario",
-        "description": "Retorna eventos do calendario em um intervalo de datas com filtros opcionais. Pode incluir tarefas com data de vencimento no intervalo.",
+        "description": "Retorna eventos do calendario em um intervalo de datas com filtros opcionais. Pode incluir tarefas com data de vencimento no intervalo. Requer permissão tasks: view_own na chave de API.",
         "operationId": "listCalendarEvents",
         "parameters": [
           { "name": "startDate", "in": "query", "required": true, "schema": { "type": "number" }, "description": "Inicio do intervalo (timestamp ms)" },
@@ -1581,6 +1625,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1589,7 +1634,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Calendario"],
         "summary": "Obter evento",
-        "description": "Retorna os dados de um evento especifico pelo ID.",
+        "description": "Retorna os dados de um evento especifico pelo ID. Requer permissão tasks: view_own na chave de API.",
         "operationId": "getCalendarEvent",
         "parameters": [
           { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do evento" }
@@ -1610,6 +1655,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
@@ -1619,7 +1665,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Criar evento",
-        "description": "Cria um novo evento no calendario.",
+        "description": "Cria um novo evento no calendario. Requer permissão tasks: view_own na chave de API.",
         "operationId": "createCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1665,6 +1711,7 @@ export const OPENAPI_SPEC = `{
           },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1673,7 +1720,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Atualizar evento",
-        "description": "Atualiza campos de um evento existente.",
+        "description": "Atualiza campos de um evento existente. Requer permissão tasks: view_own na chave de API.",
         "operationId": "updateCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1702,6 +1749,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1710,7 +1758,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Excluir evento",
-        "description": "Remove um evento do calendario. Exclui tambem eventos recorrentes filhos.",
+        "description": "Remove um evento do calendario. Exclui tambem eventos recorrentes filhos. Requer permissão tasks: view_own na chave de API.",
         "operationId": "deleteCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1730,6 +1778,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1738,7 +1787,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Reagendar evento",
-        "description": "Reagenda um evento para novo horario. Se newEndTime nao for fornecido, a duracao original e mantida.",
+        "description": "Reagenda um evento para novo horario. Se newEndTime nao for fornecido, a duracao original e mantida. Requer permissão tasks: view_own na chave de API.",
         "operationId": "rescheduleCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1760,6 +1809,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -1768,7 +1818,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Concluir evento",
-        "description": "Marca um evento como concluido. Se o evento tiver recorrencia, gera automaticamente a proxima instancia.",
+        "description": "Marca um evento como concluido. Se o evento tiver recorrencia, gera automaticamente a proxima instancia. Requer permissão tasks: view_own na chave de API.",
         "operationId": "completeCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1788,6 +1838,7 @@ export const OPENAPI_SPEC = `{
           "200": { "$ref": "#/components/responses/Success" },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
@@ -2165,7 +2216,7 @@ export const OPENAPI_SPEC = `{
         "type": "apiKey",
         "in": "header",
         "name": "X-API-Key",
-        "description": "Chave de API vinculada a um membro da equipe e organização. A chave é armazenada como hash SHA-256."
+        "description": "Chave de API vinculada a um membro da equipe e organização. A chave é armazenada como hash SHA-256. As permissões efetivas são resolvidas na ordem chave > membro > padrão do papel e conferidas em toda rota /api/v1 (403 quando insuficientes). Rate limit: 300 requisições por minuto por chave (429 ao exceder)."
       }
     },
     "schemas": {
@@ -2566,7 +2617,7 @@ export const OPENAPI_SPEC = `{
         }
       },
       "Forbidden": {
-        "description": "Permissão insuficiente — a chave de API não tem o nível exigido (settings: manage nas rotas de dados)",
+        "description": "Permissão insuficiente — a chave de API não tem a categoria/nível exigidos pela rota (ver a descrição da operação). Corpo: {\\\"error\\\": \\\"Permissão insuficiente\\\", \\\"code\\\": 403}",
         "content": {
           "application/json": {
             "schema": {

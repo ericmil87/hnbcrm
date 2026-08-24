@@ -10,6 +10,96 @@ API keys resolve permissions in this order: key-level permissions > team member 
 
 ---
 
+## Permissions per route
+
+**Every `/api/v1` route enforces a minimum permission** (category + level), checked right after the API key is authenticated. A key below the required level gets the same response on every route:
+
+```json
+{ "error": "Permissão insuficiente", "code": 403 }
+```
+
+The required level mirrors the equivalent in-app function: where the app calls `requirePermission(ctx, org, category, level)` the route requires the same pair; where the app only requires organization membership, the route requires the category's lowest read level. A route with no entry in the table is rejected (fail-closed). Source of truth: `ROUTE_PERMISSIONS` in `convex/router.ts`.
+
+The last column shows whether the **default** permissions of the `ai` and `agent` roles (identical: leads `edit_own`, contacts `edit`, inbox `reply`, tasks `edit_own`, reports `view`, team/settings/auditLogs/apiKeys `none`) are enough. When it says **não**, the key needs an explicit permission override (Settings → Team → member → permissions) or an admin-linked key — otherwise the MCP tool that calls it (`crm_delete_lead`, `crm_list_team`) fails with 403.
+
+| Route | Required permission | `ai`/`agent` default is enough? |
+|-------|---------------------|-------------------------------|
+| `POST /api/v1/inbound/lead` | `leads: edit_own` | sim |
+| `GET /api/v1/leads` | `leads: view_own` | sim |
+| `GET /api/v1/leads/get` | `leads: view_own` | sim |
+| `POST /api/v1/leads/update` | `leads: view_own` | sim |
+| `POST /api/v1/leads/delete` | `leads: full` | **não** |
+| `POST /api/v1/leads/move-stage` | `leads: view_own` | sim |
+| `POST /api/v1/leads/assign` | `leads: view_own` | sim |
+| `POST /api/v1/leads/handoff` | `inbox: view_own` | sim |
+| `GET /api/v1/contacts` | `contacts: view` | sim |
+| `POST /api/v1/contacts/create` | `contacts: edit` | sim |
+| `GET /api/v1/contacts/get` | `contacts: view` | sim |
+| `POST /api/v1/contacts/update` | `contacts: view` | sim |
+| `POST /api/v1/contacts/enrich` | `contacts: edit` | sim |
+| `GET /api/v1/contacts/gaps` | `contacts: view` | sim |
+| `GET /api/v1/contacts/search` | `contacts: view` | sim |
+| `GET /api/v1/conversations` | `inbox: view_own` | sim |
+| `GET /api/v1/conversations/messages` | `inbox: view_own` | sim |
+| `POST /api/v1/conversations/send` | `inbox: view_own` | sim |
+| `POST /api/v1/conversations/send-template` | `inbox: reply` | sim |
+| `POST /api/v1/conversations/receive` | `inbox: reply` | sim |
+| `GET /api/v1/handoffs` | `inbox: view_own` | sim |
+| `GET /api/v1/handoffs/pending` | `inbox: view_own` | sim |
+| `POST /api/v1/handoffs/accept` | `inbox: reply` | sim |
+| `POST /api/v1/handoffs/reject` | `inbox: reply` | sim |
+| `POST /api/v1/files/upload-url` | `leads: edit_own` | sim |
+| `POST /api/v1/files` | `leads: edit_own` | sim |
+| `GET /api/v1/files/:id/url` | `leads: view_own` | sim |
+| `DELETE /api/v1/files/:id` | `leads: edit_own` | sim |
+| `POST /api/v1/exports` | `settings: manage` | **não** |
+| `GET /api/v1/exports` | `settings: manage` | **não** |
+| `GET /api/v1/exports/get` | `settings: manage` | **não** |
+| `GET /api/v1/exports/download` | `settings: manage` | **não** |
+| `POST /api/v1/imports` | `settings: manage` | **não** |
+| `GET /api/v1/imports` | `settings: manage` | **não** |
+| `GET /api/v1/imports/get` | `settings: manage` | **não** |
+| `POST /api/v1/imports/mapping` | `settings: manage` | **não** |
+| `POST /api/v1/imports/preview` | `settings: manage` | **não** |
+| `POST /api/v1/imports/confirm` | `settings: manage` | **não** |
+| `POST /api/v1/imports/rollback` | `settings: manage` | **não** |
+| `GET /api/v1/imports/failed-rows` | `settings: manage` | **não** |
+| `GET /api/v1/boards` | `leads: view_own` | sim |
+| `GET /api/v1/team-members` | só API key válida (espelha requireAuth do app) | sim |
+| `GET /api/v1/field-definitions` | `leads: view_own` | sim |
+| `GET /api/v1/lead-sources` | `leads: view_own` | sim |
+| `GET /api/v1/activities` | `leads: view_own` | sim |
+| `POST /api/v1/activities` | `leads: view_own` | sim |
+| `GET /api/v1/dashboard` | `reports: view` | sim |
+| `GET /api/v1/audit-logs` | `auditLogs: view` | **não** |
+| `GET /api/v1/tasks` | `tasks: view_own` | sim |
+| `GET /api/v1/tasks/get` | `tasks: view_own` | sim |
+| `GET /api/v1/tasks/my` | `tasks: view_own` | sim |
+| `GET /api/v1/tasks/overdue` | `tasks: view_own` | sim |
+| `GET /api/v1/tasks/search` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/create` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/update` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/complete` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/delete` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/assign` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/snooze` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/bulk` | `tasks: view_own` | sim |
+| `GET /api/v1/tasks/comments` | `tasks: view_own` | sim |
+| `POST /api/v1/tasks/comments/add` | `tasks: view_own` | sim |
+| `GET /api/v1/calendar/events` | `tasks: view_own` | sim |
+| `GET /api/v1/calendar/events/get` | `tasks: view_own` | sim |
+| `POST /api/v1/calendar/events/create` | `tasks: view_own` | sim |
+| `POST /api/v1/calendar/events/update` | `tasks: view_own` | sim |
+| `POST /api/v1/calendar/events/delete` | `tasks: view_own` | sim |
+| `POST /api/v1/calendar/events/reschedule` | `tasks: view_own` | sim |
+| `POST /api/v1/calendar/events/complete` | `tasks: view_own` | sim |
+| `GET /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
+| `PUT /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
+
+Public routes (no API key, no permission): `GET /api/v1/forms/public`, `POST /api/v1/forms/public/submit`, `POST /api/v1/forms/public/partial`, `POST /api/v1/forms/experiment/view`, `GET /api/v1/embed.js`, `GET /api/v1/openapi.json`, `POST /api/v1/webhooks/resend`.
+
+---
+
 ## Lead Management
 
 ### crm_create_lead
@@ -675,6 +765,8 @@ Both flows are asynchronous: the POST returns a `jobId` and the work happens in 
 | GET | `/api/v1/exports` | List the last 20 export jobs |
 | GET | `/api/v1/exports/get?id=<jobId>` | Poll a single job |
 | GET | `/api/v1/exports/download?id=<jobId>` | Download the generated file |
+
+> CSV cells starting with `=`, `+`, `@` or TAB come prefixed with `'` (formula-injection protection; negative numbers untouched). The import side strips the prefix, so export → reimport round-trips cleanly.
 
 #### POST /api/v1/exports
 

@@ -166,6 +166,23 @@ export function parseDateValue(raw: string): number | null {
   return null;
 }
 
+/**
+ * Apóstrofo de neutralização de fórmula (inverso do `escapeFormulas` de
+ * `lib/csv.ts`): remove UM apóstrofo inicial só quando ele é seguido de um dos
+ * caracteres que o export escapa (`= + - @`, TAB, CR) — é exatamente o inverso
+ * do prefixo aplicado lá. Um apóstrofo legítimo no dado (ex.: "'s-Hertogenbosch",
+ * onde o 2º caractere não bate no padrão) fica intacto. Isso fecha o round-trip:
+ * exportar → reimportar → exportar dá o mesmo resultado, e um valor que o
+ * usuário digitou como `'=SOMA(A1)` (fórmula neutralizada) volta a ser
+ * `=SOMA(A1)` no banco em vez de carregar o apóstrofo para sempre.
+ */
+const FORMULA_ESCAPE_RE = /^'[=+\-@\t\r]/;
+
+/** Desfaz o escape de fórmula (ver `FORMULA_ESCAPE_RE`) antes de coagir a célula. */
+export function unescapeFormulaPrefix(raw: string): string {
+  return FORMULA_ESCAPE_RE.test(raw) ? raw.slice(1) : raw;
+}
+
 /** Lista separada por `;` (mesmo separador usado no export). */
 export function splitList(raw: string): string[] {
   return String(raw ?? "")
@@ -757,7 +774,9 @@ export function coerceAndValidateRow(
   for (const [header, destination] of Object.entries(mapping ?? {})) {
     if (!destination || destination === IGNORE_FIELD) continue;
     const cell = row?.[header];
-    const raw = cell === undefined || cell === null ? "" : String(cell).trim();
+    const raw = unescapeFormulaPrefix(
+      cell === undefined || cell === null ? "" : String(cell).trim()
+    );
 
     if (destination.startsWith(CUSTOM_FIELD_PREFIX)) {
       const key = destination.slice(CUSTOM_FIELD_PREFIX.length);

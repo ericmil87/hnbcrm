@@ -850,7 +850,10 @@ async function runEntityCsv(
   } while (cursor);
 
   return {
-    content: serializeCsv(columns, rows),
+    // escapeFormulas: dado de outra org/lead pode ter sido digitado por um
+    // contato mal-intencionado — neutraliza CSV formula injection ao abrir a
+    // planilha no Excel/Sheets (regra 1 do plano de export/import).
+    content: serializeCsv(columns, rows, { escapeFormulas: true }),
     mimeType: "text/csv;charset=utf-8",
     rowCount: rows.length,
   };

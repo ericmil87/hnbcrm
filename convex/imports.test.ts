@@ -394,6 +394,26 @@ describe("wizard de contatos", () => {
     expect(csv).toContain("nao-eh-email");
     expect(csv).not.toContain("maria@exemplo.com");
   });
+
+  test("getFailedRowsCsv neutraliza célula com fórmula plantada na linha com erro", async () => {
+    const s = await seedOrg(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const csv = [
+      "Nome,E-mail",
+      "Maria,maria@exemplo.com",
+      "=1+1,nao-eh-email",
+    ].join("\n");
+    const jobId = await startJob(asAdmin, s, "contacts", csv);
+    await preview(asAdmin, s.organizationId, jobId);
+    await execute(asAdmin, s.organizationId, jobId);
+
+    const result: string = await asAdmin.action(api.imports.getFailedRowsCsv, {
+      organizationId: s.organizationId,
+      jobId,
+    });
+    expect(result).toContain("'=1+1");
+    expect(result).not.toMatch(/[,\r\n]=1\+1/);
+  });
 });
 
 // ===== Estratégias de duplicata =====

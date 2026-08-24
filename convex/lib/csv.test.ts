@@ -142,6 +142,45 @@ describe("serializeCsv", () => {
     expect(plain).toBe("a\r\n=1+1\r\n");
   });
 
+  it("prefixa com ' células que começam com = + @ ou TAB quando escapeFormulas está ligado", () => {
+    const rows = [
+      { a: "=HYPERLINK(\"http://mal.example\")" },
+      { a: "+1234" },
+      { a: "@SUM(A1)" },
+      { a: "\tconteudo" },
+    ];
+    for (const row of rows) {
+      const csv = serializeCsv(["a"], [row], { bom: false, escapeFormulas: true });
+      const cell = row.a.includes('"') ? `"'${row.a.replace(/"/g, '""')}"` : `'${row.a}`;
+      expect(csv).toBe(`a\r\n${cell}\r\n`);
+    }
+  });
+
+  it("não prefixa número puro negativo (inteiro ou decimal pt-BR) mesmo com escapeFormulas ligado", () => {
+    expect(serializeCsv(["a"], [{ a: "-123" }], { bom: false, escapeFormulas: true })).toBe(
+      "a\r\n-123\r\n"
+    );
+    // Delimitador ";" evita a quotação por causa da vírgula decimal — o que
+    // importa aqui é que NÃO leva o prefixo `'` de neutralização de fórmula.
+    expect(
+      serializeCsv(["a"], [{ a: "-1.234,56" }], {
+        bom: false,
+        escapeFormulas: true,
+        delimiter: ";",
+      })
+    ).toBe("a\r\n-1.234,56\r\n");
+  });
+
+  it("prefixa com ' quando o valor começa com - mas não é um número puro", () => {
+    const csv = serializeCsv(["a"], [{ a: "-abc" }], { bom: false, escapeFormulas: true });
+    expect(csv).toBe("a\r\n'-abc\r\n");
+  });
+
+  it("não neutraliza fórmulas por padrão (sem passar escapeFormulas)", () => {
+    const csv = serializeCsv(["a"], [{ a: "=1+1" }, { a: "-123" }], { bom: false });
+    expect(csv).toBe("a\r\n=1+1\r\n-123\r\n");
+  });
+
   it("faz round-trip com parseCsv preservando acentos e valores complexos", () => {
     const headers = ["nome", "obs", "tags"];
     const rows = [

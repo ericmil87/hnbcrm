@@ -381,6 +381,12 @@ npm run dev`}</CodeBlock>
                 Envie o header <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">X-API-Key</code> em
                 todas as requisicoes:
               </p>
+              <p className="text-sm text-text-secondary">
+                Cada rota exige a permissao RBAC correspondente do membro dono da chave (as mesmas
+                da interface — ex.: excluir lead exige <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">leads: full</code>,
+                exportar/importar dados exige <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">settings: manage</code>).
+                A tabela completa rota → permissao esta no <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">/llms-full.txt</code>.
+              </p>
               <CodeBlock language="bash">{`curl -X GET "https://SEU-DEPLOYMENT.convex.site/api/v1/leads" \\
   -H "X-API-Key: sua_chave_aqui"`}</CodeBlock>
             </Card>
@@ -398,7 +404,7 @@ npm run dev`}</CodeBlock>
                 </p>
                 <p>
                   <code className="text-semantic-error bg-surface-overlay px-1.5 py-0.5 rounded text-xs">429</code>{" "}
-                  — Rate limit excedido
+                  — Rate limit excedido (300 requisicoes/minuto por chave)
                 </p>
               </div>
             </Card>

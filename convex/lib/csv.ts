@@ -213,9 +213,28 @@ export function formatCsvValue(value: unknown): string {
   }
 }
 
+/** `=`, `+`, `@`, TAB e CR no início da célula são sempre gatilho de fórmula. */
+const FORMULA_PREFIX_RE = /^[=+@\t\r]/;
+
+/**
+ * Número puro negativo: "-123", "-1234.56"/"-1,5" (um único separador) ou
+ * "-1.234,56"/"-1.234.567,89" (milhar por ponto + decimal por vírgula, pt-BR).
+ * `-` sozinho NÃO é sinal de fórmula em planilha — é sinal de número — então
+ * uma célula assim não deve levar o prefixo `'` (senão "-123" vira "'-123" e a
+ * coluna numérica é corrompida ao reimportar/abrir no Excel).
+ */
+const NEGATIVE_NUMBER_RE = /^-(?:\d{1,3}(?:\.\d{3})*(?:,\d+)?|\d+(?:[.,]\d+)?)$/;
+
+/** `-` só é tratado como início de fórmula quando a célula não é um número puro. */
+function needsFormulaEscape(cell: string): boolean {
+  if (FORMULA_PREFIX_RE.test(cell)) return true;
+  if (cell.startsWith("-")) return !NEGATIVE_NUMBER_RE.test(cell);
+  return false;
+}
+
 function escapeCell(raw: string, delimiter: string, escapeFormulas: boolean): string {
   let cell = raw;
-  if (escapeFormulas && /^[=+\-@\t\r]/.test(cell)) cell = `'${cell}`;
+  if (escapeFormulas && needsFormulaEscape(cell)) cell = `'${cell}`;
   const needsQuotes =
     cell.includes(delimiter) ||
     cell.includes('"') ||

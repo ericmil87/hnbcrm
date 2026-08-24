@@ -2,6 +2,20 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.47.0] - 2026-08-24
+
+### Segurança da API — permissão em todas as rotas REST + anti CSV injection
+
+- **Toda a API REST agora enforça permissão** (antes só as 12 rotas de dados da v0.46): as 71 rotas autenticadas de `/api/v1/*` passam por um mapa único `ROUTE_PERMISSIONS` cujo nível espelha o `requirePermission` da função equivalente do app; **fail-closed** — rota nova sem entrada no mapa recebe 403 em vez de passar batido; negação padronizada (`Permissão insuficiente`, 403)
+- 3 rotas self-scoped exigem só API key válida (`GET /team-members`, `GET`/`PUT /notifications/preferences`) — espelham o `requireAuth` puro do app, sem ficar mais rígidas que ele
+- Impacto em keys de membros `ai`/`agent` (defaults): 403 novo **apenas** em `POST /leads/delete` (exige `leads: full`, como `leads.deleteLead` no app) e `GET /audit-logs` (`auditLogs: view`); todo o resto do fluxo do atendente/MCP continua funcionando; contorno: override de permissão por membro
+- **Teste de build** `routerPermissions.test.ts` (19 testes): completude do mapa nos dois sentidos, gate presente em cada handler, níveis válidos, rotas "authenticated" pinadas
+- **Proteção contra CSV formula injection**: export por entidade e "linhas com erro" escapam células começando com `=` `+` `@` tab (prefixo `'`); números negativos (`-123`, `-1.234,56`) preservados para não corromper colunas numéricas; o import remove o prefixo no round-trip (`'=SOMA(A1)` volta a ser `=SOMA(A1)` no banco) sem tocar apóstrofos legítimos
+- OpenAPI (403 + "requer permissão" em 51 operações), llms.txt e refs da skill documentam a tabela rota → permissão
+- 536 testes verdes (35 arquivos, +28) · lint completo
+
+**Modificados:** `convex/router.ts`, `convex/openapiSpec.ts`, `convex/llmsTxt.ts`, `convex/lib/csv.ts`, `convex/lib/importMapping.ts`, `convex/exports.ts`, `convex/imports.ts`, refs da skill. **Novo:** `convex/routerPermissions.test.ts`.
+
 ## [0.46.0] - 2026-08-23
 
 ### Exportação e importação de dados — backup, migração e portabilidade LGPD

@@ -229,6 +229,33 @@ describe("coerceAndValidateRow (contatos)", () => {
     if (result.ok) return;
     expect(result.errors[0].message).toContain('Campo "naoExiste"');
   });
+
+  it("desfaz o escape de fórmula do export (inverso do escapeFormulas de lib/csv.ts)", () => {
+    const result = coerceAndValidateRow(
+      { Nome: "'=SOMA(A1)" },
+      { Nome: "firstName" },
+      "contacts"
+    );
+    expect(result.ok && result.value.firstName).toBe("=SOMA(A1)");
+  });
+
+  it("preserva apóstrofo legítimo que não é escape de fórmula", () => {
+    const result = coerceAndValidateRow(
+      { Nome: "'texto normal" },
+      { Nome: "firstName" },
+      "contacts"
+    );
+    expect(result.ok && result.value.firstName).toBe("'texto normal");
+  });
+
+  it("preserva apóstrofo legítimo em nome próprio ('s-Hertogenbosch)", () => {
+    const result = coerceAndValidateRow(
+      { Nome: "'s-Hertogenbosch" },
+      { Nome: "firstName" },
+      "contacts"
+    );
+    expect(result.ok && result.value.firstName).toBe("'s-Hertogenbosch");
+  });
 });
 
 // ===== coerceAndValidateRow — custom fields =====

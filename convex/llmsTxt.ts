@@ -18,7 +18,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
-- Permissions: Granular RBAC with 9 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys). API keys can have scoped permissions.
+- Permissions: Granular RBAC with 9 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
 
 ## WhatsApp Channel
 
@@ -75,6 +75,33 @@ API keys resolve permissions in a chain: key-level permissions > team member per
 \`\`\`
 X-API-Key: your-api-key-here
 \`\`\`
+
+### Permission enforcement (route → permission)
+
+**EVERY \`/api/v1\` route enforces a minimum permission**, not just the data export/import ones. The check runs right after key authentication; a key that resolves to a lower level gets \`403 { "error": "Permissão insuficiente", "code": 403 }\` — identical body on every route. The required level MIRRORS the equivalent in-app function: where the app calls \`requirePermission(ctx, org, category, level)\` the route requires the same pair; where the app only requires org membership the route requires the category's lowest read level. Routes not listed below are rejected (fail-closed). The source of truth is \`ROUTE_PERMISSIONS\` in \`convex/router.ts\`.
+
+Paths below omit the \`/api/v1\` prefix:
+
+| Required permission | Routes |
+|---------------------|--------|
+| \`auditLogs: view\` | GET /audit-logs |
+| \`contacts: edit\` | POST /contacts/create, POST /contacts/enrich |
+| \`contacts: view\` | GET /contacts, GET /contacts/get, POST /contacts/update, GET /contacts/gaps, GET /contacts/search |
+| \`inbox: reply\` | POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
+| \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending |
+| \`leads: edit_own\` | POST /inbound/lead, POST /files/upload-url, POST /files, DELETE /files/:id |
+| \`leads: full\` | POST /leads/delete |
+| \`leads: view_own\` | GET /leads, GET /leads/get, POST /leads/update, POST /leads/move-stage, POST /leads/assign, GET /files/:id/url, GET /boards, GET /field-definitions, GET /lead-sources, GET /activities, POST /activities |
+| \`reports: view\` | GET /dashboard |
+| \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows |
+| \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add, GET /calendar/events, GET /calendar/events/get, POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete |
+| valid API key only | GET /team-members, GET /notifications/preferences, PUT /notifications/preferences (self-scoped — mirrors the app, which requires only membership for these) |
+
+Public \`/api/v1\` routes (no API key, no permission): GET /forms/public, POST /forms/public/submit, POST /forms/public/partial, POST /forms/experiment/view, GET /embed.js, GET /openapi.json, POST /webhooks/resend (Resend signature).
+
+**Role defaults vs. the table:** \`agent\` and \`ai\` keys (defaults: leads edit_own, contacts edit, inbox reply, tasks edit_own, reports view, everything else none) are refused on POST /leads/delete, GET /audit-logs and all export/import routes. \`manager\` keys are refused on POST /leads/delete and the export/import routes. Give the key an explicit permission override (or use an admin-linked key) when an integration needs those.
+
+**Rate limit:** 300 requests per minute per API key (fixed 1-minute window). Exceeding it returns 429 with \`Rate limit exceeded — try again in a minute\`.
 
 ---
 
@@ -512,7 +539,7 @@ A submission from a public form.
 
 ## REST API Endpoints
 
-All endpoints are at \`/api/v1/*\` and require \`X-API-Key\` header.
+All endpoints are at \`/api/v1/*\` and require the \`X-API-Key\` header **plus** the minimum permission listed in the route→permission table under [Authentication](#authentication) — a key below the required level gets \`403 { error: "Permissão insuficiente" }\`.
 
 ### Lead Endpoints
 
@@ -994,7 +1021,7 @@ Get audit logs with filtering and cursor-based pagination.
 
 ### Data Export / Import Endpoints
 
-**These are the only endpoints that enforce a permission level.** The API key must resolve to \`settings: manage\` (admin default) — anything lower gets \`403 { error: "Permissão insuficiente" }\`. Exporting the whole organization is a data-exfiltration surface, so every transition is written to \`auditLogs\` (full backup = severity \`high\`).
+**The strictest endpoints of the API.** The API key must resolve to \`settings: manage\` (admin default) — anything lower gets \`403 { error: "Permissão insuficiente" }\`. Every other route is enforced too (see the table under Authentication), but at the level its in-app counterpart uses. Exporting the whole organization is a data-exfiltration surface, so every transition is written to \`auditLogs\` (full backup = severity \`high\`).
 
 #### POST /api/v1/exports
 Create an asynchronous export job (queued immediately, executed in the background).
@@ -1024,7 +1051,7 @@ Poll a single export job. Watch \`status\` (\`queued\` → \`running\` → \`com
 #### GET /api/v1/exports/download?id=<jobId>
 Stream the generated file through the authenticated endpoint (no public storage URL is ever persisted).
 
-**Response:** the file body with \`Content-Type: text/csv; charset=utf-8\` (or \`application/json\`) and \`Content-Disposition: attachment; filename="hnbcrm-contatos-2026-08-23.csv"\`. Returns 404 when the job is not \`completed\` or when the blob already expired (7 days, cleaned hourly by cron).
+**Response:** the file body with \`Content-Type: text/csv; charset=utf-8\` (or \`application/json\`) and \`Content-Disposition: attachment; filename="hnbcrm-contatos-2026-08-23.csv"\`. Returns 404 when the job is not \`completed\` or when the blob already expired (7 days, cleaned hourly by cron). CSV cells starting with \`=\`, \`+\`, \`@\` or TAB are prefixed with a single quote (\`'\`) as formula-injection protection (negative numbers are left intact); the import endpoints strip that prefix back, so export → reimport round-trips cleanly.
 
 CSV exports carry a UTF-8 BOM (opens correctly in Excel/LibreOffice), ISO dates and flattened custom fields as \`cf_<key>\` columns. The JSON backup is \`{ format: "hnbcrm-backup", version: 1, exportedAt, organizationId, entities: { <table>: [...] } }\` with secrets stripped (no API keys, org secrets, channel credentials or webhook secrets).
 
