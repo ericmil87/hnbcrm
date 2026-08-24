@@ -27,6 +27,7 @@ src/
     │   ├── Avatar.tsx         # Initials avatar with AI badge + status dot
     │   ├── ConfirmDialog.tsx  # Reusable confirmation modal (danger/default variants)
     │   ├── Checkbox.tsx       # Styled checkbox with label/description
+    │   ├── FileDropZone.tsx   # Drag-and-drop + clique p/ escolher arquivo (.csv), nome/tamanho, aviso >10 MB, acessível
     │   └── ApiKeyRevealModal.tsx # API key reveal with copy + security warning
     ├── notifications/
     │   ├── NotificationBell.tsx        # Header bell — unread count, opens NotificationPanel
@@ -65,11 +66,13 @@ src/
     ├── handoffs/               # Peças da fila de repasses
     │   └── HandoffPeekSlideOver.tsx # Espiada read-only na conversa do repasse (resumo estruturado + BANT, sem composer)
     ├── TeamPage.tsx            # Team member management (route: /app/equipe)
-    ├── Settings.tsx            # Organization settings (route: /app/configuracoes)
+    ├── Settings.tsx            # Organization settings (route: /app/configuracoes) — deep-link ?secao=<id> p/ abrir numa seção
     ├── settings/                # Settings section panels
     │   ├── AiSection.tsx            # AI config: activation/LGPD ack, Copiloto/Atendente toggles, bridge risk ack, attendant profile
     │   ├── ChannelsSection.tsx      # WhatsApp channel configs (Meta Cloud API + bridge), QR pairing, risk ack
-    │   └── ChannelHealthPanel.tsx   # 7-day delivery/health stats per WhatsApp channel
+    │   ├── ChannelHealthPanel.tsx   # 7-day delivery/health stats per WhatsApp channel
+    │   ├── DataSection.tsx          # Aba "Dados" (gate settings:manage): export rápido (CSV/backup JSON + LGPD) com histórico reativo e download; imports com contadores, linhas com erro, desfazer/cancelar
+    │   └── ImportWizard.tsx         # Wizard de importação em 5 passos (entidade+upload → mapeamento com encodeHeaderKey → dry-run → execução reativa → resultado); retoma pelo status server-side do job
     ├── AuditLogs.tsx           # Audit log viewer (route: /app/auditoria)
     ├── ContactsPage.tsx        # Contacts management (route: /app/contatos)
     ├── TasksPage.tsx           # Task manager (route: /app/tarefas) — list/kanban per project, deep-link ?task=<id>

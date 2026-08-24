@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useOutletContext } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -20,12 +20,43 @@ import { ShieldAlert } from "lucide-react";
 import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
 import { ChannelsSection } from "@/components/settings/ChannelsSection";
 import { AiSection } from "@/components/settings/AiSection";
+import { DataSection } from "@/components/settings/DataSection";
 
-type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "notifications";
+type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "data" | "notifications";
+
+const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
+  { id: "general", name: "Geral" },
+  { id: "ai", name: "IA" },
+  { id: "apikeys", name: "Chaves API" },
+  { id: "fields", name: "Campos Personalizados" },
+  { id: "sources", name: "Fontes de Leads" },
+  { id: "webhooks", name: "Webhooks" },
+  { id: "channels", name: "Canais" },
+  { id: "data", name: "Dados" },
+  { id: "notifications", name: "Notificacoes" },
+];
+
+function isSettingsSection(value: string | null): value is SettingsSection {
+  return SETTINGS_SECTIONS.some((section) => section.id === value);
+}
 
 export function Settings() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
+
+  // Deep-link `/app/configuracoes?secao=<id>` (usado pelo Painel).
+  const [searchParams] = useSearchParams();
+  const sectionParam = searchParams.get("secao");
+  const [activeSection, setActiveSection] = useState<SettingsSection>(
+    isSettingsSection(sectionParam) ? sectionParam : "general"
+  );
+  const lastParamRef = useRef<string | null>(sectionParam);
+
+  useEffect(() => {
+    if (lastParamRef.current === sectionParam) return;
+    lastParamRef.current = sectionParam;
+    if (isSettingsSection(sectionParam)) setActiveSection(sectionParam);
+  }, [sectionParam]);
 
   if (!can("settings", "view")) {
     return (
@@ -35,18 +66,8 @@ export function Settings() {
       </div>
     );
   }
-  const [activeSection, setActiveSection] = useState<SettingsSection>("general");
 
-  const sections = [
-    { id: "general", name: "Geral" },
-    { id: "ai", name: "IA" },
-    { id: "apikeys", name: "Chaves API" },
-    { id: "fields", name: "Campos Personalizados" },
-    { id: "sources", name: "Fontes de Leads" },
-    { id: "webhooks", name: "Webhooks" },
-    { id: "channels", name: "Canais" },
-    { id: "notifications", name: "Notificacoes" },
-  ];
+  const sections = SETTINGS_SECTIONS;
 
   return (
     <div className="space-y-6">
@@ -57,7 +78,7 @@ export function Settings() {
         {sections.map((section) => (
           <button
             key={section.id}
-            onClick={() => setActiveSection(section.id as SettingsSection)}
+            onClick={() => setActiveSection(section.id)}
             className={cn(
               "px-4 py-2 rounded-full text-sm font-medium transition-colors",
               activeSection === section.id
@@ -77,6 +98,7 @@ export function Settings() {
       {activeSection === "sources" && <LeadSourcesSection organizationId={organizationId} />}
       {activeSection === "webhooks" && <WebhooksSection organizationId={organizationId} />}
       {activeSection === "channels" && <ChannelsSection organizationId={organizationId} />}
+      {activeSection === "data" && <DataSection organizationId={organizationId} />}
       {activeSection === "notifications" && <NotificationsSection organizationId={organizationId} />}
     </div>
   );

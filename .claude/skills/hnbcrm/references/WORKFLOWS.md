@@ -358,3 +358,132 @@ When a visitor submits a public form at `/f/:slug`:
 - Check the lead's activity feed (`crm_get_activities`) — form submissions show as `type: "created"` with content "Formulario 'X' submetido"
 - The lead's contact will have fields populated from the form's CRM mappings
 - Process these leads through the normal intake workflow (qualify, enrich contact, advance pipeline)
+
+---
+
+## 9. Exporting Data (REST)
+
+Use when someone asks for a backup, a spreadsheet of contacts/leads/tasks, or LGPD data portability. Requires an API key that resolves to `settings: manage` — anything lower gets `403 Permissão insuficiente`. Only one export job can be active per organization at a time.
+
+### Step 1: Create the job
+
+```bash
+# CSV of a single entity (scope=entity always pairs with format=csv)
+curl -s -X POST "$HNBCRM_URL/api/v1/exports" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"format":"csv","scope":"entity","entity":"contacts"}'
+# → { "success": true, "jobId": "..." }
+
+# Full organization backup (scope=full_backup always pairs with format=json)
+curl -s -X POST "$HNBCRM_URL/api/v1/exports" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"format":"json","scope":"full_backup"}'
+```
+
+Pass `columns` to narrow the CSV (e.g. `["firstName","lastName","email","phone"]`); omit it for every column, including flattened custom fields (`cf_<key>`).
+
+### Step 2: Poll until it finishes
+
+```bash
+curl -s "$HNBCRM_URL/api/v1/exports/get?id=$JOB_ID" -H "X-API-Key: $HNBCRM_API_KEY"
+```
+
+`status` walks `queued` → `running` → `completed` | `failed`. While running, `progress.processed` grows and `progress.currentEntity` shows which table is being read. On `failed`, read `error` — the usual causes are the row cap (100k for CSV) and the document cap (200k for a backup).
+
+### Step 3: Download
+
+```bash
+curl -sL "$HNBCRM_URL/api/v1/exports/download?id=$JOB_ID" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -o contatos.csv
+```
+
+The file streams through the authenticated endpoint with `Content-Disposition: attachment` — there is no public URL. **The blob is deleted 7 days after creation** (`expiresAt`); after that the endpoint answers 404 and the job has to be re-run.
+
+### What you get
+
+- **CSV** — UTF-8 with BOM (opens cleanly in Excel/LibreOffice), RFC 4180 quoting, ISO dates, denormalized names (`boardName`, `stageName`, `contactEmail`, `assignedToName`, …) and `cf_<key>` columns for custom fields.
+- **JSON backup** — `{ format: "hnbcrm-backup", version: 1, exportedAt, organizationId, entities: { <table>: [...] } }`. Secrets never leave: API keys, org secrets, channel credentials, webhook secrets and AI runtime tables are excluded by a central denylist. Restoring a backup is **not** supported — it is an archive/portability artifact.
+
+Webhooks `export.completed` / `export.failed` fire at the end, so a listener can skip the polling loop.
+
+---
+
+## 10. Importing a CSV (REST wizard)
+
+The import is a five-step wizard whose state lives server-side, so you can resume it from any client by reading `status`. Same gate as the export (`settings: manage`), one active import job per organization, 10.000 rows and 10 MB per job.
+
+### Step 1: Create the job
+
+```bash
+curl -s -X POST "$HNBCRM_URL/api/v1/imports" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"entity":"contacts","duplicateStrategy":"skip","fileName":"contatos.csv","csv":"Nome,E-mail\nAna,ana@x.com"}'
+# → { "success": true, "jobId": "...", "fileId": "..." }
+```
+
+Inline `csv` is capped at 5 MB. For bigger files, upload first (`POST /api/v1/files/upload-url` → PUT the bytes → `POST /api/v1/files` with `fileType: "import_file"`) and pass `fileId` instead.
+
+Pick `duplicateStrategy` deliberately — it is what the run does when a contact already matches by email (then phone):
+- `skip` — leave the existing record untouched (safe default for re-imports)
+- `update` — merge the incoming fields into the existing contact (tags are added, never removed)
+- `create` — always insert, duplicates included
+
+### Step 2: Read the detected headers and fix the mapping
+
+Header detection runs automatically. Poll until `detectedHeaders` and `suggestedMapping` show up:
+
+```bash
+curl -s "$HNBCRM_URL/api/v1/imports/get?id=$JOB_ID" -H "X-API-Key: $HNBCRM_API_KEY"
+```
+
+The suggestion already understands PT-BR and EN headers (`nome`→`firstName`, `e-mail`→`email`, `telefone`/`celular`→`phone`, `empresa`→`company`, `funil`→`boardName`, `etapa`→`stageName`, …). Send only what you want to change — the mapping you POST replaces the whole record:
+
+```bash
+curl -s -X POST "$HNBCRM_URL/api/v1/imports/mapping" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"jobId":"'$JOB_ID'","mapping":{"Nome":"firstName","E-mail":"email","Observações":"__ignore__"}}'
+```
+
+Keys are the raw headers. Values are a field name, `cf:<key>` for a custom field of the organization, or `__ignore__`. Changing the mapping clears any previous dry-run.
+
+### Step 3: Dry-run before touching data
+
+```bash
+curl -s -X POST "$HNBCRM_URL/api/v1/imports/preview" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" -d '{"jobId":"'$JOB_ID'"}'
+```
+
+The job goes to `previewing` and lands on `preview_ready` with:
+
+```
+dryRun: { totalRows, validRows, errorRows, newRows, updateRows, skipRows, sampleErrors[≤50], preview[≤10] }
+```
+
+Read this before confirming. `errorRows > 0` means those lines will be skipped by the run; `skipRows`/`updateRows` tell you how many duplicates the chosen strategy will hit. If the numbers look wrong, go back to step 2 — the mapping can be changed as many times as needed.
+
+### Step 4: Confirm and follow the progress
+
+```bash
+curl -s -X POST "$HNBCRM_URL/api/v1/imports/confirm" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" -d '{"jobId":"'$JOB_ID'"}'
+```
+
+Rows are written in batches of 50. Poll `/api/v1/imports/get` and watch `progress: { processed, total, created, updated, skipped, failed }` until `completed` (nothing failed) or `completed_with_errors`.
+
+For leads, each row resolves its board and stage by name (case-insensitive, falling back to the default board and its first stage), finds-or-creates the contact from `contactEmail`/`contactPhone`, and matches `assigneeEmail` against team members.
+
+### Step 5: Fix the leftovers — or undo everything
+
+```bash
+# CSV with only the failed rows + an "erro" column
+curl -s "$HNBCRM_URL/api/v1/imports/failed-rows?id=$JOB_ID" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -o erros.csv
+
+# Full undo: deletes what was created, reverts what was updated
+curl -s -X POST "$HNBCRM_URL/api/v1/imports/rollback" \
+  -H "X-API-Key: $HNBCRM_API_KEY" -H "Content-Type: application/json" -d '{"jobId":"'$JOB_ID'"}'
+```
+
+Correct `erros.csv` and re-import it as a new job. Rollback only works on `completed` / `completed_with_errors` and does not undo side effects that already fired (activities, webhooks) — announce it before running it on a shared pipeline.
+
+Webhooks `import.completed`, `import.failed` and `import.rolled_back` fire on the corresponding transitions.

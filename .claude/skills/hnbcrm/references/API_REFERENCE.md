@@ -656,3 +656,108 @@ Shortcut for `GET /api/v1/handoffs?status=pending`.
 |----------|--------------|
 | `crm_get_notification_preferences` | GET /api/v1/notifications/preferences |
 | `crm_update_notification_preferences` | PUT /api/v1/notifications/preferences |
+
+---
+
+## Data Export / Import (REST only)
+
+No MCP tools — these endpoints exist only in the REST API and in the app UI (Settings → Dados).
+
+**These are the only endpoints that enforce a permission level.** The API key must resolve to `settings: manage` (admin default; manager only has `settings: view`). Anything lower gets `403 { "error": "Permissão insuficiente" }`. Every job transition is written to `auditLogs` — a full backup is logged with severity `high`.
+
+Both flows are asynchronous: the POST returns a `jobId` and the work happens in the background. Poll the `get` endpoint until the job reaches a terminal status.
+
+### Export Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/v1/exports` | Create an export job |
+| GET | `/api/v1/exports` | List the last 20 export jobs |
+| GET | `/api/v1/exports/get?id=<jobId>` | Poll a single job |
+| GET | `/api/v1/exports/download?id=<jobId>` | Download the generated file |
+
+#### POST /api/v1/exports
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| format | string | yes | `csv` or `json` |
+| scope | string | yes | `entity` (one table as CSV) or `full_backup` (whole org as JSON) |
+| entity | string | when scope=entity | `contacts`, `leads` or `tasks` |
+| columns | string[] | no | Subset of CSV columns (default: all) |
+
+Valid combinations: `scope=entity` requires `format=csv`; `scope=full_backup` requires `format=json`. Only one active export job per organization — a second one returns "Já existe uma exportação em andamento nesta organização".
+
+**Response:** `{ success: true, jobId }` (201)
+
+#### GET /api/v1/exports/get?id=
+
+**Response:** `{ job: { status, format, scope, entity, progress: { processed, total, currentEntity }, resultFileName, resultSize, rowCount, error, expiresAt, ... } }`
+
+`status` goes `queued` → `running` → `completed` | `failed`. 404 when the job belongs to another organization or does not exist.
+
+#### GET /api/v1/exports/download?id=
+
+Streams the file through the authenticated endpoint (no public storage URL is ever persisted).
+
+**Response:** the file body with `Content-Type: text/csv; charset=utf-8` (or `application/json`) and `Content-Disposition: attachment; filename="hnbcrm-contatos-2026-08-23.csv"`. 404 when the job is not `completed` or when the blob already expired (7 days).
+
+CSV exports carry a UTF-8 BOM (opens cleanly in Excel/LibreOffice), ISO dates, denormalized names (`boardName`, `stageName`, `contactEmail`, …) and flattened custom fields as `cf_<key>` columns. The JSON backup is `{ format: "hnbcrm-backup", version: 1, exportedAt, organizationId, entities: { <table>: [...] } }` with all secrets stripped (no API keys, org secrets, channel credentials or webhook secrets). Restoring a backup is **not** supported.
+
+### Import Endpoints
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| POST | `/api/v1/imports` | Create an import job (header detection starts automatically) |
+| GET | `/api/v1/imports` | List the last 20 import jobs |
+| GET | `/api/v1/imports/get?id=<jobId>` | Poll a single job |
+| POST | `/api/v1/imports/mapping` | Set the column → field mapping |
+| POST | `/api/v1/imports/preview` | Run the dry-run |
+| POST | `/api/v1/imports/confirm` | Execute the import |
+| POST | `/api/v1/imports/rollback` | Undo a finished import |
+| GET | `/api/v1/imports/failed-rows?id=<jobId>` | Download the rows that failed |
+
+Canceling a job that has not started yet (status `mapping` / `preview_ready`) is available only in the app UI — there is no REST route for it. A stuck job blocks new imports for the organization until it is canceled or fails.
+
+#### POST /api/v1/imports
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| entity | string | yes | `contacts` or `leads` |
+| duplicateStrategy | string | yes | `skip`, `update` or `create` |
+| fileName | string | yes | Name shown in the job history |
+| csv | string | one of csv/fileId | Inline CSV content, max 5 MB |
+| fileId | string | one of csv/fileId | File already saved via `POST /api/v1/files` with `fileType: "import_file"` (max 10 MB) |
+
+Limits: 10.000 rows per job. Only one active import job per organization.
+
+**Response:** `{ success: true, jobId, fileId }` (201)
+
+#### POST /api/v1/imports/mapping
+
+**Body:** `{ jobId, mapping }` — `mapping` keys are the **raw file headers**, exactly as they appear in `detectedHeaders`.
+
+```json
+{ "jobId": "...", "mapping": { "Nome": "firstName", "E-mail": "email", "Observações": "__ignore__" } }
+```
+
+Values are a field name, `cf:<key>` for a custom field of the organization, or `__ignore__` to drop the column. Contacts accept `firstName`, `lastName`, `email`, `phone`, `company`, `title`, `city`, `state`, `country`, `tags`, … Leads accept `title`, `value`, `boardName`, `stageName`, `sourceName`, `assigneeEmail`, `contactFirstName`, `contactLastName`, `contactEmail`, `contactPhone`, `contactCompany`, `priority`, `temperature`, `tags`, … Changing the mapping invalidates the previous dry-run. Only allowed before execution.
+
+**Response:** `{ success: true }`
+
+#### POST /api/v1/imports/preview · confirm · rollback
+
+All three take `{ jobId }` and return `{ success: true }`; the work runs in the background.
+
+- **preview** — queues the dry-run (`previewing`). When done the job sits at `preview_ready` with `dryRun: { totalRows, validRows, errorRows, newRows, updateRows, skipRows, sampleErrors (max 50), preview (max 10 rows) }`.
+- **confirm** — only from `preview_ready` and only with `dryRun.validRows > 0`. Runs in batches of 50 rows; follow `progress: { processed, total, created, updated, skipped, failed }` until `completed` or `completed_with_errors`.
+- **rollback** — only for `completed` / `completed_with_errors`. Deletes the created records and reverts the updated ones (`rolled_back`). Side effects already fired (activities, webhooks) are NOT reverted.
+
+#### GET /api/v1/imports/failed-rows?id=
+
+CSV with only the failed rows — original columns plus an `erro` column — ready to fix and re-import.
+
+**Response:** `text/csv` body with `Content-Disposition: attachment` (empty body when there are no errors).
+
+### Webhook events
+
+`export.completed`, `export.failed`, `import.completed`, `import.failed`, `import.rolled_back` — see WORKFLOWS.md for the full polling flow.

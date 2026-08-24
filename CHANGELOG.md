@@ -2,6 +2,42 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.46.0] - 2026-08-23
+
+### Exportação e importação de dados — backup, migração e portabilidade LGPD
+
+- **Aba "Dados" em Configurações**: exportar e importar num lugar só, com histórico reativo de jobs (status, progresso, "Baixar", "expira em X dias") — o card "Importar/Exportar" do Painel saiu do "em breve"
+- **Export CSV por entidade** (contatos, leads, tarefas) com colunas legíveis e desnormalizadas — lead traz contato/funil/estágio/responsável, tarefa traz projeto/coluna/etiquetas — e custom fields achatados (`cf_<chave>`); BOM + RFC 4180 (abre no Excel/LibreOffice com acentos corretos)
+- **Backup completo JSON versionado** (`hnbcrm-backup` v1) com as 22 tabelas core na ordem de dependência; segredos NUNCA saem (denylist central `exportSanitize` + teste de build que quebra se vazar) — atende portabilidade LGPD art. 18
+- **Import CSV de contatos com wizard de 5 passos**: upload (drag-and-drop) → mapeamento com sugestões automáticas PT-BR/EN (inclusive custom fields) → dry-run com contagem de novos/atualizações/erros e preview de 10 linhas → execução com barra reativa → resultado; fechar e reabrir o wizard retoma de onde parou (o job vive no servidor)
+- **Import CSV de leads**: resolve funil/estágio por nome (case-insensitive, com fallback para o board padrão), vincula ou cria o contato por e-mail/telefone e aceita responsável por e-mail
+- **Estratégias de duplicata**: pular (padrão), atualizar (célula vazia não apaga nada; etiquetas somam) ou criar mesmo assim
+- **Desfazer importação**: rollback apaga os registros criados e reverte os atualizados ao estado anterior, campo a campo
+- **"Baixar linhas com erro"**: CSV só com as linhas rejeitadas, pronto para corrigir e reimportar
+- Blobs de export ficam no File Storage por **7 dias** (cron horário de limpeza) e não contam na quota de arquivos da org
+- **REST API**: 12 rotas novas em `/api/v1/exports/*` e `/api/v1/imports/*` — as primeiras do produto com enforcement de permissão (`settings:manage` → 403); OpenAPI, llms.txt e referências da skill atualizados
+- **Webhooks novos**: `export.completed`, `export.failed`, `import.completed`, `import.failed`, `import.rolled_back`
+- **RBAC e auditoria**: tudo atrás de `settings:manage` (padrão: só admin); cada transição de job auditada — backup completo com severidade alta
+- Limites v1: arquivo ≤ 10 MB, ≤ 10.000 linhas por importação, lotes de 50, 1 job ativo por org por tipo
+- 508 testes verdes (34 arquivos) · lint completo
+
+**Arquivos novos:**
+
+| Arquivo | Propósito |
+|------|---------|
+| `convex/lib/csv.ts` | Parser/serializador CSV RFC 4180 (BOM, auto-detect `,`/`;`) — referência única |
+| `convex/lib/importMapping.ts` | Aliases PT-BR/EN → campos, sugestão de mapeamento, coerções e validação por linha |
+| `convex/lib/importKeys.ts` | Codificação das chaves do mapeamento (compartilhado por backend, REST e front) |
+| `convex/lib/exportColumns.ts` | Colunas por entidade com desnormalização e datas ISO |
+| `convex/lib/exportSanitize.ts` | Denylist central de segredos aplicada ao backup |
+| `convex/exports.ts` | Jobs de export (CSV/JSON), download, limpeza de expirados |
+| `convex/imports.ts` + `convex/importRun.ts` | Wizard server-side: detecção de headers, dry-run, lotes de 50, rollback |
+| `src/components/settings/DataSection.tsx` | Aba "Dados" (exportar + importar + históricos) |
+| `src/components/settings/ImportWizard.tsx` | Wizard de importação em 5 passos |
+| `src/components/ui/FileDropZone.tsx` | Zona de drag-and-drop de arquivo acessível |
+
+**Modificados:** `convex/schema.ts` (3 tabelas novas), `convex/router.ts` (12 rotas + preflights), `convex/crons.ts`, `convex/openapiSpec.ts`, `convex/llmsTxt.ts`, `convex/auditLogs.ts`, `convex/lib/auditDescription.ts`, `src/components/Settings.tsx` (seção Dados + deep-link `?secao=`), `src/components/DashboardOverview.tsx`, `src/pages/DevelopersPage.tsx`, refs da skill hnbcrm.
+
 ## [0.45.0] - 2026-08-14
 
 ### Repasses IA ↔ Humano fluidos + loop de coaching

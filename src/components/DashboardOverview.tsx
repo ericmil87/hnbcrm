@@ -183,7 +183,10 @@ export function DashboardOverview() {
           <Badge variant="warning">Próximas funcionalidades</Badge>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {comingSoonFeatures(() => onTabChange("settings")).map((feature, idx) => (
+          {comingSoonFeatures(
+            () => onTabChange("settings"),
+            () => navigate(`${TAB_ROUTES.settings}?secao=data`)
+          ).map((feature, idx) => (
             <ComingSoonCard key={idx} {...feature} />
           ))}
         </div>
@@ -688,7 +691,7 @@ function existingFeatures(
   ];
 }
 
-function comingSoonFeatures(onOpenAiSettings: () => void) {
+function comingSoonFeatures(onOpenAiSettings: () => void, onOpenDataSettings: () => void) {
   return [
     {
       icon: Sparkles,
@@ -710,7 +713,9 @@ function comingSoonFeatures(onOpenAiSettings: () => void) {
     {
       icon: FileUp,
       title: "Importar/Exportar",
-      description: "Importação de CSV e exportação de dados em massa para planilhas",
+      description: "Já disponível — abra Configurações → Dados",
+      available: true,
+      onClick: onOpenDataSettings,
     },
   ];
 }

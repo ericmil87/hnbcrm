@@ -33,7 +33,8 @@ export const OPENAPI_SPEC = `{
     { "name": "Tarefas", "description": "Gerenciamento de tarefas e lembretes do CRM" },
     { "name": "Fontes", "description": "Fontes de captação de leads" },
     { "name": "Auditoria", "description": "Logs de auditoria" },
-    { "name": "Calendario", "description": "Eventos do calendário" }
+    { "name": "Calendario", "description": "Eventos do calendário" },
+    { "name": "Dados", "description": "Exportação e importação de dados da organização — exige permissão settings: manage na chave de API" }
   ],
   "paths": {
     "/api/v1/inbound/lead": {
@@ -1790,6 +1791,372 @@ export const OPENAPI_SPEC = `{
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
+    },
+    "/api/v1/exports": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Criar exportação",
+        "description": "Cria um job assíncrono de exportação e o coloca na fila. Combinações válidas: scope=entity exige format=csv e entity; scope=full_backup exige format=json. Só um job de exportação ativo por organização. Requer settings: manage.",
+        "operationId": "createExportJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["format", "scope"],
+                "properties": {
+                  "format": { "type": "string", "enum": ["csv", "json"], "description": "csv para exportação por entidade, json para backup completo" },
+                  "scope": { "type": "string", "enum": ["entity", "full_backup"], "description": "entity = uma tabela em CSV; full_backup = backup JSON da organização" },
+                  "entity": { "type": "string", "enum": ["contacts", "leads", "tasks"], "description": "Obrigatório quando scope=entity" },
+                  "columns": { "type": "array", "items": { "type": "string" }, "description": "Subconjunto de colunas do CSV (opcional; padrão = todas)" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job criado e enfileirado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "const": true },
+                    "jobId": { "type": "string", "description": "ID do job de exportação" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Listar exportações",
+        "description": "Últimos 20 jobs de exportação da organização, do mais recente para o mais antigo. Requer settings: manage.",
+        "operationId": "listExportJobs",
+        "responses": {
+          "200": {
+            "description": "Lista de jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/ExportJob" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/exports/get": {
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Consultar exportação",
+        "description": "Estado de um job de exportação (use para acompanhar progress.processed até status=completed). Requer settings: manage.",
+        "operationId": "getExportJob",
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do job de exportação" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job encontrado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "job": { "$ref": "#/components/schemas/ExportJob" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/exports/download": {
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Baixar arquivo da exportação",
+        "description": "Devolve o arquivo gerado como anexo (Content-Disposition: attachment). Só funciona com status=completed e antes de expiresAt (7 dias); depois disso o blob é apagado pelo cron e a rota responde 404. Requer settings: manage.",
+        "operationId": "downloadExportJob",
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do job de exportação" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Arquivo da exportação",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" }, "description": "attachment; filename=\\"hnbcrm-contatos-2026-08-23.csv\\"" }
+            },
+            "content": {
+              "text/csv": { "schema": { "type": "string" } },
+              "application/json": { "schema": { "type": "string" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Criar importação",
+        "description": "Cria um job de importação de CSV e dispara a detecção de cabeçalhos (status inicial mapping). Envie o conteúdo em csv (máx. 5 MB no corpo) OU o fileId de um upload prévio via /api/v1/files (fileType import_file, máx. 10 MB). Só um job de importação ativo por organização. Requer settings: manage.",
+        "operationId": "createImportJob",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["entity", "duplicateStrategy", "fileName"],
+                "properties": {
+                  "entity": { "type": "string", "enum": ["contacts", "leads"], "description": "Entidade de destino" },
+                  "duplicateStrategy": { "type": "string", "enum": ["skip", "update", "create"], "description": "O que fazer quando o contato já existe (match por email, depois telefone)" },
+                  "fileName": { "type": "string", "description": "Nome do arquivo (aparece no histórico)" },
+                  "csv": { "type": "string", "description": "Conteúdo do CSV embutido (máx. 5 MB). Alternativa a fileId" },
+                  "fileId": { "type": "string", "description": "ID de um arquivo já salvo via /api/v1/files. Alternativa a csv" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job criado; a detecção de cabeçalhos roda em segundo plano",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "const": true },
+                    "jobId": { "type": "string", "description": "ID do job de importação" },
+                    "fileId": { "type": "string", "description": "ID do arquivo (o criado a partir do csv embutido, ou o informado)" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      },
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Listar importações",
+        "description": "Últimos 20 jobs de importação da organização. Requer settings: manage.",
+        "operationId": "listImportJobs",
+        "responses": {
+          "200": {
+            "description": "Lista de jobs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/ImportJob" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/get": {
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Consultar importação",
+        "description": "Estado de um job de importação, incluindo detectedHeaders, suggestedMapping, mapping, dryRun e progress. Requer settings: manage.",
+        "operationId": "getImportJob",
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do job de importação" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job encontrado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "job": { "$ref": "#/components/schemas/ImportJob" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/mapping": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Definir mapeamento",
+        "description": "Define o mapeamento coluna do arquivo → campo do CRM. As chaves são os CABEÇALHOS CRUS do arquivo. Valores: nome do campo (firstName, email, title, boardName, ...), cf:<chave> para campo personalizado, ou __ignore__ para ignorar a coluna. Alterar o mapeamento invalida o dry-run anterior. Só antes da execução. Requer settings: manage.",
+        "operationId": "updateImportMapping",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jobId", "mapping"],
+                "properties": {
+                  "jobId": { "type": "string", "description": "ID do job de importação" },
+                  "mapping": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Objeto { \\"Cabeçalho do arquivo\\": \\"campo\\" }", "example": { "Nome": "firstName", "E-mail": "email", "Observações": "__ignore__" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Success" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/preview": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Rodar dry-run",
+        "description": "Enfileira o dry-run (status previewing). Quando terminar, o job fica em preview_ready com o resumo em dryRun — consulte por /api/v1/imports/get. Requer settings: manage.",
+        "operationId": "runImportPreview",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jobId"],
+                "properties": { "jobId": { "type": "string", "description": "ID do job de importação" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Success" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/confirm": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Confirmar importação",
+        "description": "Executa a importação de verdade, em lotes de 50 linhas (status running → completed | completed_with_errors). Só a partir de preview_ready e com pelo menos uma linha válida. Requer settings: manage.",
+        "operationId": "confirmImport",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jobId"],
+                "properties": { "jobId": { "type": "string", "description": "ID do job de importação" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Success" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/rollback": {
+      "post": {
+        "tags": ["Dados"],
+        "summary": "Desfazer importação",
+        "description": "Apaga os registros criados e reverte os atualizados pela importação (status rolled_back). Só para jobs completed ou completed_with_errors. Efeitos colaterais já disparados (atividades, webhooks) não são revertidos. Requer settings: manage.",
+        "operationId": "rollbackImport",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["jobId"],
+                "properties": { "jobId": { "type": "string", "description": "ID do job de importação" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Success" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/imports/failed-rows": {
+      "get": {
+        "tags": ["Dados"],
+        "summary": "Baixar linhas com erro",
+        "description": "CSV com as linhas que falharam (colunas originais + coluna \\"erro\\"), para corrigir e reimportar. Devolve corpo vazio quando não há erros. Requer settings: manage.",
+        "operationId": "getImportFailedRows",
+        "parameters": [
+          { "name": "id", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID do job de importação" }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV das linhas com erro",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" }, "description": "attachment; filename=\\"erros-contatos.csv\\"" }
+            },
+            "content": { "text/csv": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
     }
   },
   "components": {
@@ -2077,6 +2444,83 @@ export const OPENAPI_SPEC = `{
           "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"], "description": "Severidade" },
           "createdAt": { "type": "number", "description": "Timestamp de criação" }
         }
+      },
+      "ExportJob": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string", "description": "ID do job" },
+          "_creationTime": { "type": "number", "description": "Timestamp de criação" },
+          "organizationId": { "type": "string", "description": "ID da organização" },
+          "requestedBy": { "type": "string", "description": "Membro que solicitou" },
+          "status": { "type": "string", "enum": ["queued", "running", "completed", "failed"], "description": "Estado do job" },
+          "format": { "type": "string", "enum": ["csv", "json"], "description": "Formato do arquivo" },
+          "scope": { "type": "string", "enum": ["entity", "full_backup"], "description": "Escopo da exportação" },
+          "entity": { "type": "string", "enum": ["contacts", "leads", "tasks"], "description": "Entidade exportada (scope=entity)" },
+          "columns": { "type": "array", "items": { "type": "string" }, "description": "Colunas escolhidas para o CSV" },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "processed": { "type": "number", "description": "Registros já processados" },
+              "total": { "type": "number", "description": "Total conhecido (quando disponível)" },
+              "currentEntity": { "type": "string", "description": "Tabela sendo lida no momento" }
+            }
+          },
+          "resultFileName": { "type": "string", "description": "Nome do arquivo gerado" },
+          "resultSize": { "type": "number", "description": "Tamanho do arquivo em bytes" },
+          "rowCount": { "type": "number", "description": "Linhas (CSV) ou documentos (backup) exportados" },
+          "error": { "type": "string", "description": "Mensagem de erro quando status=failed" },
+          "expiresAt": { "type": "number", "description": "Timestamp em que o arquivo é apagado (7 dias)" },
+          "createdAt": { "type": "number", "description": "Timestamp de criação" },
+          "startedAt": { "type": "number", "description": "Timestamp de início da execução" },
+          "finishedAt": { "type": "number", "description": "Timestamp de término" }
+        }
+      },
+      "ImportJob": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string", "description": "ID do job" },
+          "_creationTime": { "type": "number", "description": "Timestamp de criação" },
+          "organizationId": { "type": "string", "description": "ID da organização" },
+          "requestedBy": { "type": "string", "description": "Membro que solicitou" },
+          "status": { "type": "string", "enum": ["mapping", "previewing", "preview_ready", "running", "completed", "completed_with_errors", "failed", "rolled_back", "canceled"], "description": "Estado do wizard" },
+          "entity": { "type": "string", "enum": ["contacts", "leads"], "description": "Entidade de destino" },
+          "fileId": { "type": "string", "description": "Arquivo CSV de origem (tabela files)" },
+          "fileName": { "type": "string", "description": "Nome do arquivo" },
+          "detectedHeaders": { "type": "array", "items": { "type": "string" }, "description": "Cabeçalhos detectados no arquivo, na ordem original" },
+          "suggestedMapping": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Mapeamento sugerido — chaves são os cabeçalhos crus" },
+          "mapping": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Mapeamento em uso — chaves são os cabeçalhos crus" },
+          "duplicateStrategy": { "type": "string", "enum": ["skip", "update", "create"], "description": "Tratamento de duplicatas" },
+          "matchFields": { "type": "array", "items": { "type": "string" }, "description": "Campos usados no match de duplicata (contatos: email, phone)" },
+          "dryRun": {
+            "type": "object",
+            "description": "Resultado da pré-visualização (status preview_ready)",
+            "properties": {
+              "totalRows": { "type": "number" },
+              "validRows": { "type": "number" },
+              "errorRows": { "type": "number" },
+              "newRows": { "type": "number" },
+              "updateRows": { "type": "number" },
+              "skipRows": { "type": "number" },
+              "sampleErrors": { "type": "array", "description": "Até 50 erros de amostra", "items": { "type": "object", "properties": { "row": { "type": "number" }, "field": { "type": "string" }, "message": { "type": "string" } } } },
+              "preview": { "type": "array", "description": "Até 10 linhas já mapeadas", "items": { "type": "object", "additionalProperties": true } }
+            }
+          },
+          "progress": {
+            "type": "object",
+            "properties": {
+              "processed": { "type": "number" },
+              "total": { "type": "number" },
+              "created": { "type": "number" },
+              "updated": { "type": "number" },
+              "skipped": { "type": "number" },
+              "failed": { "type": "number" }
+            }
+          },
+          "error": { "type": "string", "description": "Mensagem de erro quando status=failed" },
+          "createdAt": { "type": "number", "description": "Timestamp de criação" },
+          "startedAt": { "type": "number", "description": "Timestamp de início da execução" },
+          "finishedAt": { "type": "number", "description": "Timestamp de término" }
+        }
       }
     },
     "responses": {
@@ -2116,6 +2560,20 @@ export const OPENAPI_SPEC = `{
               "properties": {
                 "error": { "type": "string", "description": "Mensagem de erro" },
                 "code": { "type": "integer", "example": 401 }
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Permissão insuficiente — a chave de API não tem o nível exigido (settings: manage nas rotas de dados)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": { "type": "string", "description": "Mensagem de erro" },
+                "code": { "type": "integer", "example": 403 }
               }
             }
           }

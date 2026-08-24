@@ -221,6 +221,8 @@ export const getAuditLogFilters = query({
       { value: "fieldDefinition", label: "Campos Personalizados" },
       { value: "apiKey", label: "Chaves de API" },
       { value: "savedView", label: "Visualizações Salvas" },
+      { value: "exportJob", label: "Exportações" },
+      { value: "importJob", label: "Importações" },
     ];
 
     const actions = [

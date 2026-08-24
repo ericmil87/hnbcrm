@@ -1033,6 +1033,11 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "task_label.created",
                   "task_label.updated",
                   "task_label.deleted",
+                  "export.completed",
+                  "export.failed",
+                  "import.completed",
+                  "import.failed",
+                  "import.rolled_back",
                 ].map((event) => (
                   <code
                     key={event}

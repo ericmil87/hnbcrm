@@ -11,4 +11,7 @@ crons.daily("send daily digest", { hourUTC: 11, minuteUTC: 0 }, internal.email.s
 
 crons.interval("mark abandoned form partials", { minutes: 10 }, internal.formPartials.internalMarkAbandoned);
 
+// Blobs de export vivem 7 dias (exportJobs.expiresAt); a limpeza roda de hora em hora.
+crons.interval("cleanup expired exports", { hours: 1 }, internal.exports.internalCleanupExpired, {});
+
 export default crons;

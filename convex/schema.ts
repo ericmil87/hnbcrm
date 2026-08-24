@@ -1465,6 +1465,76 @@ const applicationTables = {
   })
     .index("by_lead", ["leadId"])
     .index("by_organization", ["organizationId"]),
+
+  // ===== Export / Import de dados =====
+
+  exportJobs: defineTable({
+    organizationId: v.id("organizations"),
+    requestedBy: v.id("teamMembers"),
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("completed"), v.literal("failed")),
+    format: v.union(v.literal("csv"), v.literal("json")),
+    scope: v.union(v.literal("entity"), v.literal("full_backup")),
+    entity: v.optional(v.union(v.literal("contacts"), v.literal("leads"), v.literal("tasks"))), // obrigatório quando scope=entity
+    columns: v.optional(v.array(v.string())),        // subconjunto de colunas p/ CSV (precedente: savedViews.columns)
+    progress: v.object({ processed: v.number(), total: v.optional(v.number()), currentEntity: v.optional(v.string()) }),
+    resultStorageId: v.optional(v.id("_storage")),
+    resultFileName: v.optional(v.string()),
+    resultSize: v.optional(v.number()),
+    rowCount: v.optional(v.number()),
+    error: v.optional(v.string()),
+    expiresAt: v.number(),                            // createdAt + 7 dias; cron limpa o blob
+    createdAt: v.number(), startedAt: v.optional(v.number()), finishedAt: v.optional(v.number()),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_status_and_expires", ["status", "expiresAt"]),
+
+  importJobs: defineTable({
+    organizationId: v.id("organizations"),
+    requestedBy: v.id("teamMembers"),
+    status: v.union(
+      v.literal("mapping"),        // arquivo carregado, headers detectados, aguardando mapeamento
+      v.literal("previewing"),     // dry-run rodando
+      v.literal("preview_ready"),  // dry-run pronto, aguardando confirmação
+      v.literal("running"),
+      v.literal("completed"), v.literal("completed_with_errors"),
+      v.literal("failed"), v.literal("rolled_back"), v.literal("canceled"),
+    ),
+    entity: v.union(v.literal("contacts"), v.literal("leads")),
+    fileId: v.id("files"),                            // fileType: "import_file"
+    fileName: v.string(),
+    detectedHeaders: v.optional(v.array(v.string())),
+    suggestedMapping: v.optional(v.record(v.string(), v.string())),
+    mapping: v.optional(v.record(v.string(), v.string())), // header → campo | "cf:<key>" | "__ignore__"
+    duplicateStrategy: v.union(v.literal("skip"), v.literal("update"), v.literal("create")),
+    matchFields: v.optional(v.array(v.string())),     // default contatos: ["email","phone"]
+    dryRun: v.optional(v.object({
+      totalRows: v.number(), validRows: v.number(), errorRows: v.number(),
+      newRows: v.number(), updateRows: v.number(), skipRows: v.number(),
+      sampleErrors: v.array(v.object({ row: v.number(), field: v.optional(v.string()), message: v.string() })), // cap 50
+      preview: v.array(v.record(v.string(), v.any())), // 10 primeiras linhas já mapeadas
+    })),
+    progress: v.object({
+      processed: v.number(), total: v.number(),
+      created: v.number(), updated: v.number(), skipped: v.number(), failed: v.number(),
+    }),
+    error: v.optional(v.string()),
+    createdAt: v.number(), startedAt: v.optional(v.number()), finishedAt: v.optional(v.number()),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"]),
+
+  importJobBatches: defineTable({
+    organizationId: v.id("organizations"),
+    jobId: v.id("importJobs"),
+    batchIndex: v.number(),
+    createdIds: v.array(v.string()),                  // ids de contacts/leads criados neste lote
+    updated: v.array(v.object({ id: v.string(), before: v.record(v.string(), v.any()) })), // só campos alterados
+    errors: v.array(v.object({ row: v.number(), message: v.string() })),
+    createdAt: v.number(),
+  })
+    .index("by_job", ["jobId"])
+    .index("by_organization", ["organizationId"]),
 };
 
 export default defineSchema({

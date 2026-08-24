@@ -60,6 +60,14 @@
 | `emailTemplates.ts` | Pure TS email template builders (8 templates, PT-BR) |
 | `webhooks.ts` | Webhook CRUD |
 | `webhookTrigger.ts` | Internal action that fires webhooks |
+| `exports.ts` | Jobs de export (CSV por entidade + backup JSON `hnbcrm-backup` v1 sanitizado): criação gated por `settings:manage`, 1 ativo/org, paginação 500 via `lib/cursor.ts`, blob no File Storage (expira em 7 dias, cron horário `internalCleanupExpired`), download por URL assinada; internals `internal*` p/ REST |
+| `imports.ts` | Superfície do wizard de import (contatos/leads): createImportJob/updateMapping/runPreview/confirmImport/rollbackImport/cancelImport + `getFailedRowsCsv` (ACTION — lê storage); chaves do `mapping` = `encodeHeaderKey(header)` (Convex rejeita acento em field name); trilha de rollback em `importJobBatches` (`before` só dos campos alterados, `null` = não existia) |
+| `importRun.ts` | Actions do import: `internalDetectHeaders` (parse + sugestão de mapeamento), `internalRunDryRun` (caps 50 erros/10 preview/10k linhas), `internalRunImport` (lotes de 50, claim por `startedAt`), `internalRunRollback` |
+| `lib/csv.ts` | Parser/serializador CSV RFC 4180 (BOM, auto-detect `,`/`;`) — referência ÚNICA de CSV no produto |
+| `lib/importMapping.ts` | Puro: aliases PT-BR/EN → campos, `suggestMapping`, `coerceAndValidateRow` (datas ISO+dd/mm/aaaa, vírgula decimal, sim/não, tags por `;`, `cf:<key>` validado contra fieldDefinitions) |
+| `lib/importKeys.ts` | Puro: `encodeHeaderKey`/`invalidHeader`/`mappingForHeaders` — compartilhado com front e REST |
+| `lib/exportColumns.ts` | Colunas de export por entidade com desnormalização (contato/board/estágio/responsável, `cf_<key>`, datas ISO) |
+| `lib/exportSanitize.ts` | Denylist central de segredos (`*token*`/`*secret*`/`*keyHash*` + caminhos) aplicada a todo doc do backup; verificada por `exportSecurity.test.ts` |
 | `lib/auth.ts` | Shared `requireAuth()` + `requirePermission()` helpers |
 | `lib/permissions.ts` | Shared permission types, defaults, hierarchy comparison |
 | `lib/batchGet.ts` | Utility for batch-fetching documents by IDs |

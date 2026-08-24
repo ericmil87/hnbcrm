@@ -398,6 +398,63 @@ File metadata for uploaded files (attachments, photos, documents).
 | uploadedBy | Id<teamMembers> | Who uploaded the file |
 | metadata | Record<string, any> | Additional metadata |
 
+### Export Job
+An asynchronous data export (CSV per entity or full JSON backup). The generated file lives in Convex File Storage and expires after 7 days.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestedBy | Id<teamMembers> | Who asked for the export |
+| status | enum | queued, running, completed, failed |
+| format | enum | csv, json |
+| scope | enum | entity (single table, CSV), full_backup (whole org, JSON) |
+| entity | enum | contacts, leads, tasks (required when scope=entity) |
+| columns | string[] | Subset of CSV columns (optional) |
+| progress | object | { processed, total?, currentEntity? } |
+| resultStorageId | Id<_storage> | Generated blob (removed once expired) |
+| resultFileName | string | e.g. hnbcrm-contatos-2026-08-23.csv |
+| resultSize | number | File size in bytes |
+| rowCount | number | Rows (CSV) or documents (backup) written |
+| error | string | Failure message |
+| expiresAt | number | createdAt + 7 days; an hourly cron deletes the blob |
+
+Indexes: by_organization, by_organization_and_status, by_status_and_expires
+
+### Import Job
+A CSV import wizard run (contacts or leads), persisted server-side so the flow can be resumed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| requestedBy | Id<teamMembers> | Who started the import |
+| status | enum | mapping, previewing, preview_ready, running, completed, completed_with_errors, failed, rolled_back, canceled |
+| entity | enum | contacts, leads |
+| fileId | Id<files> | Source CSV (fileType import_file) |
+| fileName | string | Original file name |
+| detectedHeaders | string[] | Headers found in the file, in order |
+| suggestedMapping | Record<string,string> | Auto-suggested header → field (PT-BR/EN aliases) |
+| mapping | Record<string,string> | Header → field, \`cf:<key>\` for a custom field, or \`__ignore__\` |
+| duplicateStrategy | enum | skip, update, create |
+| matchFields | string[] | Duplicate match fields (contacts: email, phone) |
+| dryRun | object | { totalRows, validRows, errorRows, newRows, updateRows, skipRows, sampleErrors (max 50), preview (max 10) } |
+| progress | object | { processed, total, created, updated, skipped, failed } |
+| error | string | Failure message |
+
+Indexes: by_organization, by_organization_and_status
+
+**REST note:** in the API the \`mapping\`/\`suggestedMapping\` keys are the raw file headers. Internally they are stored URI-encoded, because Convex field names must be ASCII and PT-BR headers carry accents.
+
+### Import Job Batch
+Rollback trail for an import: one document per batch of 50 rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| jobId | Id<importJobs> | Parent job |
+| batchIndex | number | Zero-based batch position |
+| createdIds | string[] | Contacts/leads created in this batch |
+| updated | array | [{ id, before }] — only the changed fields, for the revert |
+| errors | array | [{ row, message }] — feeds the failed-rows CSV |
+
+Indexes: by_job, by_organization
+
 ### notificationPreferences
 Per-member email notification preferences (opt-out model).
 Fields: organizationId, teamMemberId, invite, handoffRequested, handoffResolved, taskOverdue, taskAssigned, leadAssigned, newMessage, dailyDigest, taskCommentMention, taskDueSoon, aiDraftPending, createdAt, updatedAt
@@ -935,6 +992,99 @@ Get audit logs with filtering and cursor-based pagination.
 - GET /api/v1/notifications/preferences — Get notification preferences for the authenticated API key's team member
 - PUT /api/v1/notifications/preferences — Update notification preferences. Body: { invite?: boolean, handoffRequested?: boolean, ... }
 
+### Data Export / Import Endpoints
+
+**These are the only endpoints that enforce a permission level.** The API key must resolve to \`settings: manage\` (admin default) — anything lower gets \`403 { error: "Permissão insuficiente" }\`. Exporting the whole organization is a data-exfiltration surface, so every transition is written to \`auditLogs\` (full backup = severity \`high\`).
+
+#### POST /api/v1/exports
+Create an asynchronous export job (queued immediately, executed in the background).
+
+**Body:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| format | string | yes | \`csv\` or \`json\` |
+| scope | string | yes | \`entity\` (one table as CSV) or \`full_backup\` (whole org as JSON) |
+| entity | string | when scope=entity | \`contacts\`, \`leads\` or \`tasks\` |
+| columns | string[] | no | Subset of CSV columns (default: all) |
+
+Valid combinations: \`scope=entity\` requires \`format=csv\`; \`scope=full_backup\` requires \`format=json\`. Only one active export job per organization (a job stuck for more than 30 min is auto-failed and frees the slot).
+
+**Response:** \`{ success: true, jobId }\` (201)
+
+#### GET /api/v1/exports
+List the last 20 export jobs, newest first.
+
+**Response:** \`{ jobs: [...] }\`
+
+#### GET /api/v1/exports/get?id=<jobId>
+Poll a single export job. Watch \`status\` (\`queued\` → \`running\` → \`completed\` | \`failed\`) and \`progress.processed\`.
+
+**Response:** \`{ job: { status, format, scope, entity, progress, resultFileName, resultSize, rowCount, error, expiresAt, ... } }\` — 404 when the job does not exist in this organization.
+
+#### GET /api/v1/exports/download?id=<jobId>
+Stream the generated file through the authenticated endpoint (no public storage URL is ever persisted).
+
+**Response:** the file body with \`Content-Type: text/csv; charset=utf-8\` (or \`application/json\`) and \`Content-Disposition: attachment; filename="hnbcrm-contatos-2026-08-23.csv"\`. Returns 404 when the job is not \`completed\` or when the blob already expired (7 days, cleaned hourly by cron).
+
+CSV exports carry a UTF-8 BOM (opens correctly in Excel/LibreOffice), ISO dates and flattened custom fields as \`cf_<key>\` columns. The JSON backup is \`{ format: "hnbcrm-backup", version: 1, exportedAt, organizationId, entities: { <table>: [...] } }\` with secrets stripped (no API keys, org secrets, channel credentials or webhook secrets).
+
+#### POST /api/v1/imports
+Create a CSV import job. Header detection runs in the background right after creation (job starts in status \`mapping\`).
+
+**Body:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| entity | string | yes | \`contacts\` or \`leads\` |
+| duplicateStrategy | string | yes | \`skip\` (default behaviour), \`update\` or \`create\` |
+| fileName | string | yes | Name shown in the job history |
+| csv | string | one of csv/fileId | Inline CSV content, max 5 MB |
+| fileId | string | one of csv/fileId | ID of a file already saved via POST /api/v1/files with \`fileType: "import_file"\` (max 10 MB) |
+
+Limits: 10.000 rows per job, 10 MB per file. Only one active import job per organization.
+
+**Response:** \`{ success: true, jobId, fileId }\` (201)
+
+#### GET /api/v1/imports
+List the last 20 import jobs, newest first.
+
+**Response:** \`{ jobs: [...] }\`
+
+#### GET /api/v1/imports/get?id=<jobId>
+Poll a single import job.
+
+**Response:** \`{ job: { status, entity, fileName, detectedHeaders, suggestedMapping, mapping, duplicateStrategy, dryRun, progress, error, ... } }\`
+
+Statuses: \`mapping\` → \`previewing\` → \`preview_ready\` → \`running\` → \`completed\` | \`completed_with_errors\`, plus \`failed\`, \`rolled_back\` and \`canceled\`.
+
+#### POST /api/v1/imports/mapping
+Set the column → field mapping. Keys are the **raw file headers** (the REST layer encodes them internally; \`detectedHeaders\`, \`suggestedMapping\` and \`mapping\` always come back with raw headers too).
+
+**Body:** \`{ jobId, mapping }\` — e.g. \`{ "Nome": "firstName", "E-mail": "email", "Observações": "__ignore__" }\`
+
+Values are a field name (\`firstName\`, \`lastName\`, \`email\`, \`phone\`, \`company\`, … for contacts; \`title\`, \`value\`, \`boardName\`, \`stageName\`, \`assigneeEmail\`, \`contactEmail\`, … for leads), \`cf:<key>\` for a custom field of the organization, or \`__ignore__\` to drop the column. Changing the mapping invalidates the previous dry-run. Only allowed before execution.
+
+**Response:** \`{ success: true }\`
+
+#### POST /api/v1/imports/preview
+Queue the dry-run. **Body:** \`{ jobId }\`. When it finishes the job sits at \`preview_ready\` with \`dryRun: { totalRows, validRows, errorRows, newRows, updateRows, skipRows, sampleErrors (max 50), preview (max 10 rows) }\` — read it with GET /api/v1/imports/get.
+
+**Response:** \`{ success: true }\`
+
+#### POST /api/v1/imports/confirm
+Run the import for real, in batches of 50 rows. Only from \`preview_ready\` and only when \`dryRun.validRows > 0\`. **Body:** \`{ jobId }\`. Follow \`progress: { processed, total, created, updated, skipped, failed }\`.
+
+**Response:** \`{ success: true }\`
+
+#### POST /api/v1/imports/rollback
+Undo a finished import: deletes the created records and reverts the updated ones to their previous values (status becomes \`rolled_back\`). Only for \`completed\` / \`completed_with_errors\`. Side effects already fired (activities, webhooks) are NOT reverted. **Body:** \`{ jobId }\`
+
+**Response:** \`{ success: true }\`
+
+#### GET /api/v1/imports/failed-rows?id=<jobId>
+Download a CSV with only the rows that failed — original columns plus an \`erro\` column — ready to fix and re-import.
+
+**Response:** \`text/csv\` body with \`Content-Disposition: attachment\` (empty body when there are no errors).
+
 ### Public Form Endpoints (no auth required)
 
 #### GET /api/v1/forms/public
@@ -1288,6 +1438,11 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | task_label.created | Task label created (P1) |
 | task_label.updated | Task label updated (P1) |
 | task_label.deleted | Task label deleted (P1) |
+| export.completed | Export job finished (payload: jobId, scope, entity, format, status, rowCount, fileName, size, expiresAt, requestedBy) |
+| export.failed | Export job failed (same payload, with \`error\`) |
+| import.completed | Import job finished — \`status\` is \`completed\` or \`completed_with_errors\` (payload: jobId, entity, fileName, created, updated, skipped, failed, total) |
+| import.failed | Import job failed (payload: jobId, entity, fileName, error) |
+| import.rolled_back | Import undone (payload: jobId, entity, fileName, deleted, reverted) |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
 
@@ -1419,4 +1574,16 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 
 ### Lead Document Category
 \`contract\` | \`proposal\` | \`invoice\` | \`other\`
+
+### Export Job Status
+\`queued\` | \`running\` | \`completed\` | \`failed\`
+
+### Export Scope
+\`entity\` | \`full_backup\`
+
+### Import Job Status
+\`mapping\` | \`previewing\` | \`preview_ready\` | \`running\` | \`completed\` | \`completed_with_errors\` | \`failed\` | \`rolled_back\` | \`canceled\`
+
+### Import Duplicate Strategy
+\`skip\` | \`update\` | \`create\`
 `;

@@ -5,7 +5,8 @@ import { internal } from "./_generated/api";
 import { LLMS_TXT, LLMS_FULL_TXT } from "./llmsTxt";
 import { EMBED_SCRIPT } from "./embedScript";
 import { OPENAPI_SPEC } from "./openapiSpec";
-import { resolvePermissions, type Role, type Permissions } from "./lib/permissions";
+import { hasPermission, resolvePermissions, type Role, type Permissions } from "./lib/permissions";
+import { encodeHeaderKey } from "./lib/importKeys";
 import { resend } from "./email";
 import {
   webhookVerify as whatsappWebhookVerify,
@@ -955,6 +956,516 @@ http.route({
       return jsonResponse({ success: true });
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Export / Import Endpoints ----
+//
+// Estas rotas INAUGURAM o enforcement de permissão no router (plano
+// docs/EXPORT-IMPORT-PLAN-v2.md, regra 3): exportar/importar dados da
+// organização exige `settings: manage` na chave de API. As rotas antigas
+// seguem sem checagem — não retrofitar aqui.
+
+/** Teto do CSV embutido no corpo de POST /api/v1/imports. */
+const MAX_INLINE_CSV_BYTES = 5 * 1024 * 1024;
+
+const EXPORT_ENTITIES = ["contacts", "leads", "tasks"];
+const IMPORT_ENTITIES = ["contacts", "leads"];
+const DUPLICATE_STRATEGIES = ["skip", "update", "create"];
+
+/** Gate `settings:manage` das rotas de export/import (null = liberado). */
+function denyDataOps(auth: { permissions: Permissions }): Response | null {
+  if (hasPermission(auth.permissions, "settings", "manage")) return null;
+  return errorResponse("Permissão insuficiente", 403);
+}
+
+/**
+ * Erro das rotas de export/import: chave ausente/inválida → 401; validação e
+ * regra de negócio das mutations (job ativo, status errado, coluna inexistente)
+ * → 400, no padrão documentado em `convex/CLAUDE.md`.
+ */
+function dataOpsError(error: unknown): Response {
+  const message = error instanceof Error ? error.message : "Erro interno";
+  if (message === "API key required" || message === "Invalid API key") {
+    return errorResponse(message, 401);
+  }
+  return errorResponse(message, 400);
+}
+
+/**
+ * As chaves do record `mapping` são `encodeURIComponent(cabeçalho)` (o Convex
+ * não aceita acento em nome de campo). Na REST o consumidor sempre vê o
+ * cabeçalho cru: entra cru no corpo, sai cru nas respostas.
+ */
+function decodeMappingKeys(
+  mapping: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!mapping) return undefined;
+  const decoded: Record<string, string> = {};
+  for (const [key, destination] of Object.entries(mapping)) {
+    let header = key;
+    try {
+      header = decodeURIComponent(key);
+    } catch {
+      // Chave que não é URI-encoded: devolve como está.
+    }
+    decoded[header] = destination;
+  }
+  return decoded;
+}
+
+function shapeImportJob(job: any) {
+  if (!job) return job;
+  return {
+    ...job,
+    mapping: decodeMappingKeys(job.mapping),
+    suggestedMapping: decodeMappingKeys(job.suggestedMapping),
+  };
+}
+
+/** Nome seguro para o header `Content-Disposition`. */
+function attachmentFileName(name: string): string {
+  const safe = name.replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "");
+  return safe || "arquivo";
+}
+
+// Criar job de exportação
+http.route({
+  path: "/api/v1/exports",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+
+      if (body.format !== "csv" && body.format !== "json") {
+        return errorResponse("format deve ser \"csv\" ou \"json\"", 400);
+      }
+      if (body.scope !== "entity" && body.scope !== "full_backup") {
+        return errorResponse("scope deve ser \"entity\" ou \"full_backup\"", 400);
+      }
+      if (body.entity !== undefined && !EXPORT_ENTITIES.includes(body.entity)) {
+        return errorResponse("entity deve ser \"contacts\", \"leads\" ou \"tasks\"", 400);
+      }
+      if (
+        body.columns !== undefined &&
+        (!Array.isArray(body.columns) ||
+          body.columns.some((column: unknown) => typeof column !== "string"))
+      ) {
+        return errorResponse("columns deve ser um array de strings", 400);
+      }
+
+      const jobId = await ctx.runMutation(internal.exports.internalCreateExportJob, {
+        organizationId: auth.organizationId,
+        teamMemberId: auth.teamMemberId,
+        format: body.format,
+        scope: body.scope,
+        entity: body.entity,
+        columns: body.columns,
+      });
+
+      return jsonResponse({ success: true, jobId }, 201);
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Listar exportações (últimas 20)
+http.route({
+  path: "/api/v1/exports",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobs = await ctx.runQuery(internal.exports.internalListExportJobs, {
+        organizationId: auth.organizationId,
+      });
+
+      return jsonResponse({ jobs });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Consultar uma exportação
+http.route({
+  path: "/api/v1/exports/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobId = new URL(request.url).searchParams.get("id");
+      if (!jobId) return errorResponse("Parâmetro \"id\" é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.exports.internalGetExportJob, {
+        organizationId: auth.organizationId,
+        jobId,
+      });
+      if (!job) return errorResponse("Exportação não encontrada", 404);
+
+      return jsonResponse({ job });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Baixar o arquivo gerado (stream autenticado — nunca URL pública)
+http.route({
+  path: "/api/v1/exports/download",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobId = new URL(request.url).searchParams.get("id");
+      if (!jobId) return errorResponse("Parâmetro \"id\" é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.exports.internalGetExportJob, {
+        organizationId: auth.organizationId,
+        jobId,
+      });
+      if (!job) return errorResponse("Exportação não encontrada", 404);
+      if (job.status !== "completed" || !job.resultStorageId) {
+        return errorResponse(
+          `Exportação indisponível para download (status: ${job.status})`,
+          404
+        );
+      }
+
+      const blob = await ctx.storage.get(job.resultStorageId as Id<"_storage">);
+      if (!blob) {
+        return errorResponse("Arquivo expirado ou removido do armazenamento", 404);
+      }
+
+      const fileName = attachmentFileName(
+        job.resultFileName ?? `hnbcrm-export.${job.format}`
+      );
+      return new Response(blob, {
+        status: 200,
+        headers: {
+          "Content-Type":
+            job.format === "csv" ? "text/csv; charset=utf-8" : "application/json",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+          ...corsHeaders,
+        },
+      });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Criar job de importação (CSV embutido ou fileId de upload prévio)
+http.route({
+  path: "/api/v1/imports",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+
+      if (!IMPORT_ENTITIES.includes(body.entity)) {
+        return errorResponse("entity deve ser \"contacts\" ou \"leads\"", 400);
+      }
+      if (!DUPLICATE_STRATEGIES.includes(body.duplicateStrategy)) {
+        return errorResponse(
+          "duplicateStrategy deve ser \"skip\", \"update\" ou \"create\"",
+          400
+        );
+      }
+      if (typeof body.fileName !== "string" || body.fileName.trim().length === 0) {
+        return errorResponse("fileName é obrigatório", 400);
+      }
+      if (typeof body.csv !== "string" && typeof body.fileId !== "string") {
+        return errorResponse("Envie o conteúdo em \"csv\" ou o \"fileId\" de um upload prévio", 400);
+      }
+
+      let fileId: string = body.fileId;
+      if (typeof body.csv === "string") {
+        const blob = new Blob([body.csv], { type: "text/csv" });
+        if (blob.size > MAX_INLINE_CSV_BYTES) {
+          return errorResponse(
+            `CSV embutido acima de ${MAX_INLINE_CSV_BYTES / (1024 * 1024)} MB — faça upload por /api/v1/files e use "fileId"`,
+            400
+          );
+        }
+        const storageId = await ctx.storage.store(blob);
+        fileId = await ctx.runMutation(internal.files.internalSaveFile, {
+          organizationId: auth.organizationId,
+          teamMemberId: auth.teamMemberId,
+          storageId,
+          name: body.fileName,
+          mimeType: "text/csv",
+          size: blob.size,
+          fileType: "import_file",
+        });
+      }
+
+      const jobId = await ctx.runMutation(internal.imports.internalCreateImportJob, {
+        organizationId: auth.organizationId,
+        teamMemberId: auth.teamMemberId,
+        entity: body.entity,
+        fileId,
+        fileName: body.fileName,
+        duplicateStrategy: body.duplicateStrategy,
+      });
+
+      return jsonResponse({ success: true, jobId, fileId }, 201);
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Listar importações (últimas 20)
+http.route({
+  path: "/api/v1/imports",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobs = await ctx.runQuery(internal.imports.internalListImportJobs, {
+        organizationId: auth.organizationId,
+      });
+
+      return jsonResponse({ jobs: (jobs as any[]).map(shapeImportJob) });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Consultar uma importação
+http.route({
+  path: "/api/v1/imports/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobId = new URL(request.url).searchParams.get("id");
+      if (!jobId) return errorResponse("Parâmetro \"id\" é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      return jsonResponse({ job: shapeImportJob(job) });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Definir o mapeamento cabeçalho → campo
+http.route({
+  path: "/api/v1/imports/mapping",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+      if (typeof body.jobId !== "string") return errorResponse("jobId é obrigatório", 400);
+      if (!body.mapping || typeof body.mapping !== "object" || Array.isArray(body.mapping)) {
+        return errorResponse("mapping deve ser um objeto { cabeçalho: campo }", 400);
+      }
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId: body.jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      // O corpo vem com CABEÇALHOS CRUS; o record persistido usa a chave codificada.
+      const mapping: Record<string, string> = {};
+      for (const [header, destination] of Object.entries(body.mapping)) {
+        if (typeof destination !== "string") {
+          return errorResponse(`O destino da coluna "${header}" deve ser uma string`, 400);
+        }
+        mapping[encodeHeaderKey(header)] = destination;
+      }
+
+      await ctx.runMutation(internal.imports.internalUpdateMapping, {
+        organizationId: auth.organizationId,
+        jobId: job._id as Id<"importJobs">,
+        mapping,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Rodar o dry-run
+http.route({
+  path: "/api/v1/imports/preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+      if (typeof body.jobId !== "string") return errorResponse("jobId é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId: body.jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      await ctx.runMutation(internal.imports.internalRunPreview, {
+        organizationId: auth.organizationId,
+        jobId: job._id as Id<"importJobs">,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Confirmar e executar a importação
+http.route({
+  path: "/api/v1/imports/confirm",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+      if (typeof body.jobId !== "string") return errorResponse("jobId é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId: body.jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      await ctx.runMutation(internal.imports.internalConfirmImport, {
+        organizationId: auth.organizationId,
+        jobId: job._id as Id<"importJobs">,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Desfazer uma importação concluída
+http.route({
+  path: "/api/v1/imports/rollback",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const body = await request.json();
+      if (typeof body.jobId !== "string") return errorResponse("jobId é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId: body.jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      await ctx.runMutation(internal.imports.internalRollbackImport, {
+        organizationId: auth.organizationId,
+        jobId: job._id as Id<"importJobs">,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return dataOpsError(error);
+    }
+  }),
+});
+
+// Baixar o CSV das linhas que falharam
+http.route({
+  path: "/api/v1/imports/failed-rows",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    if (request.method === "OPTIONS") return handleOptions();
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      const denied = denyDataOps(auth);
+      if (denied) return denied;
+
+      const jobId = new URL(request.url).searchParams.get("id");
+      if (!jobId) return errorResponse("Parâmetro \"id\" é obrigatório", 400);
+
+      const job = await ctx.runQuery(internal.imports.internalGetImportJob, {
+        organizationId: auth.organizationId,
+        jobId,
+      });
+      if (!job) return errorResponse("Importação não encontrada", 404);
+
+      const csv = await ctx.runAction(internal.imports.internalGetFailedRowsCsv, {
+        organizationId: auth.organizationId,
+        jobId: job._id as Id<"importJobs">,
+      });
+
+      const fileName = attachmentFileName(`erros-${job.fileName ?? "importacao.csv"}`);
+      return new Response(csv, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${fileName}"`,
+          ...corsHeaders,
+        },
+      });
+    } catch (error) {
+      return dataOpsError(error);
     }
   }),
 });
@@ -2204,6 +2715,16 @@ http.route({ path: "/api/v1/files/upload-url", method: "OPTIONS", handler: optio
 http.route({ path: "/api/v1/files", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/exports", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/exports/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/exports/download", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/mapping", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/preview", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/confirm", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/rollback", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/imports/failed-rows", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/notifications/preferences", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });

@@ -415,6 +415,76 @@ A submission from a public form.
 
 ---
 
+### Export Job
+
+An asynchronous data export. Created through `POST /api/v1/exports` (or the Dados tab in Settings) and executed in the background. The generated file lives in Convex File Storage and is deleted 7 days later by an hourly cron.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| organizationId | Id\<organizations\> | Organization |
+| requestedBy | Id\<teamMembers\> | Who requested the export |
+| status | enum | `queued`, `running`, `completed`, `failed` |
+| format | enum | `csv`, `json` |
+| scope | enum | `entity` (one table as CSV), `full_backup` (whole org as JSON) |
+| entity | enum | `contacts`, `leads`, `tasks` — required when scope=entity |
+| columns | string[] | Subset of CSV columns (optional; default is all) |
+| progress | object | `{ processed, total?, currentEntity? }` |
+| resultStorageId | Id\<_storage\> | Generated blob (cleared once expired) |
+| resultFileName | string | e.g. `hnbcrm-contatos-2026-08-23.csv` |
+| resultSize | number | File size in bytes |
+| rowCount | number | Rows (CSV) or documents (backup) written |
+| error | string | Failure message (status=failed) |
+| expiresAt | number | createdAt + 7 days |
+| createdAt / startedAt / finishedAt | number | Lifecycle timestamps |
+
+Valid combinations: `scope=entity` requires `format=csv`; `scope=full_backup` requires `format=json`. Only one active export job per organization.
+
+---
+
+### Import Job
+
+A CSV import wizard run. The state lives server-side, so the flow can be resumed from any client by reading `status`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| organizationId | Id\<organizations\> | Organization |
+| requestedBy | Id\<teamMembers\> | Who started the import |
+| status | enum | `mapping`, `previewing`, `preview_ready`, `running`, `completed`, `completed_with_errors`, `failed`, `rolled_back`, `canceled` |
+| entity | enum | `contacts`, `leads` |
+| fileId | Id\<files\> | Source CSV (fileType `import_file`) |
+| fileName | string | Original file name |
+| detectedHeaders | string[] | Headers found in the file, in order |
+| suggestedMapping | Record\<string, string\> | Auto-suggested header → field (PT-BR/EN aliases) |
+| mapping | Record\<string, string\> | Header → field, `cf:<key>` for a custom field, or `__ignore__` |
+| duplicateStrategy | enum | `skip`, `update`, `create` |
+| matchFields | string[] | Duplicate match fields (contacts default: `email`, `phone`) |
+| dryRun | object | `{ totalRows, validRows, errorRows, newRows, updateRows, skipRows, sampleErrors (max 50), preview (max 10) }` |
+| progress | object | `{ processed, total, created, updated, skipped, failed }` |
+| error | string | Failure message (status=failed) |
+| createdAt / startedAt / finishedAt | number | Lifecycle timestamps |
+
+Limits: 10.000 rows and 10 MB per job (5 MB when the CSV goes inline in the REST body); rows are processed in batches of 50. Only one active import job per organization.
+
+**Header keys:** in the REST API the `mapping` / `suggestedMapping` keys are the raw file headers. They are stored URI-encoded, because Convex field names must be ASCII and PT-BR headers carry accents (`Título`, `Estágio`).
+
+---
+
+### Import Job Batch
+
+Rollback trail for an import — one document per batch of 50 rows.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| organizationId | Id\<organizations\> | Organization |
+| jobId | Id\<importJobs\> | Parent job |
+| batchIndex | number | Zero-based batch position |
+| createdIds | string[] | Contacts/leads created in this batch |
+| updated | array | `[{ id, before }]` — only the changed fields, used by the revert |
+| errors | array | `[{ row, message }]` — feeds the failed-rows CSV |
+| createdAt | number | Creation timestamp |
+
+---
+
 ## Complete Enum Reference
 
 | Enum | Values |
@@ -444,5 +514,11 @@ A submission from a public form.
 | Form Border Radius | `none`, `sm`, `md`, `lg`, `full` |
 | Form Assignment Mode | `none`, `specific`, `round_robin` |
 | Form Submission Status | `processed`, `spam`, `error` |
+| Export Job Status | `queued`, `running`, `completed`, `failed` |
+| Export Scope | `entity`, `full_backup` |
+| Export Entity | `contacts`, `leads`, `tasks` |
+| Import Job Status | `mapping`, `previewing`, `preview_ready`, `running`, `completed`, `completed_with_errors`, `failed`, `rolled_back`, `canceled` |
+| Import Entity | `contacts`, `leads` |
+| Import Duplicate Strategy | `skip`, `update`, `create` |
 | Preferred Contact Time | `morning`, `afternoon`, `evening` |
 | Device Type | `android`, `iphone`, `desktop`, `unknown` |
