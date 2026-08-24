@@ -977,10 +977,12 @@ export const internalProcessBatch = internalMutation({
 
     const getLeadContext = async () => {
       if (leadContext) return leadContext;
-      const boards = await ctx.db
-        .query("boards")
-        .withIndex("by_organization_and_order", (q) => q.eq("organizationId", organizationId))
-        .take(200);
+      const boards = (
+        await ctx.db
+          .query("boards")
+          .withIndex("by_organization_and_order", (q) => q.eq("organizationId", organizationId))
+          .take(200)
+      ).filter((b) => b.archivedAt === undefined);
       const sources = await ctx.db
         .query("leadSources")
         .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))

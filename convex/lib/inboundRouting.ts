@@ -112,11 +112,13 @@ export async function ensureLeadForContact(
   const existing = leads.find((l) => l.organizationId === args.organizationId);
   if (existing) return existing._id;
 
-  // Default board + first stage
-  const boards = await ctx.db
-    .query("boards")
-    .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-    .collect();
+  // Default board + first stage (arquivado nunca entra na roleta)
+  const boards = (
+    await ctx.db
+      .query("boards")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .collect()
+  ).filter((b) => b.archivedAt === undefined);
   const defaultBoard = boards.find((b) => b.isDefault) ?? boards[0];
   if (!defaultBoard) throw new Error("No boards configured");
 
@@ -127,7 +129,7 @@ export async function ensureLeadForContact(
     if (preferred) {
       board = preferred;
     } else {
-      pipelineFallback = "funil configurado no atendente não existe mais";
+      pipelineFallback = "funil configurado no atendente não existe mais ou foi arquivado";
     }
   }
 

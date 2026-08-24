@@ -13,10 +13,12 @@ export const getDashboardStats = query({
     const org = await ctx.db.get(args.organizationId);
 
     // Get boards for the organization
-    const boards = await ctx.db
-      .query("boards")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+    const boards = (
+      await ctx.db
+        .query("boards")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .collect()
+    ).filter((b) => b.archivedAt === undefined);
 
     // Pipeline stats: grouped by board, leads queried per-board with cap
     const pipelineStats = await Promise.all(
@@ -171,10 +173,12 @@ export const getPipelineStats = query({
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
 
-    const boards = await ctx.db
-      .query("boards")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+    const boards = (
+      await ctx.db
+        .query("boards")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .collect()
+    ).filter((b) => b.archivedAt === undefined);
 
     return Promise.all(
       boards.sort((a, b) => a.order - b.order).map(async (board) => {
@@ -347,10 +351,12 @@ export const internalGetDashboardStats = internalQuery({
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
 
-    const boards = await ctx.db
-      .query("boards")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+    const boards = (
+      await ctx.db
+        .query("boards")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .collect()
+    ).filter((b) => b.archivedAt === undefined);
 
     const pipelineStats = await Promise.all(
       boards.sort((a, b) => a.order - b.order).map(async (board) => {

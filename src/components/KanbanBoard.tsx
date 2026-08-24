@@ -11,16 +11,18 @@ import { CreateLeadModal } from "./CreateLeadModal";
 import { ManageStagesModal } from "./ManageStagesModal";
 import { EditBoardModal } from "./EditBoardModal";
 import { CloseReasonModal } from "./CloseReasonModal";
+import { DeleteBoardModal } from "./DeleteBoardModal";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Modal } from "@/components/ui/Modal";
 import { LeadsListView, type LeadSortKey } from "./leads/LeadsListView";
 import { LeadsBulkActionBar } from "./leads/LeadsBulkActionBar";
 import { cn } from "@/lib/utils";
-import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2, LayoutGrid, List, Archive } from "lucide-react";
+import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2, LayoutGrid, List, Archive, ArchiveRestore } from "lucide-react";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import {
   DndContext,
@@ -666,6 +668,7 @@ function LeadDeepLinkResolver({
 export function KanbanBoard() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
+  const canDeleteLeads = can("leads", "full");
   const [searchParams, setSearchParams] = useSearchParams();
   const boardParam = searchParams.get("board");
   const leadParam = searchParams.get("lead");
@@ -681,7 +684,9 @@ export function KanbanBoard() {
   const [stageMenuId, setStageMenuId] = useState<Id<"stages"> | null>(null);
   const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const [showCloseReasonModal, setShowCloseReasonModal] = useState(false);
-  const [showDeleteBoardConfirm, setShowDeleteBoardConfirm] = useState(false);
+  const [showArchiveBoardConfirm, setShowArchiveBoardConfirm] = useState(false);
+  const [deleteBoardTarget, setDeleteBoardTarget] = useState<{ _id: Id<"boards">; name: string } | null>(null);
+  const [showArchivedBoardsMenu, setShowArchivedBoardsMenu] = useState(false);
   const [pendingClose, setPendingClose] = useState<{
     leadId: Id<"leads">;
     stageId: Id<"stages">;
@@ -704,8 +709,16 @@ export function KanbanBoard() {
   const [pendingBulk, setPendingBulk] = useState<
     { run: () => Promise<void>; title: string; description: string } | null
   >(null);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [bulkDeleteContacts, setBulkDeleteContacts] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   const boards = useQuery(api.boards.getBoards, { organizationId });
+  const allBoards = useQuery(api.boards.getBoards, { organizationId, includeArchived: true });
+  const archivedBoards = useMemo(
+    () => (allBoards ?? []).filter((b: any) => !!b.archivedAt),
+    [allBoards]
+  );
   // Reaproveita a agregação existente do dashboard (sem query nova no backend)
   // só para exibir a contagem de leads por board no seletor.
   const dashboardStats = useQuery(api.dashboard.getDashboardStats, { organizationId });
@@ -740,9 +753,10 @@ export function KanbanBoard() {
       );
     }
   );
-  const deleteBoard = useMutation(api.boards.deleteBoard);
   const createBoard = useMutation(api.boards.createBoard);
   const createBoardWithStages = useMutation(api.boards.createBoardWithStages);
+  const archiveBoard = useMutation(api.boards.archiveBoard);
+  const unarchiveBoard = useMutation(api.boards.unarchiveBoard);
   const updateStage = useMutation(api.boards.updateStage);
   const deleteStage = useMutation(api.boards.deleteStage);
   const createStage = useMutation(api.boards.createStage);
@@ -750,6 +764,7 @@ export function KanbanBoard() {
   const bulkAssignLeads = useMutation(api.leads.bulkAssignLeads);
   const bulkAddTags = useMutation(api.leads.bulkAddTags);
   const bulkArchiveLeads = useMutation(api.leads.bulkArchiveLeads);
+  const bulkDeleteLeads = useMutation(api.leads.bulkDeleteLeads);
 
   // Suppress the click that fires immediately after a drag ends.
   const justDraggedRef = useRef(false);
@@ -1008,20 +1023,53 @@ export function KanbanBoard() {
       .catch(() => toast.error("Falha ao mover lead"));
   };
 
-  const handleDeleteBoard = async () => {
+  const handleArchiveBoard = async () => {
     if (!selectedBoardId) return;
 
     try {
-      await deleteBoard({ boardId: selectedBoardId });
-      toast.success("Pipeline excluído!");
+      await archiveBoard({ boardId: selectedBoardId });
+      toast.success("Pipeline arquivado!");
       setSelectedBoardId(null);
       setShowSettingsMenu(false);
     } catch (error) {
-      toast.error(
-        error instanceof Error && error.message.includes("leads")
-          ? "Não é possível excluir um pipeline com leads. Mova ou exclua todos os leads primeiro."
-          : "Falha ao excluir pipeline"
+      toast.error(error instanceof Error ? error.message : "Falha ao arquivar pipeline");
+    }
+  };
+
+  const handleUnarchiveBoard = async (boardId: Id<"boards">) => {
+    try {
+      await unarchiveBoard({ boardId });
+      toast.success("Pipeline restaurado!");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao restaurar pipeline");
+    }
+  };
+
+  const handleBoardDeleted = () => {
+    setDeleteBoardTarget(null);
+    setShowSettingsMenu(false);
+    setSelectedBoardId((cur) => (cur === deleteBoardTarget?._id ? null : cur));
+  };
+
+  const handleBulkDeleteLeads = async () => {
+    if (selectedLeadIds.size === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    try {
+      await bulkDeleteLeads({
+        organizationId,
+        leadIds: Array.from(selectedLeadIds) as Id<"leads">[],
+        deleteContacts: bulkDeleteContacts,
+      });
+      toast.success(
+        `${selectedLeadIds.size} lead${selectedLeadIds.size === 1 ? "" : "s"} excluído${selectedLeadIds.size === 1 ? "" : "s"} permanentemente`
       );
+      clearSelection();
+      setShowBulkDeleteConfirm(false);
+      setBulkDeleteContacts(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao excluir leads");
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -1133,6 +1181,72 @@ export function KanbanBoard() {
               </button>
             </div>
 
+            {/* Pipelines arquivados */}
+            {archivedBoards.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowArchivedBoardsMenu((v) => !v)}
+                  className={cn(
+                    "px-3 py-2 rounded-full text-sm border flex items-center gap-1.5 whitespace-nowrap transition-colors",
+                    showArchivedBoardsMenu
+                      ? "bg-brand-600/15 border-brand-500 text-brand-300"
+                      : "bg-surface-overlay border-border-strong text-text-secondary hover:text-text-primary"
+                  )}
+                  aria-label="Pipelines arquivados"
+                  aria-expanded={showArchivedBoardsMenu}
+                >
+                  <Archive size={15} />
+                  Arquivados
+                  <span className="text-xs font-normal tabular-nums opacity-75">({archivedBoards.length})</span>
+                </button>
+
+                {showArchivedBoardsMenu && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setShowArchivedBoardsMenu(false)} />
+                    <div className="absolute left-0 top-full mt-2 w-72 bg-surface-overlay border border-border rounded-card shadow-elevated z-20 py-1 max-h-80 overflow-y-auto">
+                      {archivedBoards.map((board: any) => (
+                        <div
+                          key={board._id}
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-surface-raised transition-colors"
+                        >
+                          <div
+                            className="w-2 h-2 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: board.color }}
+                          />
+                          <span className="flex-1 min-w-0 truncate text-sm text-text-primary">{board.name}</span>
+                          {board.deletionStartedAt ? (
+                            <span className="text-xs text-semantic-error whitespace-nowrap">Excluindo…</span>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => handleUnarchiveBoard(board._id)}
+                                className="p-1.5 rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-overlay transition-colors"
+                                aria-label={`Restaurar pipeline ${board.name}`}
+                                title="Restaurar"
+                              >
+                                <ArchiveRestore size={14} />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setDeleteBoardTarget({ _id: board._id, name: board.name });
+                                  setShowArchivedBoardsMenu(false);
+                                }}
+                                className="p-1.5 rounded-full text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
+                                aria-label={`Excluir pipeline ${board.name}`}
+                                title="Excluir"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Settings Dropdown (only for active pipeline) */}
             {selectedBoardId && (
               <div className="relative">
@@ -1171,7 +1285,17 @@ export function KanbanBoard() {
                       </button>
                       <button
                         onClick={() => {
-                          setShowDeleteBoardConfirm(true);
+                          setShowArchiveBoardConfirm(true);
+                          setShowSettingsMenu(false);
+                        }}
+                        className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors flex items-center gap-2"
+                      >
+                        <Archive size={14} />
+                        Arquivar Pipeline
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (selectedBoard) setDeleteBoardTarget({ _id: selectedBoard._id, name: selectedBoard.name });
                           setShowSettingsMenu(false);
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
@@ -1430,6 +1554,8 @@ export function KanbanBoard() {
           onAddTag={handleBulkAddTag}
           onArchive={handleBulkArchive}
           archiveLabel={showArchived ? "Desarquivar" : "Arquivar"}
+          onDelete={() => setShowBulkDeleteConfirm(true)}
+          canDelete={canDeleteLeads}
           onClear={clearSelection}
         />
       )}
@@ -1533,16 +1659,64 @@ export function KanbanBoard() {
         </div>
       )}
 
-      {/* Delete Board Confirm */}
+      {/* Archive Board Confirm */}
       <ConfirmDialog
-        open={showDeleteBoardConfirm}
-        onClose={() => setShowDeleteBoardConfirm(false)}
-        onConfirm={handleDeleteBoard}
-        title="Excluir Pipeline"
-        description="Tem certeza que deseja excluir este pipeline? Esta ação não pode ser desfeita."
-        confirmLabel="Excluir"
-        variant="danger"
+        open={showArchiveBoardConfirm}
+        onClose={() => setShowArchiveBoardConfirm(false)}
+        onConfirm={handleArchiveBoard}
+        title="Arquivar Pipeline"
+        description={`O pipeline "${selectedBoard?.name ?? ""}" e seus leads somem das listas ativas, mas continuam salvos e podem ser restaurados a qualquer momento.`}
+        confirmLabel="Arquivar"
       />
+
+      {/* Delete Board Modal (pipeline ativo ou arquivado) */}
+      {deleteBoardTarget && (
+        <DeleteBoardModal
+          boardId={deleteBoardTarget._id}
+          boardName={deleteBoardTarget.name}
+          onClose={() => setDeleteBoardTarget(null)}
+          onDeleted={handleBoardDeleted}
+        />
+      )}
+
+      {/* Bulk delete leads confirm */}
+      <Modal
+        open={showBulkDeleteConfirm}
+        onClose={() => { if (!bulkDeleting) { setShowBulkDeleteConfirm(false); setBulkDeleteContacts(false); } }}
+        title="Excluir Leads"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-secondary leading-relaxed">
+            Excluir permanentemente {selectedLeadIds.size} lead{selectedLeadIds.size === 1 ? "" : "s"}? Conversas,
+            mensagens e documentos desses leads também serão excluídos. Os dados permanecem no log de auditoria.
+          </p>
+          <Checkbox
+            checked={bulkDeleteContacts}
+            onChange={(e) => setBulkDeleteContacts(e.target.checked)}
+            label="Excluir contatos vinculados sem outros leads"
+          />
+          <div className="flex gap-2 pt-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => { setShowBulkDeleteConfirm(false); setBulkDeleteContacts(false); }}
+              className="flex-1"
+              disabled={bulkDeleting}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleBulkDeleteLeads}
+              className="flex-1"
+              disabled={bulkDeleting}
+            >
+              {bulkDeleting ? "Excluindo..." : "Excluir permanentemente"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Bulk action confirm (above 5 leads) */}
       <ConfirmDialog

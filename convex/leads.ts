@@ -1,12 +1,21 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { assertAgentCan } from "./lib/agentSecurity";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { ensureLeadForContact } from "./lib/inboundRouting";
+import {
+  CASCADE_WRITE_BUDGET,
+  cascadeContactRefs,
+  cascadeLeadChildren,
+  hardDeleteLead,
+  newBudget,
+  scheduleLeadCascade,
+} from "./lib/leadCascade";
 
 // Get leads for organization
 export const getLeads = query({
@@ -331,7 +340,10 @@ export const linkContact = mutation({
 
 // Delete lead (requires leads:full)
 export const deleteLead = mutation({
-  args: { leadId: v.id("leads") },
+  args: {
+    leadId: v.id("leads"),
+    deleteContact: v.optional(v.boolean()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId);
@@ -339,30 +351,150 @@ export const deleteLead = mutation({
 
     const userMember = await requirePermission(ctx, lead.organizationId, "leads", "full");
 
-    const now = Date.now();
-
-    // Log audit entry before deletion
-    await ctx.db.insert("auditLogs", {
-      organizationId: lead.organizationId,
-      entityType: "lead",
-      entityId: args.leadId,
-      action: "delete",
+    const { deletedContactId } = await hardDeleteLead(ctx, {
+      lead,
       actorId: userMember._id,
-      actorType: "human",
-      metadata: { title: lead.title },
-      description: buildAuditDescription({ action: "delete", entityType: "lead", metadata: { title: lead.title } }),
-      severity: "high",
-      createdAt: now,
+      actorType: userMember.type === "ai" ? "ai" : "human",
+      deleteContact: args.deleteContact,
     });
 
-    // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleLeadCascade(ctx, {
       organizationId: lead.organizationId,
-      event: "lead.deleted",
-      payload: { leadId: args.leadId, title: lead.title },
+      leadIds: [args.leadId],
+      contactIds: deletedContactId ? [deletedContactId] : [],
     });
 
-    await ctx.db.delete(args.leadId);
+    return null;
+  },
+});
+
+// Exclusão definitiva em lote (teto de 100 por chamada)
+export const bulkDeleteLeads = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    deleteContacts: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (args.leadIds.length > 100) {
+      throw new Error("Máximo de 100 leads por exclusão. Selecione menos leads e tente novamente.");
+    }
+
+    const userMember = await requirePermission(ctx, args.organizationId, "leads", "full");
+    const actorType = userMember.type === "ai" ? "ai" : "human";
+
+    const deletedLeadIds: Id<"leads">[] = [];
+    const deletedContactIds: Id<"contacts">[] = [];
+
+    for (const leadId of args.leadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== args.organizationId) continue;
+
+      const { deletedContactId } = await hardDeleteLead(ctx, {
+        lead,
+        actorId: userMember._id,
+        actorType,
+        deleteContact: args.deleteContacts,
+      });
+      deletedLeadIds.push(leadId);
+      if (deletedContactId) deletedContactIds.push(deletedContactId);
+    }
+
+    await scheduleLeadCascade(ctx, {
+      organizationId: args.organizationId,
+      leadIds: deletedLeadIds,
+      contactIds: deletedContactIds,
+    });
+
+    return null;
+  },
+});
+
+// Prévia do estrago de excluir um lead (alimenta o diálogo de confirmação)
+export const getLeadDeletionImpact = query({
+  args: { leadId: v.id("leads") },
+  returns: v.object({
+    conversationCount: v.number(),
+    taskCount: v.number(),
+    documentCount: v.number(),
+    contactName: v.union(v.string(), v.null()),
+    contactHasOtherLeads: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) throw new Error("Lead not found");
+
+    await requirePermission(ctx, lead.organizationId, "leads", "full");
+
+    const [conversations, tasks, documents] = await Promise.all([
+      ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", args.leadId)).take(100),
+      ctx.db.query("tasks").withIndex("by_lead", (q) => q.eq("leadId", args.leadId)).take(100),
+      ctx.db.query("leadDocuments").withIndex("by_lead", (q) => q.eq("leadId", args.leadId)).take(100),
+    ]);
+
+    let contactName: string | null = null;
+    let contactHasOtherLeads = false;
+    if (lead.contactId) {
+      const contact = await ctx.db.get(lead.contactId);
+      if (contact) {
+        contactName =
+          [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim() ||
+          contact.email ||
+          contact.phone ||
+          "Contato sem nome";
+        const contactLeads = await ctx.db
+          .query("leads")
+          .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
+          .take(20);
+        contactHasOtherLeads = contactLeads.some((l) => l._id !== args.leadId);
+      }
+    }
+
+    return {
+      conversationCount: conversations.length,
+      taskCount: tasks.length,
+      documentCount: documents.length,
+      contactName,
+      contactHasOtherLeads,
+    };
+  },
+});
+
+/**
+ * Cascata dos filhos de leads/contatos já excluídos. Um job sequencial com
+ * orçamento de escritas que se re-agenda com o que sobrou.
+ */
+export const internalCascadeDeleteLeads = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadIds: v.array(v.id("leads")),
+    contactIds: v.array(v.id("contacts")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const budget = newBudget(CASCADE_WRITE_BUDGET);
+    const pendingLeadIds: Id<"leads">[] = [];
+    const pendingContactIds: Id<"contacts">[] = [];
+
+    for (const leadId of args.leadIds) {
+      if (budget.left <= 0 || !(await cascadeLeadChildren(ctx, leadId, budget))) {
+        pendingLeadIds.push(leadId);
+      }
+    }
+    for (const contactId of args.contactIds) {
+      if (budget.left <= 0 || !(await cascadeContactRefs(ctx, contactId, budget))) {
+        pendingContactIds.push(contactId);
+      }
+    }
+
+    if (pendingLeadIds.length > 0 || pendingContactIds.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.leads.internalCascadeDeleteLeads, {
+        organizationId: args.organizationId,
+        leadIds: pendingLeadIds,
+        contactIds: pendingContactIds,
+      });
+    }
 
     return null;
   },
@@ -1084,6 +1216,7 @@ export const internalDeleteLead = internalMutation({
   args: {
     leadId: v.id("leads"),
     teamMemberId: v.id("teamMembers"),
+    deleteContact: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1097,30 +1230,18 @@ export const internalDeleteLead = internalMutation({
       throw new Error("Membro não pertence à organização do lead");
     }
 
-    const now = Date.now();
-
-    // Log audit entry before deletion
-    await ctx.db.insert("auditLogs", {
-      organizationId: lead.organizationId,
-      entityType: "lead",
-      entityId: args.leadId,
-      action: "delete",
+    const { deletedContactId } = await hardDeleteLead(ctx, {
+      lead,
       actorId: teamMember._id,
       actorType: teamMember.type === "ai" ? "ai" : "human",
-      metadata: { title: lead.title },
-      description: buildAuditDescription({ action: "delete", entityType: "lead", metadata: { title: lead.title } }),
-      severity: "high",
-      createdAt: now,
+      deleteContact: args.deleteContact,
     });
 
-    // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleLeadCascade(ctx, {
       organizationId: lead.organizationId,
-      event: "lead.deleted",
-      payload: { leadId: args.leadId, title: lead.title },
+      leadIds: [args.leadId],
+      contactIds: deletedContactId ? [deletedContactId] : [],
     });
-
-    await ctx.db.delete(args.leadId);
 
     return null;
   },

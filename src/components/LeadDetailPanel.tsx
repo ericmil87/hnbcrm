@@ -6,12 +6,14 @@ import { Id } from "../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
 import { toast } from "sonner";
 import {
   X,
@@ -32,6 +34,11 @@ import {
   ClipboardList,
   Send,
   Reply,
+  MoreVertical,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { MentionTextarea } from "@/components/ui/MentionTextarea";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
@@ -54,12 +61,14 @@ interface LeadDetailPanelProps {
   leadId: Id<"leads">;
   organizationId: Id<"organizations">;
   onClose: () => void;
+  /** Aba aberta ao montar o painel. Padrão: "conversation". */
+  initialTab?: Tab;
 }
 
 type Tab = "conversation" | "details" | "tasks" | "activity";
 
-export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailPanelProps) {
-  const [activeTab, setActiveTab] = useState<Tab>("conversation");
+export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }: LeadDetailPanelProps) {
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? "conversation");
 
   const tabLabels: Record<Tab, string> = {
     conversation: "Conversa",
@@ -73,6 +82,9 @@ export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailP
       open={true}
       onClose={onClose}
       title="Detalhes do Lead"
+      headerActions={
+        <LeadActionsMenu leadId={leadId} organizationId={organizationId} onDeleted={onClose} />
+      }
       bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
     >
       {/* Tab Bar */}
@@ -118,6 +130,250 @@ export function LeadDetailPanel({ leadId, organizationId, onClose }: LeadDetailP
         )}
       </div>
     </SlideOver>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Header actions ("⋮")                                               */
+/* ------------------------------------------------------------------ */
+
+function LeadActionsMenu({
+  leadId,
+  organizationId,
+  onDeleted,
+}: {
+  leadId: Id<"leads">;
+  organizationId: Id<"organizations">;
+  onDeleted: () => void;
+}) {
+  const { can } = usePermissions(organizationId);
+  const lead = useQuery(api.leads.getLead, { leadId });
+  const archiveLeads = useMutation(api.leads.bulkArchiveLeads);
+
+  const [open, setOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointer = (e: MouseEvent | TouchEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("touchstart", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("touchstart", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  const canArchive = can("leads", "edit_own");
+  const canDelete = can("leads", "full");
+  if (!canArchive && !canDelete) return null;
+
+  const archived = lead?.archivedAt != null;
+
+  const handleArchive = async () => {
+    if (!lead || archiving) return;
+    setArchiving(true);
+    try {
+      await archiveLeads({ organizationId, leadIds: [leadId], archived: !archived });
+      toast.success(archived ? "Lead restaurado" : "Lead arquivado");
+      setOpen(false);
+    } catch (error) {
+      toast.error(
+        mutationErrorMessage(error, archived ? "Falha ao restaurar o lead" : "Falha ao arquivar o lead")
+      );
+    } finally {
+      setArchiving(false);
+    }
+  };
+
+  return (
+    <div ref={rootRef} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "flex items-center justify-center min-h-[44px] min-w-[44px] -my-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors",
+          open && "text-text-primary bg-surface-overlay"
+        )}
+        aria-label="Ações do lead"
+        aria-expanded={open}
+      >
+        <MoreVertical size={18} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full right-0 mt-1 z-40 w-64 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
+          {canArchive && (
+            <button
+              type="button"
+              onClick={handleArchive}
+              disabled={!lead || archiving}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors disabled:opacity-50"
+            >
+              {archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
+              {archiving
+                ? "Salvando…"
+                : archived
+                  ? "Restaurar lead"
+                  : "Arquivar lead"}
+            </button>
+          )}
+
+          {canDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setConfirmDelete(true);
+              }}
+              className={cn(
+                "w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-semantic-error hover:bg-surface-raised transition-colors",
+                canArchive && "border-t border-border mt-1"
+              )}
+            >
+              <Trash2 size={15} />
+              Excluir permanentemente
+            </button>
+          )}
+        </div>
+      )}
+
+      {confirmDelete && (
+        <DeleteLeadDialog
+          leadId={leadId}
+          onClose={() => setConfirmDelete(false)}
+          onDeleted={onDeleted}
+        />
+      )}
+    </div>
+  );
+}
+
+/* Diálogo próprio (e não o ConfirmDialog) porque a confirmação carrega o
+   impacto da exclusão e o checkbox de excluir o contato junto. */
+function DeleteLeadDialog({
+  leadId,
+  onClose,
+  onDeleted,
+}: {
+  leadId: Id<"leads">;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const impact = useQuery(api.leads.getLeadDeletionImpact, { leadId });
+  const deleteLead = useMutation(api.leads.deleteLead);
+  const [deleteContact, setDeleteContact] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const contactName = impact?.contactName ?? null;
+  const contactIsExclusive = !!contactName && impact?.contactHasOtherLeads === false;
+
+  const handleConfirm = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteLead({
+        leadId,
+        deleteContact: contactIsExclusive && deleteContact ? true : undefined,
+      });
+      toast.success("Lead excluído permanentemente");
+      onClose();
+      onDeleted();
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao excluir o lead"));
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={true}
+      onClose={() => {
+        if (!deleting) onClose();
+      }}
+      title="Excluir lead permanentemente"
+    >
+      <div className="space-y-4">
+        <div className="flex gap-3">
+          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-semantic-error/10 flex items-center justify-center">
+            <AlertTriangle size={20} className="text-semantic-error" />
+          </div>
+          <div className="flex-1 min-w-0 space-y-2 text-sm text-text-secondary leading-relaxed">
+            <p>Esta ação não pode ser desfeita.</p>
+            {impact === undefined ? (
+              <div className="flex justify-center py-2">
+                <Spinner size="sm" />
+              </div>
+            ) : (
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  <span className="tabular-nums text-text-primary font-medium">
+                    {impact.conversationCount}
+                  </span>{" "}
+                  conversa(s) e todas as mensagens serão excluídas
+                </li>
+                <li>
+                  <span className="tabular-nums text-text-primary font-medium">
+                    {impact.documentCount}
+                  </span>{" "}
+                  documento(s) serão excluídos
+                </li>
+                <li>
+                  <span className="tabular-nums text-text-primary font-medium">
+                    {impact.taskCount}
+                  </span>{" "}
+                  tarefa(s) vinculada(s) serão desvinculadas (não excluídas)
+                </li>
+              </ul>
+            )}
+            <p>Os dados excluídos permanecem no log de auditoria.</p>
+          </div>
+        </div>
+
+        {contactIsExclusive && (
+          <Checkbox
+            checked={deleteContact}
+            onChange={(e) => setDeleteContact(e.target.checked)}
+            containerClassName="rounded-lg border border-border bg-surface-sunken p-3"
+            label={
+              <span className="text-sm text-text-primary">
+                Excluir também o contato {contactName}
+              </span>
+            }
+            description="Este contato não tem outros leads."
+          />
+        )}
+
+        {contactName && impact?.contactHasOtherLeads && (
+          <p className="text-xs text-text-muted">
+            O contato {contactName} tem outros leads e será mantido.
+          </p>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <Button variant="secondary" onClick={onClose} disabled={deleting} className="flex-1">
+            Cancelar
+          </Button>
+          <Button
+            variant="danger"
+            onClick={handleConfirm}
+            disabled={deleting || impact === undefined}
+            className="flex-1"
+          >
+            {deleting ? "Excluindo…" : "Excluir permanentemente"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

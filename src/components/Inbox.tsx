@@ -7,7 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -28,6 +28,8 @@ import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { LeadDetailPanel } from "@/components/LeadDetailPanel";
+import { ContactDetailPanel } from "@/components/ContactDetailPanel";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
 // v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
@@ -138,6 +140,14 @@ export function Inbox() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
   const [recorderActive, setRecorderActive] = useState(false);
+
+  // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
+  const [showLeadPanel, setShowLeadPanel] = useState(false);
+  const [showContactPanel, setShowContactPanel] = useState(false);
+  useEffect(() => {
+    setShowLeadPanel(false);
+    setShowContactPanel(false);
+  }, [selectedConversation]);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60_000);
@@ -348,10 +358,33 @@ export function Inbox() {
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
 
-  // Funil do lead da conversa aberta (C2): "Funil: <board> → <estágio>" com link.
+  const openContactId = currentConversation?.contact?._id as Id<"contacts"> | undefined;
+  const contactHeadingText = currentConversation ? contactName || "Sem nome" : "";
+
+  const renderContactHeading = (className: string) =>
+    openContactId ? (
+      <h2 className={className}>
+        <button
+          type="button"
+          onClick={() => setShowContactPanel(true)}
+          className="block max-w-full truncate py-2.5 -my-2.5 text-left transition-colors hover:text-brand-500 hover:underline underline-offset-4 focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
+          aria-label={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
+        >
+          {contactHeadingText}
+        </button>
+      </h2>
+    ) : (
+      <h2 className={className}>{contactHeadingText}</h2>
+    );
+
+  // Funil do lead da conversa aberta (C2): "Funil: <board> → <estágio>" + lead.
+  const openLeadId = currentConversation?.leadId as Id<"leads"> | undefined;
   const leadBoardId = currentConversation?.lead?.boardId as Id<"boards"> | undefined;
   const leadStageId = currentConversation?.lead?.stageId as Id<"stages"> | undefined;
-  const leadBoards = useQuery(api.boards.getBoards, leadBoardId ? { organizationId } : "skip") as
+  const leadBoards = useQuery(
+    api.boards.getBoards,
+    leadBoardId ? { organizationId, includeArchived: true } : "skip"
+  ) as
     | { _id: Id<"boards">; name: string }[]
     | undefined;
   const leadStages = useQuery(
@@ -360,28 +393,48 @@ export function Inbox() {
   ) as { _id: Id<"stages">; name: string }[] | undefined;
   const leadBoardName = leadBoards?.find((b) => b._id === leadBoardId)?.name;
   const leadStageName = leadStages?.find((s) => s._id === leadStageId)?.name;
-  const funnelLine = leadBoardId ? (
-    <button
-      type="button"
-      onClick={() =>
-        navigate(
-          `${TAB_ROUTES.board}?board=${leadBoardId}` +
-            (currentConversation?.leadId ? `&lead=${currentConversation.leadId}` : "")
-        )
-      }
-      className="block text-left text-xs text-text-muted hover:text-brand-500 transition-colors truncate"
-    >
+  const funnelText = (
+    <>
       Funil: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
       {" → "}
       <span className="text-text-secondary font-medium">{leadStageName ?? "…"}</span>
-      <span className="ml-1.5 text-brand-500">Ver no funil</span>
-    </button>
+    </>
+  );
+  const funnelLine = leadBoardId ? (
+    <div className="flex items-center gap-1 min-w-0">
+      {openLeadId ? (
+        <button
+          type="button"
+          onClick={() => setShowLeadPanel(true)}
+          className="flex-1 min-w-0 truncate py-2 -my-2 text-left text-xs text-text-muted hover:text-brand-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
+          aria-label="Ver detalhes do lead"
+        >
+          {funnelText}
+          <span className="ml-1.5 text-brand-500">Ver lead</span>
+        </button>
+      ) : (
+        <span className="flex-1 min-w-0 truncate text-xs text-text-muted">{funnelText}</span>
+      )}
+      <button
+        type="button"
+        onClick={() =>
+          navigate(
+            `${TAB_ROUTES.board}?board=${leadBoardId}` +
+              (openLeadId ? `&lead=${openLeadId}` : "")
+          )
+        }
+        title="Abrir no funil"
+        aria-label="Abrir no funil"
+        className="shrink-0 flex items-center justify-center min-h-[44px] min-w-[44px] -my-3 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
+      >
+        <ExternalLink size={14} />
+      </button>
+    </div>
   ) : null;
 
   // Repasse pendente do lead da conversa aberta → banner com ação inline.
   const openHandoffState = currentConversation?.lead?.handoffState as LeadHandoffState;
   const handoffPending = isHandoffPending(openHandoffState);
-  const openLeadId = currentConversation?.leadId as Id<"leads"> | undefined;
   const pendingHandoff = useQuery(
     api.handoffs.getPendingHandoffForLead,
     handoffPending && openLeadId ? { leadId: openLeadId } : "skip"
@@ -1255,9 +1308,9 @@ export function Inbox() {
                 >
                   <ArrowLeft size={20} />
                 </button>
-                <h2 className="flex-1 min-w-0 truncate text-base font-semibold text-text-primary">
-                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
-                </h2>
+                {renderContactHeading(
+                  "flex-1 min-w-0 truncate text-base font-semibold text-text-primary"
+                )}
                 {currentConversation && (
                   <ConversationActionsMenu
                     organizationId={organizationId}
@@ -1307,9 +1360,7 @@ export function Inbox() {
             {/* Desktop header */}
             <div className="hidden md:flex shrink-0 p-4 border-b border-border bg-surface-raised items-center justify-between">
               <div className="min-w-0">
-                <h2 className="text-base font-semibold text-text-primary truncate">
-                  {currentConversation?.contact?.firstName} {currentConversation?.contact?.lastName}
-                </h2>
+                {renderContactHeading("text-base font-semibold text-text-primary truncate")}
                 {funnelLine}
                 {contactTyping && (
                   <span className="text-xs text-brand-500 animate-pulse">digitando…</span>
@@ -1668,6 +1719,22 @@ export function Inbox() {
         }
         confirmLabel="Confirmar"
       />
+
+      {/* Painéis sobrepostos à conversa */}
+      {showLeadPanel && openLeadId && (
+        <LeadDetailPanel
+          leadId={openLeadId}
+          organizationId={organizationId}
+          onClose={() => setShowLeadPanel(false)}
+          initialTab="details"
+        />
+      )}
+      {showContactPanel && openContactId && (
+        <ContactDetailPanel
+          contactId={openContactId}
+          onClose={() => setShowContactPanel(false)}
+        />
+      )}
     </div>
   );
 }

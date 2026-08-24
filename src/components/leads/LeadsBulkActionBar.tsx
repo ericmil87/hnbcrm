@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightLeft, Archive, Plus, Tag, UserPlus, UserX, X } from "lucide-react";
+import { ArrowRightLeft, Archive, Plus, Tag, Trash2, UserPlus, UserX, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Avatar } from "@/components/ui/Avatar";
@@ -17,6 +17,8 @@ export interface LeadsBulkActionBarProps {
   onAddTag: (tag: string) => void;
   onArchive: () => void;
   archiveLabel: string;
+  onDelete?: () => void;
+  canDelete?: boolean;
   onClear: () => void;
 }
 
@@ -38,6 +40,8 @@ export function LeadsBulkActionBar({
   onAddTag,
   onArchive,
   archiveLabel,
+  onDelete,
+  canDelete,
   onClear,
 }: LeadsBulkActionBarProps) {
   const [openPopover, setOpenPopover] = useState<PopoverKey | null>(null);
@@ -211,6 +215,20 @@ export function LeadsBulkActionBar({
           <Archive size={15} />
           {archiveLabel}
         </button>
+
+        {canDelete && onDelete && (
+          <>
+            <div className="hidden h-6 w-px bg-border md:block" />
+            <button
+              type="button"
+              onClick={onDelete}
+              className={cn(actionButtonClass(false), "text-semantic-error hover:bg-semantic-error/10 hover:text-semantic-error")}
+            >
+              <Trash2 size={15} />
+              Excluir
+            </button>
+          </>
+        )}
 
         <div className="ml-auto flex items-center">
           <button

@@ -31,6 +31,7 @@ import {
 import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { batchGet } from "./lib/batchGet";
+import { hardDeleteLead, scheduleLeadCascade } from "./lib/leadCascade";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -350,10 +351,12 @@ async function runReadTool(
 }
 
 async function loadBoardsWithStages(ctx: ReadCtx, organizationId: Id<"organizations">) {
-  const boards = await ctx.db
-    .query("boards")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .collect();
+  const boards = (
+    await ctx.db
+      .query("boards")
+      .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+      .collect()
+  ).filter((b) => b.archivedAt === undefined);
   return await Promise.all(
     boards.map(async (board: Doc<"boards">) => {
       const stages = await ctx.db
@@ -766,10 +769,12 @@ async function runWriteTool(
       const title = typeof toolArgs.title === "string" ? toolArgs.title.trim() : "";
       if (!title) return { error: "title é obrigatório" };
 
-      const boards = await ctx.db
-        .query("boards")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .collect();
+      const boards = (
+        await ctx.db
+          .query("boards")
+          .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+          .collect()
+      ).filter((b) => b.archivedAt === undefined);
       const boardName = typeof toolArgs.boardName === "string" ? toolArgs.boardName : undefined;
       const board = boardName
         ? boards.find((b) => b.name.toLowerCase() === boardName.toLowerCase())
@@ -1290,24 +1295,18 @@ export const confirmPendingAction = mutation({
         // Re-checa a permissão NO MOMENTO da confirmação (pode ter mudado).
         await assertAgentCan(ctx, member._id, "leads", "full", lead);
 
-        await ctx.db.insert("auditLogs", {
-          organizationId: lead.organizationId,
-          entityType: "lead",
-          entityId: leadId,
-          action: "delete",
+        await hardDeleteLead(ctx, {
+          lead,
           actorId: member._id,
           actorType: "human",
-          metadata: { title: lead.title, via: "copilot", confirmedAt: now },
           description: `Excluiu o lead '${lead.title}' (proposto via Copiloto, confirmado)`,
-          severity: "high",
-          createdAt: now,
+          extraMetadata: { via: "copilot", confirmedAt: now },
         });
-        await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        await scheduleLeadCascade(ctx, {
           organizationId: lead.organizationId,
-          event: "lead.deleted",
-          payload: { leadId, title: lead.title },
+          leadIds: [leadId],
+          contactIds: [],
         });
-        await ctx.db.delete(leadId);
         break;
       }
       default:

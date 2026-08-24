@@ -66,6 +66,7 @@ import type * as lib_formFieldTypes from "../lib/formFieldTypes.js";
 import type * as lib_importKeys from "../lib/importKeys.js";
 import type * as lib_importMapping from "../lib/importMapping.js";
 import type * as lib_inboundRouting from "../lib/inboundRouting.js";
+import type * as lib_leadCascade from "../lib/leadCascade.js";
 import type * as lib_llm_index from "../lib/llm/index.js";
 import type * as lib_llm_openaiCompatible from "../lib/llm/openaiCompatible.js";
 import type * as lib_llm_registry from "../lib/llm/registry.js";
@@ -170,6 +171,7 @@ declare const fullApi: ApiFromModules<{
   "lib/importKeys": typeof lib_importKeys;
   "lib/importMapping": typeof lib_importMapping;
   "lib/inboundRouting": typeof lib_inboundRouting;
+  "lib/leadCascade": typeof lib_leadCascade;
   "lib/llm/index": typeof lib_llm_index;
   "lib/llm/openaiCompatible": typeof lib_llm_openaiCompatible;
   "lib/llm/registry": typeof lib_llm_registry;

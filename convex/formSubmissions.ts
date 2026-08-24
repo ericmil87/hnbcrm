@@ -305,10 +305,12 @@ export const internalProcessSubmission = internalMutation({
     let stageId = form.settings.stageId;
 
     if (!boardId) {
-      const boards = await ctx.db
-        .query("boards")
-        .withIndex("by_organization", (q) => q.eq("organizationId", form.organizationId))
-        .collect();
+      const boards = (
+        await ctx.db
+          .query("boards")
+          .withIndex("by_organization", (q) => q.eq("organizationId", form.organizationId))
+          .collect()
+      ).filter((b) => b.archivedAt === undefined);
       const defaultBoard = boards.find((b) => b.isDefault) || boards[0];
       if (!defaultBoard) throw new Error("No boards configured");
       boardId = defaultBoard._id;

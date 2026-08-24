@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { toast } from "sonner";
+import { TAB_ROUTES } from "@/lib/routes";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -12,7 +14,8 @@ import { SocialIcons } from "@/components/SocialIcons";
 import { CustomFieldsRenderer } from "@/components/CustomFieldsRenderer";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { AvatarUpload } from "@/components/ui/AvatarUpload";
-import { Trash2, Bot } from "lucide-react";
+import { LeadDetailPanel } from "@/components/LeadDetailPanel";
+import { Trash2, Bot, ExternalLink, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface ContactDetailPanelProps {
@@ -90,11 +93,14 @@ function contactToForm(c: any): ContactForm {
 }
 
 export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelProps) {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<"info" | "leads">("info");
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ContactForm | null>(null);
   const [initialized, setInitialized] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Lead aberto a partir da aba "Leads Vinculados" — painel sobreposto a este.
+  const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
 
   const contactData = useQuery(api.contacts.getContactWithLeads, { contactId });
   const fieldDefs = useQuery(
@@ -193,6 +199,8 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
 
   const contact = contactData;
   const leads = contactData.leads || [];
+  const activeLeads = leads.filter((l: any) => l.archivedAt == null);
+  const archivedLeads = leads.filter((l: any) => l.archivedAt != null);
   const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
   const displayName = fullName || contact.email || contact.phone || "Sem nome";
   const initials = [contact.firstName?.[0], contact.lastName?.[0]].filter(Boolean).join("").toUpperCase() || "?";
@@ -214,6 +222,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
   ];
 
   return (
+    <>
     <SlideOver open={true} onClose={onClose} title={displayName}>
       <div className="flex flex-col h-full">
         {/* Tabs */}
@@ -547,31 +556,47 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
             /* Leads tab */
             <div className="space-y-3">
               {leads.length === 0 ? (
-                <div className="text-center py-8 text-text-secondary">
-                  Nenhum lead vinculado
+                <div className="flex flex-col items-center text-center py-10">
+                  <div className="w-14 h-14 rounded-full bg-surface-overlay flex items-center justify-center mb-3">
+                    <Target size={26} className="text-text-muted" />
+                  </div>
+                  <p className="text-sm font-medium text-text-primary">Nenhum lead vinculado</p>
+                  <p className="text-sm text-text-secondary mt-1 max-w-xs">
+                    Os leads criados para este contato aparecem aqui.
+                  </p>
                 </div>
               ) : (
-                leads.map((lead: any) => (
-                  <div
-                    key={lead._id}
-                    className="p-4 bg-surface-sunken border border-border rounded-card"
-                  >
-                    <div className="font-medium text-text-primary mb-1">{lead.title}</div>
-                    {lead.value > 0 && (
-                      <div className="text-sm text-text-secondary mb-1">
-                        {new Intl.NumberFormat("pt-BR", {
-                          style: "currency",
-                          currency: "BRL",
-                        }).format(lead.value)}
+                <>
+                  {activeLeads.length === 0 && (
+                    <p className="text-sm text-text-secondary py-2">
+                      Nenhum lead ativo — veja os arquivados abaixo.
+                    </p>
+                  )}
+                  {activeLeads.map((lead: any) => (
+                    <LinkedLeadCard
+                      key={lead._id}
+                      lead={lead}
+                      onOpen={() => setSelectedLeadId(lead._id as Id<"leads">)}
+                      onOpenBoard={() => navigate(`${TAB_ROUTES.board}?lead=${lead._id}`)}
+                    />
+                  ))}
+
+                  {archivedLeads.length > 0 && (
+                    <CollapsibleSection title={`Arquivados (${archivedLeads.length})`}>
+                      <div className="space-y-3">
+                        {archivedLeads.map((lead: any) => (
+                          <LinkedLeadCard
+                            key={lead._id}
+                            lead={lead}
+                            archived
+                            onOpen={() => setSelectedLeadId(lead._id as Id<"leads">)}
+                            onOpenBoard={() => navigate(`${TAB_ROUTES.board}?lead=${lead._id}`)}
+                          />
+                        ))}
                       </div>
-                    )}
-                    {lead.stage?.name && (
-                      <Badge variant="default" className="mt-2">
-                        {lead.stage.name}
-                      </Badge>
-                    )}
-                  </div>
-                ))
+                    </CollapsibleSection>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -596,6 +621,104 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
         variant="danger"
       />
     </SlideOver>
+
+    {/* Montado depois do SlideOver do contato para ficar por cima dele. */}
+    {selectedLeadId && (
+      <LeadDetailPanel
+        leadId={selectedLeadId}
+        organizationId={contact.organizationId as Id<"organizations">}
+        onClose={() => setSelectedLeadId(null)}
+        initialTab="details"
+      />
+    )}
+    </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Card de lead vinculado                                             */
+/* ------------------------------------------------------------------ */
+
+function formatRelativeDate(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return "agora";
+  if (minutes < 60) return `há ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `há ${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `há ${days} dia${days > 1 ? "s" : ""}`;
+  return new Date(timestamp).toLocaleDateString("pt-BR", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function LinkedLeadCard({
+  lead,
+  archived,
+  onOpen,
+  onOpenBoard,
+}: {
+  lead: any;
+  archived?: boolean;
+  onOpen: () => void;
+  onOpenBoard: () => void;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Abrir os detalhes do lead ${lead.title}`}
+        className="w-full text-left p-4 pr-14 bg-surface-sunken border border-border rounded-card cursor-pointer transition-colors hover:bg-surface-overlay hover:border-border-strong focus:outline-none focus:ring-2 focus:ring-brand-500"
+      >
+        <div className="flex items-start gap-2">
+          <span className="flex-1 min-w-0 font-medium text-text-primary">{lead.title}</span>
+          {archived && (
+            <Badge variant="default" className="shrink-0">
+              Arquivado
+            </Badge>
+          )}
+        </div>
+
+        {lead.value > 0 && (
+          <div className="text-sm text-text-secondary mt-0.5 tabular-nums">
+            {new Intl.NumberFormat("pt-BR", {
+              style: "currency",
+              currency: "BRL",
+            }).format(lead.value)}
+          </div>
+        )}
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+          {lead.stage?.name && (
+            <span className="inline-flex items-center gap-1.5 text-text-secondary">
+              <span
+                className="h-2 w-2 rounded-full shrink-0"
+                style={{ backgroundColor: lead.stage.color || "#71717A" }}
+                aria-hidden="true"
+              />
+              {lead.stage.name}
+            </span>
+          )}
+          {lead.boardName && <span className="truncate">{lead.boardName}</span>}
+          <span className="truncate">{lead.assigneeName || "Não atribuído"}</span>
+          {lead.updatedAt && <span>Atualizado {formatRelativeDate(lead.updatedAt)}</span>}
+        </div>
+      </button>
+
+      <button
+        type="button"
+        onClick={onOpenBoard}
+        title="Abrir no funil"
+        aria-label={`Abrir o lead ${lead.title} no funil`}
+        className="absolute top-2 right-2 flex items-center justify-center min-h-[44px] min-w-[44px] rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500"
+      >
+        <ExternalLink size={16} />
+      </button>
+    </div>
   );
 }
 

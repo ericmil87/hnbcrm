@@ -257,6 +257,11 @@ const applicationTables = {
     color: v.string(),
     isDefault: v.boolean(),
     order: v.number(),
+    // Soft-delete timestamp: undefined = active, set = archived
+    archivedAt: v.optional(v.number()),
+    // Exclusão definitiva em andamento (cascata batched): o board fica arquivado
+    // até o job terminar, mas não pode ser restaurado nem re-excluído.
+    deletionStartedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

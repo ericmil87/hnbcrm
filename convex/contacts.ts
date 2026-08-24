@@ -135,22 +135,31 @@ export const getContactWithLeads = query({
       }
     }
 
-    const allLeads = await ctx.db
+    // Arquivados entram na lista com `archivedAt` preenchido — o painel do
+    // contato os mostra numa subseção separada.
+    const leads = await ctx.db
       .query("leads")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
       .take(100);
-    // Exclude soft-deleted (archived) leads from the linked-leads list
-    const leads = allLeads.filter((l) => l.archivedAt === undefined);
 
-    const [stageMap, assigneeMap] = await Promise.all([
+    const [stageMap, boardMap, assigneeMap] = await Promise.all([
       batchGet(ctx.db, leads.map(l => l.stageId)),
+      batchGet(ctx.db, leads.map(l => l.boardId)),
       batchGet(ctx.db, leads.map(l => l.assignedTo)),
     ]);
-    const leadsWithData = leads.map(lead => ({
-      ...lead,
-      stage: stageMap.get(lead.stageId) ?? null,
-      assignee: lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null,
-    }));
+    const leadsWithData = leads
+      .map(lead => {
+        const stage = stageMap.get(lead.stageId) ?? null;
+        const assignee = lead.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
+        return {
+          ...lead,
+          stage: stage ? { name: stage.name, color: stage.color } : null,
+          boardName: boardMap.get(lead.boardId)?.name ?? null,
+          assignee,
+          assigneeName: assignee?.name ?? null,
+        };
+      })
+      .sort((a, b) => b.updatedAt - a.updatedAt);
 
     return { ...contact, photoUrl, leads: leadsWithData };
   },

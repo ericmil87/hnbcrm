@@ -2685,10 +2685,12 @@ export const internalGetSimulatorSetup = internalQuery({
     const providerConfig = org.settings.aiConfig?.providerConfig;
 
     // Board default p/ listar estágios plausíveis na simulação.
-    const boards = await ctx.db
-      .query("boards")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .collect();
+    const boards = (
+      await ctx.db
+        .query("boards")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .collect()
+    ).filter((b) => b.archivedAt === undefined);
     const board = boards.find((b) => b.isDefault) ?? boards[0];
     const stages = board
       ? await ctx.db
