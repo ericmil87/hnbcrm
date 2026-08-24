@@ -376,7 +376,7 @@ function DeveloperSection() {
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code e OpenClaw.",
+      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compativel com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
@@ -391,7 +391,7 @@ function DeveloperSection() {
     {
       icon: BookOpen,
       title: "Agent Skills",
-      description: "Skill portavel que ensina qualquer agente de IA a operar como membro da equipe. Compativel com Claude Code, Cursor, OpenClaw, Gemini e mais.",
+      description: "Skill portavel que ensina qualquer agente de IA a operar como membro da equipe. Compativel com Claude Code, Cursor, Hermes Agent, OpenClaw, Gemini e mais.",
       link: "/developers#agent-skills",
       linkText: "Ver Skill",
     },

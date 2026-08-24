@@ -108,6 +108,26 @@ Add to your VS Code settings or workspace `.vscode/mcp.json`:
 }
 ```
 
+### Hermes Agent
+
+Add to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  hnbcrm:
+    command: npx
+    args: ["-y", "hnbcrm-mcp"]
+    env:
+      HNBCRM_API_URL: "https://your-app.convex.site"
+      HNBCRM_API_KEY: "your-api-key"
+```
+
+To also install the agent skill (agentskills.io standard, native to Hermes):
+
+```bash
+cp -r .claude/skills/hnbcrm/ ~/.hermes/skills/hnbcrm/
+```
+
 ### OpenClaw
 
 Add to your OpenClaw MCP configuration:

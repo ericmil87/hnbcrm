@@ -53,7 +53,7 @@ Or use the MCP server for tool access: \`npx hnbcrm-mcp\`
 - references/WORKFLOWS.md — Step-by-step playbooks (lead intake, qualification, enrichment, handoffs)
 - references/API_REFERENCE.md — Complete MCP tool and REST endpoint mapping
 - references/DATA_MODEL.md — All tables, fields, and enum values
-- references/SETUP.md — Platform-specific MCP configuration (Claude, Cursor, VS Code, Gemini, OpenClaw)
+- references/SETUP.md — Platform-specific MCP configuration (Claude, Cursor, VS Code, Gemini, Hermes Agent, OpenClaw)
 `;
 
 export const LLMS_FULL_TXT = `# HNBCRM — Full API Reference
@@ -1160,7 +1160,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 - **references/WORKFLOWS.md** — Step-by-step playbooks for lead intake, qualification, pipeline advancement, contact enrichment, handoff execution, conversation management
 - **references/API_REFERENCE.md** — Complete MCP tool ↔ REST endpoint mapping with parameters and response formats
 - **references/DATA_MODEL.md** — All entity tables, fields, and enum values
-- **references/SETUP.md** — Platform-specific MCP configuration (Claude Code/Desktop, Cursor, VS Code, Gemini CLI, OpenClaw)
+- **references/SETUP.md** — Platform-specific MCP configuration (Claude Code/Desktop, Cursor, VS Code, Gemini CLI, Hermes Agent, OpenClaw)
 
 ### Getting Started
 1. Install the MCP server: \`npx hnbcrm-mcp\` (set HNBCRM_API_URL and HNBCRM_API_KEY env vars)

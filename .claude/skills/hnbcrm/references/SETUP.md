@@ -110,6 +110,34 @@ export HNBCRM_API_KEY="your-api-key"
 
 Then configure MCP in `~/.gemini/settings.json` (or your project config) following Gemini's MCP setup guide.
 
+### Hermes Agent
+
+1. Install the MCP server:
+
+```bash
+npm install -g hnbcrm-mcp
+```
+
+2. Add the MCP server to `~/.hermes/config.yaml` (keep the API key in `~/.hermes/.env` if you prefer secrets out of the config):
+
+```yaml
+mcp_servers:
+  hnbcrm:
+    command: npx
+    args: ["-y", "hnbcrm-mcp"]
+    env:
+      HNBCRM_API_URL: "https://your-app.convex.site"
+      HNBCRM_API_KEY: "your-api-key"
+```
+
+3. Copy the skill into the Hermes skills directory (the skill follows the agentskills.io standard Hermes uses natively):
+
+```bash
+cp -r .claude/skills/hnbcrm/ ~/.hermes/skills/hnbcrm/
+```
+
+The agent will automatically detect the skill and begin the bootstrap sequence (discover team, learn pipeline, check handoffs, review leads).
+
 ### OpenClaw
 
 1. Install the MCP server:

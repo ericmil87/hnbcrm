@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.36.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.47.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -33,7 +33,8 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Voice Transcription** — Self-hosted Whisper service transcribes voice notes locally (opt-in per org, no paid API), transcripts are searchable
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
-- **REST API** — Full CRUD at `/api/v1/` with API key authentication and HMAC webhooks
+- **Data Export/Import** — Per-entity CSV exports (denormalized columns + custom fields, BOM, formula-injection safe) and versioned full-org JSON backup (secrets always stripped, LGPD art. 18 portability); CSV import wizard for contacts and leads with PT-BR/EN header mapping suggestions, dry-run preview, duplicate strategies, and one-click rollback
+- **REST API** — Full CRUD at `/api/v1/` with API key authentication, per-route RBAC enforcement (mirrors in-app permissions, fail-closed 403), 300 req/min rate limit per key, and HMAC webhooks
 - **MCP Server** — AI agents connect via Model Context Protocol with 46 tools for full CRM access
 - **Agent Skills** — Open skill package (AgentSkills.io standard) with workflows, data model, and setup guides
 - **Multi-tenant** — Organization-level isolation with role-based access (Admin, Manager, Agent, AI)
@@ -114,11 +115,11 @@ public/             Logo assets
 
 ## API & Integrations
 
-**REST API** — RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. Covers leads, contacts, conversations, handoffs, boards, and team members. See `convex/router.ts` for the full reference.
+**REST API** — RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. Covers leads, contacts, conversations, handoffs, tasks, calendar, boards, team members, and data export/import. Every route enforces the RBAC permission of the key's member (fail-closed, 403), rate-limited at 300 req/min per key. Route → permission table at `/llms-full.txt`; OpenAPI spec at `/openapi.json`. See `convex/router.ts` for the source of truth.
 
 **MCP Server** — The `mcp-server/` directory contains an MCP server (`hnbcrm-mcp`) with 46 tools and 4 resources for AI agent integration. See [mcp-server/README.md](mcp-server/README.md) for setup.
 
-**Agent Skills** — The `.claude/skills/hnbcrm/` directory contains a portable Agent Skill following the [AgentSkills.io](https://agentskills.io) open standard. Includes workflows, data model reference, API mapping, and platform setup guides. Copy the skill into any compatible agent workspace to get started.
+**Agent Skills** — The `.claude/skills/hnbcrm/` directory contains a portable Agent Skill following the [AgentSkills.io](https://agentskills.io) open standard. Includes workflows, data model reference, API mapping, and platform setup guides. Copy the skill into any compatible agent workspace — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (`~/.hermes/skills/`), Claude Code, Cursor, OpenClaw, and more.
 
 **Webhooks** — HMAC-SHA256 signed webhook events for lead, conversation, and handoff state changes.
 

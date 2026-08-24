@@ -33,6 +33,7 @@ const sections = [
   { id: "auth", label: "Autenticacao", icon: Key },
   { id: "mcp", label: "Servidor MCP", icon: Server },
   { id: "mcp-tools", label: "Tools MCP", icon: Table2 },
+  { id: "hermes", label: "Hermes Agent", icon: Bot },
   { id: "openclaw", label: "OpenClaw", icon: Bot },
   { id: "agent-skills", label: "Agent Skills", icon: BookOpen },
   { id: "rest-api", label: "API REST", icon: Globe },
@@ -761,6 +762,74 @@ npm run dev`}</CodeBlock>
             </Card>
           </section>
 
+          {/* Hermes Agent Integration */}
+          <section id="hermes" className="space-y-6 scroll-mt-24">
+            <h2 className="text-2xl font-bold flex items-center gap-3">
+              <Bot className="text-brand-400" size={24} />
+              Hermes Agent
+            </h2>
+            <p className="text-text-secondary">
+              O HNBCRM e compativel nativamente com o{" "}
+              <a href="https://github.com/NousResearch/hermes-agent" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">
+                Hermes Agent
+              </a>
+              {" "}&mdash; o agente open-source da Nous Research com memoria persistente, skills
+              que evoluem com o uso e suporte a MCP nativo. Roda no WhatsApp, Telegram, Slack,
+              Discord, e-mail e CLI. Conecte seu CRM em minutos.
+            </p>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">Setup Rapido</h3>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">1.</span> Instale o servidor MCP via npm:
+                  </p>
+                  <CodeBlock language="bash">{`npm install -g hnbcrm-mcp`}</CodeBlock>
+                </div>
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">2.</span> Adicione ao{" "}
+                    <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">~/.hermes/config.yaml</code>
+                    {" "}(a chave pode ficar no <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">~/.hermes/.env</code>):
+                  </p>
+                  <CodeBlock language="yaml">{`mcp_servers:
+  hnbcrm:
+    command: npx
+    args: ["-y", "hnbcrm-mcp"]
+    env:
+      HNBCRM_API_URL: "https://seu-deployment.convex.site"
+      HNBCRM_API_KEY: "sua_chave_aqui"`}</CodeBlock>
+                </div>
+                <div>
+                  <p className="text-sm text-text-secondary mb-2">
+                    <span className="text-brand-400 font-semibold">3.</span> Copie o Agent Skill (opcional — o skill segue o padrao agentskills.io, o mesmo do Hermes):
+                  </p>
+                  <CodeBlock language="bash">{`cp -r .claude/skills/hnbcrm/ ~/.hermes/skills/hnbcrm/`}</CodeBlock>
+                </div>
+              </div>
+            </Card>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">O que o Hermes pode fazer com HNBCRM</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  "Gerenciar leads no pipeline automaticamente",
+                  "Responder conversas e solicitar handoffs para humanos",
+                  "Criar tarefas e agendar eventos no calendario",
+                  "Exportar/importar dados via API (com permissao settings: manage)",
+                  "Aprender seus fluxos e criar skills proprias a partir do uso do CRM",
+                  "Operar 24/7 com cron jobs e memoria entre sessoes",
+                ].map((capability) => (
+                  <div key={capability} className="flex items-start gap-2 text-sm text-text-secondary">
+                    <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={16} />
+                    <span>{capability}</span>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          </section>
+
           {/* OpenClaw Integration */}
           <section id="openclaw" className="space-y-6 scroll-mt-24">
             <h2 className="text-2xl font-bold flex items-center gap-3">
@@ -855,7 +924,7 @@ npm run dev`}</CodeBlock>
                   { file: "references/WORKFLOWS.md", desc: "Playbooks passo a passo: intake, qualificacao, enrichment, handoffs" },
                   { file: "references/API_REFERENCE.md", desc: "Mapeamento completo MCP tools <> REST endpoints" },
                   { file: "references/DATA_MODEL.md", desc: "Tabelas, campos e valores de enum" },
-                  { file: "references/SETUP.md", desc: "Configuracao por plataforma (Claude, Cursor, VS Code, Gemini, OpenClaw)" },
+                  { file: "references/SETUP.md", desc: "Configuracao por plataforma (Claude, Cursor, VS Code, Gemini, Hermes, OpenClaw)" },
                 ].map((item) => (
                   <div key={item.file} className="flex items-start gap-3 p-3 rounded-lg bg-surface-overlay border border-border">
                     <code className="text-xs font-mono text-brand-400 whitespace-nowrap mt-0.5">{item.file}</code>
@@ -908,6 +977,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "Cursor",
                   "VS Code",
                   "Gemini CLI",
+                  "Hermes Agent",
                   "OpenClaw",
                   "REST API (qualquer agente)",
                 ].map((platform) => (
