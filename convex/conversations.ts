@@ -255,8 +255,11 @@ export const getConversations = query({
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
         .take(args.limit ?? 200);
     } else {
+      // Ordena pelo índice de última mensagem (desc) — o take(200) pega as
+      // conversas com atividade mais recente, não as mais antigas por criação.
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .withIndex("by_organization_and_last_message", (q) => q.eq("organizationId", args.organizationId))
+        .order("desc")
         .take(args.limit ?? 200);
     }
 
@@ -297,7 +300,36 @@ export const getConversations = query({
       };
     }).filter(Boolean);
 
+    // Não lidas primeiro; dentro de cada grupo, última mensagem primeiro.
+    conversationsWithData.sort((a: any, b: any) => {
+      const aUnread = (a.unreadCount ?? 0) > 0 ? 1 : 0;
+      const bUnread = (b.unreadCount ?? 0) > 0 ? 1 : 0;
+      if (aUnread !== bUnread) return bUnread - aUnread;
+      return (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt);
+    });
+
     return conversationsWithData;
+  },
+});
+
+/**
+ * Total de mensagens não lidas nas conversas ativas (badge da sidebar).
+ * Mesmo gate de visibilidade do item de navegação (inbox:view_own).
+ */
+export const getInboxUnreadCount = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "inbox", "view_own");
+    const unreadConversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_organization_and_unread", (q) =>
+        q.eq("organizationId", args.organizationId).gt("unreadCount", 0)
+      )
+      .collect();
+    return unreadConversations
+      .filter((c) => !c.archivedAt)
+      .reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
   },
 });
 
@@ -1315,6 +1347,7 @@ export const internalReceiveMessage = internalMutation({
       lastMessageAt: now,
       lastInboundAt: now, // (re)opens the 24h customer-service window
       messageCount: conversation.messageCount + 1,
+      unreadCount: (conversation.unreadCount ?? 0) + 1, // zerado por markConversationRead
       updatedAt: now,
       ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
         ? { channelConfigId: args.channelConfigId }
@@ -1675,6 +1708,14 @@ export const markConversationRead = mutation({
 
     await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
 
+    const now = Date.now();
+
+    // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
+    // lista) — independe dos recibos de leitura do provedor logo abaixo.
+    if ((conversation.unreadCount ?? 0) > 0) {
+      await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+    }
+
     // Cap the batch: the newest 20 inbound messages that carry a provider id and
     // aren't marked read yet. (Older history is left as-is.)
     const recent = await ctx.db
@@ -1686,8 +1727,6 @@ export const markConversationRead = mutation({
       (m) => m.direction === "inbound" && !!m.externalId && !m.metadata?.readAt
     );
     if (unread.length === 0) return null;
-
-    const now = Date.now();
     for (const m of unread) {
       await ctx.db.patch(m._id, { metadata: { ...(m.metadata ?? {}), readAt: now } });
     }

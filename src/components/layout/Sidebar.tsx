@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
+import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { PermissionCategory } from "../../../convex/lib/permissions";
 import {
@@ -62,6 +64,23 @@ export function Sidebar({ onSignOut, organizationId, orgSelector }: SidebarProps
     });
   }, [can]);
 
+  // Badges reativos (estilo sino de notificações): mensagens não lidas na
+  // Caixa de Entrada + repasses pendentes. Skip sem permissão de inbox.
+  const canSeeInbox = can("inbox", "view_own");
+  const inboxUnread = useQuery(
+    api.conversations.getInboxUnreadCount,
+    canSeeInbox ? { organizationId } : "skip"
+  );
+  const pendingHandoffs = useQuery(
+    api.handoffs.getPendingHandoffCount,
+    canSeeInbox ? { organizationId } : "skip"
+  );
+
+  const badgeCounts: Partial<Record<Tab, number | undefined>> = {
+    inbox: inboxUnread,
+    handoffs: pendingHandoffs,
+  };
+
   return (
     <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-20 flex-col bg-surface-raised border-r border-border w-16 lg:w-56 transition-all duration-200">
       {/* Logo */}
@@ -81,22 +100,43 @@ export function Sidebar({ onSignOut, organizationId, orgSelector }: SidebarProps
         {visibleItems.map((item) => {
           const Icon = item.icon;
           const isActive = activeTab === item.id;
+          const count = badgeCounts[item.id] ?? 0;
+          const badgeLabel = count > 0 ? (count > 99 ? "99+" : String(count)) : null;
           return (
             <button
               key={item.id}
               onClick={() => navigate(TAB_ROUTES[item.id])}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                "relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
                 "min-h-[44px]",
                 isActive
                   ? "bg-brand-500/10 text-brand-500"
                   : "text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
               )}
               aria-current={isActive ? "page" : undefined}
+              aria-label={badgeLabel ? `${item.label}, ${badgeLabel} não lidas` : undefined}
               title={item.label}
             >
               <Icon size={20} className="shrink-0" />
               <span className="hidden lg:block truncate">{item.label}</span>
+              {badgeLabel && (
+                <>
+                  {/* Sidebar expandida: pill no fim da linha */}
+                  <span
+                    className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                    aria-hidden="true"
+                  >
+                    {badgeLabel}
+                  </span>
+                  {/* Sidebar colapsada (só ícones): pill sobre o ícone */}
+                  <span
+                    className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                    aria-hidden="true"
+                  >
+                    {badgeLabel}
+                  </span>
+                </>
+              )}
             </button>
           );
         })}

@@ -927,8 +927,10 @@ export function Inbox() {
       ? contactName || "Contato"
       : "Você";
 
+  // O container fixo começa ABAIXO do header sticky do AppShell (h-14/h-16) —
+  // top-0 deixava o topo da página (spotlight) atrás do sino de notificações.
   return (
-    <div className="fixed top-0 left-0 right-0 h-[calc(100dvh-64px-env(safe-area-inset-bottom,0px))] md:left-16 lg:left-56 md:h-[100dvh] flex flex-col bg-surface-base">
+    <div className="fixed top-14 md:top-16 left-0 right-0 h-[calc(100dvh-3.5rem-64px-env(safe-area-inset-bottom,0px))] md:left-16 lg:left-56 md:h-[calc(100dvh-4rem)] flex flex-col bg-surface-base">
       {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
       <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
         <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
@@ -1132,6 +1134,9 @@ export function Inbox() {
                 className={cn(
                   "p-4 border-b border-border cursor-pointer transition-colors",
                   "hover:bg-surface-overlay active:bg-surface-overlay",
+                  (conversation.unreadCount ?? 0) > 0 &&
+                    selectedConversation !== conversation._id &&
+                    "bg-brand-500/5",
                   !selectionMode &&
                     selectedConversation === conversation._id &&
                     "bg-brand-500/10 border-l-2 border-l-brand-500",
@@ -1152,7 +1157,12 @@ export function Inbox() {
                       {selectedIds.has(conversation._id) && <Check size={11} />}
                     </span>
                   )}
-                  <h3 className="flex items-center gap-1.5 min-w-0 flex-1 font-medium text-text-primary truncate">
+                  <h3
+                    className={cn(
+                      "flex items-center gap-1.5 min-w-0 flex-1 text-text-primary truncate",
+                      (conversation.unreadCount ?? 0) > 0 ? "font-semibold" : "font-medium"
+                    )}
+                  >
                     <span className="truncate">
                       {conversation.contact?.firstName} {conversation.contact?.lastName}
                     </span>
@@ -1192,7 +1202,14 @@ export function Inbox() {
 
                 <div className="flex items-center justify-between gap-2">
                   {conversation.lastMessagePreview ? (
-                    <span className="flex items-center gap-1 min-w-0 text-xs text-text-muted">
+                    <span
+                      className={cn(
+                        "flex items-center gap-1 min-w-0 text-xs",
+                        (conversation.unreadCount ?? 0) > 0
+                          ? "text-text-primary font-medium"
+                          : "text-text-muted"
+                      )}
+                    >
                       {(() => {
                         const PreviewIcon = getPreviewIcon(
                           conversation.lastMessageContentType ?? null,
@@ -1219,8 +1236,23 @@ export function Inbox() {
                       />
                     )}
                     {conversation.lastMessageAt && (
-                      <span className="text-xs text-text-muted tabular-nums">
+                      <span
+                        className={cn(
+                          "text-xs tabular-nums",
+                          (conversation.unreadCount ?? 0) > 0
+                            ? "text-brand-500 font-medium"
+                            : "text-text-muted"
+                        )}
+                      >
                         {new Date(conversation.lastMessageAt).toLocaleDateString("pt-BR")}
+                      </span>
+                    )}
+                    {(conversation.unreadCount ?? 0) > 0 && (
+                      <span
+                        className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                        aria-label={`${conversation.unreadCount} mensagens não lidas`}
+                      >
+                        {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
                       </span>
                     )}
                   </div>

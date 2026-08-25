@@ -588,9 +588,29 @@ export const getHandoffs = query({
       );
     }
 
-    const handoffs = await query.take(args.limit ?? 200);
+    // Mais recentes primeiro — a fila mostra o repasse novo no topo.
+    const handoffs = await query.order("desc").take(args.limit ?? 200);
 
     return await enrichHandoffs(ctx, handoffs);
+  },
+});
+
+/**
+ * Repasses pendentes da org (badge da sidebar). Mesmo gate de visibilidade do
+ * item de navegação (inbox:view_own).
+ */
+export const getPendingHandoffCount = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "inbox", "view_own");
+    const pending = await ctx.db
+      .query("handoffs")
+      .withIndex("by_organization_and_status", (q) =>
+        q.eq("organizationId", args.organizationId).eq("status", "pending")
+      )
+      .collect();
+    return pending.length;
   },
 });
 

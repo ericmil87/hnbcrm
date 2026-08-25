@@ -540,6 +540,10 @@ const applicationTables = {
     ),
     archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
     labelIds: v.optional(v.array(v.id("conversationLabels"))),
+    // Não lidas pela EQUIPE (compartilhado, não por membro): ingress incrementa,
+    // markConversationRead zera. Ausente = 0 (conversas antigas nascem "lidas").
+    unreadCount: v.optional(v.number()),
+    lastReadAt: v.optional(v.number()),
     // Lock/lease OCC do turno de IA — evita resposta dupla de dois inbounds
     // concorrentes. Claims concorrentes leem+escrevem o mesmo doc → só uma commita.
     aiTurnLock: v.optional(v.object({ runId: v.string(), leaseUntil: v.number() })),
@@ -553,7 +557,11 @@ const applicationTables = {
     .index("by_organization", ["organizationId"])
     .index("by_lead", ["leadId"])
     .index("by_lead_and_channel", ["leadId", "channel"])
-    .index("by_organization_and_status", ["organizationId", "status"]),
+    .index("by_organization_and_status", ["organizationId", "status"])
+    // Lista do inbox ordenada por última mensagem (desc) sem collect() da org.
+    .index("by_organization_and_last_message", ["organizationId", "lastMessageAt"])
+    // Badge da sidebar: range unreadCount > 0 direto no índice.
+    .index("by_organization_and_unread", ["organizationId", "unreadCount"]),
 
   // Messages
   messages: defineTable({

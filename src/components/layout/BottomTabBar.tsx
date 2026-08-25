@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
+import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { PermissionCategory } from "../../../convex/lib/permissions";
 import {
@@ -77,6 +79,23 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
   const moreTabIds = useMemo(() => new Set(visibleMore.map((t) => t.id)), [visibleMore]);
   const isMoreActive = moreTabIds.has(activeTab as Tab);
 
+  // Badges (mesmos da sidebar): não lidas na Entrada + repasses pendentes.
+  const canSeeInbox = can("inbox", "view_own");
+  const inboxUnread = useQuery(
+    api.conversations.getInboxUnreadCount,
+    canSeeInbox ? { organizationId } : "skip"
+  );
+  const pendingHandoffs = useQuery(
+    api.handoffs.getPendingHandoffCount,
+    canSeeInbox ? { organizationId } : "skip"
+  );
+  const badgeCounts: Partial<Record<Tab, number | undefined>> = {
+    inbox: inboxUnread,
+    handoffs: pendingHandoffs,
+  };
+  const formatBadge = (count: number | undefined) =>
+    count && count > 0 ? (count > 99 ? "99+" : String(count)) : null;
+
   return (
     <>
       {/* More menu overlay */}
@@ -87,18 +106,26 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
       {/* More menu popup */}
       {showMore && visibleMore.length > 0 && (
         <div className="fixed bottom-[calc(64px+env(safe-area-inset-bottom,0px))] right-2 z-50 bg-surface-overlay border border-border rounded-xl shadow-elevated animate-fade-in-up p-1 min-w-[160px]">
-          {visibleMore.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => { navigate(TAB_ROUTES[tab.id]); onToggleMore(); }}
-              className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors",
-                activeTab === tab.id ? "text-brand-500 bg-brand-500/10" : "text-text-secondary hover:text-text-primary hover:bg-surface-raised"
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
+          {visibleMore.map((tab) => {
+            const badgeLabel = formatBadge(badgeCounts[tab.id]);
+            return (
+              <button
+                key={tab.id}
+                onClick={() => { navigate(TAB_ROUTES[tab.id]); onToggleMore(); }}
+                className={cn(
+                  "w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm transition-colors",
+                  activeTab === tab.id ? "text-brand-500 bg-brand-500/10" : "text-text-secondary hover:text-text-primary hover:bg-surface-raised"
+                )}
+              >
+                <span className="flex-1 text-left">{tab.label}</span>
+                {badgeLabel && (
+                  <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums">
+                    {badgeLabel}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -108,18 +135,29 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
           {visiblePrimary.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
+            const badgeLabel = formatBadge(badgeCounts[tab.id]);
             return (
               <button
                 key={tab.id}
                 onClick={() => navigate(TAB_ROUTES[tab.id])}
                 className={cn(
-                  "flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
+                  "relative flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
                   isActive ? "text-brand-500" : "text-text-muted"
                 )}
-                aria-label={tab.label}
+                aria-label={badgeLabel ? `${tab.label}, ${badgeLabel} não lidas` : tab.label}
                 aria-current={isActive ? "page" : undefined}
               >
-                <Icon size={20} />
+                <span className="relative">
+                  <Icon size={20} />
+                  {badgeLabel && (
+                    <span
+                      className="absolute -top-1.5 -right-2.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                      aria-hidden="true"
+                    >
+                      {badgeLabel}
+                    </span>
+                  )}
+                </span>
                 <span className="text-[11px] font-medium">{tab.label}</span>
               </button>
             );
@@ -130,12 +168,21 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
             <button
               onClick={onToggleMore}
               className={cn(
-                "flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
+                "relative flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
                 isMoreActive ? "text-brand-500" : "text-text-muted"
               )}
               aria-label="Mais opções"
             >
-              <MoreHorizontal size={20} />
+              <span className="relative">
+                <MoreHorizontal size={20} />
+                {/* Ponto quando algum item do menu "Mais" tem pendência (repasses) */}
+                {visibleMore.some((t) => formatBadge(badgeCounts[t.id])) && (
+                  <span
+                    className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-brand-600"
+                    aria-hidden="true"
+                  />
+                )}
+              </span>
               <span className="text-[11px] font-medium">Mais</span>
             </button>
           )}
