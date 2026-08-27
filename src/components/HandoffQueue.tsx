@@ -16,6 +16,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
+import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
 
 export function HandoffQueue() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -40,6 +41,9 @@ export function HandoffQueue() {
   // (`?handoff=`), que é o destino do sino de notificações.
   const [peekHandoffId, setPeekHandoffId] = useState<string | null>(null);
   const [peekBusy, setPeekBusy] = useState(false);
+
+  // Popover "Devolver à IA" aberto em qual card (um por vez).
+  const [returnPopoverFor, setReturnPopoverFor] = useState<string | null>(null);
 
   // Escrita nossa no `?handoff=` ainda em voo: o router aplica o
   // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
@@ -132,12 +136,17 @@ export function HandoffQueue() {
     }
   };
 
-  const handleReject = async (handoffId: string): Promise<boolean> => {
+  const handleReject = async (handoffId: string, instruction?: string): Promise<boolean> => {
     try {
       await rejectHandoff({
         handoffId: handoffId as Id<"handoffs">,
+        ...(instruction ? { instruction } : {}),
       });
-      toast.success("Repasse rejeitado — a IA volta a atender");
+      toast.success(
+        instruction
+          ? "Devolvido à IA — ela vai responder o cliente com a sua orientação"
+          : "Repasse rejeitado — a IA volta a atender"
+      );
       return true;
     } catch (error) {
       toast.error(errorMessage(error, "Falha ao rejeitar repasse"));
@@ -154,10 +163,10 @@ export function HandoffQueue() {
     }
   };
 
-  const handlePeekReject = async (handoffId: string) => {
+  const handlePeekReject = async (handoffId: string, instruction?: string) => {
     setPeekBusy(true);
     try {
-      if (await handleReject(handoffId)) closePeek();
+      if (await handleReject(handoffId, instruction)) closePeek();
     } finally {
       setPeekBusy(false);
     }
@@ -297,14 +306,31 @@ export function HandoffQueue() {
                     <Eye size={16} />
                     Espiar conversa
                   </Button>
-                  <Button
-                    onClick={() => void handleReject(handoff._id)}
-                    variant="secondary"
-                    size="md"
-                    className="w-full sm:w-auto whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
-                  >
-                    Rejeitar e devolver à IA
-                  </Button>
+                  <div className="relative w-full sm:w-auto">
+                    <Button
+                      onClick={() =>
+                        setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
+                      }
+                      variant="secondary"
+                      size="md"
+                      className="w-full sm:w-auto whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
+                    >
+                      Devolver à IA
+                    </Button>
+                    {returnPopoverFor === handoff._id && (
+                      <AiInstructionPopover
+                        title="Devolver à IA — responda o que ela precisa (opcional)"
+                        placeholder='Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                        submitLabel="Devolver"
+                        direction="up"
+                        onSubmit={(instruction) => {
+                          setReturnPopoverFor(null);
+                          void handleReject(handoff._id, instruction);
+                        }}
+                        onClose={() => setReturnPopoverFor(null)}
+                      />
+                    )}
+                  </div>
                   <Button
                     onClick={() => handleAccept(handoff._id)}
                     variant="primary"

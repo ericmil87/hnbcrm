@@ -550,6 +550,18 @@ const applicationTables = {
     // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
     // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
     aiPausedUntil: v.optional(v.number()),
+    // Informações passadas pela equipe humana à IA ("Devolver para IA" /
+    // rejeitar repasse com instrução): persistem na conversa e entram como
+    // fonte oficial em TODOS os turnos seguintes do atendente (cap 20, FIFO).
+    aiTeamNotes: v.optional(
+      v.array(
+        v.object({
+          text: v.string(),
+          byMemberId: v.optional(v.id("teamMembers")),
+          at: v.number(),
+        })
+      )
+    ),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),

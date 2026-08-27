@@ -393,27 +393,34 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
 
 /**
  * Painel ancorado com uma instrução em texto livre para a IA. Usado por
- * "Devolver para IA" e "Pedir sugestão à IA" — no mobile abre alinhado à
- * esquerda do gatilho para não sair da tela.
+ * "Devolver para IA", "Pedir sugestão à IA" e pelo devolver-com-instrução dos
+ * repasses — no mobile abre alinhado à esquerda do gatilho para não sair da
+ * tela; `direction="up"` para gatilhos colados no rodapé.
  */
-function AiInstructionPopover({
+export function AiInstructionPopover({
   title,
   placeholder,
   submitLabel,
   onSubmit,
   onClose,
+  direction = "down",
 }: {
   title: string;
   placeholder: string;
   submitLabel: string;
   onSubmit: (instruction?: string) => void;
   onClose: () => void;
+  direction?: "down" | "up";
 }) {
   const [text, setText] = useState("");
   const trimmed = text.trim();
 
   return (
-    <div className="absolute top-full left-0 md:left-auto md:right-0 mt-2 z-40 w-[calc(100vw-2rem)] max-w-xs p-3 bg-surface-overlay border border-border rounded-xl shadow-elevated space-y-2.5">
+    <div
+      className={`absolute ${
+        direction === "up" ? "bottom-full mb-2" : "top-full mt-2"
+      } left-0 md:left-auto md:right-0 z-40 w-[calc(100vw-2rem)] max-w-xs p-3 bg-surface-overlay border border-border rounded-xl shadow-elevated space-y-2.5`}
+    >
       <p className="text-xs font-medium text-text-primary">{title}</p>
       <textarea
         value={text}
@@ -484,7 +491,7 @@ export function ReturnToAiButton({
       {open && (
         <AiInstructionPopover
           title="Devolver a conversa para a IA"
-          placeholder="Instrução para a IA (opcional): ex. faça follow-up amanhã oferecendo o plano anual"
+          placeholder='Instrução para a IA (opcional): responda o que ela precisa — ex. "o Pix é financeiro@empresa.com e o valor é R$ 150" — ou peça uma ação: "faça follow-up amanhã"'
           submitLabel="Devolver"
           onSubmit={submit}
           onClose={() => setOpen(false)}

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
-import { getAiDraft } from "@/components/inbox/AiDraftCard";
+import { getAiDraft, AiInstructionPopover } from "@/components/inbox/AiDraftCard";
 import type { InboxMessage } from "@/components/inbox/types";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -46,7 +46,7 @@ interface HandoffPeekSlideOverProps {
   handoff: PeekHandoff;
   onClose: () => void;
   onAccept: (handoffId: string) => Promise<void>;
-  onReject: (handoffId: string) => Promise<void>;
+  onReject: (handoffId: string, instruction?: string) => Promise<void>;
   busy?: boolean;
 }
 
@@ -107,6 +107,8 @@ export function HandoffPeekSlideOver({
   const [instructOpen, setInstructOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [instructing, setInstructing] = useState(false);
+  // Popover do "Devolver à IA" (rejeitar respondendo o que a IA precisava).
+  const [returnOpen, setReturnOpen] = useState(false);
 
   const handleInstruct = async () => {
     const text = instruction.trim();
@@ -391,14 +393,29 @@ export function HandoffPeekSlideOver({
         )}
 
         <div className="flex flex-col sm:flex-row gap-2">
-          <Button
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void onReject(handoff._id)}
-            className="whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
-          >
-            Rejeitar e devolver à IA
-          </Button>
+          <div className="relative">
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => setReturnOpen((v) => !v)}
+              className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
+            >
+              Devolver à IA
+            </Button>
+            {returnOpen && (
+              <AiInstructionPopover
+                title="Devolver à IA — responda o que ela precisa (opcional)"
+                placeholder='Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                submitLabel="Devolver"
+                direction="up"
+                onSubmit={(instruction) => {
+                  setReturnOpen(false);
+                  void onReject(handoff._id, instruction);
+                }}
+                onClose={() => setReturnOpen(false)}
+              />
+            )}
+          </div>
           <Button
             disabled={busy}
             onClick={() => void onAccept(handoff._id)}

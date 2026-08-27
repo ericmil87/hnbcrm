@@ -707,11 +707,17 @@ export const acceptHandoff = mutation({
   },
 });
 
-// Reject handoff
+// Reject handoff — `instruction` opcional: rejeitar RESPONDENDO o que a IA
+// precisava ("o Pix é X, o valor é 50"). Além do reject, aplica a devolução
+// plena à IA (despausa + lead de volta ao atendente) e dispara um turno
+// instruído via internal.attendant.internalQueueInstructedTurn (scheduler —
+// import direto criaria ciclo handoffs↔attendant); a instrução também persiste
+// como nota da equipe na conversa e vale para os turnos seguintes.
 export const rejectHandoff = mutation({
   args: {
     handoffId: v.id("handoffs"),
     notes: v.optional(v.string()),
+    instruction: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -720,8 +726,29 @@ export const rejectHandoff = mutation({
 
     const userMember = await requirePermission(ctx, handoff.organizationId, "inbox", "reply");
 
-    await rejectHandoffCore(ctx, { handoff, member: userMember, notes: args.notes });
+    const instruction = args.instruction?.trim() || undefined;
+    // Espelha attendant.MAX_INSTRUCTION_CHARS (2000).
+    if (instruction && instruction.length > 2000) {
+      throw new Error("Instrução muito longa (máx. 2000 caracteres)");
+    }
 
+    await rejectHandoffCore(ctx, {
+      handoff,
+      member: userMember,
+      notes: args.notes ?? instruction,
+    });
+
+    if (instruction) {
+      const conversationId =
+        handoff.conversationId ?? (await resolveLeadPrimaryConversationId(ctx, handoff.leadId));
+      if (conversationId) {
+        await ctx.scheduler.runAfter(0, internal.attendant.internalQueueInstructedTurn, {
+          conversationId,
+          instructedBy: userMember._id,
+          instruction,
+        });
+      }
+    }
     return null;
   },
 });

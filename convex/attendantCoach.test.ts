@@ -770,3 +770,283 @@ describe("notificação ai_draft_pending", () => {
     expect(pendingNotifs).toHaveLength(1); // dedupado
   });
 });
+
+// ── v0.50: notas da equipe (aiTeamNotes) + devolver/rejeitar com instrução ──
+
+describe("notas da equipe e devolver com instrução", () => {
+  const PIX_INSTRUCTION = "O Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente";
+
+  test("returnToAi persiste a nota; instrução reforçada no turno e nota nos turnos seguintes", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seed.conversationId, { aiPausedUntil: Number.MAX_SAFE_INTEGER });
+    });
+
+    await asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
+      conversationId: seed.conversationId,
+      instruction: PIX_INSTRUCTION,
+    });
+
+    // Nota persistida na conversa (vale para os turnos futuros).
+    let conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
+    expect(conversation!.aiTeamNotes).toHaveLength(1);
+    expect(conversation!.aiTeamNotes![0]).toMatchObject({
+      text: PIX_INSTRUCTION,
+      byMemberId: seed.sellerId,
+    });
+
+    // Turno instruído: bloco reforçado no prompt, sem duplicar como nota.
+    const item = await t.run(async (ctx) =>
+      (await ctx.db.query("aiReplyQueue").collect()).find((i) => i.origin === "return_to_ai")
+    );
+    vi.useRealTimers();
+    const fetchMock = stubLlm("O Pix é financeiro@empresa.com e o valor é R$ 150.");
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item!._id });
+    const prompt1 = systemPromptOf(fetchMock);
+    expect(prompt1).toContain("INSTRUÇÃO DO ATENDENTE HUMANO PARA ESTE TURNO");
+    expect(prompt1).toContain(PIX_INSTRUCTION);
+    expect(prompt1).toContain("CONFIRMADOS pela equipe humana");
+    // única nota == a própria instrução → filtrada do bloco de notas
+    expect(prompt1).not.toContain("INFORMAÇÕES DA SUA EQUIPE");
+
+    // Turno NORMAL seguinte (inbound do cliente): a nota continua no prompt.
+    await resetPacing(t, seed.organizationId);
+    const normalItemId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const inboundId = await ctx.db.insert("messages", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        leadId: seed.leadId, direction: "inbound", senderType: "contact",
+        content: "e como eu faço a inscrição?", contentType: "text",
+        isInternal: false, createdAt: now,
+      });
+      await ctx.db.patch(seed.conversationId, { lastInboundAt: now });
+      return await ctx.db.insert("aiReplyQueue", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        triggerMessageId: inboundId, agentMemberId: seed.agentId,
+        status: "pending", attempts: 0, nextAttemptAt: now,
+        createdAt: now, updatedAt: now,
+      });
+    });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: normalItemId });
+    const prompt2 = systemPromptOf(fetchMock, 1);
+    expect(prompt2).toContain("INFORMAÇÕES DA SUA EQUIPE NESTA CONVERSA");
+    expect(prompt2).toContain(PIX_INSTRUCTION);
+    expect(prompt2).toContain("FONTE OFICIAL CONFIRMADA");
+    expect(prompt2).not.toContain("INSTRUÇÃO DO ATENDENTE HUMANO"); // turno normal
+  });
+
+  test("rejectHandoff com instrução: rejeita, devolve à IA e dispara turno instruído", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    // Estado típico: conversa pausada, lead com o humano, repasse pendente da IA.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seed.conversationId, { aiPausedUntil: Number.MAX_SAFE_INTEGER });
+      await ctx.db.patch(seed.leadId, { assignedTo: seed.sellerId });
+    });
+    const handoffId = await t.mutation(internal.handoffs.internalRequestHandoff, {
+      leadId: seed.leadId,
+      conversationId: seed.conversationId,
+      reason: "Cliente pediu Pix e valor",
+      suggestedActions: [],
+      teamMemberId: seed.agentId,
+      origin: "ai_tool",
+    });
+
+    const fetchMock = stubLlm("O Pix é financeiro@empresa.com e o valor é R$ 150.");
+    await asUser(t, seed.sellerUserId).mutation(api.handoffs.rejectHandoff, {
+      handoffId,
+      instruction: PIX_INSTRUCTION,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const { handoff, conversation, lead, items } = await t.run(async (ctx) => ({
+      handoff: await ctx.db.get(handoffId),
+      conversation: await ctx.db.get(seed.conversationId),
+      lead: await ctx.db.get(seed.leadId),
+      items: await ctx.db.query("aiReplyQueue").collect(),
+    }));
+    expect(handoff!.status).toBe("rejected");
+    expect(handoff!.notes).toBe(PIX_INSTRUCTION);
+    expect(conversation!.aiPausedUntil).toBeUndefined();
+    expect(lead!.assignedTo).toBe(seed.agentId); // devolução plena à IA
+    expect(conversation!.aiTeamNotes?.map((n) => n.text)).toContain(PIX_INSTRUCTION);
+    const item = items.find((i) => i.origin === "return_to_ai");
+    expect(item).toMatchObject({
+      status: "done",
+      instruction: PIX_INSTRUCTION,
+      instructedBy: seed.sellerId,
+    });
+    expect(systemPromptOf(fetchMock)).toContain("INSTRUÇÃO DO ATENDENTE HUMANO PARA ESTE TURNO");
+    expect(await draftsOf(t, seed)).toHaveLength(1); // modo suggest → rascunho
+  });
+
+  test("rejectHandoff SEM instrução segue sem disparar turno da IA", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const handoffId = await t.mutation(internal.handoffs.internalRequestHandoff, {
+      leadId: seed.leadId,
+      conversationId: seed.conversationId,
+      reason: "Cliente pediu humano",
+      suggestedActions: [],
+      teamMemberId: seed.agentId,
+      origin: "ai_tool",
+    });
+    await asUser(t, seed.sellerUserId).mutation(api.handoffs.rejectHandoff, { handoffId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const { handoff, items, conversation } = await t.run(async (ctx) => ({
+      handoff: await ctx.db.get(handoffId),
+      items: await ctx.db.query("aiReplyQueue").collect(),
+      conversation: await ctx.db.get(seed.conversationId),
+    }));
+    expect(handoff!.status).toBe("rejected");
+    expect(items).toHaveLength(0);
+    expect(conversation!.aiTeamNotes ?? []).toHaveLength(0);
+  });
+
+  test("returnToAi reaproveita item coach pendente: origin muda e sourceDraftId é limpo", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const { itemId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const draftId = await ctx.db.insert("messages", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        leadId: seed.leadId, direction: "internal", senderId: seed.agentId,
+        senderType: "ai", content: "Rascunho antigo", contentType: "text",
+        isInternal: true,
+        metadata: { aiDraft: { status: "pending", proposedActions: [] } },
+        createdAt: now,
+      });
+      const itemId = await ctx.db.insert("aiReplyQueue", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        triggerMessageId: seed.inboundId, agentMemberId: seed.agentId,
+        status: "pending", attempts: 0, nextAttemptAt: now + 60_000,
+        origin: "coach", instruction: "mais curto", instructedBy: seed.sellerId,
+        sourceDraftId: draftId, createdAt: now, updatedAt: now,
+      });
+      return { itemId };
+    });
+
+    await asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
+      conversationId: seed.conversationId,
+      instruction: "Pode enviar direto: o valor é R$ 150",
+    });
+
+    const item = await t.run(async (ctx) => ctx.db.get(itemId));
+    expect(item!.origin).toBe("return_to_ai");
+    expect(item!.instruction).toBe("Pode enviar direto: o valor é R$ 150");
+    // Conversão não é mais regeneração: em autopilot o envio direto deixaria o
+    // rascunho de origem órfão como "pending" para sempre.
+    expect(item!.sourceDraftId).toBeUndefined();
+  });
+
+  test("envio direto supera rascunho pendente antigo (vira 'revised')", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t, { mode: "autopilot" });
+    const { itemId, agentRunId, staleDraftId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const staleDraftId = await ctx.db.insert("messages", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        leadId: seed.leadId, direction: "internal", senderId: seed.agentId,
+        senderType: "ai", content: "Rascunho que ficou para trás", contentType: "text",
+        isInternal: true,
+        metadata: { aiDraft: { status: "pending", proposedActions: [] } },
+        createdAt: now,
+      });
+      await ctx.db.patch(seed.conversationId, {
+        aiTurnLock: { runId: "run-direct", leaseUntil: now + 60_000 },
+      });
+      const agentRunId = await ctx.db.insert("agentRuns", {
+        organizationId: seed.organizationId, memberId: seed.agentId,
+        kind: "attendant", status: "running", conversationId: seed.conversationId,
+        requestCount: 0, startedAt: now,
+      });
+      const itemId = await ctx.db.insert("aiReplyQueue", {
+        organizationId: seed.organizationId, conversationId: seed.conversationId,
+        triggerMessageId: seed.inboundId, agentMemberId: seed.agentId,
+        status: "processing", attempts: 0, nextAttemptAt: now,
+        createdAt: now, updatedAt: now,
+      });
+      return { itemId, agentRunId, staleDraftId };
+    });
+
+    const result = await t.mutation(internal.attendant.internalCommitAiReply, {
+      queueItemId: itemId,
+      conversationId: seed.conversationId,
+      agentMemberId: seed.agentId,
+      runId: "run-direct",
+      agentRunId,
+      runStartedAt: Date.now(),
+      text: "Resposta direta ao cliente.",
+      needsDisclosure: false,
+      disclosure: "",
+      allowPendingHandoff: false,
+    });
+    expect(result).toMatchObject({ committed: true });
+
+    const staleDraft = await t.run(async (ctx) => ctx.db.get(staleDraftId));
+    expect((staleDraft!.metadata!.aiDraft as { status: string }).status).toBe("revised");
+  });
+
+  test("commit de turno pedido por humano atravessa pausa concorrente (bypass no re-check)", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t, { mode: "autopilot" });
+    const seedCommitState = async () =>
+      await t.run(async (ctx) => {
+        const now = Date.now();
+        // Pausa chegou DURANTE a geração (outro membro clicou "Assumir").
+        await ctx.db.patch(seed.conversationId, {
+          aiPausedUntil: Number.MAX_SAFE_INTEGER,
+          aiTurnLock: { runId: "run-h", leaseUntil: now + 60_000 },
+        });
+        const agentRunId = await ctx.db.insert("agentRuns", {
+          organizationId: seed.organizationId, memberId: seed.agentId,
+          kind: "attendant", status: "running", conversationId: seed.conversationId,
+          humanInitiated: true, requestCount: 0, startedAt: now,
+        });
+        const itemId = await ctx.db.insert("aiReplyQueue", {
+          organizationId: seed.organizationId, conversationId: seed.conversationId,
+          triggerMessageId: seed.inboundId, agentMemberId: seed.agentId,
+          status: "processing", attempts: 0, nextAttemptAt: now,
+          origin: "return_to_ai", instruction: "O valor é R$ 150",
+          instructedBy: seed.sellerId, createdAt: now, updatedAt: now,
+        });
+        return { itemId, agentRunId };
+      });
+
+    // SEM humanInitiated: aborta em ia_pausada (comportamento antigo preservado
+    // para turnos normais).
+    const s1 = await seedCommitState();
+    const blocked = await t.mutation(internal.attendant.internalCommitAiReply, {
+      queueItemId: s1.itemId,
+      conversationId: seed.conversationId,
+      agentMemberId: seed.agentId,
+      runId: "run-h",
+      agentRunId: s1.agentRunId,
+      runStartedAt: Date.now(),
+      text: "O valor é R$ 150.",
+      needsDisclosure: false,
+      disclosure: "",
+      allowPendingHandoff: false,
+    });
+    expect(blocked).toMatchObject({ committed: false, reason: "ia_pausada" });
+
+    // COM humanInitiated: o mesmo bypass do claim vale no commit.
+    const s2 = await seedCommitState();
+    const committed = await t.mutation(internal.attendant.internalCommitAiReply, {
+      queueItemId: s2.itemId,
+      conversationId: seed.conversationId,
+      agentMemberId: seed.agentId,
+      runId: "run-h",
+      agentRunId: s2.agentRunId,
+      runStartedAt: Date.now(),
+      text: "O valor é R$ 150.",
+      needsDisclosure: false,
+      disclosure: "",
+      allowPendingHandoff: false,
+      humanInitiated: true,
+    });
+    expect(committed).toMatchObject({ committed: true });
+  });
+});

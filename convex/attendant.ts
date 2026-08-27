@@ -69,6 +69,8 @@ const DEFAULT_HANDOFF_KEYWORDS = ["humano", "atendente", "pessoa de verdade", "f
 // NUNCA inclua opt_out (LGPD), janela_24h, tetos ou bridge_sem_aceite aqui.
 const HUMAN_HOLD_REASONS = ["ia_pausada", "lead_de_humano", "handoff_pendente"];
 const MAX_INSTRUCTION_CHARS = 2000;
+// Teto de notas da equipe persistidas por conversa (FIFO — as mais antigas saem).
+const MAX_TEAM_NOTES = 20;
 const DEFAULT_DISCLOSURE =
   "Você está falando com um assistente virtual. Digite 'humano' a qualquer momento para falar com uma pessoa.";
 
@@ -835,6 +837,7 @@ export const internalClaimForProcessing = internalMutation({
             }
           : null,
         history,
+        teamNotes: (conversation.aiTeamNotes ?? []).map((n) => ({ text: n.text, at: n.at })),
         // Loop de coaching (P2): instrução do humano viaja no item da fila e
         // entra no prompt como conteúdo CONFIÁVEL (fora do envelope).
         humanInitiated,
@@ -1287,6 +1290,7 @@ export const internalCommitAiReply = internalMutation({
     needsDisclosure: v.boolean(),
     disclosure: v.string(),
     allowPendingHandoff: v.boolean(), // a própria run pediu handoff neste turno
+    humanInitiated: v.optional(v.boolean()), // turno pedido por humano (return_to_ai)
   },
   returns: v.union(
     v.object({ committed: v.literal(true), messageId: v.id("messages") }),
@@ -1323,7 +1327,29 @@ export const internalCommitAiReply = internalMutation({
       now,
     });
     if (!eligibility.ok && !(args.allowPendingHandoff && eligibility.reason === "handoff_pendente")) {
-      return { committed: false as const, reason: eligibility.reason };
+      // Mesmo bypass do claim para turnos INICIADOS POR HUMANO: os holds
+      // humanos (pausa/lead de humano/handoff) não derrubam no commit o que um
+      // humano pediu explicitamente. Igual ao claim, a cadeia é RE-AVALIADA
+      // inteira com os holds neutralizados — opt-out LGPD, janela 24h, tetos e
+      // bridge sem aceite continuam abortando.
+      let effectiveReason = eligibility.reason;
+      let bypassed = false;
+      if (args.humanInitiated && HUMAN_HOLD_REASONS.includes(eligibility.reason)) {
+        const recheck = evaluateEligibility({
+          org,
+          agent,
+          conversation: { ...conversation, aiPausedUntil: undefined },
+          lead: lead ? { ...lead, assignedTo: agent?._id, handoffState: undefined } : lead,
+          contact,
+          channelProvider: providerOf(channelConfig),
+          aiReplyCountConversation: counts.total,
+          aiReplyCountLastHour: counts.lastHour,
+          now,
+        });
+        if (recheck.ok) bypassed = true;
+        else effectiveReason = recheck.reason;
+      }
+      if (!bypassed) return { committed: false as const, reason: effectiveReason };
     }
 
     // Humano respondeu DEPOIS do início da run? Então a IA não pisa nele.
@@ -1346,6 +1372,26 @@ export const internalCommitAiReply = internalMutation({
       args.needsDisclosure && !args.text.includes(args.disclosure)
         ? `${args.disclosure}\n\n${args.text}`
         : args.text;
+
+    // Envio direto supera rascunhos pendentes antigos: sem isso, um rascunho
+    // "pending" (ex.: item coach convertido em return_to_ai em org autopilot)
+    // ficaria órfão no inbox depois de a resposta real já ter saído. "revised"
+    // fica fora das métricas do gate do autopilot (não é julgamento humano).
+    for (const m of recent) {
+      const staleDraft = m.metadata?.aiDraft as { status?: string } | undefined;
+      if (staleDraft?.status === "pending") {
+        await ctx.db.patch(m._id, {
+          metadata: {
+            ...(m.metadata ?? {}),
+            aiDraft: {
+              ...(m.metadata!.aiDraft as Record<string, unknown>),
+              status: "revised",
+              revisedAt: now,
+            },
+          },
+        });
+      }
+    }
 
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
@@ -1676,6 +1722,9 @@ type RunContext = {
   lead: Record<string, unknown>;
   contact: Record<string, unknown> | null;
   history: { de: string; texto: string; em: number }[];
+  // Notas persistidas pela equipe humana nesta conversa (returnToAi/reject com
+  // instrução) — entram no prompt de TODOS os turnos como fonte oficial.
+  teamNotes: { text: string; at: number }[];
   // Loop de coaching (P2) — presentes só em itens iniciados por humano.
   humanInitiated: boolean;
   humanInstruction: string | null;
@@ -1700,6 +1749,7 @@ type PromptContext = Pick<
   | "stages"
   | "needsDisclosure"
   | "disclosure"
+  | "teamNotes"
   | "humanInstruction"
   | "previousDraftText"
 >;
@@ -1737,6 +1787,22 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
     context.knowledge
       ? `CONHECIMENTO DO NEGÓCIO (use como fonte da verdade):\n${context.knowledge}`
       : "",
+    // Notas da equipe: o gerente/atendente humano respondeu o que a IA não
+    // sabia ("Devolver para IA" com instrução). Precisam VENCER regras de
+    // persona do tipo "você não sabe/não tem acesso" — senão a IA recusa a
+    // própria informação que a equipe acabou de confirmar. A nota igual à
+    // instrução deste turno não duplica (o turno instruído acabou de
+    // persistir a própria instrução como nota).
+    (() => {
+      const notes = (context.teamNotes ?? []).filter((n) => n.text !== context.humanInstruction);
+      return notes.length > 0
+        ? [
+            "INFORMAÇÕES DA SUA EQUIPE NESTA CONVERSA (canal interno de supervisão — o cliente não vê esta seção):",
+            ...notes.map((n) => `- ${n.text}`),
+            'A equipe humana da empresa te passou as informações acima depois de conferir os fatos. Elas são FONTE OFICIAL CONFIRMADA: use-as como verdade, com prioridade sobre o restante do conhecimento e sobre regras da sua persona do tipo "você não sabe", "não tem acesso" ou "quem confirma é a equipe" — a equipe é quem confirmou. Repassar esses dados ao cliente NÃO é inventar. Não abra repasse (requestHandoff) para algo que já esteja respondido aqui.',
+          ].join("\n")
+        : "";
+    })(),
     context.advanceRules
       ? `REGRAS DO FUNIL (definidas pela empresa — siga ao decidir mover o lead):\n${context.advanceRules}`
       : "",
@@ -1758,9 +1824,16 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
       : "",
     // Instrução do atendente humano: conteúdo CONFIÁVEL (vem de um membro
     // autenticado com inbox:reply) — deliberadamente FORA do envelope de dado
-    // não-confiável. Prioridade máxima, mas nunca acima das regras de segurança.
+    // não-confiável. Precisa vencer explicitamente as regras de PERSONA do tipo
+    // "você não sabe/não confirma valores" (senão a IA recusa a informação que
+    // a equipe acabou de passar); só as REGRAS OBRIGATÓRIAS da plataforma
+    // continuam acima dela.
     context.humanInstruction
-      ? `INSTRUÇÃO DO ATENDENTE HUMANO (prioridade máxima — siga-a, exceto se violar as REGRAS OBRIGATÓRIAS acima):\n${context.humanInstruction}`
+      ? [
+          "INSTRUÇÃO DO ATENDENTE HUMANO PARA ESTE TURNO (canal interno — o cliente não vê; prioridade máxima):",
+          context.humanInstruction,
+          'Aja AGORA conforme a instrução. Dados factuais nela (valores, datas, chaves Pix, links, condições) foram CONFIRMADOS pela equipe humana: repasse-os ao cliente com naturalidade, mesmo que sua persona diga que você "não sabe", "não tem acesso" ou que "quem confirma é a equipe" — foi a equipe que te confirmou. Isso NÃO é inventar. NÃO use requestHandoff para o que a instrução já resolve (use-o somente se a própria instrução mandar repassar a um humano). Apenas as REGRAS OBRIGATÓRIAS numeradas acima seguem valendo.',
+        ].join("\n")
       : "",
     context.previousDraftText
       ? `Seu rascunho anterior foi:\n"${context.previousDraftText}"\n${
@@ -2012,6 +2085,7 @@ export const internalProcessQueueItem = internalAction({
               ...commitArgsBase,
               runStartedAt: context.runStartedAt,
               allowPendingHandoff: handoffRequestedThisRun,
+              ...(context.humanInitiated ? { humanInitiated: true } : {}),
             });
 
       await ctx.runMutation(internal.agentRuns.internalFinishRun, {
@@ -2390,10 +2464,85 @@ export const requestAiDraft = mutation({
   },
 });
 
+// Persiste a instrução do humano como "nota da equipe" na conversa: diferente
+// da instrução de turno (que só vale para a run que ela dispara), a nota entra
+// como fonte oficial em TODOS os turnos seguintes — é o gerente respondendo o
+// que o atendente não sabia, e o atendente segue sabendo dali em diante.
+async function appendAiTeamNote(
+  ctx: MutationCtx,
+  conversation: Doc<"conversations">,
+  note: { text: string; byMemberId?: Id<"teamMembers">; at: number }
+): Promise<void> {
+  const notes = [...(conversation.aiTeamNotes ?? []), note].slice(-MAX_TEAM_NOTES);
+  await ctx.db.patch(conversation._id, { aiTeamNotes: notes });
+}
+
+// Núcleo de "devolver à IA com instrução": persiste a nota da equipe e dispara
+// um turno imediato — reaproveitando item pendente (que vira o turno instruído;
+// `sourceDraftId` é LIMPO porque a conversão deixa de ser regeneração de
+// rascunho, e em autopilot o envio direto deixaria o rascunho de origem órfão)
+// ou inserindo um novo. Conversa sem mensagem nenhuma: só a nota persiste (o
+// turno vem com o primeiro inbound).
+async function queueInstructedAiTurn(
+  ctx: MutationCtx,
+  params: {
+    conversation: Doc<"conversations">;
+    agent: Doc<"teamMembers">;
+    instructedBy: Id<"teamMembers">;
+    instruction: string;
+    now: number;
+  }
+): Promise<void> {
+  const { conversation, agent, instructedBy, instruction, now } = params;
+  await appendAiTeamNote(ctx, conversation, { text: instruction, byMemberId: instructedBy, at: now });
+
+  const pendingItem = await ctx.db
+    .query("aiReplyQueue")
+    .withIndex("by_conversation_and_status", (q) =>
+      q.eq("conversationId", conversation._id).eq("status", "pending")
+    )
+    .first();
+  if (pendingItem) {
+    await ctx.db.patch(pendingItem._id, {
+      origin: "return_to_ai" as const,
+      instruction,
+      instructedBy,
+      sourceDraftId: undefined,
+      nextAttemptAt: now,
+      updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
+      queueItemId: pendingItem._id,
+    });
+    return;
+  }
+  const lastMessage = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+    .order("desc")
+    .first();
+  if (!lastMessage) return;
+  const queueItemId = await ctx.db.insert("aiReplyQueue", {
+    organizationId: conversation.organizationId,
+    conversationId: conversation._id,
+    triggerMessageId: lastMessage._id,
+    agentMemberId: agent._id,
+    status: "pending",
+    attempts: 0,
+    nextAttemptAt: now,
+    origin: "return_to_ai",
+    instruction,
+    instructedBy,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, { queueItemId });
+}
+
 // Devolve a conversa à IA numa transação só: despausa, reatribui o lead ao
 // atendente (ou limpa a atribuição), cancela repasse pendente e — com
-// `instruction` — já enfileira um turno da IA com o contexto do humano
-// ("faça follow-up amanhã oferecendo o plano anual"). Diferente do coach, o
+// `instruction` — persiste a nota da equipe e já enfileira um turno da IA com
+// o contexto do humano ("o Pix é X e o valor é 50"). Diferente do coach, o
 // turno respeita o MODO do perfil (suggest → rascunho; autopilot → envia).
 export const returnToAi = mutation({
   args: {
@@ -2496,51 +2645,61 @@ export const returnToAi = mutation({
       },
     });
 
-    // Instrução → um turno da IA agora. Item pendente existente é reaproveitado
-    // (vira o turno instruído) em vez de disputar o lock com um novo.
-    if (instruction && agent) {
-      const lastMessage = await ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
-        .order("desc")
-        .first();
-      const pendingItem = await ctx.db
-        .query("aiReplyQueue")
-        .withIndex("by_conversation_and_status", (q) =>
-          q.eq("conversationId", conversation._id).eq("status", "pending")
-        )
-        .first();
-      if (pendingItem) {
-        await ctx.db.patch(pendingItem._id, {
-          origin: "return_to_ai",
-          instruction,
-          instructedBy: member._id,
-          nextAttemptAt: now,
-          updatedAt: now,
-        });
-        await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
-          queueItemId: pendingItem._id,
-        });
-      } else if (lastMessage) {
-        const queueItemId = await ctx.db.insert("aiReplyQueue", {
-          organizationId: conversation.organizationId,
-          conversationId: conversation._id,
-          triggerMessageId: lastMessage._id,
-          agentMemberId: agent._id,
-          status: "pending",
-          attempts: 0,
-          nextAttemptAt: now,
-          origin: "return_to_ai",
-          instruction,
-          instructedBy: member._id,
-          createdAt: now,
-          updatedAt: now,
-        });
-        await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
-          queueItemId,
-        });
-      }
+    // Instrução → nota da equipe persistida (vale para todos os turnos futuros)
+    // + um turno da IA agora. Item pendente existente é reaproveitado (vira o
+    // turno instruído) em vez de disputar o lock com um novo.
+    if (instruction) {
+      await queueInstructedAiTurn(ctx, {
+        conversation,
+        agent,
+        instructedBy: member._id,
+        instruction,
+        now,
+      });
     }
+    return null;
+  },
+});
+
+// Chamado pelo rejeitar-com-instrução do /app/repasses (handoffs.rejectHandoff,
+// via scheduler — import direto criaria ciclo handoffs↔attendant): aplica a
+// devolução plena à IA (despausa + lead de volta ao atendente) e dispara o
+// turno instruído. Sem atendente resolvível (IA/atendente desligados, canal sem
+// agente), vira no-op — o reject em si já aconteceu na mutation chamadora.
+export const internalQueueInstructedTurn = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    instructedBy: v.id("teamMembers"),
+    instruction: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) return null;
+    const org = await ctx.db.get(conversation.organizationId);
+    if (!orgAiActive(org)) return null;
+    if (org!.settings.aiConfig?.attendantEnabled === false) return null;
+    const lead = await ctx.db.get(conversation.leadId);
+    if (!lead) return null;
+    const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
+    const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
+    if (!agent) return null;
+
+    const now = Date.now();
+    await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+    await ctx.db.patch(lead._id, {
+      assignedTo: agent._id,
+      handoffState: undefined,
+      lastActivityAt: now,
+      updatedAt: now,
+    });
+    await queueInstructedAiTurn(ctx, {
+      conversation,
+      agent,
+      instructedBy: args.instructedBy,
+      instruction: args.instruction,
+      now,
+    });
     return null;
   },
 });
@@ -2744,6 +2903,7 @@ export const internalGetSimulatorSetup = internalQuery({
       contact: { nome: "Cliente de teste", empresa: null },
       // O simulador não tem loop de coaching — campos presentes só para o
       // PromptContext ser o mesmo do runtime.
+      teamNotes: [],
       humanInstruction: null,
       previousDraftText: null,
     };
