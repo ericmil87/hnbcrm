@@ -12,7 +12,7 @@
  * mirroring the Meta pipeline in convex/whatsapp.ts.
  */
 import { v } from "convex/values";
-import { httpAction, internalAction } from "./_generated/server";
+import { httpAction, internalAction, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { configProvider } from "./channelConfigs";
@@ -28,6 +28,8 @@ import {
   buildBridgeDownloadRequest,
   descriptorFileLength,
   parseBridgeDownloadResponse,
+  sanitizeBridgeMediaMeta,
+  stripMediaKeyMaterial,
 } from "./lib/bridgeMedia";
 
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // mirror the Meta path — skip larger, keep a note
@@ -191,7 +193,9 @@ export const internalIngestBridgeMessage = internalAction({
     // true) — a media hiccup must never drop the inbound message itself.
     if (args.message.media) {
       const media = args.message.media;
-      metadata.bridgeMedia = media;
+      // Só a parte diagnosticável fica na mensagem. O descriptor cru — com o
+      // `MediaKey` do whatsmeow — vive apenas nesta action, o tempo do download.
+      metadata.bridgeMedia = sanitizeBridgeMediaMeta(media);
       try {
         if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
           throw new Error("Configuração bridge incompleta — mídia não baixada");
@@ -228,15 +232,23 @@ export const internalIngestBridgeMessage = internalAction({
             } else {
               const mimeType = media.mimeType ?? parsed.mimeType ?? "application/octet-stream";
               const storageId = await ctx.storage.store(new Blob([bytes], { type: mimeType }));
-              const fileId = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
+              const saved = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
                 organizationId: config.organizationId,
                 storageId,
                 name: media.filename ?? `whatsapp-${args.message.externalId}`,
                 mimeType,
                 size: bytes.byteLength,
               });
-              attachments = [fileId];
-              // Success — the reference stays for provenance, but it's no longer pending.
+              if (saved.ok) {
+                attachments = [saved.fileId];
+                // Success — the reference stays for provenance, but it's no longer pending.
+              } else {
+                // Mimetype fora da allowlist ou quota da org estourada: a
+                // mensagem do contato segue inteira, só sem o anexo (mesmo
+                // tratamento da mídia grande demais logo acima).
+                metadata.mediaSkipped = saved.reason;
+                metadata.mediaPending = true;
+              }
             }
           }
         }
@@ -255,9 +267,44 @@ export const internalIngestBridgeMessage = internalAction({
       contentType: args.message.contentType,
       attachments,
       externalId: args.message.externalId,
-      metadata,
+      // Última barreira antes do banco: nenhum campo de chave passa, nem pelo
+      // `metadata.raw` que o parser guarda para tipo de mensagem desconhecido.
+      metadata: stripMediaKeyMaterial(metadata) as Record<string, unknown>,
     });
 
     return null;
+  },
+});
+
+/**
+ * Backfill idempotente: tira o material de chave (`MediaKey`, `FileEncSHA256` e
+ * afins) das mensagens que já foram gravadas com o descriptor inteiro do
+ * whatsmeow em `metadata.bridgeMedia` — ou com o evento cru em `metadata.raw`.
+ * Molde: `internal.transcription.internalBackfillTranscriptText`.
+ *
+ * Roda com: `npx convex run bridge:internalBackfillBridgeMediaKeys '{}'`
+ * (devolve quantas mensagens foram reescritas; rodar de novo devolve 0).
+ */
+export const internalBackfillBridgeMediaKeys = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const messages = await ctx.db.query("messages").collect();
+    let patched = 0;
+    for (const message of messages) {
+      const metadata = message.metadata;
+      if (!metadata) continue;
+
+      const cleaned = stripMediaKeyMaterial(metadata) as Record<string, unknown>;
+      const rawMedia = metadata.bridgeMedia;
+      if (rawMedia && typeof rawMedia === "object" && !Array.isArray(rawMedia)) {
+        cleaned.bridgeMedia = sanitizeBridgeMediaMeta(rawMedia as Record<string, any>);
+      }
+
+      if (JSON.stringify(cleaned) === JSON.stringify(metadata)) continue;
+      await ctx.db.patch(message._id, { metadata: cleaned });
+      patched++;
+    }
+    return patched;
   },
 });

@@ -22,6 +22,7 @@ import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
+import { deleteBlobIfUnreferenced } from "./fileRefs";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -88,11 +89,9 @@ function contactDisplayName(contact: Doc<"contacts">): string {
 async function deleteFileWithBlob(ctx: MutationCtx, fileId: Id<"files">): Promise<number> {
   const file = await ctx.db.get(fileId);
   if (!file) return 0;
-  try {
-    await ctx.storage.delete(file.storageId as never);
-  } catch {
-    // blob já removido — segue
-  }
+  // O blob só cai quando NENHUMA outra linha de `files` aponta para ele — uma
+  // mensagem encaminhada compartilha o `storageId` com a original.
+  await deleteBlobIfUnreferenced(ctx, file);
   await ctx.db.delete(fileId);
   return 1;
 }

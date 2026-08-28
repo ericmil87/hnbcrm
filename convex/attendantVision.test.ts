@@ -428,18 +428,28 @@ describe("espera pelo enriquecimento de mídia no claim (D12)", () => {
     expect(claim.kind).toBe("requeued");
   });
 
-  test("download em voo (mediaPending) segura o turno — regressão nova do D12", async () => {
+  // `mediaPending` engana pelo nome: o download do bridge é SÍNCRONO dentro do
+  // ingest, então o campo nunca quer dizer "os bytes estão a caminho" — só é
+  // escrito quando a mídia FALHOU (grande demais, erro de download, anexo
+  // recusado). Esperar por ele atrasava a resposta em 60 s por bytes que nunca
+  // viriam. Este teste trava a regressão.
+  test("mídia que falhou (mediaPending) NÃO segura o turno", async () => {
     const t = setup();
     const seed = await seedVisionOrg(t, { visionEnabled: true });
-    // Sem anexo ainda: os bytes estão sendo baixados do gateway neste instante.
-    const messageId = await insertImage(t, seed, { mediaPending: true, withAttachment: false });
+    const messageId = await insertImage(t, seed, {
+      mediaPending: true,
+      withAttachment: false,
+      content: "[imagem]",
+    });
     const item = await enqueueAndSettle(t, messageId);
 
-    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+    const claim: any = await t.mutation(internal.attendant.internalClaimForProcessing, {
       queueItemId: item._id,
-      runId: "run-download-em-voo",
+      runId: "run-midia-falhou",
     });
-    expect(claim.kind).toBe("requeued");
+    expect(claim.kind).toBe("run");
+    // E a IA sabe que chegou uma imagem que não deu para ler.
+    expect(historyTexts(claim)).toEqual(["[imagem recebida — não foi possível ler o conteúdo]"]);
   });
 
   test("deadline estourado: a run acontece com o marcador de indisponível", async () => {

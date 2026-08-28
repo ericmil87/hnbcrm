@@ -23,7 +23,7 @@
 | `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET` |
 | `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification (no ctx) |
 | `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
-| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) |
+| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) + sanitização do descriptor: `sanitizeBridgeMediaMeta` (allowlist do que fica) e `stripMediaKeyMaterial` (denylist recursiva) — `MediaKey`/`FileEncSHA256` NUNCA vão para `messages.metadata` |
 | `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`) |
 | `handoffs.ts` | Repasse IA→humano: caminho ÚNICO de criação `createHandoffCore` (todos os gatilhos — humano, palavra-chave, tool, falha) que resolve `conversationId` de origem, notifica in-app (destinatário ou broadcast p/ `inbox >= reply`) e dispara webhook; criar NÃO pausa a conversa; accept = assumir (pausa IA + atribui lead + desarquiva → UI navega p/ a conversa), reject devolve à IA, status `canceled` p/ repasse cancelado pelo returnToAi |
 | `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições), lock/lease OCC, commits transacionais, runtime, simulador, rascunhos com AÇÕES APROVÁVEIS (acceptAiDraft+actionIndexes → executor compartilhado), captura de dados (updateThisContact/updateThisLeadInfo com whitelist captureFields), estado por conversa (getConversationAiState), skip com rastro; loop de coaching `requestAiDraft`/`returnToAi` (SÓ app UI) — itens `humanInitiated` (`origin` coach\|return_to_ai) têm bypass RESTRITO no claim e commitam SEMPRE como sugestão, e a regeneração supersede o rascunho de origem p/ status `revised` (encadeado previousDraftId/nextDraftId) |
@@ -73,6 +73,7 @@
 | `lib/auth.ts` | Shared `requireAuth()` + `requirePermission()` helpers |
 | `lib/permissions.ts` | Shared permission types, defaults, hierarchy comparison |
 | `lib/batchGet.ts` | Utility for batch-fetching documents by IDs |
+| `lib/fileRefs.ts` | Contagem de referências do blob antes do delete (`isStorageShared`/`deleteBlobIfUnreferenced`) — encaminhamento duplica a linha de `files` com o mesmo `storageId`; na dúvida o blob FICA |
 | `authHelpers.ts` | Internal queries/mutations for auth table operations (user/authAccount CRUD) |
 | `nodeActions.ts` | Node.js actions: API key hashing, webhook dispatch, invite, password change |
 | `forms.ts` | Form builder CRUD: create, update, publish, archive, duplicate, slug check |

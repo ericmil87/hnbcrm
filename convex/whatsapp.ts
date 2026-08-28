@@ -42,6 +42,8 @@ import {
   parseBridgeSendResponse,
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
+import { checkInboundMediaMimeType } from "./lib/fileValidation";
+import { checkInboundMediaQuota } from "./lib/fileQuotas";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -202,14 +204,17 @@ export const internalIngestMessage = internalAction({
             const storageId = await ctx.storage.store(blob);
             const mimeType =
               args.message.media.mimeType ?? lookup.mime_type ?? "application/octet-stream";
-            const fileId = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
+            const saved = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
               organizationId: config.organizationId,
               storageId,
               name: args.message.media.filename ?? `whatsapp-${args.message.media.id}`,
               mimeType,
               size: blob.size,
             });
-            attachments = [fileId];
+            // Mimetype fora da allowlist ou quota estourada: a mensagem segue
+            // para o inbox sem o anexo, com o motivo à vista.
+            if (saved.ok) attachments = [saved.fileId];
+            else metadata.mediaSkipped = saved.reason;
           }
         }
       } catch (e) {
@@ -1054,6 +1059,15 @@ export const internalBridgeSendPresence = internalAction({
 });
 
 // Internal: files record for downloaded inbound media (no uploader — sent by a contact)
+//
+// Porta de entrada ÚNICA dos dois transportes (Meta em `internalIngestMessage` e
+// bridge em `bridge.internalIngestBridgeMessage`), e por isso o lugar certo das
+// mesmas defesas do upload humano (`files.saveFile`): allowlist de mimetype e
+// quota da org. Diferença deliberada: aqui NADA lança — quem manda o anexo é o
+// contato, e derrubar a mensagem dele por causa da mídia seria perder o
+// texto/legenda no inbox. Recusa devolve `{ ok: false, reason }` para o ingest
+// marcar em `metadata.mediaSkipped`, e o blob já armazenado é apagado na hora
+// (senão sobraria lixo órfão no storage, que não tem cron de limpeza).
 export const internalSaveInboundAttachment = internalMutation({
   args: {
     organizationId: v.id("organizations"),
@@ -1062,9 +1076,30 @@ export const internalSaveInboundAttachment = internalMutation({
     mimeType: v.string(),
     size: v.number(),
   },
-  returns: v.id("files"),
+  returns: v.union(
+    v.object({ ok: v.literal(true), fileId: v.id("files") }),
+    v.object({ ok: v.literal(false), reason: v.string() })
+  ),
   handler: async (ctx, args) => {
-    return await ctx.db.insert("files", {
+    const discard = async (reason: string) => {
+      try {
+        await ctx.storage.delete(args.storageId as never);
+      } catch {
+        // blob já sumiu — segue
+      }
+      return { ok: false as const, reason };
+    };
+
+    const mime = checkInboundMediaMimeType(args.mimeType);
+    if (!mime.ok) return await discard(mime.reason);
+
+    const quota = await checkInboundMediaQuota(ctx, {
+      organizationId: args.organizationId,
+      fileSize: args.size,
+    });
+    if (!quota.ok) return await discard(quota.reason);
+
+    const fileId = await ctx.db.insert("files", {
       organizationId: args.organizationId,
       storageId: args.storageId,
       name: args.name,
@@ -1073,5 +1108,6 @@ export const internalSaveInboundAttachment = internalMutation({
       fileType: "message_attachment",
       createdAt: Date.now(),
     });
+    return { ok: true as const, fileId };
   },
 });

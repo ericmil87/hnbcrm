@@ -64,6 +64,104 @@ export function descriptorFileLength(descriptor: Record<string, any> | undefined
   return undefined;
 }
 
+// ── O que da mídia do bridge PODE ser persistido ─────────────────────────────
+//
+// O descriptor do whatsmeow é MATERIAL CRIPTOGRÁFICO: `MediaKey` é a chave que
+// decifra o blob na CDN do WhatsApp, e `FileEncSHA256`/`FileSHA256` são os
+// hashes que o acompanham. Guardar isso em `messages.metadata` — texto claro, em
+// registro que fica para sempre — é vazamento esperando acontecer. O descriptor
+// só serve DURANTE o download (a action monta o request e joga fora); depois é
+// lixo sensível.
+//
+// Duas camadas, no espírito de `lib/exportSanitize.ts`:
+//  1. allowlist do que fica (o que serve para diagnóstico depois do fato);
+//  2. denylist explícita de campos de chave, aplicada por cima — assim, se
+//     alguém acrescentar campo à allowlist ou ao parser, a chave não passa.
+
+/** Campos de chave/hash que NUNCA podem ser persistidos (nome normalizado). */
+export const MEDIA_KEY_DENY_PATTERNS: readonly RegExp[] = [
+  /mediakey/,
+  /encsha/,
+  /filesha/,
+  /\bsha256\b/,
+  /secret/,
+  /key$/,
+];
+
+/** minúsculas, só letras e dígitos (`media_key` → `mediakey`). */
+function normalizeMediaField(key: string): string {
+  return String(key ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** `true` se o campo carrega (ou pode carregar) material de chave. */
+export function isMediaKeyField(key: string): boolean {
+  const normalized = normalizeMediaField(key);
+  if (normalized === "") return false;
+  return MEDIA_KEY_DENY_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+const MAX_STRIP_DEPTH = 12;
+
+/**
+ * Varre um valor (objeto/array) removendo TODO campo de chave, em qualquer
+ * profundidade. Rede de segurança para o resto do `metadata` da mensagem — o
+ * parser guarda o evento cru em `metadata.raw` quando não reconhece o tipo
+ * (`lib/bridgeParse.ts`), e um tipo de mídia não suportado levaria o descriptor
+ * inteiro junto. Usada no ingest e no backfill.
+ */
+export function stripMediaKeyMaterial(value: unknown, depth = 0): unknown {
+  if (depth > MAX_STRIP_DEPTH) return null;
+  if (Array.isArray(value)) {
+    return value.map((item) => stripMediaKeyMaterial(item, depth + 1));
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (child === undefined || isMediaKeyField(key)) continue;
+      out[key] = stripMediaKeyMaterial(child, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Forma segura de `metadata.bridgeMedia` — só diagnóstico, zero segredo. */
+export type SafeBridgeMediaMeta = {
+  kind?: string;
+  mimeType?: string;
+  filename?: string;
+  fileLength?: number;
+};
+
+/**
+ * Reduz a mídia recebida do webhook ao que pode ficar gravado na mensagem:
+ * tipo, mimetype, nome e tamanho. O descriptor inteiro (com `MediaKey`) fica
+ * SÓ na memória da action que faz o download.
+ */
+export function sanitizeBridgeMediaMeta(media: {
+  kind?: string;
+  mimeType?: string;
+  filename?: string;
+  descriptor?: Record<string, any>;
+  [key: string]: any;
+}): SafeBridgeMediaMeta {
+  const safe: SafeBridgeMediaMeta = {};
+  if (typeof media?.kind === "string" && media.kind) safe.kind = media.kind;
+  if (typeof media?.mimeType === "string" && media.mimeType) safe.mimeType = media.mimeType;
+  if (typeof media?.filename === "string" && media.filename) safe.filename = media.filename;
+  // `descriptor` no ingest; no re-processamento (backfill) o tamanho já está no
+  // topo — ler dos dois mantém a função idempotente.
+  const fileLength = descriptorFileLength(media?.descriptor) ?? descriptorFileLength(media);
+  if (fileLength !== undefined) safe.fileLength = fileLength;
+
+  // Camada 2: a allowlist acima já não copia chave nenhuma; esta varredura é a
+  // rede de segurança para quando ela crescer.
+  for (const key of Object.keys(safe) as Array<keyof SafeBridgeMediaMeta>) {
+    if (isMediaKeyField(key)) delete safe[key];
+  }
+  return safe;
+}
+
 /**
  * Build the POST request that asks wuzapi to download + decrypt one media node.
  *

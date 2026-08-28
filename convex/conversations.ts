@@ -875,6 +875,13 @@ export const sendMessage = mutation({
 // originals would orphan them from the source message); the copies share the same
 // storageId, so no bytes are re-uploaded. Requires inbox "reply"; the target
 // conversation must belong to the same organization as the source message.
+//
+// O blob compartilhado tinha um efeito colateral: excluir um dos lados (cascata
+// de lead ou botão de excluir arquivo) apagava o blob e deixava a outra cópia
+// apontando para o vazio. A correção NÃO está aqui — a duplicação de linhas
+// continua sendo o modelo — e sim em `lib/fileRefs.ts`: quem apaga arquivo só
+// chama `ctx.storage.delete` quando nenhuma outra linha de `files` referencia
+// aquele `storageId`.
 export const forwardMessage = mutation({
   args: {
     messageId: v.id("messages"),

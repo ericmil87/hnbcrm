@@ -9,6 +9,7 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { requireAuth, requirePermission } from "./lib/auth";
 import { validateFileUpload } from "./lib/fileValidation";
 import { checkUploadQuota } from "./lib/fileQuotas";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { Id } from "./_generated/dataModel";
 
 /**
@@ -164,8 +165,9 @@ export const deleteFile = mutation({
     // Auth: Requires edit permission
     const userMember = await requirePermission(ctx, file.organizationId, "leads", "edit_own");
 
-    // Delete from storage
-    await ctx.storage.delete(file.storageId);
+    // Delete from storage — só quando nenhuma outra linha de `files` compartilha
+    // o blob (mensagem encaminhada duplica a linha, não o blob).
+    await deleteBlobIfUnreferenced(ctx, file);
 
     // Delete metadata
     await ctx.db.delete(args.fileId);
@@ -437,8 +439,8 @@ export const internalDeleteFile = internalMutation({
       throw new Error("Arquivo não encontrado");
     }
 
-    // Delete from storage
-    await ctx.storage.delete(file.storageId);
+    // Delete from storage — ver `lib/fileRefs.ts`: blob compartilhado fica
+    await deleteBlobIfUnreferenced(ctx, file);
 
     // Delete metadata
     await ctx.db.delete(args.fileId);

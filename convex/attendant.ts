@@ -578,14 +578,23 @@ export function historyTextOf(
 // isto só olhava áudio, e por isso a IA respondia a um comprovante de Pix antes
 // de a descrição existir, exatamente o bug que a visão veio resolver.
 //
-// Três casos seguram a fila:
+// Dois casos seguram a fila:
 //   1. áudio com transcrição `pending` ou não iniciada;
-//   2. imagem com visão `pending` ou não iniciada (só quando a org tem visão);
-//   3. QUALQUER mídia com download ainda em voo (`metadata.mediaPending`) —
-//      caso que ninguém esperava antes desta versão.
+//   2. imagem com visão `pending` ou não iniciada (só quando a org tem visão).
 //
 // `done`/`failed` NUNCA seguram: falha é fallback honesto (o marcador de
 // indisponível na história), não bloqueio.
+//
+// ⚠️ NÃO espere por `metadata.mediaPending`. O nome engana: apesar de "pending",
+// ele NUNCA significa "os bytes estão a caminho". O download da mídia é
+// SÍNCRONO dentro da action de ingest (`bridge.internalIngestBridgeMessage`), e
+// a mensagem só é gravada depois que ele resolveu — não existe janela em que a
+// mensagem exista com o anexo em trânsito. Na prática o campo é escrito só em
+// caminhos de FALHA do bridge (mídia grande demais, erro de download, anexo
+// recusado), e o Meta nem o escreve; o inbox o lê como "problema de mídia"
+// (`hasMediaProblem`). A v0.51 esperava por ele, e isso atrasava em 60 s toda
+// resposta a uma mídia que falhou — esperando bytes que nunca viriam. Sem
+// anexo, o `continue` abaixo já resolve.
 async function hasMediaAwaitingEnrichment(
   ctx: MutationCtx,
   conversationId: Id<"conversations">,
@@ -606,10 +615,8 @@ async function hasMediaAwaitingEnrichment(
     if (m.direction !== "inbound" || m.senderType !== "contact") continue;
     if (m.isInternal) continue;
 
-    // 3. Download em voo — a mensagem existe, os bytes ainda não.
-    if (m.metadata?.mediaPending === true) return true;
-
-    // Sem anexo não há o que enriquecer — esperar seria espera eterna.
+    // Sem anexo não há o que enriquecer — esperar seria espera eterna. É também
+    // o caso da mídia que falhou no download (ver o aviso sobre `mediaPending`).
     if ((m.attachments?.length ?? 0) === 0) continue;
 
     if (m.contentType === "audio") {

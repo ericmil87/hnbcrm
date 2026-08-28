@@ -106,6 +106,54 @@ export function getFileCategory(mimeType: string): "image" | "document" | "text"
   return "other";
 }
 
+// ── Mídia INBOUND do WhatsApp ────────────────────────────────────────────────
+//
+// O contato não é usuário nosso: ele manda o que o app dele deixa, e o anexo
+// entra sem passar pelo uploader humano. A allowlist do upload humano
+// (ALLOWED_MIME_TYPES) é a base — o WhatsApp só acrescenta tipos que o app web
+// não oferece (vídeo, codecs de áudio do celular, zip e slides).
+
+/** Tipos que só chegam por mídia recebida — somados aos do upload humano. */
+export const INBOUND_EXTRA_MIME_TYPES: readonly string[] = [
+  // Vídeo (o WhatsApp reencoda para mp4/3gp; quicktime/webm aparecem em
+  // encaminhamentos de outros apps)
+  "video/mp4",
+  "video/3gpp",
+  "video/quicktime",
+  "video/webm",
+  // Áudio de celular (nota de voz é audio/ogg, já coberto pelo upload humano)
+  "audio/aac",
+  "audio/amr",
+  "audio/opus",
+  // Documentos que o app humano não oferece mas o WhatsApp anexa
+  "application/zip",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+];
+
+/**
+ * `true` se o mimetype é aceitável para mídia RECEBIDA (upload humano + extras).
+ */
+export function validateInboundMimeType(mimeType: string): boolean {
+  if (validateMimeType(mimeType)) return true;
+  return INBOUND_EXTRA_MIME_TYPES.includes(baseMimeType(mimeType));
+}
+
+/** Resultado NÃO-LANÇANTE das checagens de mídia inbound. */
+export type InboundMediaCheck = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Valida o mimetype de mídia recebida SEM lançar: uma mídia recusada só derruba
+ * o anexo, nunca a mensagem (o texto/legenda do contato tem que chegar ao
+ * inbox de qualquer jeito). O teto de tamanho continua sendo o MAX_MEDIA_BYTES
+ * do pipeline de ingest — os limites por tipo do upload humano não se aplicam
+ * aqui, senão o cap de 25 MB viraria letra morta.
+ */
+export function checkInboundMediaMimeType(mimeType: string): InboundMediaCheck {
+  if (validateInboundMimeType(mimeType)) return { ok: true };
+  return { ok: false, reason: `tipo de mídia não permitido (${baseMimeType(mimeType)})` };
+}
+
 /**
  * Validate file upload (throws on error)
  */
