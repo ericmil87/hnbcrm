@@ -14,8 +14,6 @@ import {
   XCircle,
   Trash2,
   User,
-  FileText,
-  Clock,
   AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -188,28 +186,6 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
             </div>
           )}
 
-          {/* Checklist Progress */}
-          {task.checklistItems && task.checklistItems.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium text-text-secondary mb-2 flex items-center gap-2">
-                <CheckCircle2 size={16} />
-                Checklist ({task.checklistItems.filter((i: any) => i.completed).length}/{task.checklistItems.length})
-              </h3>
-              <div className="space-y-2">
-                {task.checklistItems.map((item: any, idx: number) => (
-                  <div key={idx} className="flex items-center gap-2 text-sm">
-                    <div className={item.completed ? "text-semantic-success" : "text-text-muted"}>
-                      {item.completed ? <CheckCircle2 size={16} /> : <Clock size={16} />}
-                    </div>
-                    <span className={item.completed ? "line-through text-text-muted" : "text-text-primary"}>
-                      {item.text}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Linked Records */}
           {(task.lead || task.contact) && (
             <div>
@@ -247,17 +223,6 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
                 <Avatar name={task.assignee.name} type={task.assignee.type} size="sm" />
                 <span className="text-sm text-text-primary">{task.assignee.name}</span>
               </div>
-            </div>
-          )}
-
-          {/* Notes */}
-          {task.notes && (
-            <div>
-              <h3 className="text-sm font-medium text-text-secondary mb-2 flex items-center gap-2">
-                <FileText size={16} />
-                Notas
-              </h3>
-              <p className="text-sm text-text-primary whitespace-pre-wrap">{task.notes}</p>
             </div>
           )}
 

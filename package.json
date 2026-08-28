@@ -8,7 +8,7 @@
     "dev:frontend": "vite --open",
     "dev:backend": "convex dev",
     "build": "vite build",
-    "lint": "tsc -p convex -noEmit --pretty false && tsc -p . -noEmit --pretty false && convex dev --once && vite build",
+    "lint": "tsc -p convex -noEmit --pretty false && tsc -p tsconfig.app.json -noEmit --pretty false && tsc -p tsconfig.node.json -noEmit --pretty false && convex dev --once && vite build",
     "test": "vitest run",
     "build:embed": "vite build --config vite.embed.config.ts",
     "convert-images": "node scripts/convert-images.js"

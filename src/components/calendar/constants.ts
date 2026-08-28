@@ -1,3 +1,15 @@
+// Tipos de evento aceitos pelo backend (espelha o validator de convex/calendar).
+// Existe como união (e não `string`) para o filtro não conseguir mandar um valor
+// que a query recusa.
+export type CalendarEventType =
+  | "call"
+  | "meeting"
+  | "follow_up"
+  | "demo"
+  | "task"
+  | "reminder"
+  | "other";
+
 export const EVENT_TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   call: { bg: "bg-blue-500/20", border: "border-blue-500", text: "text-blue-400" },
   meeting: { bg: "bg-purple-500/20", border: "border-purple-500", text: "text-purple-400" },
@@ -17,6 +29,18 @@ export const EVENT_TYPE_LABELS: Record<string, string> = {
   reminder: "Lembrete",
   other: "Outro",
 };
+
+// Ordem em que o filtro lista os tipos. Existe porque Object.keys() devolve
+// string[] e perderia a união.
+export const EVENT_TYPES: CalendarEventType[] = [
+  "call",
+  "meeting",
+  "follow_up",
+  "demo",
+  "task",
+  "reminder",
+  "other",
+];
 
 export const EVENT_STATUS_LABELS: Record<string, string> = {
   scheduled: "Agendado",

@@ -364,7 +364,7 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
       { name: "content", type: "string", required: false, location: "body", description: "Conteúdo da mensagem (obrigatório sem attachments)" },
       { name: "contentType", type: "string", required: false, location: "body", description: "Tipo de conteúdo", enumValues: ["text", "image", "file", "audio"], default: "text" },
       { name: "isInternal", type: "boolean", required: false, location: "body", description: "Nota interna?", default: "false" },
-      { name: "attachments", type: "string[]", required: false, location: "body", description: "IDs de arquivos (tabela files) a anexar" },
+      { name: "attachments", type: "array", required: false, location: "body", description: "IDs de arquivos (tabela files) a anexar" },
       { name: "replyToMessageId", type: "string", required: false, location: "body", description: "ID da mensagem sendo respondida (quote)" },
     ],
     responseExample: { success: true, messageId: "m5s8g3j1k7p4q9w2" },

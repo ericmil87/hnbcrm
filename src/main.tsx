@@ -35,7 +35,7 @@ const FormAnalyticsPage = lazy(() => import("./components/forms/FormAnalyticsPag
 const FormExperimentPage = lazy(() => import("./components/forms/FormExperimentPage").then(m => ({ default: m.FormExperimentPage })));
 
 // Wrapper component for Suspense boundaries
-function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => JSX.Element> }) {
+function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => React.JSX.Element> }) {
   return (
     <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size="lg" /></div>}>
       <Component />

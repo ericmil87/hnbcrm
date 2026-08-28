@@ -16,6 +16,7 @@ import { CalendarEventModal } from "./CalendarEventModal";
 import { EventDetailSlideOver } from "./EventDetailSlideOver";
 import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { EventBlock } from "./EventBlock";
+import type { CalendarEventType } from "./constants";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
 
@@ -40,7 +41,7 @@ export function CalendarPage() {
   const [initialHour, setInitialHour] = useState<number | undefined>();
   const [initialMinute, setInitialMinute] = useState<number | undefined>();
   const [selectedMemberId, setSelectedMemberId] = useState<string | null>(null);
-  const [selectedEventTypes, setSelectedEventTypes] = useState<string[]>([]);
+  const [selectedEventTypes, setSelectedEventTypes] = useState<CalendarEventType[]>([]);
   const [activeEvent, setActiveEvent] = useState<any>(null);
 
   const events = useQuery(api.calendar.getEvents, {
@@ -118,7 +119,12 @@ export function CalendarPage() {
 
     // Handle drop on time slot
     if (over.id.toString().startsWith("slot-")) {
-      const { date, hour, minute } = over.data.current;
+      // O dnd-kit tipa `data.current` como AnyData: o formato é o que o
+      // droppable do TimeGrid publica ({ date, hour, minute }).
+      const slot = over.data.current as
+        | { date?: Date; hour?: number; minute?: number }
+        | undefined;
+      const { date, hour, minute } = slot ?? {};
       if (!date || hour === undefined || minute === undefined) return;
 
       const newStart = new Date(date);

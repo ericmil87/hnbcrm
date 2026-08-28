@@ -118,13 +118,16 @@ export function PublicFormPage() {
       setPageState({ kind: "not_found" });
       return;
     }
+    // Fixado numa const: o narrowing do `if` acima não atravessa a closure da
+    // fetchForm abaixo.
+    const slug = formSlug;
 
     let cancelled = false;
 
     async function fetchForm() {
       try {
         const res = await fetch(
-          `${siteUrl}/api/v1/forms/public?slug=${encodeURIComponent(formSlug)}`
+          `${siteUrl}/api/v1/forms/public?slug=${encodeURIComponent(slug)}`
         );
 
         if (cancelled) return;

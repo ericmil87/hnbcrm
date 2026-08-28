@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "../ui/Button";
 import { CalendarFilters } from "./CalendarFilters";
 import { MONTHS_LONG, WEEKDAYS_LONG } from "./constants";
+import type { CalendarEventType } from "./constants";
 
 type CalendarView = "month" | "week" | "day";
 
@@ -16,9 +17,9 @@ interface CalendarHeaderProps {
   onCreateEvent: () => void;
   teamMembers: Array<{ _id: string; name: string }>;
   selectedMemberId: string | null;
-  selectedEventTypes: string[];
+  selectedEventTypes: CalendarEventType[];
   onMemberChange: (memberId: string | null) => void;
-  onEventTypesChange: (types: string[]) => void;
+  onEventTypesChange: (types: CalendarEventType[]) => void;
 }
 
 export function CalendarHeader({

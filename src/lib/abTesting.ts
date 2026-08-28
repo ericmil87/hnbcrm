@@ -30,19 +30,18 @@ function murmurHash3(key: string, seed: number = 0): number {
   let k1 = 0;
   const tail = nblocks * 4;
 
-  switch (len & 3) {
-    case 3:
-      k1 ^= (key.charCodeAt(tail + 2) & 0xff) << 16;
-    // fall through
-    case 2:
-      k1 ^= (key.charCodeAt(tail + 1) & 0xff) << 8;
-    // fall through
-    case 1:
-      k1 ^= key.charCodeAt(tail) & 0xff;
-      k1 = Math.imul(k1, c1);
-      k1 = (k1 << 15) | (k1 >>> 17);
-      k1 = Math.imul(k1, c2);
-      h ^= k1;
+  // Cauda de 1-3 bytes. Era um switch com fallthrough deliberado; virou cascata
+  // de ifs porque o TypeScript não reconhece o comentário "// fall through" e
+  // marcava o caso como erro. A semântica (e o hash) são idênticos.
+  const rem = len & 3;
+  if (rem >= 3) k1 ^= (key.charCodeAt(tail + 2) & 0xff) << 16;
+  if (rem >= 2) k1 ^= (key.charCodeAt(tail + 1) & 0xff) << 8;
+  if (rem >= 1) {
+    k1 ^= key.charCodeAt(tail) & 0xff;
+    k1 = Math.imul(k1, c1);
+    k1 = (k1 << 15) | (k1 >>> 17);
+    k1 = Math.imul(k1, c2);
+    h ^= k1;
   }
 
   h ^= len;

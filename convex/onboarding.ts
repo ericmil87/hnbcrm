@@ -7,6 +7,27 @@ import { buildAuditDescription } from "./lib/auditDescription";
 const wizardDataValidator = v.optional(v.any());
 
 // Get onboarding progress for the current user in an organization
+// Resposta para a org que NÃO tem registro em onboardingProgress mas já tem
+// dados: quem já usa o produto não pode ver o wizard de novo. Os tipos são
+// explícitos de propósito — sem eles os arrays inferem `never[]` e o consumidor
+// (SpotlightTooltip) não consegue nem chamar `.includes(id)`; e sem
+// `wizardData` a união com o documento real fica sem o campo, quebrando o
+// OnboardingWizard.
+const ALREADY_ONBOARDED: {
+  wizardCompleted: boolean;
+  checklistDismissed: boolean;
+  seenSpotlights: string[];
+  celebratedMilestones: string[];
+  wizardCurrentStep: number;
+  wizardData?: Record<string, unknown>;
+} = {
+  wizardCompleted: true,
+  checklistDismissed: true,
+  seenSpotlights: [],
+  celebratedMilestones: [],
+  wizardCurrentStep: 4,
+};
+
 export const getOnboardingProgress = query({
   args: { organizationId: v.id("organizations") },
   returns: v.any(),
@@ -35,13 +56,7 @@ export const getOnboardingProgress = query({
       .first();
 
     if (existingLead) {
-      return {
-        wizardCompleted: true,
-        checklistDismissed: true,
-        seenSpotlights: [],
-        celebratedMilestones: [],
-        wizardCurrentStep: 4,
-      };
+      return { ...ALREADY_ONBOARDED };
     }
 
     const existingContact = await ctx.db
@@ -52,13 +67,7 @@ export const getOnboardingProgress = query({
       .first();
 
     if (existingContact) {
-      return {
-        wizardCompleted: true,
-        checklistDismissed: true,
-        seenSpotlights: [],
-        celebratedMilestones: [],
-        wizardCurrentStep: 4,
-      };
+      return { ...ALREADY_ONBOARDED };
     }
 
     // No record and no data — new org, trigger wizard

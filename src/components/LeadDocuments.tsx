@@ -44,9 +44,27 @@ function getFileIcon(mimeType: string) {
   return File;
 }
 
+// Espelha o `returns` de convex/files.ts:getLeadDocuments. Existe porque o tipo
+// que chega do `api` está caindo para `any` — sem isto, `doc` no map abaixo é
+// implicitamente any e nada no arquivo é verificado.
+type LeadDocumentRow = {
+  documentId: Id<"leadDocuments">;
+  fileId: Id<"files">;
+  title?: string;
+  category?: "contract" | "proposal" | "invoice" | "other";
+  name: string;
+  mimeType: string;
+  size: number;
+  url: string | null;
+  uploadedBy: Id<"teamMembers">;
+  createdAt: number;
+};
+
 export function LeadDocuments({ leadId, organizationId }: LeadDocumentsProps) {
   const [showUploadModal, setShowUploadModal] = useState(false);
-  const documents = useQuery(api.files.getLeadDocuments, { leadId });
+  const documents = useQuery(api.files.getLeadDocuments, { leadId }) as
+    | LeadDocumentRow[]
+    | undefined;
   const removeDocument = useMutation(api.leads.removeLeadDocument);
 
   const handleDelete = async (documentId: Id<"leadDocuments">, name: string) => {

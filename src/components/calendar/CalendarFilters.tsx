@@ -2,14 +2,14 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Filter, X } from "lucide-react";
 import { Button } from "../ui/Button";
-import { EVENT_TYPE_LABELS } from "./constants";
+import { EVENT_TYPE_LABELS, EVENT_TYPES, type CalendarEventType } from "./constants";
 
 interface CalendarFiltersProps {
   teamMembers: Array<{ _id: string; name: string }>;
   selectedMemberId: string | null;
-  selectedEventTypes: string[];
+  selectedEventTypes: CalendarEventType[];
   onMemberChange: (memberId: string | null) => void;
-  onEventTypesChange: (types: string[]) => void;
+  onEventTypesChange: (types: CalendarEventType[]) => void;
 }
 
 export function CalendarFilters({
@@ -21,7 +21,7 @@ export function CalendarFilters({
 }: CalendarFiltersProps) {
   const [isOpen, setIsOpen] = useState(false);
 
-  const toggleEventType = (type: string) => {
+  const toggleEventType = (type: CalendarEventType) => {
     if (selectedEventTypes.includes(type)) {
       onEventTypesChange(selectedEventTypes.filter((t) => t !== type));
     } else {
@@ -90,7 +90,7 @@ export function CalendarFilters({
                 Tipo de Evento
               </label>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(EVENT_TYPE_LABELS).map(([type, label]) => (
+                {EVENT_TYPES.map((type) => (
                   <button
                     key={type}
                     onClick={() => toggleEventType(type)}
@@ -101,7 +101,7 @@ export function CalendarFilters({
                         : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-sunken"
                     )}
                   >
-                    {label}
+                    {EVENT_TYPE_LABELS[type]}
                   </button>
                 ))}
               </div>
