@@ -1253,6 +1253,94 @@ function verifyWebhook(body, signature, secret) {
   }
 }`}</CodeBlock>
             </Card>
+
+            <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">
+                Integracao com Apointoo (agendamentos confirmados)
+              </h3>
+              <p className="text-sm text-text-secondary">
+                <strong>O que e o Apointoo:</strong> plataforma de atribuicao e
+                conversao para negocios que vendem agendamento (clinicas,
+                consultorios, estetica). Ela captura o lead ja sabendo qual campanha
+                o gerou e confirma o agendamento real no sistema de agenda.
+              </p>
+              <p className="text-sm text-text-secondary">
+                <strong>Objetivo da integracao:</strong> quando um agendamento e
+                confirmado no Apointoo, o lead correspondente nasce ou avanca no
+                funil do HNBCRM com a atribuicao da campanha. Assim o time ve, no
+                proprio CRM, quais leads de campanha chegaram ate o agendamento
+                confirmado.
+              </p>
+              <p className="text-sm text-text-secondary">
+                <strong>Como funciona:</strong> o Apointoo envia um webhook{" "}
+                <code>booking.confirmed</code> para um receiver seu. O receiver usa
+                apenas a API REST do HNBCRM: cria o lead na primeira conversao
+                (<code>/api/v1/inbound/lead</code>) e move de estagio nos eventos
+                seguintes (<code>/api/v1/leads/move-stage</code>). Nenhum dado sai
+                do seu infraestrutura alem disso.
+              </p>
+              <CodeBlock language="javascript">{`// Evento enviado pelo Apointoo no booking.confirmed:
+// {
+//   "type": "booking.confirmed",
+//   "tenantId": "clinic-x",
+//   "service": "Limpeza de pele",
+//   "value": 180,
+//   "contact": { "name": "Maria Silva", "phone": "+5561999990000" },
+//   "attribution": { "source": "meta", "campaign": "meta-agosto", "landingPage": "/limpeza-de-pele" },
+//   "confirmedAt": "2026-08-24T14:30:00Z"
+// }
+
+// Mapa telefone -> leadId (use seu banco de dados em producao)
+const leadPorTelefone = new Map();
+const STAGE_CONFIRMACAO_ID = "id-do-estagio-confirmado";
+
+async function handleApointooEvent(event) {
+  // Passo 0: ignore eventos que nao sao de agendamento confirmado
+  if (event.type !== "booking.confirmed") return;
+
+  const leadId = leadPorTelefone.get(event.contact.phone);
+
+  if (!leadId) {
+    // Passo 1: primeiro agendamento do contato — cria o lead com a atribuicao
+    const res = await fetch(\`\${HNBCRM_URL}/api/v1/inbound/lead\`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": HNBCRM_API_KEY,
+      },
+      body: JSON.stringify({
+        title: \`Agendamento: \${event.service}\`,
+        contact: {
+          name: event.contact.name,
+          phone: event.contact.phone,
+        },
+        value: event.value || 0,
+        tags: ["apointoo", "agendamento-confirmado"],
+        customFields: {
+          apointoo_campaign: event.attribution?.campaign,
+          apointoo_source: event.attribution?.source,
+          apointoo_tenant: event.tenantId,
+        },
+      }),
+    });
+    const data = await res.json();
+    leadPorTelefone.set(event.contact.phone, data.leadId);
+  } else {
+    // Passo 2: agendamentos seguintes do mesmo contato — move o lead de estagio
+    await fetch(\`\${HNBCRM_URL}/api/v1/leads/move-stage\`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": HNBCRM_API_KEY,
+      },
+      body: JSON.stringify({ leadId, stageId: STAGE_CONFIRMACAO_ID }),
+    });
+  }
+}
+
+// Passo 3 (opcional): exponha isso como webhook receiver, ex.
+// app.post("/webhooks/apointoo", (req, res) => handleApointooEvent(req.body).then(() => res.sendStatus(200)))`}</CodeBlock>
+            </Card>
           </section>
 
           {/* Bottom spacer */}
