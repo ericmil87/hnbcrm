@@ -12,7 +12,9 @@ import {
   DEFAULT_STORED_MODELS,
   supportsVision,
   visionChainFor,
+  visionModelOptions,
 } from "./registry";
+import { effectivePlatformOrder } from "../agentRoutes";
 import { ContentPart, LlmHttpError, StreamToolCallDelta, flattenContent } from "./types";
 
 const ENDPOINT = { providerId: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", apiKey: "sk-test-secret-key" };
@@ -457,5 +459,58 @@ describe("supportsVision — allowlist FAIL-CLOSED por rota", () => {
       "copilot",
     ]);
     expect(DEFAULT_STORED_MODELS).not.toHaveProperty("vision");
+  });
+});
+
+// ── Config por produto de IA (Configurações → IA) ───────────────────────────
+
+describe("effectivePlatformOrder — precedência produto > org > env", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  test("a escolha do PRODUTO vence a da org", () => {
+    const cfg = {
+      platformOrder: "opencode-only" as const,
+      products: { vision: { order: "openrouter-only" as const } },
+    };
+    expect(effectivePlatformOrder(cfg, "vision")).toBe("openrouter-only");
+    // …e não vaza para os outros produtos.
+    expect(effectivePlatformOrder(cfg, "attendant")).toBe("opencode-only");
+  });
+
+  test("sem override, herda a org; sem org, cai no override de ops do deployment", () => {
+    expect(effectivePlatformOrder({ platformOrder: "auto" }, "copilot")).toBe("auto");
+    vi.stubEnv("LLM_PLATFORM_ORDER", "openrouter-first");
+    expect(effectivePlatformOrder(null, "copilot")).toBe("openrouter-first");
+    expect(effectivePlatformOrder(undefined, undefined)).toBe("openrouter-first");
+  });
+
+  test("env inválida é ignorada (não vira ordem silenciosa)", () => {
+    vi.stubEnv("LLM_PLATFORM_ORDER", "nao-existe");
+    expect(effectivePlatformOrder(null, "vision")).toBeUndefined();
+  });
+});
+
+describe("visionModelOptions — o que a org pode fixar na UI", () => {
+  test("só os modelos medidos, com as rotas onde cada um existe", () => {
+    const ids = visionModelOptions().map((o) => o.id).sort();
+    expect(ids).toEqual(
+      ["deepseek-v4-flash-vision-exp", "glm-5.3-flash", "kimi-k2.7-code", "kimi-k3", "mimo-v2.5"].sort()
+    );
+    // Os que ignoram a imagem em silêncio NUNCA podem ser oferecidos.
+    expect(ids).not.toContain("hy3");
+    expect(ids).not.toContain("longcat-2.0");
+  });
+
+  test("glm-5.3-flash é a ponte (as duas rotas); o deepseek-vision só existe no OpenCode Go", () => {
+    const byId = Object.fromEntries(visionModelOptions().map((o) => [o.id, o.providers]));
+    expect([...byId["glm-5.3-flash"]].sort()).toEqual(["opencode-go", "openrouter"]);
+    expect(byId["deepseek-v4-flash-vision-exp"]).toEqual(["opencode-go"]);
+  });
+
+  test("cada opção carrega os números medidos, para a escolha não ser às cegas", () => {
+    const deepseek = visionModelOptions().find((o) => o.id === "deepseek-v4-flash-vision-exp")!;
+    expect(deepseek.accuracy).toBe("7/7");
+    expect(deepseek.inputTokens).toBe(495);
+    expect(deepseek.latencyMs).toBeGreaterThan(0);
   });
 });

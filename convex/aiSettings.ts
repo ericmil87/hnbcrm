@@ -16,8 +16,16 @@ import {
   DEFAULT_STORED_MODELS,
   OPENCODE_GO_MODELS,
   routeInfo,
+  supportsVision,
+  visionModelOptions,
 } from "./lib/llm/registry";
 import { personaById, personaForIndustry } from "./lib/agentPersonas";
+
+// Normaliza o override de um produto para a UI: ausência vira o sentinela que o
+// select renderiza ("inherit" = herda a org; "" = modelo automático).
+function productRoutingOf(routing: { order?: string; model?: string } | undefined) {
+  return { order: routing?.order ?? "inherit", model: routing?.model ?? "" };
+}
 
 export const getAiStatus = query({
   args: { organizationId: v.id("organizations") },
@@ -47,6 +55,13 @@ export const getAiStatus = query({
     // Roteamento de provider (UI de Configurações → IA).
     providerMode: v.union(v.literal("platform"), v.literal("byo")),
     platformOrder: v.string(), // "auto" | "openrouter-first" | "opencode-only" | "openrouter-only"
+    // Override por produto. `order: "inherit"` = segue o platformOrder da org;
+    // `model: ""` (só visão) = Automático, a cadeia inteira com fallover.
+    products: v.object({
+      copilot: v.object({ order: v.string(), model: v.string() }),
+      attendant: v.object({ order: v.string(), model: v.string() }),
+      vision: v.object({ order: v.string(), model: v.string() }),
+    }),
     byo: v.union(
       v.object({
         provider: v.string(),
@@ -94,6 +109,11 @@ export const getAiStatus = query({
       },
       strictZdr: aiConfig?.providerConfig?.strictZdr === true,
       monthlyConversationBudget: aiConfig?.monthlyConversationBudget ?? null,
+      products: {
+        copilot: productRoutingOf(aiConfig?.providerConfig?.products?.copilot),
+        attendant: productRoutingOf(aiConfig?.providerConfig?.products?.attendant),
+        vision: productRoutingOf(aiConfig?.providerConfig?.products?.vision),
+      },
       providerMode: aiConfig?.providerConfig?.mode ?? "platform",
       platformOrder: aiConfig?.providerConfig?.platformOrder ?? "auto",
       byo: await (async () => {
@@ -1159,6 +1179,118 @@ export const setPlatformOrder = mutation({
       createdAt: now,
     });
     return null;
+  },
+});
+
+/**
+ * Roteamento (e, na visão, o modelo) POR PRODUTO de IA. Cada produto herda o
+ * padrão da org quando `order` vem como "inherit"; para a visão, `model` vazio
+ * significa "Automático" — a cadeia inteira com fallover.
+ *
+ * A chave própria (BYO) NÃO entra aqui: é decisão da organização inteira
+ * (`setProviderMode`), porque BYO não tem fallback e um produto sozinho numa
+ * rota caída é uma falha silenciosa.
+ */
+export const setProductRouting = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    product: v.union(v.literal("copilot"), v.literal("attendant"), v.literal("vision")),
+    // "inherit" limpa o override e volta a seguir o padrão da org.
+    order: v.optional(
+      v.union(
+        v.literal("inherit"),
+        v.literal("auto"),
+        v.literal("openrouter-first"),
+        v.literal("opencode-only"),
+        v.literal("openrouter-only")
+      )
+    ),
+    // Só para "vision". String vazia = Automático (limpa a escolha).
+    model: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new Error("Organização não encontrada");
+    const current = org.settings.aiConfig;
+    if (!current) throw new Error("Ative a IA primeiro");
+
+    if (args.model !== undefined && args.product !== "vision") {
+      throw new Error("Só a leitura de imagens escolhe o modelo por aqui");
+    }
+    // Fail-closed: um id fora da allowlist medida entraria como uma cadeia vazia
+    // e a org descobriria só quando a primeira imagem não fosse lida. Recusar
+    // aqui é o único ponto em que dá para avisar a tempo.
+    const pinned = args.model?.trim();
+    if (pinned) {
+      const known = visionModelOptions().some((o) => o.id === pinned);
+      if (!known) throw new Error(`"${pinned}" não é um modelo de visão validado`);
+    }
+
+    const providerConfig = current.providerConfig ?? {
+      mode: "platform" as const,
+      zdr: true,
+      models: { ...DEFAULT_STORED_MODELS },
+    };
+    const before = providerConfig.products?.[args.product] ?? {};
+    const next: { order?: "auto" | "openrouter-first" | "opencode-only" | "openrouter-only"; model?: string } = {
+      ...before,
+    };
+    if (args.order !== undefined) {
+      if (args.order === "inherit") delete next.order;
+      else next.order = args.order;
+    }
+    if (args.model !== undefined) {
+      if (pinned) next.model = pinned;
+      else delete next.model;
+    }
+
+    const products = { ...(providerConfig.products ?? {}), [args.product]: next };
+    const now = Date.now();
+    await ctx.db.patch(args.organizationId, {
+      settings: {
+        ...org.settings,
+        aiConfig: { ...current, providerConfig: { ...providerConfig, products } },
+      },
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { product: args.product, order: before.order ?? "inherit", model: before.model ?? "auto" },
+        after: { product: args.product, order: next.order ?? "inherit", model: next.model ?? "auto" },
+      },
+      description: `Atualizou provider/modelo do produto de IA "${args.product}"`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Modelos de visão que a org pode fixar, com as rotas onde cada um existe e os
+ * números MEDIDOS (latência, tokens de imagem, acurácia). A lista é curta de
+ * propósito: dois modelos do catálogo aceitam a imagem, ignoram em silêncio e
+ * devolvem tudo nulo, e não há erro para detectar isso em runtime.
+ */
+export const getVisionModelOptions = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "view");
+    return visionModelOptions().map((o) => ({
+      ...o,
+      route: routeInfo(o.providers[0], o.id),
+      zdrOnAllRoutes: o.providers.every((p) => supportsVision(o.id, p)),
+    }));
   },
 });
 

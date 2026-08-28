@@ -242,8 +242,16 @@ async function runVision(
     return await fail(ctx, message.messageId, visionError(e));
   }
   if (attempts.length === 0) {
-    // Fail-closed: provider sem modelo de visão na allowlist (ex.: BYO custom).
-    return await fail(ctx, message.messageId, "Nenhum modelo de visão disponível para o provider desta organização");
+    // Fail-closed: provider sem modelo de visão na allowlist (ex.: BYO custom),
+    // ou modelo fixado que não existe na(s) rota(s) da org.
+    const pinned = message.providerConfig?.products?.vision?.model;
+    return await fail(
+      ctx,
+      message.messageId,
+      pinned
+        ? `O modelo de visão escolhido ("${pinned}") não está disponível nas rotas desta organização — volte para Automático em Configurações → IA`
+        : "Nenhum modelo de visão disponível para o provider desta organização"
+    );
   }
 
   // Claim transacional — fecha a corrida entre o autoDescribe do ingest e o CTA
@@ -276,7 +284,7 @@ async function runVision(
         conversationId: message.conversationId,
         leadId: message.leadId,
         triggerMessageId: message.messageId,
-        model: DEFAULT_MODELS.vision,
+        model: message.providerConfig?.products?.vision?.model ?? DEFAULT_MODELS.vision,
       })
     : null;
 
@@ -383,21 +391,31 @@ async function fail(
  * permitidos NAQUELA rota, na ordem validada ao vivo. `visionChainFor` é
  * fail-closed — provider fora da allowlist devolve [] e a org simplesmente não
  * tem visão, em vez de mandarmos a imagem para um modelo que a ignora.
+ *
+ * A org pode FIXAR um modelo (Configurações → IA → Ler imagens recebidas). Nesse
+ * caso a cadeia vira de um elo só: some o fallover, e se o modelo escolhido
+ * estiver fora do ar a imagem não é lida. É por isso que "Automático" é o
+ * default. Um id fixado fora da allowlist não cria tentativa nenhuma — o mesmo
+ * fail-closed de sempre, e não "manda assim mesmo para ver o que acontece".
  */
 async function buildVisionAttempts(
   ctx: ActionCtx,
   message: ImageMessageForVision
 ): Promise<ResolvedRoute[]> {
+  const pinned = message.providerConfig?.products?.vision?.model;
   const baseRoutes = await resolveOrgRoutes(
     ctx,
     message.organizationId,
     message.providerConfig,
-    DEFAULT_MODELS.vision
+    pinned ?? DEFAULT_MODELS.vision,
+    "vision"
   );
 
   const attempts: ResolvedRoute[] = [];
   for (const route of baseRoutes) {
-    for (const canonical of visionChainFor(route.providerId)) {
+    const chain = visionChainFor(route.providerId);
+    const models = pinned ? chain.filter((m) => m === pinned) : chain;
+    for (const canonical of models) {
       const zdr = routeInfo(route.providerId, canonical);
       // strictZdr precisa ser re-aplicado: resolveOrgRoutes filtrou pelas facts
       // do modelo BASE, e aqui cada elo tem o seu próprio par (rota, modelo).
@@ -601,13 +619,9 @@ export const internalGetImageMessageIfEligible = internalQuery({
     const file = await ctx.db.get(fileId);
     if (!file || file.organizationId !== message.organizationId) return null;
 
-    const conversation = await ctx.db.get(message.conversationId);
-    const config = conversation?.channelConfigId
-      ? await ctx.db.get(conversation.channelConfigId)
-      : null;
     const org = await ctx.db.get(message.organizationId);
-    // Gate D10 (AND, não OR — cada imagem custa dinheiro).
-    if (!shouldDescribeImage(org, config)) return null;
+    // Um interruptor só: aiConfig.visionEnabled (opt-in, default false).
+    if (!shouldDescribeImage(org)) return null;
 
     const aiConfig = org!.settings.aiConfig;
     return {

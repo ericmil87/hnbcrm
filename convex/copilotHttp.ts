@@ -167,7 +167,8 @@ export const copilotStream = httpAction(async (ctx, request) => {
       ctx,
       organizationId,
       session.providerConfig as OrgProviderConfig | null,
-      canonicalModel
+      canonicalModel,
+      "copilot"
     );
   } catch (e) {
     return new Response(

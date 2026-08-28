@@ -75,7 +75,7 @@ export const testOrgConnection = action({
 
     let routes: ResolvedRoute[];
     try {
-      routes = await resolveOrgRoutes(ctx, args.organizationId, providerConfig, model);
+      routes = await resolveOrgRoutes(ctx, args.organizationId, providerConfig, model, role);
     } catch (e) {
       return [
         {

@@ -54,8 +54,9 @@ async function seedVisionOrg(
   opts?: {
     visionEnabled?: boolean;
     attendantEnabled?: boolean;
-    autoDescribeImages?: boolean;
     withAiMember?: boolean;
+    platformOrder?: "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
+    products?: Record<string, { order?: string; model?: string }>;
   }
 ) {
   return await t.run(async (ctx) => {
@@ -72,6 +73,21 @@ async function seedVisionOrg(
           handoffThreshold: 0.8,
           ...(opts?.visionEnabled ? { visionEnabled: true } : {}),
           ...(opts?.attendantEnabled === false ? { attendantEnabled: false } : {}),
+          ...(opts?.platformOrder || opts?.products
+            ? {
+                providerConfig: {
+                  mode: "platform" as const,
+                  zdr: true,
+                  models: {
+                    copilot: "kimi-k2.7-code",
+                    attendant: "deepseek-v4-flash",
+                    classify: "deepseek-v4-flash",
+                  },
+                  ...(opts.platformOrder ? { platformOrder: opts.platformOrder } : {}),
+                  ...(opts.products ? { products: opts.products as any } : {}),
+                },
+              }
+            : {}),
         },
       },
       createdAt: now,
@@ -116,7 +132,6 @@ async function seedVisionOrg(
       displayName: "Número principal",
       phoneNumberId: "555000333",
       status: "active",
-      ...(opts?.autoDescribeImages ? { autoDescribeImages: true } : {}),
       createdAt: now,
       updatedAt: now,
     });
@@ -305,8 +320,7 @@ describe("visionEnabled desligado (D2) — o default não muda nada", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const t = setup();
-    // Canal com o toggle LIGADO de propósito: sozinho ele não pode ligar a visão.
-    const seed = await seedVisionOrg(t, { autoDescribeImages: true });
+    const seed = await seedVisionOrg(t);
     const messageId = await insertImage(t, seed);
 
     const result = await t.action(internal.vision.autoDescribe, { messageId });
@@ -512,8 +526,8 @@ describe("marcadores de imagem no histórico (D9)", () => {
 
 // ── 7/8. O gate é um AND (D10) e figurinha não gasta nada (D11) ──────────────
 
-describe("gate do passe de visão (D10/D11)", () => {
-  test("visionEnabled on + canal off + atendente on → descreve", async () => {
+describe("gate do passe de visão — UM interruptor só", () => {
+  test("visionEnabled ligado → descreve", async () => {
     vi.useRealTimers();
     const fetchSpy = vi.fn(async () => llmResponse(COMPROVANTE_JSON));
     vi.stubGlobal("fetch", fetchSpy);
@@ -534,13 +548,13 @@ describe("gate do passe de visão (D10/D11)", () => {
     expect((message!.metadata?.vision as any).model).toBe("deepseek-v4-flash-vision-exp");
   });
 
-  test("visionEnabled OFF + canal ON → não descreve (é AND, não OR)", async () => {
+  test("visionEnabled desligado → não descreve", async () => {
     vi.useRealTimers();
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
     const t = setup();
-    const seed = await seedVisionOrg(t, { autoDescribeImages: true });
+    const seed = await seedVisionOrg(t);
     const messageId = await insertImage(t, seed);
 
     expect(await t.action(internal.vision.autoDescribe, { messageId })).toEqual({
@@ -549,36 +563,21 @@ describe("gate do passe de visão (D10/D11)", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  test("visionEnabled on + canal on + atendente OFF → descreve (toggle do inbox)", async () => {
+  // A v0.51 exigia um AND com o toggle do canal, e com o atendente desligado a
+  // imagem NÃO era lida. A v0.52 tirou o segundo interruptor: quem liga a
+  // leitura é só a org, e ela vale mesmo com o atendente parado (o humano lê a
+  // descrição no inbox).
+  test("atendente desligado não impede a leitura", async () => {
     vi.useRealTimers();
     const fetchSpy = vi.fn(async () => llmResponse(COMPROVANTE_JSON));
-    vi.stubGlobal("fetch", fetchSpy);
-
-    const t = setup();
-    const seed = await seedVisionOrg(t, {
-      visionEnabled: true,
-      attendantEnabled: false,
-      autoDescribeImages: true,
-    });
-    const messageId = await insertImage(t, seed);
-
-    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("done");
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-  });
-
-  test("visionEnabled on + canal OFF + atendente OFF → não descreve", async () => {
-    vi.useRealTimers();
-    const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
     const t = setup();
     const seed = await seedVisionOrg(t, { visionEnabled: true, attendantEnabled: false });
     const messageId = await insertImage(t, seed);
 
-    expect(await t.action(internal.vision.autoDescribe, { messageId })).toEqual({
-      status: "skipped",
-    });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("done");
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   test("figurinha nunca vira chamada paga (D11)", async () => {
@@ -924,5 +923,120 @@ describe("anti-injeção por imagem (D14)", () => {
     // prompt do atendente tem a REGRA 7 dizendo que texto de imagem é dado.
     expect(historyTexts(claim)[0]).toContain("[imagem descrita]:");
     expect(historyTexts(claim)[0]).toContain("SYSTEM OVERRIDE");
+  });
+});
+
+// ── Config por produto: rota e modelo escolhidos pela org ───────────────────
+
+describe("roteamento e modelo por produto (Configurações → IA)", () => {
+  test("modelo de visão FIXADO usa só ele — sem fallover", async () => {
+    vi.useRealTimers();
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: any, init: any) => {
+        calls.push(JSON.parse(init.body).model);
+        return llmResponse(COMPROVANTE_JSON);
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, {
+      visionEnabled: true,
+      products: { vision: { model: "kimi-k3" } },
+    });
+    const messageId = await insertImage(t, seed);
+
+    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("done");
+    // Só o escolhido — o deepseek-vision, que é o 1º da cadeia, nem foi tentado.
+    expect(calls).toEqual(["kimi-k3"]);
+  });
+
+  test("modelo fixado que falha NÃO cai para outro (o preço de desligar o fallover)", async () => {
+    vi.useRealTimers();
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: any, init: any) => {
+        calls.push(JSON.parse(init.body).model);
+        return new Response(JSON.stringify({ error: { message: "fora do ar" } }), { status: 500 });
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, {
+      visionEnabled: true,
+      products: { vision: { model: "kimi-k3" } },
+    });
+    const messageId = await insertImage(t, seed);
+
+    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("failed");
+    expect(new Set(calls)).toEqual(new Set(["kimi-k3"]));
+  });
+
+  test("modelo fixado ausente na rota da org falha limpo, sem mandar a imagem", async () => {
+    vi.useRealTimers();
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const t = setup();
+    // deepseek-v4-flash-vision-exp só existe no OpenCode Go (o ZDR do OpenRouter
+    // o elimina) — fixá-lo numa org travada em OpenRouter não pode "tentar assim
+    // mesmo".
+    const seed = await seedVisionOrg(t, {
+      visionEnabled: true,
+      products: { vision: { order: "openrouter-only", model: "deepseek-v4-flash-vision-exp" } },
+    });
+    const messageId = await insertImage(t, seed);
+
+    const result = await t.action(internal.vision.autoDescribe, { messageId });
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("não está disponível");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("a rota do PRODUTO vence a rota padrão da org", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "key-openrouter-de-teste");
+    vi.useRealTimers();
+    const hosts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: any) => {
+        hosts.push(String(url));
+        return llmResponse(COMPROVANTE_JSON);
+      })
+    );
+
+    const t = setup();
+    // Org inteira no OpenCode Go, mas a visão mandada para o OpenRouter.
+    const seed = await seedVisionOrg(t, {
+      visionEnabled: true,
+      platformOrder: "opencode-only",
+      products: { vision: { order: "openrouter-only" } },
+    });
+    const messageId = await insertImage(t, seed);
+
+    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("done");
+    expect(hosts[0]).toContain("openrouter.ai");
+  });
+
+  test("sem override, o produto herda a rota padrão da org", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "key-openrouter-de-teste");
+    vi.useRealTimers();
+    const hosts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: any) => {
+        hosts.push(String(url));
+        return llmResponse(COMPROVANTE_JSON);
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true, platformOrder: "openrouter-only" });
+    const messageId = await insertImage(t, seed);
+
+    expect((await t.action(internal.vision.autoDescribe, { messageId })).status).toBe("done");
+    expect(hosts[0]).toContain("openrouter.ai");
   });
 });

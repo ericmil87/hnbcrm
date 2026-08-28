@@ -13,6 +13,15 @@ import { resolvePlatformChain, resolveByoRoute, ResolvedRoute } from "./llm";
 
 export type PlatformOrder = "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
 
+/** Produtos de IA que escolhem a própria rota (Configurações → IA). */
+export type AiProduct = "copilot" | "attendant" | "vision";
+
+export interface ProductRouting {
+  order?: PlatformOrder;
+  /** Só a visão usa: ausente significa "Automático" (a cadeia inteira). */
+  model?: string;
+}
+
 export interface OrgProviderConfig {
   mode?: "platform" | "byo";
   byo?: {
@@ -22,6 +31,7 @@ export interface OrgProviderConfig {
   };
   strictZdr?: boolean;
   platformOrder?: PlatformOrder;
+  products?: Partial<Record<AiProduct, ProductRouting>>;
 }
 
 const PLATFORM_ORDERS: PlatformOrder[] = [
@@ -64,11 +74,29 @@ type RunQueryCtx = {
   ) => Promise<string | null>;
 };
 
+/**
+ * Ordem efetiva da cadeia para um produto. Precedência, do mais específico ao
+ * mais geral: escolha do PRODUTO > padrão da ORG > override de ops no
+ * deployment (env LLM_PLATFORM_ORDER) > "auto".
+ *
+ * O BYO não entra aqui de propósito: chave própria é decisão da organização
+ * inteira. Ela não tem fallback, e deixar um único produto sozinho numa rota
+ * que caiu é uma falha que ninguém percebe até o cliente reclamar.
+ */
+export function effectivePlatformOrder(
+  providerConfig: OrgProviderConfig | null | undefined,
+  product?: AiProduct
+): PlatformOrder | undefined {
+  const perProduct = product ? providerConfig?.products?.[product]?.order : undefined;
+  return perProduct ?? providerConfig?.platformOrder ?? envPlatformOrder();
+}
+
 export async function resolveOrgRoutes(
   ctx: RunQueryCtx,
   organizationId: Id<"organizations">,
   providerConfig: OrgProviderConfig | null | undefined,
-  canonicalModel: string
+  canonicalModel: string,
+  product?: AiProduct
 ): Promise<ResolvedRoute[]> {
   let routes: ResolvedRoute[];
 
@@ -90,15 +118,12 @@ export async function resolveOrgRoutes(
       ),
     ];
   } else {
-    // Precedência: escolha da org > override de ops do deployment (env
-    // LLM_PLATFORM_ORDER, p/ ex. "openrouter-first" enquanto a quota do
-    // OpenCode Go está esgotada) > auto.
     routes = applyPlatformOrder(
       resolvePlatformChain(canonicalModel, {
         opencodeGoKey: process.env.OPENCODE_GO_API,
         openrouterKey: process.env.OPENROUTER_API_KEY,
       }),
-      providerConfig?.platformOrder ?? envPlatformOrder()
+      effectivePlatformOrder(providerConfig, product)
     );
   }
 

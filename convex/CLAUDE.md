@@ -15,7 +15,7 @@
 | `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
 | `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest); gate compartilhado em `lib/mediaEnrichment.ts` |
 | `vision.ts` | Passe de VISÃO: descreve imagem recebida UMA VEZ por imagem (`describeImage` user action + `autoDescribe` post-ingest) e grava o texto em `messages.imageDescription` + `metadata.vision`; cadeia de modelos POR ROTA com loop de fallover próprio (qualquer erro = próximo elo), data URI base64 montada na action, timeout 45s, parse tolerante a ```json/`<think>`; runs em `agentRuns` com `kind:"vision"` |
-| `lib/mediaEnrichment.ts` | Gates puros dos dois pipelines de mídia: `shouldTranscribeAudio` (DISJUNÇÃO — Whisper é grátis) vs `shouldDescribeImage` (CONJUNÇÃO — visão custa por imagem, `aiConfig.visionEnabled` obrigatório), `attendantActive`, `visionEnabledForOrg`, `isSticker` |
+| `lib/mediaEnrichment.ts` | Gates puros dos dois pipelines de mídia: `shouldTranscribeAudio` (DISJUNÇÃO — toggle do canal OU atendente ativo; Whisper é grátis) vs `visionEnabledForOrg`/`shouldDescribeImage` (UM interruptor: `aiConfig.visionEnabled`, opt-in, default false — a v0.51 tinha um AND com um toggle por canal, removido na v0.52), `attendantActive`, `isSticker` |
 | `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
 | `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |
@@ -32,7 +32,7 @@
 | `lib/whatsappDispatch.ts` | Pacing de envio em 2 níveis: cursor por conversa (pair rate 6,5s) + cursor por número (`channelPacing`; Meta 1-3s, bridge reativo 4-10s / frio 8-15s), typing humanizado no bridge, claim OCC |
 | `copilot.ts` | Copiloto: threads/mensagens + executores de tools (leitura via query, escrita via mutation com via:"copilot", destrutivo → pendingActions) |
 | `copilotHttp.ts` | Streaming SSE autenticado do copiloto (`POST /api/copilot/stream`) com loop de tool_calls |
-| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas — contadores `revised` (rascunho substituído por instrução humana) e `coached` (turnos pedidos por humano) ficam FORA do cálculo de aceitação que libera o autopilot |
+| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas — contadores `revised` (rascunho substituído por instrução humana) e `coached` (turnos pedidos por humano) ficam FORA do cálculo de aceitação que libera o autopilot; `setProductRouting` (rota por produto + modelo de visão, validado contra a allowlist) e `getVisionModelOptions` |
 | `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
 | `testReset.ts` | Comandos de teste via WhatsApp — `/resetme` (hard delete do próprio remetente), `/resetlist` (10 leads mais recentes, numerados) e `/resetother <nº\|sufixo do telefone>` (hard delete de outro lead, com confirmação no WhatsApp) — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
 | `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
@@ -40,7 +40,7 @@
 | `orgSecrets.ts` | BYO API keys por org (cifradas; leitura sempre mascarada) |
 | `lib/agentSecurity.ts` | 4 camadas: assertAgentCan, escopo por registro, TOOL_DENYLIST + SECRET_FIELD_PATTERN, orgAiActive |
 | `lib/agentTools.ts` | Registry ESTÁTICO de tools de IA (specs + projeção de resultado por whitelist) |
-| `lib/agentRoutes.ts` | Resolve rotas LLM da org (platform chain ou BYO + strictZdr) |
+| `lib/agentRoutes.ts` | Resolve rotas LLM da org (platform chain ou BYO + strictZdr) + rota POR PRODUCT (`effectivePlatformOrder`: produto > org > env > auto); BYO permanece org-wide (não tem fallback) |
 | `lib/agentPersonas.ts` | Personas de atendente por indústria (sementes do 1-toque) |
 | `lib/promptEnvelope.ts` | Envelope de dado não-confiável (`<crm_data untrusted>`) |
 | `lib/outboundSideEffects.ts` | Side effects compartilhados de outbound (usado por conversations + attendant; evita ciclo de módulos) |

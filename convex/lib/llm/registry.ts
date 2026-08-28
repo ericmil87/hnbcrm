@@ -322,6 +322,70 @@ export function visionChainFor(providerId: string): string[] {
   return VISION_MODELS_BY_PROVIDER[providerId as ProviderId] ?? [];
 }
 
+// Fatos MEDIDOS de cada modelo de visão (comprovante de Pix sintético 1080x1920,
+// 2026-08-27) — servem à UI de Configurações → IA, para o admin escolher com
+// número na mão em vez de adivinhar. `accuracy` é campos corretos sobre 7.
+export interface VisionModelFacts {
+  id: string;
+  latencyMs: number;
+  inputTokens: number;
+  accuracy: string;
+  note?: string;
+}
+
+const VISION_MODEL_FACTS: Record<string, Omit<VisionModelFacts, "id">> = {
+  "deepseek-v4-flash-vision-exp": {
+    latencyMs: 3800,
+    inputTokens: 495,
+    accuracy: "7/7",
+    note: "Mais barato: 5,6x menos tokens de imagem que os outros. Experimental (-exp) — pode sumir sem aviso.",
+  },
+  "glm-5.3-flash": {
+    latencyMs: 2900,
+    inputTokens: 2751,
+    accuracy: "7/7",
+    note: "O mais rápido, e o único que funciona nas duas rotas.",
+  },
+  "kimi-k3": {
+    latencyMs: 6100,
+    inputTokens: 2839,
+    accuracy: "7/7",
+  },
+  "kimi-k2.7-code": {
+    latencyMs: 6300,
+    inputTokens: 2757,
+    accuracy: "7/7",
+  },
+  "mimo-v2.5": {
+    latencyMs: 33200,
+    inputTokens: 2113,
+    accuracy: "7/7",
+    note: "Lento (33 s) — só como último recurso.",
+  },
+};
+
+/**
+ * Modelos de visão que a org pode FIXAR, com as rotas onde cada um existe e os
+ * números medidos. A UI monta o dropdown a partir daqui; a opção "Automático"
+ * (ausência de escolha) não vem nesta lista — ela é a cadeia inteira.
+ */
+export function visionModelOptions(): Array<VisionModelFacts & { providers: ProviderId[] }> {
+  const byModel = new Map<string, ProviderId[]>();
+  for (const [providerId, chain] of Object.entries(VISION_MODELS_BY_PROVIDER)) {
+    for (const id of chain ?? []) {
+      byModel.set(id, [...(byModel.get(id) ?? []), providerId as ProviderId]);
+    }
+  }
+  return [...byModel.entries()].map(([id, providers]) => ({
+    id,
+    providers,
+    latencyMs: VISION_MODEL_FACTS[id]?.latencyMs ?? 0,
+    inputTokens: VISION_MODEL_FACTS[id]?.inputTokens ?? 0,
+    accuracy: VISION_MODEL_FACTS[id]?.accuracy ?? "não medido",
+    note: VISION_MODEL_FACTS[id]?.note,
+  }));
+}
+
 // ── OpenRouter ZDR double-lock (per-request provider object) ────────────────
 //
 // data_collection:"deny"  -> only providers that don't collect content.

@@ -4,15 +4,17 @@
  * (convex/vision.ts). Funções puras sobre os docs — sem ctx, sem db — para
  * ficarem testáveis e para os dois pipelines não divergirem.
  *
- * A assimetria entre os dois gates é DELIBERADA (D10 do plano de visão):
+ * Os dois gates são assimétricos de propósito:
  *
  * - **Áudio** é uma DISJUNÇÃO: o Whisper é self-hosted e grátis, então basta o
  *   toggle do canal OU o atendente estar ativo (sem transcrição ele responderia
  *   "não consigo ouvir áudio").
- * - **Visão** é uma CONJUNÇÃO: cada imagem custa uma chamada paga a um provider
- *   externo e a imagem do cliente (que pode ser RG/CNH) sai da nossa infra.
- *   `aiConfig.visionEnabled === true` é obrigatório SEMPRE; o toggle do canal
- *   só serve para o humano querer a leitura no inbox com o atendente desligado.
+ * - **Visão** é UM interruptor só: `aiConfig.visionEnabled`. A v0.51 exigia
+ *   também um toggle por canal, num AND — dois interruptores em telas
+ *   diferentes para ligar a mesma coisa. Confundia mais do que a flexibilidade
+ *   valia, então a v0.52 deixou só o da organização. Ele continua sendo opt-in
+ *   explícito (default false), porque cada imagem custa uma chamada paga e a
+ *   imagem do cliente — que pode ser RG/CNH — sai da nossa infra.
  */
 
 import { Doc } from "../_generated/dataModel";
@@ -40,29 +42,21 @@ export function shouldTranscribeAudio(org: OrgDoc, channelConfig: ChannelConfigD
 }
 
 /**
- * Descrever esta imagem? Conjunção (D10):
- *
- *   orgAiActive && visionEnabled === true
- *   && ( autoDescribeImages === true || attendantEnabled !== false )
+ * A org tem o passe de visão ligado? É o gate INTEIRO da visão — o mesmo valor
+ * decide se a imagem é descrita no ingest, se o CTA manual do inbox funciona, se
+ * o claim do atendente espera pela descrição e se ela aparece no histórico.
  *
  * `visionEnabled` ausente = DESLIGADO (default do produto). Com ele off nenhuma
- * chamada é feita, e o histórico do atendente volta a mostrar "[imagem]" cru —
+ * chamada é feita e o histórico do atendente volta a mostrar "[imagem]" cru —
  * comportamento byte-a-byte o de antes da visão existir.
- */
-export function shouldDescribeImage(org: OrgDoc, channelConfig: ChannelConfigDoc): boolean {
-  if (!orgAiActive(org)) return false;
-  const aiConfig = org!.settings.aiConfig;
-  if (aiConfig?.visionEnabled !== true) return false;
-  return channelConfig?.autoDescribeImages === true || aiConfig.attendantEnabled !== false;
-}
-
-/**
- * A org tem o passe de visão ligado? Usado onde o canal não importa — o
- * formatador de histórico do atendente (que só decide COMO exibir o que já foi
- * gravado) e a espera do claim.
  */
 export function visionEnabledForOrg(org: OrgDoc): boolean {
   return orgAiActive(org) && org!.settings.aiConfig?.visionEnabled === true;
+}
+
+/** Alias explícito para o ponto de ingest — mesma decisão, nome que lê melhor lá. */
+export function shouldDescribeImage(org: OrgDoc): boolean {
+  return visionEnabledForOrg(org);
 }
 
 /**

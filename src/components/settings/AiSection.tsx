@@ -128,6 +128,9 @@ type AiStatus = {
   monthlyConversationBudget: number | null;
   providerMode: "platform" | "byo";
   platformOrder: string;
+  // Override por produto. order "inherit" = herda o platformOrder da org;
+  // model "" (só na visão) = Automático, a cadeia inteira com fallover.
+  products: Record<"copilot" | "attendant" | "vision", { order: string; model: string }>;
   byo: { provider: string; baseUrl: string | null; keyLast4: string | null } | null;
 };
 
@@ -312,6 +315,155 @@ function ActivationWizardModal({
 
 // ── Toggles por produto (Copiloto × Atendente) — sob o mestre ──
 
+// ── Produtos de IA ──────────────────────────────────────────────────────────
+//
+// Cada produto carrega a PRÓPRIA configuração: o interruptor, o modelo e a
+// rota. Antes o interruptor ficava aqui e o modelo num card lá embaixo, e a
+// leitura de imagens ainda exigia um segundo interruptor em Configurações →
+// Canais — três lugares para configurar duas coisas. O card de baixo agora
+// guarda só o que é mesmo da organização inteira: rota padrão, chave própria e
+// privacidade.
+
+type ProductKey = "copilot" | "attendant" | "vision";
+
+type ModelOption = {
+  id: string;
+  route: { zdrCapable: boolean; dataResidency: string; retention: string };
+};
+
+type VisionModelOption = {
+  id: string;
+  providers: string[];
+  latencyMs: number;
+  inputTokens: number;
+  accuracy: string;
+  note?: string;
+};
+
+const PROVIDER_LABEL: Record<string, string> = {
+  "opencode-go": "OpenCode Go",
+  openrouter: "OpenRouter",
+};
+
+function secondsLabel(ms: number): string {
+  return `${(ms / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
+}
+
+/** Nota de privacidade da rota escolhida — a mesma linguagem do card de baixo. */
+function RouteNote({ route }: { route: ModelOption["route"] | undefined }) {
+  if (!route) return null;
+  return (
+    <p className="flex items-center gap-1.5 text-xs mt-1.5">
+      {route.zdrCapable ? (
+        <>
+          <ShieldCheck size={13} className="text-semantic-success" />
+          <span className="text-text-muted">Zero-retention · residência {route.dataResidency}</span>
+        </>
+      ) : (
+        <span className="text-semantic-warning">
+          Retém dados ({route.retention}) · residência {route.dataResidency}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** Seletor de rota por produto. "inherit" mostra qual padrão da org está herdando. */
+function RoutingSelect({
+  value,
+  orgOrder,
+  byoProvider,
+  onChange,
+}: {
+  value: string;
+  orgOrder: string;
+  byoProvider: string | null;
+  onChange: (v: string) => void;
+}) {
+  const orgLabel =
+    PLATFORM_ORDER_OPTIONS.find((o) => o.value === orgOrder)?.label ?? "padrão da organização";
+  if (byoProvider) {
+    return (
+      <div>
+        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+          Roteamento
+        </label>
+        <div className="rounded-field border border-border bg-surface-sunken px-3.5 py-2.5 text-sm text-text-muted">
+          Chave própria da organização ({byoProvider})
+        </div>
+        <p className="text-xs text-text-muted mt-1.5">
+          No modo BYO a rota é uma só, para todos os produtos — e sem fallback.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div>
+      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Roteamento</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLS}>
+        <option value="inherit">Herdar da organização — {orgLabel}</option>
+        {PLATFORM_ORDER_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/** Linha de um produto: interruptor + painel de configuração recolhível. */
+function ProductRow({
+  title,
+  description,
+  enabled,
+  busy,
+  onToggle,
+  first,
+  children,
+}: {
+  title: string;
+  description: string;
+  enabled: boolean;
+  busy: boolean;
+  onToggle: () => void;
+  first?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={first ? "" : "pt-4 border-t border-border"}>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-primary">{title}</p>
+          <p className="text-xs text-text-muted mt-0.5">{description}</p>
+        </div>
+        <Switch checked={enabled} onChange={onToggle} label={title} disabled={busy} />
+      </div>
+      {enabled && (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-400"
+          >
+            <ChevronDown
+              size={13}
+              className={cn("transition-transform", open && "rotate-180")}
+            />
+            {open ? "Ocultar modelo e roteamento" : "Modelo e roteamento"}
+          </button>
+          {open && (
+            <div className="mt-3 grid gap-4 sm:grid-cols-2 rounded-lg border border-border bg-surface-sunken p-3.5">
+              {children}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function FeatureTogglesCard({
   organizationId,
   status,
@@ -320,13 +472,27 @@ function FeatureTogglesCard({
   status: AiStatus;
 }) {
   const setFeatureToggles = useMutation(api.aiSettings.setFeatureToggles);
+  const setModels = useMutation(api.aiSettings.setModels);
+  const setProductRouting = useMutation(api.aiSettings.setProductRouting);
+  const modelOptions = useQuery(api.aiSettings.getModelOptions, { organizationId }) as
+    | ModelOption[]
+    | undefined;
+  const visionOptions = useQuery(api.aiSettings.getVisionModelOptions, { organizationId }) as
+    | VisionModelOption[]
+    | undefined;
   const [busy, setBusy] = useState(false);
 
-  const handleToggleCopilot = async () => {
+  const byoProvider = status.providerMode === "byo" ? (status.byo?.provider ?? "?") : null;
+  const routeFor = (id: string) => modelOptions?.find((m) => m.id === id)?.route;
+
+  const toggle = async (
+    args: { copilotEnabled?: boolean; attendantEnabled?: boolean; visionEnabled?: boolean },
+    okMessage: string
+  ) => {
     setBusy(true);
     try {
-      await setFeatureToggles({ organizationId, copilotEnabled: !status.copilotEnabled });
-      toast.success(status.copilotEnabled ? "Copiloto desativado" : "Copiloto ativado");
+      await setFeatureToggles({ organizationId, ...args });
+      toast.success(okMessage);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao alterar");
     } finally {
@@ -334,33 +500,70 @@ function FeatureTogglesCard({
     }
   };
 
-  const handleToggleVision = async () => {
-    setBusy(true);
+  // Modelo de copiloto/atendente continua morando em providerConfig.models —
+  // por isso o save manda o conjunto todo com um campo trocado.
+  const saveModel = async (which: "copilot" | "attendant", model: string) => {
+    const route = routeFor(model);
+    const nonZdr = route && !route.zdrCapable;
+    if (
+      nonZdr &&
+      !window.confirm(
+        `Atenção: a rota "${model}" retém dados (${route!.retention}, residência ${route!.dataResidency}) e sai do padrão zero-retention. Confirmar mesmo assim?`
+      )
+    ) {
+      return;
+    }
     try {
-      await setFeatureToggles({ organizationId, visionEnabled: !status.visionEnabled });
-      toast.success(
-        status.visionEnabled ? "Leitura de imagens desativada" : "Leitura de imagens ativada"
-      );
+      await setModels({
+        organizationId,
+        models: {
+          copilot: which === "copilot" ? model : status.models.copilot,
+          attendant: which === "attendant" ? model : status.models.attendant,
+          classify: which === "attendant" ? model : status.models.attendant,
+          complex: status.models.complex,
+        },
+        ...(nonZdr ? { nonZdrAck: true } : {}),
+      });
+      toast.success("Modelo atualizado");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar");
-    } finally {
-      setBusy(false);
+      toast.error(e instanceof Error ? e.message : "Falha ao salvar");
     }
   };
 
-  const handleToggleAttendant = async () => {
-    setBusy(true);
-    try {
-      await setFeatureToggles({ organizationId, attendantEnabled: !status.attendantEnabled });
-      toast.success(
-        status.attendantEnabled ? "Atendente virtual desativado" : "Atendente virtual ativado"
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const saveRouting = (product: ProductKey, patch: { order?: string; model?: string }) =>
+    toast.promise(
+      setProductRouting({
+        organizationId,
+        product,
+        ...(patch.order !== undefined ? { order: patch.order as never } : {}),
+        ...(patch.model !== undefined ? { model: patch.model } : {}),
+      }),
+      { loading: "Salvando...", success: "Configuração salva", error: "Falha ao salvar" }
+    );
+
+  const ModelField = ({
+    which,
+    value,
+  }: {
+    which: "copilot" | "attendant";
+    value: string;
+  }) => (
+    <div>
+      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Modelo</label>
+      <select
+        value={value}
+        onChange={(e) => void saveModel(which, e.target.value)}
+        className={SELECT_CLS}
+      >
+        {(modelOptions ?? []).map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.id}
+          </option>
+        ))}
+      </select>
+      <RouteNote route={routeFor(value)} />
+    </div>
+  );
 
   return (
     <Card>
@@ -370,55 +573,115 @@ function FeatureTogglesCard({
         </div>
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Produtos de IA</h3>
-          <p className="text-xs text-text-muted">Ligue só o que sua equipe for usar</p>
+          <p className="text-xs text-text-muted">
+            Ligue só o que sua equipe for usar — cada um com o próprio modelo e rota
+          </p>
         </div>
       </div>
       <div className="space-y-4">
-        <div className="flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary">Copiloto do CRM</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              Assistente no app para o seu time — lê e edita o CRM conforme a permissão de cada
-              usuário.
-            </p>
-          </div>
-          <Switch
-            checked={status.copilotEnabled}
-            onChange={() => void handleToggleCopilot()}
-            label="Copiloto do CRM"
-            disabled={busy}
+        <ProductRow
+          first
+          title="Copiloto do CRM"
+          description="Assistente no app para o seu time — lê e edita o CRM conforme a permissão de cada usuário."
+          enabled={status.copilotEnabled}
+          busy={busy}
+          onToggle={() =>
+            void toggle(
+              { copilotEnabled: !status.copilotEnabled },
+              status.copilotEnabled ? "Copiloto desativado" : "Copiloto ativado"
+            )
+          }
+        >
+          <ModelField which="copilot" value={status.models.copilot} />
+          <RoutingSelect
+            value={status.products.copilot.order}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("copilot", { order: v })}
           />
-        </div>
-        <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary">Atendente virtual</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              Responde clientes no WhatsApp — começa em modo sugestão, com revisão humana.
-            </p>
-          </div>
-          <Switch
-            checked={status.attendantEnabled}
-            onChange={() => void handleToggleAttendant()}
-            label="Atendente virtual"
-            disabled={busy}
+        </ProductRow>
+
+        <ProductRow
+          title="Atendente virtual"
+          description="Responde clientes no WhatsApp — começa em modo sugestão, com revisão humana."
+          enabled={status.attendantEnabled}
+          busy={busy}
+          onToggle={() =>
+            void toggle(
+              { attendantEnabled: !status.attendantEnabled },
+              status.attendantEnabled ? "Atendente virtual desativado" : "Atendente virtual ativado"
+            )
+          }
+        >
+          <ModelField which="attendant" value={status.models.attendant} />
+          <RoutingSelect
+            value={status.products.attendant.order}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("attendant", { order: v })}
           />
-        </div>
-        <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-text-primary">Ler imagens recebidas</p>
-            <p className="text-xs text-text-muted mt-0.5">
-              A IA descreve comprovantes, documentos e fotos que o cliente enviar. Cada imagem é
-              enviada uma única vez ao provedor de IA e o texto lido fica salvo aqui — sem reenvio
-              a cada resposta. Custo medido: cerca de US$ 0,0003 por imagem. Vem desligado.
-            </p>
+        </ProductRow>
+
+        <ProductRow
+          title="Ler imagens recebidas"
+          description="A IA descreve comprovantes, documentos e fotos que o cliente enviar. Cada imagem vai uma única vez ao provedor e o texto lido fica salvo — sem reenvio a cada resposta. Custo medido: cerca de US$ 0,0003 por imagem. Vem desligado."
+          enabled={status.visionEnabled}
+          busy={busy}
+          onToggle={() =>
+            void toggle(
+              { visionEnabled: !status.visionEnabled },
+              status.visionEnabled ? "Leitura de imagens desativada" : "Leitura de imagens ativada"
+            )
+          }
+        >
+          <div>
+            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+              Modelo de visão
+            </label>
+            <select
+              value={status.products.vision.model}
+              onChange={(e) => saveRouting("vision", { model: e.target.value })}
+              className={SELECT_CLS}
+            >
+              <option value="">Automático (recomendado)</option>
+              {(visionOptions ?? []).map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.id}
+                </option>
+              ))}
+            </select>
+            {status.products.vision.model === "" ? (
+              <p className="text-xs text-text-muted mt-1.5">
+                Tenta os modelos validados em ordem e passa para o próximo se algum falhar.
+              </p>
+            ) : (
+              (() => {
+                const o = visionOptions?.find((x) => x.id === status.products.vision.model);
+                if (!o) return null;
+                return (
+                  <div className="mt-1.5 space-y-0.5">
+                    <p className="text-xs text-text-muted">
+                      {secondsLabel(o.latencyMs)} · {o.inputTokens} tokens de imagem · acurácia{" "}
+                      {o.accuracy} ·{" "}
+                      {o.providers.map((p) => PROVIDER_LABEL[p] ?? p).join(" e ")}
+                    </p>
+                    {o.note && <p className="text-xs text-text-muted">{o.note}</p>}
+                    <p className="flex items-start gap-1.5 text-xs text-semantic-warning">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      Fixar um modelo desliga o fallover: se ele sair do ar, a imagem não é lida.
+                    </p>
+                  </div>
+                );
+              })()
+            )}
           </div>
-          <Switch
-            checked={status.visionEnabled}
-            onChange={() => void handleToggleVision()}
-            label="Ler imagens recebidas"
-            disabled={busy}
+          <RoutingSelect
+            value={status.products.vision.order}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("vision", { order: v })}
           />
-        </div>
+        </ProductRow>
       </div>
     </Card>
   );
@@ -1714,17 +1977,11 @@ function PrivacyCard({
   organizationId: Id<"organizations">;
   status: AiStatus;
 }) {
-  const modelOptions = useQuery(api.aiSettings.getModelOptions, { organizationId }) as
-    | { id: string; route: { zdrCapable: boolean; dataResidency: string; retention: string } }[]
-    | undefined;
-  const setModels = useMutation(api.aiSettings.setModels);
   const setStrictZdr = useMutation(api.aiSettings.setStrictZdr);
   const setPlatformOrder = useMutation(api.aiSettings.setPlatformOrder);
   const setProviderMode = useMutation(api.aiSettings.setProviderMode);
   const createOrgSecret = useAction(api.orgSecrets.createOrgSecret);
   const testOrgConnection = useAction(api.aiDiagnostics.testOrgConnection);
-  const [attendantModel, setAttendantModel] = useState(status.models.attendant);
-  const [copilotModel, setCopilotModel] = useState(status.models.copilot);
   const [byoOpen, setByoOpen] = useState(false);
   const [byoForm, setByoForm] = useState({ provider: "openrouter", baseUrl: "", apiKey: "" });
   const [byoSaving, setByoSaving] = useState(false);
@@ -1794,79 +2051,6 @@ function PrivacyCard({
     }
   };
 
-  const routeFor = (id: string) => modelOptions?.find((m) => m.id === id)?.route;
-
-  const handleSave = async () => {
-    const chosen = [attendantModel, copilotModel];
-    const nonZdr = chosen.filter((m) => routeFor(m) && !routeFor(m)!.zdrCapable);
-    if (nonZdr.length > 0) {
-      const route = routeFor(nonZdr[0])!;
-      const ok = window.confirm(
-        `Atenção: a rota "${nonZdr[0]}" retém dados (${route.retention}, residência ${route.dataResidency}) e sai do padrão zero-retention. Confirmar mesmo assim?`
-      );
-      if (!ok) return;
-    }
-    try {
-      await setModels({
-        organizationId,
-        models: {
-          copilot: copilotModel,
-          attendant: attendantModel,
-          classify: attendantModel,
-          complex: status.models.complex,
-        },
-        ...(nonZdr.length > 0 ? { nonZdrAck: true } : {}),
-      });
-      toast.success("Modelos atualizados");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar");
-    }
-  };
-
-  const ModelSelect = ({
-    label,
-    value,
-    onChange,
-  }: {
-    label: string;
-    value: string;
-    onChange: (v: string) => void;
-  }) => {
-    const route = routeFor(value);
-    return (
-      <div>
-        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{label}</label>
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
-        >
-          {(modelOptions ?? []).map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.id}
-            </option>
-          ))}
-        </select>
-        {route && (
-          <p className="flex items-center gap-1.5 text-xs mt-1.5">
-            {route.zdrCapable ? (
-              <>
-                <ShieldCheck size={13} className="text-semantic-success" />
-                <span className="text-text-muted">
-                  Zero-retention · residência {route.dataResidency}
-                </span>
-              </>
-            ) : (
-              <span className="text-semantic-warning">
-                Retém dados ({route.retention}) · residência {route.dataResidency}
-              </span>
-            )}
-          </p>
-        )}
-      </div>
-    );
-  };
-
   return (
     <Card>
       <div className="flex items-center gap-3 mb-4">
@@ -1874,9 +2058,7 @@ function PrivacyCard({
           <ShieldCheck size={20} className="text-brand-500" />
         </div>
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">
-            Provider, modelos e privacidade
-          </h3>
+          <h3 className="text-lg font-semibold text-text-primary">Provider e privacidade</h3>
           <p className="text-xs text-text-muted">
             {status.providerMode === "byo"
               ? `Chave própria da org (BYO: ${status.byo?.provider ?? "?"}) — sem fallback da plataforma`
@@ -1892,7 +2074,7 @@ function PrivacyCard({
           <>
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Roteamento (keys da plataforma)
+                Roteamento padrão (keys da plataforma)
               </label>
               <select
                 value={status.platformOrder}
@@ -1918,8 +2100,9 @@ function PrivacyCard({
                 ))}
               </select>
               <p className="text-xs text-text-muted mt-1.5">
-                O fallback assume automaticamente em caso de quota esgotada ou instabilidade do
-                provider primário.
+                Vale para todos os produtos de IA; cada um pode sobrescrever em "Produtos de IA",
+                acima. O fallback assume automaticamente em caso de quota esgotada ou
+                instabilidade do provider primário.
               </p>
             </div>
             {!byoOpen && (
@@ -2062,25 +2245,17 @@ function PrivacyCard({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 max-w-xl">
-        <ModelSelect label="Atendente (WhatsApp)" value={attendantModel} onChange={setAttendantModel} />
-        <ModelSelect label="Copiloto (in-app)" value={copilotModel} onChange={setCopilotModel} />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t border-border">
-        <Checkbox
-          checked={status.strictZdr}
-          onChange={(e) =>
-            toast.promise(
-              setStrictZdr({ organizationId, strictZdr: e.target.checked }),
-              { loading: "Salvando...", success: "Preferência salva", error: "Falha ao salvar" }
-            )
-          }
-          label="Modo estrito: recusar qualquer rota que retenha dados (compliance rígida)"
-        />
-        <div className="flex-1" />
-        <Button onClick={() => void handleSave()}>Salvar modelos</Button>
-      </div>
+      <Checkbox
+        checked={status.strictZdr}
+        onChange={(e) =>
+          toast.promise(setStrictZdr({ organizationId, strictZdr: e.target.checked }), {
+            loading: "Salvando...",
+            success: "Preferência salva",
+            error: "Falha ao salvar",
+          })
+        }
+        label="Modo estrito: recusar qualquer rota que retenha dados (compliance rígida)"
+      />
     </Card>
   );
 }

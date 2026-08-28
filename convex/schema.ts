@@ -75,6 +75,27 @@ const aiModelsValidator = v.object({
 
 // Config de provider por-org. mode "platform" (default) usa as keys da plataforma
 // (OpenCode Go → fallback OpenRouter); "byo" usa a key da org em orgSecrets.
+// Ordem da cadeia da plataforma. Reusado no override por produto.
+const platformOrderValidator = v.union(
+  v.literal("auto"),
+  v.literal("openrouter-first"),
+  v.literal("opencode-only"),
+  v.literal("openrouter-only")
+);
+
+// Override de rota POR PRODUTO de IA. Ausente = herda o `platformOrder` da org.
+// A chave própria (BYO) continua sendo decisão da organização inteira: ela não
+// tem fallback, e deixar UM produto sozinho numa rota caída é o tipo de coisa
+// que ninguém percebe até o cliente reclamar.
+//
+// `model` só existe para a VISÃO, e por um motivo: nos outros produtos o modelo
+// já mora em `models.{copilot,attendant}`. Na visão, ausente significa
+// "Automático" — a cadeia inteira com fallover — e não "use o default".
+const productRoutingValidator = v.object({
+  order: v.optional(platformOrderValidator),
+  model: v.optional(v.string()),
+});
+
 const providerConfigValidator = v.object({
   mode: v.union(v.literal("platform"), v.literal("byo")),
   byo: v.optional(
@@ -94,21 +115,24 @@ const providerConfigValidator = v.object({
   // padrão da plataforma já é zero-retention; o aviso só aparece ao sair do padrão.
   zdr: v.boolean(), // default true
   strictZdr: v.optional(v.boolean()), // modo estrito opcional: backend RECUSA rotas não-ZDR
-  // Ordem da cadeia no modo "platform": auto (OpenCode Go → OpenRouter),
-  // openrouter-first inverte o primário, *-only remove o fallback.
-  platformOrder: v.optional(
-    v.union(
-      v.literal("auto"),
-      v.literal("openrouter-first"),
-      v.literal("opencode-only"),
-      v.literal("openrouter-only")
-    )
-  ),
+  // Ordem PADRÃO da cadeia no modo "platform": auto (OpenCode Go → OpenRouter),
+  // openrouter-first inverte o primário, *-only remove o fallback. Cada produto
+  // pode sobrescrever em `products` abaixo.
+  platformOrder: v.optional(platformOrderValidator),
   // Aceite explícito registrado quando o admin escolhe uma rota não-ZDR sob zdr:true.
   nonZdrAck: v.optional(
     v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers"), route: v.string() })
   ),
   models: aiModelsValidator,
+  // Config por produto de IA (Configurações → IA → "Produtos de IA"). Cada
+  // produto herda o padrão da org quando o campo está ausente.
+  products: v.optional(
+    v.object({
+      copilot: v.optional(productRoutingValidator),
+      attendant: v.optional(productRoutingValidator),
+      vision: v.optional(productRoutingValidator),
+    })
+  ),
 });
 
 const aiConfigValidator = v.object({
@@ -513,10 +537,12 @@ const applicationTables = {
     // Auto-transcribe inbound voice notes with the local Whisper service
     // (convex/transcription.ts). Applies to both providers; absent/false = off.
     autoTranscribeAudio: v.optional(v.boolean()),
-    // Descrever automaticamente imagens recebidas neste canal (convex/vision.ts).
-    // Conveniência do INBOX — NÃO liga a visão sozinho: o gate é um AND com
-    // aiConfig.visionEnabled da org (D10 do plano de visão), porque cada imagem
-    // custa uma chamada paga ao provider. Ausente/false = desligado.
+    // LEGADO (v0.51 → v0.52): existiu por uma versão como segundo interruptor da
+    // leitura de imagens, num AND com aiConfig.visionEnabled. Dois interruptores
+    // em telas diferentes para ligar UMA coisa era confuso e não valia a
+    // flexibilidade — hoje quem manda é só `aiConfig.visionEnabled`. O campo
+    // fica aqui porque o Convex valida os documentos existentes no push; nada
+    // lê nem escreve nele.
     autoDescribeImages: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),

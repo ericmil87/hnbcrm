@@ -1963,7 +1963,8 @@ export const internalProcessQueueItem = internalAction({
         ctx,
         context.organizationId,
         context.providerConfig,
-        context.model
+        context.model,
+        "attendant"
       );
       if (routes.length === 0) throw new Error("Nenhum provider de IA disponível");
 
@@ -2820,7 +2821,8 @@ export const simulateAttendant = action({
       ctx,
       args.organizationId,
       setup.providerConfig,
-      setup.model
+      setup.model,
+      "attendant"
     );
     if (routes.length === 0) return { reply: null, actions: [], error: "Nenhum provider disponível" };
 
