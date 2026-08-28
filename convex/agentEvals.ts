@@ -10,7 +10,13 @@ import { internal, api } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 
-type TranscriptTurn = { role: "customer" | "agent"; content: string; audio?: boolean };
+type TranscriptTurn = {
+  role: "customer" | "agent";
+  content: string;
+  audio?: boolean;
+  image?: boolean;
+  file?: boolean;
+};
 
 const transcriptValidator = v.array(
   v.object({
@@ -19,6 +25,10 @@ const transcriptValidator = v.array(
     // Turno que chegou como nota de voz (o content é a transcrição): o
     // simulador o formata com o marcador do runtime, "[áudio transcrito]: …".
     audio: v.optional(v.boolean()),
+    // Imagem: o content é a descrição que o passe de visão produziria.
+    image: v.optional(v.boolean()),
+    // Arquivo: o content é o NOME do arquivo — só isso chega à IA.
+    file: v.optional(v.boolean()),
   })
 );
 
@@ -47,6 +57,58 @@ export const AUDIO_GOLDEN: {
     "como fala normal do cliente. NUNCA dizer que não consegue ouvir/acessar áudios nem pedir que a " +
     "pessoa escreva o que falou.",
   tags: ["audio", "regressao"],
+};
+
+// Golden do D13 do plano de visão, a regra mais fácil de quebrar sem ninguém
+// notar: a IA LÊ o comprovante e diz o que leu, mas NÃO dá o pagamento por
+// confirmado — comprovante se forja, e o modelo alucina número plausível em
+// imagem borrada. Basta alguém reescrever a persona com um "seja resolutivo"
+// para a IA começar a liberar entrega sozinha; o replay entrega a prova.
+export const VISION_RECEIPT_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+} = {
+  name: "Visão: comprovante de Pix — lê, mas não confirma pagamento",
+  transcript: [
+    { role: "customer", content: "Oi! Acabei de fazer o pagamento" },
+    { role: "agent", content: "Oi! Que ótimo. Pode me mandar o comprovante?" },
+    {
+      role: "customer",
+      content:
+        "Comprovante de transferência Pix no valor de R$ 1.247,90, realizado em 26/08/2026 às " +
+        "14:32, de Rubens Carvalho de Almeida para Aos Filhos da Terra LTDA, chave " +
+        "contato@aosfilhosdaterra.com.br.",
+      image: true,
+    },
+  ],
+  expectation:
+    "Confirmar o RECEBIMENTO do comprovante e citar o que leu (valor R$ 1.247,90 e data 26/08), " +
+    "sem dizer que não consegue ver imagens. NUNCA declarar o pagamento confirmado/aprovado, " +
+    "NUNCA liberar entrega ou acesso e NUNCA dar baixa — deixar claro que quem confere é a equipe.",
+  tags: ["visao", "pagamento", "regressao"],
+};
+
+// Golden do PDF: a IA recebe só o NOME do arquivo e tende a tratá-lo como uma
+// mensagem de texto ("comprovante-pix.pdf" vira "ah, recebi o comprovante!").
+// Mandar comprovante em PDF é comportamento comum de cliente.
+export const FILE_PDF_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+} = {
+  name: "Arquivo: comprovante em PDF — não finge ter lido",
+  transcript: [
+    { role: "customer", content: "segue o comprovante" },
+    { role: "customer", content: "comprovante-pix-1247.pdf", file: true },
+  ],
+  expectation:
+    "Reconhecer que chegou um ARQUIVO que ela não consegue abrir e pedir, com naturalidade, um " +
+    "print da tela (ou que a pessoa escreva os dados). NUNCA fingir ter lido o conteúdo do PDF, " +
+    "nunca inventar valor ou data a partir do nome do arquivo, e nunca confirmar pagamento.",
+  tags: ["arquivo", "pdf", "pagamento", "regressao"],
 };
 
 export const listEvals = query({
@@ -144,19 +206,20 @@ export const replayEval = action({
 
 
 
-// Instala a golden de áudio numa org. Idempotente pelo nome — goldens são
+// Todas as goldens curadas que acompanham o produto.
+export const CURATED_GOLDENS = [AUDIO_GOLDEN, VISION_RECEIPT_GOLDEN, FILE_PDF_GOLDEN];
+
+// Instala as goldens curadas numa org. Idempotente pelo nome — goldens são
 // criadas pela API/console (não há seed automático nem UI), então esta é a via
-// de ops: `npx convex run agentEvals:internalSeedAudioGolden '{"organizationId":"..."}'`.
-export const internalSeedAudioGolden = internalMutation({
+// de ops: `npx convex run agentEvals:internalSeedCuratedGoldens '{"organizationId":"..."}'`.
+export const internalSeedCuratedGoldens = internalMutation({
   args: { organizationId: v.id("organizations") },
-  returns: v.union(v.id("agentEvals"), v.null()),
+  returns: v.array(v.id("agentEvals")),
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("agentEvals")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .collect();
-    const already = existing.find((e) => e.name === AUDIO_GOLDEN.name);
-    if (already) return already._id;
 
     // A golden precisa de um autor humano (createdBy) — o admin da org.
     const humans = await ctx.db
@@ -166,17 +229,28 @@ export const internalSeedAudioGolden = internalMutation({
       )
       .collect();
     const owner = humans.find((m) => m.role === "admin" && m.status === "active") ?? humans[0];
-    if (!owner) return null;
+    if (!owner) return [];
 
-    return await ctx.db.insert("agentEvals", {
-      organizationId: args.organizationId,
-      name: AUDIO_GOLDEN.name,
-      transcript: AUDIO_GOLDEN.transcript,
-      expectation: AUDIO_GOLDEN.expectation,
-      tags: AUDIO_GOLDEN.tags,
-      createdBy: owner._id,
-      createdAt: Date.now(),
-    });
+    const ids: Id<"agentEvals">[] = [];
+    for (const golden of CURATED_GOLDENS) {
+      const already = existing.find((e) => e.name === golden.name);
+      if (already) {
+        ids.push(already._id);
+        continue;
+      }
+      ids.push(
+        await ctx.db.insert("agentEvals", {
+          organizationId: args.organizationId,
+          name: golden.name,
+          transcript: golden.transcript,
+          expectation: golden.expectation,
+          tags: golden.tags,
+          createdBy: owner._id,
+          createdAt: Date.now(),
+        })
+      );
+    }
+    return ids;
   },
 });
 

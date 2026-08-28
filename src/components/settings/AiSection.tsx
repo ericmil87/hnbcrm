@@ -16,6 +16,8 @@ import {
   Check,
   Clock,
   Mic,
+  Image as ImageIcon,
+  FileText,
 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -1718,6 +1720,50 @@ function AttendantConfig({
 
 // ── Simulador "testar antes de ativar" (sandbox — não toca o WhatsApp) ──
 
+// Tipos de mensagem que o simulador sabe encenar. Existem para o botão "Testar"
+// conseguir exercitar os caminhos de mídia — antes só dava para validar a
+// persona contra um comprovante mandando do celular de verdade.
+type SimKind = "text" | "audio" | "image" | "file";
+
+type SimTurn = {
+  role: "customer" | "agent";
+  content: string;
+  audio?: boolean;
+  image?: boolean;
+  file?: boolean;
+  actions?: string[];
+};
+
+const SIM_KINDS: Array<{
+  kind: Exclude<SimKind, "text">;
+  Icon: typeof Mic;
+  label: string;
+  hint: string;
+  placeholder: string;
+}> = [
+  {
+    kind: "audio",
+    Icon: Mic,
+    label: "nota de voz (transcrita)",
+    hint: "Enviar como nota de voz — o texto vira a transcrição",
+    placeholder: "Transcrição da nota de voz...",
+  },
+  {
+    kind: "image",
+    Icon: ImageIcon,
+    label: "imagem (lida pela IA)",
+    hint: "Enviar como imagem — o texto vira a descrição que a leitura de imagens produziria",
+    placeholder: "O que a IA leu na imagem (ex.: comprovante de Pix de R$ 1.247,90 em 26/08)...",
+  },
+  {
+    kind: "file",
+    Icon: FileText,
+    label: "arquivo (só o nome chega)",
+    hint: "Enviar como arquivo — só o NOME chega à IA, que não consegue abrir o conteúdo",
+    placeholder: "Nome do arquivo (ex.: comprovante-pix.pdf)...",
+  },
+];
+
 function SimulatorModal({
   organizationId,
   agentMemberId,
@@ -1728,25 +1774,38 @@ function SimulatorModal({
   onClose: () => void;
 }) {
   const simulate = useAction(api.attendant.simulateAttendant);
-  const [transcript, setTranscript] = useState<
-    { role: "customer" | "agent"; content: string; audio?: boolean; actions?: string[] }[]
-  >([]);
+  const [transcript, setTranscript] = useState<SimTurn[]>([]);
   const [input, setInput] = useState("");
-  const [asAudio, setAsAudio] = useState(false);
+  const [kind, setKind] = useState<SimKind>("text");
   const [busy, setBusy] = useState(false);
 
   const handleSend = async () => {
     const text = input.trim();
     if (!text || busy) return;
     setInput("");
-    const next = [...transcript, { role: "customer" as const, content: text, audio: asAudio }];
+    const next: SimTurn[] = [
+      ...transcript,
+      {
+        role: "customer",
+        content: text,
+        audio: kind === "audio",
+        image: kind === "image",
+        file: kind === "file",
+      },
+    ];
     setTranscript(next);
     setBusy(true);
     try {
       const result = await simulate({
         organizationId,
         agentMemberId,
-        transcript: next.map(({ role, content, audio }) => ({ role, content, audio })),
+        transcript: next.map(({ role, content, audio, image, file }) => ({
+          role,
+          content,
+          audio,
+          image,
+          file,
+        })),
       });
       if (result.error) {
         toast.error(result.error);
@@ -1768,8 +1827,9 @@ function SimulatorModal({
       <div className="space-y-3">
         <p className="text-xs text-text-muted">
           Sandbox: nada aqui toca o WhatsApp nem altera dados do CRM. Escreva como se fosse o
-          cliente. Com o microfone ligado, a mensagem entra como nota de voz — o texto digitado
-          faz o papel da transcrição.
+          cliente. Os três botões ao lado do campo trocam o tipo de mensagem: nota de voz (o
+          texto vira a transcrição), imagem (o texto vira a descrição que a leitura de imagens
+          produziria) e arquivo (só o nome chega à IA, como acontece com um PDF de verdade).
         </p>
         <div className="h-72 overflow-y-auto space-y-2 rounded-lg bg-surface-sunken p-3">
           {transcript.length === 0 && (
@@ -1787,11 +1847,15 @@ function SimulatorModal({
                     : "bg-purple-600/20 text-text-primary border border-purple-500/30"
                 )}
               >
-                {m.audio && (
-                  <span className="mb-1 flex items-center gap-1 text-[11px] opacity-80">
-                    <Mic size={11} /> nota de voz (transcrita)
-                  </span>
-                )}
+                {(() => {
+                  const meta = SIM_KINDS.find((k) => m[k.kind]);
+                  if (!meta) return null;
+                  return (
+                    <span className="mb-1 flex items-center gap-1 text-[11px] opacity-80">
+                      <meta.Icon size={11} /> {meta.label}
+                    </span>
+                  );
+                })()}
                 {m.content}
                 {m.actions && m.actions.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-purple-500/30">
@@ -1817,29 +1881,34 @@ function SimulatorModal({
           )}
         </div>
         <div className="flex gap-2">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={asAudio}
-            aria-label="Enviar como nota de voz"
-            title="Enviar como nota de voz — o texto vira a transcrição"
-            onClick={() => setAsAudio((v) => !v)}
-            className={cn(
-              "px-3 rounded-field border transition-colors",
-              asAudio
-                ? "bg-brand-600 border-brand-600 text-white"
-                : "bg-surface-raised border-border-strong text-text-muted hover:text-text-primary"
-            )}
-          >
-            <Mic size={15} />
-          </button>
+          {SIM_KINDS.map(({ kind: k, Icon, hint }) => (
+            <button
+              key={k}
+              type="button"
+              role="switch"
+              aria-checked={kind === k}
+              aria-label={hint}
+              title={hint}
+              onClick={() => setKind((prev) => (prev === k ? "text" : k))}
+              className={cn(
+                "px-3 rounded-field border transition-colors",
+                kind === k
+                  ? "bg-brand-600 border-brand-600 text-white"
+                  : "bg-surface-raised border-border-strong text-text-muted hover:text-text-primary"
+              )}
+            >
+              <Icon size={15} />
+            </button>
+          ))}
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") void handleSend();
             }}
-            placeholder={asAudio ? "Transcrição da nota de voz..." : "Mensagem do cliente..."}
+            placeholder={
+              SIM_KINDS.find((k) => k.kind === kind)?.placeholder ?? "Mensagem do cliente..."
+            }
             className="flex-1 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
           />
           <Button onClick={() => void handleSend()} disabled={busy || !input.trim()}>

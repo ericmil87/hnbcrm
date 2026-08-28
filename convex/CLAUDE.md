@@ -36,7 +36,7 @@
 | `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
 | `testReset.ts` | Comandos de teste via WhatsApp — `/resetme` (hard delete do próprio remetente), `/resetlist` (10 leads mais recentes, numerados) e `/resetother <nº\|sufixo do telefone>` (hard delete de outro lead, com confirmação no WhatsApp) — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
 | `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
-| `agentEvals.ts` | Golden conversations + replay (regressão de persona via simulador) |
+| `agentEvals.ts` | Golden conversations + replay (regressão de persona via simulador); 3 goldens curadas em `CURATED_GOLDENS` (áudio, comprovante por imagem protegendo o D13, PDF), instaladas por `internalSeedCuratedGoldens` |
 | `orgSecrets.ts` | BYO API keys por org (cifradas; leitura sempre mascarada) |
 | `lib/agentSecurity.ts` | 4 camadas: assertAgentCan, escopo por registro, TOOL_DENYLIST + SECRET_FIELD_PATTERN, orgAiActive |
 | `lib/agentTools.ts` | Registry ESTÁTICO de tools de IA (specs + projeção de resultado por whitelist) |

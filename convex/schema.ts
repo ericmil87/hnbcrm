@@ -1521,6 +1521,12 @@ const applicationTables = {
         content: v.string(),
         // Turno que chegou como nota de voz: o content é a transcrição.
         audio: v.optional(v.boolean()),
+        // Turno que chegou como imagem: o content é a descrição que a leitura
+        // de imagens produziria.
+        image: v.optional(v.boolean()),
+        // Turno que chegou como arquivo (PDF/planilha): o content é o NOME —
+        // é tudo o que a IA recebe de verdade.
+        file: v.optional(v.boolean()),
       })
     ),
     expectation: v.string(),

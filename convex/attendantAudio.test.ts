@@ -506,22 +506,36 @@ describe("simulador + golden com áudio (F4)", () => {
     vi.unstubAllGlobals();
   }, 20_000);
 
-  test("golden de áudio: instalada uma vez só, com o turno de voz preservado", async () => {
+  test("goldens curadas: instaladas uma vez só, com os turnos de mídia preservados", async () => {
     const t = setup();
     const seed = await seedAttendantOrg(t);
 
-    const first = await t.mutation(internal.agentEvals.internalSeedAudioGolden, {
+    const first = await t.mutation(internal.agentEvals.internalSeedCuratedGoldens, {
       organizationId: seed.organizationId,
     });
-    const again = await t.mutation(internal.agentEvals.internalSeedAudioGolden, {
+    const again = await t.mutation(internal.agentEvals.internalSeedCuratedGoldens, {
       organizationId: seed.organizationId,
     });
     expect(again).toEqual(first); // idempotente pelo nome
 
     const evals = await t.run(async (ctx) => ctx.db.query("agentEvals").collect());
-    expect(evals).toHaveLength(1);
-    expect(evals[0].transcript.filter((turn) => turn.audio)).toHaveLength(1);
-    expect(evals[0].expectation).toMatch(/não consegue ouvir/i);
-    expect(evals[0].createdBy).toEqual(seed.humanId);
+    expect(evals).toHaveLength(3);
+    expect(evals.every((e) => e.createdBy === seed.humanId)).toBe(true);
+
+    const audio = evals.find((e) => e.tags?.includes("audio"))!;
+    expect(audio.transcript.filter((turn) => turn.audio)).toHaveLength(1);
+    expect(audio.expectation).toMatch(/não consegue ouvir/i);
+
+    // D13 do plano de visão: a IA lê o comprovante e NÃO confirma o pagamento.
+    const visao = evals.find((e) => e.tags?.includes("visao"))!;
+    expect(visao.transcript.filter((turn) => turn.image)).toHaveLength(1);
+    expect(visao.transcript.find((turn) => turn.image)!.content).toContain("R$ 1.247,90");
+    expect(visao.expectation).toMatch(/NUNCA declarar o pagamento confirmado/i);
+
+    // PDF: só o nome chega — a IA não pode fingir ter lido.
+    const pdf = evals.find((e) => e.tags?.includes("pdf"))!;
+    expect(pdf.transcript.filter((turn) => turn.file)).toHaveLength(1);
+    expect(pdf.transcript.find((turn) => turn.file)!.content).toMatch(/\.pdf$/);
+    expect(pdf.expectation).toMatch(/NUNCA fingir ter lido/i);
   });
 });
