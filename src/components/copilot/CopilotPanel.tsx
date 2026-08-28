@@ -5,10 +5,10 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { useCopilotStream, toolLabel } from "@/hooks/useCopilotStream";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { Markdown, CopyButton } from "@/components/ui/Markdown";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { cn } from "@/lib/utils";
 import { Sparkles, Plus, Send, AlertTriangle } from "lucide-react";
 
 const SUGGESTIONS = [
@@ -90,10 +90,11 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
           <Plus size={18} />
         </button>
       }
+      className="md:w-[520px] lg:w-[600px] xl:w-[680px]"
       bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
     >
       {/* Mensagens */}
-      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-4 md:px-6 space-y-3">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-4 md:px-6 space-y-4">
         {!hasConversation ? (
           <EmptyState onPickSuggestion={(s) => handleSend(s)} />
         ) : (
@@ -233,6 +234,19 @@ function EmptyState({ onPickSuggestion }: { onPickSuggestion: (text: string) => 
   );
 }
 
+function ToolChips({ names }: { names: string[] }) {
+  if (names.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1.5 mb-2">
+      {names.map((name, i) => (
+        <Badge key={`${name}-${i}`} variant="brand">
+          {toolLabel(name)}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 function MessageBubble({
   role,
   content,
@@ -242,58 +256,61 @@ function MessageBubble({
   content: string;
   toolCalls?: { name: string }[];
 }) {
-  const isUser = role === "user";
-  return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap break-words",
-          isUser
-            ? "bg-brand-600 text-white"
-            : "bg-surface-overlay text-text-primary border border-border"
-        )}
-      >
-        {!isUser && toolCalls && toolCalls.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {toolCalls.map((tc, i) => (
-              <Badge key={`${tc.name}-${i}`} variant="brand">
-                {toolLabel(tc.name)}
-              </Badge>
-            ))}
-          </div>
-        )}
-        {content}
+  if (role === "user") {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 text-sm bg-brand-600 text-white whitespace-pre-wrap break-words">
+          {content}
+        </div>
       </div>
+    );
+  }
+
+  // A resposta da IA ocupa a largura toda: tabela, lista e bloco de código
+  // ficam ilegíveis espremidos em 85% de um painel estreito.
+  return (
+    <div className="group/msg rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-surface-overlay text-text-primary border border-border">
+      <ToolChips names={(toolCalls ?? []).map((tc) => tc.name)} />
+      <Markdown content={content} />
+      {content.trim().length > 0 && (
+        <div className="mt-2 -mb-1 flex justify-end opacity-0 transition-opacity group-hover/msg:opacity-100 focus-within:opacity-100">
+          <CopyButton text={content} label="Copiar resposta" />
+        </div>
+      )}
     </div>
   );
 }
 
 function StreamingBubble({ text, tools }: { text: string; tools: string[] }) {
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-surface-overlay text-text-primary border border-border">
-        {tools.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {tools.map((name) => (
-              <span
-                key={name}
-                className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/10 text-brand-400 px-2.5 py-0.5 text-xs font-medium"
-              >
-                <Spinner size="sm" className="h-3 w-3 border-[1.5px]" />
-                {toolLabel(name)}…
-              </span>
-            ))}
-          </div>
-        )}
-        {text ? (
-          <span className="whitespace-pre-wrap break-words">{text}</span>
-        ) : tools.length === 0 ? (
-          <span className="inline-flex items-center gap-2 text-text-secondary">
-            <Spinner size="sm" />
-            Pensando...
-          </span>
-        ) : null}
-      </div>
+    <div className="rounded-2xl rounded-bl-md px-4 py-3 text-sm bg-surface-overlay text-text-primary border border-border">
+      {tools.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {tools.map((name) => (
+            <span
+              key={name}
+              className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/10 text-brand-400 px-2.5 py-0.5 text-xs font-medium"
+            >
+              <Spinner size="sm" className="h-3 w-3 border-[1.5px]" />
+              {toolLabel(name)}…
+            </span>
+          ))}
+        </div>
+      )}
+      {text ? (
+        <>
+          <Markdown content={text} />
+          <span
+            className="mt-1 inline-block h-3.5 w-1.5 animate-pulse-brand rounded-sm bg-brand-500 align-middle"
+            aria-hidden="true"
+          />
+        </>
+      ) : tools.length === 0 ? (
+        <span className="inline-flex items-center gap-2 text-text-secondary">
+          <Spinner size="sm" />
+          Pensando...
+        </span>
+      ) : null}
     </div>
   );
 }
