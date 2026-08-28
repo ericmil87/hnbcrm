@@ -139,6 +139,7 @@ export function Inbox() {
   const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
+  const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
   const [recorderActive, setRecorderActive] = useState(false);
 
   // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
@@ -220,6 +221,9 @@ export function Inbox() {
   const markConversationRead = useMutation(api.conversations.markConversationRead);
   const sendTypingState = useMutation(api.conversations.sendTypingState);
   const transcribe = useAction(api.transcription.transcribe);
+  const describeImage = useAction(api.vision.describeImage);
+  // Visão é um AND (D10 do plano): IA ativa na org E leitura de imagens ligada.
+  const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
 
   // Typing indicator throttle bookkeeping.
   const typingLastSentRef = useRef(0);
@@ -612,6 +616,25 @@ export function Inbox() {
       toast.error("Falha na transcrição");
     } finally {
       setTranscribingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(message._id);
+        return nextSet;
+      });
+    }
+  };
+
+  const handleDescribeImage = async (message: InboxMessage) => {
+    setDescribingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await describeImage({
+        organizationId,
+        messageId: message._id as Id<"messages">,
+      });
+      if (result.status === "failed") toast.error("Não foi possível ler a imagem");
+    } catch {
+      toast.error("Não foi possível ler a imagem");
+    } finally {
+      setDescribingIds((prev) => {
         const nextSet = new Set(prev);
         nextSet.delete(message._id);
         return nextSet;
@@ -1107,6 +1130,13 @@ export function Inbox() {
                     {result.matchedTranscript && (
                       <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
                     )}
+                    {result.matchedImage && (
+                      <ImageIcon
+                        size={11}
+                        className="shrink-0 text-text-muted"
+                        aria-label="Encontrado na leitura da imagem"
+                      />
+                    )}
                     <span className="truncate">
                       {renderSnippet(result.snippetText, debouncedTerm.trim())}
                     </span>
@@ -1515,11 +1545,14 @@ export function Inbox() {
                       currentMemberId={currentMemberId}
                       contactName={contactName}
                       transcribing={transcribingIds.has(message._id)}
+                      describing={describingIds.has(message._id)}
+                      visionEnabled={visionEnabled}
                       highlighted={highlightId === message._id}
                       onReply={setReplyTo}
                       onReact={handleReact}
                       onForward={setForwardTarget}
                       onTranscribe={handleTranscribe}
+                      onDescribeImage={(m) => void handleDescribeImage(m)}
                       onJumpToMessage={handleJumpToMessage}
                     />
                   )

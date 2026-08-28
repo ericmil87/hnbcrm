@@ -7,13 +7,16 @@ import { MessageActionsBar } from "./MessageActionsBar";
 import { ReactionChips } from "./ReactionChips";
 import { QuotedBlock } from "./QuotedBlock";
 import { VoiceTranscription } from "./VoiceTranscription";
+import { ImageDescription } from "./ImageDescription";
 import {
   InboxMessage,
   getQuoted,
   getQuotedMessageId,
   getReactions,
   getTranscription,
+  getVision,
   hasMediaProblem,
+  isImageMessage,
   isMediaPlaceholder,
   isSticker,
   isVoiceNote,
@@ -31,12 +34,17 @@ interface MessageBubbleProps {
   contactName?: string;
   /** True while a transcribe request for this message is in flight. */
   transcribing?: boolean;
+  /** True while a "ler imagem" request for this message is in flight. */
+  describing?: boolean;
+  /** Org has AI vision on — sem isso a imagem não ganha CTA de leitura. */
+  visionEnabled?: boolean;
   /** Transient highlight after jumping to this message from a quote. */
   highlighted?: boolean;
   onReply: (message: InboxMessage) => void;
   onReact: (message: InboxMessage, emoji: string) => void;
   onForward: (message: InboxMessage) => void;
   onTranscribe: (message: InboxMessage) => void;
+  onDescribeImage: (message: InboxMessage) => void;
   /** Jump to the original message a reply quotes (if it's on screen). */
   onJumpToMessage: (messageId: string) => void;
 }
@@ -123,11 +131,14 @@ export function MessageBubble({
   currentMemberId,
   contactName,
   transcribing = false,
+  describing = false,
+  visionEnabled = false,
   highlighted = false,
   onReply,
   onReact,
   onForward,
   onTranscribe,
+  onDescribeImage,
   onJumpToMessage,
 }: MessageBubbleProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -136,11 +147,13 @@ export function MessageBubble({
   const hasAttachments = attachments.length > 0;
   const sticker = isSticker(message);
   const voiceNote = isVoiceNote(message);
+  const imageMessage = isImageMessage(message);
   const mediaProblem = hasMediaProblem(message);
 
   const quoted = getQuoted(message);
   const reactions = getReactions(message);
   const transcription = getTranscription(message);
+  const vision = getVision(message);
   const quotedMessageId = getQuotedMessageId(message);
 
   // Reactions/reply/forward are whatsapp-channel actions; internal notes and
@@ -153,6 +166,17 @@ export function MessageBubble({
   // The bar's Transcribe entry only appears for a voice note still lacking text.
   const needsTranscription =
     voiceNote && (!transcription || (transcription.status !== "done" && transcription.status !== "pending"));
+  // Ler imagem é pago por imagem e só vale para o que o cliente mandou: exige o
+  // toggle mestre ligado, mídia presente e nenhuma leitura em cache/em voo.
+  const canDescribeImage =
+    visionEnabled &&
+    imageMessage &&
+    message.direction === "inbound" &&
+    !message.isInternal &&
+    hasAttachments &&
+    !mediaProblem;
+  const needsVision =
+    canDescribeImage && (!vision || (vision.status !== "done" && vision.status !== "pending"));
 
   const showDeliveryTick =
     !message.isInternal && message.direction === "outbound" && channelIsWhatsapp;
@@ -177,7 +201,7 @@ export function MessageBubble({
     minute: "2-digit",
   });
 
-  const canShowActions = actionsEnabled && (canInteract || needsTranscription);
+  const canShowActions = actionsEnabled && (canInteract || needsTranscription || needsVision);
 
   const handleReactToggle = (emoji: string) => onReact(message, emoji);
 
@@ -227,6 +251,14 @@ export function MessageBubble({
                 ? () => {
                     setMenuOpen(false);
                     onTranscribe(message);
+                  }
+                : undefined
+            }
+            onDescribeImage={
+              needsVision
+                ? () => {
+                    setMenuOpen(false);
+                    onDescribeImage(message);
                   }
                 : undefined
             }
@@ -327,6 +359,16 @@ export function MessageBubble({
               variant={style.variant}
               transcribing={transcribing}
               onTranscribe={() => onTranscribe(message)}
+            />
+          )}
+
+          {imageMessage && !message.isInternal && (
+            <ImageDescription
+              vision={vision}
+              variant={style.variant}
+              describing={describing}
+              canDescribe={canDescribeImage}
+              onDescribe={() => onDescribeImage(message)}
             />
           )}
 

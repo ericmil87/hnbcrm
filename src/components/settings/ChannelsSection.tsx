@@ -66,6 +66,7 @@ type ChannelConfig = {
   hasBridgeToken: boolean;
   bridgeSessionState: BridgeSessionState | null;
   autoTranscribeAudio: boolean;
+  autoDescribeImages: boolean;
   status: "active" | "disabled" | "error";
   lastHealthCheckAt: number | null;
   healthDetail: string | null;
@@ -170,6 +171,15 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
     });
   };
 
+  const handleToggleAutoDescribe = (config: ChannelConfig) => {
+    const next = !config.autoDescribeImages;
+    toast.promise(updateChannelConfig({ configId: config._id, autoDescribeImages: next }), {
+      loading: "Atualizando...",
+      success: next ? "Leitura de imagens ativada" : "Leitura de imagens desativada",
+      error: "Falha ao atualizar leitura de imagens",
+    });
+  };
+
   const handleDelete = (configId: Id<"channelConfigs">) => {
     toast.promise(deleteChannelConfig({ configId }), {
       loading: "Excluindo número...",
@@ -258,6 +268,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
                 onEdit={() => openEditForm(config)}
                 onToggle={() => handleToggleStatus(config)}
                 onToggleAutoTranscribe={() => handleToggleAutoTranscribe(config)}
+                onToggleAutoDescribe={() => handleToggleAutoDescribe(config)}
                 onDelete={() => setConfirmDeleteId(config._id)}
                 onShowQr={() => setQrConfig(config)}
                 onCopy={handleCopy}
@@ -369,6 +380,7 @@ function ChannelCard({
   onEdit,
   onToggle,
   onToggleAutoTranscribe,
+  onToggleAutoDescribe,
   onDelete,
   onShowQr,
   onCopy,
@@ -381,6 +393,7 @@ function ChannelCard({
   onEdit: () => void;
   onToggle: () => void;
   onToggleAutoTranscribe: () => void;
+  onToggleAutoDescribe: () => void;
   onDelete: () => void;
   onShowQr: () => void;
   onCopy: (field: string, value: string, message: string) => void;
@@ -503,6 +516,44 @@ function ChannelCard({
               className={cn(
                 "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
                 config.autoTranscribeAudio ? "translate-x-5" : "translate-x-1"
+              )}
+            />
+          </button>
+        </PermissionGate>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-base border border-border-subtle p-2.5">
+        <div className="min-w-0">
+          <span className="text-sm text-text-primary">Ler imagens automaticamente</span>
+          <p className="text-xs text-text-muted mt-0.5">
+            Só funciona com “Ler imagens recebidas” ligado em Configurações → IA
+          </p>
+        </div>
+        <PermissionGate
+          organizationId={organizationId}
+          category="settings"
+          level="manage"
+          fallback={
+            <Badge variant={config.autoDescribeImages ? "success" : "default"}>
+              {config.autoDescribeImages ? "Ativado" : "Desativado"}
+            </Badge>
+          }
+        >
+          <button
+            type="button"
+            role="switch"
+            aria-checked={config.autoDescribeImages}
+            aria-label="Ler imagens automaticamente"
+            onClick={onToggleAutoDescribe}
+            className={cn(
+              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+              config.autoDescribeImages ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
+            )}
+          >
+            <span
+              className={cn(
+                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                config.autoDescribeImages ? "translate-x-5" : "translate-x-1"
               )}
             />
           </button>
@@ -735,6 +786,7 @@ type UpdateChannelConfigFn = (args: {
   bridgeInstanceId?: string;
   bridgeToken?: string;
   autoTranscribeAudio?: boolean;
+  autoDescribeImages?: boolean;
 }) => Promise<null>;
 
 type ProvisionBridgeFn = (args: {

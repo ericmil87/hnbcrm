@@ -133,6 +133,12 @@ export function HandoffPeekSlideOver({
   // no peek para dar sentido a um áudio antes de decidir sobre o repasse.
   const transcribe = useAction(api.transcription.transcribe);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
+  // Ler a imagem é a mesma leitura assistida do áudio — só que paga por imagem,
+  // então depende do AND do D10: IA ativa na org E leitura de imagens ligada.
+  const describeImage = useAction(api.vision.describeImage);
+  const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
 
   const handleTranscribe = async (message: InboxMessage) => {
     setTranscribingIds((prev) => new Set(prev).add(message._id));
@@ -146,6 +152,25 @@ export function HandoffPeekSlideOver({
       toast.error("Falha na transcrição");
     } finally {
       setTranscribingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(message._id);
+        return next;
+      });
+    }
+  };
+
+  const handleDescribeImage = async (message: InboxMessage) => {
+    setDescribingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await describeImage({
+        organizationId,
+        messageId: message._id as Id<"messages">,
+      });
+      if (result.status === "failed") toast.error("Não foi possível ler a imagem");
+    } catch {
+      toast.error("Não foi possível ler a imagem");
+    } finally {
+      setDescribingIds((prev) => {
         const next = new Set(prev);
         next.delete(message._id);
         return next;
@@ -331,11 +356,14 @@ export function HandoffPeekSlideOver({
                   currentMemberId={null}
                   contactName={contactName}
                   transcribing={transcribingIds.has(message._id)}
+                  describing={describingIds.has(message._id)}
+                  visionEnabled={visionEnabled}
                   highlighted={false}
                   onReply={() => {}}
                   onReact={() => {}}
                   onForward={() => {}}
                   onTranscribe={(m) => void handleTranscribe(m)}
+                  onDescribeImage={(m) => void handleDescribeImage(m)}
                   onJumpToMessage={() => {}}
                 />
               );

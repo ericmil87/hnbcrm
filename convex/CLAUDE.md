@@ -13,7 +13,9 @@
 | `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
 | `contacts.ts` | Contact CRUD |
 | `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
-| `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest) |
+| `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest); gate compartilhado em `lib/mediaEnrichment.ts` |
+| `vision.ts` | Passe de VISÃO: descreve imagem recebida UMA VEZ por imagem (`describeImage` user action + `autoDescribe` post-ingest) e grava o texto em `messages.imageDescription` + `metadata.vision`; cadeia de modelos POR ROTA com loop de fallover próprio (qualquer erro = próximo elo), data URI base64 montada na action, timeout 45s, parse tolerante a ```json/`<think>`; runs em `agentRuns` com `kind:"vision"` |
+| `lib/mediaEnrichment.ts` | Gates puros dos dois pipelines de mídia: `shouldTranscribeAudio` (DISJUNÇÃO — Whisper é grátis) vs `shouldDescribeImage` (CONJUNÇÃO — visão custa por imagem, `aiConfig.visionEnabled` obrigatório), `attendantActive`, `visionEnabledForOrg`, `isSticker` |
 | `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
 | `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning |

@@ -119,6 +119,7 @@ type AiStatus = {
   active: boolean;
   copilotEnabled: boolean;
   attendantEnabled: boolean;
+  visionEnabled: boolean;
   bridgeAiAckDone: boolean;
   hasAttendant: boolean;
   hasBridgeChannel: boolean;
@@ -333,6 +334,20 @@ function FeatureTogglesCard({
     }
   };
 
+  const handleToggleVision = async () => {
+    setBusy(true);
+    try {
+      await setFeatureToggles({ organizationId, visionEnabled: !status.visionEnabled });
+      toast.success(
+        status.visionEnabled ? "Leitura de imagens desativada" : "Leitura de imagens ativada"
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao alterar");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleToggleAttendant = async () => {
     setBusy(true);
     try {
@@ -385,6 +400,22 @@ function FeatureTogglesCard({
             checked={status.attendantEnabled}
             onChange={() => void handleToggleAttendant()}
             label="Atendente virtual"
+            disabled={busy}
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4 pt-4 border-t border-border">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-text-primary">Ler imagens recebidas</p>
+            <p className="text-xs text-text-muted mt-0.5">
+              A IA descreve comprovantes, documentos e fotos que o cliente enviar. Cada imagem é
+              enviada uma única vez ao provedor de IA e o texto lido fica salvo aqui — sem reenvio
+              a cada resposta. Custo medido: cerca de US$ 0,0003 por imagem. Vem desligado.
+            </p>
+          </div>
+          <Switch
+            checked={status.visionEnabled}
+            onChange={() => void handleToggleVision()}
+            label="Ler imagens recebidas"
             disabled={busy}
           />
         </div>

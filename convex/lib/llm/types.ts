@@ -14,12 +14,43 @@ export interface ChatToolCall {
   function: { name: string; arguments: string };
 }
 
+// Content parts (formato multimodal do Chat Completions). Existem para o PASSE
+// DE VISÃO — a única superfície do produto que manda imagem para o LLM. Todo o
+// resto (copiloto, atendente, evals) continua mandando `content` como `string`,
+// e a união é retrocompatível: string continua válida em qualquer posição.
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: ChatRole;
-  content: string | null;
+  content: string | ContentPart[] | null;
   tool_calls?: ChatToolCall[];
   tool_call_id?: string;
   name?: string;
+}
+
+// Achata um `content` (string, parts ou null) em texto puro: concatena os pedaços
+// `text` com "\n" e ignora os `image_url`. Serve a quem só sabe ler texto — sem
+// isso um content em parts viraria "" silenciosamente (ver a recuperação pós-400
+// em attendant.ts).
+export function flattenContent(
+  content: string | ContentPart[] | null | undefined
+): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
+
+// A mensagem que VOLTA do provider nunca chega em parts: `normalizeMessage`
+// (openaiCompatible.ts) só produz string|null. Fixar isso no tipo da resposta
+// evita espalhar narrowing por todo consumidor (atendente, copiloto, evals) só
+// porque a REQUISIÇÃO agora aceita parts.
+export interface AssistantMessage extends Omit<ChatMessage, "content"> {
+  content: string | null;
 }
 
 export interface ToolDefinition {
@@ -59,7 +90,7 @@ export interface NormalizedUsage {
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | "unknown";
 
 export interface NormalizedResponse {
-  message: ChatMessage;
+  message: AssistantMessage;
   finishReason: FinishReason;
   usage?: NormalizedUsage;
   raw?: unknown;

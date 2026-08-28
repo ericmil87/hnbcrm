@@ -11,7 +11,12 @@ import { query, mutation, internalQuery, MutationCtx, QueryCtx } from "./_genera
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
-import { DEFAULT_MODELS, OPENCODE_GO_MODELS, routeInfo } from "./lib/llm/registry";
+import {
+  DEFAULT_MODELS,
+  DEFAULT_STORED_MODELS,
+  OPENCODE_GO_MODELS,
+  routeInfo,
+} from "./lib/llm/registry";
 import { personaById, personaForIndustry } from "./lib/agentPersonas";
 
 export const getAiStatus = query({
@@ -23,6 +28,9 @@ export const getAiStatus = query({
     // Toggles por produto (P3): undefined no config = ligado.
     copilotEnabled: v.boolean(),
     attendantEnabled: v.boolean(),
+    // Leitura de imagens (visão): custa por imagem, então default FALSE —
+    // ao contrário dos dois acima, onde undefined significa ligado.
+    visionEnabled: v.boolean(),
     // Aceite de risco do canal bridge (P1): habilita atendente em canais não-oficiais.
     bridgeAiAckDone: v.boolean(),
     // v4.2: estado p/ o wizard de ativação em 1 fluxo.
@@ -70,6 +78,7 @@ export const getAiStatus = query({
       active: enabled && lgpdAckDone,
       copilotEnabled: aiConfig?.copilotEnabled !== false,
       attendantEnabled: aiConfig?.attendantEnabled !== false,
+      visionEnabled: aiConfig?.visionEnabled === true,
       bridgeAiAckDone: aiConfig?.bridgeAiAck !== undefined,
       hasAttendant: aiMembers.some(
         (m) => m.status === "active" && m.agentProfile?.kind === "attendant"
@@ -107,6 +116,7 @@ export const setFeatureToggles = mutation({
     organizationId: v.id("organizations"),
     copilotEnabled: v.optional(v.boolean()),
     attendantEnabled: v.optional(v.boolean()),
+    visionEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -125,6 +135,7 @@ export const setFeatureToggles = mutation({
           ...(args.attendantEnabled !== undefined
             ? { attendantEnabled: args.attendantEnabled }
             : {}),
+          ...(args.visionEnabled !== undefined ? { visionEnabled: args.visionEnabled } : {}),
         },
       },
       updatedAt: now,
@@ -141,14 +152,16 @@ export const setFeatureToggles = mutation({
         before: {
           copilotEnabled: current.copilotEnabled !== false,
           attendantEnabled: current.attendantEnabled !== false,
+          visionEnabled: current.visionEnabled === true,
         },
         after: {
           copilotEnabled: args.copilotEnabled ?? current.copilotEnabled !== false,
           attendantEnabled: args.attendantEnabled ?? current.attendantEnabled !== false,
+          visionEnabled: args.visionEnabled ?? current.visionEnabled === true,
         },
       },
       metadata: { aiConfig: true },
-      description: "Atualizou os toggles de Copiloto/Atendente da IA",
+      description: "Atualizou os toggles de Copiloto/Atendente/leitura de imagens da IA",
       severity: "medium",
       createdAt: now,
     });
@@ -293,7 +306,7 @@ export const setStrictZdr = mutation({
     const providerConfig = current.providerConfig ?? {
       mode: "platform" as const,
       zdr: true,
-      models: { ...DEFAULT_MODELS },
+      models: { ...DEFAULT_STORED_MODELS },
     };
 
     const now = Date.now();
@@ -1063,7 +1076,7 @@ export const setProviderMode = mutation({
       strictZdr: current.providerConfig?.strictZdr,
       platformOrder: current.providerConfig?.platformOrder,
       nonZdrAck,
-      models: current.providerConfig?.models ?? { ...DEFAULT_MODELS },
+      models: current.providerConfig?.models ?? { ...DEFAULT_STORED_MODELS },
     };
     await ctx.db.patch(args.organizationId, {
       settings: { ...org.settings, aiConfig: { ...current, providerConfig } },
@@ -1115,7 +1128,7 @@ export const setPlatformOrder = mutation({
     const providerConfig = current.providerConfig ?? {
       mode: "platform" as const,
       zdr: true,
-      models: { ...DEFAULT_MODELS },
+      models: { ...DEFAULT_STORED_MODELS },
     };
 
     const now = Date.now();

@@ -266,7 +266,10 @@ describe("espera pela transcrição no claim (D1)", () => {
     // Continua pendente, com novo slot e o teto da espera gravado…
     expect(updated!.status).toBe("pending");
     expect(updated!.nextAttemptAt).toBe(Date.now() + 8_000);
-    expect(updated!.transcriptWaitUntil).toBe(item.createdAt + 60_000);
+    // Campo generalizado na v0.51 (D12 do plano de visão): a espera cobre
+    // transcrição, passe de visão e download em voo. `transcriptWaitUntil`
+    // sobrevive como legado só para as linhas que já estavam em voo.
+    expect(updated!.mediaWaitUntil).toBe(item.createdAt + 60_000);
     // …sem consumir tentativa de falha nem tomar o lock de turno.
     expect(updated!.attempts).toBe(0);
     expect(conversation!.aiTurnLock).toBeUndefined();

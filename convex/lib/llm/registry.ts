@@ -16,6 +16,20 @@ export const DEFAULT_MODELS = {
   attendant: "deepseek-v4-flash",
   classify: "deepseek-v4-flash",
   complex: "deepseek-v4-pro",
+  // Passe de visão: melhor em acurácia (7/7), latência (3,8 s) E custo
+  // (495 tokens de imagem, 5,6x menos que os demais) na medição de 2026-08-27.
+  vision: "deepseek-v4-flash-vision-exp",
+} as const;
+
+// Os papéis que a org PERSISTE em aiConfig.providerConfig.models (schema:
+// aiModelsValidator). "vision" fica de fora de propósito: o modelo de visão não
+// é escolhido por org — vem da cadeia por rota (VISION_MODELS_BY_PROVIDER), que
+// faz fallover próprio. Use isto, e não `{ ...DEFAULT_MODELS }`, ao gravar.
+export const DEFAULT_STORED_MODELS = {
+  copilot: DEFAULT_MODELS.copilot,
+  attendant: DEFAULT_MODELS.attendant,
+  classify: DEFAULT_MODELS.classify,
+  complex: DEFAULT_MODELS.complex,
 } as const;
 
 export type ProviderId =
@@ -53,6 +67,16 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
   "glm-5.2": {
     openrouter: "z-ai/glm-5.2",
   },
+  "glm-5.3-flash": {
+    openrouter: "z-ai/glm-5.3-flash",
+  },
+  "mimo-v2.5": {
+    openrouter: "xiaomi/mimo-v2.5",
+  },
+  // NÃO mapear "deepseek-v4-flash-vision-exp" para o OpenRouter: sob o body ZDR
+  // (data_collection:"deny") ele devolve 404 "No endpoints found matching your
+  // data policy (Paid model training)" — medido em 2026-08-27. Esse modelo só
+  // existe pela rota OpenCode Go.
   "qwen3.7-plus": {
     openrouter: "qwen/qwen3.7-plus",
   },
@@ -65,6 +89,9 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
 };
 
 // Ids confirmed present on OpenCode Go's /v1/models (identical to canonical).
+// Lista completa (31 ids) conferida contra o GET /v1/models da API VIVA em
+// 2026-08-27 — o registry listava só os 15 primeiros, e faltava justamente o
+// "deepseek-v4-flash-vision-exp" que virou o modelo de visão default.
 export const OPENCODE_GO_MODELS = [
   "minimax-m3",
   "minimax-m2.7",
@@ -81,6 +108,22 @@ export const OPENCODE_GO_MODELS = [
   "mimo-v2.5-pro",
   "hy3",
   "grok-4.5",
+  "deepseek-v4-flash-vision-exp",
+  "glm-5.3",
+  "glm-5.3-flash",
+  "glm-5",
+  "qwen3.8-max",
+  "qwen3.6-plus",
+  "qwen3.5-plus",
+  "kimi-k2.5",
+  "minimax-m2.5",
+  "longcat-2.0",
+  "mimo-v2-pro",
+  "mimo-v2-omni",
+  "hy3-preview",
+  "gpt-5.6-luna",
+  "grok-4.6",
+  "muse-spark-1.2-contributor",
 ] as const;
 
 export function resolveModelId(canonical: string, providerId: string): string {
@@ -240,6 +283,43 @@ export function supportsJsonSchemaStrict(canonical: string, providerId: string):
   const cap = MODEL_CAPABILITIES[canonical];
   // Unknown model -> conservative false (use json_object + runtime validation).
   return cap?.jsonSchemaStrict ?? false;
+}
+
+// ── Modelos de visão: allowlist POR ROTA ────────────────────────────────────
+//
+// POR QUE ALLOWLIST, e não "manda a imagem e vê no que dá": `hy3` e
+// `longcat-2.0` ACEITAM o request com a imagem, IGNORAM a imagem em silêncio e
+// devolvem todos os campos `null` — sem erro nenhum. O único sinal é a contagem
+// de tokens de input (58-66, contra 2.000+ de quem realmente olha). Não há erro
+// para detectar em runtime, então a lista tem de ser explícita.
+//
+// POR QUE POR ROTA, e não uma lista global: a rota OpenRouter carrega o ZDR
+// double-lock (data_collection:"deny" + allow_fallbacks:false) e, com esse body
+// exato, o MELHOR modelo da cadeia — "deepseek-v4-flash-vision-exp" — devolve
+// 404 "No endpoints found matching your data policy (Paid model training)".
+// Ele só existe pela rota OpenCode Go.
+//
+// Todos os ids abaixo foram medidos ao vivo em 2026-08-27 com 7/7 campos de
+// acurácia (comprovante de Pix sintético 1080x1920). Fora da lista, por medição:
+//   - `kimi-k3` NÃO entra na cadeia OpenRouter: 429 persistente de upstream.
+//   - `mimo-v2.5` é último recurso na cadeia OpenRouter: 33 s de latência.
+export const VISION_MODELS_BY_PROVIDER: Partial<Record<ProviderId, string[]>> = {
+  "opencode-go": ["deepseek-v4-flash-vision-exp", "glm-5.3-flash", "kimi-k3"],
+  openrouter: ["glm-5.3-flash", "kimi-k2.7-code", "mimo-v2.5"],
+};
+
+// FAIL-CLOSED por desenho: provider desconhecido -> false; modelo fora da lista
+// da rota -> false. Nunca relaxar isso (ver a falha silenciosa acima).
+export function supportsVision(canonical: string, providerId: string): boolean {
+  const chain = VISION_MODELS_BY_PROVIDER[providerId as ProviderId];
+  if (!chain) return false;
+  return chain.includes(canonical);
+}
+
+// Cadeia de visão da rota, na ordem de preferência medida. Fail-closed: rota sem
+// modelos de visão devolve [] (quem consome simplesmente não tenta).
+export function visionChainFor(providerId: string): string[] {
+  return VISION_MODELS_BY_PROVIDER[providerId as ProviderId] ?? [];
 }
 
 // ── OpenRouter ZDR double-lock (per-request provider object) ────────────────

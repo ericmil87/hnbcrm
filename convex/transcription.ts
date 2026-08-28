@@ -25,12 +25,11 @@ import {
   internalMutation,
   internalQuery,
   ActionCtx,
-  QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
-import { orgAiActive } from "./lib/agentSecurity";
+import { shouldTranscribeAudio } from "./lib/mediaEnrichment";
 
 const ENGINE = "faster-whisper";
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000; // don't duplicate an in-flight transcription
@@ -245,20 +244,6 @@ export const internalGetAudioMessageForMember = internalQuery({
   },
 });
 
-// O atendente IA tem ouvidos próprios (D2 do plano de áudio): org com IA ativa
-// (enabled + aceite LGPD) e atendente não desligado transcreve mesmo sem o
-// toggle de conveniência do inbox — sem transcrição ele responderia "não
-// consigo ouvir áudio". Sem novo operador de dados: o Whisper é self-hosted e o
-// áudio já está no nosso storage.
-async function attendantNeedsTranscription(
-  ctx: QueryCtx,
-  organizationId: Id<"organizations">
-): Promise<boolean> {
-  const org = await ctx.db.get(organizationId);
-  if (!orgAiActive(org)) return false;
-  return org!.settings.aiConfig?.attendantEnabled !== false;
-}
-
 // Unauthenticated lookup for the ingest pipeline's `autoTranscribe`. Returns
 // null (a clean skip) unless the message is audio AND either the channel config
 // has autoTranscribeAudio enabled OR the org's AI attendant needs to hear it —
@@ -279,12 +264,12 @@ export const internalGetAudioMessageIfEligible = internalQuery({
     const config = conversation?.channelConfigId
       ? await ctx.db.get(conversation.channelConfigId)
       : null;
-    if (
-      !config?.autoTranscribeAudio &&
-      !(await attendantNeedsTranscription(ctx, message.organizationId))
-    ) {
-      return null;
-    }
+    // Gate compartilhado com o passe de visão (lib/mediaEnrichment): o
+    // atendente IA tem ouvidos próprios (D2 do plano de áudio) — org com IA
+    // ativa e atendente não desligado transcreve mesmo sem o toggle de
+    // conveniência do inbox, senão ele responderia "não consigo ouvir áudio".
+    const org = await ctx.db.get(message.organizationId);
+    if (!shouldTranscribeAudio(org, config)) return null;
 
     return {
       messageId: message._id,

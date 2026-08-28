@@ -132,6 +132,13 @@ const aiConfigValidator = v.object({
   bridgeAiAck: v.optional(
     v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
   ),
+  // Passe de visão: descrever imagens recebidas (comprovante, documento, foto)
+  // para que o atendente responda ao que a pessoa mandou em vez de "[imagem]".
+  // DEFAULT FALSE de propósito — diferente de copilotEnabled/attendantEnabled,
+  // aqui `undefined` significa DESLIGADO: a imagem do cliente (que pode ser
+  // RG/CNH) sai para um provider externo e cada imagem custa dinheiro. Opt-in
+  // explícito por org.
+  visionEnabled: v.optional(v.boolean()),
   providerConfig: v.optional(providerConfigValidator),
   // Teto amigável de uso mensal (nº de conversas atendidas). Kill-switch de custo.
   monthlyConversationBudget: v.optional(v.number()),
@@ -506,6 +513,11 @@ const applicationTables = {
     // Auto-transcribe inbound voice notes with the local Whisper service
     // (convex/transcription.ts). Applies to both providers; absent/false = off.
     autoTranscribeAudio: v.optional(v.boolean()),
+    // Descrever automaticamente imagens recebidas neste canal (convex/vision.ts).
+    // Conveniência do INBOX — NÃO liga a visão sozinho: o gate é um AND com
+    // aiConfig.visionEnabled da org (D10 do plano de visão), porque cada imagem
+    // custa uma chamada paga ao provider. Ausente/false = desligado.
+    autoDescribeImages: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -599,6 +611,9 @@ const applicationTables = {
     // Cópia rasa de metadata.transcription.text — search index só indexa campo
     // de topo, então a transcrição pesquisável vive aqui (setada ao transcrever).
     transcriptText: v.optional(v.string()),
+    // Idem para o passe de visão: cópia rasa de metadata.vision.text, para o
+    // search index encontrar o que estava escrito na imagem (convex/vision.ts).
+    imageDescription: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
@@ -612,6 +627,10 @@ const applicationTables = {
     })
     .searchIndex("search_transcript", {
       searchField: "transcriptText",
+      filterFields: ["organizationId", "conversationId"],
+    })
+    .searchIndex("search_image", {
+      searchField: "imageDescription",
       filterFields: ["organizationId", "conversationId"],
     }),
 
@@ -1296,7 +1315,13 @@ const applicationTables = {
     organizationId: v.id("organizations"),
     // Atendente: o teamMember IA. Copiloto: o teamMember HUMANO que comandou.
     memberId: v.id("teamMembers"),
-    kind: v.union(v.literal("copilot"), v.literal("attendant"), v.literal("simulator")),
+    kind: v.union(
+      v.literal("copilot"),
+      v.literal("attendant"),
+      v.literal("simulator"),
+      // Passe de visão (convex/vision.ts): 1 chamada por IMAGEM, não por turno.
+      v.literal("vision")
+    ),
     status: v.union(
       v.literal("running"),
       v.literal("done"),
@@ -1345,8 +1370,13 @@ const applicationTables = {
     ),
     attempts: v.number(),
     nextAttemptAt: v.number(), // slot de pacing/backoff (debounce incluído)
-    // Teto da espera pela transcrição de áudio (D1): setado no 1º requeue por
-    // transcrição; estourado, a run acontece com o marcador de indisponível.
+    // Teto da espera por ENRIQUECIMENTO DE MÍDIA (transcrição de áudio, passe
+    // de visão, download em voo): setado no 1º requeue; estourado, a run
+    // acontece com o marcador de indisponível.
+    mediaWaitUntil: v.optional(v.number()),
+    // LEGADO — teto da espera só de áudio, anterior ao mediaWaitUntil acima.
+    // Mantido para as linhas em voo continuarem válidas sem migração; a leitura
+    // é `mediaWaitUntil ?? transcriptWaitUntil ?? createdAt + teto`.
     transcriptWaitUntil: v.optional(v.number()),
     // Uma única mensagem de fallback por item em instabilidade (flag anti-spam).
     fallbackSentAt: v.optional(v.number()),

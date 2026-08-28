@@ -100,6 +100,7 @@ function maskConfig(config: Doc<"channelConfigs">) {
     hasBridgeToken: config.bridgeTokenEncrypted != null,
     bridgeSessionState: config.bridgeSessionState ?? null,
     autoTranscribeAudio: config.autoTranscribeAudio ?? false,
+    autoDescribeImages: config.autoDescribeImages ?? false,
     status: config.status,
     lastHealthCheckAt: config.lastHealthCheckAt ?? null,
     healthDetail: config.healthDetail ?? null,
@@ -293,6 +294,7 @@ export const updateChannelConfig = action({
     bridgeToken: v.optional(v.string()),
     // Shared (both providers)
     autoTranscribeAudio: v.optional(v.boolean()),
+    autoDescribeImages: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -316,6 +318,7 @@ export const updateChannelConfig = action({
       patch.bridgeTokenLast4 = secretLast4(args.bridgeToken);
     }
     if (args.autoTranscribeAudio !== undefined) patch.autoTranscribeAudio = args.autoTranscribeAudio;
+    if (args.autoDescribeImages !== undefined) patch.autoDescribeImages = args.autoDescribeImages;
 
     await ctx.runMutation(internal.channelConfigs.internalPatchConfig, {
       configId: args.configId,
@@ -922,7 +925,7 @@ export const internalPatchConfig = internalMutation({
     ]);
     // Shared fields apply to both providers, so they sit outside the
     // provider-exclusivity check below.
-    const SHARED_FIELDS = new Set(["displayName", "autoTranscribeAudio"]);
+    const SHARED_FIELDS = new Set(["displayName", "autoTranscribeAudio", "autoDescribeImages"]);
     const allowedFields = new Set([...SHARED_FIELDS, ...META_FIELDS, ...BRIDGE_FIELDS]);
     for (const field of Object.keys(args.patch)) {
       if (!allowedFields.has(field)) throw new Error(`Field not updatable: ${field}`);

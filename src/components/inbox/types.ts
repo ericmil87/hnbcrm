@@ -20,6 +20,8 @@ export interface InboxMessage {
   isInternal: boolean;
   createdAt: number;
   deliveryStatus?: "sent" | "delivered" | "read" | "failed";
+  /** Espelho pesquisável da leitura da imagem (campo de topo, indexado). */
+  imageDescription?: string;
   metadata?: Record<string, any>;
   attachmentFiles?: InboxAttachmentFile[];
   sender?: { name?: string | null } | null;
@@ -54,6 +56,32 @@ export interface TranscriptionMeta {
   at?: number;
 }
 
+export type VisionStatus = "done" | "pending" | "failed" | "skipped";
+
+// Tipo de imagem reconhecido pelo passe de visão.
+export type VisionKind =
+  | "comprovante"
+  | "documento"
+  | "boleto"
+  | "nota_fiscal"
+  | "foto"
+  | "print"
+  | "outro";
+
+// Campos estruturados extraídos de comprovantes/documentos. Cada chave vem
+// como string ou null (o modelo devolve o objeto completo, com nulos).
+export type VisionFields = Record<string, string | null>;
+
+export interface VisionMeta {
+  status: VisionStatus;
+  text?: string;
+  tipo?: VisionKind;
+  fields?: VisionFields;
+  model?: string;
+  error?: string;
+  at?: number;
+}
+
 export function getQuoted(message: InboxMessage): QuotedMeta | null {
   const q = message.metadata?.quoted;
   return q && typeof q === "object" ? (q as QuotedMeta) : null;
@@ -80,6 +108,18 @@ export function getTranscription(message: InboxMessage): TranscriptionMeta | nul
   return t && typeof t === "object" && typeof t.status === "string"
     ? (t as TranscriptionMeta)
     : null;
+}
+
+export function getVision(message: InboxMessage): VisionMeta | null {
+  const vision = message.metadata?.vision;
+  if (!vision || typeof vision !== "object" || typeof vision.status !== "string") return null;
+  const meta = vision as VisionMeta;
+  // A descrição canônica vive no campo de topo (indexado); metadata.vision.text
+  // é o espelho. Preferimos o topo quando os dois existem.
+  const text = typeof message.imageDescription === "string" && message.imageDescription.length > 0
+    ? message.imageDescription
+    : meta.text;
+  return { ...meta, text };
 }
 
 // Grouped reactions for compact rendering: one entry per distinct emoji with a
@@ -147,6 +187,15 @@ export function isVoiceNote(message: InboxMessage): boolean {
 
 export function isSticker(message: InboxMessage): boolean {
   return message.metadata?.bridgeType === "sticker";
+}
+
+// Imagem "de verdade": foto/print/documento fotografado. Espelha o que a leitura
+// de imagem aceita no servidor (`contentType: "image"`), e figurinha não conta —
+// é ruído de alto volume, marcado em campos diferentes pelo bridge e pela
+// Cloud API.
+export function isImageMessage(message: InboxMessage): boolean {
+  if (isSticker(message) || message.metadata?.whatsappType === "sticker") return false;
+  return message.contentType === "image";
 }
 
 export function hasMediaProblem(message: InboxMessage): boolean {

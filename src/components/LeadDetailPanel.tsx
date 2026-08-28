@@ -402,6 +402,7 @@ function ConversationTab({
   const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
+  const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
@@ -423,6 +424,10 @@ function ConversationTab({
   const markConversationRead = useMutation(api.conversations.markConversationRead);
   const sendTypingState = useMutation(api.conversations.sendTypingState);
   const transcribe = useAction(api.transcription.transcribe);
+  const describeImage = useAction(api.vision.describeImage);
+  // Leitura de imagem é um AND (D10): IA ativa na org E leitura ligada.
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
 
   const channelIsWhatsapp = firstConversation?.channel === "whatsapp";
   const contactName =
@@ -657,6 +662,25 @@ function ConversationTab({
     }
   };
 
+  const handleDescribeImage = async (message: InboxMessage) => {
+    setDescribingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await describeImage({
+        organizationId,
+        messageId: message._id as Id<"messages">,
+      });
+      if (result.status === "failed") toast.error("Não foi possível ler a imagem");
+    } catch {
+      toast.error("Não foi possível ler a imagem");
+    } finally {
+      setDescribingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(message._id);
+        return nextSet;
+      });
+    }
+  };
+
   const handleJumpToMessage = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);
     if (!el) {
@@ -724,11 +748,14 @@ function ConversationTab({
                 currentMemberId={currentMemberId}
                 contactName={contactName}
                 transcribing={transcribingIds.has(message._id)}
+                describing={describingIds.has(message._id)}
+                visionEnabled={visionEnabled}
                 highlighted={highlightId === message._id}
                 onReply={setReplyTo}
                 onReact={handleReact}
                 onForward={setForwardTarget}
                 onTranscribe={handleTranscribe}
+                onDescribeImage={(m) => void handleDescribeImage(m)}
                 onJumpToMessage={handleJumpToMessage}
               />
             )

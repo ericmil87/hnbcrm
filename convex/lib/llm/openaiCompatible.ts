@@ -7,7 +7,7 @@
 // crypto). Never logs or embeds the API key in an error.
 
 import {
-  ChatMessage,
+  AssistantMessage,
   ChatToolCall,
   FinishReason,
   LlmEndpoint,
@@ -87,9 +87,9 @@ function parseUsage(raw: any): NormalizedUsage | undefined {
   return usage;
 }
 
-function normalizeMessage(raw: any): ChatMessage {
-  const message: ChatMessage = {
-    role: (raw?.role as ChatMessage["role"]) ?? "assistant",
+function normalizeMessage(raw: any): AssistantMessage {
+  const message: AssistantMessage = {
+    role: (raw?.role as AssistantMessage["role"]) ?? "assistant",
     content: typeof raw?.content === "string" ? raw.content : null,
   };
   if (Array.isArray(raw?.tool_calls) && raw.tool_calls.length > 0) {

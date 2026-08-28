@@ -455,9 +455,11 @@ export const searchMessages = query({
       createdAt: v.number(),
       channel: v.string(),
       contactName: v.string(),
-      // Texto de onde o termo foi encontrado (conteúdo ou transcrição de voz).
+      // Texto de onde o termo foi encontrado (conteúdo, transcrição de voz ou
+      // leitura da imagem).
       snippetText: v.string(),
       matchedTranscript: v.boolean(),
+      matchedImage: v.boolean(),
     })
   ),
   handler: async (ctx, args) => {
@@ -467,8 +469,9 @@ export const searchMessages = query({
     if (term.length < 2) return [];
 
     // Busca mais que o limite exibido para o filtro de data ainda ter material.
-    // Dois índices: texto da mensagem e transcrição de nota de voz.
-    const [contentHits, transcriptHits] = await Promise.all([
+    // Três índices: texto da mensagem, transcrição de nota de voz e leitura de
+    // imagem (o espelho de topo `imageDescription`).
+    const [contentHits, transcriptHits, imageHits] = await Promise.all([
       ctx.db
         .query("messages")
         .withSearchIndex("search_content", (q) => {
@@ -485,11 +488,21 @@ export const searchMessages = query({
           return args.conversationId ? scoped.eq("conversationId", args.conversationId) : scoped;
         })
         .take(150),
+      ctx.db
+        .query("messages")
+        .withSearchIndex("search_image", (q) => {
+          const scoped = q
+            .search("imageDescription", term)
+            .eq("organizationId", args.organizationId);
+          return args.conversationId ? scoped.eq("conversationId", args.conversationId) : scoped;
+        })
+        .take(150),
     ]);
 
     const transcriptIds = new Set(transcriptHits.map((m) => m._id));
+    const imageIds = new Set(imageHits.map((m) => m._id));
     const seen = new Set<string>();
-    let results = [...contentHits, ...transcriptHits].filter((m) => {
+    let results = [...contentHits, ...transcriptHits, ...imageHits].filter((m) => {
       if (seen.has(m._id)) return false;
       seen.add(m._id);
       return true;
@@ -522,6 +535,8 @@ export const searchMessages = query({
       const contentMatches = m.content.toLowerCase().includes(termLower);
       const matchedTranscript =
         transcriptIds.has(m._id) && !contentMatches && !!m.transcriptText;
+      const matchedImage =
+        imageIds.has(m._id) && !contentMatches && !matchedTranscript && !!m.imageDescription;
       return {
         _id: m._id,
         conversationId: m.conversationId,
@@ -532,8 +547,13 @@ export const searchMessages = query({
         createdAt: m.createdAt,
         channel: conv?.channel ?? "internal",
         contactName: contactName || lead?.name || "Contato",
-        snippetText: matchedTranscript ? m.transcriptText! : m.content,
+        snippetText: matchedTranscript
+          ? m.transcriptText!
+          : matchedImage
+            ? m.imageDescription!
+            : m.content,
         matchedTranscript,
+        matchedImage,
       };
     });
   },
@@ -1390,6 +1410,13 @@ export const internalReceiveMessage = internalMutation({
     // Voice notes: transcription is a no-op unless the channel config opts in
     if ((args.contentType === "audio") && args.attachments && args.attachments.length > 0) {
       await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
+    }
+
+    // Imagens: o passe de visão também é no-op silencioso a menos que o gate
+    // (org com IA ativa + aiConfig.visionEnabled + canal/atendente) passe, e
+    // figurinha nunca é descrita — tudo isso é decidido DENTRO de autoDescribe.
+    if (args.contentType === "image" && args.attachments && args.attachments.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.vision.autoDescribe, { messageId });
     }
 
     // Atendente IA: ENFILEIRA (aiReplyQueue) — nunca inferência direta daqui.

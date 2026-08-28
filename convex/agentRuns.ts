@@ -1,7 +1,7 @@
 /**
  * Registro de operações de IA (agentRuns) — SEM transcrições/PII (LGPD art. 37
  * sem duplicar art. 18): só tokens, custo estimado, nomes de tools e ponteiros.
- * Compartilhado por copiloto, atendente e simulador.
+ * Compartilhado por copiloto, atendente, simulador e passe de visão.
  */
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
@@ -11,7 +11,12 @@ export const internalStartRun = internalMutation({
   args: {
     organizationId: v.id("organizations"),
     memberId: v.id("teamMembers"),
-    kind: v.union(v.literal("copilot"), v.literal("attendant"), v.literal("simulator")),
+    kind: v.union(
+      v.literal("copilot"),
+      v.literal("attendant"),
+      v.literal("simulator"),
+      v.literal("vision")
+    ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),
     triggerMessageId: v.optional(v.id("messages")),

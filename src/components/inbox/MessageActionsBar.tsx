@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Reply, Smile, Forward, FileText } from "lucide-react";
+import { Reply, Smile, Forward, FileText, ScanText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ReactionPicker } from "./ReactionPicker";
 
@@ -12,6 +12,8 @@ interface MessageActionsBarProps {
   onForward: () => void;
   /** Present only for a voice note that still needs a transcription. */
   onTranscribe?: () => void;
+  /** Present only for an image that still needs the AI reading (vision on). */
+  onDescribeImage?: () => void;
   /** Which side the bubble sits on — drives picker alignment. */
   align?: "start" | "end";
   className?: string;
@@ -27,6 +29,7 @@ export function MessageActionsBar({
   onReact,
   onForward,
   onTranscribe,
+  onDescribeImage,
   align = "start",
   className,
 }: MessageActionsBarProps) {
@@ -74,6 +77,18 @@ export function MessageActionsBar({
           title="Transcrever"
         >
           <FileText size={16} />
+        </button>
+      )}
+
+      {onDescribeImage && (
+        <button
+          type="button"
+          onClick={onDescribeImage}
+          className={BTN}
+          aria-label="Ler imagem"
+          title="Ler imagem"
+        >
+          <ScanText size={16} />
         </button>
       )}
 

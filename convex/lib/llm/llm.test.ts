@@ -3,8 +3,17 @@ import { expect, test, describe, afterEach, vi } from "vitest";
 import { chat, chatWithRetry, streamChat, accumulateToolCallDeltas, isUpstreamMislabeled400 } from "./openaiCompatible";
 import { resolvePlatformChain, chatWithFallback } from "./index";
 import { sanitizeLlmError } from "./sanitize";
-import { resolveModelId, routeInfo, OPENROUTER_ZDR_PROVIDER_BODY } from "./registry";
-import { LlmHttpError, StreamToolCallDelta } from "./types";
+import {
+  resolveModelId,
+  routeInfo,
+  OPENROUTER_ZDR_PROVIDER_BODY,
+  OPENCODE_GO_MODELS,
+  DEFAULT_MODELS,
+  DEFAULT_STORED_MODELS,
+  supportsVision,
+  visionChainFor,
+} from "./registry";
+import { ContentPart, LlmHttpError, StreamToolCallDelta, flattenContent } from "./types";
 
 const ENDPOINT = { providerId: "opencode-go", baseUrl: "https://opencode.ai/zen/go/v1", apiKey: "sk-test-secret-key" };
 const REQ = { model: "deepseek-v4-flash", messages: [{ role: "user" as const, content: "oi" }] };
@@ -333,5 +342,120 @@ describe("400 'Upstream request failed' mal-rotulado (achado do E2E)", () => {
     ).toBe(true);
     expect(isUpstreamMislabeled400(new LlmHttpError(400, "Invalid request"))).toBe(false);
     expect(isUpstreamMislabeled400(new LlmHttpError(500, "Upstream request failed"))).toBe(false);
+  });
+});
+
+
+// ── Visão: content parts + allowlist por rota (F1 do plano de visão) ─────────
+
+describe("content parts (passe de visão)", () => {
+  // Comprovante fake: o data URI tem de chegar ao provider byte a byte igual.
+  const DATA_URI = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAo=";
+  const PARTS: ContentPart[] = [
+    { type: "text", text: "Descreva a imagem em JSON." },
+    { type: "image_url", image_url: { url: DATA_URI } },
+  ];
+
+  test("chat serializa content parts SEM alterar (buildBody passa direto)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        choices: [{ message: { role: "assistant", content: "{}" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 495, completion_tokens: 30 },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await chat(ENDPOINT, {
+      model: "deepseek-v4-flash-vision-exp",
+      messages: [{ role: "user", content: PARTS }],
+      maxTokens: 1500,
+    });
+
+    const sent = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(sent.model).toBe("deepseek-v4-flash-vision-exp");
+    expect(sent.messages[0].content).toEqual(PARTS);
+    // O data URI não pode ser truncado nem re-encodado no caminho.
+    expect(sent.messages[0].content[1].image_url.url).toBe(DATA_URI);
+  });
+
+  test("flattenContent achata parts em texto e ignora imagens", () => {
+    expect(flattenContent(PARTS)).toBe("Descreva a imagem em JSON.");
+    expect(
+      flattenContent([
+        { type: "text", text: "linha 1" },
+        { type: "image_url", image_url: { url: DATA_URI } },
+        { type: "text", text: "linha 2" },
+      ])
+    ).toBe("linha 1\nlinha 2");
+    expect(flattenContent("já é texto")).toBe("já é texto");
+    expect(flattenContent(null)).toBe("");
+    expect(flattenContent(undefined)).toBe("");
+    // Só imagens -> string vazia, nunca "[object Object]".
+    expect(flattenContent([{ type: "image_url", image_url: { url: DATA_URI } }])).toBe("");
+  });
+});
+
+describe("supportsVision — allowlist FAIL-CLOSED por rota", () => {
+  test("modelos que ignoram a imagem em silêncio ficam de fora", () => {
+    // hy3 e longcat-2.0 aceitam o request e devolvem tudo null (58-66 tokens de
+    // input): não há erro para detectar, por isso a lista é explícita.
+    expect(supportsVision("hy3", "opencode-go")).toBe(false);
+    expect(supportsVision("longcat-2.0", "opencode-go")).toBe(false);
+  });
+
+  test("o ZDR do OpenRouter derruba o melhor modelo — allowlist é POR ROTA", () => {
+    expect(supportsVision("deepseek-v4-flash-vision-exp", "opencode-go")).toBe(true);
+    expect(supportsVision("deepseek-v4-flash-vision-exp", "openrouter")).toBe(false);
+    expect(supportsVision("glm-5.3-flash", "openrouter")).toBe(true);
+    expect(supportsVision("glm-5.3-flash", "opencode-go")).toBe(true);
+    // kimi-k3 funciona pela OpenCode Go, mas está com 429 persistente no OpenRouter.
+    expect(supportsVision("kimi-k3", "opencode-go")).toBe(true);
+    expect(supportsVision("kimi-k3", "openrouter")).toBe(false);
+  });
+
+  test("provider ou modelo desconhecido -> false", () => {
+    expect(supportsVision("glm-5.3-flash", "provider-que-nao-existe")).toBe(false);
+    expect(supportsVision("glm-5.3-flash", "openai")).toBe(false);
+    expect(supportsVision("modelo-inventado", "opencode-go")).toBe(false);
+    expect(supportsVision("", "")).toBe(false);
+  });
+
+  test("visionChainFor devolve a cadeia medida, e [] p/ rota sem visão", () => {
+    expect(visionChainFor("opencode-go")).toEqual([
+      "deepseek-v4-flash-vision-exp",
+      "glm-5.3-flash",
+      "kimi-k3",
+    ]);
+    expect(visionChainFor("openrouter")).toEqual(["glm-5.3-flash", "kimi-k2.7-code", "mimo-v2.5"]);
+    expect(visionChainFor("openai")).toEqual([]);
+    expect(visionChainFor("nao-existe")).toEqual([]);
+  });
+
+  test("toda a cadeia da OpenCode Go existe no /v1/models e o default é o 1º", () => {
+    for (const model of visionChainFor("opencode-go")) {
+      expect(OPENCODE_GO_MODELS).toContain(model);
+    }
+    expect(DEFAULT_MODELS.vision).toBe(visionChainFor("opencode-go")[0]);
+    // Resolução de id na rota OpenRouter (D17).
+    expect(resolveModelId("glm-5.3-flash", "openrouter")).toBe("z-ai/glm-5.3-flash");
+    expect(resolveModelId("mimo-v2.5", "openrouter")).toBe("xiaomi/mimo-v2.5");
+    expect(resolveModelId("kimi-k2.7-code", "openrouter")).toBe("moonshotai/kimi-k2.7-code");
+    // Pela rota OpenCode Go o id canônico vale como está.
+    expect(resolveModelId("deepseek-v4-flash-vision-exp", "opencode-go")).toBe(
+      "deepseek-v4-flash-vision-exp"
+    );
+  });
+
+  test("o papel 'vision' NÃO entra no que a org persiste (aiModelsValidator)", () => {
+    // Gravar { ...DEFAULT_MODELS } em providerConfig.models quebra o validator
+    // do schema ("Unexpected field `vision`") — o modelo de visão vem da cadeia
+    // por rota, não da config da org.
+    expect(Object.keys(DEFAULT_STORED_MODELS).sort()).toEqual([
+      "attendant",
+      "classify",
+      "complex",
+      "copilot",
+    ]);
+    expect(DEFAULT_STORED_MODELS).not.toHaveProperty("vision");
   });
 });
