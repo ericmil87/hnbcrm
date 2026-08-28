@@ -61,6 +61,7 @@ import type * as lib_cursor from "../lib/cursor.js";
 import type * as lib_exportColumns from "../lib/exportColumns.js";
 import type * as lib_exportSanitize from "../lib/exportSanitize.js";
 import type * as lib_fileQuotas from "../lib/fileQuotas.js";
+import type * as lib_fileRefs from "../lib/fileRefs.js";
 import type * as lib_fileValidation from "../lib/fileValidation.js";
 import type * as lib_formFieldTypes from "../lib/formFieldTypes.js";
 import type * as lib_importKeys from "../lib/importKeys.js";
@@ -168,6 +169,7 @@ declare const fullApi: ApiFromModules<{
   "lib/exportColumns": typeof lib_exportColumns;
   "lib/exportSanitize": typeof lib_exportSanitize;
   "lib/fileQuotas": typeof lib_fileQuotas;
+  "lib/fileRefs": typeof lib_fileRefs;
   "lib/fileValidation": typeof lib_fileValidation;
   "lib/formFieldTypes": typeof lib_formFieldTypes;
   "lib/importKeys": typeof lib_importKeys;
