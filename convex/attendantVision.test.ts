@@ -24,8 +24,15 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { supportsVision, visionChainFor, VISION_MODELS_BY_PROVIDER } from "./lib/llm/registry";
-import { parseVisionJson } from "./vision";
+import {
+  OPENROUTER_ZDR_PROVIDER_BODY,
+  supportsVision,
+  visionChainFor,
+  visionImageDropped,
+  VISION_MODELS_BY_PROVIDER,
+  VISION_TEXT_ONLY_PROMPT_TOKENS,
+} from "./lib/llm/registry";
+import { parseVisionJson, VISION_SYSTEM_PROMPT, VISION_USER_PROMPT } from "./vision";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -836,6 +843,207 @@ describe("cadeia de visão por rota (D4/D5)", () => {
   });
 });
 
+// ── Imagem descartada no caminho (incidente de 14/09/2026) ───────────────────
+//
+// Três comprovantes reais da Aos Filhos da Terra: o glm-5.3-flash deu 429 (o
+// OpenRouter, com allow_fallbacks:false, só tentava o provedor primário), a
+// cadeia desceu para o kimi-k2.7-code, e o provedor escolhido jogou a imagem
+// fora — 200, 425 tokens de entrada, "Nenhuma imagem foi enviada". Isso virou a
+// descrição gravada, e o atendente pediu à cliente para reenviar.
+
+function llmResponseWith(content: string, opts: { promptTokens: number; provider?: string }) {
+  return new Response(
+    JSON.stringify({
+      id: "chatcmpl-teste",
+      ...(opts.provider ? { provider: opts.provider } : {}),
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      usage: { prompt_tokens: opts.promptTokens, completion_tokens: 200 },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
+}
+
+// A resposta REAL de produção, com o modelo descrevendo a ausência da imagem.
+const SEM_IMAGEM_JSON = JSON.stringify({
+  descricao: "Nenhuma imagem foi enviada ou a imagem está vazia/ilegível.",
+  tipo: "outro",
+  campos: {
+    valor: null,
+    data: null,
+    pagador: null,
+    recebedor: null,
+    chave_pix: null,
+    id_transacao: null,
+    banco: null,
+  },
+});
+
+describe("imagem descartada no caminho não vira descrição (incidente 14/09)", () => {
+  test("200 com os tokens do prompt sozinho cai para o próximo elo e registra quem falhou", async () => {
+    vi.useRealTimers();
+    vi.stubEnv("OPENROUTER_API_KEY", "key-or");
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: any, init: any) => {
+        calls.push(JSON.parse(init.body).model);
+        if (calls.length === 1) {
+          return llmResponseWith(SEM_IMAGEM_JSON, {
+            promptTokens: VISION_TEXT_ONLY_PROMPT_TOKENS["glm-5.3-flash"],
+            provider: "ProvedorQueDescarta",
+          });
+        }
+        return llmResponseWith(COMPROVANTE_JSON, { promptTokens: 2310, provider: "Fireworks" });
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true, platformOrder: "openrouter-only" });
+    const messageId = await insertImage(t, seed);
+
+    const result = await t.action(internal.vision.autoDescribe, { messageId });
+    expect(result.status).toBe("done");
+    expect(result.text).toContain("R$ 1.247,90");
+    expect(calls).toEqual(["z-ai/glm-5.3-flash", "moonshotai/kimi-k2.7-code"]);
+
+    const message = await t.run(async (ctx) => await ctx.db.get(messageId));
+    const vision = message!.metadata?.vision as any;
+    expect(vision.upstream).toBe("Fireworks");
+    expect(vision.attempts).toHaveLength(1);
+    expect(vision.attempts[0]).toContain("openrouter:glm-5.3-flash via ProvedorQueDescarta");
+    expect(vision.attempts[0]).toContain("não chegou");
+    expect(message!.imageDescription).toContain("R$ 1.247,90");
+  });
+
+  test("imagem_recebida:false conta como falha mesmo com tokens de sobra", async () => {
+    vi.useRealTimers();
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: any, init: any) => {
+        calls.push(JSON.parse(init.body).model);
+        if (calls.length === 1) {
+          return llmResponse(JSON.stringify({ imagem_recebida: false, ...JSON.parse(SEM_IMAGEM_JSON) }));
+        }
+        return llmResponse(JSON.stringify({ imagem_recebida: true, ...JSON.parse(COMPROVANTE_JSON) }));
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true });
+    const messageId = await insertImage(t, seed);
+
+    const result = await t.action(internal.vision.autoDescribe, { messageId });
+    expect(result.status).toBe("done");
+    expect(result.text).toContain("R$ 1.247,90");
+    expect(calls).toEqual(["deepseek-v4-flash-vision-exp", "glm-5.3-flash"]);
+  });
+
+  test("cadeia inteira sem imagem → failed, nunca a descrição 'nenhuma imagem'", async () => {
+    vi.useRealTimers();
+    vi.stubEnv("OPENROUTER_API_KEY", "key-or");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => llmResponseWith(SEM_IMAGEM_JSON, { promptTokens: 300 }))
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true, platformOrder: "openrouter-only" });
+    const messageId = await insertImage(t, seed);
+
+    const result = await t.action(internal.vision.autoDescribe, { messageId });
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("não chegou");
+
+    const message = await t.run(async (ctx) => await ctx.db.get(messageId));
+    const vision = message!.metadata?.vision as any;
+    expect(vision.status).toBe("failed");
+    expect(vision.text).toBeUndefined();
+    expect(vision.attempts).toHaveLength(VISION_MODELS_BY_PROVIDER.openrouter!.length);
+    expect(message!.imageDescription).toBeUndefined();
+  });
+
+  test("no OpenRouter a visão libera allow_fallbacks sem soltar o data_collection", async () => {
+    vi.useRealTimers();
+    vi.stubEnv("OPENROUTER_API_KEY", "key-or");
+    let captured: any = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: any, init: any) => {
+        captured = JSON.parse(init.body);
+        return llmResponseWith(COMPROVANTE_JSON, { promptTokens: 2255 });
+      })
+    );
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true, platformOrder: "openrouter-only" });
+    const messageId = await insertImage(t, seed);
+    await t.action(internal.vision.autoDescribe, { messageId });
+
+    expect(captured.provider).toEqual({
+      data_collection: "deny",
+      require_parameters: true,
+      allow_fallbacks: true,
+    });
+    // O lock compartilhado (atendente/copiloto) não foi mutado pela visão.
+    expect(OPENROUTER_ZDR_PROVIDER_BODY.provider.allow_fallbacks).toBe(false);
+  });
+
+  test("reprocessar: marcar failed apaga o espelho errado e o autoDescribe lê de novo", async () => {
+    vi.useRealTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => llmResponse(COMPROVANTE_JSON)));
+
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true });
+    const errada = "Nenhuma imagem foi enviada ou a imagem está vazia/ilegível.";
+    const messageId = await insertImage(t, seed, {
+      vision: { status: "done", text: errada },
+      imageDescription: errada,
+    });
+
+    await t.mutation(internal.vision.internalSetVisionResult, {
+      messageId,
+      status: "failed",
+      error: "Reprocessar",
+    });
+    let message = await t.run(async (ctx) => await ctx.db.get(messageId));
+    expect(message!.imageDescription).toBeUndefined();
+
+    const result = await t.action(internal.vision.autoDescribe, { messageId });
+    expect(result.status).toBe("done");
+    message = await t.run(async (ctx) => await ctx.db.get(messageId));
+    expect(message!.imageDescription).toContain("R$ 1.247,90");
+  });
+});
+
+describe("piso de tokens da visão (visionImageDropped)", () => {
+  test("o prompt sozinho é imagem descartada; a menor imagem medida passa", () => {
+    for (const [model, textOnly] of Object.entries(VISION_TEXT_ONLY_PROMPT_TOKENS)) {
+      expect(visionImageDropped(model, textOnly)).toBe(true);
+      // +12 foi o menor acréscimo medido (imagem de 96 px de altura).
+      expect(visionImageDropped(model, textOnly + 12)).toBe(false);
+    }
+  });
+
+  test("sem medição do modelo ou sem usage na resposta, não julga", () => {
+    expect(visionImageDropped("deepseek-v4-flash-vision-exp", 10)).toBe(false);
+    expect(visionImageDropped("glm-5.3-flash", undefined)).toBe(false);
+    expect(visionImageDropped("glm-5.3-flash", 0)).toBe(false);
+  });
+
+  test("todo modelo da cadeia OpenRouter tem piso medido", () => {
+    for (const model of VISION_MODELS_BY_PROVIDER.openrouter!) {
+      expect(VISION_TEXT_ONLY_PROMPT_TOKENS[model]).toBeGreaterThan(0);
+    }
+  });
+
+  test("mudou o prompt? re-meça VISION_TEXT_ONLY_PROMPT_TOKENS", () => {
+    // Os pisos foram medidos com ESTE prompt. Se este número mudou, meça de
+    // novo o prompt sem imagem em cada modelo e atualize o registry.
+    expect(VISION_SYSTEM_PROMPT.length + VISION_USER_PROMPT.length).toBe(1463);
+  });
+});
+
 // ── 11. Allowlist fail-closed (D4) ───────────────────────────────────────────
 
 describe("allowlist de modelos de visão é fail-closed (D4)", () => {
@@ -878,6 +1086,13 @@ describe("allowlist de modelos de visão é fail-closed (D4)", () => {
 // ── 10. Parse tolerante às sujeiras MEDIDAS dos modelos (D16) ────────────────
 
 describe("parse tolerante da saída do modelo (D16)", () => {
+  test("imagem_recebida: só false explícito (booleano ou string) vira false", () => {
+    expect(parseVisionJson('{"imagem_recebida": false, "descricao": "x"}')?.imagemRecebida).toBe(false);
+    expect(parseVisionJson('{"imagem_recebida": "false", "descricao": "x"}')?.imagemRecebida).toBe(false);
+    expect(parseVisionJson('{"imagem_recebida": true, "descricao": "x"}')?.imagemRecebida).toBe(true);
+    expect(parseVisionJson('{"descricao": "x"}')).not.toHaveProperty("imagemRecebida");
+  });
+
   test("JSON puro", () => {
     const parsed = parseVisionJson(COMPROVANTE_JSON);
     expect(parsed!.descricao).toContain("R$ 1.247,90");

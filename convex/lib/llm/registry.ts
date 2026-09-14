@@ -322,6 +322,41 @@ export function visionChainFor(providerId: string): string[] {
   return VISION_MODELS_BY_PROVIDER[providerId as ProviderId] ?? [];
 }
 
+// Tokens de ENTRADA do prompt de visão SEM imagem nenhuma, por modelo — o maior
+// valor entre os provedores medidos pelo OpenRouter em 14/09/2026, com o prompt
+// ATUAL (1463 caracteres): glm em 5 provedores, kimi em 5, mimo em 3.
+//
+// POR QUE EXISTE: em 14/09/2026 três comprovantes reais foram parar num
+// provedor do `kimi-k2.7-code` que DESCARTOU a imagem e respondeu 200 com
+// "Nenhuma imagem foi enviada" — 425 tokens de entrada, o prompt sozinho. É a
+// falha silenciosa do hy3/longcat acontecendo com um modelo DA allowlist, num
+// provedor que o OpenRouter escolhe a cada request (então allowlist não pega).
+// Qualquer imagem soma tokens — a menor medida (31x96 px) somou +12 a +26 —,
+// então input no nível do prompt sozinho significa que a imagem não chegou.
+//
+// ⚠️ Mudou VISION_SYSTEM_PROMPT ou VISION_USER_PROMPT? RE-MEÇA. O teste
+// "mudou o prompt? re-meça" quebra de propósito quando o tamanho do prompt muda.
+// Modelo fora do mapa não passa por esta checagem — só pela do campo
+// `imagem_recebida`, que o próprio modelo preenche.
+export const VISION_TEXT_ONLY_PROMPT_TOKENS: Record<string, number> = {
+  "glm-5.3-flash": 426,
+  "kimi-k2.7-code": 492,
+  "mimo-v2.5": 431,
+};
+
+// Folga acima do máximo medido. Entre provedores o mesmo modelo variou até 3
+// tokens PARA BAIXO do máximo (kimi 489–492) — coberto por usar o máximo —, e
+// a folga fica bem abaixo dos +12 da menor imagem.
+const VISION_TEXT_ONLY_TOLERANCE = 2;
+
+// true = a resposta veio de um request em que a imagem não chegou ao modelo.
+// Sem medição do modelo ou sem `usage` na resposta, não julga (false).
+export function visionImageDropped(canonical: string, promptTokens: number | undefined): boolean {
+  const textOnly = VISION_TEXT_ONLY_PROMPT_TOKENS[canonical];
+  if (textOnly === undefined || !promptTokens) return false;
+  return promptTokens <= textOnly + VISION_TEXT_ONLY_TOLERANCE;
+}
+
 // Fatos MEDIDOS de cada modelo de visão (comprovante de Pix sintético 1080x1920,
 // 2026-08-27) — servem à UI de Configurações → IA, para o admin escolher com
 // número na mão em vez de adivinhar. `accuracy` é campos corretos sobre 7.
