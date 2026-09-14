@@ -633,10 +633,15 @@ export const activateOneFlow = mutation({
 
 // Personalização do perfil. Trocar para AUTOPILOT tem gate de métricas: só após
 // >=10 sugestões revisadas com >=60% de aceitação (enforçado AQUI, no servidor).
+// Quem já conhece o produto pode PULAR o gate com `autopilotRiskAck: true`
+// (aceite explícito, gravado em `agentProfile.autopilotEarlyAck` + auditLog
+// severity high). O gate continua sendo o caminho padrão — o bypass é opt-in
+// consciente, nunca o default da UI.
 export const updateAgentProfile = mutation({
   args: {
     agentMemberId: v.id("teamMembers"),
     patch: agentProfilePatchValidator,
+    autopilotRiskAck: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -646,13 +651,17 @@ export const updateAgentProfile = mutation({
     }
     const member = await requirePermission(ctx, agent.organizationId, "settings", "manage");
 
+    let autopilotEarly = false;
     if (args.patch.mode === "autopilot" && agent.agentProfile.mode !== "autopilot") {
       const metrics = await computeAcceptanceMetrics(ctx, agent.organizationId, agent._id);
       const enough = metrics.reviewed >= 10 && metrics.acceptanceRate >= 0.6;
-      if (!enough) {
+      if (!enough && args.autopilotRiskAck === true) {
+        autopilotEarly = true;
+      } else if (!enough) {
         throw new Error(
           `Autopilot exige pelo menos 10 sugestões revisadas com 60% de aceitação ` +
-            `(hoje: ${metrics.reviewed} revisadas, ${Math.round(metrics.acceptanceRate * 100)}% aceitas)`
+            `(hoje: ${metrics.reviewed} revisadas, ${Math.round(metrics.acceptanceRate * 100)}% aceitas). ` +
+            `Para ativar antes disso, confirme o aceite de risco.`
         );
       }
     }
@@ -716,6 +725,7 @@ export const updateAgentProfile = mutation({
     const clean = Object.fromEntries(
       Object.entries(rest).filter(([, value]) => value !== undefined)
     );
+    const now = Date.now();
     const next = {
       ...agent.agentProfile,
       ...clean,
@@ -723,8 +733,8 @@ export const updateAgentProfile = mutation({
       ...(pipelineConfig !== undefined
         ? { pipelineConfig: pipelineConfig ?? undefined }
         : {}),
+      ...(autopilotEarly ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
     };
-    const now = Date.now();
     await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
 
     await ctx.db.insert("auditLogs", {
@@ -738,9 +748,10 @@ export const updateAgentProfile = mutation({
         before: { agentProfile: agent.agentProfile as unknown as Record<string, unknown> },
         after: { agentProfile: next as unknown as Record<string, unknown> },
       },
-      metadata: { name: agent.name, agentConfig: true },
-      description:
-        args.patch.mode === "autopilot"
+      metadata: { name: agent.name, agentConfig: true, ...(autopilotEarly ? { autopilotEarly: true } : {}) },
+      description: autopilotEarly
+        ? `Ativou o AUTOPILOT ANTECIPADO do atendente '${agent.name}' — pulou o gate de métricas com aceite de risco`
+        : args.patch.mode === "autopilot"
           ? `Ativou o AUTOPILOT do atendente '${agent.name}'`
           : `Atualizou o perfil do agente IA '${agent.name}'`,
       severity: args.patch.mode === "autopilot" ? "high" : "medium",

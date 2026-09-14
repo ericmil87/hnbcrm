@@ -933,6 +933,7 @@ type Attendant = {
     maxRepliesPerConversation?: number;
     maxRepliesPerHour?: number;
     messageDebounceSeconds?: number;
+    autopilotEarlyAck?: { acceptedAt: number; acceptedBy: string };
     pipelineConfig?: {
       boardId?: Id<"boards">;
       initialStageId?: Id<"stages">;
@@ -1149,6 +1150,10 @@ function AttendantConfig({
   const updateProfile = useMutation(api.aiSettings.updateAgentProfile);
   const [showCustomize, setShowCustomize] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
+  // Autopilot antecipado (pular o gate de métricas com aceite de risco).
+  const [showEarlyAutopilot, setShowEarlyAutopilot] = useState(false);
+  const [earlyRiskChecked, setEarlyRiskChecked] = useState(false);
+  const [earlyBusy, setEarlyBusy] = useState(false);
   const profile = attendant.agentProfile;
 
   const [knowledge, setKnowledge] = useState(profile.knowledge ?? "");
@@ -1237,6 +1242,23 @@ function AttendantConfig({
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Falha ao alterar o modo");
+    }
+  };
+
+  const handleEarlyAutopilot = async () => {
+    setEarlyBusy(true);
+    try {
+      await updateProfile({
+        agentMemberId: attendant._id,
+        patch: { mode: "autopilot" },
+        autopilotRiskAck: true,
+      });
+      toast.success("Autopilot ativado antecipadamente — respostas saem sem revisão");
+      setShowEarlyAutopilot(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Falha ao ativar o autopilot");
+    } finally {
+      setEarlyBusy(false);
     }
   };
 
@@ -1376,10 +1398,29 @@ function AttendantConfig({
           ) : metrics.autopilotUnlocked ? (
             <Button onClick={() => void handleModeToggle()}>Ativar autopilot</Button>
           ) : (
-            <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
-              <Lock size={13} />
-              Autopilot libera com 10+ sugestões revisadas e 60%+ de aceitação
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
+                <Lock size={13} />
+                Autopilot libera com 10+ sugestões revisadas e 60%+ de aceitação
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setEarlyRiskChecked(false);
+                  setShowEarlyAutopilot(true);
+                }}
+              >
+                Já conheço — ativar agora
+              </Button>
+            </div>
+          )}
+          {isAutopilot && profile.autopilotEarlyAck && (
+            <p className="w-full flex items-center gap-1.5 text-xs text-semantic-warning">
+              <AlertTriangle size={12} className="shrink-0" />
+              Autopilot ativado antecipadamente (sem o gate de métricas) em{" "}
+              {new Date(profile.autopilotEarlyAck.acceptedAt).toLocaleDateString("pt-BR")}.
+            </p>
           )}
           {(isAutopilot || metrics.autopilotUnlocked) && (
             <p className="w-full flex items-center gap-1.5 text-xs text-text-muted">
@@ -1397,6 +1438,61 @@ function AttendantConfig({
           )}
         </div>
       )}
+
+      <Modal
+        open={showEarlyAutopilot}
+        onClose={() => setShowEarlyAutopilot(false)}
+        title="Ativar o autopilot antes do gate"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-text-secondary">
+            O gate de métricas existe para você ver a IA responder em modo sugestão antes de
+            deixá-la falar sozinha com seus clientes. Se você já conhece o atendente e sabe o que
+            esperar, pode pular essa etapa.
+          </p>
+          <div className="flex items-start gap-2.5 p-3.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
+            <AlertTriangle size={18} className="shrink-0 text-semantic-warning mt-0.5" />
+            <ul className="text-sm text-text-primary space-y-1.5 list-disc pl-4">
+              <li>
+                Cada resposta da IA vai <strong>direto para o cliente</strong>, sem revisão
+                humana, a partir de agora.
+              </li>
+              <li>
+                Persona, conhecimento e regras do funil ainda não foram validados com conversas
+                reais desta conta — erros de tom ou de informação chegam ao cliente.
+              </li>
+              <li>
+                Os tetos de resposta, o horário de atendimento e as palavras de repasse continuam
+                valendo. Você pode voltar ao modo sugestão a qualquer momento.
+              </li>
+              <li>
+                Esta ativação fica registrada na auditoria com seu nome e a data.
+              </li>
+            </ul>
+          </div>
+          <Checkbox
+            checked={earlyRiskChecked}
+            onChange={(e) => setEarlyRiskChecked(e.target.checked)}
+            label="Entendo os riscos e quero ativar o autopilot agora"
+          />
+          <div className="flex gap-2 pt-2">
+            <Button
+              variant="secondary"
+              onClick={() => setShowEarlyAutopilot(false)}
+              className="flex-1"
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => void handleEarlyAutopilot()}
+              disabled={!earlyRiskChecked || earlyBusy}
+              className="flex-1"
+            >
+              Ativar autopilot
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {showCustomize && (
         <div className="mt-4 pt-4 border-t border-border space-y-5">

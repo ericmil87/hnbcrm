@@ -584,6 +584,57 @@ describe("métricas de aceitação (gate do autopilot)", () => {
   });
 });
 
+describe("autopilot antecipado (pular o gate com aceite de risco)", () => {
+  test("sem métricas e sem aceite: recusa com a mensagem do gate", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await expect(
+      asUser(t, seed.adminUserId).mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: { mode: "autopilot" },
+      })
+    ).rejects.toThrow(/10 sugestões revisadas/);
+    const agent = await t.run((ctx) => ctx.db.get(seed.agentId));
+    expect(agent?.agentProfile?.mode).toBe("suggest");
+    expect(agent?.agentProfile?.autopilotEarlyAck).toBeUndefined();
+  });
+
+  test("com autopilotRiskAck:true: ativa, grava autopilotEarlyAck e audita como high", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await asUser(t, seed.adminUserId).mutation(api.aiSettings.updateAgentProfile, {
+      agentMemberId: seed.agentId,
+      patch: { mode: "autopilot" },
+      autopilotRiskAck: true,
+    });
+    const agent = await t.run((ctx) => ctx.db.get(seed.agentId));
+    expect(agent?.agentProfile?.mode).toBe("autopilot");
+    expect(agent?.agentProfile?.autopilotEarlyAck?.acceptedBy).toBe(seed.adminId);
+
+    const logs = await t.run((ctx) =>
+      ctx.db
+        .query("auditLogs")
+        .withIndex("by_organization", (q) => q.eq("organizationId", seed.organizationId))
+        .collect()
+    );
+    const early = logs.find((l) => l.metadata?.autopilotEarly === true);
+    expect(early?.severity).toBe("high");
+    expect(early?.description).toMatch(/ANTECIPADO/);
+  });
+
+  test("aceite de risco exige settings:manage (agente comum não passa)", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await expect(
+      asUser(t, seed.sellerUserId).mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: { mode: "autopilot" },
+        autopilotRiskAck: true,
+      })
+    ).rejects.toThrow();
+  });
+});
+
 describe("returnToAi (devolver a conversa à IA)", () => {
   test("sem atendente disponível no canal: falha e PRESERVA o dono do lead", async () => {
     // Regressão do achado nº 2: com o atendente inativo, o patch antigo

@@ -220,6 +220,13 @@ const agentProfileValidator = v.object({
       captureFields: v.optional(v.array(v.string())),
     })
   ),
+  // Autopilot ANTECIPADO: quem ligou o autopilot sem passar pelo gate de
+  // métricas (10 sugestões revisadas / 60% de aceitação) aceitando o risco
+  // explicitamente. Fica no perfil (não só no auditLog) para a UI mostrar que o
+  // gate foi pulado e por quem. Voltar ao modo sugestão NÃO apaga (histórico).
+  autopilotEarlyAck: v.optional(
+    v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
+  ),
 });
 
 // ── Campanhas de WhatsApp (disparo em massa) ──
