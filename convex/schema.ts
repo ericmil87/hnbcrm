@@ -59,6 +59,12 @@ const permissionsValidator = v.object({
   settings: v.union(v.literal("none"), v.literal("view"), v.literal("manage")),
   auditLogs: v.union(v.literal("none"), v.literal("view")),
   apiKeys: v.union(v.literal("none"), v.literal("view"), v.literal("manage")),
+  // Campanhas (disparo em massa de WhatsApp). Opcional: membros com permissões
+  // explícitas gravadas antes da categoria existir continuam válidos —
+  // resolvePermissions completa com o default do role.
+  campaigns: v.optional(
+    v.union(v.literal("none"), v.literal("view"), v.literal("manage"), v.literal("full"))
+  ),
 });
 
 export { permissionsValidator };
@@ -216,6 +222,91 @@ const agentProfileValidator = v.object({
   ),
 });
 
+// ── Campanhas de WhatsApp (disparo em massa) ──
+// Tetos de envio de uma campanha. TODOS os números são estimativas de
+// engenharia calibráveis (ver docs/AI-WHATSAPP-LIMITS.md) — o teto DURO vive em
+// lib/campaignPacing.ts e nunca é ultrapassado, nem com override.
+const campaignPacingValidator = v.object({
+  minDelaySec: v.number(),
+  maxDelaySec: v.number(),
+  batchSize: v.number(), // envios entre pausas de lote (0 = sem lote)
+  batchPauseMin: v.number(),
+  maxPerHour: v.number(),
+  maxPerDay: v.number(),
+  maxNewContactsPerDay: v.optional(v.number()),
+  respectWarmup: v.optional(v.boolean()), // bridge: aplica a rampa por idade do número
+});
+
+const campaignScheduleValidator = v.object({
+  startAt: v.optional(v.number()), // ausente = ao lançar
+  timezone: v.string(),
+  windowStartHour: v.number(), // 0-23
+  windowEndHour: v.number(), // 1-24 (exclusivo)
+  days: v.array(v.number()), // 0=Dom … 6=Sáb
+});
+
+const campaignAckValidator = v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") });
+
+const campaignVariantValidator = v.object({
+  text: v.string(),
+  attachmentFileIds: v.optional(v.array(v.id("files"))),
+});
+
+const campaignTemplateParamValidator = v.object({
+  // "field" = campo do destinatário (vars/nome), "const" = texto fixo
+  source: v.union(v.literal("field"), v.literal("const")),
+  value: v.string(),
+});
+
+const campaignAudienceFiltersValidator = v.object({
+  boardId: v.optional(v.id("boards")),
+  stageIds: v.optional(v.array(v.id("stages"))),
+  tags: v.optional(v.array(v.string())),
+  assignedTo: v.optional(v.id("teamMembers")),
+  temperature: v.optional(v.union(v.literal("cold"), v.literal("warm"), v.literal("hot"))),
+  priority: v.optional(
+    v.union(v.literal("low"), v.literal("medium"), v.literal("high"), v.literal("urgent"))
+  ),
+  lastActivityBefore: v.optional(v.number()),
+  lastActivityAfter: v.optional(v.number()),
+  onlyOpenWindow: v.optional(v.boolean()), // só quem tem janela de 24h aberta (Meta)
+  excludeCampaignedWithinDays: v.optional(v.number()),
+  excludeRepliedToCampaigns: v.optional(v.boolean()),
+});
+
+const campaignStatusValidator = v.union(
+  v.literal("draft"),
+  v.literal("scheduled"),
+  v.literal("running"),
+  v.literal("paused"),
+  v.literal("completed"),
+  v.literal("canceled"),
+  v.literal("failed")
+);
+
+const campaignRecipientStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("queued"),
+  v.literal("sent"),
+  v.literal("delivered"),
+  v.literal("read"),
+  v.literal("replied"),
+  v.literal("failed"),
+  v.literal("skipped"),
+  v.literal("opted_out")
+);
+
+export {
+  campaignPacingValidator,
+  campaignScheduleValidator,
+  campaignAckValidator,
+  campaignVariantValidator,
+  campaignTemplateParamValidator,
+  campaignAudienceFiltersValidator,
+  campaignStatusValidator,
+  campaignRecipientStatusValidator,
+};
+
 const applicationTables = {
   // Organizations
   organizations: defineTable({
@@ -225,6 +316,12 @@ const applicationTables = {
       timezone: v.string(),
       currency: v.string(),
       aiConfig: v.optional(aiConfigValidator),
+      // Campanhas: palavras-chave inbound que colocam o remetente na lista de
+      // supressão (optOuts). Ausente = ["SAIR","PARAR","STOP","CANCELAR"].
+      optOutKeywords: v.optional(v.array(v.string())),
+      // Campanhas: tetos default da org (sobrepõem a tabela segura de
+      // lib/campaignPacing, nunca o teto duro). Ausente = tabela.
+      campaignDefaults: v.optional(campaignPacingValidator),
     }),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
@@ -325,6 +422,7 @@ const applicationTables = {
       v.literal("phone"),
       v.literal("referral"),
       v.literal("api"),
+      v.literal("campaign"),
       v.literal("other")
     ),
     isActive: v.boolean(),
@@ -544,6 +642,9 @@ const applicationTables = {
     // fica aqui porque o Convex valida os documentos existentes no push; nada
     // lê nem escreve nele.
     autoDescribeImages: v.optional(v.boolean()),
+    // Quando a sessão bridge ficou "connected" pela primeira vez — idade do
+    // número para o warm-up de campanhas (ausente = usa createdAt).
+    bridgeConnectedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -949,7 +1050,9 @@ const applicationTables = {
       v.literal("task_overdue"),
       v.literal("handoff_requested"),
       v.literal("handoff_resolved"),
-      v.literal("ai_draft_pending")
+      v.literal("ai_draft_pending"),
+      v.literal("campaign_completed"),
+      v.literal("campaign_paused")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -958,6 +1061,7 @@ const applicationTables = {
     taskId: v.optional(v.id("tasks")),
     handoffId: v.optional(v.id("handoffs")),
     conversationId: v.optional(v.id("conversations")),
+    campaignId: v.optional(v.id("campaigns")),
     actorId: v.optional(v.id("teamMembers")),
     readAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -1060,6 +1164,9 @@ const applicationTables = {
     taskDueSoon: v.optional(v.boolean()),
     // P2 — rascunho da IA aguardando revisão (sino)
     aiDraftPending: v.optional(v.boolean()),
+    // Campanhas — concluída / pausada por kill switch
+    campaignCompleted: v.optional(v.boolean()),
+    campaignPaused: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1435,6 +1542,177 @@ const applicationTables = {
   // próprio (não um campo em channelConfigs) de propósito: um cursor quente no
   // doc do config re-executaria as queries da UI de Canais a cada envio e
   // ampliaria o conflito OCC de todo sendMessage.
+  // ── Campanhas de WhatsApp (disparo em massa) — docs/CAMPANHAS-WHATSAPP-PLAN.md ──
+  campaigns: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    description: v.optional(v.string()),
+    status: campaignStatusValidator,
+    channelConfigId: v.id("channelConfigs"),
+    provider: v.union(v.literal("meta"), v.literal("bridge")), // denormalizado do canal
+    content: v.object({
+      kind: v.union(v.literal("text"), v.literal("template")),
+      // texto/mídia (bridge, ou Meta dentro da janela de 24h). Várias variantes
+      // = rotação anti-repetição; spintax {a|b} e {{vars}} dentro do texto.
+      variants: v.array(campaignVariantValidator),
+      contentType: v.optional(
+        v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))
+      ),
+      template: v.optional(
+        v.object({
+          name: v.string(),
+          language: v.string(),
+          category: v.optional(v.string()),
+          headerFileId: v.optional(v.id("files")),
+          headerFormat: v.optional(v.string()), // IMAGE | VIDEO | DOCUMENT | TEXT
+          bodyParams: v.optional(v.array(campaignTemplateParamValidator)),
+          headerParams: v.optional(v.array(campaignTemplateParamValidator)),
+          buttonParams: v.optional(v.array(campaignTemplateParamValidator)),
+          bodyText: v.optional(v.string()), // cópia do body p/ preview e histórico
+        })
+      ),
+    }),
+    audience: v.object({
+      source: v.union(v.literal("segment"), v.literal("import"), v.literal("manual")),
+      filters: v.optional(campaignAudienceFiltersValidator),
+      importFileId: v.optional(v.id("files")),
+      // Onde criar o lead de um número NOVO (ausente = board default, 1º estágio)
+      targetBoardId: v.optional(v.id("boards")),
+      targetStageId: v.optional(v.id("stages")),
+      targetTags: v.optional(v.array(v.string())),
+      snapshotAt: v.optional(v.number()),
+      total: v.optional(v.number()),
+    }),
+    schedule: campaignScheduleValidator,
+    pacing: campaignPacingValidator,
+    safeMode: v.boolean(), // false = override até o teto duro (exige "ENTENDO")
+    overrideAck: v.optional(campaignAckValidator),
+    safety: v.object({
+      consentAck: v.optional(campaignAckValidator), // base legal para contatar a lista
+      bridgeRiskAck: v.optional(campaignAckValidator), // API não-oficial pode banir
+      checkNumbersFirst: v.boolean(), // bridge: /user/check antes de enviar
+      allowLinks: v.optional(v.boolean()), // bridge: permite link no 1º contato (default false)
+      stopOnReplyRateBelow: v.optional(v.number()), // 0-1; ausente = desligado
+      stopOnDeliveryRateBelow: v.optional(v.number()),
+      minSampleForKillSwitch: v.optional(v.number()),
+      maxConsecutiveFailures: v.optional(v.number()),
+    }),
+    stats: v.object({
+      total: v.number(),
+      pending: v.number(),
+      queued: v.number(),
+      sent: v.number(),
+      delivered: v.number(),
+      read: v.number(),
+      replied: v.number(),
+      failed: v.number(),
+      skipped: v.number(),
+      optedOut: v.number(),
+      consecutiveFailures: v.number(),
+      estimatedCostUsd: v.optional(v.number()),
+    }),
+    // Timeline de eventos da campanha (lançada, pausada, retomada…). Cap 100.
+    timeline: v.optional(
+      v.array(
+        v.object({
+          at: v.number(),
+          kind: v.string(),
+          detail: v.optional(v.string()),
+          actorId: v.optional(v.id("teamMembers")),
+        })
+      )
+    ),
+    pausedReason: v.optional(v.string()),
+    pausedBy: v.optional(v.id("teamMembers")),
+    lastError: v.optional(v.string()),
+    tierAtLaunch: v.optional(v.string()),
+    templateQualityAtLaunch: v.optional(v.string()),
+    // Estado do worker
+    schedulerFnId: v.optional(v.string()),
+    nextTickAt: v.optional(v.number()),
+    tickToken: v.optional(v.string()), // idempotência: tick com token diferente sai
+    batchSentSinceLastPause: v.optional(v.number()),
+    snapshotOffset: v.optional(v.number()), // snapshot em lotes (segmento)
+    createdBy: v.id("teamMembers"),
+    startedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_channel_config", ["channelConfigId"]),
+
+  // Destinatários materializados no lançamento (snapshot). Um por telefone.
+  campaignRecipients: defineTable({
+    organizationId: v.id("organizations"),
+    campaignId: v.id("campaigns"),
+    phone: v.string(), // E.164 sem "+" (lib/phone.ts)
+    displayName: v.optional(v.string()),
+    vars: v.optional(v.record(v.string(), v.string())), // {{placeholders}}
+    contactId: v.optional(v.id("contacts")),
+    leadId: v.optional(v.id("leads")),
+    conversationId: v.optional(v.id("conversations")),
+    messageId: v.optional(v.id("messages")),
+    status: campaignRecipientStatusValidator,
+    variantIndex: v.optional(v.number()),
+    attempts: v.number(),
+    scheduledFor: v.optional(v.number()), // retry 131049 (+24h)
+    errorCode: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+    skipReason: v.optional(v.string()),
+    isNewContact: v.optional(v.boolean()), // número sem conversa prévia no envio
+    sentAt: v.optional(v.number()),
+    deliveredAt: v.optional(v.number()),
+    readAt: v.optional(v.number()),
+    repliedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"]) // backup JSON pagina por aqui
+    .index("by_campaign", ["campaignId"])
+    .index("by_campaign_and_status", ["campaignId", "status"])
+    .index("by_campaign_and_phone", ["campaignId", "phone"])
+    .index("by_message", ["messageId"])
+    .index("by_conversation", ["conversationId"])
+    .index("by_lead", ["leadId"])
+    .index("by_organization_and_phone", ["organizationId", "phone"]),
+
+  // Lista de supressão org-wide: NENHUMA campanha envia para quem está aqui.
+  optOuts: defineTable({
+    organizationId: v.id("organizations"),
+    phone: v.string(),
+    source: v.union(
+      v.literal("keyword"),
+      v.literal("meta_131050"),
+      v.literal("manual"),
+      v.literal("import")
+    ),
+    campaignId: v.optional(v.id("campaigns")),
+    contactId: v.optional(v.id("contacts")),
+    reason: v.optional(v.string()),
+    createdBy: v.optional(v.id("teamMembers")),
+    createdAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_phone", ["organizationId", "phone"]),
+
+  // Cache dos templates da Meta por canal (sync sob demanda).
+  whatsappTemplates: defineTable({
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    metaId: v.string(),
+    name: v.string(),
+    language: v.string(),
+    category: v.string(), // MARKETING | UTILITY | AUTHENTICATION
+    status: v.string(), // APPROVED | PENDING | REJECTED | PAUSED | DISABLED
+    qualityScore: v.optional(v.string()), // GREEN | YELLOW | RED | UNKNOWN
+    components: v.any(),
+    syncedAt: v.number(),
+  })
+    .index("by_channel_config", ["channelConfigId"])
+    .index("by_channel_config_and_name", ["channelConfigId", "name"])
+    .index("by_organization", ["organizationId"]),
+
   channelPacing: defineTable({
     organizationId: v.id("organizations"),
     channelConfigId: v.id("channelConfigs"),
@@ -1442,6 +1720,14 @@ const applicationTables = {
     // Métrica-only (SEM enforcement): envios do dia UTC, p/ calibrar um futuro
     // warm-up/cap de canal bridge com dados reais.
     dailyCount: v.optional(v.object({ day: v.string(), sent: v.number() })),
+    // Campanhas (COM enforcement, ao contrário de dailyCount): contadores de
+    // envios de campanha por dia UTC / por hora, e novos contatos (número sem
+    // conversa prévia) por dia — base dos tetos de lib/campaignPacing.
+    campaignDaily: v.optional(v.object({ day: v.string(), sent: v.number(), newContacts: v.number() })),
+    campaignHourly: v.optional(v.object({ hour: v.string(), sent: v.number() })),
+    // Congelamento do canal para CAMPANHAS (131048 / sessão bridge caída):
+    // campanhas não disparam antes disto; o atendimento reativo segue.
+    campaignFrozenUntil: v.optional(v.number()),
   }).index("by_channel_config", ["channelConfigId"]),
 
   // Segredos por-org (BYO API key de LLM), cifrados via lib/secretCrypto.

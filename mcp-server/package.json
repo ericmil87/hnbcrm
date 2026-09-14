@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm-mcp",
   "version": "0.1.0",
-  "description": "MCP server for HNBCRM — 44 tools to manage leads, contacts, pipeline, tasks, and calendar via AI agents",
+  "description": "MCP server for HNBCRM — 58 tools to manage leads, contacts, pipeline, tasks, calendar and WhatsApp campaigns via AI agents",
   "type": "module",
   "bin": {
     "hnbcrm-mcp": "./dist/index.js"

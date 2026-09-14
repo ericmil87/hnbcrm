@@ -6,6 +6,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { SlideOver } from "@/components/ui/SlideOver";
+import { LeadCampaignsSection } from "@/components/campaigns/LeadCampaignsSection";
 import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
@@ -65,7 +66,7 @@ interface LeadDetailPanelProps {
   initialTab?: Tab;
 }
 
-type Tab = "conversation" | "details" | "tasks" | "activity";
+type Tab = "conversation" | "details" | "tasks" | "campaigns" | "activity";
 
 export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }: LeadDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab ?? "conversation");
@@ -74,6 +75,7 @@ export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }:
     conversation: "Conversa",
     details: "Detalhes",
     tasks: "Tarefas",
+    campaigns: "Campanhas",
     activity: "Atividade",
   };
 
@@ -89,12 +91,12 @@ export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }:
     >
       {/* Tab Bar */}
       <div className="flex shrink-0 border-b border-border bg-surface-raised">
-        {(["conversation", "details", "tasks", "activity"] as Tab[]).map((tab) => (
+        {(["conversation", "details", "tasks", "campaigns", "activity"] as Tab[]).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={cn(
-              "flex-1 px-4 py-3 text-sm font-medium text-center transition-colors",
+              "flex-1 px-2 md:px-3 py-3 text-xs md:text-sm font-medium text-center transition-colors whitespace-nowrap",
               activeTab === tab
                 ? "text-brand-500 border-b-2 border-brand-500"
                 : "text-text-secondary hover:text-text-primary"
@@ -121,6 +123,11 @@ export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }:
         {activeTab === "tasks" && (
           <div className="h-full overflow-y-auto">
             <TasksTab leadId={leadId} organizationId={organizationId} />
+          </div>
+        )}
+        {activeTab === "campaigns" && (
+          <div className="h-full overflow-y-auto">
+            <LeadCampaignsSection leadId={leadId} />
           </div>
         )}
         {activeTab === "activity" && (

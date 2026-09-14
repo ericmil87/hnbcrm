@@ -14,6 +14,8 @@ const NOTIFICATION_EVENTS = [
   { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um agente IA solicita repasse para você" },
   { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
   { key: "aiDraftPending", label: "Rascunho da IA aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
+  { key: "campaignCompleted", label: "Campanha concluída", desc: "Quando uma campanha de WhatsApp termina de enviar" },
+  { key: "campaignPaused", label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha automaticamente" },
   { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuída a você está atrasada" },
   { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa é atribuída a você" },
   { key: "taskCommentMention", label: "Menção em comentário de tarefa", desc: "Quando alguém te menciona em um comentário de tarefa" },

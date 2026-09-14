@@ -88,7 +88,10 @@ export function TermsPage() {
                 <li>Violar leis aplicáveis, incluindo a legislação de proteção de dados e anti-spam;</li>
                 <li>
                   Enviar comunicações não solicitadas em massa, mensagens fraudulentas ou conteúdo ilícito
-                  a titulares que não consentiram com o contato;
+                  a titulares que não consentiram com o contato. O recurso de Campanhas exige, a cada
+                  disparo, a declaração de que a organização possui base legal para contatar a lista;
+                  a plataforma aplica automaticamente a lista de supressão (pedidos de não contato) e
+                  limites de envio, mas a responsabilidade pelo consentimento é da organização;
                 </li>
                 <li>Tentar comprometer a segurança, a integridade ou a disponibilidade da plataforma;</li>
                 <li>Acessar dados de outras organizações ou contornar o isolamento multi-tenant;</li>

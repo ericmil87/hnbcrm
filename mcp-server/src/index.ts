@@ -12,6 +12,7 @@ import { registerActivityTools } from "./tools/activities.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerCalendarTools } from "./tools/calendar.js";
 import { registerNotificationTools } from "./tools/notifications.js";
+import { registerCampaignTools } from "./tools/campaigns.js";
 import { registerResources } from "./resources.js";
 
 function createServer(apiUrl: string, apiKey: string) {
@@ -31,6 +32,7 @@ function createServer(apiUrl: string, apiKey: string) {
   registerTaskTools(server, client);
   registerCalendarTools(server, client);
   registerNotificationTools(server, client);
+  registerCampaignTools(server, client);
   registerResources(server, client);
 
   return server;

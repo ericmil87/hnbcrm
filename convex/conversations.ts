@@ -7,6 +7,7 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { applyCampaignDeliveryUpdate, applyCampaignInboundHooks } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
@@ -195,9 +196,15 @@ async function resolveWhatsappTarget(
 
 // Get-or-create a conversation for a lead/channel pair (shared by
 // createConversation, internalCreateConversation and internalReceiveMessage)
-async function getOrCreateConversation(
+export async function getOrCreateConversation(
   ctx: MutationCtx,
-  args: { organizationId: Id<"organizations">; leadId: Id<"leads">; channel: ConversationChannel }
+  args: {
+    organizationId: Id<"organizations">;
+    leadId: Id<"leads">;
+    channel: ConversationChannel;
+    // Campanhas: carimba o número conectado ao criar (o ingest faz isso depois).
+    channelConfigId?: Id<"channelConfigs">;
+  }
 ): Promise<Id<"conversations">> {
   const existing = await ctx.db
     .query("conversations")
@@ -216,6 +223,7 @@ async function getOrCreateConversation(
     organizationId: args.organizationId,
     leadId: args.leadId,
     channel: args.channel,
+    ...(args.channelConfigId ? { channelConfigId: args.channelConfigId } : {}),
     status: "active",
     messageCount: 0,
     createdAt: now,
@@ -1414,6 +1422,14 @@ export const internalReceiveMessage = internalMutation({
       },
     });
 
+    // Campanhas: resposta a campanha (→ replied) e palavra-chave de opt-out
+    // (→ lista de supressão). No-op para conversas sem campanha.
+    await applyCampaignInboundHooks(ctx, {
+      conversation: (await ctx.db.get(conversationId))!,
+      text: args.content,
+      now,
+    });
+
     // Voice notes: transcription is a no-op unless the channel config opts in
     if ((args.contentType === "audio") && args.attachments && args.attachments.length > 0) {
       await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
@@ -1595,6 +1611,7 @@ export const internalUpdateDeliveryStatus = internalMutation({
       v.literal("failed")
     ),
     errorDetail: v.optional(v.string()),
+    errorCode: v.optional(v.number()),
   },
   returns: v.union(v.id("messages"), v.null()),
   handler: async (ctx, args) => {
@@ -1613,8 +1630,22 @@ export const internalUpdateDeliveryStatus = internalMutation({
     await ctx.db.patch(message._id, {
       deliveryStatus: args.status,
       ...(args.errorDetail
-        ? { metadata: { ...(message.metadata ?? {}), deliveryError: args.errorDetail } }
+        ? {
+            metadata: {
+              ...(message.metadata ?? {}),
+              deliveryError: args.errorDetail,
+              ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
+            },
+          }
         : {}),
+    });
+
+    // Campanhas: delivered/read/failed do webhook (no-op fora de campanha)
+    await applyCampaignDeliveryUpdate(ctx, {
+      messageId: message._id,
+      status: args.status,
+      errorCode: args.errorCode,
+      errorDetail: args.errorDetail,
     });
 
     return message._id;

@@ -504,7 +504,7 @@ npm run dev`}</CodeBlock>
               Tools MCP — Referência
             </h2>
             <p className="text-text-secondary">
-              O servidor MCP expõe 46 ferramentas organizadas por categoria. Cada
+              O servidor MCP expõe 58 ferramentas organizadas por categoria. Cada
               ferramenta corresponde a uma ação no CRM.
             </p>
 
@@ -616,6 +616,41 @@ npm run dev`}</CodeBlock>
                     <ToolRow name="crm_list_handoffs" description="Lista handoffs por status" params="status?" />
                     <ToolRow name="crm_accept_handoff" description="Aceita um handoff pendente" params="handoffId, notes?" />
                     <ToolRow name="crm_reject_handoff" description="Rejeita um handoff pendente" params="handoffId, notes?" />
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Campanhas */}
+            <Card className="p-0 overflow-hidden">
+              <div className="px-4 py-3 bg-surface-overlay border-b border-border">
+                <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                  Campanhas de WhatsApp
+                  <Badge variant="brand">12 tools</Badge>
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-surface-sunken/50">
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <ToolRow name="crm_list_campaigns" description="Lista campanhas com status e contadores" params="status?" />
+                    <ToolRow name="crm_get_campaign" description="Detalhes de uma campanha" params="campaignId" />
+                    <ToolRow name="crm_campaign_report" description="Taxas de entrega/leitura/resposta, falhas, custo" params="campaignId" />
+                    <ToolRow name="crm_create_campaign" description="Cria um rascunho (texto ou template Meta + público)" params="name, channelConfigId, content" />
+                    <ToolRow name="crm_add_campaign_recipients" description="Números manuais ou CSV com mapeamento" params="campaignId, entries? | csv?" />
+                    <ToolRow name="crm_launch_campaign" description="Lança com os aceites humanos obrigatórios" params="campaignId, consentAck" />
+                    <ToolRow name="crm_pause_campaign" description="Pausa os envios" params="campaignId" />
+                    <ToolRow name="crm_resume_campaign" description="Retoma uma campanha pausada" params="campaignId" />
+                    <ToolRow name="crm_cancel_campaign" description="Cancela (pendentes são pulados)" params="campaignId" />
+                    <ToolRow name="crm_list_opt_outs" description="Lista de supressão (não contatar)" params="search?" />
+                    <ToolRow name="crm_add_opt_out" description="Marca um telefone como não contatar" params="phone | contactId" />
+                    <ToolRow name="crm_list_whatsapp_templates" description="Templates Meta em cache do canal" params="channelConfigId" />
                   </tbody>
                 </table>
               </div>
@@ -1009,7 +1044,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
             <p className="text-sm text-text-secondary">
               Todos os endpoints requerem o header{" "}
               <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">X-API-Key</code>.
-              Respostas em JSON. {ALL_ENDPOINTS.length} endpoints documentados no playground (64 no total — referência completa em /llms-full.txt).
+              Respostas em JSON. {ALL_ENDPOINTS.length} endpoints documentados no playground (85 no total — referência completa em /llms-full.txt).
             </p>
 
             {API_CATEGORIES.map((category) => {
@@ -1114,6 +1149,14 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "import.completed",
                   "import.failed",
                   "import.rolled_back",
+                  "campaign.created",
+                  "campaign.started",
+                  "campaign.paused",
+                  "campaign.resumed",
+                  "campaign.completed",
+                  "campaign.canceled",
+                  "campaign.recipient_replied",
+                  "contact.opted_out",
                 ].map((event) => (
                   <code
                     key={event}

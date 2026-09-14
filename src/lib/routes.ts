@@ -11,6 +11,7 @@ export const TAB_ROUTES: Record<Tab, string> = {
   team: "/app/equipe",
   audit: "/app/auditoria",
   forms: "/app/formularios",
+  campaigns: "/app/campanhas",
   settings: "/app/configuracoes",
 };
 

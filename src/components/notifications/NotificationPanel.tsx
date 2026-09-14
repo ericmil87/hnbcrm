@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -21,6 +21,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   handoff_requested: ArrowLeftRight,
   handoff_resolved: CheckCheck,
   ai_draft_pending: Sparkles,
+  campaign_completed: Megaphone,
+  campaign_paused: PauseCircle,
 };
 
 const PAGE_SIZE = 15;
@@ -94,6 +96,10 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     // Rascunho da IA esperando revisão → abre a conversa direto no inbox.
     if (n.type === "ai_draft_pending" && n.conversationId) {
       navigate(`${TAB_ROUTES.inbox}?conversation=${n.conversationId}`);
+      return;
+    }
+    if ((n.type === "campaign_completed" || n.type === "campaign_paused") && n.campaignId) {
+      navigate(`${TAB_ROUTES.campaigns}?campanha=${n.campaignId}`);
       return;
     }
     if (n.taskId) {

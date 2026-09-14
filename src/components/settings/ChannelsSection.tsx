@@ -28,6 +28,7 @@ import {
   QrCode,
   Cloud,
   Radio,
+  LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
@@ -389,6 +390,26 @@ function ChannelCard({
   // Subtitle: prefer a human phone number; fall back to the provider's routing id.
   const subtitle = config.displayPhoneNumber ?? (isBridge ? config.bridgeInstanceId : config.phoneNumberId);
 
+  // Templates da Meta (campanhas): sync sob demanda, cache em whatsappTemplates.
+  const syncTemplates = useAction(api.whatsappTemplates.syncMetaTemplates);
+  const [syncingTemplates, setSyncingTemplates] = useState(false);
+  const templates = useQuery(
+    api.whatsappTemplates.listTemplates,
+    !isBridge ? { channelConfigId: config._id } : "skip"
+  ) as { status: string }[] | undefined;
+  const approvedCount = templates?.filter((t) => t.status === "APPROVED").length ?? 0;
+  const handleSyncTemplates = async () => {
+    setSyncingTemplates(true);
+    try {
+      const r = await syncTemplates({ channelConfigId: config._id });
+      toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Falha ao sincronizar templates");
+    } finally {
+      setSyncingTemplates(false);
+    }
+  };
+
   // For bridge, show the fine-grained pairing badge (unless deliberately disabled).
   const showBridgeStateBadge = isBridge && config.status !== "disabled" && config.bridgeSessionState;
   const stateBadge = showBridgeStateBadge ? bridgeStateBadge(config.bridgeSessionState!) : null;
@@ -449,6 +470,18 @@ function ChannelCard({
               {testing ? <Spinner size="sm" /> : <RefreshCw size={14} />}
               Testar conexão
             </Button>
+            {!isBridge && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleSyncTemplates()}
+                disabled={syncingTemplates}
+                title="Sincroniza os templates de mensagem aprovados na Meta (usados nas campanhas)"
+              >
+                {syncingTemplates ? <Spinner size="sm" /> : <LayoutTemplate size={14} />}
+                Templates{templates !== undefined ? ` (${approvedCount})` : ""}
+              </Button>
+            )}
             <button
               onClick={onEdit}
               className="text-sm text-brand-500 hover:text-brand-400 px-2 py-1.5"

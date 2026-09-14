@@ -853,3 +853,17 @@ CSV with only the failed rows — original columns plus an `erro` column — rea
 ### Webhook events
 
 `export.completed`, `export.failed`, `import.completed`, `import.failed`, `import.rolled_back` — see WORKFLOWS.md for the full polling flow.
+
+## Campaigns (WhatsApp bulk messaging)
+
+Tools: `crm_list_campaigns`, `crm_get_campaign`, `crm_campaign_report`, `crm_create_campaign`, `crm_add_campaign_recipients`, `crm_launch_campaign`, `crm_pause_campaign`, `crm_resume_campaign`, `crm_cancel_campaign`, `crm_list_opt_outs`, `crm_add_opt_out`, `crm_list_whatsapp_templates` → REST `/api/v1/campaigns/*`, `/api/v1/opt-outs`, `/api/v1/whatsapp/templates`.
+
+Permissions (category `campaigns`, defaults: admin `full`, manager `manage`, agent/ai `view`):
+
+| Route | Required permission | `ai`/`agent` default is enough? |
+|-------|---------------------|-------------------------------|
+| `GET /api/v1/campaigns`, `/campaigns/get`, `/campaigns/report`, `/campaigns/recipients`, `/campaigns/safe-defaults`, `GET /api/v1/opt-outs`, `GET /api/v1/whatsapp/templates`, `GET /api/v1/whatsapp/tier` | `campaigns: view` | sim |
+| `POST /api/v1/campaigns/create`, `/update`, `/recipients`, `/preview-audience`, `/pause`, `/resume`, `/retry-failed`, `POST /api/v1/opt-outs`, `POST /api/v1/whatsapp/templates/sync` | `campaigns: manage` | **não** |
+| `POST /api/v1/campaigns/launch`, `/cancel`, `/delete`, `DELETE /api/v1/opt-outs` | `campaigns: full` | **não** |
+
+Rules for agents: a campaign is a draft until a human launches it. `crm_launch_campaign` requires `consentAck: true` (and `bridgeRiskAck: true` on bridge channels) — these represent the HUMAN operator's explicit acknowledgement; ask and quote their confirmation before setting them. Prefer 2+ text variants and `{{nome}}` placeholders; never raise limits above the safe defaults returned by `/campaigns/safe-defaults`. Numbers in the suppression list (`crm_list_opt_outs`) never receive campaigns; when a customer asks not to be contacted, call `crm_add_opt_out`.

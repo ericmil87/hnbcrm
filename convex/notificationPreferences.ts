@@ -15,6 +15,8 @@ const DEFAULTS = {
   taskCommentMention: true,
   taskDueSoon: true,
   aiDraftPending: true,
+  campaignCompleted: true,
+  campaignPaused: true,
 };
 
 // Get current member's notification preferences
@@ -47,6 +49,8 @@ export const getMyPreferences = query({
       taskCommentMention: prefs.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: prefs.taskDueSoon ?? DEFAULTS.taskDueSoon,
       aiDraftPending: prefs.aiDraftPending ?? DEFAULTS.aiDraftPending,
+      campaignCompleted: prefs.campaignCompleted ?? DEFAULTS.campaignCompleted,
+      campaignPaused: prefs.campaignPaused ?? DEFAULTS.campaignPaused,
       _id: prefs._id,
       _exists: true,
     };
@@ -68,6 +72,8 @@ export const updateMyPreferences = mutation({
     taskCommentMention: v.optional(v.boolean()),
     taskDueSoon: v.optional(v.boolean()),
     aiDraftPending: v.optional(v.boolean()),
+    campaignCompleted: v.optional(v.boolean()),
+    campaignPaused: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -94,6 +100,9 @@ export const updateMyPreferences = mutation({
         args.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: args.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
       aiDraftPending: args.aiDraftPending ?? existing?.aiDraftPending ?? DEFAULTS.aiDraftPending,
+      campaignCompleted:
+        args.campaignCompleted ?? existing?.campaignCompleted ?? DEFAULTS.campaignCompleted,
+      campaignPaused: args.campaignPaused ?? existing?.campaignPaused ?? DEFAULTS.campaignPaused,
     };
 
     if (existing) {

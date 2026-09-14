@@ -43,6 +43,7 @@ import {
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
+import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
@@ -139,6 +140,7 @@ export const webhookReceive = httpAction(async (ctx, request) => {
       externalId: status.externalId,
       status: status.status,
       errorDetail: status.errorDetail,
+      errorCode: status.errorCode,
     });
   }
 
@@ -792,6 +794,8 @@ export const internalMarkDispatched = internalMutation({
         deliveryStatus: "sent",
       });
     }
+    // Campanhas: destinatário → sent (no-op fora de campanha)
+    await applyCampaignDeliveryUpdate(ctx, { messageId: args.messageId, status: "sent" });
     return null;
   },
 });
@@ -825,6 +829,13 @@ export const internalMarkDispatchFailed = internalMutation({
       content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
       metadata: { conversationId: message.conversationId, messageId: args.messageId },
       createdAt: Date.now(),
+    });
+    // Campanhas: mapa de erros (131049 retry 24h, 131050 opt-out, 131048/132015 pausa…)
+    await applyCampaignDeliveryUpdate(ctx, {
+      messageId: args.messageId,
+      status: "failed",
+      errorCode: args.errorCode,
+      errorDetail: args.detail,
     });
     return null;
   },

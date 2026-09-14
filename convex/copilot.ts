@@ -32,6 +32,17 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { batchGet } from "./lib/batchGet";
 import { hardDeleteLead, scheduleLeadCascade } from "./lib/leadCascade";
+import {
+  listCampaignsHandler,
+  getCampaignReportHandler,
+  previewAudienceHandler,
+  createCampaignHandler,
+  addManualRecipientsHandler,
+  pauseCampaignHandler,
+  resumeCampaignHandler,
+  cancelCampaignHandler,
+} from "./campaigns";
+import { configProvider } from "./channelConfigs";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -286,6 +297,9 @@ export const internalRunCopilotReadTool = internalQuery({
     argsJson: v.string(),
     organizationId: v.id("organizations"),
     memberId: v.id("teamMembers"), // o teamMember HUMANO dono da sessão
+    // "agora" vem da action (sem Date.now() em query) — usado por tools que
+    // dependem de janela temporal (público de campanha).
+    now: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -312,7 +326,10 @@ export const internalRunCopilotReadTool = internalQuery({
       return { error: "Argumentos inválidos (JSON malformado)" };
     }
 
-    const raw = await runReadTool(ctx, args.name, parsed, args.organizationId);
+    const raw = await runReadTool(ctx, args.name, parsed, args.organizationId, {
+      memberId: member._id,
+      now: args.now ?? member.updatedAt,
+    });
     if ("error" in raw) return raw;
     return projectToolResult(spec, raw);
   },
@@ -324,9 +341,16 @@ async function runReadTool(
   ctx: ReadCtx,
   name: string,
   toolArgs: Record<string, unknown>,
-  organizationId: Id<"organizations">
+  organizationId: Id<"organizations">,
+  scope: { memberId: Id<"teamMembers">; now: number }
 ): Promise<Record<string, unknown>> {
   switch (name) {
+    case "listCampaigns":
+      return await listCampaignsTool(ctx, organizationId, toolArgs, scope.memberId);
+    case "getCampaignReport":
+      return await getCampaignReportTool(ctx, organizationId, toolArgs, scope.memberId);
+    case "previewCampaignAudience":
+      return await previewCampaignAudienceTool(ctx, organizationId, toolArgs, scope);
     case "getPipelineOverview":
       return await getPipelineOverview(ctx, organizationId, toolArgs);
     case "listLeads":
@@ -675,6 +699,169 @@ async function listTasksTool(
 
 const PENDING_ACTION_TTL_MS = 15 * 60 * 1000;
 
+// ── Campanhas (copiloto lê; rascunha; pausa; cancelar = pendingAction; lançar = humano) ──
+
+const CAMPAIGN_URL = (id: string) => `/app/campanhas?campanha=${id}`;
+
+function campaignSummary(c: Record<string, any>) {
+  return {
+    campaignId: c._id,
+    name: c.name,
+    status: c.status,
+    provider: c.provider,
+    contentKind: c.contentKind ?? c.content?.kind,
+    channel: c.channel?.displayName ?? null,
+    stats: {
+      total: c.stats.total,
+      pending: c.stats.pending,
+      sent: c.stats.sent + c.stats.delivered + c.stats.read + c.stats.replied,
+      delivered: c.stats.delivered + c.stats.read + c.stats.replied,
+      read: c.stats.read + c.stats.replied,
+      replied: c.stats.replied,
+      failed: c.stats.failed,
+      skipped: c.stats.skipped,
+      optedOut: c.stats.optedOut,
+    },
+    pausedReason: c.pausedReason ?? null,
+    startedAt: c.startedAt ?? null,
+    completedAt: c.completedAt ?? null,
+    url: CAMPAIGN_URL(c._id),
+  };
+}
+
+async function listCampaignsTool(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  toolArgs: Record<string, unknown>,
+  memberId: Id<"teamMembers">
+): Promise<Record<string, unknown>> {
+  const status = typeof toolArgs.status === "string" ? (toolArgs.status as any) : undefined;
+  const rows = (await listCampaignsHandler(ctx, {
+    organizationId,
+    ...(status ? { status } : {}),
+    actorMemberId: memberId,
+  })) as Record<string, any>[];
+  return { campaigns: rows.slice(0, 50).map(campaignSummary) };
+}
+
+async function getCampaignReportTool(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  toolArgs: Record<string, unknown>,
+  memberId: Id<"teamMembers">
+): Promise<Record<string, unknown>> {
+  if (typeof toolArgs.campaignId !== "string") return { error: "campaignId é obrigatório" };
+  const campaign = await ctx.db.get(toolArgs.campaignId as Id<"campaigns">).catch(() => null);
+  if (!campaign || campaign.organizationId !== organizationId) return { error: "Campanha não encontrada" };
+  const report = (await getCampaignReportHandler(ctx, {
+    campaignId: campaign._id,
+    actorMemberId: memberId,
+  })) as Record<string, any>;
+  return {
+    report: {
+      campaignId: report.campaignId,
+      name: report.name,
+      status: report.status,
+      provider: report.provider,
+      stats: report.stats,
+      rates: report.rates,
+      progress: report.progress,
+      errorBreakdown: report.errorBreakdown,
+      skipBreakdown: report.skipBreakdown,
+      estimatedCostUsd: report.estimatedCostUsd,
+      tierAtLaunch: report.tierAtLaunch,
+      pausedReason: report.pausedReason,
+      startedAt: report.startedAt,
+      completedAt: report.completedAt,
+      timeline: (report.timeline ?? []).slice(-10),
+      url: CAMPAIGN_URL(report.campaignId),
+    },
+  };
+}
+
+/** Resolve nomes (board/estágios) vindos do modelo para ids DA ORG. */
+async function resolveAudienceFilters(
+  ctx: ReadCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  input: Record<string, unknown>,
+  now: number
+): Promise<{ filters: Record<string, unknown> } | { error: string }> {
+  const filters: Record<string, unknown> = {};
+  const boardName = typeof input.boardName === "string" ? input.boardName.trim() : "";
+  if (boardName || Array.isArray(input.stageNames)) {
+    const boards = (
+      await ctx.db
+        .query("boards")
+        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+        .collect()
+    ).filter((b) => b.archivedAt === undefined);
+    const board = boardName
+      ? boards.find((b) => b.name.toLowerCase() === boardName.toLowerCase())
+      : boards.find((b) => b.isDefault) ?? boards[0];
+    if (!board) return { error: boardName ? `Board "${boardName}" não existe` : "Nenhum board configurado" };
+    filters.boardId = board._id;
+    if (Array.isArray(input.stageNames) && input.stageNames.length > 0) {
+      const stages = await ctx.db
+        .query("stages")
+        .withIndex("by_board_and_order", (q) => q.eq("boardId", board._id))
+        .collect();
+      const ids: Id<"stages">[] = [];
+      for (const raw of input.stageNames) {
+        if (typeof raw !== "string") continue;
+        const stage = stages.find((st) => st.name.toLowerCase() === raw.trim().toLowerCase());
+        if (!stage) return { error: `Estágio "${raw}" não existe no board "${board.name}"` };
+        ids.push(stage._id);
+      }
+      filters.stageIds = ids;
+    }
+  }
+  if (Array.isArray(input.tags)) filters.tags = input.tags.filter((t) => typeof t === "string");
+  if (typeof input.temperature === "string") filters.temperature = input.temperature;
+  if (typeof input.priority === "string") filters.priority = input.priority;
+  const DAY = 24 * 60 * 60 * 1000;
+  if (typeof input.lastActivityBeforeDays === "number") {
+    filters.lastActivityBefore = now - input.lastActivityBeforeDays * DAY;
+  }
+  if (typeof input.lastActivityAfterDays === "number") {
+    filters.lastActivityAfter = now - input.lastActivityAfterDays * DAY;
+  }
+  if (input.onlyOpenWindow === true) filters.onlyOpenWindow = true;
+  if (typeof input.excludeCampaignedWithinDays === "number") {
+    filters.excludeCampaignedWithinDays = input.excludeCampaignedWithinDays;
+  }
+  if (input.excludeRepliedToCampaigns === true) filters.excludeRepliedToCampaigns = true;
+  return { filters };
+}
+
+function maskPhone(phone: string): string {
+  return phone.length > 8 ? `${phone.slice(0, 4)}${"*".repeat(phone.length - 8)}${phone.slice(-4)}` : phone;
+}
+
+async function previewCampaignAudienceTool(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  toolArgs: Record<string, unknown>,
+  scope: { memberId: Id<"teamMembers">; now: number }
+): Promise<Record<string, unknown>> {
+  const resolved = await resolveAudienceFilters(ctx, organizationId, toolArgs, scope.now);
+  if ("error" in resolved) return resolved;
+  const preview = (await previewAudienceHandler(ctx, {
+    organizationId,
+    filters: resolved.filters as any,
+    now: scope.now,
+    actorMemberId: scope.memberId,
+  })) as Record<string, any>;
+  return {
+    count: preview.count,
+    excluded: preview.excluded,
+    truncated: preview.truncated,
+    sample: (preview.sample ?? []).map((c: any) => ({
+      name: c.displayName ?? null,
+      phone: maskPhone(String(c.phone ?? "")),
+    })),
+  };
+}
+
 export const internalRunCopilotWriteTool = internalMutation({
   args: {
     name: v.string(),
@@ -754,6 +941,13 @@ async function runWriteTool(
       severity: entry.severity,
       createdAt: now,
     });
+  };
+
+  const getCampaignInOrgForCopilot = async (idRaw: unknown): Promise<Doc<"campaigns"> | null> => {
+    if (typeof idRaw !== "string") return null;
+    const campaign = await ctx.db.get(idRaw as Id<"campaigns">).catch(() => null);
+    if (!campaign || campaign.organizationId !== organizationId) return null;
+    return campaign;
   };
 
   // Resolve um lead validando a org (id vem do modelo — camada 1 de novo aqui).
@@ -1207,6 +1401,164 @@ async function runWriteTool(
       return { status: "criada", quickReplyId };
     }
 
+    case "createCampaignDraft": {
+      const name = typeof toolArgs.name === "string" ? toolArgs.name.trim() : "";
+      if (!name) return { error: "name é obrigatório" };
+      const variants = Array.isArray(toolArgs.variants)
+        ? toolArgs.variants.filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+        : [];
+      if (variants.length === 0) return { error: "Informe ao menos uma variante de texto" };
+      const audienceIn = (toolArgs.audience ?? {}) as Record<string, unknown>;
+      const kind = audienceIn.kind === "segment" ? "segment" : "manual";
+
+      // Canal: pelo nome, ou o único WhatsApp ativo da org.
+      const channels = (
+        await ctx.db
+          .query("channelConfigs")
+          .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+          .collect()
+      ).filter((c) => c.channel === "whatsapp" && c.status === "active");
+      const channelName = typeof toolArgs.channelName === "string" ? toolArgs.channelName.trim() : "";
+      const channel = channelName
+        ? channels.find((c) => c.displayName.toLowerCase() === channelName.toLowerCase())
+        : channels.length === 1
+          ? channels[0]
+          : undefined;
+      if (!channel) {
+        return {
+          error:
+            channels.length === 0
+              ? "Nenhum canal WhatsApp ativo — conecte um em Configurações → Canais"
+              : `Informe channelName (canais ativos: ${channels.map((c) => c.displayName).join(", ")})`,
+        };
+      }
+
+      let filters: Record<string, unknown> | undefined;
+      if (kind === "segment") {
+        const resolved = await resolveAudienceFilters(ctx, organizationId, audienceIn, now);
+        if ("error" in resolved) return resolved;
+        filters = resolved.filters;
+      }
+      let targetBoardId: Id<"boards"> | undefined;
+      let targetStageId: Id<"stages"> | undefined;
+      if (typeof toolArgs.targetBoardName === "string" && toolArgs.targetBoardName.trim()) {
+        const resolved = await resolveAudienceFilters(
+          ctx,
+          organizationId,
+          {
+            boardName: toolArgs.targetBoardName,
+            ...(typeof toolArgs.targetStageName === "string" ? { stageNames: [toolArgs.targetStageName] } : {}),
+          },
+          now
+        );
+        if ("error" in resolved) return resolved;
+        targetBoardId = resolved.filters.boardId as Id<"boards">;
+        targetStageId = (resolved.filters.stageIds as Id<"stages">[] | undefined)?.[0];
+      }
+
+      const campaignId = await createCampaignHandler(ctx, {
+        organizationId,
+        name,
+        description: typeof toolArgs.description === "string" ? toolArgs.description : undefined,
+        channelConfigId: channel._id,
+        content: {
+          kind: "text",
+          variants: variants.map((text) => ({ text })),
+          contentType: "text",
+        },
+        audience: {
+          source: kind,
+          ...(filters ? { filters: filters as any } : {}),
+          ...(targetBoardId ? { targetBoardId } : {}),
+          ...(targetStageId ? { targetStageId } : {}),
+        },
+        actorMemberId: member._id,
+        via: "copilot",
+      });
+
+      let recipientsAdded = 0;
+      let invalid: Array<{ phone: string; reason: string }> = [];
+      if (kind === "manual" && Array.isArray(audienceIn.phones) && audienceIn.phones.length > 0) {
+        const phones = audienceIn.phones.filter((p): p is string => typeof p === "string").slice(0, 500);
+        const added = await addManualRecipientsHandler(ctx, {
+          campaignId,
+          entries: phones.map((phone) => ({ phone })),
+          actorMemberId: member._id,
+        });
+        recipientsAdded = added.added;
+        invalid = added.invalid;
+      }
+      const provider = configProvider(channel);
+      return {
+        status: "rascunho_criado",
+        campaignId,
+        name,
+        recipientsAdded,
+        invalid,
+        url: CAMPAIGN_URL(campaignId),
+        next: `Rascunho salvo no canal "${channel.displayName}" (${provider}). O lançamento é feito por um humano na tela de Campanhas, onde ficam os aceites obrigatórios${provider === "bridge" ? " (inclusive o risco de banimento do bridge)" : ""}.`,
+      };
+    }
+
+    case "pauseCampaign": {
+      const campaign = await getCampaignInOrgForCopilot(toolArgs.campaignId);
+      if (!campaign) return { error: "Campanha não encontrada" };
+      await pauseCampaignHandler(ctx, {
+        campaignId: campaign._id,
+        reason: typeof toolArgs.reason === "string" ? toolArgs.reason : "Pausada via Copiloto",
+        actorMemberId: member._id,
+        via: "copilot",
+      });
+      return { status: "pausada", campaignId: campaign._id };
+    }
+
+    case "resumeCampaign": {
+      const campaign = await getCampaignInOrgForCopilot(toolArgs.campaignId);
+      if (!campaign) return { error: "Campanha não encontrada" };
+      await resumeCampaignHandler(ctx, { campaignId: campaign._id, actorMemberId: member._id, via: "copilot" });
+      return { status: "retomada", campaignId: campaign._id };
+    }
+
+    case "launchCampaign": {
+      // DECISÃO: lançar exige aceites (consentimento LGPD + risco do bridge)
+      // que o fluxo de pendingActions não transporta — e a UI de confirmação
+      // não pergunta nada além de "confirmar". Então o copiloto NÃO lança nem
+      // cria pendingAction: devolve a instrução para o humano lançar na tela.
+      const campaign = await getCampaignInOrgForCopilot(toolArgs.campaignId);
+      if (!campaign) return { error: "Campanha não encontrada" };
+      return {
+        status: "requer_lancamento_humano",
+        campaignId: campaign._id,
+        url: CAMPAIGN_URL(campaign._id),
+        instruction:
+          campaign.status === "draft"
+            ? `Abra a campanha «${campaign.name}» em Campanhas, revise público, mensagem e limites, marque os aceites (consentimento/base legal${campaign.provider === "bridge" ? " e risco do bridge" : ""}) e clique em Lançar. O copiloto não pode lançar campanhas.`
+            : `A campanha «${campaign.name}» está em "${campaign.status}" — só rascunhos podem ser lançados.`,
+      };
+    }
+
+    case "cancelCampaign": {
+      // TWO-PHASE: grava a proposta; o cancelamento real é confirmPendingAction.
+      const campaign = await getCampaignInOrgForCopilot(toolArgs.campaignId);
+      if (!campaign) return { error: "Campanha não encontrada" };
+      if (!["running", "paused", "scheduled"].includes(campaign.status)) {
+        return { error: `A campanha está em "${campaign.status}" e não pode ser cancelada` };
+      }
+      const preview = `Cancelar a campanha «${campaign.name}» — ${campaign.stats.pending} destinatário(s) pendente(s) deixam de receber a mensagem (não pode ser desfeito)`;
+      const pendingActionId = await ctx.db.insert("pendingActions", {
+        organizationId,
+        requestedBy: member._id,
+        threadId: scope.threadId,
+        tool: "cancelCampaign",
+        args: { campaignId: campaign._id },
+        preview,
+        status: "pending",
+        expiresAt: now + PENDING_ACTION_TTL_MS,
+        createdAt: now,
+      });
+      return { status: "confirmacao_necessaria", pendingActionId, preview };
+    }
+
     case "deleteLead": {
       // TWO-PHASE: nunca executa aqui. Grava a proposta com TTL; a exclusão
       // real é confirmPendingAction, disparada por clique humano.
@@ -1307,6 +1659,17 @@ export const confirmPendingAction = mutation({
           leadIds: [leadId],
           contactIds: [],
         });
+        break;
+      }
+      case "cancelCampaign": {
+        const campaignId = pending.args.campaignId as Id<"campaigns">;
+        const campaign = await ctx.db.get(campaignId);
+        if (!campaign || campaign.organizationId !== pending.organizationId) {
+          throw new Error("Campanha não existe mais");
+        }
+        // Re-checa a permissão NO MOMENTO da confirmação (campaigns:full).
+        await assertAgentCan(ctx, member._id, "campaigns", "full", campaign);
+        await cancelCampaignHandler(ctx, { campaignId, actorMemberId: member._id, via: "copilot" });
         break;
       }
       default:

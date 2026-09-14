@@ -19,6 +19,7 @@ import {
   FileText,
   Settings,
   LogOut,
+  Megaphone,
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
@@ -42,6 +43,7 @@ const navItems: NavItem[] = [
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
+  { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 
@@ -76,9 +78,15 @@ export function Sidebar({ onSignOut, organizationId, orgSelector }: SidebarProps
     canSeeInbox ? { organizationId } : "skip"
   );
 
+  const pausedCampaigns = useQuery(
+    api.campaigns.getPausedCount,
+    can("campaigns", "view") ? { organizationId } : "skip"
+  );
+
   const badgeCounts: Partial<Record<Tab, number | undefined>> = {
     inbox: inboxUnread,
     handoffs: pendingHandoffs,
+    campaigns: pausedCampaigns,
   };
 
   return (

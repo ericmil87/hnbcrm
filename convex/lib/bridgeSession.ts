@@ -293,3 +293,58 @@ export function mapBridgeSessionState(input: {
     healthDetail: "Deslogado — reconecte escaneando o QR",
   };
 }
+
+// ── Campanhas: checar se números têm WhatsApp (wuzapi POST /user/check) ──
+//
+// API.md: POST /user/check, Token header, body {"Phone":["5491155554444", …]}
+//   → { code, success, data: { Users: [ { Query, IsInWhatsapp, JID, VerifiedName } ] } }
+// Parser tolerante a casing (IsInWhatsapp / IsInWhatsApp / isInWhatsapp) e ao
+// envelope (data.Users / Users / data.users).
+export function buildBridgeCheckUserRequest(params: {
+  baseUrl: string;
+  token: string;
+  phones: string[];
+}): BridgeHttpRequest {
+  return {
+    method: "POST",
+    url: `${trimBase(params.baseUrl)}/user/check`,
+    headers: { "Content-Type": "application/json", token: params.token },
+    body: JSON.stringify({ Phone: params.phones }),
+  };
+}
+
+export type BridgeCheckUserResult =
+  | { ok: true; users: Array<{ phone: string; onWhatsapp: boolean; jid?: string }> }
+  | { ok: false; error: string };
+
+export function parseBridgeCheckUserResponse(
+  httpOk: boolean,
+  httpStatus: number,
+  body: unknown
+): BridgeCheckUserResult {
+  const root = (body && typeof body === "object" ? body : {}) as Record<string, any>;
+  if (!httpOk) {
+    const err = pick(root, "error", "Error", "message") ?? `HTTP ${httpStatus}`;
+    return { ok: false, error: String(err) };
+  }
+  if (root.success === false) {
+    return { ok: false, error: String(pick(root, "error", "Error", "message") ?? "Gateway recusou a checagem") };
+  }
+  const data = pick(root, "data", "Data") ?? root;
+  const users = pick(data, "Users", "users");
+  if (!Array.isArray(users)) return { ok: false, error: "Resposta sem lista de usuários" };
+  return {
+    ok: true,
+    users: users.map((u: Record<string, any>) => {
+      const query = String(pick(u, "Query", "query", "Phone", "phone") ?? "");
+      const jid = strUndef(pick(u, "JID", "Jid", "jid"));
+      const flag = pick(u, "IsInWhatsapp", "IsInWhatsApp", "isInWhatsapp", "isInWhatsApp");
+      const onWhatsapp = typeof flag === "boolean" ? flag : Boolean(jid);
+      return {
+        phone: query.replace(/\D+/g, "") || (phoneFromJid(jid) ?? ""),
+        onWhatsapp,
+        ...(jid ? { jid } : {}),
+      };
+    }),
+  };
+}

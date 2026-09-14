@@ -80,6 +80,11 @@ export const BACKUP_TABLES: readonly string[] = [
   "calendarEvents",
   "savedViews",
   "webhooks",
+  // Campanhas (v0.55): dependem de contacts/leads/conversations/messages acima.
+  "campaigns",
+  "campaignRecipients",
+  "optOuts",
+  "whatsappTemplates",
 ];
 
 /** Tabelas que `internalCollectPage` aceita paginar. */

@@ -284,6 +284,57 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     effect: "read",
     resultFields: ["tasks"],
   },
+  {
+    name: "listCampaigns",
+    description:
+      "Lista as campanhas de WhatsApp (disparo em massa) da organização com status, canal e contadores (enviadas, entregues, lidas, respondidas, falhas, opt-out).",
+    parameters: schema(
+      {
+        status: {
+          type: "string",
+          enum: ["draft", "scheduled", "running", "paused", "completed", "canceled", "failed"],
+        },
+      },
+      []
+    ),
+    permission: { category: "campaigns", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["campaigns"],
+  },
+  {
+    name: "getCampaignReport",
+    description:
+      "Relatório de uma campanha: contadores, taxas (entrega, leitura, resposta, falha, opt-out), motivos de falha, custo estimado, progresso e linha do tempo.",
+    parameters: schema({ campaignId: { type: "string", description: "ID da campanha" } }, ["campaignId"]),
+    permission: { category: "campaigns", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["report"],
+  },
+  {
+    name: "previewCampaignAudience",
+    description:
+      "Conta quantos leads um segmento alcançaria numa campanha (por board, estágios, tags, temperatura, prioridade, última atividade) e mostra uma amostra — sem criar nada.",
+    parameters: schema(
+      {
+        boardName: { type: "string", description: "Nome do board (funil)" },
+        stageNames: { type: "array", items: { type: "string" }, description: "Nomes dos estágios" },
+        tags: { type: "array", items: { type: "string" } },
+        temperature: { type: "string", enum: ["cold", "warm", "hot"] },
+        priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+        lastActivityBeforeDays: { type: "number", description: "Só leads sem atividade há mais de N dias" },
+        lastActivityAfterDays: { type: "number", description: "Só leads com atividade nos últimos N dias" },
+        onlyOpenWindow: { type: "boolean", description: "Só quem tem a janela de 24h do WhatsApp aberta" },
+        excludeCampaignedWithinDays: { type: "number", description: "Excluir quem recebeu campanha nos últimos N dias" },
+      },
+      []
+    ),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["count", "excluded", "sample", "truncated"],
+  },
 ];
 
 // ── Tools de ESCRITA do copiloto (F2): gated + confirmação por reversibilidade.
@@ -455,6 +506,87 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
       "PROPÕE a exclusão de um lead. A exclusão NÃO acontece agora: gera uma confirmação que o usuário precisa aprovar.",
     parameters: schema({ leadId: { type: "string" } }, ["leadId"]),
     permission: { category: "leads", level: "full" },
+    audience: "copilot",
+    effect: "destructive",
+    resultFields: ["status", "pendingActionId", "preview"],
+  },
+  {
+    name: "createCampaignDraft",
+    description:
+      "Cria um RASCUNHO de campanha de WhatsApp (disparo em massa) com mensagem e público. NUNCA lança: o lançamento exige aceites (consentimento LGPD, risco do bridge) feitos por um humano na tela de Campanhas. Prefira 2+ variantes de texto e {{nome}} para personalizar.",
+    parameters: schema(
+      {
+        name: { type: "string" },
+        description: { type: "string" },
+        channelName: { type: "string", description: "Nome do canal WhatsApp (default: o único canal ativo)" },
+        variants: {
+          type: "array",
+          items: { type: "string" },
+          description: "Textos da mensagem (variantes rotacionadas; aceita {{nome}} e spintax {a|b})",
+        },
+        audience: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["segment", "manual"] },
+            boardName: { type: "string" },
+            stageNames: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            temperature: { type: "string", enum: ["cold", "warm", "hot"] },
+            priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+            onlyOpenWindow: { type: "boolean" },
+            excludeCampaignedWithinDays: { type: "number" },
+            phones: { type: "array", items: { type: "string" }, description: "Manual: números (até 500)" },
+          },
+          required: ["kind"],
+          additionalProperties: false,
+        },
+        targetBoardName: { type: "string", description: "Board onde números novos viram lead" },
+        targetStageName: { type: "string" },
+      },
+      ["name", "variants", "audience"]
+    ),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "campaignId", "name", "recipientsAdded", "invalid", "url", "next"],
+  },
+  {
+    name: "pauseCampaign",
+    description: "Pausa uma campanha em andamento (os envios param na hora; pode ser retomada depois).",
+    parameters: schema(
+      { campaignId: { type: "string" }, reason: { type: "string" } },
+      ["campaignId"]
+    ),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "campaignId"],
+  },
+  {
+    name: "resumeCampaign",
+    description: "Retoma uma campanha pausada.",
+    parameters: schema({ campaignId: { type: "string" } }, ["campaignId"]),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "campaignId"],
+  },
+  {
+    name: "launchCampaign",
+    description:
+      "NÃO lança a campanha: explica ao usuário como lançar pela tela (o lançamento exige aceites humanos e não pode ser feito pelo copiloto). Use para orientar quando pedirem para disparar.",
+    parameters: schema({ campaignId: { type: "string" } }, ["campaignId"]),
+    permission: { category: "campaigns", level: "full" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "campaignId", "url", "instruction"],
+  },
+  {
+    name: "cancelCampaign",
+    description:
+      "PROPÕE o cancelamento de uma campanha em andamento/pausada. Não cancela agora: gera uma confirmação que o usuário precisa aprovar.",
+    parameters: schema({ campaignId: { type: "string" } }, ["campaignId"]),
+    permission: { category: "campaigns", level: "full" },
     audience: "copilot",
     effect: "destructive",
     resultFields: ["status", "pendingActionId", "preview"],

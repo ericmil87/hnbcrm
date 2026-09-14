@@ -83,6 +83,10 @@ export const DENY_PATHS: readonly string[] = [
   "teamMembers.userId",
   // Rota BYO de LLM: aponta para a chave cifrada em `orgSecrets`.
   "organizations.settings.aiConfig.providerConfig.byo",
+  // Estado do worker de campanha (id de scheduled function + token do tick):
+  // sem valor fora do deployment e o token já cai no padrão `token`.
+  "campaigns.schedulerFnId",
+  "campaigns.tickToken",
 ];
 
 const MAX_DEPTH = 24;

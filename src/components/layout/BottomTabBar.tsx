@@ -19,10 +19,11 @@ import {
   Settings,
   FileText,
   MoreHorizontal,
+  Megaphone,
 } from "lucide-react";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
 
-export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms";
+export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns";
 
 interface NavItem {
   id: Tab;
@@ -47,6 +48,7 @@ const moreTabs: NavItem[] = [
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
+  { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 
@@ -89,9 +91,14 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
     api.handoffs.getPendingHandoffCount,
     canSeeInbox ? { organizationId } : "skip"
   );
+  const pausedCampaigns = useQuery(
+    api.campaigns.getPausedCount,
+    can("campaigns", "view") ? { organizationId } : "skip"
+  );
   const badgeCounts: Partial<Record<Tab, number | undefined>> = {
     inbox: inboxUnread,
     handoffs: pendingHandoffs,
+    campaigns: pausedCampaigns,
   };
   const formatBadge = (count: number | undefined) =>
     count && count > 0 ? (count > 99 ? "99+" : String(count)) : null;

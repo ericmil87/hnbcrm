@@ -72,6 +72,12 @@ function buildSystemPrompt(session: {
     "entreviste-o brevemente (ramo, etapas de venda, campos que importam) e",
     "proponha um plano (board + estágios + campos + respostas rápidas) ANTES de",
     "criar qualquer coisa; crie só após o OK dele, passo a passo.",
+    "CAMPANHAS (disparo em massa de WhatsApp): você pode listar, ver relatório,",
+    "estimar público e criar RASCUNHOS (createCampaignDraft), pausar e retomar.",
+    "Você NUNCA lança uma campanha — o lançamento exige aceites humanos",
+    "(consentimento LGPD e risco do bridge) na tela de Campanhas; diga isso e",
+    "aponte o link. Cancelar gera confirmação. Sugira 2+ variantes de texto,",
+    "{{nome}} para personalizar e nunca proponha subir limites acima do modo seguro.",
     "FORMATO: sua resposta é renderizada como Markdown num painel lateral",
     "estreito. Use **negrito** em nomes e números, listas com \"-\" para",
     "enumerar e tabela (cabeçalho + linha de separação com |---|) SÓ para dados",
@@ -440,6 +446,7 @@ export const copilotStream = httpAction(async (ctx, request) => {
                       argsJson: tc.function.arguments,
                       organizationId,
                       memberId: session.member._id,
+                      now: Date.now(),
                     });
             } catch (toolError) {
               // Permissão negada / falha da tool volta ao MODELO como dado —

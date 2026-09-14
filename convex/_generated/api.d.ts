@@ -21,6 +21,9 @@ import type * as authHelpers from "../authHelpers.js";
 import type * as boards from "../boards.js";
 import type * as bridge from "../bridge.js";
 import type * as calendar from "../calendar.js";
+import type * as campaignWorker from "../campaignWorker.js";
+import type * as campaigns from "../campaigns.js";
+import type * as campaignsInternal from "../campaignsInternal.js";
 import type * as channelConfigs from "../channelConfigs.js";
 import type * as contacts from "../contacts.js";
 import type * as conversations from "../conversations.js";
@@ -55,6 +58,12 @@ import type * as lib_bridgeMedia from "../lib/bridgeMedia.js";
 import type * as lib_bridgeParse from "../lib/bridgeParse.js";
 import type * as lib_bridgeSend from "../lib/bridgeSend.js";
 import type * as lib_bridgeSession from "../lib/bridgeSession.js";
+import type * as lib_campaignAudience from "../lib/campaignAudience.js";
+import type * as lib_campaignAuth from "../lib/campaignAuth.js";
+import type * as lib_campaignContext from "../lib/campaignContext.js";
+import type * as lib_campaignHooks from "../lib/campaignHooks.js";
+import type * as lib_campaignPacing from "../lib/campaignPacing.js";
+import type * as lib_campaignRender from "../lib/campaignRender.js";
 import type * as lib_channelResolve from "../lib/channelResolve.js";
 import type * as lib_csv from "../lib/csv.js";
 import type * as lib_cursor from "../lib/cursor.js";
@@ -77,12 +86,14 @@ import type * as lib_mediaEnrichment from "../lib/mediaEnrichment.js";
 import type * as lib_notify from "../lib/notify.js";
 import type * as lib_outboundSideEffects from "../lib/outboundSideEffects.js";
 import type * as lib_permissions from "../lib/permissions.js";
+import type * as lib_phone from "../lib/phone.js";
 import type * as lib_promptEnvelope from "../lib/promptEnvelope.js";
 import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
 import type * as lib_taskSearchText from "../lib/taskSearchText.js";
 import type * as lib_whatsappDispatch from "../lib/whatsappDispatch.js";
 import type * as lib_whatsappParse from "../lib/whatsappParse.js";
+import type * as lib_whatsappPricing from "../lib/whatsappPricing.js";
 import type * as llmsTxt from "../llmsTxt.js";
 import type * as nodeActions from "../nodeActions.js";
 import type * as notificationPreferences from "../notificationPreferences.js";
@@ -90,6 +101,7 @@ import type * as notifications from "../notifications.js";
 import type * as onboarding from "../onboarding.js";
 import type * as onboardingSeed from "../onboardingSeed.js";
 import type * as openapiSpec from "../openapiSpec.js";
+import type * as optOuts from "../optOuts.js";
 import type * as orgSecrets from "../orgSecrets.js";
 import type * as organizations from "../organizations.js";
 import type * as quickReplies from "../quickReplies.js";
@@ -108,6 +120,7 @@ import type * as vision from "../vision.js";
 import type * as webhookTrigger from "../webhookTrigger.js";
 import type * as webhooks from "../webhooks.js";
 import type * as whatsapp from "../whatsapp.js";
+import type * as whatsappTemplates from "../whatsappTemplates.js";
 
 import type {
   ApiFromModules,
@@ -129,6 +142,9 @@ declare const fullApi: ApiFromModules<{
   boards: typeof boards;
   bridge: typeof bridge;
   calendar: typeof calendar;
+  campaignWorker: typeof campaignWorker;
+  campaigns: typeof campaigns;
+  campaignsInternal: typeof campaignsInternal;
   channelConfigs: typeof channelConfigs;
   contacts: typeof contacts;
   conversations: typeof conversations;
@@ -163,6 +179,12 @@ declare const fullApi: ApiFromModules<{
   "lib/bridgeParse": typeof lib_bridgeParse;
   "lib/bridgeSend": typeof lib_bridgeSend;
   "lib/bridgeSession": typeof lib_bridgeSession;
+  "lib/campaignAudience": typeof lib_campaignAudience;
+  "lib/campaignAuth": typeof lib_campaignAuth;
+  "lib/campaignContext": typeof lib_campaignContext;
+  "lib/campaignHooks": typeof lib_campaignHooks;
+  "lib/campaignPacing": typeof lib_campaignPacing;
+  "lib/campaignRender": typeof lib_campaignRender;
   "lib/channelResolve": typeof lib_channelResolve;
   "lib/csv": typeof lib_csv;
   "lib/cursor": typeof lib_cursor;
@@ -185,12 +207,14 @@ declare const fullApi: ApiFromModules<{
   "lib/notify": typeof lib_notify;
   "lib/outboundSideEffects": typeof lib_outboundSideEffects;
   "lib/permissions": typeof lib_permissions;
+  "lib/phone": typeof lib_phone;
   "lib/promptEnvelope": typeof lib_promptEnvelope;
   "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;
   "lib/taskSearchText": typeof lib_taskSearchText;
   "lib/whatsappDispatch": typeof lib_whatsappDispatch;
   "lib/whatsappParse": typeof lib_whatsappParse;
+  "lib/whatsappPricing": typeof lib_whatsappPricing;
   llmsTxt: typeof llmsTxt;
   nodeActions: typeof nodeActions;
   notificationPreferences: typeof notificationPreferences;
@@ -198,6 +222,7 @@ declare const fullApi: ApiFromModules<{
   onboarding: typeof onboarding;
   onboardingSeed: typeof onboardingSeed;
   openapiSpec: typeof openapiSpec;
+  optOuts: typeof optOuts;
   orgSecrets: typeof orgSecrets;
   organizations: typeof organizations;
   quickReplies: typeof quickReplies;
@@ -216,6 +241,7 @@ declare const fullApi: ApiFromModules<{
   webhookTrigger: typeof webhookTrigger;
   webhooks: typeof webhooks;
   whatsapp: typeof whatsapp;
+  whatsappTemplates: typeof whatsappTemplates;
 }>;
 
 /**

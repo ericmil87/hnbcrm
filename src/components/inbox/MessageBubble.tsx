@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { MessageAttachments } from "./MessageAttachments";
@@ -319,6 +319,14 @@ export function MessageBubble({
               (message.direction === "inbound" || message.senderType === "contact")
                 ? contactName || style.label
                 : style.label)}
+            {message.metadata?.campaign && (
+              <span
+                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-[10px] font-medium opacity-80"
+                title="Enviada por campanha"
+              >
+                <Megaphone size={9} /> Campanha
+              </span>
+            )}
           </div>
 
           {quoted && (

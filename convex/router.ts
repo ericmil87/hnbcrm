@@ -232,6 +232,29 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   // Preferências de notificação — convex/notificationPreferences.ts
   "GET /api/v1/notifications/preferences": "authenticated", // rota self-scoped (preferências do PRÓPRIO membro da key) — espelha requireAuth de notificationPreferences.getMyPreferences; team:view no app é só p/ ver preferências de OUTRO membro
   "PUT /api/v1/notifications/preferences": "authenticated", // idem (escrita self-scoped)
+
+  // Campanhas de WhatsApp — convex/campaigns.ts (categoria `campaigns`: view < manage < full)
+  "GET /api/v1/campaigns": { category: "campaigns", level: "view" }, // campaigns.listCampaigns
+  "GET /api/v1/campaigns/get": { category: "campaigns", level: "view" }, // campaigns.getCampaign
+  "GET /api/v1/campaigns/report": { category: "campaigns", level: "view" }, // campaigns.getCampaignReport
+  "GET /api/v1/campaigns/recipients": { category: "campaigns", level: "view" }, // campaigns.getCampaignRecipients
+  "GET /api/v1/campaigns/safe-defaults": { category: "campaigns", level: "view" }, // campaigns.getSafeDefaults
+  "POST /api/v1/campaigns/preview-audience": { category: "campaigns", level: "manage" }, // campaigns.previewAudience
+  "POST /api/v1/campaigns/create": { category: "campaigns", level: "manage" }, // campaigns.createCampaign
+  "POST /api/v1/campaigns/update": { category: "campaigns", level: "manage" }, // campaigns.updateCampaign
+  "POST /api/v1/campaigns/delete": { category: "campaigns", level: "full" }, // campaigns.deleteCampaign
+  "POST /api/v1/campaigns/recipients": { category: "campaigns", level: "manage" }, // campaigns.addManualRecipients / importRecipientsCsv
+  "POST /api/v1/campaigns/launch": { category: "campaigns", level: "full" }, // campaigns.launchCampaign
+  "POST /api/v1/campaigns/pause": { category: "campaigns", level: "manage" }, // campaigns.pauseCampaign
+  "POST /api/v1/campaigns/resume": { category: "campaigns", level: "manage" }, // campaigns.resumeCampaign
+  "POST /api/v1/campaigns/cancel": { category: "campaigns", level: "full" }, // campaigns.cancelCampaign
+  "POST /api/v1/campaigns/retry-failed": { category: "campaigns", level: "manage" }, // campaigns.retryFailed
+  "GET /api/v1/opt-outs": { category: "campaigns", level: "view" }, // optOuts.listOptOuts
+  "POST /api/v1/opt-outs": { category: "campaigns", level: "manage" }, // optOuts.addOptOut (campaigns:manage OU contacts:edit no app — a REST fica na categoria da campanha)
+  "DELETE /api/v1/opt-outs": { category: "campaigns", level: "full" }, // optOuts.removeOptOut
+  "GET /api/v1/whatsapp/templates": { category: "campaigns", level: "view" }, // whatsappTemplates.listTemplates
+  "POST /api/v1/whatsapp/templates/sync": { category: "campaigns", level: "manage" }, // whatsappTemplates.syncMetaTemplates (campaigns:manage OU settings:manage no app)
+  "GET /api/v1/whatsapp/tier": { category: "campaigns", level: "view" }, // whatsappTemplates.readMetaTier (leitura do limite do portfólio)
 };
 
 /**
@@ -2939,6 +2962,556 @@ http.route({
   }),
 });
 
+// ---- Campanhas de WhatsApp (disparo em massa) — convex/campaigns.ts ----
+// Padrão de caminho FLAT (`/campaigns/get?campaignId=`), como o resto da API:
+// o httpRouter do Convex só casa `path` exato ou `pathPrefix` — `:id` não é
+// padrão de rota. Erros de domínio viram 400/403/404 em vez de 500.
+
+function campaignErrorResponse(error: unknown) {
+  const message = error instanceof Error ? error.message : "Internal server error";
+  if (/não encontrad/i.test(message)) return errorResponse(message, 404);
+  if (/Permissão insuficiente|Rate limit/i.test(message)) return errorResponse(message, 403);
+  return errorResponse(message, 400);
+}
+
+function parseLimit(raw: string | null, fallback: number, max: number): number {
+  const n = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(Math.floor(n), max);
+}
+
+http.route({
+  path: "/api/v1/campaigns",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/campaigns");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const status = url.searchParams.get("status") ?? undefined;
+      const campaigns = await ctx.runQuery(internal.campaignsInternal.internalListCampaigns, {
+        organizationId: apiKeyRecord.organizationId,
+        ...(status ? { status: status as any } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ campaigns });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/campaigns/get");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const campaignId = url.searchParams.get("campaignId");
+      if (!campaignId) return errorResponse("campaignId required", 400);
+      const campaign = await ctx.runQuery(internal.campaignsInternal.internalGetCampaign, {
+        campaignId: campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      if (!campaign) return errorResponse("Campanha não encontrada", 404);
+      return jsonResponse({ campaign });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/report",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/campaigns/report");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const campaignId = url.searchParams.get("campaignId");
+      if (!campaignId) return errorResponse("campaignId required", 400);
+      const report = await ctx.runQuery(internal.campaignsInternal.internalGetCampaignReport, {
+        campaignId: campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ report });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/recipients",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/campaigns/recipients");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const campaignId = url.searchParams.get("campaignId");
+      if (!campaignId) return errorResponse("campaignId required", 400);
+      const status = url.searchParams.get("status") ?? undefined;
+      const search = url.searchParams.get("search") ?? undefined;
+      const page = await ctx.runQuery(internal.campaignsInternal.internalGetCampaignRecipients, {
+        campaignId: campaignId as Id<"campaigns">,
+        paginationOpts: {
+          numItems: parseLimit(url.searchParams.get("limit"), 100, 500),
+          cursor: url.searchParams.get("cursor"),
+        },
+        ...(status ? { status: status as any } : {}),
+        ...(search ? { search } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({
+        recipients: page.page,
+        nextCursor: page.isDone ? null : page.continueCursor,
+        hasMore: !page.isDone,
+      });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/safe-defaults",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/campaigns/safe-defaults");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const channelConfigId = url.searchParams.get("channelConfigId");
+      if (!channelConfigId) return errorResponse("channelConfigId required", 400);
+      const tier = url.searchParams.get("tier") ?? undefined;
+      const defaults = await ctx.runQuery(internal.campaignsInternal.internalGetSafeDefaults, {
+        channelConfigId: channelConfigId as Id<"channelConfigs">,
+        ...(tier ? { tier } : {}),
+        now: Date.now(),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ defaults });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/preview-audience",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/preview-audience");
+      if (denied) return denied;
+      const body = await request.json();
+      const preview = await ctx.runQuery(internal.campaignsInternal.internalPreviewAudience, {
+        organizationId: apiKeyRecord.organizationId,
+        filters: body.filters ?? {},
+        now: Date.now(),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ preview });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/create",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/create");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.name) return errorResponse("name required", 400);
+      if (!body.channelConfigId) return errorResponse("channelConfigId required", 400);
+      if (!body.content) return errorResponse("content required", 400);
+      const campaignId = await ctx.runMutation(internal.campaignsInternal.internalCreateCampaign, {
+        organizationId: apiKeyRecord.organizationId,
+        name: body.name,
+        description: body.description,
+        channelConfigId: body.channelConfigId as Id<"channelConfigs">,
+        content: body.content,
+        audience: body.audience ?? { source: "manual" },
+        schedule: body.schedule,
+        pacing: body.pacing,
+        safeMode: body.safeMode,
+        safety: body.safety,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, campaignId }, 201);
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/update");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalUpdateCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        patch: body.patch ?? {},
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/delete");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalDeleteCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+// Destinatários: `entries` (manual, ≤500) OU `csv` (texto ≤5 MB) OU `fileId`
+// (arquivo `import_file`). Com CSV, `dryRun: true` só valida e devolve o resumo.
+http.route({
+  path: "/api/v1/campaigns/recipients",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/recipients");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      const campaignId = body.campaignId as Id<"campaigns">;
+      if (Array.isArray(body.entries)) {
+        if (body.entries.length > 500) return errorResponse("máximo de 500 números por chamada", 400);
+        const result = await ctx.runMutation(internal.campaignsInternal.internalAddManualRecipients, {
+          campaignId,
+          entries: body.entries,
+          actorMemberId: apiKeyRecord.teamMemberId,
+        });
+        return jsonResponse({ success: true, ...result });
+      }
+      if (typeof body.csv === "string" || body.fileId) {
+        const result = await ctx.runAction(internal.campaignsInternal.internalImportRecipientsCsv, {
+          campaignId,
+          ...(typeof body.csv === "string" ? { csvText: body.csv } : {}),
+          ...(body.fileId ? { fileId: body.fileId as Id<"files"> } : {}),
+          ...(body.mapping ? { mapping: body.mapping } : {}),
+          dryRun: body.dryRun === true,
+          actorMemberId: apiKeyRecord.teamMemberId,
+        });
+        return jsonResponse({ success: true, ...result });
+      }
+      return errorResponse("envie entries[], csv ou fileId", 400);
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/launch",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/launch");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      const result = await ctx.runMutation(internal.campaignsInternal.internalLaunchCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        consentAck: body.consentAck === true,
+        bridgeRiskAck: body.bridgeRiskAck === true,
+        overrideAck: body.overrideAck === true,
+        overrideWord: typeof body.overrideWord === "string" ? body.overrideWord : undefined,
+        tierAtLaunch: typeof body.tierAtLaunch === "string" ? body.tierAtLaunch : undefined,
+        templateQualityAtLaunch:
+          typeof body.templateQualityAtLaunch === "string" ? body.templateQualityAtLaunch : undefined,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/pause",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/pause");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalPauseCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/resume",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/resume");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalResumeCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/cancel");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalCancelCampaign, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/campaigns/retry-failed",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/campaigns/retry-failed");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.campaignId) return errorResponse("campaignId required", 400);
+      const result = await ctx.runMutation(internal.campaignsInternal.internalRetryFailed, {
+        campaignId: body.campaignId as Id<"campaigns">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+// ---- Lista de supressão (opt-out) — convex/optOuts.ts ----
+
+http.route({
+  path: "/api/v1/opt-outs",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/opt-outs");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const search = url.searchParams.get("search") ?? undefined;
+      const page = await ctx.runQuery(internal.campaignsInternal.internalListOptOuts, {
+        organizationId: apiKeyRecord.organizationId,
+        paginationOpts: {
+          numItems: parseLimit(url.searchParams.get("limit"), 100, 500),
+          cursor: url.searchParams.get("cursor"),
+        },
+        ...(search ? { search } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({
+        optOuts: page.page,
+        nextCursor: page.isDone ? null : page.continueCursor,
+        hasMore: !page.isDone,
+      });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/opt-outs",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/opt-outs");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.phone && !body.contactId) return errorResponse("phone or contactId required", 400);
+      const optOutId = await ctx.runMutation(internal.campaignsInternal.internalAddOptOut, {
+        organizationId: apiKeyRecord.organizationId,
+        phone: typeof body.phone === "string" ? body.phone : undefined,
+        contactId: body.contactId ? (body.contactId as Id<"contacts">) : undefined,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, optOutId }, 201);
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/opt-outs",
+  method: "DELETE",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "DELETE", "/api/v1/opt-outs");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const optOutId = url.searchParams.get("optOutId");
+      if (!optOutId) return errorResponse("optOutId required", 400);
+      await ctx.runMutation(internal.campaignsInternal.internalRemoveOptOut, {
+        optOutId: optOutId as Id<"optOuts">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+// ---- Templates da Meta (Cloud API) — convex/whatsappTemplates.ts ----
+
+http.route({
+  path: "/api/v1/whatsapp/templates",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/whatsapp/templates");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const channelConfigId = url.searchParams.get("channelConfigId");
+      if (!channelConfigId) return errorResponse("channelConfigId required", 400);
+      const templates = await ctx.runQuery(internal.campaignsInternal.internalListTemplates, {
+        channelConfigId: channelConfigId as Id<"channelConfigs">,
+        onlyApproved: url.searchParams.get("onlyApproved") === "true",
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ templates });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/whatsapp/templates/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/whatsapp/templates/sync");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.channelConfigId) return errorResponse("channelConfigId required", 400);
+      const result = await ctx.runAction(internal.campaignsInternal.internalSyncMetaTemplates, {
+        channelConfigId: body.channelConfigId as Id<"channelConfigs">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/whatsapp/tier",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/whatsapp/tier");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const channelConfigId = url.searchParams.get("channelConfigId");
+      if (!channelConfigId) return errorResponse("channelConfigId required", 400);
+      const result = await ctx.runAction(internal.campaignsInternal.internalReadMetaTier, {
+        channelConfigId: channelConfigId as Id<"channelConfigs">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse(result);
+    } catch (error) {
+      return campaignErrorResponse(error);
+    }
+  }),
+});
+
 // ---- WhatsApp Cloud API webhooks (multi-tenant: routed by phone_number_id) ----
 
 http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
@@ -3020,5 +3593,23 @@ http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: option
 http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/report", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/recipients", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/safe-defaults", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/preview-audience", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/create", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/update", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/delete", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/launch", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/pause", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/resume", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/cancel", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/campaigns/retry-failed", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/opt-outs", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/whatsapp/templates", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/whatsapp/templates/sync", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/whatsapp/tier", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

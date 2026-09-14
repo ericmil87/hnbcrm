@@ -12,6 +12,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
+import { pauseCampaignsForChannel } from "./lib/campaignHooks";
 import {
   buildBridgeConnectRequest,
   buildBridgeHmacConfigRequest,
@@ -1015,9 +1016,24 @@ export const internalRecordHealthCheck = internalMutation({
       displayPhoneNumber: args.displayPhoneNumber ?? config.displayPhoneNumber,
       healthDetail: args.healthDetail,
       ...(args.bridgeSessionState ? { bridgeSessionState: args.bridgeSessionState } : {}),
+      // Campanhas: idade do número = 1ª vez que a sessão ficou "connected"
+      ...(args.bridgeSessionState === "connected" && config.bridgeConnectedAt === undefined
+        ? { bridgeConnectedAt: now }
+        : {}),
       lastHealthCheckAt: now,
       updatedAt: now,
     });
+    // Campanhas: sessão banida/desconectada pausa o que estiver rodando neste canal
+    if (args.bridgeSessionState === "banned" || args.bridgeSessionState === "disconnected") {
+      await pauseCampaignsForChannel(
+        ctx,
+        args.configId,
+        args.bridgeSessionState === "banned"
+          ? "Número BANIDO pelo WhatsApp — sessão do bridge encerrada"
+          : "Sessão do bridge desconectada — reconecte em Configurações → Canais",
+        now
+      );
+    }
     return null;
   },
 });

@@ -70,6 +70,7 @@ const NO_PERMISSIONS: Permissions = {
   settings: "none",
   auditLogs: "none",
   apiKeys: "none",
+  campaigns: "none",
 };
 
 describe("completude do mapa rota → permissão", () => {
@@ -126,6 +127,7 @@ describe("validade dos pares categoria:nível", () => {
     "settings",
     "auditLogs",
     "apiKeys",
+    "campaigns",
   ];
 
   test("toda categoria usada existe em lib/permissions", () => {

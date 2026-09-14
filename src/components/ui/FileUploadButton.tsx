@@ -22,6 +22,8 @@ const ACCEPTED_TYPES = [
   "audio/mpeg",
   "audio/wav",
   "audio/ogg",
+  "video/mp4",
+  "video/3gpp",
 ].join(",");
 
 const MAX_FILES = 5;

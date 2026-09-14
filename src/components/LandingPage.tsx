@@ -28,6 +28,7 @@ import {
   Play,
   BookOpen,
   Github,
+  Megaphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -230,6 +231,12 @@ function FeaturesSection() {
       icon: Radio,
       title: "Canal WhatsApp",
       description: "API oficial (Cloud API) ou bridge não-oficial — mensagens, voz, mídia e templates.",
+    },
+    {
+      icon: Megaphone,
+      title: "Campanhas de WhatsApp",
+      description:
+        "Disparos segmentados ou por CSV, com limites anti-ban, preview ao vivo, opt-out automático e relatório por destinatário.",
     },
     {
       icon: ArrowRightLeft,

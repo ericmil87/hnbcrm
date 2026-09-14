@@ -65,6 +65,9 @@ window.addEventListener('message', async (message) => {
 
           // Icons library (lucide-react)
           'icons-vendor': ['lucide-react'],
+
+          // SheetJS — só carregado por import() dinâmico no wizard de campanhas
+          'xlsx-vendor': ['xlsx'],
         },
       },
     },

@@ -45,6 +45,13 @@ export const ALLOWED_MIME_TYPES = {
     "audio/webm": { maxSize: 10 * 1024 * 1024, extensions: [".webm"] },
     "audio/mp4": { maxSize: 10 * 1024 * 1024, extensions: [".m4a", ".mp4"] },
   },
+
+  // Vídeo (16MB — teto da Cloud API para vídeo outbound; o bridge aceita mais,
+  // mas o menor teto vale para os dois). Entrou com as campanhas (v0.55).
+  video: {
+    "video/mp4": { maxSize: 16 * 1024 * 1024, extensions: [".mp4"] },
+    "video/3gpp": { maxSize: 16 * 1024 * 1024, extensions: [".3gp"] },
+  },
 } as const;
 
 // MediaRecorder e o WhatsApp reportam mime com parâmetros ("audio/webm;codecs=opus",
@@ -62,6 +69,7 @@ function getAllAllowedMimeTypes(): Record<string, { maxSize: number; extensions:
     ...ALLOWED_MIME_TYPES.documents,
     ...ALLOWED_MIME_TYPES.text,
     ...ALLOWED_MIME_TYPES.audio,
+    ...ALLOWED_MIME_TYPES.video,
   };
 }
 
@@ -97,12 +105,13 @@ export function formatFileSize(bytes: number): string {
 /**
  * Get file category from MIME type
  */
-export function getFileCategory(mimeType: string): "image" | "document" | "text" | "audio" | "other" {
+export function getFileCategory(mimeType: string): "image" | "document" | "text" | "audio" | "video" | "other" {
   const base = baseMimeType(mimeType);
   if (base in ALLOWED_MIME_TYPES.images) return "image";
   if (base in ALLOWED_MIME_TYPES.documents) return "document";
   if (base in ALLOWED_MIME_TYPES.text) return "text";
   if (base in ALLOWED_MIME_TYPES.audio) return "audio";
+  if (base in ALLOWED_MIME_TYPES.video) return "video";
   return "other";
 }
 

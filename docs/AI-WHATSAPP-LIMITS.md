@@ -210,3 +210,348 @@ comunidade) — não inventar caps. Códigos de throttling oficiais completos:
   10–45s, caps 20–50/dia (número novo) a 80–200/dia (aquecido). Anedota de
   calibração de risco: **~30% de chance de ban em 6 meses mesmo com número
   aquecido** — o aceite de risco do P1 não é teatro.
+
+
+---
+
+## Addendum 2026-09-08 — rodada de pesquisa para o módulo de Campanhas
+
+## Resumo Executivo
+
+Três coisas mudaram e invalidam o conhecimento anterior: o degrau de tier virou **250 → 2.000 → 10.000 → 100.000 → ilimitado** (o de 1.000 morreu em 07/10/2025) e agora é por **portfólio de negócios**, não por número [1][2]. A cobrança é **por mensagem entregue** desde 01/07/2025, e template de utilidade dentro da janela de 24 h é **grátis** — marketing nunca é [3]. E a "MM Lite" foi renomeada para **Marketing Messages API**, com endpoint próprio `/marketing_messages` [12].
+
+No lado não oficial, não existe limite publicado. O que existe é consenso de comunidade e defaults de biblioteca, que divergem em até 30x entre si — daí a seção final com os números que sugiro travar no HNBCRM.
+
+---
+
+# PARTE A — Cloud API oficial (Meta)
+
+## A1. Versão e modelo de cobrança
+
+A Graph API v26.0 saiu em **29/07/2026** [13]; a documentação da Meta usa v25.0/v26.0 nos exemplos [1][6]. A API On-Premises foi desligada em **23/10/2025**, então Cloud API é o único caminho oficial [13].
+
+Cobrança **por mensagem**, efetiva 01/07/2025 [3]:
+
+| Situação | Cobrado? |
+|---|---|
+| Template marketing (dentro ou fora da janela) | Sim, sempre |
+| Template utility fora da janela de 24 h | Sim |
+| Template utility dentro da janela aberta | **Grátis** |
+| Template authentication fora da janela | Sim |
+| Qualquer mensagem não-template (texto, imagem, áudio…) | Grátis (só pode dentro da janela) |
+| Tudo, dentro da janela de free entry point | Grátis por 72 h |
+
+Só se cobra quando o template é **entregue** (`"type":"template"`), não quando é enviado [3].
+
+A janela de atendimento (customer service window, CSW) de 24 h reinicia a cada mensagem **ou chamada** do usuário [10].
+
+**Calendário de preços** [3]: a Meta só altera preço no 1º dia de trimestre (1/jan, 1/abr, 1/jul, 1/out), com aviso mínimo de 1 mês para rate card, 3 meses para add-on de modelo e 6 meses para mudança de modelo.
+
+**Brasil:** desde **01/07/2026** (9h PT) clientes com Sold-To Brasil no Billing Hub abrem WABAs em **BRL**, faturados pela Facebook Brasil. Migração de todas as WABAs do portfólio obrigatória até **30/06/2027** — a partir de 01/07/2027 a Meta **para de entregar** mensagens de WABA não-BRL de cliente elegível. Existem APIs de migração de moeda (WABA Currency Migration APIs) [3].
+
+**Tarifas do Brasil** (fontes secundárias, convergentes entre si, não confirmadas no CSV oficial da Meta): **marketing US$ 0,0625**, **utility ≈ US$ 0,0068**, **authentication ≈ US$ 0,0068** (uma fonte diz 0,0225), **serviço grátis** [14]. A Meta publica os números reais só nos CSVs por moeda linkados dentro do painel, que não são acessíveis sem sessão [3].
+
+Volume tiers existem para **utility e authentication** (preço menor conforme escala); marketing não tem volume tier [3].
+
+## A2. Limites de envio (messaging limits / tiers)
+
+Limite = número de **usuários únicos** que você alcança **fora** da janela de 24 h, em janela móvel de 24 h, **compartilhado por todos os números do portfólio** [1].
+
+| Nível | Como se chega |
+|---|---|
+| 250 | Padrão de portfólio novo |
+| 2.000 | Verificar o negócio, **ou** verificação via parceiro, **ou** entregar 2.000 mensagens fora da janela a números únicos em 30 dias com templates de qualidade alta |
+| 10.000 | Escala automática |
+| 100.000 | Escala automática |
+| Ilimitado | Escala automática |
+
+**Critério da escala automática** [1]:
+- mensagens de alta qualidade em todos os números e templates do portfólio, **e**
+- uso de pelo menos **metade** do limite atual nos últimos 7 dias.
+
+Atendidos os dois, sobe um nível **em até 6 horas** [1].
+
+**Mudanças de 07/10/2025 (já ativas)** [2]:
+- limites saíram do número e foram para o **portfólio**; portfólio existente herdou o maior limite de qualquer número dele;
+- número recém-registrado **já entra** com o limite do portfólio (antes começava em 250);
+- o degrau de entrada da escala automática subiu de **1.000 para 2.000**;
+- tempo de upgrade caiu de 24 h para **6 h**;
+- o estado de qualidade **Flagged deixou de existir**, e queda de qualidade **não rebaixa mais** o limite;
+- webhook `business_capability_update` ganhou `max_daily_conversations_per_business`; o antigo `max_daily_conversation_per_phone` foi removido em **fevereiro de 2026**.
+
+**API:** `messaging_limit_tier` foi **descontinuado**. Use `whatsapp_business_manager_messaging_limit` [1]:
+
+```
+curl 'https://graph.facebook.com/v26.0/<PHONE_NUMBER_ID>?fields=whatsapp_business_manager_messaging_limit' \
+  -H 'Authorization: Bearer <TOKEN>'
+# → {"whatsapp_business_manager_messaging_limit":"TIER_250", "id":"..."}
+```
+
+Em caso de negativa de escala, chega webhook `account_alerts` com `alert_type` em `INCREASED_CAPABILITIES_ELIGIBILITY_DEFERRED` / `_FAILED` / `_NEED_MORE_INFO` [1].
+
+## A3. Qualidade
+
+**Qualidade do número:** calculada sobre **7 dias**, ponderada por recência, a partir de bloqueios, denúncias, silenciamentos, arquivamentos e o motivo declarado pelo usuário ao bloquear [10]. Números de alto tráfego mudam de qualidade "mesmo dentro de minutos" [10].
+
+Diretrizes oficiais para manter qualidade alta [10]:
+- seguir a Business Messaging Policy;
+- enviar **só a quem optou** por receber;
+- mensagens altamente personalizadas e úteis;
+- **evitar** boas-vindas ou introduções genéricas e abertas;
+- **evitar muitas mensagens por dia**;
+- otimizar conteúdo e comprimento.
+
+**Qualidade do template** (independente da do número) [6]: `GREEN` (alta), `YELLOW` (média — feedback negativo ou baixa leitura, ainda envia), `RED` (baixa — em risco de pausa), `UNKNOWN` (pendente, template novo). Consulta via `?fields=quality_score` no Template API.
+
+## A4. Template pacing e pausa
+
+**Pacing** [7] vale para templates de marketing e utility. Template novo, despausado ou sem rating `GREEN` pode ser pacing-ado. Passado um limiar não divulgado, as mensagens seguintes ficam **retidas**: a resposta do endpoint traz `message_status: held_for_quality_assessment` (contra `accepted` no caminho normal).
+
+- Sinal bom → libera as retidas, dispara webhooks `sent`/`delivered` normalmente.
+- Sinal ruim → template vira `PAUSED`, webhook `message_template_status_update` com evento `paused`, e **cada mensagem retida cai** com webhook `failed` + código **132015**.
+
+A Meta afirma guardrail interno para decidir em até **1 hora no p99** mesmo em campanha grande [7]. Utility só entra em pacing se você já teve um utility pausado, e pelos 7 dias seguintes [7].
+
+**Pausa por qualidade RED** [8]: 1ª ocorrência **3 h**, 2ª **6 h**, 3ª **desabilitado**. Enquanto pausado a API rejeita o envio (não cobra nem consome limite, mas rejeita). Template pausado **pelo pacing** exige **unpause manual**: `POST /{whats_app_message_template_id}/unpause` ou o link no WhatsApp Manager [8]. Apelação de rejeição exige amostra e é decidida em 24 h [8].
+
+## A5. Limite por usuário (frequency capping) e opt-out
+
+A Meta limita quantos **templates de marketing** uma pessoa recebe, de forma **dinâmica e adaptativa** — depende da taxa de leitura recente dela e de quanto a caixa de entrada está cheia de mensagens de amigos, família e empresas. **Não existe número publicado** [5].
+
+- Marketing enviado **dentro de uma janela aberta não conta** para o limite [5].
+- Falha vem como webhook `failed` + erro **131049** [5].
+- Espere **pelo menos 24 h** antes de reenviar. Retry excessivo faz a Meta bloquear entregas àquele usuário por até 24 h e degrada a acurácia do relatório da campanha [5].
+- **Não está ativo** para EEA, Reino Unido, Japão e Coreia do Sul — **o Brasil está sujeito** [5].
+
+**EUA:** a Meta **não entrega** templates de marketing para números com +1 e área americana. Foi anunciado para abr/2025 e a doc atual afirma o bloqueio como estado corrente [5]. Não afeta Brasil.
+
+**Opt-out** tem código próprio: **131050** — "o destinatário escolheu parar de receber mensagens de marketing da sua empresa". Não reenvie; existe webhook para ser notificado do opt-out [9].
+
+## A6. Envio fora da janela e mídia outbound
+
+Fora da janela, **só template aprovado**; texto livre retorna **131047** ("mais de 24 horas desde a última resposta") [9].
+
+Header de template aceita imagem, vídeo ou documento. Recomendação oficial: **subir o arquivo e usar o media ID** em vez de URL própria, para aproveitar throughput alto; se precisar servir da sua infra, use media HTTP caching [4].
+
+Limites de mídia [11]:
+
+| Tipo | Formatos / MIME | Tamanho máx. |
+|---|---|---|
+| Imagem | jpeg, png | 5 MB |
+| Vídeo | mp4, 3gp | 16 MB |
+| Áudio | aac, amr, mp3, m4a, ogg (**só codec OPUS, mono**) | 16 MB |
+| Documento | pdf, txt, doc/docx, xls/xlsx, ppt/pptx | 100 MB |
+| Sticker | webp estático | 100 KB |
+| Sticker | webp animado | 500 KB |
+
+Media ID de upload expira em **30 dias**; media ID vindo de webhook expira em **7 dias** [11].
+
+Tipos de mensagem disponíveis dentro da janela (não-template): endereço, áudio, contatos, documento, imagem, botão CTA de URL, chamada interativa, WhatsApp Flows, lista interativa, pedido de localização, botões de resposta rápida (até 3), localização, sticker, texto, vídeo e reação [10].
+
+## A7. Checar se um número tem WhatsApp
+
+Não existe mais endpoint de checagem — o `/contacts` foi removido. O comportamento atual é **enviar e ler o erro**: **131026** cobre "o número não é um número WhatsApp", "o destinatário não aceitou os novos termos" e "cliente WhatsApp antigo demais" [9]. Na Cloud API a validação é a posteriori, e cada tentativa errada custa em qualidade.
+
+Outros erros relevantes para campanha [9]:
+
+| Código | Significado | Ação |
+|---|---|---|
+| 130429 | Throughput da Cloud API estourado | backoff, reduzir frequência |
+| 131026 | Não entregue: sem WhatsApp / ToS / cliente antigo | não reenviar |
+| 131047 | Passaram 24 h da última resposta | usar template |
+| 131048 | Restrição de envio por spam/bloqueios anteriores | checar qualidade, congelar canal |
+| 131049 | Não entregue para manter engajamento saudável (per-user cap) | esperar 24 h |
+| 131050 | Usuário optou por não receber marketing | **nunca** reenviar |
+| 130403 | A empresa bloqueou o usuário | desbloquear |
+| 132015 | Template pausado por baixa qualidade | corrigir e despausar |
+| 131057 | Conta em manutenção (às vezes upgrade de throughput) | esperar |
+
+## A8. Throughput e boas práticas de vazão
+
+- **80 mensagens/segundo** por número registrado, padrão [4].
+- Até **1.000 mps** por upgrade automático e gratuito [4].
+- Elegibilidade para 1.000 mps: portfólio com limite **ilimitado** + número usado para alcançar **100 mil usuários únicos fora da janela em 24 h** + qualidade `YELLOW` ou melhor [4].
+- Número compartilhado com o app WhatsApp Business fica travado em **20 mps** [4].
+- O upgrade leva até 1 minuto, e durante ele a API responde **131057** [4].
+- Throughput conta **inbound e outbound**, todos os tipos [4].
+- Estourar devolve **130429**; excesso para o *mesmo* usuário devolve erro de **pair rate limit** [4].
+- Webhook precisa aguentar **3x** o tráfego de saída (status callbacks) + 1x o de entrada; mediana ≤ 250 ms, menos de 1% acima de 1 s; a Meta reentrega falhas por até 7 dias com backoff exponencial [4].
+
+## A9. Marketing Messages API (ex-MM Lite)
+
+Renomeada de "Marketing Messages Lite API" para **Marketing Messages API for WhatsApp** (MM API). Endpoint dedicado **`/marketing_messages`**, mesmo esquema técnico e **mesmo modelo de cobrança** da Cloud API, reaproveita números e templates existentes [12].
+
+O que ela adiciona [12]:
+- otimização automática de entrega (teste A/B da Meta com ~12 milhões de mensagens na Índia em jan/2025, t-test 95%);
+- benchmarks de performance e recomendações;
+- otimizações criativas em teste (animação e filtro de imagem);
+- formatos mais ricos, como **GIF**;
+- **time-to-live**, para não entregar campanha sensível a tempo com atraso.
+
+Restrições geográficas (fonte secundária de BSPs): mensagens de/para EEA, Reino Unido, Japão e Coreia do Sul **não recebem** otimização de entrega nem relatório de clique/conversão [busca]. Alinhado com a lista de países excluídos do per-user cap na doc oficial [5].
+
+---
+
+# PARTE B — Não oficial (whatsmeow / wuzapi / Evolution API / Baileys)
+
+Nada aqui é documentado pela Meta. São defaults de biblioteca e consenso de mercado, e divergem muito entre si. O bridge viola os termos do WhatsApp e o risco de ban permanente é real.
+
+## B1. Curvas de aquecimento publicadas
+
+| Fonte | D1–2 | D3–4 | D5–7 | Depois |
+|---|---|---|---|---|
+| Letalk (provedor BR) [16] | 30–50/dia | 80–100/dia | 150–200/dia | campanhas graduais |
+| baileys-antiban (defaults do código) [15] | 20 → 36 | 65 → 117 | 210 → 680 | sem teto (dia 8+) |
+| Umbler (provedor BR) [17] | — | — | — | **só escale após ~1 mês** de uso normal |
+| Consenso PT-BR de busca [busca] | 10–30/dia de primeiro contato | 30–50 na 1ª semana | — | 100–200 ao fim da 2ª semana |
+
+A curva do baileys-antiban usa `warmUpDays: 7`, `day1Limit: 20`, `growthFactor: 1.8` — chega a 680/dia no dia 7 [15]. É agressiva demais para lista fria; trate como teto técnico da biblioteca, não como recomendação de segurança.
+
+Letalk detalha o ritual completo do aquecimento [16]: nos dias 1–2, conversar com amigos/família/equipe, entrar em grupos, publicar status, fazer chamadas curtas; dias 3–4, aumentar volume e entrar em novos grupos; dias 5–7, fazer alguns contatos **iniciarem** a conversa com você. Recomenda 2–5 grupos e pelo menos 1 status por dia. Afirma que números com **mínimo de 5 dias** de aquecimento têm menos bloqueios; 3 dias basta para pouco volume, 5–7 dias para campanhas e automações. O critério de "aquecido" é **equilíbrio entre enviadas e recebidas** — o ideal é receber tanto quanto ou mais do que envia.
+
+## B2. Defaults numéricos do baileys-antiban [15]
+
+| Parâmetro | Default |
+|---|---|
+| Delay entre mensagens | 1.500–5.000 ms |
+| Penalidade para chat novo | +2.500–3.000 ms |
+| Multiplicador de delay: desconhecido | 2,5× |
+| Multiplicador: handshake enviado | 1,8× |
+| Multiplicador: handshake completo | 1,3× |
+| Multiplicador: contato conhecido | 1,0× |
+| Simulação de digitação | ~30 ms por caractere |
+| Preset "moderado" | 8–15/min, 200–400/h, 1.500–2.000/dia |
+| Novos contatos por dia | 5 |
+| Contatos do mesmo grupo | 10 |
+| Operações de grupo | ~3 adds / 10 min, 2 criações / 10 min |
+| Taxa de resposta mínima | **10%** (abaixo disso, bloqueia envio) |
+| Mínimo antes de aplicar a regra | 5 mensagens enviadas |
+| Entrega abaixo de 60% de duplo-tique | sinal de soft-ban |
+| Atividade humana de fundo | a cada 2–6 h; digitação 3–8 s; delay de leitura 10–60 min; toggle de presença 30–120 s |
+
+Pontuação de risco na saúde da conexão: +15 a +30 por desconexão, +40 em erro 403, +60 em 401 (logged out), +25 em 463 (timelock), +20 por mensagem falha. Alerta em 3 desconexões/hora, crítico em 5/hora [15].
+
+## B3. Sinais que levam a ban
+
+O driver real é **denúncia e bloqueio do destinatário**; o resto é proxy [18]. Pesam também [16][18]:
+
+- enviar muito mais do que recebe;
+- mensagens para quem nunca respondeu ou não salvou seu contato;
+- texto idêntico repetido em massa;
+- volume alto logo no primeiro dia de um número novo;
+- número recém-ativado disparando campanha;
+- envio para número inexistente (sinal de lista comprada);
+- link já no primeiro contato.
+
+Pesquisa citada pela comunidade em 2025–2026 (fonte secundária, não verificável de forma independente): os modelos do WhatsApp pesam fortemente **razão de resposta** (abaixo de 10% = alto risco), **distância no grafo de contatos** (desconhecido = alto risco) e **padrão temporal** (timing robótico = alto risco), com rastreio de mensagens sem resposta em 48 h acumuladas em janela móvel de 30 dias [busca].
+
+A Umbler recomenda dividir a lista em segmentos (leads, clientes ativos, reengajamento) e **esperar 24 h entre lotes** para observar resultado antes de continuar. Também recomenda **1 mês de uso normal** antes de escalar disparos em número recém-ativado, e nunca disparar com qualidade baixa ou sinalizada [17].
+
+**Contraponto honesto:** a Chatsac argumenta que nenhuma rotina de aquecimento imuniza a conta, porque o motivo real da restrição é consentimento e qualidade da mensagem, não a curva de volume — um chip "bem aquecido" que passa a disparar para lista fria é restringido igual a um chip novo fazendo a mesma coisa. Sinaliza também que o mercado reconstituiu "regras" a partir de anedota, na ausência de dados oficiais [18]. Concordo com a leitura, e ela deveria estar visível na UI do produto.
+
+## B4. Mídia e recursos suportados no wuzapi/whatsmeow
+
+O README do wuzapi lista [19]:
+
+- **Mensagens:** texto, imagem, áudio, documento, template, vídeo, sticker, localização, contato e **enquete (poll)**.
+- **Usuários:** **checar se números têm WhatsApp**, obter info e avatar, listar contatos.
+- **Chat:** presença (digitando / pausado / gravando mídia), marcar como lido, baixar imagens, enviar reações.
+- **Grupos:** criar, apagar, listar, info, link de convite, participantes, foto e nome.
+- **Webhooks:** eventos `Message`, `ReadReceipt`, `Presence`, `HistorySync`, `ChatPresence`, `All`.
+
+**Botões e listas interativas não aparecem na lista de recursos** [19], e a comunidade do whatsmeow relata renderização incompleta ao montar mensagem interativa na mão — só header, body e footer aparecem, sem os botões e seções [20]. **Trate botão interativo como indisponível no bridge em 2026.**
+
+O README traz aviso explícito contra uso para spam e recomenda um provedor global oficial para fins comerciais [19].
+
+O ponto forte do bridge para campanha é justamente o **`IsOnWhatsApp`**: dá para validar a lista antes de disparar, coisa que a Cloud API não oferece mais.
+
+---
+
+# PARTE C — Como os concorrentes tratam campanhas
+
+- **Blip Go** chama de "Campanhas" / "Mensagens ativas": upload de **CSV separado por vírgula**, envio **imediato ou agendado**, e público por "grupo de contatos" vindo de uma coluna do Kanban [21]. Relatório com quatro métricas: **Audiência** (1 disparo = 1 telefone), **Falhas**, **Recebidas**, **Lidas** [21]. Limite mensal de disparos reinicia junto com o ciclo de faturamento, do dia 1 ao último dia do mês [21].
+- **Kommo** chama de **Broadcast**: segmentação por tags, personalização e escolha de template; até 256 contatos no app WhatsApp Business, ilimitado via API oficial. **Não tem agendamento** — o disparo é manual [22].
+- **Umbler** não expõe delay por mensagem; expõe **lotes com intervalo de 24 h** entre eles e alerta sobre a qualidade do número antes do disparo [17].
+- **Zenvia** posiciona como disparo multicanal (WhatsApp + SMS + e-mail), com importação de lista e segmentação da comunicação em massa [busca].
+- **HubSpot** (via parceiros de integração) é o modelo mais maduro do ponto de vista de CRM: as respostas do broadcast **voltam automaticamente para o registro do contato**, preservando o histórico, e as métricas da campanha convivem com as do CRM no mesmo relatório [busca].
+- Padrão comum entre as ferramentas mais novas: **dedup automático, metadado de opt-in e opt-out em um clique**, segmentação por campos do CRM e por comportamento (última abertura, último clique, última compra), contador de tamanho de segmento em tempo real, agendamento no fuso local do contato e teste A/B [busca].
+- **Nenhuma** das ferramentas brasileiras que li publica o intervalo entre mensagens como configuração de usuário. Elas escondem isso. É uma oportunidade de diferenciação para o HNBCRM e, ao mesmo tempo, um risco de suporte (usuário sobe o número e culpa a ferramenta pelo ban).
+- Vocabulário usado no mercado BR: "disparo em massa", "campanha", "mensagem ativa", "transmissão", "broadcast". Vale suportar mais de um termo na busca da UI.
+
+---
+
+# DEFAULTS RECOMENDADOS PARA O HNBCRM
+
+## (a) Cloud API oficial
+
+| Parâmetro | Número novo (tier 250) | Aquecido (tier ≥ 10k) |
+|---|---|---|
+| Destinatários únicos por dia | 200 (80% do tier) | 80% do tier vigente |
+| Taxa de envio | 3–5 msg/s | 20 msg/s (teto documentado: 80) |
+| Tamanho do lote | 200, pausa de 30 min entre lotes | 1.000, pausa de 5 min |
+| Janela de envio | 09h–20h no fuso do lead | 08h–21h |
+| Retry em 131049 | 1 tentativa, após 24 h | idem |
+| Retry em 131050 / 131026 / 130403 | **nunca** | **nunca** |
+| Retry em 130429 | backoff exponencial | idem |
+| Parada automática | template `RED`, `PAUSED` ou 132015 | idem |
+
+Justificativa: 80% do tier deixa margem para o tráfego transacional do dia, e a Meta exige **metade do limite usado em 7 dias** para escalar — então o default não pode ser tímido demais [1]. Trave um circuit breaker em `132015` e em `message_status: held_for_quality_assessment`: pacing ativo significa que continuar disparando só queima o template [7].
+
+Campos a persistir por campanha, porque a Meta os fornece e o usuário vai perguntar: `message_status` do envio, `whatsapp_business_manager_messaging_limit` do portfólio no momento do disparo, `quality_score` do template.
+
+## (b) Bridge não oficial
+
+| Dia desde a conexão | Mensagens/dia | Novos contatos/dia | Delay entre mensagens |
+|---|---|---|---|
+| 1–2 | 20 | 5 | 45–120 s |
+| 3–4 | 40 | 10 | 40–110 s |
+| 5–7 | 80 | 20 | 35–100 s |
+| 8–14 | 120 | 30 | 30–90 s |
+| Aquecido (15+) | **150–200** | 50 | 30–90 s |
+
+Complementos que eu tornaria **obrigatórios**, não opcionais:
+
+1. **Pausa de 15–30 min a cada 30 mensagens**, e teto de 30/hora. O consenso brasileiro é "abaixo de 30 por hora e uma por minuto, dentro de uma janela de 8 horas, com intervalos aleatórios" [busca][16].
+2. **Janela comercial 09h–20h** no fuso do lead, sem fim de semana por padrão [16].
+3. **Checar `IsOnWhatsApp` antes de cada envio** e pular número inexistente [19]. É grátis no bridge e caríssimo em qualidade na Cloud API.
+4. **Kill switch por taxa de resposta:** abaixo de 10% depois de 50 envios, pausar a campanha [15].
+5. **Kill switch por entrega:** abaixo de 60% de duplo-tique, pausar [15].
+6. **Variação obrigatória de texto** (spintax ou 3+ variantes por campanha) e **sem link no primeiro contato** [15][16].
+7. **Bloquear disparo enquanto o número tiver menos de 7 dias** de conexão; exibir aviso até 30 dias [17].
+8. **Multiplicador de delay 2,5× para desconhecido** (contato sem histórico de conversa), 1,0× para quem já respondeu [15].
+9. **Presença "digitando" antes de cada envio**, proporcional ao tamanho do texto (~30 ms/caractere) — o HNBCRM já faz isso no `lib/whatsappDispatch.ts` para IA e agendadas [15].
+
+Sobre teto máximo: **não** subiria além de 200/dia no bridge, mesmo com número velho. Os 680/dia do baileys-antiban [15] vêm de uma biblioteca que otimiza para volume, não para sobrevivência do número.
+
+## (c) O que colocar na UI
+
+O aviso mais importante desta pesquisa: **aquecimento reduz risco, não elimina**. O que derruba o número é denúncia e bloqueio de quem não pediu contato [18]. Exponha a **taxa de opt-out e de bloqueio** na tela da campanha com o mesmo destaque de "entregues" — é o indicador que antecede o ban, e nenhum concorrente que li mostra isso.
+
+---
+
+## Fontes
+
+[1] https://developers.facebook.com/documentation/business-messaging/whatsapp/messaging-limits — doc oficial da Meta, atualizada 21/05/2026. Tiers, escala automática, campo de API.
+[2] https://developers.facebook.com/documentation/business-messaging/whatsapp/upcoming-messaging-limits-changes — mudança de 07/10/2025, marcada como já ativa. Comparativo antes/depois.
+[3] https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing — modelo por mensagem, calendário de preços, localização BRL do Brasil.
+[4] https://developers.facebook.com/documentation/business-messaging/whatsapp/throughput — 80/1.000 mps, elegibilidade, requisitos de webhook.
+[5] https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/marketing-templates/per-user-limits — cap dinâmico por usuário, 131049, EUA, países excluídos.
+[6] https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-quality — GREEN/YELLOW/RED/UNKNOWN.
+[7] https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-pacing — retenção, held_for_quality_assessment, 132015.
+[8] https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-pausing — 3 h / 6 h / desabilitado, unpause manual.
+[9] https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes — 131026, 131047, 131048, 131049, 131050, 130429, 132015.
+[10] https://developers.facebook.com/documentation/business-messaging/whatsapp/messages/send-messages — janela de 24 h, tipos de mensagem, qualidade de 7 dias.
+[11] https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/media — tabelas de tipo e tamanho, expiração de media ID.
+[12] https://developers.facebook.com/documentation/business-messaging/whatsapp/marketing-messages/overview — MM Lite renomeada, endpoint /marketing_messages, TTL e GIF.
+[13] https://unalsoft.com/blog/2026-07-31-meta-graph-api-v26/en/ e ppc.land — Graph API v26.0 em 29/07/2026; sunset da On-Premises em 23/10/2025. **Secundárias.**
+[14] https://setsmart.io/blog/whatsapp-business-api-pricing e https://blueticks.co/blog/whatsapp-business-api-pricing-2026 — tarifas do Brasil. **Secundárias**, convergentes entre si, não confirmadas no CSV oficial da Meta (que exige sessão).
+[15] https://github.com/kobie3717/baileys-antiban — defaults numéricos de anti-ban. É código de biblioteca, não pesquisa da Meta; viés para volume.
+[16] https://letalk.com.br/blog/como-aquecer-seu-chip-tech/ — curva dia a dia e ritual de aquecimento. Provedor brasileiro, **viés comercial**.
+[17] https://help.umbler.com/hc/pt-br/articles/37924111692813-Recomenda%C3%A7%C3%B5es-para-envio-em-massa — lotes com 24 h de intervalo, 1 mês antes de escalar. **A tabela de tiers dessa página está desatualizada** (cita Tier 1 = 1.000), contradizendo [1].
+[18] https://chatsac.com/blog/aquecer-chip-whatsapp-business/ — contraponto cético ao aquecimento; confirma os tiers 250/2.000/10.000/100.000/ilimitado.
+[19] https://github.com/asternic/wuzapi — README com recursos suportados e aviso anti-spam.
+[20] https://github.com/tulir/whatsmeow/discussions/348 e /discussions/711 — mensagens interativas com renderização incompleta.
+[21] https://help.blip.ai/hc/pt-br/articles/33302768736023-Como-fazer-Campanhas-em-Massa — CSV, agendamento, métricas Audiência/Falhas/Recebidas/Lidas.
+[22] https://support.kommo.com/docs/broadcasting-overview e https://www.kommo.com/blog/whatsapp-broadcast/ — broadcast por tags, 256 contatos no app, sem agendamento.
+
+**Nota de segurança:** todo o conteúdo acima veio de páginas públicas tratadas como dado não confiável. Nenhuma tentou injetar instrução no agente. As fontes de provedores brasileiros ([16], [17], [18]) têm viés comercial declarado — vendem a solução que recomendam. A [17] contém um erro factual sobre tiers, sinalizado acima em vez de repassado. Itens marcados como "[busca]" vieram de resumos de busca sem que eu tenha aberto a página fonte; trate-os como o elo mais fraco da cadeia.

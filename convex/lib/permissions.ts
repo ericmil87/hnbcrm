@@ -13,7 +13,8 @@ export type PermissionCategory =
   | "team"
   | "settings"
   | "auditLogs"
-  | "apiKeys";
+  | "apiKeys"
+  | "campaigns";
 
 // Level definitions per category
 export type LeadsLevel = "none" | "view_own" | "view_all" | "edit_own" | "edit_all" | "full";
@@ -25,6 +26,7 @@ export type TeamLevel = "none" | "view" | "manage";
 export type SettingsLevel = "none" | "view" | "manage";
 export type AuditLogsLevel = "none" | "view";
 export type ApiKeysLevel = "none" | "view" | "manage";
+export type CampaignsLevel = "none" | "view" | "manage" | "full";
 
 export interface Permissions {
   leads: LeadsLevel;
@@ -36,6 +38,7 @@ export interface Permissions {
   settings: SettingsLevel;
   auditLogs: AuditLogsLevel;
   apiKeys: ApiKeysLevel;
+  campaigns: CampaignsLevel;
 }
 
 export type Role = "admin" | "manager" | "agent" | "ai";
@@ -51,6 +54,8 @@ const LEVEL_HIERARCHIES: Record<PermissionCategory, string[]> = {
   settings: ["none", "view", "manage"],
   auditLogs: ["none", "view"],
   apiKeys: ["none", "view", "manage"],
+  // manage = criar/editar/pausar; full = lançar, cancelar, excluir, override de tetos
+  campaigns: ["none", "view", "manage", "full"],
 };
 
 // Default permissions per role
@@ -65,6 +70,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     settings: "manage",
     auditLogs: "view",
     apiKeys: "manage",
+    campaigns: "full",
   },
   manager: {
     leads: "edit_all",
@@ -76,6 +82,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     settings: "view",
     auditLogs: "view",
     apiKeys: "manage",
+    campaigns: "manage",
   },
   agent: {
     leads: "edit_own",
@@ -87,6 +94,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     settings: "none",
     auditLogs: "none",
     apiKeys: "none",
+    campaigns: "view",
   },
   ai: {
     leads: "edit_own",
@@ -98,6 +106,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     settings: "none",
     auditLogs: "none",
     apiKeys: "none",
+    campaigns: "view",
   },
 };
 
@@ -105,9 +114,15 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
  * Resolve effective permissions for a team member.
  * If explicit permissions are set, use those; otherwise fall back to role defaults.
  */
-export function resolvePermissions(role: Role, explicit?: Permissions | null): Permissions {
-  if (explicit) return explicit;
-  return DEFAULT_PERMISSIONS[role];
+export function resolvePermissions(
+  role: Role,
+  explicit?: (Partial<Permissions> & Omit<Permissions, "campaigns">) | null
+): Permissions {
+  const defaults = DEFAULT_PERMISSIONS[role];
+  if (!explicit) return defaults;
+  // Categorias criadas depois de o membro ter permissões explícitas gravadas
+  // (ex.: campaigns) caem no default do role em vez de "undefined" (= negado).
+  return { ...explicit, campaigns: explicit.campaigns ?? defaults.campaigns };
 }
 
 /**
@@ -144,6 +159,7 @@ export const CATEGORY_LABELS: Record<PermissionCategory, string> = {
   settings: "Configurações",
   auditLogs: "Auditoria",
   apiKeys: "Chaves API",
+  campaigns: "Campanhas",
 };
 
 // PT-BR labels for levels

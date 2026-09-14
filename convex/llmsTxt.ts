@@ -14,11 +14,11 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (46 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (58 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
-- Permissions: Granular RBAC with 9 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
+- Permissions: Granular RBAC with 10 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys, campaigns). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
 
 ## WhatsApp Channel
 
@@ -85,6 +85,9 @@ Paths below omit the \`/api/v1\` prefix:
 | Required permission | Routes |
 |---------------------|--------|
 | \`auditLogs: view\` | GET /audit-logs |
+| \`campaigns: view\` | GET /campaigns, GET /campaigns/get, GET /campaigns/report, GET /campaigns/recipients, GET /campaigns/safe-defaults, GET /opt-outs, GET /whatsapp/templates, GET /whatsapp/tier |
+| \`campaigns: manage\` | POST /campaigns/create, POST /campaigns/update, POST /campaigns/recipients, POST /campaigns/preview-audience, POST /campaigns/pause, POST /campaigns/resume, POST /campaigns/retry-failed, POST /opt-outs, POST /whatsapp/templates/sync |
+| \`campaigns: full\` | POST /campaigns/launch, POST /campaigns/cancel, POST /campaigns/delete, DELETE /opt-outs |
 | \`contacts: edit\` | POST /contacts/create, POST /contacts/enrich |
 | \`contacts: view\` | GET /contacts, GET /contacts/get, POST /contacts/update, GET /contacts/gaps, GET /contacts/search |
 | \`inbox: reply\` | POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
@@ -714,6 +717,68 @@ Reject a handoff.
 
 **Response:** \`{ success: true }\`
 
+### Campaign Endpoints (WhatsApp bulk messaging)
+
+Campaigns send WhatsApp messages in bulk through one channel (official Meta Cloud API or the unofficial bridge). New numbers become contact + lead + conversation at send time; replies flow through the normal inbox (and the AI attendant, which receives the campaign context). Every campaign enforces sending limits (safe defaults per channel age/tier, hard caps never exceeded), a business-hours window, the org-wide suppression list (opt-outs), and kill switches (low reply/delivery rate, consecutive failures, Meta quality errors). Statuses: draft → scheduled/running → paused/completed/canceled/failed. **Launching requires the human operator's explicit acknowledgements** (\`consentAck\` = consent/legal basis to contact the list; \`bridgeRiskAck\` on bridge channels = permanent ban risk) — never set them on a person's behalf without their confirmation. Recipient statuses: pending, queued, sent, delivered, read, replied, failed, skipped, opted_out. Meta error mapping: 131026/131047/130403 → failed (no retry); 131049 (per-user marketing cap) → one retry after 24h; 131050 (user opted out) → opted_out + suppression; 131048/132015 → campaign paused.
+
+#### GET /api/v1/campaigns
+List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns: [{ _id, name, status, provider, contentKind, channel, creatorName, stats, pausedReason, ... }] }\`
+
+#### GET /api/v1/campaigns/get
+**Query params:** campaignId. **Response:** \`{ campaign }\` (content, audience, schedule, pacing, safety, stats, timeline).
+
+#### GET /api/v1/campaigns/report
+**Query params:** campaignId. **Response:** \`{ report: { stats, rates: { delivered, read, replied, failed, optedOut }, errorBreakdown, skipBreakdown, estimatedCostUsd, progress, timeline } }\`
+
+#### GET /api/v1/campaigns/recipients
+**Query params:** campaignId (required), status, search, limit (≤500), cursor. **Response:** \`{ recipients: [...], nextCursor, hasMore }\`
+
+#### GET /api/v1/campaigns/safe-defaults
+**Query params:** channelConfigId (required), tier. **Response:** \`{ defaults: { provider, warmupDay, safe, hardCap, blocked, warmupWarning, schedule, safety } }\`
+
+#### POST /api/v1/campaigns/preview-audience
+**Body:** filters (boardId, stageIds, tags, assignedTo, temperature, priority, lastActivityBefore, lastActivityAfter, onlyOpenWindow, excludeCampaignedWithinDays, excludeRepliedToCampaigns). **Response:** \`{ preview: { count, sample, excluded, scanned, truncated } }\`
+
+#### POST /api/v1/campaigns/create
+Create a DRAFT. **Body:** name (required), channelConfigId (required), content (required: \`{ kind: "text"|"template", variants: [{ text, attachmentFileIds? }], contentType?, template?: { name, language, category?, headerFileId?, bodyParams?: [{ source: "field"|"const", value }] } }\`), audience (\`{ source: "segment"|"manual"|"import", filters?, targetBoardId?, targetStageId?, targetTags? }\`, default manual), schedule, pacing, safeMode, safety, description. On bridge channels with more than 30 recipients the message needs 2+ text variants or spintax \`{a|b}\`; links are refused unless \`safety.allowLinks\`. Meta text campaigns only reach recipients with an open 24h window (\`filters.onlyOpenWindow\`); use a template for new numbers. **Response:** \`{ success: true, campaignId }\` (201)
+
+#### POST /api/v1/campaigns/update
+**Body:** campaignId, patch (name, description, channelConfigId, content, audience, schedule, pacing, safeMode, safety). Drafts: everything; paused/scheduled: only schedule/pacing/safety/safeMode.
+
+#### POST /api/v1/campaigns/delete
+Draft/canceled/completed only (campaigns:full). **Body:** campaignId
+
+#### POST /api/v1/campaigns/recipients
+Add recipients to a DRAFT. **Body:** campaignId + one of: \`entries: [{ phone, name?, vars? }]\` (≤500) — or \`csv\` (text ≤5 MB) / \`fileId\` (uploaded with fileType import_file) with \`mapping: { phone, name?, email?, company?, varsColumns? }\` and \`dryRun\`. Without mapping the CSV call returns headers + suggestedMapping. **Response:** \`{ success, added, invalid, duplicates, suppressed, existingContacts?, preview? }\`
+
+#### POST /api/v1/campaigns/launch
+**Body:** campaignId, consentAck (required true), bridgeRiskAck (required true on bridge), overrideAck + overrideWord "ENTENDO" (only when limits exceed the safe defaults), tierAtLaunch, templateQualityAtLaunch. **Response:** \`{ success, status: "running"|"scheduled", warnings, estimatedCostUsd }\`
+
+#### POST /api/v1/campaigns/pause · POST /api/v1/campaigns/resume · POST /api/v1/campaigns/cancel · POST /api/v1/campaigns/retry-failed
+**Body:** campaignId (+ reason on pause). retry-failed re-queues eligible failures (131049 elapsed, network errors, canceled) → \`{ requeued }\`.
+
+### Opt-out (suppression) Endpoints
+
+#### GET /api/v1/opt-outs
+**Query params:** search (digits), limit, cursor. **Response:** \`{ optOuts: [{ _id, phone, source: keyword|meta_131050|manual|import, campaignId?, contactId?, reason?, createdAt }], nextCursor, hasMore }\`
+
+#### POST /api/v1/opt-outs
+**Body:** phone or contactId, reason. Idempotent. **Response:** \`{ success, optOutId }\` (201)
+
+#### DELETE /api/v1/opt-outs
+**Query params:** optOutId. campaigns:full; audited as high.
+
+### WhatsApp Template Endpoints (Meta Cloud API)
+
+#### GET /api/v1/whatsapp/templates
+**Query params:** channelConfigId (required), onlyApproved. **Response:** \`{ templates: [{ name, language, category, status, qualityScore, components, bodyText, headerFormat, bodyParamCount, buttons }] }\`
+
+#### POST /api/v1/whatsapp/templates/sync
+**Body:** channelConfigId. Pulls templates from Meta into the cache. **Response:** \`{ success, synced, removed, approved }\`
+
+#### GET /api/v1/whatsapp/tier
+**Query params:** channelConfigId. **Response:** \`{ tier: "TIER_250"|"TIER_2K"|"TIER_10K"|"TIER_100K"|"TIER_UNLIMITED"|"unknown", limit }\`
+
 ### Reference Endpoints
 
 #### GET /api/v1/boards
@@ -1171,7 +1236,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 46 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 58 tools for AI agents:
 
 ### Lead Management
 
@@ -1433,6 +1498,32 @@ Reschedule a calendar event to a new time.
 - **newStartTime** (number, required): New start timestamp (ms)
 - **newEndTime** (number, optional): New end timestamp (auto-calculated if omitted)
 
+### Campaigns (WhatsApp bulk messaging)
+
+#### crm_list_campaigns
+List campaigns with status and counters. **status** (optional).
+
+#### crm_get_campaign / crm_campaign_report
+Campaign details / report (rates, error breakdown, cost, progress). **campaignId** (required).
+
+#### crm_create_campaign
+Create a DRAFT campaign. **name**, **channelConfigId**, **content** (required), audience, schedule, pacing, safety. Never launches.
+
+#### crm_add_campaign_recipients
+**campaignId** + **entries[]** (≤500) or **csv** + **mapping** (+ dryRun).
+
+#### crm_launch_campaign
+**campaignId**, **consentAck** (required — human confirmation of consent/legal basis), bridgeRiskAck (bridge), overrideAck/overrideWord (above safe limits), tierAtLaunch. Requires campaigns:full.
+
+#### crm_pause_campaign / crm_resume_campaign / crm_cancel_campaign
+**campaignId** (+ reason on pause).
+
+#### crm_list_opt_outs / crm_add_opt_out
+Suppression list: list (search, limit, cursor) / add (phone or contactId, reason).
+
+#### crm_list_whatsapp_templates
+Meta templates cached for a channel. **channelConfigId**, onlyApproved.
+
 ---
 
 ## Webhook Events
@@ -1470,6 +1561,14 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | import.completed | Import job finished — \`status\` is \`completed\` or \`completed_with_errors\` (payload: jobId, entity, fileName, created, updated, skipped, failed, total) |
 | import.failed | Import job failed (payload: jobId, entity, fileName, error) |
 | import.rolled_back | Import undone (payload: jobId, entity, fileName, deleted, reverted) |
+| campaign.created | Campaign draft created (payload: campaignId, name, provider, channelConfigId) |
+| campaign.started | Campaign launched (payload: campaignId, name, provider, recipients, startAt) |
+| campaign.paused | Campaign paused — manually or by a kill switch (payload: campaignId, name, reason, automatic) |
+| campaign.resumed | Campaign resumed (payload: campaignId, name) |
+| campaign.completed | Campaign finished sending (payload: campaignId, name, stats) |
+| campaign.canceled | Campaign canceled (payload: campaignId, name, stats) |
+| campaign.recipient_replied | A campaign recipient replied within 7 days (payload: campaignId, recipientId, conversationId, leadId, phone) |
+| contact.opted_out | A phone entered the suppression list (payload: phone, source, campaignId?, contactId?) |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
 

@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **46 tools across 9 categories** to manage leads, contacts, pipeline, tasks, calendar, and notification preferences via AI agents.
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **58 tools across 10 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns and notification preferences via AI agents.
 
 ## Prerequisites
 
@@ -245,6 +245,25 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 |------|-------------|
 | `crm_get_notification_preferences` | Get email notification preferences for the current agent |
 | `crm_update_notification_preferences` | Update email notification preferences (e.g., disable dailyDigest) |
+
+### Campaigns (12 tools)
+
+WhatsApp bulk-messaging campaigns (official Cloud API or unofficial bridge). Launching always requires the human operator's explicit acknowledgements (LGPD consent; bridge ban risk) — never set those flags on your own.
+
+| Tool | Description |
+|------|-------------|
+| `crm_list_campaigns` | List campaigns with status and counters |
+| `crm_get_campaign` | Get a campaign (content, audience, limits, stats, timeline) |
+| `crm_campaign_report` | Delivery/read/reply/opt-out rates, error breakdown, cost, progress |
+| `crm_create_campaign` | Create a DRAFT campaign (text variants or Meta template + audience) |
+| `crm_add_campaign_recipients` | Add recipients: phone entries (≤500) or CSV text with mapping (dry-run first) |
+| `crm_launch_campaign` | Launch a draft — requires `consentAck` (+ `bridgeRiskAck` on bridge) |
+| `crm_pause_campaign` | Pause sending |
+| `crm_resume_campaign` | Resume a paused campaign |
+| `crm_cancel_campaign` | Cancel (pending recipients are skipped) |
+| `crm_list_opt_outs` | Suppression list (numbers that never receive campaigns) |
+| `crm_add_opt_out` | Add a phone/contact to the suppression list |
+| `crm_list_whatsapp_templates` | Meta message templates cached for a channel |
 
 ## Resources
 

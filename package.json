@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm",
   "private": true,
-  "version": "0.54.0",
+  "version": "0.55.0",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
@@ -30,7 +30,8 @@
     "react-helmet-async": "^2.0.5",
     "react-router": "^7.13.0",
     "sonner": "^2.0.3",
-    "tailwind-merge": "^3.1.0"
+    "tailwind-merge": "^3.1.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

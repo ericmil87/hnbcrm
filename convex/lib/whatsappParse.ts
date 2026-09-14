@@ -18,6 +18,7 @@ export interface ParsedStatusUpdate {
   externalId: string; // wamid of the outbound message this status refers to
   status: "sent" | "delivered" | "read" | "failed";
   errorDetail?: string;
+  errorCode?: number;
 }
 
 export interface ParsedWebhookValue {
@@ -189,7 +190,13 @@ function parseStatus(status: Record<string, any>): ParsedStatusUpdate | null {
         )
         .join(" | ")
     : undefined;
-  return { externalId: wamid, status: value, errorDetail };
+  const firstCode = errors.length ? Number((errors[0] as Record<string, any>).code) : NaN;
+  return {
+    externalId: wamid,
+    status: value,
+    errorDetail,
+    ...(Number.isFinite(firstCode) ? { errorCode: firstCode } : {}),
+  };
 }
 
 /** Parse every `field: "messages"` change in a (signature-verified) payload. */
