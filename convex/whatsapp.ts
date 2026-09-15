@@ -422,7 +422,16 @@ async function dispatchViaBridge(
     return;
   }
 
-  const token = await decryptSecret(config.bridgeTokenEncrypted);
+  let token: string;
+  try {
+    token = await decryptSecret(config.bridgeTokenEncrypted);
+  } catch {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: "Não foi possível ler o token do canal bridge — reconecte o número em Configurações → Canais",
+    });
+    return;
+  }
 
   // Humanização (v4.1 P2): envios de IA/agendados no bridge sinalizam
   // "digitando…" e aguardam o delay JÁ CONTABILIZADO no cursor do canal pelo
@@ -582,193 +591,223 @@ export const internalDispatchMessage = internalAction({
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
-      messageId: args.messageId,
-    });
-    if (!context) return null;
-
-    const { message, config, toPhone, latestInboundExternalId, attachmentFiles } = context;
-
-    // Already dispatched (redelivery / duplicate scheduling)
-    if (message.externalId || message.deliveryStatus) return null;
-
-    if (!config || config.status !== "active") {
-      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
-        messageId: args.messageId,
-        detail:
-          "Nenhum número de WhatsApp ativo conectado para esta organização — configure em Configurações → Canais",
-      });
-      return null;
-    }
-    // Bridge provider (unofficial wuzapi/whatsmeow gateway) uses a separate REST
-    // egress. Everything below this branch is the untouched Meta Graph API path.
-    if (configProvider(config) === "bridge") {
-      await dispatchViaBridge(ctx, {
-        messageId: args.messageId,
-        message,
-        config,
-        toPhone,
-        attachmentFiles,
-        typingDelayMs: args.typingDelayMs,
-      });
-      return null;
-    }
-
-    // Meta Cloud API path requires the Graph credentials. A complete Meta config
-    // always has both, so the happy path never hits this guard.
-    if (!config.accessTokenEncrypted || !config.phoneNumberId) {
-      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
-        messageId: args.messageId,
-        detail: "Configuração Meta incompleta — reconfigure o canal em Configurações → Canais",
-      });
-      return null;
-    }
-    if (!toPhone) {
-      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
-        messageId: args.messageId,
-        detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
-      });
-      return null;
-    }
-
-    // Build the Graph API payload: template > media attachment > text
-    const payload: Record<string, unknown> = { messaging_product: "whatsapp", to: toPhone };
-    const template = message.metadata?.template as
-      | { name: string; languageCode: string; components?: unknown[] }
-      | undefined;
-    if (template) {
-      payload.type = "template";
-      payload.template = {
-        name: template.name,
-        language: { code: template.languageCode },
-        ...(template.components ? { components: template.components } : {}),
-      };
-    } else if (attachmentFiles.length > 0) {
-      const file = attachmentFiles[0];
-      const link = await ctx.storage.getUrl(file.storageId);
-      if (!link) {
-        await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
-          messageId: args.messageId,
-          detail: "Anexo indisponível no armazenamento",
-        });
-        return null;
-      }
-      const kind = file.mimeType.startsWith("image/")
-        ? "image"
-        : file.mimeType.startsWith("audio/")
-          ? "audio"
-          : "document";
-      payload.type = kind;
-      payload[kind] = {
-        link,
-        ...(kind === "document" ? { filename: file.name } : {}),
-        ...(kind !== "audio" && message.content ? { caption: message.content } : {}),
-      };
-    } else {
-      payload.type = "text";
-      payload.text = { body: message.content };
-    }
-
-    // Reply/quote: reference the quoted message id via Graph `context`. Templates
-    // don't carry a reply context, so only attach it to text/media sends.
-    if (!template) {
-      const quotedExternalId = (message.metadata?.quoted as { externalId?: string } | undefined)
-        ?.externalId;
-      if (quotedExternalId) {
-        payload.context = { message_id: quotedExternalId };
-      }
-    }
-
-    const accessToken = await decryptSecret(config.accessTokenEncrypted);
-    let response: Response;
-    let body: Record<string, any>;
     try {
-      response = await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      body = await response.json().catch(() => ({}));
+      await dispatchMessage(ctx, args);
     } catch (e) {
+      // Rede de segurança: uma exceção fora dos caminhos tratados (token que não
+      // decifra, storage…) deixava a mensagem SEM status para sempre — no inbox ela
+      // parecia enviada e o destinatário de campanha ficava "queued" eternamente.
+      const detail = e instanceof Error ? e.message : String(e);
+      console.error(`[whatsapp] dispatch ${args.messageId} lançou: ${detail}`);
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId: args.messageId,
-        detail: e instanceof Error ? e.message : "Falha de rede ao enviar",
-      });
-      return null;
-    }
-
-    const wamid = body?.messages?.[0]?.id;
-    if (response.ok && typeof wamid === "string") {
-      await ctx.runMutation(internal.whatsapp.internalMarkDispatched, {
-        messageId: args.messageId,
-        wamid,
-      });
-      // Nice-to-have: mark the latest inbound message as read (best-effort)
-      if (latestInboundExternalId) {
-        try {
-          await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              messaging_product: "whatsapp",
-              status: "read",
-              message_id: latestInboundExternalId,
-            }),
-          });
-        } catch {
-          // read receipts are cosmetic — never fail the dispatch over them
-        }
-      }
-    } else {
-      const code = body?.error?.code as number | undefined;
-
-      // Classificação em duas famílias (v4.1 P2 DIFF 7):
-      // — Throttling benigno (131056 pair rate, 130429 throughput, 80007 WABA
-      //   rate limit): re-agenda com o backoff OFICIAL 4^X da doc Meta, dentro
-      //   do teto de tentativas. Só cai no mark-failed quando esgota.
-      if (code === 131056 || code === 130429 || code === 80007) {
-        const rescheduled = await ctx.runMutation(
-          internal.whatsapp.internalRescheduleDispatch,
-          {
-            messageId: args.messageId,
-            errorCode: code,
-            ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
-          }
-        );
-        if (rescheduled) return null;
-      }
-      // — Sinal de risco de qualidade (131048: número restringido por mensagens
-      //   bloqueadas/denunciadas como spam): NUNCA re-tentar automaticamente —
-      //   insistir agrava o quality rating. Congela a fila do canal + alerta.
-      if (code === 131048) {
-        await ctx.runMutation(internal.whatsapp.internalFreezeChannelPacing, {
-          messageId: args.messageId,
-          freezeMs: QUALITY_FREEZE_MS,
-        });
-      }
-
-      const detail =
-        code === 131026
-          ? "Fora da janela de 24h — é necessário enviar um template aprovado (erro 131026)"
-          : code === 131056
-            ? "Limite de envio para este destinatário — tentativas esgotadas (erro 131056)"
-            : code === 130429
-              ? "Limite de vazão do número atingido — tentativas esgotadas (erro 130429)"
-              : code === 80007
-                ? "Limite de envio da conta WhatsApp atingido — tentativas esgotadas (erro 80007)"
-                : code === 131048
-                  ? "A Meta restringiu envios deste número por qualidade (mensagens bloqueadas/denunciadas como spam — erro 131048). Fila do canal pausada por 30 minutos"
-                  : body?.error?.message ?? `Falha no envio (HTTP ${response.status})`;
-      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
-        messageId: args.messageId,
-        errorCode: code,
-        detail,
+        detail: `Falha inesperada no envio: ${detail}`,
+        onlyIfUndispatched: true,
       });
     }
-
     return null;
   },
 });
+
+async function dispatchMessage(
+  ctx: ActionCtx,
+  args: { messageId: Id<"messages">; typingDelayMs?: number }
+): Promise<null> {
+  const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
+    messageId: args.messageId,
+  });
+  if (!context) return null;
+
+  const { message, config, toPhone, latestInboundExternalId, attachmentFiles } = context;
+
+  // Already dispatched (redelivery / duplicate scheduling)
+  if (message.externalId || message.deliveryStatus) return null;
+
+  if (!config || config.status !== "active") {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail:
+        "Nenhum número de WhatsApp ativo conectado para esta organização — configure em Configurações → Canais",
+    });
+    return null;
+  }
+  // Bridge provider (unofficial wuzapi/whatsmeow gateway) uses a separate REST
+  // egress. Everything below this branch is the untouched Meta Graph API path.
+  if (configProvider(config) === "bridge") {
+    await dispatchViaBridge(ctx, {
+      messageId: args.messageId,
+      message,
+      config,
+      toPhone,
+      attachmentFiles,
+      typingDelayMs: args.typingDelayMs,
+    });
+    return null;
+  }
+
+  // Meta Cloud API path requires the Graph credentials. A complete Meta config
+  // always has both, so the happy path never hits this guard.
+  if (!config.accessTokenEncrypted || !config.phoneNumberId) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail: "Configuração Meta incompleta — reconfigure o canal em Configurações → Canais",
+    });
+    return null;
+  }
+  if (!toPhone) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
+    });
+    return null;
+  }
+
+  // Build the Graph API payload: template > media attachment > text
+  const payload: Record<string, unknown> = { messaging_product: "whatsapp", to: toPhone };
+  const template = message.metadata?.template as
+    | { name: string; languageCode: string; components?: unknown[] }
+    | undefined;
+  if (template) {
+    payload.type = "template";
+    payload.template = {
+      name: template.name,
+      language: { code: template.languageCode },
+      ...(template.components ? { components: template.components } : {}),
+    };
+  } else if (attachmentFiles.length > 0) {
+    const file = attachmentFiles[0];
+    const link = await ctx.storage.getUrl(file.storageId);
+    if (!link) {
+      await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail: "Anexo indisponível no armazenamento",
+      });
+      return null;
+    }
+    const kind = file.mimeType.startsWith("image/")
+      ? "image"
+      : file.mimeType.startsWith("audio/")
+        ? "audio"
+        : "document";
+    payload.type = kind;
+    payload[kind] = {
+      link,
+      ...(kind === "document" ? { filename: file.name } : {}),
+      ...(kind !== "audio" && message.content ? { caption: message.content } : {}),
+    };
+  } else {
+    payload.type = "text";
+    payload.text = { body: message.content };
+  }
+
+  // Reply/quote: reference the quoted message id via Graph `context`. Templates
+  // don't carry a reply context, so only attach it to text/media sends.
+  if (!template) {
+    const quotedExternalId = (message.metadata?.quoted as { externalId?: string } | undefined)
+      ?.externalId;
+    if (quotedExternalId) {
+      payload.context = { message_id: quotedExternalId };
+    }
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await decryptSecret(config.accessTokenEncrypted);
+  } catch {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail: "Não foi possível ler o token de acesso da Meta — reconfigure o canal em Configurações → Canais",
+    });
+    return null;
+  }
+  let response: Response;
+  let body: Record<string, any>;
+  try {
+    response = await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    body = await response.json().catch(() => ({}));
+  } catch (e) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail: e instanceof Error ? e.message : "Falha de rede ao enviar",
+    });
+    return null;
+  }
+
+  const wamid = body?.messages?.[0]?.id;
+  if (response.ok && typeof wamid === "string") {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatched, {
+      messageId: args.messageId,
+      wamid,
+    });
+    // Nice-to-have: mark the latest inbound message as read (best-effort)
+    if (latestInboundExternalId) {
+      try {
+        await fetch(`${GRAPH_API_BASE}/${config.phoneNumberId}/messages`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messaging_product: "whatsapp",
+            status: "read",
+            message_id: latestInboundExternalId,
+          }),
+        });
+      } catch {
+        // read receipts are cosmetic — never fail the dispatch over them
+      }
+    }
+  } else {
+    const code = body?.error?.code as number | undefined;
+
+    // Classificação em duas famílias (v4.1 P2 DIFF 7):
+    // — Throttling benigno (131056 pair rate, 130429 throughput, 80007 WABA
+    //   rate limit): re-agenda com o backoff OFICIAL 4^X da doc Meta, dentro
+    //   do teto de tentativas. Só cai no mark-failed quando esgota.
+    if (code === 131056 || code === 130429 || code === 80007) {
+      const rescheduled = await ctx.runMutation(
+        internal.whatsapp.internalRescheduleDispatch,
+        {
+          messageId: args.messageId,
+          errorCode: code,
+          ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
+        }
+      );
+      if (rescheduled) return null;
+    }
+    // — Sinal de risco de qualidade (131048: número restringido por mensagens
+    //   bloqueadas/denunciadas como spam): NUNCA re-tentar automaticamente —
+    //   insistir agrava o quality rating. Congela a fila do canal + alerta.
+    if (code === 131048) {
+      await ctx.runMutation(internal.whatsapp.internalFreezeChannelPacing, {
+        messageId: args.messageId,
+        freezeMs: QUALITY_FREEZE_MS,
+      });
+    }
+
+    const detail =
+      code === 131026
+        ? "Fora da janela de 24h — é necessário enviar um template aprovado (erro 131026)"
+        : code === 131056
+          ? "Limite de envio para este destinatário — tentativas esgotadas (erro 131056)"
+          : code === 130429
+            ? "Limite de vazão do número atingido — tentativas esgotadas (erro 130429)"
+            : code === 80007
+              ? "Limite de envio da conta WhatsApp atingido — tentativas esgotadas (erro 80007)"
+              : code === 131048
+                ? "A Meta restringiu envios deste número por qualidade (mensagens bloqueadas/denunciadas como spam — erro 131048). Fila do canal pausada por 30 minutos"
+                : body?.error?.message ?? `Falha no envio (HTTP ${response.status})`;
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      errorCode: code,
+      detail,
+    });
+  }
+
+  return null;
+}
 
 // Internal: record a successful dispatch (wamid → externalId for status webhooks).
 // `note` is an optional diagnostic (e.g. extra attachments the bridge couldn't
@@ -806,11 +845,14 @@ export const internalMarkDispatchFailed = internalMutation({
     messageId: v.id("messages"),
     errorCode: v.optional(v.number()),
     detail: v.string(),
+    // Rede de segurança do dispatch: nunca rebaixa uma mensagem que já saiu.
+    onlyIfUndispatched: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) return null;
+    if (args.onlyIfUndispatched && (message.externalId || message.deliveryStatus)) return null;
 
     await ctx.db.patch(args.messageId, {
       deliveryStatus: "failed",

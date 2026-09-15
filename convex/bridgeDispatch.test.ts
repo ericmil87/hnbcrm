@@ -289,6 +289,67 @@ describe("internalDispatchMessage — bridge provider", () => {
     expect(message!.deliveryStatus).toBe("failed");
     expect(String(message!.metadata!.deliveryError)).toContain("sem anexo");
   });
+
+  test("channel token that fails to decrypt → failed with a readable detail, no gateway call", async () => {
+    const t = setup();
+    const { aiMemberId, configId, conversationId } = await seedBridge(t);
+    // Well-formed v1 value encrypted under another key: AES-GCM rejects it
+    await t.run(async (ctx) =>
+      ctx.db.patch(configId, { bridgeTokenEncrypted: `v1:${btoa("x".repeat(12))}:${btoa("y".repeat(24))}` })
+    );
+    const messageId = await send(t, conversationId, aiMemberId);
+
+    const fetchMock = bridgeOkMock();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBe("failed");
+    expect(String(message!.metadata!.deliveryError)).toContain("token do canal bridge");
+  });
+
+  test("an exception outside the handled paths still marks the message failed (never left without status)", async () => {
+    const t = setup();
+    const { aiMemberId, conversationId } = await seedBridge(t);
+    const messageId = await send(t, conversationId, aiMemberId);
+
+    // Response that blows up when read OUTSIDE the fetch try/catch
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        get ok(): boolean {
+          throw new Error("corrupted response");
+        },
+        status: 200,
+        json: async () => ({}),
+      }))
+    );
+
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBe("failed");
+    expect(String(message!.metadata!.deliveryError)).toContain("corrupted response");
+  });
+
+  test("the safety net never downgrades a message that already went out", async () => {
+    const t = setup();
+    const { aiMemberId, conversationId } = await seedBridge(t);
+    const messageId = await send(t, conversationId, aiMemberId);
+    await t.mutation(internal.whatsapp.internalMarkDispatched, { messageId, wamid: "3EB0ALREADY" });
+
+    await t.mutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId,
+      detail: "too late",
+      onlyIfUndispatched: true,
+    });
+
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBe("sent");
+    expect(message!.metadata?.deliveryError).toBeUndefined();
+  });
 });
 
 // ── U4 outbound media: upload the first attachment via /chat/send/* ──

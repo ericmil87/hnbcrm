@@ -168,6 +168,28 @@ describe("envio de ponta a ponta (bridge)", () => {
     expect(acts.some((a) => /campanha «Bridge camp» enviada/.test(a.content ?? ""))).toBe(true);
   });
 
+  test("canal com token que não decifra: destinatário vira failed em vez de ficar queued para sempre", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    // Incidente de 15/09: canal de fixture cujo token não decifra — a checagem cai em
+    // "enviado sem confirmar" e o dispatch lançava ANTES de marcar a mensagem, que
+    // ficava sem status no inbox (parecendo enviada) com o destinatário em queued.
+    await t.run((ctx) => ctx.db.patch(s.bridgeConfigId, { bridgeTokenEncrypted: `v1:${btoa("x".repeat(12))}:${btoa("y".repeat(24))}` }));
+    const mock = bridgeFetchMock();
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "11 99999-0001", name: "Ana" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const [row] = await recipients(t, id);
+    expect(row.status).toBe("failed");
+    const message = (await t.run((ctx) => ctx.db.get(row.messageId!)))!;
+    expect(message.deliveryStatus).toBe("failed");
+    expect(String(message.metadata?.deliveryError)).toContain("token do canal bridge");
+    expect(mock.calls.filter((c) => c.url.includes("/chat/send/"))).toHaveLength(0);
+    const campaign = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(campaign.stats).toMatchObject({ total: 1, failed: 1, queued: 0, pending: 0 });
+  });
+
   test("janela fechada reagenda para a próxima abertura sem enviar", async () => {
     vi.setSystemTime(Date.UTC(2026, 8, 12, 15)); // sábado 12:00 BRT
     const t = setup();
