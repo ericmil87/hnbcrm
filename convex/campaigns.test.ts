@@ -241,6 +241,7 @@ describe("lançamento — aceites e validações", () => {
     expect(campaign?.status).toBe("running");
     expect(campaign?.safety.consentAck?.acceptedBy).toBe(seed.adminId);
     expect(campaign?.safety.bridgeRiskAck?.acceptedBy).toBe(seed.adminId);
+    expect(campaign?.safety.newNumberRiskAck).toBeUndefined(); // número de 10 dias
     expect(campaign?.schedulerFnId).toBeTruthy();
     expect(campaign?.tickToken).toBeTruthy();
     const logs = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", seed.organizationId)).collect());
@@ -274,13 +275,41 @@ describe("lançamento — aceites e validações", () => {
     expect(campaign?.overrideAck?.acceptedBy).toBe(seed.adminId);
   });
 
-  test("bridge com menos de 3 dias não lança", async () => {
+  test("bridge com menos de 3 dias AVISA e lança com o aceite do risco de número novo", async () => {
     const t = setup();
     const seed = await seedCampaignOrg(t, { channelAgeDays: 1 });
+    const defaults = await asUser(t, seed.adminUserId).query(api.campaigns.getSafeDefaults, {
+      channelConfigId: seed.bridgeConfigId, now: Date.now(),
+    });
+    expect(defaults.warmupDay).toBe(2);
+    expect(defaults.newNumberRisk).toMatch(/recém-conectado/);
+    expect(defaults.safe.maxPerDay).toBe(20);
+
     const id = await draftWithRecipients(t, seed);
     await expect(
       asUser(t, seed.adminUserId).mutation(api.campaigns.launchCampaign, { campaignId: id, consentAck: true, bridgeRiskAck: true })
-    ).rejects.toThrow(/3 dias/);
+    ).rejects.toThrow(/recém-conectado/);
+    const res = await asUser(t, seed.adminUserId).mutation(api.campaigns.launchCampaign, {
+      campaignId: id, consentAck: true, bridgeRiskAck: true, newNumberRiskAck: true,
+    });
+    expect(res.status).toBe("running");
+    expect(res.warnings.some((w: string) => /recém-conectado/.test(w))).toBe(true);
+
+    const campaign = await t.run((ctx) => ctx.db.get(id));
+    expect(campaign?.safety.newNumberRiskAck?.acceptedBy).toBe(seed.adminId);
+    // não trava, mas os limites do aquecimento continuam valendo
+    expect(campaign?.safeMode).toBe(true);
+    expect(campaign?.pacing.maxPerDay).toBe(20);
+    const logs = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", seed.organizationId)).collect());
+    const launch = logs.find((l) => /Lançou a campanha/.test(l.description ?? ""));
+    expect(launch?.description).toMatch(/RECÉM-CONECTADO/);
+    expect(launch?.changes?.after?.newNumberRiskAck).toBe(true);
+    expect(launch?.changes?.after?.warmupDay).toBe(2);
+
+    // duplicar não herda o aceite
+    const copyId = await asUser(t, seed.adminUserId).mutation(api.campaigns.duplicateCampaign, { campaignId: id });
+    const copy = await t.run((ctx) => ctx.db.get(copyId));
+    expect(copy?.safety.newNumberRiskAck).toBeUndefined();
   });
 
   test("bridge: >30 destinatários exigem 2 variantes; link no 1º contato é recusado", async () => {

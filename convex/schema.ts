@@ -1597,6 +1597,7 @@ const applicationTables = {
     safety: v.object({
       consentAck: v.optional(campaignAckValidator), // base legal para contatar a lista
       bridgeRiskAck: v.optional(campaignAckValidator), // API não-oficial pode banir
+      newNumberRiskAck: v.optional(campaignAckValidator), // bridge lançado com número de < 3 dias (aviso, não trava)
       checkNumbersFirst: v.boolean(), // bridge: /user/check antes de enviar
       allowLinks: v.optional(v.boolean()), // bridge: permite link no 1º contato (default false)
       stopOnReplyRateBelow: v.optional(v.number()), // 0-1; ausente = desligado

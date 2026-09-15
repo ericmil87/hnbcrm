@@ -3260,6 +3260,7 @@ http.route({
         campaignId: body.campaignId as Id<"campaigns">,
         consentAck: body.consentAck === true,
         bridgeRiskAck: body.bridgeRiskAck === true,
+        newNumberRiskAck: body.newNumberRiskAck === true,
         overrideAck: body.overrideAck === true,
         overrideWord: typeof body.overrideWord === "string" ? body.overrideWord : undefined,
         tierAtLaunch: typeof body.tierAtLaunch === "string" ? body.tierAtLaunch : undefined,

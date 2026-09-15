@@ -195,13 +195,16 @@ function ChannelHealth({
           </span>
         </div>
       )}
-      {defaults.blocked && (
+      {defaults.newNumberRisk && (
         <div className="flex items-start gap-2 rounded-lg border border-semantic-error/40 bg-semantic-error/10 p-3 text-sm text-text-primary">
           <ShieldAlert size={16} className="shrink-0 text-semantic-error mt-0.5" />
-          <span>{defaults.blocked}</span>
+          <div>
+            <p className="font-medium">Número recém-conectado — risco alto de banimento</p>
+            <p className="mt-0.5 text-text-secondary">{defaults.newNumberRisk}</p>
+          </div>
         </div>
       )}
-      {!defaults.blocked && defaults.warmupWarning && (
+      {!defaults.newNumberRisk && defaults.warmupWarning && (
         <div className="flex items-start gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-3 text-sm text-text-primary">
           <AlertTriangle size={16} className="shrink-0 text-semantic-warning mt-0.5" />
           <span>{defaults.warmupWarning}</span>

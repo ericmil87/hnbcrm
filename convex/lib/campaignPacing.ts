@@ -73,7 +73,11 @@ export const BRIDGE_HARD_CAP = {
   maxPerHour: 40,
 } as const;
 
-/** Bridge: idade mínima do número para lançar (dias) e até quando avisar. */
+/**
+ * Bridge: abaixo desta idade (dias) o número é "recém-conectado" — AVISA e o
+ * lançamento exige o aceite explícito `newNumberRiskAck`, mas NÃO trava: somos
+ * ferramenta, a decisão é de quem opera. Até BRIDGE_WARN_AGE_DAYS, só aviso.
+ */
 export const BRIDGE_MIN_AGE_DAYS = 3;
 export const BRIDGE_WARN_AGE_DAYS = 7;
 
@@ -116,8 +120,8 @@ export function bridgeWarmupRow(warmupDay: number): BridgeWarmupRow {
 
 export interface SafeDefaults {
   pacing: CampaignPacing;
-  /** Bridge com idade abaixo do mínimo: lançamento bloqueado (mensagem). */
-  blocked?: string;
+  /** Bridge abaixo da idade recomendada: lançar exige aceite explícito do risco (mensagem). */
+  newNumberRisk?: string;
   /** Bridge entre o mínimo e o limiar de aviso. */
   warmupWarning?: string;
   /** Meta: tier resolvido. */
@@ -162,7 +166,7 @@ export function safeDefaultsFor(args: {
   };
   const result: SafeDefaults = { pacing };
   if (day < BRIDGE_MIN_AGE_DAYS) {
-    result.blocked = `Número conectado há ${day} dia(s). Campanhas no bridge só a partir de ${BRIDGE_MIN_AGE_DAYS} dias de uso normal — disparar num número recém-conectado é o padrão mais banido.`;
+    result.newNumberRisk = `Número conectado há ${day} dia(s). Disparar num número recém-conectado é o padrão mais banido — o recomendado é esperar ${BRIDGE_MIN_AGE_DAYS} dias de uso normal. Dá para lançar assim mesmo: os limites de aquecimento continuam valendo (${row.maxPerDay}/dia, ${row.maxNewContactsPerDay} contatos novos/dia) e o risco precisa ser aceito na revisão.`;
   } else if (day <= BRIDGE_WARN_AGE_DAYS) {
     result.warmupWarning = `Número conectado há ${day} dias — ainda em aquecimento. Os limites seguros de hoje são ${row.maxPerDay}/dia e ${row.maxNewContactsPerDay} contatos novos/dia.`;
   }

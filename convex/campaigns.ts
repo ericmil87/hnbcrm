@@ -38,7 +38,6 @@ import {
   isWithinSafeDefaults,
   warmupDayFor,
   BRIDGE_HARD_CAP,
-  BRIDGE_MIN_AGE_DAYS,
   tierLimit,
   type CampaignPacing,
 } from "./lib/campaignPacing";
@@ -394,7 +393,7 @@ export async function getSafeDefaultsHandler(ctx: QueryCtx, args: GetSafeDefault
         provider === "bridge"
           ? { ...BRIDGE_HARD_CAP }
           : { maxPerDay: tierLimit(args.tier), maxPerHour: tierLimit(args.tier), minDelaySec: 0, maxNewContactsPerDay: null },
-      blocked: safe.blocked ?? null,
+      newNumberRisk: safe.newNumberRisk ?? null,
       warmupWarning: safe.warmupWarning ?? null,
       tier: safe.tier ?? null,
       schedule: defaultSchedule(org?.settings.timezone ?? "America/Sao_Paulo"),
@@ -790,7 +789,7 @@ export async function duplicateCampaignHandler(ctx: MutationCtx, args: Duplicate
       stats: emptyStats(),
       timeline: [{ at: now, kind: "created", detail: `Duplicada de «${campaign.name}»`, actorId: member._id }],
       overrideAck: undefined,
-      safety: { ...campaign.safety, consentAck: undefined, bridgeRiskAck: undefined },
+      safety: { ...campaign.safety, consentAck: undefined, bridgeRiskAck: undefined, newNumberRiskAck: undefined },
       pausedReason: undefined,
       pausedBy: undefined,
       lastError: undefined,
@@ -1265,9 +1264,6 @@ async function validateForLaunch(
 
   if (provider === "bridge") {
     const day = channelAgeDay(config, now);
-    if (day < BRIDGE_MIN_AGE_DAYS) {
-      throw new Error(safeDefaultsFor({ provider, warmupDay: day }).blocked!);
-    }
     const total = campaign.audience.source === "segment" ? (campaign.audience.total ?? Infinity) : campaign.stats.total;
     const variants = campaign.content.variants.filter((vr) => vr.text.trim());
     if (total > MIN_VARIANTS_BRIDGE_ABOVE && variants.length < 2 && !variants.some((vr) => /\{[^{}]*\|[^{}]*\}/.test(vr.text))) {
@@ -1281,6 +1277,12 @@ async function validateForLaunch(
       );
     }
     const safe = safeDefaultsFor({ provider, warmupDay: day });
+    // Número recém-conectado não trava — o aceite próprio é exigido no launch.
+    if (safe.newNumberRisk) {
+      warnings.push(
+        `Número conectado há ${day} dia(s) — lançada com o aceite do risco de número recém-conectado. Acompanhe entregas e bloqueios de perto.`
+      );
+    }
     if (safe.warmupWarning) warnings.push(safe.warmupWarning);
   }
   if (campaign.audience.source !== "segment" && campaign.stats.pending === 0) {
@@ -1296,6 +1298,7 @@ export const launchCampaignArgs = {
     campaignId: v.id("campaigns"),
     consentAck: v.boolean(),
     bridgeRiskAck: v.optional(v.boolean()),
+    newNumberRiskAck: v.optional(v.boolean()), // bridge com < BRIDGE_MIN_AGE_DAYS dias
     overrideAck: v.optional(v.boolean()),
     overrideWord: v.optional(v.string()),
     tierAtLaunch: v.optional(v.string()),
@@ -1316,7 +1319,16 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
     if (provider === "bridge" && args.bridgeRiskAck !== true) {
       throw new Error("Confirme que aceita o risco de banimento do número ao disparar pela API não-oficial");
     }
-    const safe = safeDefaultsFor({ provider, warmupDay: channelAgeDay(config, now), tier: args.tierAtLaunch });
+    const warmupDay = channelAgeDay(config, now);
+    const safe = safeDefaultsFor({ provider, warmupDay, tier: args.tierAtLaunch });
+    // Número recém-conectado AVISA e exige aceite próprio, mas não trava: a
+    // decisão é de quem opera. Os limites de aquecimento continuam valendo.
+    const newNumber = safe.newNumberRisk !== undefined;
+    if (newNumber && args.newNumberRiskAck !== true) {
+      throw new Error(
+        `Número conectado há ${warmupDay} dia(s): confirme que aceita o risco de disparar por um número recém-conectado`
+      );
+    }
     let pacing = clampToHardCap(campaign.pacing, provider, args.tierAtLaunch);
     const withinSafe = isWithinSafeDefaults(pacing, safe.pacing);
     let overrideAck = campaign.overrideAck;
@@ -1352,6 +1364,7 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
         ...campaign.safety,
         consentAck: { acceptedAt: now, acceptedBy: member._id },
         ...(provider === "bridge" ? { bridgeRiskAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
+        ...(newNumber ? { newNumberRiskAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
       },
       stats: { ...campaign.stats, estimatedCostUsd, consecutiveFailures: 0 },
       tierAtLaunch: args.tierAtLaunch ?? (provider === "meta" ? "unknown" : undefined),
@@ -1364,7 +1377,7 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
       updatedAt: now,
     });
     let fresh = (await ctx.db.get(campaign._id))!;
-    await addTimeline(ctx, fresh, { kind: "launched", actorId: member._id, detail: withinSafe ? "modo seguro" : "override de limites" }, now);
+    await addTimeline(ctx, fresh, { kind: "launched", actorId: member._id, detail: `${withinSafe ? "modo seguro" : "override de limites"}${newNumber ? ` · número recém-conectado (dia ${warmupDay})` : ""}` }, now);
     fresh = (await ctx.db.get(campaign._id))!;
 
     await audit(
@@ -1373,11 +1386,11 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
       {
         actorId: member._id,
         action: "update",
-        description: `Lançou a campanha «${campaign.name}» (${provider}, ${recipients} destinatários${withinSafe ? "" : ", LIMITES ACIMA DO MODO SEGURO"})`,
+        description: `Lançou a campanha «${campaign.name}» (${provider}, ${recipients} destinatários${withinSafe ? "" : ", LIMITES ACIMA DO MODO SEGURO"}${newNumber ? `, NÚMERO RECÉM-CONECTADO (dia ${warmupDay})` : ""})`,
         severity: "high",
         changes: {
           before: { status: "draft" },
-          after: { status, pacing, safeMode: withinSafe, consentAck: true, bridgeRiskAck: provider === "bridge", override: !withinSafe, estimatedCostUsd, tierAtLaunch: args.tierAtLaunch ?? null },
+          after: { status, pacing, safeMode: withinSafe, consentAck: true, bridgeRiskAck: provider === "bridge", newNumberRiskAck: newNumber, warmupDay: provider === "bridge" ? warmupDay : null, override: !withinSafe, estimatedCostUsd, tierAtLaunch: args.tierAtLaunch ?? null },
         },
         metadata: viaMeta(args.via),
       },

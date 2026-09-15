@@ -179,7 +179,7 @@ O upload de vídeo hoje está fora da allowlist humana (`FileUploadButton`/`file
 | 8–14 | 120 | 30 | 30–90 s | 30 |
 | 15+ | 150 | 50 | 30–90 s | 30 |
 | **Teto duro** | **200** | 80 | ≥ 15 s | 40 |
-+ pausa de 20 min a cada 30 envios; janela 09–20h seg–sex; `checkNumbersFirst` ligado; variantes obrigatórias (D7); número com < 3 dias: bloqueado; 3–7 dias: aviso vermelho.
++ pausa de 20 min a cada 30 envios; janela 09–20h seg–sex; `checkNumbersFirst` ligado; variantes obrigatórias (D7); número com < 3 dias: aviso vermelho + aceite explícito `newNumberRiskAck` no lançamento (revisto em 15/09/2026 — era bloqueio; somos ferramenta, avisamos mas não travamos); 3–7 dias: aviso.
 Todos os números do §6 são **constantes documentadas como estimativa calibrável**, não limite oficial (regra já usada em `whatsappDispatch.ts`).
 
 ### 6.3 Kill switches (pausam com motivo, notificam `campaign_paused`)
@@ -244,7 +244,7 @@ Ordem de execução com subagentes: F1 (backend, 1 agente Fable) ∥ F3-preview 
 - Audit: create/update (medium), launch/cancel/override de teto/aceites (high), pause por kill switch (high, actorType `system`), opt-out manual (medium). Snapshot dos limites e aceites em `changes.after`.
 - Segredos: token do bridge/Meta nunca sai do servidor (mesmo padrão); `exportSanitize` ganha as novas tabelas (backup JSON) sem segredos.
 - LGPD: aceite de base legal por campanha (D4a); lista de supressão respeitada por TODOS os envios de campanha; `optOuts` entra no export; cláusula nova nos Termos ("disparos exigem consentimento; o HNBCRM aplica supressão").
-- Anti-abuso da plataforma: teto duro não configurável (D5); número bridge com < 3 dias bloqueado; `secretScan`/`exportSecurity` cobrem os arquivos novos.
+- Anti-abuso da plataforma: teto duro não configurável (D5); número bridge com < 3 dias exige aceite explícito do risco (aviso, não trava — revisto em 15/09/2026); `secretScan`/`exportSecurity` cobrem os arquivos novos.
 
 ## 11.1 Lacunas do código atual que a v1 fecha (achados do mapeamento)
 - **Telefone**: `normalizePhone` só tira não-dígitos — sem código de país, sem 9º dígito BR, sem validação. Entra `lib/phone.ts` (E.164 sem "+", default país da org = 55, regra do 9º dígito para celular BR, rejeita fixo quando `mobileOnly`), usado por import, manual e dedupe.

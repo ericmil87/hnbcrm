@@ -52,6 +52,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
   const [saving, setSaving] = useState(false);
   const [consentAck, setConsentAck] = useState(false);
   const [bridgeRiskAck, setBridgeRiskAck] = useState(false);
+  const [newNumberRiskAck, setNewNumberRiskAck] = useState(false);
   const [now] = useState(() => Date.now());
 
   const setDraft = useCallback((updater: (prev: WizardDraft) => WizardDraft) => setDraftState(updater), []);
@@ -77,6 +78,8 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
     api.campaigns.getSafeDefaults,
     draft.channelConfigId ? { channelConfigId: draft.channelConfigId, now, ...(draft.tierAtLaunch ? { tier: draft.tierAtLaunch } : {}) } : "skip"
   ) as SafeDefaults | undefined;
+  // Número bridge recém-conectado: avisa e pede aceite próprio, mas não trava
+  const newNumberRisk = safeDefaults?.newNumberRisk ?? null;
 
   const stepIndex = WIZARD_STEPS.indexOf(step);
 
@@ -85,7 +88,6 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
     if (step === "channel") {
       if (!draft.name.trim()) return "Dê um nome à campanha";
       if (!draft.channelConfigId) return "Escolha o número que vai disparar";
-      if (safeDefaults?.blocked) return safeDefaults.blocked;
     }
     if (step === "message") {
       if (draft.content.kind === "template") {
@@ -186,6 +188,10 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
       toast.error("Confirme o aceite de risco do bridge");
       return;
     }
+    if (newNumberRisk && !newNumberRiskAck) {
+      toast.error("Confirme o aceite de risco do número recém-conectado");
+      return;
+    }
     setSaving(true);
     try {
       const withinSafe = !safeDefaults || !draft.pacing || isWithinSafe(draft.pacing, safeDefaults.safe);
@@ -193,6 +199,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
         campaignId: id,
         consentAck: true,
         ...(draft.provider === "bridge" ? { bridgeRiskAck: true } : {}),
+        ...(newNumberRisk ? { newNumberRiskAck: true } : {}),
         ...(!withinSafe ? { overrideAck: true, overrideWord: draft.overrideWord.trim() } : {}),
         ...(draft.tierAtLaunch ? { tierAtLaunch: draft.tierAtLaunch } : {}),
         ...(draft.templateQuality ? { templateQualityAtLaunch: draft.templateQuality } : {}),
@@ -304,6 +311,9 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
             bridgeRiskAck={bridgeRiskAck}
             onConsentAck={setConsentAck}
             onBridgeRiskAck={setBridgeRiskAck}
+            newNumberRisk={newNumberRisk}
+            newNumberRiskAck={newNumberRiskAck}
+            onNewNumberRiskAck={setNewNumberRiskAck}
             canLaunch={canLaunch && isDraft}
             estimatedCostUsd={estimatedCost}
             warnings={[]}
@@ -327,7 +337,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
           </Button>
         ) : isDraft ? (
           canLaunch ? (
-            <Button onClick={() => void handleLaunch()} disabled={saving || !consentAck || (draft.provider === "bridge" && !bridgeRiskAck)}>
+            <Button onClick={() => void handleLaunch()} disabled={saving || !consentAck || (draft.provider === "bridge" && !bridgeRiskAck) || (newNumberRisk !== null && !newNumberRiskAck)}>
               {saving ? <Spinner size="sm" /> : <Rocket size={16} />}
               Lançar campanha
             </Button>

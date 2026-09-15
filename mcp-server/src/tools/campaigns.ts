@@ -188,11 +188,12 @@ export function registerCampaignTools(server: McpServer, client: HnbCrmClient) {
 
   server.tool(
     "crm_launch_campaign",
-    "Launch a draft campaign. REQUIRES explicit acknowledgements from the human operator you act for: consentAck=true (the organization has consent / legal basis to contact the list — LGPD) and, on bridge (unofficial) channels, bridgeRiskAck=true (the number can be permanently banned). Limits above the safe defaults additionally require overrideAck=true and overrideWord='ENTENDO'. Requires campaigns:full. Never set these flags without the human's explicit confirmation.",
+    "Launch a draft campaign. REQUIRES explicit acknowledgements from the human operator you act for: consentAck=true (the organization has consent / legal basis to contact the list — LGPD) and, on bridge (unofficial) channels, bridgeRiskAck=true (the number can be permanently banned). If the bridge number was connected less than 3 days ago (safe-defaults returns newNumberRisk), newNumberRiskAck=true is also required — the most-banned pattern; warned, not blocked. Limits above the safe defaults additionally require overrideAck=true and overrideWord='ENTENDO'. Requires campaigns:full. Never set these flags without the human's explicit confirmation.",
     {
       campaignId: z.string(),
       consentAck: z.boolean().describe("Human confirmed consent/legal basis for the list"),
       bridgeRiskAck: z.boolean().optional().describe("Human accepted the ban risk (bridge channels)"),
+      newNumberRiskAck: z.boolean().optional().describe("Human accepted launching from a bridge number connected less than 3 days ago"),
       overrideAck: z.boolean().optional(),
       overrideWord: z.string().optional().describe("Type ENTENDO to launch above safe limits"),
       tierAtLaunch: z.string().optional().describe("Meta portfolio tier (from crm_get_whatsapp_tier)"),

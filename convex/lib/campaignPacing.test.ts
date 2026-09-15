@@ -26,15 +26,16 @@ describe("warm-up do bridge", () => {
     expect(warmupDayFor(now - 2 * DAY, now)).toBe(3);
     expect(warmupDayFor(now - 20 * DAY, now)).toBe(21);
   });
-  test("tabela por idade + bloqueio/aviso", () => {
+  test("tabela por idade + avisos (número novo avisa, não trava)", () => {
     const d1 = safeDefaultsFor({ provider: "bridge", warmupDay: 1 });
     expect(d1.pacing.maxPerDay).toBe(20);
     expect(d1.pacing.maxNewContactsPerDay).toBe(5);
     expect(d1.pacing.minDelaySec).toBe(45);
-    expect(d1.blocked).toMatch(/3 dias/);
+    expect(d1.newNumberRisk).toMatch(/3 dias/);
+    expect(d1.newNumberRisk).toMatch(/20\/dia/);
     const d5 = safeDefaultsFor({ provider: "bridge", warmupDay: 5 });
     expect(d5.pacing.maxPerDay).toBe(80);
-    expect(d5.blocked).toBeUndefined();
+    expect(d5.newNumberRisk).toBeUndefined();
     expect(d5.warmupWarning).toMatch(/aquecimento/);
     const d30 = safeDefaultsFor({ provider: "bridge", warmupDay: 30 });
     expect(d30.pacing.maxPerDay).toBe(150);

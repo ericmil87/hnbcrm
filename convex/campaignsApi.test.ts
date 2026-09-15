@@ -252,6 +252,30 @@ describe("REST /api/v1/campaigns", () => {
     expect(removed.status).toBe(200);
   });
 
+  test("número bridge recém-conectado: safe-defaults avisa e o launch exige newNumberRiskAck (não trava)", async () => {
+    const t = setup();
+    const s = await seed(t);
+    await t.run((ctx) => ctx.db.patch(s.bridgeConfigId, { bridgeConnectedAt: Date.now() }));
+    const defaults = await call(t, ADMIN_KEY, "GET", `/api/v1/campaigns/safe-defaults?channelConfigId=${s.bridgeConfigId}`);
+    expect(defaults.json.defaults.newNumberRisk).toMatch(/recém-conectado/);
+
+    const created = await call(t, ADMIN_KEY, "POST", "/api/v1/campaigns/create", draftBody(s.bridgeConfigId));
+    const campaignId = created.json.campaignId as string;
+    await call(t, ADMIN_KEY, "POST", "/api/v1/campaigns/recipients", { campaignId, entries: [{ phone: "5511999990001" }] });
+
+    const noAck = await call(t, ADMIN_KEY, "POST", "/api/v1/campaigns/launch", { campaignId, consentAck: true, bridgeRiskAck: true });
+    expect(noAck.status).toBe(400);
+    expect(noAck.json.error).toMatch(/recém-conectado/);
+
+    const launched = await call(t, ADMIN_KEY, "POST", "/api/v1/campaigns/launch", {
+      campaignId, consentAck: true, bridgeRiskAck: true, newNumberRiskAck: true,
+    });
+    expect(launched.status).toBe(200);
+    expect(launched.json.status).toBe("running");
+    const campaign = await t.run((ctx) => ctx.db.get(campaignId as Id<"campaigns">));
+    expect(campaign?.safety.newNumberRiskAck?.acceptedBy).toBe(s.adminId);
+  });
+
   test("safe-defaults e templates respondem para a key da org; canal alheio é 404", async () => {
     const t = setup();
     const s = await seed(t);
@@ -259,6 +283,7 @@ describe("REST /api/v1/campaigns", () => {
     expect(defaults.status).toBe(200);
     expect(defaults.json.defaults.provider).toBe("bridge");
     expect(defaults.json.defaults.warmupDay).toBe(11);
+    expect(defaults.json.defaults.newNumberRisk).toBeNull();
 
     const templates = await call(t, ADMIN_KEY, "GET", `/api/v1/whatsapp/templates?channelConfigId=${s.bridgeConfigId}`);
     expect(templates.status).toBe(200);

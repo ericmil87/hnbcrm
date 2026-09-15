@@ -257,7 +257,7 @@ WhatsApp bulk-messaging campaigns (official Cloud API or unofficial bridge). Lau
 | `crm_campaign_report` | Delivery/read/reply/opt-out rates, error breakdown, cost, progress |
 | `crm_create_campaign` | Create a DRAFT campaign (text variants or Meta template + audience) |
 | `crm_add_campaign_recipients` | Add recipients: phone entries (≤500) or CSV text with mapping (dry-run first) |
-| `crm_launch_campaign` | Launch a draft — requires `consentAck` (+ `bridgeRiskAck` on bridge) |
+| `crm_launch_campaign` | Launch a draft — requires `consentAck` (+ `bridgeRiskAck` on bridge; + `newNumberRiskAck` if the bridge number is < 3 days old) |
 | `crm_pause_campaign` | Pause sending |
 | `crm_resume_campaign` | Resume a paused campaign |
 | `crm_cancel_campaign` | Cancel (pending recipients are skipped) |

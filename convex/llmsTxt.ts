@@ -719,7 +719,7 @@ Reject a handoff.
 
 ### Campaign Endpoints (WhatsApp bulk messaging)
 
-Campaigns send WhatsApp messages in bulk through one channel (official Meta Cloud API or the unofficial bridge). New numbers become contact + lead + conversation at send time; replies flow through the normal inbox (and the AI attendant, which receives the campaign context). Every campaign enforces sending limits (safe defaults per channel age/tier, hard caps never exceeded), a business-hours window, the org-wide suppression list (opt-outs), and kill switches (low reply/delivery rate, consecutive failures, Meta quality errors). Statuses: draft → scheduled/running → paused/completed/canceled/failed. **Launching requires the human operator's explicit acknowledgements** (\`consentAck\` = consent/legal basis to contact the list; \`bridgeRiskAck\` on bridge channels = permanent ban risk) — never set them on a person's behalf without their confirmation. Recipient statuses: pending, queued, sent, delivered, read, replied, failed, skipped, opted_out. Meta error mapping: 131026/131047/130403 → failed (no retry); 131049 (per-user marketing cap) → one retry after 24h; 131050 (user opted out) → opted_out + suppression; 131048/132015 → campaign paused.
+Campaigns send WhatsApp messages in bulk through one channel (official Meta Cloud API or the unofficial bridge). New numbers become contact + lead + conversation at send time; replies flow through the normal inbox (and the AI attendant, which receives the campaign context). Every campaign enforces sending limits (safe defaults per channel age/tier, hard caps never exceeded), a business-hours window, the org-wide suppression list (opt-outs), and kill switches (low reply/delivery rate, consecutive failures, Meta quality errors). Statuses: draft → scheduled/running → paused/completed/canceled/failed. **Launching requires the human operator's explicit acknowledgements** (\`consentAck\` = consent/legal basis to contact the list; \`bridgeRiskAck\` on bridge channels = permanent ban risk; \`newNumberRiskAck\` when the bridge number was connected less than 3 days ago = the most-banned pattern, warned but not blocked) — never set them on a person's behalf without their confirmation. Recipient statuses: pending, queued, sent, delivered, read, replied, failed, skipped, opted_out. Meta error mapping: 131026/131047/130403 → failed (no retry); 131049 (per-user marketing cap) → one retry after 24h; 131050 (user opted out) → opted_out + suppression; 131048/132015 → campaign paused.
 
 #### GET /api/v1/campaigns
 List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns: [{ _id, name, status, provider, contentKind, channel, creatorName, stats, pausedReason, ... }] }\`
@@ -734,7 +734,7 @@ List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns
 **Query params:** campaignId (required), status, search, limit (≤500), cursor. **Response:** \`{ recipients: [...], nextCursor, hasMore }\`
 
 #### GET /api/v1/campaigns/safe-defaults
-**Query params:** channelConfigId (required), tier. **Response:** \`{ defaults: { provider, warmupDay, safe, hardCap, blocked, warmupWarning, schedule, safety } }\`
+**Query params:** channelConfigId (required), tier. **Response:** \`{ defaults: { provider, warmupDay, safe, hardCap, newNumberRisk, warmupWarning, schedule, safety } }\` — \`newNumberRisk\` (string or null) is set when the bridge number was connected less than 3 days ago; launching then requires \`newNumberRiskAck\`.
 
 #### POST /api/v1/campaigns/preview-audience
 **Body:** filters (boardId, stageIds, tags, assignedTo, temperature, priority, lastActivityBefore, lastActivityAfter, onlyOpenWindow, excludeCampaignedWithinDays, excludeRepliedToCampaigns). **Response:** \`{ preview: { count, sample, excluded, scanned, truncated } }\`
@@ -752,7 +752,7 @@ Draft/canceled/completed only (campaigns:full). **Body:** campaignId
 Add recipients to a DRAFT. **Body:** campaignId + one of: \`entries: [{ phone, name?, vars? }]\` (≤500) — or \`csv\` (text ≤5 MB) / \`fileId\` (uploaded with fileType import_file) with \`mapping: { phone, name?, email?, company?, varsColumns? }\` and \`dryRun\`. Without mapping the CSV call returns headers + suggestedMapping. **Response:** \`{ success, added, invalid, duplicates, suppressed, existingContacts?, preview? }\`
 
 #### POST /api/v1/campaigns/launch
-**Body:** campaignId, consentAck (required true), bridgeRiskAck (required true on bridge), overrideAck + overrideWord "ENTENDO" (only when limits exceed the safe defaults), tierAtLaunch, templateQualityAtLaunch. **Response:** \`{ success, status: "running"|"scheduled", warnings, estimatedCostUsd }\`
+**Body:** campaignId, consentAck (required true), bridgeRiskAck (required true on bridge), newNumberRiskAck (required true when safe-defaults returns newNumberRisk — bridge number connected < 3 days ago), overrideAck + overrideWord "ENTENDO" (only when limits exceed the safe defaults), tierAtLaunch, templateQualityAtLaunch. **Response:** \`{ success, status: "running"|"scheduled", warnings, estimatedCostUsd }\`
 
 #### POST /api/v1/campaigns/pause · POST /api/v1/campaigns/resume · POST /api/v1/campaigns/cancel · POST /api/v1/campaigns/retry-failed
 **Body:** campaignId (+ reason on pause). retry-failed re-queues eligible failures (131049 elapsed, network errors, canceled) → \`{ requeued }\`.
@@ -1513,7 +1513,7 @@ Create a DRAFT campaign. **name**, **channelConfigId**, **content** (required), 
 **campaignId** + **entries[]** (≤500) or **csv** + **mapping** (+ dryRun).
 
 #### crm_launch_campaign
-**campaignId**, **consentAck** (required — human confirmation of consent/legal basis), bridgeRiskAck (bridge), overrideAck/overrideWord (above safe limits), tierAtLaunch. Requires campaigns:full.
+**campaignId**, **consentAck** (required — human confirmation of consent/legal basis), bridgeRiskAck (bridge), newNumberRiskAck (bridge number connected < 3 days ago), overrideAck/overrideWord (above safe limits), tierAtLaunch. Requires campaigns:full.
 
 #### crm_pause_campaign / crm_resume_campaign / crm_cancel_campaign
 **campaignId** (+ reason on pause).

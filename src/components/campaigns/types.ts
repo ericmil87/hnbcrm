@@ -179,6 +179,7 @@ export interface CampaignDoc {
   safety: CampaignSafetyInput & {
     consentAck?: { acceptedAt: number; acceptedBy: string };
     bridgeRiskAck?: { acceptedAt: number; acceptedBy: string };
+    newNumberRiskAck?: { acceptedAt: number; acceptedBy: string };
   };
   stats: CampaignStats;
   timeline?: TimelineEntry[];
@@ -261,7 +262,7 @@ export interface SafeDefaults {
     minDelaySec: number;
     maxNewContactsPerDay: number | null;
   };
-  blocked: string | null;
+  newNumberRisk: string | null;
   warmupWarning: string | null;
   tier: string | null;
   schedule: CampaignSchedule;

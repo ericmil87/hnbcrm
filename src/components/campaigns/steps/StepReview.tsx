@@ -14,6 +14,10 @@ interface StepReviewProps {
   bridgeRiskAck: boolean;
   onConsentAck: (v: boolean) => void;
   onBridgeRiskAck: (v: boolean) => void;
+  /** Aviso de número bridge recém-conectado (null = não se aplica) — exige aceite próprio. */
+  newNumberRisk: string | null;
+  newNumberRiskAck: boolean;
+  onNewNumberRiskAck: (v: boolean) => void;
   canLaunch: boolean;
   estimatedCostUsd: number | null;
   warnings: string[];
@@ -28,6 +32,9 @@ export function StepReview({
   bridgeRiskAck,
   onConsentAck,
   onBridgeRiskAck,
+  newNumberRisk,
+  newNumberRiskAck,
+  onNewNumberRiskAck,
   canLaunch,
   estimatedCostUsd,
   warnings,
@@ -113,6 +120,14 @@ export function StepReview({
               onChange={(e) => onBridgeRiskAck(e.target.checked)}
               label="Aceito e reconheço que a API não-oficial viola os Termos do WhatsApp e pode causar banimento permanente do número"
               description="Disparo em massa é o uso de maior risco do bridge, mesmo dentro dos limites seguros."
+            />
+          )}
+          {isBridge && newNumberRisk && (
+            <Checkbox
+              checked={newNumberRiskAck}
+              onChange={(e) => onNewNumberRiskAck(e.target.checked)}
+              label="Aceito disparar por este número mesmo recém-conectado, antes do aquecimento recomendado"
+              description={newNumberRisk}
             />
           )}
           {!canLaunch && (

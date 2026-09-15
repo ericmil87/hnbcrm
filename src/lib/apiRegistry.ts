@@ -1030,11 +1030,12 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     path: "/api/v1/campaigns/launch",
     category: "Campanhas",
     title: "Lançar Campanha",
-    description: "Lança um rascunho. Exige consentAck (LGPD) e, no bridge, bridgeRiskAck; acima do modo seguro, overrideAck + overrideWord=ENTENDO.",
+    description: "Lança um rascunho. Exige consentAck (LGPD) e, no bridge, bridgeRiskAck (+ newNumberRiskAck se o número tem menos de 3 dias — aviso, não trava); acima do modo seguro, overrideAck + overrideWord=ENTENDO.",
     params: [
       { name: "campaignId", type: "string", required: true, location: "body", description: "ID da campanha" },
       { name: "consentAck", type: "boolean", required: true, location: "body", description: "Tenho consentimento/base legal para contatar a lista" },
       { name: "bridgeRiskAck", type: "boolean", required: false, location: "body", description: "Aceito o risco de banimento (bridge)" },
+      { name: "newNumberRiskAck", type: "boolean", required: false, location: "body", description: "Aceito disparar por número bridge recém-conectado (< 3 dias; exigido quando safe-defaults devolve newNumberRisk)" },
       { name: "overrideAck", type: "boolean", required: false, location: "body", description: "Lançar acima do modo seguro" },
       { name: "overrideWord", type: "string", required: false, location: "body", description: "ENTENDO" },
       { name: "tierAtLaunch", type: "string", required: false, location: "body", description: "Tier Meta lido antes (GET /whatsapp/tier)" },

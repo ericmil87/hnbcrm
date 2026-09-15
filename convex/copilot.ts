@@ -1532,7 +1532,7 @@ async function runWriteTool(
         url: CAMPAIGN_URL(campaign._id),
         instruction:
           campaign.status === "draft"
-            ? `Abra a campanha «${campaign.name}» em Campanhas, revise público, mensagem e limites, marque os aceites (consentimento/base legal${campaign.provider === "bridge" ? " e risco do bridge" : ""}) e clique em Lançar. O copiloto não pode lançar campanhas.`
+            ? `Abra a campanha «${campaign.name}» em Campanhas, revise público, mensagem e limites, marque os aceites (consentimento/base legal${campaign.provider === "bridge" ? " e risco do bridge — e, se o número for recém-conectado, o risco de número novo" : ""}) e clique em Lançar. O copiloto não pode lançar campanhas.`
             : `A campanha «${campaign.name}» está em "${campaign.status}" — só rascunhos podem ser lançados.`,
       };
     }
