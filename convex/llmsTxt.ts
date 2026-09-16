@@ -28,6 +28,10 @@ WhatsApp connects per organization through one of two providers on the same "wha
 
 Outbound sends are paced by an anti-burst queue: per-conversation cursor (Meta pair rate, ~1 msg/6s per recipient) plus a per-phone-number cursor with random jitter, humanized typing simulation on bridge for AI/scheduled sends, official 4^X retry backoff on Meta throttling errors, and an automatic 30-minute channel freeze on quality-flag error 131048.
 
+On bridge channels the connected number stays a normal phone, so a human can reply straight from the WhatsApp app. Those messages are captured too and stored as regular outbound messages with \`metadata.via: "device"\` and no \`senderId\` (nobody in the CRM sent them). They do not reopen the 24-hour window, do not count as unread, and never trigger the AI attendant. API clients reading messages should treat \`direction: "outbound"\` with an absent \`senderId\` as "sent from the phone", not as a data error.
+
+A bridge phone number can be active in only one organization at a time. Pairing a number that is already connected elsewhere disables the other channel, pauses its running campaigns, records a high-severity audit entry in the displaced organization, and unlinks the previous device from the WhatsApp account.
+
 ## Built-in AI (Copilot & Attendant)
 
 HNBCRM also ships two NATIVE AI products, separate from external AI agents connected via API key/MCP. Both are opt-in per organization (disabled by default, LGPD acknowledgment required) and are NOT exposed through the public REST API — they are configured in-app (Settings → IA):

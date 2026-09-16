@@ -20,11 +20,13 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.43 (2026-08-14)** — Gestor de tarefas completo: projetos/kanban, etiquetas, multi-responsável, subtarefas, menções e notificações in-app
 - **v0.44 (2026-08-14)** — Vínculo tarefa ↔ lead visível e navegável, com deep-links de pipeline e inbox
 - **v0.45 (2026-08-14)** — Repasses IA ↔ humano fluidos (sino → espiar → aceitar cai no chat, banner na conversa) + loop de coaching no rascunho da IA (instruir/regenerar, pedir sugestão, devolver para IA)
+- **v0.56 (2026-09-16)** — Bridge: mensagem digitada no app do celular entra no CRM (`fromMe` → outbound), histórico do aparelho por número (opt-in, 100 msgs/7 dias) e regra "um número = uma conta" (parear em outra conta desativa a antiga, com aviso). Correção de fundo: o `Subscribe` do connect reescrevia a assinatura de eventos do gateway — os recibos de entrega/leitura estavam mortos desde 2026-08-07
 
 ### Pendências atuais
 
 - **P3 do handoff aguardando aprovação do Eric** — SLA de resgate, timer de reativação, mensagem de transição, abas Minhas/Não-atribuídas no inbox, dashboard de handoff
 - **Hotfix do gateway bridge** — entrada em 401 após re-pareamento (o wuzapi não re-assina o HMAC; o canal envia mas não recebe). Diagnóstico e runbook em `docs/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md`
+- **Exclusividade do número em gateway self-hosted** — a regra "um número = uma conta" depende de descobrir o número pareado, e o `/session/status` do wuzapi devolve o JID vazio; hoje só o gateway gerenciado resolve (via listagem admin). Em gateway próprio a chave fica vazia e a regra não dispara
 - **E2E vivo pendente** — validação ponta a ponta de repasse + coaching bloqueada até o gateway voltar a receber
 
 ---
@@ -545,6 +547,10 @@ Real channel dispatch for WhatsApp, delivered per organization via two transport
 | Opt-in risk acceptance (ban risk) | Done | Mandatory checkbox + link to `/termos`; number may be permanently banned |
 | Channel filters + webhook delivery retries | Done | v0.32.0 |
 | End-to-end validation (real pilot) | Done | Validated e2e against a real wuzapi gateway on 2026-07-19 |
+| Bridge — messages sent from the phone app | Done | `Info.IsFromMe` ingested as outbound (`metadata.via:"device"`); echo of CRM sends deduped by `externalId` |
+| Bridge — device history recovery (opt-in) | Done | Per-channel (`bridgeHistoryEnabled/Limit/Days`, default off, 100 msgs / 7 days); reuses the webhook parser + ingest, so re-syncing never duplicates |
+| Bridge — one number, one account | Done | `bridgePhone` + deployment-wide index; pairing elsewhere disables the other channel, pauses its campaigns, audits the displaced org and unlinks the old device |
+| Bridge — channel delete unlinks the device | Done | `deleteChannelConfig` schedules `POST /session/logout`; previously every deleted channel left a logged-in orphan instance |
 
 **Risk note:** the bridge provider uses a protocol not sanctioned by Meta, violates the WhatsApp Terms of Service, and the connected number may be permanently banned. It is opt-in per organization, "at your own risk" (dedicated number, no cold outreach, warm-up and rate limiting). See `/termos`.
 

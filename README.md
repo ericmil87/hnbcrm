@@ -29,7 +29,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Anti-ban Send Queue** — Two-level pacing per conversation (Meta pair rate) and per phone number, humanized typing simulation on unofficial channels, official 4^X retry backoff, and automatic channel freeze on quality flags
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
 - **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions
-- **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel
+- **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel. Messages typed in the phone's own WhatsApp app are captured too, so the inbox matches the real conversation. A number can be active in only one account: pairing it elsewhere unlinks the previous device automatically, with a warning
 - **Voice Transcription** — Self-hosted Whisper service transcribes voice notes locally (opt-in per org, no paid API), transcripts are searchable
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
