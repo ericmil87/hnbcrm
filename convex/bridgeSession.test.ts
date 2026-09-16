@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { expect, test, describe } from "vitest";
 import {
+  BRIDGE_WEBHOOK_EVENTS,
   buildBridgeStatusRequest,
   buildBridgeConnectRequest,
   buildBridgeQrRequest,
@@ -25,12 +26,39 @@ describe("bridgeSession request builders", () => {
     expect(req.body).toBeUndefined();
   });
 
-  test("connect is a POST subscribing to Message by default", () => {
+  // O default TEM de ser a lista INTEIRA. O `Connect()` do wuzapi grava o que
+  // vier em `Subscribe` na coluna `events` do instance, então um Subscribe curto
+  // REESCREVE a assinatura feita no provisionamento — foi assim que os recibos
+  // de entrega/leitura morreram em produção (todo reconnect derrubava
+  // ReadReceipt/LoggedOut/TemporaryBan/ClientOutdated e os outbound ficavam
+  // parados em "sent"). Encurtar esta lista é reintroduzir o bug.
+  test("connect subscribes to the FULL event list by default", () => {
     const req = buildBridgeConnectRequest({ baseUrl: BASE, token: TOKEN });
     expect(req.method).toBe("POST");
     expect(req.url).toBe(`${BASE}/session/connect`);
     expect(req.headers.token).toBe(TOKEN);
-    expect(JSON.parse(req.body!)).toEqual({ Subscribe: ["Message"], Immediate: false });
+    expect(JSON.parse(req.body!)).toEqual({
+      Subscribe: [...BRIDGE_WEBHOOK_EVENTS],
+      Immediate: false,
+    });
+  });
+
+  test("connect e provisionamento usam a MESMA lista de eventos", () => {
+    // Divergir entre os dois caminhos que escrevem `users.events` é exatamente
+    // o que degradava a assinatura sem ninguém perceber.
+    const connect = JSON.parse(
+      buildBridgeConnectRequest({ baseUrl: BASE, token: TOKEN }).body!
+    ) as { Subscribe: string[] };
+    const provision = JSON.parse(
+      buildBridgeProvisionRequest({
+        baseUrl: BASE,
+        adminToken: "admin",
+        name: "inst",
+        token: TOKEN,
+        webhook: "https://example.test/webhooks/bridge",
+      }).body!
+    ) as { events: string };
+    expect(connect.Subscribe.join(",")).toBe(provision.events);
   });
 
   test("qr is a GET on /session/qr", () => {

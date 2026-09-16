@@ -100,6 +100,27 @@ export function buildBridgeHmacConfigRequest(params: {
 }
 
 /**
+ * Eventos que o gateway deve mandar para o nosso webhook.
+ *
+ * Message = mensagens (nos DOIS sentidos — o evento de uma mensagem enviada pelo
+ * app do celular é o mesmo, com `Info.IsFromMe: true`); ReadReceipt = ticks de
+ * entrega/leitura; os demais são sinais de sessão (deslogado/ban/cliente
+ * desatualizado) — o ingress responde 200 e ignora os que ainda não trata.
+ * CONFIRMADO contra o `supportedEventTypes` do wuzapi (constants.go).
+ *
+ * Usada TANTO no provisionamento quanto no connect, de propósito: são os dois
+ * caminhos que escrevem `users.events` no gateway, e divergir entre eles é o que
+ * degradava a assinatura silenciosamente.
+ */
+export const BRIDGE_WEBHOOK_EVENTS = [
+  "Message",
+  "ReadReceipt",
+  "LoggedOut",
+  "TemporaryBan",
+  "ClientOutdated",
+] as const;
+
+/**
  * POST /session/connect — bring the socket up so a QR can be issued (or the
  * session resumes). `Subscribe` defaults to Message; the real event subscription
  * that matters for ingress is set per-instance at provisioning (`/admin/users`).
@@ -114,7 +135,15 @@ export function buildBridgeConnectRequest(params: {
     url: `${trimBase(params.baseUrl)}/session/connect`,
     headers: { "Content-Type": "application/json", token: params.token },
     body: JSON.stringify({
-      Subscribe: params.subscribe && params.subscribe.length > 0 ? params.subscribe : ["Message"],
+      // O default TEM de ser a lista inteira, não `["Message"]`. O handler
+      // `Connect()` do wuzapi faz `UPDATE users SET events=$1` com o que vier
+      // aqui, então um Subscribe curto REESCREVE a assinatura feita no
+      // provisionamento — foi assim que os recibos de entrega/leitura morreram
+      // em produção (todas as instâncias ficaram com `events: "Message"` e os
+      // outbound travaram em "sent"). Mandar a lista completa também CONSERTA
+      // instâncias já degradadas no primeiro reconnect.
+      Subscribe:
+        params.subscribe && params.subscribe.length > 0 ? params.subscribe : [...BRIDGE_WEBHOOK_EVENTS],
       Immediate: false,
     }),
   };
@@ -157,7 +186,7 @@ export function buildBridgeProvisionRequest(params: {
       events:
         params.events && params.events.length > 0
           ? params.events
-          : "Message,ReadReceipt,LoggedOut,TemporaryBan,ClientOutdated",
+          : BRIDGE_WEBHOOK_EVENTS.join(","),
       // CONFIRMADO no piloto (2026-07-19): webhooks POR INSTÂNCIA são assinados
       // com a hmac_key do usuário (mín. 32 chars) — a env WUZAPI_GLOBAL_HMAC_KEY
       // só assina o webhook global. Sem este campo o webhook chega SEM assinatura
