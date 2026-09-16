@@ -12,6 +12,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
+import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
 import {
   buildBridgeConnectRequest,
@@ -101,6 +102,14 @@ function maskConfig(config: Doc<"channelConfigs">) {
     hasBridgeToken: config.bridgeTokenEncrypted != null,
     bridgeSessionState: config.bridgeSessionState ?? null,
     autoTranscribeAudio: config.autoTranscribeAudio ?? false,
+    // Histórico do aparelho (só bridge). Os números vêm já normalizados para os
+    // limites aceitos, então a UI mostra o valor que de fato vale em runtime —
+    // e não um campo vazio que o servidor silenciosamente trataria como default.
+    bridgeHistoryEnabled: config.bridgeHistoryEnabled === true,
+    bridgeHistoryLimit: normalizeHistoryLimit(config.bridgeHistoryLimit),
+    bridgeHistoryDays: normalizeHistoryDays(config.bridgeHistoryDays),
+    bridgeHistoryLastSyncAt: config.bridgeHistoryLastSyncAt ?? null,
+    bridgeHistoryLastResult: config.bridgeHistoryLastResult ?? null,
     status: config.status,
     lastHealthCheckAt: config.lastHealthCheckAt ?? null,
     healthDetail: config.healthDetail ?? null,
@@ -921,6 +930,9 @@ export const internalPatchConfig = internalMutation({
     const BRIDGE_FIELDS = new Set([
       "bridgeBaseUrl", "bridgeInstanceId", "bridgeTokenEncrypted", "bridgeTokenLast4",
     ]);
+    // Os campos de histórico (bridgeHistory*) NÃO entram aqui de propósito: quem
+    // os escreve é `bridge.internalPatchBridgeHistory`, porque gravá-los sem
+    // ecoar o teto no gateway deixa o CRM e o gateway discordando em silêncio.
     // Shared fields apply to both providers, so they sit outside the
     // provider-exclusivity check below.
     const SHARED_FIELDS = new Set(["displayName", "autoTranscribeAudio"]);

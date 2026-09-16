@@ -652,6 +652,23 @@ const applicationTables = {
     // Quando a sessão bridge ficou "connected" pela primeira vez — idade do
     // número para o warm-up de campanhas (ausente = usa createdAt).
     bridgeConnectedAt: v.optional(v.number()),
+    // ── Histórico do aparelho (bridge, POR NÚMERO) ──
+    // Rede de recuperação para o que o webhook não trouxe (janela de queda,
+    // evento perdido, mensagem digitada no celular antes desta versão): o
+    // gateway wuzapi guarda as mensagens numa tabela própria e devolve em
+    // `GET /chat/history`. Opt-in explícito — ausente/false = DESLIGADO, e com
+    // ele desligado o CRM nunca chama esses endpoints. A config é por canal
+    // porque cada número tem sua instância (e seu volume) no gateway.
+    bridgeHistoryEnabled: v.optional(v.boolean()),
+    // Teto de mensagens por conversa, na ida (o `count` do pedido de sync) e na
+    // volta (o `limit` da leitura). Ausente = BRIDGE_HISTORY_DEFAULT_LIMIT.
+    bridgeHistoryLimit: v.optional(v.number()),
+    // Janela em dias: nada mais velho que isso é importado, mesmo que o gateway
+    // devolva. Ausente = BRIDGE_HISTORY_DEFAULT_DAYS.
+    bridgeHistoryDays: v.optional(v.number()),
+    // Resultado da última sincronização (para a UI não mentir sobre o estado).
+    bridgeHistoryLastSyncAt: v.optional(v.number()),
+    bridgeHistoryLastResult: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
