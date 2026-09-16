@@ -839,6 +839,8 @@ type QrResult = {
   qrCode?: string;
   displayPhoneNumber?: string;
   error?: string;
+  // Contas que perderam este número por causa deste pareamento.
+  displacedFrom?: string[];
 };
 
 function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: () => void }) {
@@ -853,6 +855,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
   // True once we've entered the success/close sequence. Distinguishes a fresh pair
   // ("Conectado!") from a number that was already connected when the modal opened.
   const [pairedNow, setPairedNow] = useState(false);
+  const [displaced, setDisplaced] = useState<string[] | null>(null);
 
   // Refs survive re-renders without re-arming the effect below.
   const inFlightRef = useRef(false); // a getBridgeQrCode call is outstanding — skip the tick
@@ -867,7 +870,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
   // Success sequence — runs exactly once. Persists the pairing so the card badge
   // flips reactively, toasts, then auto-closes the modal.
   const finishConnected = useCallback(
-    (displayPhoneNumber?: string) => {
+    (displayPhoneNumber?: string, displacedFrom?: string[]) => {
       if (doneRef.current) return;
       doneRef.current = true;
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -879,6 +882,16 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
           ? `Número pareado com sucesso${displayPhoneNumber ? ` (${displayPhoneNumber})` : ""}`
           : `Número já conectado${displayPhoneNumber ? ` (${displayPhoneNumber})` : ""}`
       );
+      // Desligar o canal de outra conta é consequência séria o bastante para não
+      // caber num toast que some: fica no modal até o usuário fechar.
+      if (displacedFrom && displacedFrom.length > 0) {
+        setDisplaced(displacedFrom);
+        toast.warning(
+          `Este número foi desconectado de: ${displacedFrom.join(", ")}`,
+          { duration: 10000 }
+        );
+        return; // sem auto-close — o aviso precisa ser lido
+      }
       closeTimerRef.current = setTimeout(() => onCloseRef.current(), QR_SUCCESS_CLOSE_MS);
     },
     [checkChannelHealth, config._id]
@@ -894,7 +907,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
       if (r.qrCode) hadQrRef.current = true;
       setResult(r);
       setPollError(null);
-      if (r.state === "connected") finishConnected(r.displayPhoneNumber);
+      if (r.state === "connected") finishConnected(r.displayPhoneNumber, r.displacedFrom);
     } catch (e) {
       if (doneRef.current) return;
       // Keep the modal (and any existing QR) alive; surface a discreet warning.
@@ -925,6 +938,32 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
           <span className="text-text-primary">Aparelhos conectados → Conectar um aparelho</span> e escaneie
           o código abaixo.
         </p>
+
+        {/* Aviso ANTES de escanear. Genérico porque o número só é conhecido
+            depois do pareamento — não dá para nomear a conta antes. */}
+        <div className="flex gap-2.5 rounded-lg border border-semantic-warning/30 bg-semantic-warning/5 p-3">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
+          <p className="text-xs leading-relaxed text-text-secondary">
+            Um número de WhatsApp só pode estar ativo em <span className="text-text-primary">uma conta</span> do
+            HNBCRM. Se este número já estiver conectado em outra conta, aquela conexão será{" "}
+            <span className="text-text-primary">encerrada automaticamente</span> ao concluir o pareamento — o
+            canal de lá é desativado e as campanhas em andamento são pausadas. O histórico não é apagado.
+          </p>
+        </div>
+
+        {displaced && displaced.length > 0 && (
+          <div className="flex gap-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-3">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
+            <div className="text-xs leading-relaxed text-text-secondary">
+              <p className="text-text-primary font-medium">Conexão anterior encerrada</p>
+              <p className="mt-1">
+                Este número estava conectado em{" "}
+                <span className="text-text-primary">{displaced.join(", ")}</span>. O canal de lá foi desativado
+                e o aparelho, desvinculado. Nenhuma conversa foi apagada.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="flex min-h-[280px] items-center justify-center rounded-lg border border-border bg-surface-base p-4">
           {isConnected ? (

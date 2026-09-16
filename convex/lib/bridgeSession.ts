@@ -149,6 +149,31 @@ export function buildBridgeConnectRequest(params: {
   };
 }
 
+/**
+ * POST /session/logout — DESVINCULA o aparelho da conta do WhatsApp.
+ *
+ * Usa o token da PRÓPRIA instância, não o admin: assim funciona também em
+ * gateway self-hosted, onde o CRM não tem credencial administrativa. Difere de
+ * `/session/disconnect`, que só derruba o socket e deixa o aparelho vinculado —
+ * o que não resolve nada aqui, porque o aparelho vinculado continua ocupando
+ * slot e recebendo eventos quando reconectar.
+ *
+ * Responde 500 quando a sessão não estava logada/conectada; para o nosso uso
+ * (encerrar uma conexão antiga) isso é sucesso na prática — já não havia o que
+ * desvincular.
+ */
+export function buildBridgeLogoutRequest(params: {
+  baseUrl: string;
+  token: string;
+}): BridgeHttpRequest {
+  return {
+    method: "POST",
+    url: `${trimBase(params.baseUrl)}/session/logout`,
+    headers: { "Content-Type": "application/json", token: params.token },
+    body: "{}",
+  };
+}
+
 /** GET /session/qr — fetch the base64 data-URI QR to display for pairing. */
 export function buildBridgeQrRequest(params: { baseUrl: string; token: string }): BridgeHttpRequest {
   return {
@@ -194,6 +219,49 @@ export function buildBridgeProvisionRequest(params: {
       ...(params.hmacKey ? { hmacKey: params.hmacKey } : {}),
     }),
   };
+}
+
+/**
+ * GET /admin/users — listagem administrativa das instâncias do gateway.
+ *
+ * Existe por um motivo específico: `GET /session/status` devolve `jid: ""` mesmo
+ * com a sessão logada (medido contra o gateway real em 16/09/2026, em três
+ * instâncias), então o número pareado NÃO é descobrível pelo token da instância.
+ * A listagem admin lê a coluna `jid` do banco do gateway, que está correta.
+ *
+ * Usa o token ADMIN, que o CRM só tem no gateway gerenciado (env
+ * WA_BRIDGE_ADMIN_TOKEN). Em gateway self-hosted este caminho não existe e o
+ * número é aprendido pelo tráfego (ver `selfPhone` em lib/bridgeParse.ts).
+ */
+export function buildBridgeAdminUsersRequest(params: {
+  baseUrl: string;
+  adminToken: string;
+}): BridgeHttpRequest {
+  return {
+    method: "GET",
+    url: `${trimBase(params.baseUrl)}/admin/users`,
+    headers: { Authorization: params.adminToken },
+  };
+}
+
+/**
+ * Acha o JID de UMA instância na listagem admin, pelo nome (que é como o CRM
+ * nomeia a instância: `bridgeInstanceId`). Devolve só os dígitos do telefone.
+ */
+export function phoneFromAdminUsers(
+  responseBody: unknown,
+  instanceName: string
+): string | undefined {
+  const b = (responseBody && typeof responseBody === "object" ? responseBody : {}) as Record<string, any>;
+  const raw = b.data ?? b.Data ?? responseBody;
+  const users = Array.isArray(raw) ? raw : [];
+  for (const user of users) {
+    if (!user || typeof user !== "object") continue;
+    const name = (user as Record<string, any>).name ?? (user as Record<string, any>).Name;
+    if (name !== instanceName) continue;
+    return phoneFromJid((user as Record<string, any>).jid ?? (user as Record<string, any>).Jid);
+  }
+  return undefined;
 }
 
 // ── Response parsers ──

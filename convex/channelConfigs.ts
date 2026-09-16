@@ -6,6 +6,7 @@ import {
   internalQuery,
   internalMutation,
   internalAction,
+  MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -17,6 +18,8 @@ import { pauseCampaignsForChannel } from "./lib/campaignHooks";
 import {
   buildBridgeConnectRequest,
   buildBridgeHmacConfigRequest,
+  buildBridgeAdminUsersRequest,
+  buildBridgeLogoutRequest,
   buildBridgeProvisionRequest,
   buildBridgeQrRequest,
   buildBridgeStatusRequest,
@@ -24,6 +27,8 @@ import {
   parseBridgeProvisionResponse,
   parseBridgeQrResponse,
   parseBridgeStatusResponse,
+  phoneFromAdminUsers,
+  phoneFromJid,
   type BridgeHttpRequest,
   type BridgeSessionState,
 } from "./lib/bridgeSession";
@@ -378,6 +383,25 @@ export const deleteChannelConfig = mutation({
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
 
+    // Encerra a sessão no gateway ANTES de perder as credenciais com a linha.
+    //
+    // Sem isto a instância continua logada e recebendo eventos para sempre: ela
+    // vira uma órfã que gasta um slot de aparelho vinculado da conta do WhatsApp
+    // e entrega webhook que o ingress descarta. Foi exatamente assim que duas
+    // órfãs vivas apareceram no gateway de produção — excluir/reparear canal era
+    // o caminho normal e ninguém desvinculava nada.
+    if (
+      configProvider(config) === "bridge" &&
+      config.bridgeBaseUrl &&
+      config.bridgeTokenEncrypted
+    ) {
+      await ctx.scheduler.runAfter(0, internal.channelConfigs.internalLogoutBridgeInstance, {
+        baseUrl: config.bridgeBaseUrl,
+        tokenEncrypted: config.bridgeTokenEncrypted,
+        instanceId: config.bridgeInstanceId,
+      });
+    }
+
     await ctx.db.delete(args.configId);
 
     await ctx.db.insert("auditLogs", {
@@ -403,6 +427,42 @@ export const deleteChannelConfig = mutation({
   },
 });
 
+/**
+ * Descobre o telefone pareado de uma instância bridge.
+ *
+ * `/session/status` seria o lugar óbvio, mas devolve `jid: ""` mesmo logado
+ * (medido no gateway real), então quando ele não traz nada caímos na listagem
+ * admin — disponível só no gateway GERENCIADO, que é onde o CRM tem o admin
+ * token. Em gateway self-hosted isto devolve undefined e o número acaba sendo
+ * aprendido pelo tráfego (primeira mensagem nossa que chega pelo webhook).
+ */
+async function resolveBridgePhone(params: {
+  fromStatusJid?: string;
+  baseUrl: string;
+  instanceId?: string;
+}): Promise<string | undefined> {
+  const direct = phoneFromJid(params.fromStatusJid);
+  if (direct) return direct;
+
+  const adminToken = process.env.WA_BRIDGE_ADMIN_TOKEN;
+  const managedUrl = process.env.WA_BRIDGE_DEFAULT_URL;
+  if (!adminToken || !params.instanceId) return undefined;
+  // Só manda o admin token para o gateway que é nosso.
+  if (!managedUrl || normalizeBridgeBaseUrl(managedUrl) !== normalizeBridgeBaseUrl(params.baseUrl)) {
+    return undefined;
+  }
+
+  try {
+    const res = await bridgeFetchJson(
+      buildBridgeAdminUsersRequest({ baseUrl: params.baseUrl, adminToken })
+    );
+    if (!res.httpOk) return undefined;
+    return phoneFromAdminUsers(res.body, params.instanceId);
+  } catch {
+    return undefined;
+  }
+}
+
 // Health check: Graph API lookup with the decrypted token ("Test connection").
 // For a bridge config this instead probes the wuzapi session status and maps it
 // to a pairing state, recording it the same way (internalRecordHealthCheck).
@@ -415,6 +475,8 @@ export const checkChannelHealth = action({
     error: v.optional(v.string()),
     // Bridge-only: the pairing state so the UI can react immediately.
     bridgeSessionState: v.optional(bridgeSessionStateValidator),
+    // Bridge-only: contas que perderam este número por causa desta conexão.
+    displacedFrom: v.optional(v.array(v.string())),
   }),
   handler: async (
     ctx,
@@ -425,6 +487,7 @@ export const checkChannelHealth = action({
     verifiedName?: string;
     error?: string;
     bridgeSessionState?: BridgeSessionState;
+    displacedFrom?: string[];
   }> => {
     // Permission-checked read (runs with the caller's auth context)
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfigForMember, {
@@ -458,18 +521,29 @@ export const checkChannelHealth = action({
           jid: status.jid,
         });
         const ok = mapped.state === "connected";
-        await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
+        // Só vale a pena caçar o número quando a sessão está de pé.
+        const phone = ok
+          ? mapped.phone ??
+            (await resolveBridgePhone({
+              fromStatusJid: status.jid,
+              baseUrl: config.bridgeBaseUrl,
+              instanceId: config.bridgeInstanceId,
+            }))
+          : mapped.phone;
+        const displaced = await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
           configId: args.configId,
           ok,
-          displayPhoneNumber: mapped.phone ? `+${mapped.phone}` : undefined,
-          healthDetail: mapped.healthDetail,
+          displayPhoneNumber: phone ? `+${phone}` : undefined,
+          bridgePhone: phone,
+          healthDetail: phone ? `Conectado como +${phone}` : mapped.healthDetail,
           bridgeSessionState: mapped.state,
         });
         return {
           ok,
-          displayPhoneNumber: mapped.phone ? `+${mapped.phone}` : undefined,
+          displayPhoneNumber: phone ? `+${phone}` : undefined,
           error: ok ? undefined : mapped.healthDetail,
           bridgeSessionState: mapped.state,
+          ...(displaced.length > 0 ? { displacedFrom: displaced } : {}),
         };
       } catch (e) {
         const error = e instanceof Error ? e.message : "Falha ao consultar o gateway bridge";
@@ -526,6 +600,8 @@ export const getBridgeQrCode = action({
     qrCode: v.optional(v.string()),
     displayPhoneNumber: v.optional(v.string()),
     error: v.optional(v.string()),
+    // Contas que perderam este número por causa deste pareamento (a UI avisa).
+    displacedFrom: v.optional(v.array(v.string())),
   }),
   handler: async (
     ctx,
@@ -535,6 +611,7 @@ export const getBridgeQrCode = action({
     qrCode?: string;
     displayPhoneNumber?: string;
     error?: string;
+    displacedFrom?: string[];
   }> => {
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfigForMember, {
       configId: args.configId,
@@ -546,16 +623,18 @@ export const getBridgeQrCode = action({
       return { state: "disconnected", error: "Configuração bridge incompleta — reconfigure o canal" };
     }
 
+    // Devolve os nomes das contas que perderam o número para este pareamento.
     const record = async (
       state: BridgeSessionState,
       ok: boolean,
       healthDetail: string,
-      displayPhoneNumber?: string
-    ) => {
-      await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
+      phone?: string
+    ): Promise<string[]> => {
+      return await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
         configId: args.configId,
         ok,
-        displayPhoneNumber,
+        displayPhoneNumber: phone ? `+${phone}` : undefined,
+        bridgePhone: phone,
         healthDetail,
         bridgeSessionState: state,
       });
@@ -571,8 +650,22 @@ export const getBridgeQrCode = action({
       const probedJid = status.ok ? status.jid : undefined;
       if (status.ok && status.loggedIn && status.connected) {
         const mapped = mapBridgeSessionState({ connected: true, loggedIn: true, jid: status.jid });
-        await record("connected", true, mapped.healthDetail, mapped.phone ? `+${mapped.phone}` : undefined);
-        return { state: "connected", displayPhoneNumber: mapped.phone ? `+${mapped.phone}` : undefined };
+        const phone = await resolveBridgePhone({
+          fromStatusJid: status.jid,
+          baseUrl,
+          instanceId: config.bridgeInstanceId,
+        });
+        const displaced = await record(
+          "connected",
+          true,
+          phone ? `Conectado como +${phone}` : mapped.healthDetail,
+          phone
+        );
+        return {
+          state: "connected",
+          displayPhoneNumber: phone ? `+${phone}` : undefined,
+          ...(displaced.length > 0 ? { displacedFrom: displaced } : {}),
+        };
       }
 
       // Not paired (or socket down): bring the session up so a QR is issued, then
@@ -588,8 +681,24 @@ export const getBridgeQrCode = action({
       // The instance may have logged in between the two calls.
       if (qr.loggedIn && !qr.qrCode) {
         const mapped = mapBridgeSessionState({ connected: true, loggedIn: true, jid: probedJid });
-        await record("connected", true, mapped.healthDetail, mapped.phone ? `+${mapped.phone}` : undefined);
-        return { state: "connected", displayPhoneNumber: mapped.phone ? `+${mapped.phone}` : undefined };
+        // Caminho do pareamento recém-concluído: é AQUI que a exclusividade
+        // precisa valer, então vale a chamada extra para descobrir o número.
+        const phone = await resolveBridgePhone({
+          fromStatusJid: probedJid,
+          baseUrl,
+          instanceId: config.bridgeInstanceId,
+        });
+        const displaced = await record(
+          "connected",
+          true,
+          phone ? `Conectado como +${phone}` : mapped.healthDetail,
+          phone
+        );
+        return {
+          state: "connected",
+          displayPhoneNumber: phone ? `+${phone}` : undefined,
+          ...(displaced.length > 0 ? { displacedFrom: displaced } : {}),
+        };
       }
       const mapped = mapBridgeSessionState({ connected: false, loggedIn: false, hasQr: !!qr.qrCode });
       await record(mapped.state, false, mapped.healthDetail);
@@ -933,6 +1042,7 @@ export const internalPatchConfig = internalMutation({
     // Os campos de histórico (bridgeHistory*) NÃO entram aqui de propósito: quem
     // os escreve é `bridge.internalPatchBridgeHistory`, porque gravá-los sem
     // ecoar o teto no gateway deixa o CRM e o gateway discordando em silêncio.
+
     // Shared fields apply to both providers, so they sit outside the
     // provider-exclusivity check below.
     const SHARED_FIELDS = new Set(["displayName", "autoTranscribeAudio"]);
@@ -997,12 +1107,129 @@ export const internalPatchConfig = internalMutation({
   },
 });
 
+/**
+ * Um número do WhatsApp pertence a UM canal só, no deployment inteiro.
+ *
+ * Chamado quando uma sessão bridge fica "connected" e o telefone finalmente se
+ * torna conhecido (antes do QR ser lido não há como saber qual número é). Todo
+ * OUTRO canal bridge com o mesmo telefone é desativado na hora, dentro desta
+ * mesma transação — é o que impede a janela em que os dois ficam ativos e a
+ * mensagem do contato é ingerida nas duas contas.
+ *
+ * Desativa, NÃO apaga: a org deslocada perde o canal, não o histórico, e um
+ * admin consegue reativar depois de reparear (o que, por sua vez, desloca este).
+ *
+ * O logout no gateway (desvincular o aparelho de fato) é agendado à parte, por
+ * ser chamada de rede. Mesmo que ele falhe, o lado do CRM já está fechado.
+ */
+async function claimBridgePhone(
+  ctx: MutationCtx,
+  params: { config: Doc<"channelConfigs">; phone: string; now: number }
+): Promise<string[]> {
+  const rivals = await ctx.db
+    .query("channelConfigs")
+    .withIndex("by_bridge_phone", (q) => q.eq("bridgePhone", params.phone))
+    .collect();
+
+  const displaced: string[] = [];
+  for (const rival of rivals) {
+    if (rival._id === params.config._id) continue;
+    if (configProvider(rival) !== "bridge") continue;
+    if (rival.status === "disabled") continue; // já fora do ar — nada a fazer
+
+    const claimingOrg = await ctx.db.get(params.config.organizationId);
+    const claimingName = claimingOrg?.name ?? "outra conta";
+    const reason = `Número reconectado em "${claimingName}" — este canal foi desativado. Um número do WhatsApp só pode estar ativo em uma conta.`;
+
+    await ctx.db.patch(rival._id, {
+      status: "disabled",
+      bridgeSessionState: "disconnected",
+      healthDetail: reason,
+      updatedAt: params.now,
+    });
+
+    // A org deslocada precisa conseguir descobrir POR QUE o canal dela morreu.
+    await ctx.db.insert("auditLogs", {
+      organizationId: rival.organizationId,
+      entityType: "channelConfig",
+      entityId: rival._id,
+      action: "update",
+      actorType: "system",
+      metadata: {
+        name: rival.displayName,
+        bridgeInstanceId: rival.bridgeInstanceId,
+        phone: params.phone,
+        claimedBy: claimingName,
+      },
+      description: reason,
+      severity: "high",
+      createdAt: params.now,
+    });
+
+    // Campanha rodando neste canal para AGORA — o canal não envia mais.
+    await pauseCampaignsForChannel(ctx, rival._id, reason, params.now);
+
+    // Desvincula o aparelho no gateway (rede → fora da transação).
+    if (rival.bridgeBaseUrl && rival.bridgeTokenEncrypted) {
+      await ctx.scheduler.runAfter(0, internal.channelConfigs.internalLogoutBridgeInstance, {
+        baseUrl: rival.bridgeBaseUrl,
+        tokenEncrypted: rival.bridgeTokenEncrypted,
+        instanceId: rival.bridgeInstanceId,
+      });
+    }
+
+    const rivalOrg = await ctx.db.get(rival.organizationId);
+    displaced.push(rivalOrg?.name ?? rival.displayName);
+  }
+
+  return displaced;
+}
+
+/**
+ * Encerra a sessão de uma instância no gateway (best-effort).
+ *
+ * Recebe as credenciais por argumento em vez do `configId` porque os dois
+ * chamadores precisam disso: a exclusão de canal já apagou a linha quando esta
+ * ação roda, e o deslocamento aponta para um canal que não é o da chamada.
+ */
+export const internalLogoutBridgeInstance = internalAction({
+  args: {
+    baseUrl: v.string(),
+    tokenEncrypted: v.string(),
+    instanceId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    try {
+      const token = await decryptSecret(args.tokenEncrypted);
+      const res = await bridgeFetchJson(
+        buildBridgeLogoutRequest({ baseUrl: args.baseUrl, token })
+      );
+      // 500 "não estava logado" é o resultado desejado por outro caminho.
+      if (!res.httpOk) {
+        console.warn(
+          `Logout da instância bridge ${args.instanceId ?? "?"} não confirmou (HTTP ${res.status})`
+        );
+      }
+    } catch (e) {
+      // Nunca derruba o fluxo que agendou: o CRM já desativou o canal, e um
+      // aparelho vinculado sobrando é problema menor que um erro no pareamento.
+      console.warn(
+        `Falha ao encerrar a sessão bridge ${args.instanceId ?? "?"}: ${e instanceof Error ? e.message : e}`
+      );
+    }
+    return null;
+  },
+});
+
 // Internal: store health check outcome
 export const internalRecordHealthCheck = internalMutation({
   args: {
     configId: v.id("channelConfigs"),
     ok: v.boolean(),
     displayPhoneNumber: v.optional(v.string()),
+    // Bridge: telefone pareado em dígitos — a chave de exclusividade.
+    bridgePhone: v.optional(v.string()),
     healthDetail: v.string(),
     // Bridge-only: persist the whatsmeow pairing state for the card badge.
     bridgeSessionState: v.optional(
@@ -1015,17 +1242,29 @@ export const internalRecordHealthCheck = internalMutation({
       )
     ),
   },
-  returns: v.null(),
+  // Nomes das contas que perderam este número para esta conexão (vazio é o
+  // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
+  returns: v.array(v.string()),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
-    if (!config) return null;
+    if (!config) return [];
 
     const now = Date.now();
+
+    // Exclusividade ANTES de gravar este canal como ativo: se o mesmo número
+    // estava em outra conta, aquela sai primeiro, e nunca há um instante em que
+    // os dois valem.
+    const displaced =
+      args.bridgeSessionState === "connected" && args.bridgePhone
+        ? await claimBridgePhone(ctx, { config, phone: args.bridgePhone, now })
+        : [];
+
     await ctx.db.patch(args.configId, {
       // A failing check marks the config as errored; a passing one restores
       // active only if it wasn't deliberately disabled
       status: args.ok ? (config.status === "disabled" ? "disabled" : "active") : "error",
       displayPhoneNumber: args.displayPhoneNumber ?? config.displayPhoneNumber,
+      ...(args.bridgePhone ? { bridgePhone: args.bridgePhone } : {}),
       healthDetail: args.healthDetail,
       ...(args.bridgeSessionState ? { bridgeSessionState: args.bridgeSessionState } : {}),
       // Campanhas: idade do número = 1ª vez que a sessão ficou "connected"
@@ -1046,7 +1285,7 @@ export const internalRecordHealthCheck = internalMutation({
         now
       );
     }
-    return null;
+    return displaced;
   },
 });
 
@@ -1077,3 +1316,131 @@ export const internalGetBridgeCredentials = internalAction({
 });
 
 export { statusValidator as channelConfigStatusValidator };
+
+/**
+ * Backfill idempotente de `bridgePhone` a partir de `displayPhoneNumber`.
+ *
+ * Canais pareados ANTES desta versão não têm a chave de exclusividade, e sem ela
+ * a regra "um número, uma conta" só passaria a valer no próximo pareamento —
+ * deixando de fora justamente as duplicatas que já existem. Devolve quantos
+ * foram preenchidos e quantos números aparecem em mais de um canal ativo (o que
+ * precisa de decisão humana: não dá para adivinhar qual conta fica).
+ *
+ * Roda com: `npx convex run channelConfigs:internalBackfillBridgePhone '{}'`
+ */
+export const internalBackfillBridgePhone = internalMutation({
+  args: {},
+  returns: v.object({
+    patched: v.number(),
+    conflicts: v.array(v.object({ phone: v.string(), canais: v.array(v.string()) })),
+  }),
+  handler: async (ctx) => {
+    const configs = await ctx.db.query("channelConfigs").collect();
+    let patched = 0;
+
+    for (const config of configs) {
+      if (configProvider(config) !== "bridge") continue;
+      if (config.bridgePhone) continue;
+      const digits = (config.displayPhoneNumber ?? "").replace(/\D/g, "");
+      if (!digits) continue;
+      await ctx.db.patch(config._id, { bridgePhone: digits });
+      patched++;
+    }
+
+    // Relê para enxergar o que o backfill acabou de escrever.
+    const after = await ctx.db.query("channelConfigs").collect();
+    const byPhone = new Map<string, string[]>();
+    for (const config of after) {
+      if (configProvider(config) !== "bridge") continue;
+      if (!config.bridgePhone || config.status === "disabled") continue;
+      const list = byPhone.get(config.bridgePhone) ?? [];
+      list.push(`${config.displayName} (${config._id})`);
+      byPhone.set(config.bridgePhone, list);
+    }
+
+    const conflicts = [...byPhone.entries()]
+      .filter(([, canais]) => canais.length > 1)
+      .map(([phone, canais]) => ({ phone, canais }));
+
+    return { patched, conflicts };
+  },
+});
+
+/**
+ * Ops: descobre o número pareado de um canal bridge e aplica a exclusividade.
+ *
+ * Mesmo núcleo do health check (`resolveBridgePhone` + `internalRecordHealthCheck`),
+ * sem a superfície pública — serve para preencher a chave em canais pareados
+ * ANTES desta versão, sem depender de alguém abrir a tela. Devolve o telefone e
+ * quais contas perderam o número.
+ *
+ * Roda com:
+ * `npx convex run channelConfigs:internalResolveBridgePhone '{"configId":"…"}'`
+ */
+export const internalResolveBridgePhone = internalAction({
+  args: { configId: v.id("channelConfigs") },
+  returns: v.object({
+    phone: v.union(v.string(), v.null()),
+    displacedFrom: v.array(v.string()),
+    detail: v.string(),
+  }),
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ phone: string | null; displacedFrom: string[]; detail: string }> => {
+    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+      configId: args.configId,
+    });
+    if (!config) throw new Error("Canal não encontrado");
+    if (configProvider(config) !== "bridge" || !config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
+      return { phone: null, displacedFrom: [], detail: "Canal não é bridge ou está incompleto" };
+    }
+
+    const token = await decryptSecret(config.bridgeTokenEncrypted);
+    const probe = await bridgeFetchJson(
+      buildBridgeStatusRequest({ baseUrl: config.bridgeBaseUrl, token })
+    );
+    const status = parseBridgeStatusResponse(probe.httpOk, probe.status, probe.body);
+    if (!status.ok || !status.loggedIn || !status.connected) {
+      return {
+        phone: null,
+        displacedFrom: [],
+        detail: "Sessão não está conectada — nada a reivindicar",
+      };
+    }
+
+    const phone = await resolveBridgePhone({
+      fromStatusJid: status.jid,
+      baseUrl: config.bridgeBaseUrl,
+      instanceId: config.bridgeInstanceId,
+    });
+    if (!phone) {
+      return {
+        phone: null,
+        displacedFrom: [],
+        detail: "Número não descoberto (gateway não gerenciado ou instância sem JID)",
+      };
+    }
+
+    const displacedFrom = await ctx.runMutation(
+      internal.channelConfigs.internalRecordHealthCheck,
+      {
+        configId: args.configId,
+        ok: true,
+        displayPhoneNumber: `+${phone}`,
+        bridgePhone: phone,
+        healthDetail: `Conectado como +${phone}`,
+        bridgeSessionState: "connected",
+      }
+    );
+
+    return {
+      phone,
+      displacedFrom,
+      detail:
+        displacedFrom.length > 0
+          ? `Número +${phone} reivindicado — desconectado de: ${displacedFrom.join(", ")}`
+          : `Número +${phone} registrado neste canal`,
+    };
+  },
+});

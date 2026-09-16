@@ -652,6 +652,14 @@ const applicationTables = {
     // Quando a sessão bridge ficou "connected" pela primeira vez — idade do
     // número para o warm-up de campanhas (ausente = usa createdAt).
     bridgeConnectedAt: v.optional(v.number()),
+    // Telefone pareado, SÓ DÍGITOS (E.164 sem '+'), preenchido quando a sessão
+    // fica "connected". É a chave de EXCLUSIVIDADE: um número do WhatsApp só
+    // pode estar ativo em UM canal do deployment inteiro. Sem isso o mesmo
+    // número pareado em duas orgs faz cada mensagem do contato ser ingerida nas
+    // duas — vazamento entre inquilinos, não só ruído. `displayPhoneNumber` é
+    // para exibição (tem '+', e o caminho Meta também usa), então não serve de
+    // chave.
+    bridgePhone: v.optional(v.string()),
     // ── Histórico do aparelho (bridge, POR NÚMERO) ──
     // Rede de recuperação para o que o webhook não trouxe (janela de queda,
     // evento perdido, mensagem digitada no celular antes desta versão): o
@@ -675,7 +683,10 @@ const applicationTables = {
     .index("by_organization", ["organizationId"])
     .index("by_phone_number_id", ["phoneNumberId"])
     .index("by_verify_token", ["verifyToken"])
-    .index("by_bridge_instance", ["bridgeInstanceId"]),
+    .index("by_bridge_instance", ["bridgeInstanceId"])
+    // Deployment-wide de propósito (sem organizationId): a pergunta que ele
+    // responde é "este número já está em ALGUMA conta?".
+    .index("by_bridge_phone", ["bridgePhone"]),
 
   // Conversations
   conversations: defineTable({
