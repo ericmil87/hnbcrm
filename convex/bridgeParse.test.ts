@@ -141,9 +141,16 @@ describe("parseBridgeEvent — messages", () => {
     expect(res.message).toMatchObject({ externalId: "3EB0FAKEID02", content: "casing test" });
   });
 
-  test("fromMe echo is ignored", () => {
+  // Mensagem nossa não é mais descartada: o MESMO evento representa o eco do que
+  // o CRM enviou e o que alguém digitou no app do celular, e descartar os dois
+  // fazia o inbox divergir da conversa real. O eco duplicado morre na
+  // idempotência de `externalId`, no ingest.
+  test("fromMe is parsed as a message flagged fromMe", () => {
     const res = parseBridgeEvent(messageEnvelope({ conversation: "eco" }, { IsFromMe: true }));
-    expect(res).toEqual({ kind: "ignored", reason: "fromMe" });
+    expect(res.kind).toBe("message");
+    if (res.kind !== "message") return;
+    expect(res.message.fromMe).toBe(true);
+    expect(res.message.content).toBe("eco");
   });
 
   test("group message is ignored (by IsGroup flag)", () => {

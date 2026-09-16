@@ -215,7 +215,11 @@ describe("POST /webhooks/bridge routing + signature", () => {
     expect(await getScheduledIngests(t)).toHaveLength(0);
   });
 
-  test("fromMe echo is dropped (200, no ingest)", async () => {
+  // Mensagem que sai do NOSSO número (eco do CRM ou digitada no app do celular)
+  // é ingerida como `outbound` em vez de descartada — sem isso a conversa do
+  // inbox diverge da conversa real. O eco duplicado morre na idempotência de
+  // `externalId`, coberta em bridgeDeviceMessages.test.ts.
+  test("fromMe is ingested (outbound), with the CONTACT as the phone", async () => {
     const t = setup();
     await seedOrgWithBridgeConfig(t);
 
@@ -223,13 +227,31 @@ describe("POST /webhooks/bridge routing + signature", () => {
       type: "Message",
       instanceId: INSTANCE_ID,
       event: {
-        Info: { ID: "3EB0ECHO", Sender: SENDER_JID, Chat: SENDER_JID, IsFromMe: true, IsGroup: false },
-        Message: { conversation: "eco" },
+        Info: {
+          ID: "3EB0ECHO",
+          // Numa mensagem nossa o Sender somos NÓS; o contato é o Chat.
+          Sender: "5511999999999@s.whatsapp.net",
+          Chat: SENDER_JID,
+          PushName: "Nosso Atendente",
+          IsFromMe: true,
+          IsGroup: false,
+        },
+        Message: { conversation: "mandei pelo celular" },
       },
     });
     const response = await postBridge(t, body, await sign(body, HMAC_SECRET));
     expect(response.status).toBe(200);
-    expect(await getScheduledIngests(t)).toHaveLength(0);
+
+    const scheduled = await getScheduledIngests(t);
+    expect(scheduled).toHaveLength(1);
+    const message = scheduled[0].message as any;
+    expect(message.fromMe).toBe(true);
+    expect(message.content).toBe("mandei pelo celular");
+    // O telefone tem de ser o do CONTATO, nunca o nosso — senão cada envio pelo
+    // aparelho criaria um lead com o número da própria empresa.
+    expect(message.from).toBe(SENDER_JID.split("@")[0]);
+    // E o PushName é NOSSO nesse evento: propagá-lo renomearia o contato.
+    expect(message.profileName).toBeUndefined();
   });
 
   test("routes to the right org among multiple tenants", async () => {
@@ -251,6 +273,7 @@ describe("internalIngestBridgeMessage", () => {
   const PARSED_TEXT = {
     externalId: "3EB0FAKEID01",
     from: "15550000001",
+    fromMe: false,
     profileName: "Maria Teste",
     timestamp: Date.parse("2026-07-19T12:00:00Z"),
     contentType: "text" as const,
@@ -301,6 +324,7 @@ describe("internalIngestBridgeMessage", () => {
     return {
       externalId: "3EB0IMG01",
       from: "15550000001",
+      fromMe: false,
       timestamp: Date.parse("2026-07-19T12:00:00Z"),
       contentType: "image" as const,
       content: "Veja isso",

@@ -43,6 +43,7 @@ function normalizeMediaKind(kind: string): BridgeMediaKind {
 const parsedBridgeMessageValidator = v.object({
   externalId: v.string(),
   from: v.string(),
+  fromMe: v.boolean(),
   profileName: v.optional(v.string()),
   timestamp: v.number(),
   contentType: v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio")),
@@ -139,7 +140,7 @@ export const webhookReceive = httpAction(async (ctx, request) => {
       state: parsed.presence.state,
     });
   }
-  // parsed.kind === "ignored" (fromMe, group, presence, unrecognized) → no-op
+  // parsed.kind === "ignored" (group, reação nossa, presence, unrecognized) → no-op
 
   return new Response("OK", { status: 200 });
 });
@@ -166,7 +167,9 @@ export const internalIngestBridgeMessage = internalAction({
     });
     if (existing) return null;
 
-    // Reuse the shared contact/lead routing (find-or-create by phone + AI auto-assign)
+    // Reuse the shared contact/lead routing (find-or-create by phone + AI auto-assign).
+    // Vale para os dois sentidos: uma conversa iniciada pelo aparelho com um
+    // número novo também precisa de contato e lead para aparecer no inbox.
     const { leadId } = await ctx.runMutation(internal.whatsapp.internalRouteInbound, {
       configId: args.configId,
       waId: args.message.from,
@@ -258,6 +261,27 @@ export const internalIngestBridgeMessage = internalAction({
       }
     }
 
+    // Última barreira antes do banco: nenhum campo de chave passa, nem pelo
+    // `metadata.raw` que o parser guarda para tipo de mensagem desconhecido.
+    const safeMetadata = stripMediaKeyMaterial(metadata) as Record<string, unknown>;
+
+    if (args.message.fromMe) {
+      // Saiu do nosso número sem passar pelo CRM (app do celular). O eco do que
+      // o próprio CRM enviou também cai aqui e morre na idempotência.
+      await ctx.runMutation(internal.conversations.internalReceiveDeviceMessage, {
+        organizationId: config.organizationId,
+        leadId,
+        channelConfigId: args.configId,
+        content: args.message.content,
+        contentType: args.message.contentType,
+        attachments,
+        externalId: args.message.externalId,
+        sentAt: args.message.timestamp,
+        metadata: safeMetadata,
+      });
+      return null;
+    }
+
     await ctx.runMutation(internal.conversations.internalReceiveMessage, {
       organizationId: config.organizationId,
       leadId,
@@ -267,9 +291,7 @@ export const internalIngestBridgeMessage = internalAction({
       contentType: args.message.contentType,
       attachments,
       externalId: args.message.externalId,
-      // Última barreira antes do banco: nenhum campo de chave passa, nem pelo
-      // `metadata.raw` que o parser guarda para tipo de mensagem desconhecido.
-      metadata: stripMediaKeyMaterial(metadata) as Record<string, unknown>,
+      metadata: safeMetadata,
     });
 
     return null;

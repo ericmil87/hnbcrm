@@ -23,7 +23,11 @@ export interface ParsedBridgeMedia {
 
 export interface ParsedBridgeInbound {
   externalId: string; // whatsmeow message ID (Info.ID) — used for idempotency
-  from: string; // sender phone digits (E.164 without '+')
+  from: string; // CONTACT phone digits (E.164 without '+') — the other side of the chat
+  // true quando a mensagem saiu do NOSSO número: ou é o eco do que o CRM
+  // acabou de enviar (absorvido pela idempotência de externalId), ou alguém
+  // digitou no app do celular. Nos dois casos a mensagem é `outbound`.
+  fromMe: boolean;
   profileName?: string;
   timestamp: number; // ms epoch
   contentType: "text" | "image" | "file" | "audio";
@@ -295,8 +299,13 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
   const waMsg = pick(event, "Message", "message") ?? {};
   if (!info || typeof info !== "object") return { kind: "ignored", reason: "no message info" };
 
-  // fromMe echo → never an inbound message (avoids echo/duplication, plan §1 Modo D)
-  if (info.IsFromMe === true || info.isFromMe === true) return { kind: "ignored", reason: "fromMe" };
+  // Mensagem que saiu do NOSSO número. Até a v0.55 era descartada aqui para
+  // evitar o eco do que o próprio CRM enviava — só que o WhatsApp multi-device
+  // manda o MESMO evento para o eco e para o que um humano digita no app do
+  // celular, então descartar os dois fazia a conversa do inbox divergir da
+  // conversa real. Agora segue como `outbound`: o eco morre na idempotência de
+  // `externalId` (o envio já gravou o id), o do aparelho entra como mensagem.
+  const fromMe = info.IsFromMe === true || info.isFromMe === true;
 
   const chatJid = String(pick(info, "Chat", "chat") ?? "");
   const senderJid = String(pick(info, "Sender", "sender") ?? "");
@@ -315,8 +324,17 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
   // (dígitos NÃO são o telefone) e o MSISDN real vem em SenderAlt
   // ("5581…@s.whatsapp.net"). Preferir o primeiro candidato não-LID; se só
   // houver LID, ignorar em vez de criar um contato com número falso.
+  //
+  // `from` é sempre o TELEFONE DO CONTATO (a outra ponta da conversa), porque é
+  // ele que resolve contato/lead. Numa mensagem nossa o `Sender` somos nós, então
+  // o telefone tem de sair do `Chat` — usar `Sender` aqui criaria um lead com o
+  // nosso próprio número a cada mensagem enviada pelo aparelho.
   const senderAltJid = String(pick(info, "SenderAlt", "senderAlt") ?? "");
-  const phoneJid = [senderJid, senderAltJid, chatJid].find((j) => j && !isLidJid(j));
+  const chatAltJid = String(pick(info, "ChatAlt", "chatAlt", "RecipientAlt", "recipientAlt") ?? "");
+  const candidates = fromMe
+    ? [chatJid, chatAltJid]
+    : [senderJid, senderAltJid, chatJid];
+  const phoneJid = candidates.find((j) => j && !isLidJid(j));
   if (!phoneJid) {
     return { kind: "ignored", reason: "lid-only sender (no phone JID)" };
   }
@@ -325,13 +343,19 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
     return { kind: "ignored", reason: "missing id or sender" };
   }
 
-  const profileName = strUndef(pick(info, "PushName", "pushName"));
+  // `PushName` é o nome de quem ENVIOU. Na mensagem que sai do nosso número esse
+  // nome é o NOSSO — propagá-lo renomearia o contato a cada envio pelo aparelho.
+  const profileName = fromMe ? undefined : strUndef(pick(info, "PushName", "pushName"));
   const timestamp = parseTimestamp(pick(info, "Timestamp", "timestamp"));
 
   // A reaction from the contact is NOT a message — surface it as its own event so
   // the ingest can patch the target message instead of creating a standalone note.
   const reactionNode = pick(waMsg, "reactionMessage", "ReactionMessage");
   if (reactionNode) {
+    // A NOSSA reação (do inbox ou do aparelho) continua fora: o ingest grava
+    // reação sempre com `sender: "contact"`, então deixar passar atribuiria ao
+    // contato um emoji que fomos nós que pusemos.
+    if (fromMe) return { kind: "ignored", reason: "reaction fromMe" };
     const parsedReaction = reactionFrom(reactionNode);
     if (!parsedReaction) return { kind: "ignored", reason: "reaction without target id" };
     return {
@@ -353,6 +377,7 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
     message: {
       externalId,
       from,
+      fromMe,
       profileName,
       timestamp,
       contentType: extracted.contentType,

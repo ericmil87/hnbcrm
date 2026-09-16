@@ -1453,6 +1453,129 @@ export const internalReceiveMessage = internalMutation({
   },
 });
 
+/**
+ * Internal: grava uma mensagem que saiu do NOSSO número mas NÃO pelo CRM —
+ * alguém digitou no app do celular pareado ao bridge (`Info.IsFromMe: true`).
+ *
+ * Espelha `internalReceiveMessage`, com as diferenças que a direção obriga:
+ *  - `direction: "outbound"` + `senderType: "human"` SEM `senderId` (não foi um
+ *    membro do CRM; a UI mostra "pelo aparelho" a partir de `metadata.via`);
+ *  - NÃO mexe em `lastInboundAt` — a janela de 24h só reabre com mensagem do
+ *    contato, e mentir aqui liberaria envio livre fora da janela;
+ *  - NÃO incrementa `unreadCount` — não há nada para o time ler;
+ *  - NÃO enfileira o atendente IA nem dispara transcrição/visão: o gatilho
+ *    desses é mensagem DO CONTATO, e a mensagem já foi entregue (nada a despachar).
+ *
+ * O eco do que o próprio CRM enviou chega por aqui também; morre na
+ * idempotência de `externalId` logo abaixo (gravado por `internalMarkDispatched`).
+ */
+export const internalReceiveDeviceMessage = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadId: v.id("leads"),
+    channelConfigId: v.optional(v.id("channelConfigs")),
+    content: v.string(),
+    contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
+    attachments: v.optional(v.array(v.id("files"))),
+    externalId: v.string(),
+    sentAt: v.optional(v.number()),
+    metadata: v.optional(v.record(v.string(), v.any())),
+  },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+      )
+      .first();
+    if (existing) return existing._id;
+
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead) throw new Error("Lead not found");
+    if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
+
+    const conversationId = await getOrCreateConversation(ctx, {
+      organizationId: args.organizationId,
+      leadId: args.leadId,
+      channel: "whatsapp",
+    });
+    const conversation = (await ctx.db.get(conversationId))!;
+
+    const now = Date.now();
+    // `sentAt` é o carimbo do WhatsApp. Serve para a ordenação da conversa, mas
+    // nunca para o futuro (relógio do aparelho adiantado furaria a ordem).
+    const sentAt = args.sentAt && args.sentAt <= now ? args.sentAt : now;
+
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: args.organizationId,
+      conversationId,
+      leadId: args.leadId,
+      direction: "outbound",
+      senderType: "human",
+      content: args.content,
+      contentType: args.contentType || "text",
+      attachments: args.attachments,
+      externalId: args.externalId,
+      metadata: { ...(args.metadata ?? {}), via: "device" },
+      deliveryStatus: "sent",
+      isInternal: false,
+      createdAt: sentAt,
+    });
+
+    if (args.attachments && args.attachments.length > 0) {
+      await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
+    }
+
+    // Nunca ANDA PARA TRÁS. Na recuperação de histórico esta mutation recebe
+    // mensagens antigas, e sobrescrever `lastMessageAt` com a data delas jogaria
+    // a conversa para baixo no inbox (ou, pior, para cima com data errada).
+    const lastMessageAt = Math.max(conversation.lastMessageAt ?? 0, sentAt);
+
+    await ctx.db.patch(conversationId, {
+      status: "active",
+      lastMessageAt,
+      messageCount: conversation.messageCount + 1,
+      updatedAt: now,
+      ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
+        ? { channelConfigId: args.channelConfigId }
+        : {}),
+    });
+
+    await ctx.db.patch(args.leadId, {
+      lastActivityAt: Math.max(lead.lastActivityAt ?? 0, sentAt),
+      updatedAt: now,
+      conversationStatus: "active",
+    });
+
+    await ctx.db.insert("activities", {
+      organizationId: args.organizationId,
+      leadId: args.leadId,
+      type: "message_sent",
+      actorType: "human",
+      content: "Mensagem enviada pelo aparelho (fora do CRM)",
+      metadata: { conversationId, externalId: args.externalId, via: "device" },
+      createdAt: sentAt,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: args.organizationId,
+      event: "message.sent",
+      payload: {
+        messageId,
+        conversationId,
+        leadId: args.leadId,
+        channel: "whatsapp",
+        senderType: "human",
+        via: "device",
+        externalId: args.externalId,
+      },
+    });
+
+    return messageId;
+  },
+});
+
 // Internal: send a WhatsApp template message (re-engagement outside the 24h window)
 export const internalSendTemplate = internalMutation({
   args: {
