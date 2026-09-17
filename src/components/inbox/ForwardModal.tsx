@@ -50,8 +50,15 @@ export function ForwardModal({
   );
 
   const valid = useMemo(() => {
+    // Sala de GRUPO nunca é destino de encaminhamento (review de correção
+    // nº 1). Desde a v0.57 `getConversations` devolve grupos, e eles caíam
+    // nesta lista SEM NOME (não têm contato nem lead): um clique errado
+    // publicava o comprovante de Pix de um cliente para dezenas de terceiros,
+    // sem confirmação. Quem quer mandar algo num grupo abre a sala e escreve
+    // lá. `conversations.forwardMessage` recusa no servidor também.
     const list = (conversations ?? []).filter(
-      (c: any): c is any => c && c._id !== currentConversationId
+      (c: any): c is any =>
+        c && c._id !== currentConversationId && (c.kind ?? "direct") !== "group"
     );
     const term = search.trim().toLowerCase();
     if (!term) return list;

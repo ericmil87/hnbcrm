@@ -87,6 +87,9 @@ export const DENY_PATHS: readonly string[] = [
   // sem valor fora do deployment e o token já cai no padrão `token`.
   "campaigns.schedulerFnId",
   "campaigns.tickToken",
+  // Mesma coisa nas publicações programadas em grupo (`tickToken` já cai no
+  // padrão `token`; o id da scheduled function ficou de fora na F3).
+  "groupPosts.schedulerFnId",
 ];
 
 const MAX_DEPTH = 24;

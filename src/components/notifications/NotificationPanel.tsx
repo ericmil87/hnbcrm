@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -23,6 +23,12 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   ai_draft_pending: Sparkles,
   campaign_completed: Megaphone,
   campaign_paused: PauseCircle,
+  group_joined: Users,
+  group_mention: AtSign,
+  group_post_pending: CalendarClock,
+  group_post_failed: CalendarX,
+  group_opportunity: TrendingUp,
+  group_digest: FileText,
 };
 
 const PAGE_SIZE = 15;
@@ -49,6 +55,11 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
 
   const markRead = useMutation(api.notifications.markRead);
   const markAllRead = useMutation(api.notifications.markAllRead);
+  // Oportunidade detectada num grupo (F4): o botão do item cria contato+lead a
+  // partir do membro e abre a conversa PRIVADA. A IA nunca manda a DM sozinha
+  // (D3) — quem escreve é quem clica, com o rascunho já no compositor.
+  const createLeadFromMember = useMutation(api.groupChats.createLeadFromMember);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -102,6 +113,33 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       navigate(`${TAB_ROUTES.campaigns}?campanha=${n.campaignId}`);
       return;
     }
+    // Grupo: oportunidade e digest abrem a conversa da sala. A conversão em
+    // lead tem botão PRÓPRIO no item — clicar no corpo não cria nada.
+    if ((n.type === "group_opportunity" || n.type === "group_digest") && n.conversationId) {
+      navigate(`${TAB_ROUTES.inbox}?conversation=${n.conversationId}`);
+      return;
+    }
+    // Mencionaram o nosso número numa sala (ou disparou uma palavra de alerta):
+    // abre a conversa do grupo no inbox. É a notificação MAIS FREQUENTE da
+    // feature, e até aqui clicar nela não fazia nada (review de correção
+    // nº 21) — o painel fechava e nenhuma tela abria.
+    if (n.type === "group_mention" && n.conversationId) {
+      navigate(`${TAB_ROUTES.inbox}?conversation=${n.conversationId}`);
+      return;
+    }
+    // Entramos num grupo novo: a decisão de acompanhar é humana e mora na
+    // página de Grupos.
+    if (n.type === "group_joined") {
+      navigate(TAB_ROUTES.groups);
+      return;
+    }
+    // Publicação programada em grupo: abre a aba Publicações já no item.
+    if (n.type === "group_post_pending" || n.type === "group_post_failed") {
+      navigate(
+        n.groupPostId ? `${TAB_ROUTES.groups}?post=${n.groupPostId}` : TAB_ROUTES.groups
+      );
+      return;
+    }
     if (n.taskId) {
       navigate(`/app/tarefas?task=${n.taskId}`);
     }
@@ -112,6 +150,40 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       await markAllRead({ organizationId });
     } catch {
       toast.error("Falha ao marcar notificações como lidas");
+    }
+  };
+
+  const handleCreateLeadFromOpportunity = async (n: NotificationDoc) => {
+    const participantKey = (n.data as { participantKey?: string } | undefined)?.participantKey;
+    if (!n.groupChatId || !participantKey) {
+      toast.error("Esta notificação não aponta para um membro do grupo");
+      return;
+    }
+    setConvertingId(n._id);
+    try {
+      const result = await createLeadFromMember({
+        groupChatId: n.groupChatId,
+        participantKey,
+      });
+      if (!n.readAt) {
+        try {
+          await markRead({ organizationId, notificationId: n._id });
+        } catch {
+          // a navegação é mais importante que o "lido"
+        }
+      }
+      // O rascunho da primeira mensagem viaja no estado da navegação: o
+      // compositor abre preenchido, e quem aperta "enviar" é uma pessoa.
+      const suggestedDm = (n.data as { suggestedDm?: string } | undefined)?.suggestedDm;
+      onClose();
+      navigate(`${TAB_ROUTES.inbox}?conversation=${result.conversationId}`, {
+        state: suggestedDm ? { draftMessage: suggestedDm } : undefined,
+      });
+      toast.success("Lead criado — a conversa privada está aberta");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Falha ao criar o lead");
+    } finally {
+      setConvertingId(null);
     }
   };
 
@@ -211,6 +283,21 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
                         </span>
                       </span>
                     </button>
+                    {n.type === "group_opportunity" &&
+                      (n.data as { hasPhone?: boolean } | undefined)?.hasPhone && (
+                        <div className="px-4 pb-3 -mt-1">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={convertingId === n._id}
+                            onClick={() => void handleCreateLeadFromOpportunity(n)}
+                          >
+                            {convertingId === n._id
+                              ? "Criando…"
+                              : "Criar lead + abrir no privado"}
+                          </Button>
+                        </div>
+                      )}
                   </li>
                 );
               })}

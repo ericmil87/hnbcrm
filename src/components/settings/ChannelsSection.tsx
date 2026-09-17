@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
+import { BridgeGroupsPanel } from "@/components/settings/BridgeGroupsPanel";
 
 // Derive the public webhook callback host from the Convex deployment URL
 // (client-facing ".convex.cloud" deployment maps to the HTTP action host ".convex.site")
@@ -550,6 +551,8 @@ function ChannelCard({
       </div>
 
       {isBridge && <BridgeHistoryPanel organizationId={organizationId} config={config} />}
+
+      {isBridge && <BridgeGroupsPanel organizationId={organizationId} config={config} />}
 
       {/* Meta: verify token footer. Bridge: gateway instance info (no secrets). */}
       {!isBridge && config.verifyToken && (

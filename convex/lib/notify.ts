@@ -10,7 +10,13 @@ export type NotificationType =
   | "handoff_resolved"
   | "ai_draft_pending"
   | "campaign_completed"
-  | "campaign_paused";
+  | "campaign_paused"
+  | "group_joined"
+  | "group_mention"
+  | "group_post_pending"
+  | "group_post_failed"
+  | "group_opportunity"
+  | "group_digest";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -24,6 +30,12 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   ai_draft_pending: "aiDraftPending",
   campaign_completed: "campaignCompleted",
   campaign_paused: "campaignPaused",
+  group_joined: "groupJoined",
+  group_mention: "groupMention",
+  group_post_pending: "groupPostPending",
+  group_post_failed: "groupPostFailed",
+  group_opportunity: "groupOpportunity",
+  group_digest: "groupDigest",
 };
 
 /**
@@ -69,6 +81,10 @@ export async function createNotification(
     handoffId?: Id<"handoffs">;
     conversationId?: Id<"conversations">;
     campaignId?: Id<"campaigns">;
+    groupPostId?: Id<"groupPosts">;
+    groupChatId?: Id<"groupChats">;
+    /** Carga do botão de ação do item (oportunidade de grupo, digest). */
+    data?: Record<string, unknown>;
     actorId?: Id<"teamMembers">;
   }
 ): Promise<void> {
@@ -94,6 +110,9 @@ export async function createNotification(
     taskId: args.taskId,
     handoffId: args.handoffId,
     campaignId: args.campaignId,
+    groupPostId: args.groupPostId,
+    groupChatId: args.groupChatId,
+    data: args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,
     createdAt: Date.now(),

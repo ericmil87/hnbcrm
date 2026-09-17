@@ -9,7 +9,12 @@ interface MessageActionsBarProps {
   activeEmoji?: string | null;
   onReply: () => void;
   onReact: (emoji: string) => void;
-  onForward: () => void;
+  /**
+   * Ausente numa sala de GRUPO: encaminhar uma mensagem que dezenas de
+   * terceiros escreveram é vazamento com um clique, e o servidor recusa
+   * (review de correção nº 1).
+   */
+  onForward?: () => void;
   /** Present only for a voice note that still needs a transcription. */
   onTranscribe?: () => void;
   /** Present only for an image that still needs the AI reading (vision on). */
@@ -63,9 +68,11 @@ export function MessageActionsBar({
           >
             <Smile size={16} />
           </button>
-          <button type="button" onClick={onForward} className={BTN} aria-label="Encaminhar">
-            <Forward size={16} />
-          </button>
+          {onForward && (
+            <button type="button" onClick={onForward} className={BTN} aria-label="Encaminhar">
+              <Forward size={16} />
+            </button>
+          )}
         </>
       )}
       {onTranscribe && (

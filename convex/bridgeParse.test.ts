@@ -153,14 +153,36 @@ describe("parseBridgeEvent — messages", () => {
     expect(res.message.content).toBe("eco");
   });
 
-  test("group message is ignored (by IsGroup flag)", () => {
-    const res = parseBridgeEvent(messageEnvelope({ conversation: "grupo" }, { IsGroup: true }));
-    expect(res).toEqual({ kind: "ignored", reason: "group" });
+  // Grupo deixou de ser descartado no parser (v0.57). Quem decide ingerir ou
+  // não é o INGEST, que sabe se aquele grupo é acompanhado — o parser só
+  // reconhece a forma. Ver `bridgeGroupIngress.test.ts` para o descarte real.
+  test("group message is parsed as group_message (by IsGroup flag)", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope({ conversation: "grupo" }, { IsGroup: true, Chat: GROUP_JID })
+    );
+    expect(res.kind).toBe("group_message");
+    if (res.kind !== "group_message") return;
+    expect(res.message.chatJid).toBe(GROUP_JID);
+    expect(res.message.content).toBe("grupo");
   });
 
-  test("group message is ignored (by @g.us JID)", () => {
-    const res = parseBridgeEvent(messageEnvelope({ conversation: "grupo" }, { Chat: GROUP_JID, Sender: GROUP_JID }));
-    expect(res).toEqual({ kind: "ignored", reason: "group" });
+  test("group message is parsed as group_message (by @g.us JID)", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope({ conversation: "grupo" }, { Chat: GROUP_JID, Sender: SENDER_JID })
+    );
+    expect(res.kind).toBe("group_message");
+    if (res.kind !== "group_message") return;
+    expect(res.message.chatJid).toBe(GROUP_JID);
+    // O JID da sala NUNCA vira telefone — `jidToPhone` sobre "@g.us" devolveria
+    // o id numérico do grupo como se fosse um MSISDN.
+    expect(res.message.senderPhone).toBe("15550000001");
+  });
+
+  test("IsGroup sem chat @g.us é descartado (payload inconsistente)", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope({ conversation: "x" }, { IsGroup: true, Chat: SENDER_JID, Sender: SENDER_JID })
+    );
+    expect(res.kind).toBe("ignored");
   });
 
   test("strips AD-JID device/agent suffix from the sender", () => {
@@ -314,5 +336,33 @@ describe("piloto U6 — envelope real do wuzapi", () => {
     delete lidOnly.event.Info.SenderAlt;
     const parsed = parseBridgeEvent(lidOnly);
     expect(parsed.kind).toBe("ignored");
+  });
+});
+
+describe("GroupInfo: teto de itens por lista (review de segurança nº 7)", () => {
+  test("Join/Leave/Promote/Demote são cortados em 1024 entradas", () => {
+    // Cada entrada custa um merge LINEAR sobre a lista guardada e uma linha na
+    // timeline, dentro de UMA mutation. O HMAC prova que o payload veio do
+    // gateway, não que o gateway está íntegro nem que o whatsmeow não vai
+    // emitir um evento patológico.
+    const huge = Array.from({ length: 5_000 }, (_, i) => `5511${String(i).padStart(9, "0")}@s.whatsapp.net`);
+    const parsed = parseBridgeEvent({
+      type: "GroupInfo",
+      instanceId: INSTANCE_ID,
+      event: {
+        JID: GROUP_JID,
+        Timestamp: "2026-09-16T19:10:00-03:00",
+        Join: huge,
+        Leave: huge,
+        Promote: [],
+        Demote: [],
+      },
+    });
+    expect(parsed.kind).toBe("group_info");
+    if (parsed.kind !== "group_info") return;
+    expect(parsed.info.join).toHaveLength(1024);
+    expect(parsed.info.leave).toHaveLength(1024);
+    // O corte preserva a ORDEM (os primeiros, não uma amostra).
+    expect(parsed.info.join[0]).toBe(huge[0]);
   });
 });

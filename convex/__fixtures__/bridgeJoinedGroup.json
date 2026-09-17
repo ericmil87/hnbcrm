@@ -1,0 +1,37 @@
+{
+  "_fixture": "SINTÉTICA — montada a partir da struct types/events.JoinedGroup do whatsmeow (Reason/Type + GroupInfo embutido, cujos campos são os MESMOS de /group/info; os valores do GroupInfo aqui vêm do grupo real medido em 2026-09-16). Revalidar na F8.",
+  "Reason": "invite",
+  "Type": "",
+  "GroupInfo": {
+    "AddressingMode": "lid",
+    "JID": "120363999888777666@g.us",
+    "Name": "Obra Rua das Flores",
+    "OwnerJID": "180002129735765@lid",
+    "GroupCreated": "2026-09-10T09:00:00-03:00",
+    "IsAnnounce": false,
+    "IsLocked": false,
+    "IsEphemeral": false,
+    "IsParent": false,
+    "LinkedParentJID": "",
+    "ParticipantCount": 0,
+    "Participants": [
+      {
+        "DisplayName": "",
+        "IsAdmin": true,
+        "IsSuperAdmin": true,
+        "JID": "180002129735765@lid",
+        "LID": "180002129735765@lid",
+        "PhoneNumber": "558181392929@s.whatsapp.net"
+      },
+      {
+        "DisplayName": "",
+        "IsAdmin": false,
+        "IsSuperAdmin": false,
+        "JID": "92965187932215@lid",
+        "LID": "92965187932215@lid",
+        "PhoneNumber": "558192985729@s.whatsapp.net"
+      }
+    ],
+    "Topic": ""
+  }
+}

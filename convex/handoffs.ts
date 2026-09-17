@@ -5,12 +5,24 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { createNotification } from "./lib/notify";
+import { getLeadRef } from "./lib/leadRef";
 import { resolvePermissions, hasPermission, type Role } from "./lib/permissions";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 
 const APP_URL = () => process.env.APP_URL ?? "https://app.hnbcrm.com.br";
+
+/**
+ * Quanto tempo a IA de um GRUPO fica em silêncio depois que alguém aceita o
+ * repasse daquela sala (review de correção nº 6).
+ *
+ * No 1 a 1 a pausa é indefinida e faz sentido: a conversa é DAQUELE cliente e o
+ * humano que assumiu tem "Devolver à IA" a um clique. Numa sala com dezenas de
+ * pessoas o repasse é sobre UM assunto, não sobre a sala inteira — e antes
+ * disto o agente do grupo simplesmente nunca mais respondia a uma menção.
+ */
+export const GROUP_HANDOFF_PAUSE_MS = 24 * 60 * 60 * 1000;
 
 const handoffStatusValidator = v.union(
   v.literal("pending"),
@@ -36,8 +48,12 @@ const handoffOriginValidator = v.union(
 // arquivo antigo). Usada como fallback dos repasses sem `conversationId`.
 async function resolveLeadPrimaryConversationId(
   ctx: { db: QueryCtx["db"] },
-  leadId: Id<"leads">
+  // Aceita `undefined` porque `handoffs.leadId` é opcional desde a v0.57
+  // (repasse vindo de uma conversa de grupo não tem lead): sem lead não há o
+  // que resolver, e devolver null é o mesmo caminho de "lead sem conversa".
+  leadId: Id<"leads"> | undefined | null
 ): Promise<Id<"conversations"> | null> {
+  if (!leadId) return null;
   const conversations = await ctx.db
     .query("conversations")
     .withIndex("by_lead", (q) => q.eq("leadId", leadId))
@@ -90,7 +106,14 @@ async function inboxRepliers(
 export async function createHandoffCore(
   ctx: MutationCtx,
   args: {
-    leadId: Id<"leads">;
+    /**
+     * Ausente num repasse vindo de GRUPO (v0.57): a sala não é um lead. Nesse
+     * caso `organizationId` + `conversationId` são obrigatórios e `subjectLabel`
+     * (o nome do grupo) vira o título do card.
+     */
+    leadId?: Id<"leads">;
+    organizationId?: Id<"organizations">;
+    subjectLabel?: string;
     conversationId?: Id<"conversations">;
     fromMemberId: Id<"teamMembers">;
     toMemberId?: Id<"teamMembers">;
@@ -101,16 +124,20 @@ export async function createHandoffCore(
     onDuplicate: "skip" | "throw";
   }
 ): Promise<Id<"handoffs"> | null> {
-  const lead = await ctx.db.get(args.leadId);
-  if (!lead) throw new Error("Lead not found");
+  const lead = args.leadId ? await ctx.db.get(args.leadId) : null;
+  if (args.leadId && !lead) throw new Error("Lead not found");
+  const organizationId = lead?.organizationId ?? args.organizationId;
+  if (!organizationId) throw new Error("Repasse sem lead precisa da organização");
+  // Título do card: o lead quando existe, o nome do grupo quando não.
+  const subject = lead?.title ?? args.subjectLabel ?? "Conversa";
 
   // Guardas de org: ator e destinatário têm de pertencer à org do lead
   const fromMember = await ctx.db.get(args.fromMemberId);
-  if (!fromMember || fromMember.organizationId !== lead.organizationId) {
+  if (!fromMember || fromMember.organizationId !== organizationId) {
     throw new Error("Membro não pertence à organização do lead");
   }
   const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
-  if (args.toMemberId && (!toMember || toMember.organizationId !== lead.organizationId)) {
+  if (args.toMemberId && (!toMember || toMember.organizationId !== organizationId)) {
     throw new Error("Destinatário não pertence à organização do lead");
   }
 
@@ -118,7 +145,7 @@ export async function createHandoffCore(
   // repasse em aberto por lead. Gatilhos automáticos usam "skip" (é normal a
   // palavra-chave repetir); pedidos explícitos usam "throw".
   // ATENÇÃO: o runtime da IA detecta este erro por /pendente/ na mensagem.
-  if (lead.handoffState && lead.handoffState.status !== "completed") {
+  if (lead && lead.handoffState && lead.handoffState.status !== "completed") {
     if (args.onDuplicate === "skip") return null;
     throw new Error("Já existe um repasse pendente para este lead");
   }
@@ -129,20 +156,51 @@ export async function createHandoffCore(
   let conversationId = args.conversationId;
   if (conversationId) {
     const conv = await ctx.db.get(conversationId);
-    if (!conv || conv.organizationId !== lead.organizationId || conv.leadId !== args.leadId) {
+    if (
+      !conv ||
+      conv.organizationId !== organizationId ||
+      (args.leadId ? conv.leadId !== args.leadId : conv.kind !== "group")
+    ) {
       conversationId = undefined;
     }
   }
   conversationId =
-    conversationId ?? (await resolveLeadPrimaryConversationId(ctx, args.leadId)) ?? undefined;
+    conversationId ??
+    (args.leadId ? ((await resolveLeadPrimaryConversationId(ctx, args.leadId)) ?? undefined) : undefined);
+
+  // Sem lead não existe `handoffState` para segurar a duplicata — a chave é a
+  // CONVERSA. Sem isto, três menções sensíveis seguidas no grupo abririam três
+  // repasses do mesmo assunto.
+  if (!lead) {
+    if (!conversationId) throw new Error("Repasse sem lead precisa de uma conversa");
+    // Índice PRÓPRIO por conversa (review de segurança nº 6): a varredura
+    // anterior (`by_organization_and_status` + `.take(100)`, ordem ascendente)
+    // perdia o repasse novo assim que a org acumulava 100 pendentes, e aí três
+    // menções sensíveis seguidas abriam três cards do mesmo assunto.
+    const open = await ctx.db
+      .query("handoffs")
+      .withIndex("by_conversation_and_status", (q) =>
+        q.eq("conversationId", conversationId).eq("status", "pending")
+      )
+      .first();
+    if (open) {
+      if (args.onDuplicate === "skip") return null;
+      throw new Error("Já existe um repasse pendente para esta conversa");
+    }
+  }
 
   const now = Date.now();
   const actorType = fromMember.type === "ai" ? ("ai" as const) : ("human" as const);
 
   const handoffId = await ctx.db.insert("handoffs", {
-    organizationId: lead.organizationId,
+    organizationId,
     leadId: args.leadId,
     conversationId,
+    // Título do card quando NÃO há lead. O nome da sala está em
+    // `groupChats.subject`, a dois saltos de `enrichHandoffs` — congelá-lo aqui
+    // é o que faz o card de /app/repasses deixar de sair anônimo (review de
+    // correção nº 13).
+    ...(!lead && args.subjectLabel ? { subjectLabel: args.subjectLabel.slice(0, 200) } : {}),
     fromMemberId: args.fromMemberId,
     toMemberId: args.toMemberId,
     reason: args.reason,
@@ -152,23 +210,25 @@ export async function createHandoffCore(
     createdAt: now,
   });
 
-  await ctx.db.patch(args.leadId, {
-    handoffState: {
-      status: "requested",
-      fromMemberId: args.fromMemberId,
-      toMemberId: args.toMemberId,
-      reason: args.reason,
-      summary: args.summary,
-      suggestedActions: args.suggestedActions,
-      requestedAt: now,
-    },
-    lastActivityAt: now,
-    updatedAt: now,
-  });
+  if (lead) {
+    await ctx.db.patch(lead._id, {
+      handoffState: {
+        status: "requested",
+        fromMemberId: args.fromMemberId,
+        toMemberId: args.toMemberId,
+        reason: args.reason,
+        summary: args.summary,
+        suggestedActions: args.suggestedActions,
+        requestedAt: now,
+      },
+      lastActivityAt: now,
+      updatedAt: now,
+    });
+  }
 
   // Log audit entry
   await ctx.db.insert("auditLogs", {
-    organizationId: lead.organizationId,
+    organizationId,
     entityType: "handoff",
     entityId: handoffId,
     action: "create",
@@ -178,7 +238,7 @@ export async function createHandoffCore(
       leadId: args.leadId,
       reason: args.reason,
       toMemberId: args.toMemberId,
-      title: lead.title,
+      title: subject,
       fromMemberName: fromMember.name,
       toMemberName: toMember?.name,
       origin: args.origin,
@@ -186,27 +246,30 @@ export async function createHandoffCore(
     description: buildAuditDescription({
       action: "create",
       entityType: "handoff",
-      metadata: { title: lead.title, fromMemberName: fromMember.name, toMemberName: toMember?.name },
+      metadata: { title: subject, fromMemberName: fromMember.name, toMemberName: toMember?.name },
     }),
     severity: "medium",
     createdAt: now,
   });
 
-  // Log activity
-  await ctx.db.insert("activities", {
-    organizationId: lead.organizationId,
-    leadId: args.leadId,
-    type: "handoff",
-    actorId: args.fromMemberId,
-    actorType,
-    content: `Repasse solicitado: ${args.reason}${toMember ? ` (para ${toMember.name})` : ""}`,
-    metadata: { handoffId, conversationId, toMemberId: args.toMemberId, origin: args.origin },
-    createdAt: now,
-  });
+  // Log activity — `activities.leadId` é obrigatório e a timeline é do LEAD.
+  // Repasse de grupo não tem onde pendurar o evento (o audit acima registra).
+  if (lead) {
+    await ctx.db.insert("activities", {
+      organizationId,
+      leadId: lead._id,
+      type: "handoff",
+      actorId: args.fromMemberId,
+      actorType,
+      content: `Repasse solicitado: ${args.reason}${toMember ? ` (para ${toMember.name})` : ""}`,
+      metadata: { handoffId, conversationId, toMemberId: args.toMemberId, origin: args.origin },
+      createdAt: now,
+    });
+  }
 
   // Trigger webhooks
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-    organizationId: lead.organizationId,
+    organizationId,
     event: "handoff.requested",
     payload: {
       handoffId,
@@ -222,11 +285,11 @@ export async function createHandoffCore(
   // Email notification — só faz sentido com destinatário definido
   if (args.toMemberId) {
     await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-      organizationId: lead.organizationId,
+      organizationId,
       recipientMemberId: args.toMemberId,
       eventType: "handoffRequested",
       templateData: {
-        leadTitle: lead.title,
+        leadTitle: subject,
         reason: args.reason,
         suggestedActions: args.suggestedActions,
         fromMemberName: fromMember.name,
@@ -238,9 +301,9 @@ export async function createHandoffCore(
   // típico: a IA escalou) → broadcast para quem pode responder no inbox.
   // createNotification já pula membros IA, o próprio ator e quem fez opt-out.
   const notification = {
-    organizationId: lead.organizationId,
+    organizationId,
     type: "handoff_requested" as const,
-    title: `Repasse pendente: ${lead.title}`,
+    title: `Repasse pendente: ${subject}`,
     body: args.reason,
     handoffId,
     conversationId,
@@ -249,7 +312,7 @@ export async function createHandoffCore(
   if (args.toMemberId) {
     await createNotification(ctx, { ...notification, memberId: args.toMemberId });
   } else {
-    for (const replier of await inboxRepliers(ctx, lead.organizationId)) {
+    for (const replier of await inboxRepliers(ctx, organizationId)) {
       await createNotification(ctx, { ...notification, memberId: replier._id });
     }
   }
@@ -288,9 +351,9 @@ async function acceptHandoffCore(
     resolvedAt: now,
   });
 
-  const lead = await ctx.db.get(handoff.leadId);
+  const lead = await getLeadRef(ctx.db, handoff.leadId);
   if (lead) {
-    await ctx.db.patch(handoff.leadId, {
+    await ctx.db.patch(lead._id, {
       assignedTo: member._id,
       handoffState: {
         status: "completed",
@@ -317,7 +380,15 @@ async function acceptHandoffCore(
     if (conversation && conversation.organizationId === handoff.organizationId) {
       conversationId = candidateId;
       await ctx.db.patch(candidateId, {
-        aiPausedUntil: Number.MAX_SAFE_INTEGER,
+        // Conversa 1 a 1: pausa indefinida — o humano assumiu e "Devolver à IA"
+        // está a um clique no inbox.
+        // Sala de GRUPO: pausa de 24 h (review de correção nº 6). Aceitar um
+        // repasse de grupo gravava `MAX_SAFE_INTEGER` e o agente da sala nunca
+        // mais respondia a uma menção — sem aviso, sem nada na tela que
+        // desfizesse. O grupo continua atendido depois que o caso de hoje
+        // acabou; quem quiser devolver antes usa "Devolver à IA".
+        aiPausedUntil:
+          conversation.kind === "group" ? now + GROUP_HANDOFF_PAUSE_MS : Number.MAX_SAFE_INTEGER,
         archivedAt: undefined,
         updatedAt: now,
       });
@@ -355,17 +426,20 @@ async function acceptHandoffCore(
     createdAt: now,
   });
 
-  // Log activity
-  await ctx.db.insert("activities", {
-    organizationId: handoff.organizationId,
-    leadId: handoff.leadId,
-    type: "handoff",
-    actorId: member._id,
-    actorType: "human",
-    content: `Repasse aceito por ${member.name} — conversa assumida (IA pausada)`,
-    metadata: { handoffId: handoff._id, conversationId },
-    createdAt: now,
-  });
+  // Log activity — `activities.leadId` é obrigatório, então repasse de grupo
+  // (sem lead) fica só no audit acima.
+  if (handoff.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: handoff.organizationId,
+      leadId: handoff.leadId,
+      type: "handoff",
+      actorId: member._id,
+      actorType: "human",
+      content: `Repasse aceito por ${member.name} — conversa assumida (IA pausada)`,
+      metadata: { handoffId: handoff._id, conversationId },
+      createdAt: now,
+    });
+  }
 
   // Trigger webhooks
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
@@ -431,9 +505,9 @@ async function rejectHandoffCore(
     resolvedAt: now,
   });
 
-  const lead = await ctx.db.get(handoff.leadId);
+  const lead = await getLeadRef(ctx.db, handoff.leadId);
   if (lead) {
-    await ctx.db.patch(handoff.leadId, {
+    await ctx.db.patch(lead._id, {
       handoffState: undefined,
       lastActivityAt: now,
       updatedAt: now,
@@ -488,17 +562,19 @@ async function rejectHandoffCore(
     createdAt: now,
   });
 
-  // Log activity — o rejeitado deixa rastro na timeline do lead
-  await ctx.db.insert("activities", {
-    organizationId: handoff.organizationId,
-    leadId: handoff.leadId,
-    type: "handoff",
-    actorId: member._id,
-    actorType: "human",
-    content: `Repasse rejeitado por ${member.name} — devolvido à IA`,
-    metadata: { handoffId: handoff._id },
-    createdAt: now,
-  });
+  // Log activity — o rejeitado deixa rastro na timeline do lead (quando há um)
+  if (handoff.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: handoff.organizationId,
+      leadId: handoff.leadId,
+      type: "handoff",
+      actorId: member._id,
+      actorType: "human",
+      content: `Repasse rejeitado por ${member.name} — devolvido à IA`,
+      metadata: { handoffId: handoff._id },
+      createdAt: now,
+    });
+  }
 
   // Trigger webhooks
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
@@ -548,9 +624,13 @@ async function enrichHandoffs(ctx: QueryCtx, handoffs: Doc<"handoffs">[]) {
 
   const enriched = [];
   for (const handoff of handoffs) {
-    const lead = leadMap.get(handoff.leadId) ?? null;
+    const lead = handoff.leadId ? leadMap.get(handoff.leadId) ?? null : null;
     enriched.push({
       ...handoff,
+      // Título pronto para a UI: o lead quando existe, o nome da sala quando o
+      // repasse é de grupo. A UI não precisa mais saber qual dos dois é.
+      title: lead?.title ?? handoff.subjectLabel ?? "Conversa",
+      isGroup: handoff.leadId === undefined,
       // Fallback do campo novo SÓ para pendentes (é onde a UI navega/espia).
       // Resolver para listagens históricas viraria N+1 de collect() por linha
       // em repasses antigos sem o campo (REST lê até 500).
@@ -648,6 +728,40 @@ export const getPendingHandoffForLead = query({
       createdAt: pending.createdAt,
       conversationId:
         pending.conversationId ?? (await resolveLeadPrimaryConversationId(ctx, args.leadId)),
+    };
+  },
+});
+
+/**
+ * Repasse pendente DESTA conversa — o caminho de quem não tem lead (sala de
+ * grupo). O banner âmbar do inbox saía só para o 1 a 1, porque a fonte dele era
+ * `conversation.lead.handoffState`: numa sala, o operador não via nem que havia
+ * repasse aberto, nem o botão de aceitar inline.
+ */
+export const getPendingHandoffForConversation = query({
+  args: { conversationId: v.id("conversations") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) return null;
+    await requirePermission(ctx, conversation.organizationId, "inbox", "view_own");
+
+    const pending = await ctx.db
+      .query("handoffs")
+      .withIndex("by_conversation_and_status", (q) =>
+        q.eq("conversationId", args.conversationId).eq("status", "pending")
+      )
+      .first();
+    if (!pending) return null;
+
+    return {
+      _id: pending._id,
+      reason: pending.reason,
+      summary: pending.summary,
+      suggestedActions: pending.suggestedActions,
+      createdAt: pending.createdAt,
+      conversationId: pending.conversationId ?? args.conversationId,
+      title: pending.subjectLabel ?? null,
     };
   },
 });

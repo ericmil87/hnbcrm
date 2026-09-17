@@ -13,6 +13,7 @@ import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { buildAuditDescription } from "./auditDescription";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
+import { getLeadRef } from "./leadRef";
 
 export async function applyOutboundMessageSideEffects(
   ctx: MutationCtx,
@@ -33,9 +34,12 @@ export async function applyOutboundMessageSideEffects(
     updatedAt: now,
   });
 
-  const lead = await ctx.db.get(conversation.leadId);
+  // Conversa de GRUPO não tem lead (v0.57): o bump de atividade e a activity
+  // mais abaixo simplesmente não acontecem. Tudo o mais — audit, webhook,
+  // dispatch — é idêntico ao 1:1.
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
   if (lead) {
-    await ctx.db.patch(conversation.leadId, {
+    await ctx.db.patch(lead._id, {
       lastActivityAt: now,
       updatedAt: now,
       conversationStatus: "active",
@@ -59,24 +63,35 @@ export async function applyOutboundMessageSideEffects(
     createdAt: now,
   });
 
-  await ctx.db.insert("activities", {
-    organizationId: conversation.organizationId,
-    leadId: conversation.leadId,
-    type: "message_sent",
-    actorId: member._id,
-    actorType,
-    content: args.activityContent ?? `Message forwarded via ${conversation.channel}`,
-    metadata: { conversationId: conversation._id },
-    createdAt: now,
-  });
+  // `activities.leadId` é obrigatório e a timeline é do LEAD — numa sala de
+  // grupo não há onde pendurar o evento (a linha do tempo do grupo vive em
+  // `groupChats.timeline`). O audit acima já registra o envio.
+  if (lead) {
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: lead._id,
+      type: "message_sent",
+      actorId: member._id,
+      actorType,
+      content: args.activityContent ?? `Message forwarded via ${conversation.channel}`,
+      metadata: { conversationId: conversation._id },
+      createdAt: now,
+    });
+  }
 
+  // Evento PRÓPRIO para sala de grupo, simétrico ao `group.message.received`
+  // do ingest. `message.sent` sempre carregou `leadId`; um consumidor que o usa
+  // como chave estrangeira não pode começar a receber eventos sem lead por
+  // causa de uma publicação programada (review de correção nº 23).
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
     organizationId: conversation.organizationId,
-    event: "message.sent",
+    event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
     payload: {
       messageId,
       conversationId: conversation._id,
-      leadId: conversation.leadId,
+      // Ausente numa conversa de grupo — consumidores do 1:1 não mudam.
+      ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+      ...(conversation.kind === "group" ? { kind: "group" } : {}),
       channel: conversation.channel,
       senderType: actorType,
       senderId: member._id,

@@ -7,10 +7,24 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
-import { applyCampaignDeliveryUpdate, applyCampaignInboundHooks } from "./lib/campaignHooks";
+import {
+  applyCampaignDeliveryUpdate,
+  applyCampaignInboundHooks,
+  applyCampaignGroupReplyHook,
+} from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
+import {
+  appendReadBy,
+  membersWithPermission,
+  mentionsUs,
+  recordParticipantFromMessage,
+} from "./lib/groupChatCore";
+import { createNotification } from "./lib/notify";
+import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
+import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
+import { getLeadRef } from "./lib/leadRef";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -48,6 +62,29 @@ function previewOf(content: string | undefined): string | undefined {
 }
 
 const LIST_PREVIEW_MAX = 80;
+
+// Cabeçalho de uma conversa de grupo para a lista do inbox: nome da sala e
+// quantos membros. Sem isto a linha apareceria sem nome (não há contato).
+// `participantsCount` é sempre recontado da lista — o `/group/list` do wuzapi
+// devolve o campo dele zerado.
+function groupChatSummary(
+  conversation: Doc<"conversations">,
+  groupMap: Map<string, any>
+): { groupChat: { subject: string; participantsCount: number; jid: string } | null } {
+  if (conversation.kind !== "group" || !conversation.groupChatId) return { groupChat: null };
+  const group = groupMap.get(conversation.groupChatId);
+  if (!group) return { groupChat: null };
+  return {
+    groupChat: {
+      subject: group.subject,
+      jid: group.jid,
+      participantsCount:
+        group.participants?.filter((p: { leftAt?: number }) => p.leftAt === undefined).length ??
+        group.participantsCount ??
+        0,
+    },
+  };
+}
 
 // Fallback label when a media message carries no caption of its own — mirrors the
 // bracketed placeholders the ingress uses (see MEDIA_PLACEHOLDERS in whatsapp.ts).
@@ -188,7 +225,12 @@ async function resolveWhatsappTarget(
       .collect();
     config = configs.find((c) => c.channel === "whatsapp" && c.status === "active") ?? null;
   }
-  const lead = await ctx.db.get(conversation.leadId);
+  // Conversa de GRUPO: o destino é o JID da sala ("…@g.us"), que o wuzapi
+  // aceita no mesmo campo `Phone` dos envios 1:1. Não há contato para resolver.
+  if (conversation.kind === "group") {
+    return { config, toPhone: conversation.externalChatId ?? null };
+  }
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
   const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
   const toPhone = contact?.whatsappNumber ?? contact?.phone ?? null;
   return { config, toPhone };
@@ -285,24 +327,30 @@ export const getConversations = query({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap, configMap, lastMessageMap] = await Promise.all([
+    const [contactMap, assigneeMap, configMap, groupMap, lastMessageMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
       batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
+      batchGet(ctx.db, conversations.map(c => c.groupChatId)),
       lastMessageFieldsByConversation(ctx, conversations.map(c => c._id)),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
-      const lead = leadMap.get(conversation.leadId) ?? null;
+      const lead = conversation.leadId ? leadMap.get(conversation.leadId) ?? null : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
       const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
+      // Filtro por responsável é do LEAD: uma conversa de grupo não tem lead e
+      // portanto nunca casa — sai da lista filtrada, como qualquer conversa sem
+      // aquele responsável.
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
+        kind: conversation.kind ?? "direct",
         lead,
         contact,
         assignee,
+        ...groupChatSummary(conversation, groupMap),
         ...serviceWindowFields(conversation, config),
         ...(lastMessageMap.get(conversation._id) ?? lastMessageFields(null)),
       };
@@ -357,11 +405,12 @@ export const getConversationById = query({
 
     await requireAuth(ctx, conversation.organizationId);
 
-    const lead = await ctx.db.get(conversation.leadId);
-    const [contact, assignee, config, lastMessage] = await Promise.all([
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
+    const [contact, assignee, config, group, lastMessage] = await Promise.all([
       lead?.contactId ? ctx.db.get(lead.contactId) : null,
       lead?.assignedTo ? ctx.db.get(lead.assignedTo) : null,
       conversation.channelConfigId ? ctx.db.get(conversation.channelConfigId) : null,
+      conversation.groupChatId ? ctx.db.get(conversation.groupChatId) : null,
       ctx.db
         .query("messages")
         .withIndex("by_conversation_and_created", (q) =>
@@ -371,11 +420,16 @@ export const getConversationById = query({
         .first(),
     ]);
 
+    const groupMap = new Map<string, any>();
+    if (group) groupMap.set(group._id, group);
+
     return {
       ...conversation,
+      kind: conversation.kind ?? "direct",
       lead,
       contact,
       assignee,
+      ...groupChatSummary(conversation, groupMap),
       ...serviceWindowFields(conversation, config),
       ...lastMessageFields(lastMessage),
     };
@@ -399,6 +453,10 @@ export const getMessages = query({
 
     // Batch fetch sender info
     const senderMap = await batchGet(ctx.db, messages.map(m => m.senderId));
+    // Grupo: o autor é um MEMBRO, não um membro da equipe. `senderName` vem do
+    // PushName e já viaja no doc; o contato só existe quando o telefone dele
+    // já era conhecido (D3).
+    const senderContactMap = await batchGet(ctx.db, messages.map(m => m.senderContactId));
 
     // Batch fetch attachment files
     const allAttachmentIds = messages.flatMap(m => m.attachments ?? []);
@@ -429,6 +487,9 @@ export const getMessages = query({
       return {
         ...message,
         sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
+        senderContact: message.senderContactId
+          ? senderContactMap.get(message.senderContactId) ?? null
+          : null,
         attachmentFiles,
       };
     });
@@ -531,14 +592,18 @@ export const searchMessages = query({
     const leadMap = await batchGet(ctx.db, conversationsFound.map((c: any) => c?.leadId));
     const leadsFound = Array.from(leadMap.values());
     const contactMap = await batchGet(ctx.db, leadsFound.map((l: any) => l?.contactId));
+    // Conversa de grupo não tem contato: a coluna "de quem" mostra o nome da
+    // SALA, senão a linha do resultado apareceria em branco.
+    const groupMap = await batchGet(ctx.db, conversationsFound.map((c: any) => c?.groupChatId));
 
     return top.map((m) => {
       const conv = convMap.get(m.conversationId);
       const lead = conv?.leadId ? leadMap.get(conv.leadId) : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) : null;
+      const group = conv?.groupChatId ? groupMap.get(conv.groupChatId) : null;
       const contactName = contact
         ? `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim()
-        : "";
+        : group?.subject ?? "";
       const termLower = term.toLowerCase();
       const contentMatches = m.content.toLowerCase().includes(termLower);
       const matchedTranscript =
@@ -576,6 +641,13 @@ export const setConversationArchived = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversa não encontrada");
     await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
+    // Desarquivar uma sala de grupo é RETOMAR o acompanhamento, decisão de
+    // `settings:manage` ("Acompanhar" no painel de canais). Deixar `inbox:reply`
+    // desfazer isso devolvia ao inbox uma conversa meio-viva: visível, com
+    // composer, mas com o grupo desmarcado.
+    if (!args.archived && conversation.kind === "group") {
+      await assertGroupConversationSendable(ctx, conversation);
+    }
     await ctx.db.patch(args.conversationId, {
       archivedAt: args.archived ? Date.now() : undefined,
       updatedAt: Date.now(),
@@ -598,6 +670,16 @@ export const bulkSetConversationsArchived = mutation({
     for (const conversationId of args.conversationIds) {
       const conversation = await ctx.db.get(conversationId);
       if (!conversation || conversation.organizationId !== args.organizationId) continue;
+      // Mesmo motivo do `setConversationArchived`: desarquivar sala de grupo é
+      // retomar o acompanhamento. Aqui a linha ruim é PULADA (uma ação em lote
+      // não pode morrer por causa de um item).
+      if (!args.archived && conversation.kind === "group") {
+        try {
+          await assertGroupConversationSendable(ctx, conversation);
+        } catch {
+          continue;
+        }
+      }
       await ctx.db.patch(conversationId, {
         archivedAt: args.archived ? now : undefined,
         updatedAt: now,
@@ -768,6 +850,11 @@ export const sendMessage = mutation({
     attachments: v.optional(v.array(v.id("files"))),
     mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
     replyToMessageId: v.optional(v.id("messages")),
+    // Conversa de GRUPO: JIDs dos membros mencionados (LID ou telefone, como o
+    // painel de membros os conhece) → `ContextInfo.MentionedJID` no envio.
+    // O "@fulano" no texto é escolha de quem escreve; isto é o que faz o
+    // WhatsApp destacar e notificar.
+    mentions: v.optional(v.array(v.string())),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -775,15 +862,22 @@ export const sendMessage = mutation({
     if (!conversation) throw new Error("Conversation not found");
 
     const userMember = await requireAuth(ctx, conversation.organizationId);
+    // Sala de grupo: as MESMAS guardas de `POST /api/v1/groups/send`
+    // (acompanhado, não saímos, grupos ligados no número).
+    await assertGroupConversationSendable(ctx, conversation);
     await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
     const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
+
+    // Menção só existe em grupo, e só vale para quem ESTÁ na sala: o JID entra
+    // em `ContextInfo.MentionedJID` e notifica de verdade quem for citado.
+    const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
 
     const now = Date.now();
 
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
-      leadId: conversation.leadId,
+      ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
       direction: args.isInternal ? "internal" : "outbound",
       senderId: userMember._id,
       senderType: userMember.type === "ai" ? "ai" : "human",
@@ -792,6 +886,7 @@ export const sendMessage = mutation({
       attachments: args.attachments,
       isInternal: args.isInternal || false,
       mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
       ...(replyMeta ? { metadata: replyMeta } : {}),
       createdAt: now,
     });
@@ -813,9 +908,9 @@ export const sendMessage = mutation({
     });
 
     // Update lead activity
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead) {
-      await ctx.db.patch(conversation.leadId, {
+      await ctx.db.patch(lead._id, {
         lastActivityAt: now,
         updatedAt: now,
         conversationStatus: "active",
@@ -840,27 +935,33 @@ export const sendMessage = mutation({
       createdAt: now,
     });
 
-    // Log activity
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "message_sent",
-      actorId: userMember._id,
-      actorType: userMember.type === "ai" ? "ai" : "human",
-      content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
-      metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
-      createdAt: now,
-    });
+    // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
+    // só no audit acima.
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "message_sent",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
+        metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
+        createdAt: now,
+      });
+    }
 
     // Trigger webhooks
     if (!args.isInternal) {
+      // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
+      // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
       await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
         organizationId: conversation.organizationId,
-        event: "message.sent",
+        event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
         payload: {
           messageId,
           conversationId: args.conversationId,
-          leadId: conversation.leadId,
+          ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+          ...(conversation.kind === "group" ? { kind: "group" } : {}),
           channel: conversation.channel,
           senderType: userMember.type === "ai" ? "ai" : "human",
           senderId: userMember._id,
@@ -906,6 +1007,21 @@ export const forwardMessage = mutation({
     const member = await requirePermission(ctx, source.organizationId, "inbox", "reply");
     if (target.organizationId !== source.organizationId) {
       throw new Error("Conversa de destino pertence a outra organização");
+    }
+    // Encaminhar é UM clique, sem confirmação, a partir de uma lista de nomes.
+    // Uma sala de grupo nessa lista é o comprovante de Pix do cliente publicado
+    // para dezenas de terceiros. Quem quer mandar algo num grupo abre a sala e
+    // escreve lá (review de correção nº 1).
+    if (target.kind === "group") {
+      throw new Error(
+        "Não é possível encaminhar para um grupo — abra a sala e envie a mensagem por lá"
+      );
+    }
+    // Encaminhar DE uma sala de grupo para o 1 a 1 é igualmente um vazamento:
+    // o que dezenas de terceiros escreveram não viaja para fora por um clique.
+    const sourceConversation = await ctx.db.get(source.conversationId);
+    if (sourceConversation?.kind === "group") {
+      throw new Error("Não é possível encaminhar uma mensagem de grupo");
     }
 
     const now = Date.now();
@@ -997,9 +1113,18 @@ export const internalGetConversations = internalQuery({
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
+    // `direct` (o DEFAULT) = só conversa 1 a 1, exatamente o que a rota
+    // devolvia antes da v0.57. Uma sala de grupo não tem lead nem contato, e
+    // integrações existentes iteram `c.lead.title` — devolvê-las por padrão
+    // quebraria consumidores que nunca pediram grupos. `group` = só salas,
+    // `all` = as duas.
+    kind: v.optional(
+      v.union(v.literal("direct"), v.literal("group"), v.literal("all"))
+    ),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
+    const kind = args.kind ?? "direct";
     const limit = Math.min(args.limit ?? 200, 500);
     const cursor = parseCursor(args.cursor);
     const overRead = limit + 1 + (cursor ? limit * 3 : 0);
@@ -1027,6 +1152,10 @@ export const internalGetConversations = internalQuery({
     if (!args.leadId && args.channel) {
       jsFilters.push(c => c.channel === args.channel);
     }
+    if (kind !== "all") {
+      // `kind` ausente no doc = conversa antiga, que é sempre 1 a 1.
+      jsFilters.push((c) => (c.kind ?? "direct") === kind);
+    }
     if (cursor) {
       jsFilters.push(
         (c) =>
@@ -1047,24 +1176,28 @@ export const internalGetConversations = internalQuery({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap, configMap, lastMessageMap] = await Promise.all([
+    const [contactMap, assigneeMap, configMap, groupMap, lastMessageMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
       batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
+      batchGet(ctx.db, conversations.map(c => c.groupChatId)),
       lastMessageFieldsByConversation(ctx, conversations.map(c => c._id)),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
-      const lead = leadMap.get(conversation.leadId) ?? null;
+      const lead = conversation.leadId ? leadMap.get(conversation.leadId) ?? null : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
       const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
+        // Explícito: quem pediu `kind=all` precisa distinguir as duas na mão.
+        kind: conversation.kind ?? "direct",
         lead,
         contact,
         assignee,
+        ...groupChatSummary(conversation, groupMap),
         ...serviceWindowFields(conversation, config),
         ...(lastMessageMap.get(conversation._id) ?? lastMessageFields(null)),
       };
@@ -1138,6 +1271,9 @@ export const internalSendMessage = internalMutation({
     attachments: v.optional(v.array(v.id("files"))),
     mentionedUserIds: v.optional(v.array(v.id("teamMembers"))),
     replyToMessageId: v.optional(v.id("messages")),
+    // Conversa de GRUPO: JIDs mencionados → `ContextInfo.MentionedJID` no envio
+    // (mesma semântica do `mentions` da mutation pública `sendMessage`).
+    mentions: v.optional(v.array(v.string())),
     teamMemberId: v.id("teamMembers"),
   },
   returns: v.id("messages"),
@@ -1152,15 +1288,20 @@ export const internalSendMessage = internalMutation({
       throw new Error("Membro não pertence à organização da conversa");
     }
 
+    // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
+    await assertGroupConversationSendable(ctx, conversation);
     await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
     const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
+
+    // Menção só existe em grupo, e só para quem está DENTRO da sala.
+    const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
 
     const now = Date.now();
 
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
-      leadId: conversation.leadId,
+      ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
       direction: args.isInternal ? "internal" : "outbound",
       senderId: teamMember._id,
       senderType: teamMember.type === "ai" ? "ai" : "human",
@@ -1169,6 +1310,7 @@ export const internalSendMessage = internalMutation({
       attachments: args.attachments,
       isInternal: args.isInternal || false,
       mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
       ...(replyMeta ? { metadata: replyMeta } : {}),
       createdAt: now,
     });
@@ -1190,9 +1332,9 @@ export const internalSendMessage = internalMutation({
     });
 
     // Update lead activity
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead) {
-      await ctx.db.patch(conversation.leadId, {
+      await ctx.db.patch(lead._id, {
         lastActivityAt: now,
         updatedAt: now,
         conversationStatus: "active",
@@ -1217,27 +1359,33 @@ export const internalSendMessage = internalMutation({
       createdAt: now,
     });
 
-    // Log activity
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "message_sent",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
-      metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
-      createdAt: now,
-    });
+    // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
+    // só no audit acima.
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "message_sent",
+        actorId: teamMember._id,
+        actorType: teamMember.type === "ai" ? "ai" : "human",
+        content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
+        metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
+        createdAt: now,
+      });
+    }
 
     // Trigger webhooks
     if (!args.isInternal) {
+      // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
+      // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
       await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
         organizationId: conversation.organizationId,
-        event: "message.sent",
+        event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
         payload: {
           messageId,
           conversationId: args.conversationId,
-          leadId: conversation.leadId,
+          ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+          ...(conversation.kind === "group" ? { kind: "group" } : {}),
           channel: conversation.channel,
           senderType: teamMember.type === "ai" ? "ai" : "human",
           senderId: teamMember._id,
@@ -1576,6 +1724,413 @@ export const internalReceiveDeviceMessage = internalMutation({
   },
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversa de GRUPO (v0.57)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Diferenças estruturais em relação ao 1:1, todas deliberadas:
+//  - SEM lead e SEM contato: a sala não é um lead (D2), e o membro que fala
+//    não vira contato automaticamente (D3) — só amarramos `senderContactId`
+//    quando o telefone dele JÁ é um contato da org.
+//  - A conversa NÃO é criada aqui: ela nasce quando alguém marca "acompanhar"
+//    (`groupChats.setMonitored`). Mensagem de grupo não monitorado é descartada
+//    na porta (D4) — inclusive a de um grupo que o CRM nem conhece.
+//  - SEM ganchos de campanha (D13): "SAIR" escrito por um membro dentro do
+//    grupo não pode marcar opt-out de ninguém.
+//  - SEM enfileirar o atendente: a IA de grupo é um produto próprio, com
+//    gatilho por menção e tetos próprios (F4). O ponto de extensão está
+//    marcado no fim desta mutation.
+
+/** Contexto do grupo para o ingest: existe, está monitorado, e tem conversa? */
+export const internalGetGroupIngestTarget = internalQuery({
+  args: { channelConfigId: v.id("channelConfigs"), jid: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const group = await ctx.db
+      .query("groupChats")
+      .withIndex("by_channel_config_and_jid", (q) =>
+        q.eq("channelConfigId", args.channelConfigId).eq("jid", args.jid)
+      )
+      .first();
+    if (!group) return null;
+    return {
+      groupChatId: group._id,
+      organizationId: group.organizationId,
+      monitored: group.monitored === true && group.conversationId !== undefined,
+      conversationId: group.conversationId ?? null,
+      subject: group.subject,
+    };
+  },
+});
+
+const groupSenderArgs = {
+  senderLid: v.optional(v.string()),
+  senderPhone: v.optional(v.string()),
+  senderName: v.optional(v.string()),
+};
+
+/**
+ * Grupo conhecido mas NÃO monitorado: nada é gravado como mensagem, mas o que
+ * o evento revelou sobre a sala (atividade recente, nome de quem falou) é
+ * barato e útil — é o que faz a lista de grupos mostrar "ativo há 5 min" antes
+ * de alguém decidir acompanhar. Nenhum conteúdo de mensagem é persistido.
+ */
+export const internalTouchGroupActivity = internalMutation({
+  args: {
+    groupChatId: v.id("groupChats"),
+    at: v.number(),
+    ...groupSenderArgs,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group) return null;
+    await recordParticipantFromMessage(
+      ctx,
+      group,
+      { lid: args.senderLid, phone: args.senderPhone, name: args.senderName },
+      args.at
+    );
+    return null;
+  },
+});
+
+/** Mensagem de um MEMBRO num grupo monitorado. */
+export const internalReceiveGroupMessage = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    channelConfigId: v.id("channelConfigs"),
+    externalId: v.string(),
+    content: v.string(),
+    contentType: v.optional(
+      v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))
+    ),
+    attachments: v.optional(v.array(v.id("files"))),
+    mentions: v.optional(v.array(v.string())),
+    quotedParticipantJid: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+    metadata: v.optional(v.record(v.string(), v.any())),
+    ...groupSenderArgs,
+  },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    // Idempotência: o gateway reentrega, e a importação de histórico reinjeta.
+    const existing = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+      )
+      .first();
+    if (existing) return existing._id;
+
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group || group.organizationId !== args.organizationId) return null;
+    if (!group.monitored || !group.conversationId) return null;
+    const conversation = await ctx.db.get(group.conversationId);
+    if (!conversation || conversation.organizationId !== args.organizationId) return null;
+
+    const now = Date.now();
+    const sentAt = args.sentAt && args.sentAt <= now ? args.sentAt : now;
+
+    // D3: o vínculo com um contato só existe se o telefone JÁ for conhecido.
+    const senderContactId = await recordParticipantFromMessage(
+      ctx,
+      group,
+      { lid: args.senderLid, phone: args.senderPhone, name: args.senderName },
+      sentAt
+    );
+
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: args.organizationId,
+      conversationId: conversation._id,
+      direction: "inbound",
+      senderType: "contact",
+      content: args.content,
+      contentType: args.contentType || "text",
+      attachments: args.attachments,
+      externalId: args.externalId,
+      ...(args.senderLid ? { senderLid: args.senderLid } : {}),
+      ...(args.senderPhone ? { senderPhone: args.senderPhone } : {}),
+      ...(args.senderName ? { senderName: args.senderName } : {}),
+      ...(senderContactId ? { senderContactId } : {}),
+      ...(args.mentions && args.mentions.length > 0 ? { mentions: args.mentions } : {}),
+      ...(args.quotedParticipantJid
+        ? { quotedParticipantJid: args.quotedParticipantJid }
+        : {}),
+      metadata: args.metadata,
+      isInternal: false,
+      createdAt: sentAt,
+    });
+
+    if (args.attachments && args.attachments.length > 0) {
+      await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
+    }
+
+    await ctx.db.patch(conversation._id, {
+      status: "active",
+      lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, sentAt),
+      lastInboundAt: sentAt,
+      messageCount: conversation.messageCount + 1,
+      unreadCount: (conversation.unreadCount ?? 0) + 1,
+      updatedAt: now,
+    });
+
+    // `activities` exige leadId e a timeline é do lead — num grupo o rastro da
+    // sala vive em `groupChats.timeline`, e uma linha por mensagem a encheria.
+
+    // Campanha para grupos (F5): SÓ `replied`. Nada de opt-out por palavra-chave
+    // aqui — é o D13, e `applyCampaignInboundHooks` continua fora do grupo.
+    await applyCampaignGroupReplyHook(ctx, { conversation, now: sentAt });
+
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: args.organizationId,
+      event: "group.message.received",
+      payload: {
+        messageId,
+        conversationId: conversation._id,
+        groupChatId: group._id,
+        jid: group.jid,
+        subject: group.subject,
+        senderLid: args.senderLid,
+        senderPhone: args.senderPhone,
+        senderName: args.senderName,
+        contactId: senderContactId,
+        externalId: args.externalId,
+      },
+    });
+
+    // Mídia: MESMOS gates do 1:1 (decididos dentro de cada action; sem o
+    // interruptor ligado são no-op barato).
+    if (args.contentType === "audio" && args.attachments && args.attachments.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
+    }
+    if (args.contentType === "image" && args.attachments && args.attachments.length > 0) {
+      await ctx.scheduler.runAfter(0, internal.vision.autoDescribe, { messageId });
+    }
+
+    // Mencionaram o NOSSO número: alguém do time precisa ver isso hoje, não na
+    // próxima vez que abrir o inbox. Sem LLM — é comparação de JID.
+    // A F4 acrescentou o alerta por PALAVRA (`ai.alertKeywords`), que reusa o
+    // mesmo tipo de notificação: também é "olhe esta sala agora", também sem LLM.
+    const config = await ctx.db.get(args.channelConfigId);
+    const alertKeyword = matchesKeyword(args.content, group.ai?.alertKeywords);
+    if (mentionsUs(args.mentions, config?.bridgeLid, config?.bridgePhone) || alertKeyword) {
+      const recipients = await membersWithPermission(
+        ctx,
+        args.organizationId,
+        "inbox",
+        "reply"
+      );
+      for (const recipient of recipients) {
+        await createNotification(ctx, {
+          organizationId: args.organizationId,
+          memberId: recipient._id,
+          type: "group_mention",
+          title: alertKeyword
+            ? `"${alertKeyword}" em ${group.subject}`
+            : `Mencionaram você em "${group.subject}"`,
+          body: `${args.senderName ?? "Um membro"}: ${args.content.slice(0, 120)}`,
+          conversationId: conversation._id,
+          groupChatId: group._id,
+        });
+      }
+    }
+
+    // AGENTE DE GRUPO (F4). Deliberadamente NÃO é
+    // `internal.attendant.internalEnqueueFromInbound`: o atendente 1:1
+    // responderia a TODA mensagem de TODO membro e chamaria tools de lead numa
+    // conversa que não tem lead. Quem decide se a IA foi CHAMADA (menção,
+    // citação, nosso número, palavra-chave) e se ela PODE responder é o próprio
+    // `groupAgent` — aqui só agendamos, e a mutation sai no-op barato quando a
+    // org não tem IA ou o grupo está com a IA desligada.
+    await ctx.scheduler.runAfter(0, internal.groupAgent.internalEnqueueFromGroup, {
+      messageId,
+    });
+    // Radar de oportunidade (§9.3): opt-in por grupo, em LOTE de 15 min. A
+    // mutation faz o coalescing — mensagem nova não agenda um lote novo.
+    if (group.ai?.opportunityRadar === true && args.content.trim().length >= RADAR_MIN_CHARS) {
+      await ctx.scheduler.runAfter(0, internal.groupAgent.internalScheduleRadar, {
+        groupChatId: group._id,
+      });
+    }
+    return messageId;
+  },
+});
+
+/**
+ * Mensagem que saiu do NOSSO número dentro do grupo — o eco do que o CRM
+ * enviou (morre na idempotência de `externalId`) ou o que alguém digitou no app
+ * do celular. Mesmas regras do 1:1 (v0.56): `outbound` sem `senderId`, sem
+ * mexer em `lastInboundAt` nem em `unreadCount`, sem disparar enriquecimento.
+ */
+export const internalReceiveGroupDeviceMessage = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    channelConfigId: v.id("channelConfigs"),
+    externalId: v.string(),
+    content: v.string(),
+    contentType: v.optional(
+      v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))
+    ),
+    attachments: v.optional(v.array(v.id("files"))),
+    mentions: v.optional(v.array(v.string())),
+    quotedParticipantJid: v.optional(v.string()),
+    sentAt: v.optional(v.number()),
+    metadata: v.optional(v.record(v.string(), v.any())),
+  },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
+      )
+      .first();
+    if (existing) return existing._id;
+
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group || group.organizationId !== args.organizationId) return null;
+    if (!group.monitored || !group.conversationId) return null;
+    const conversation = await ctx.db.get(group.conversationId);
+    if (!conversation || conversation.organizationId !== args.organizationId) return null;
+
+    const now = Date.now();
+    const sentAt = args.sentAt && args.sentAt <= now ? args.sentAt : now;
+
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: args.organizationId,
+      conversationId: conversation._id,
+      direction: "outbound",
+      senderType: "human",
+      content: args.content,
+      contentType: args.contentType || "text",
+      attachments: args.attachments,
+      externalId: args.externalId,
+      ...(args.mentions && args.mentions.length > 0 ? { mentions: args.mentions } : {}),
+      ...(args.quotedParticipantJid
+        ? { quotedParticipantJid: args.quotedParticipantJid }
+        : {}),
+      metadata: { ...(args.metadata ?? {}), via: "device" },
+      deliveryStatus: "sent",
+      isInternal: false,
+      createdAt: sentAt,
+    });
+
+    if (args.attachments && args.attachments.length > 0) {
+      await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
+    }
+
+    // Nunca anda para trás: a importação de histórico traz mensagens antigas.
+    await ctx.db.patch(conversation._id, {
+      status: "active",
+      lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, sentAt),
+      messageCount: conversation.messageCount + 1,
+      updatedAt: now,
+    });
+    await ctx.db.patch(group._id, {
+      lastMessageAt: Math.max(group.lastMessageAt ?? 0, sentAt),
+      updatedAt: now,
+    });
+
+    return messageId;
+  },
+});
+
+/**
+ * Recibo de entrega/leitura dentro de um grupo.
+ *
+ * Num grupo o recibo chega UMA VEZ POR MEMBRO, então `deliveryStatus` só pode
+ * subir no PRIMEIRO de cada tipo (é o que o próprio WhatsApp mostra: dois ticks
+ * quando o primeiro recebeu, azul quando o primeiro leu) e quem confirmou vai
+ * para `messages.readBy` — a UI da F2 mostra "lido por N".
+ */
+export const internalApplyGroupReceipt = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    externalIds: v.array(v.string()),
+    status: v.union(v.literal("delivered"), v.literal("read"), v.literal("failed")),
+    readerJid: v.optional(v.string()),
+    at: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    for (const externalId of args.externalIds) {
+      const message = await ctx.db
+        .query("messages")
+        .withIndex("by_organization_and_external_id", (q) =>
+          q.eq("organizationId", args.organizationId).eq("externalId", externalId)
+        )
+        .first();
+      if (!message) continue;
+
+      const readBy =
+        args.readerJid && args.status === "read"
+          ? appendReadBy(message.readBy, args.readerJid, args.at)
+          : message.readBy;
+
+      // Nunca rebaixa: read > delivered > sent. Um membro que só recebeu não
+      // pode apagar o "lido" que outro já confirmou.
+      const rank = { sent: 1, delivered: 2, read: 3, failed: 0 } as const;
+      const current = message.deliveryStatus ?? "sent";
+      const next =
+        rank[args.status] > rank[current] || args.status === "failed"
+          ? args.status
+          : current;
+
+      await ctx.db.patch(message._id, {
+        ...(next !== message.deliveryStatus ? { deliveryStatus: next } : {}),
+        ...(readBy !== message.readBy ? { readBy } : {}),
+      });
+
+      // Campanha com público `groups` posta NA SALA, e a linha da mensagem
+      // carrega `metadata.campaign`. Sem esta chamada, `campaignRecipients`
+      // ficava em `sent` para sempre e o relatório por sala mostrava entrega
+      // zero numa campanha que entregou tudo (review de correção nº 16).
+      // A regra de "nunca rebaixa" é a mesma do 1 a 1 e mora lá dentro
+      // (`transitionRecipient`), então o recibo por MEMBRO não regride nada.
+      if (message.metadata?.campaign) {
+        await applyCampaignDeliveryUpdate(ctx, {
+          messageId: message._id,
+          status: args.status,
+          now: args.at,
+        });
+      }
+    }
+    return null;
+  },
+});
+
+/**
+ * "Digitando…" dentro de um grupo. A v1 guarda só o estado agregado (alguém
+ * está digitando) no mesmo campo do 1:1 — quem digita por nome é refinamento
+ * da UI (F2), e o campo por participante não existe ainda.
+ */
+export const internalSetGroupPresence = internalMutation({
+  args: {
+    channelConfigId: v.id("channelConfigs"),
+    jid: v.string(),
+    state: v.union(v.literal("composing"), v.literal("paused")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const group = await ctx.db
+      .query("groupChats")
+      .withIndex("by_channel_config_and_jid", (q) =>
+        q.eq("channelConfigId", args.channelConfigId).eq("jid", args.jid)
+      )
+      .first();
+    if (!group || !group.monitored || !group.conversationId) return null;
+    const conversation = await ctx.db.get(group.conversationId);
+    if (!conversation) return null;
+    await ctx.db.patch(conversation._id, {
+      contactPresence: { state: args.state, at: Date.now() },
+    });
+    return null;
+  },
+});
+
 // Internal: send a WhatsApp template message (re-engagement outside the 24h window)
 export const internalSendTemplate = internalMutation({
   args: {
@@ -1649,9 +2204,9 @@ export const internalSendTemplate = internalMutation({
       updatedAt: now,
     });
 
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead) {
-      await ctx.db.patch(conversation.leadId, {
+      await ctx.db.patch(lead._id, {
         lastActivityAt: now,
         updatedAt: now,
         conversationStatus: "active",
@@ -1675,16 +2230,18 @@ export const internalSendTemplate = internalMutation({
       createdAt: now,
     });
 
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "message_sent",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      content: `Template "${args.templateName}" enviado via whatsapp`,
-      metadata: { conversationId: args.conversationId, templateName: args.templateName },
-      createdAt: now,
-    });
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "message_sent",
+        actorId: teamMember._id,
+        actorType: teamMember.type === "ai" ? "ai" : "human",
+        content: `Template "${args.templateName}" enviado via whatsapp`,
+        metadata: { conversationId: args.conversationId, templateName: args.templateName },
+        createdAt: now,
+      });
+    }
 
     await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
       organizationId: conversation.organizationId,
@@ -1922,11 +2479,34 @@ export const markConversationRead = mutation({
     if (conversation.channel === "whatsapp") {
       const { config, toPhone } = await resolveWhatsappTarget(ctx, conversation);
       if (config && configProvider(config) === "bridge" && toPhone) {
-        await ctx.scheduler.runAfter(0, internal.whatsapp.internalBridgeMarkRead, {
-          configId: config._id,
-          chatPhone: toPhone,
-          externalIds: unread.map((m) => m.externalId!),
-        });
+        if (conversation.kind === "group") {
+          // Em grupo o `markread` do wuzapi precisa de DOIS endereços:
+          // `ChatPhone` = a sala, `SenderPhone` = o AUTOR da mensagem lida.
+          // Como cada mensagem tem um autor diferente, sai uma chamada por
+          // autor (e mensagem sem autor conhecido fica de fora — mandar o JID
+          // do grupo como remetente faria o gateway recusar o lote inteiro).
+          const byAuthor = new Map<string, string[]>();
+          for (const m of unread) {
+            const author =
+              m.senderLid ?? (m.senderPhone ? `${m.senderPhone}@s.whatsapp.net` : null);
+            if (!author) continue;
+            byAuthor.set(author, [...(byAuthor.get(author) ?? []), m.externalId!]);
+          }
+          for (const [author, ids] of byAuthor) {
+            await ctx.scheduler.runAfter(0, internal.whatsapp.internalBridgeMarkRead, {
+              configId: config._id,
+              chatPhone: toPhone,
+              senderPhone: author,
+              externalIds: ids,
+            });
+          }
+        } else {
+          await ctx.scheduler.runAfter(0, internal.whatsapp.internalBridgeMarkRead, {
+            configId: config._id,
+            chatPhone: toPhone,
+            externalIds: unread.map((m) => m.externalId!),
+          });
+        }
       }
     }
     return null;
@@ -1954,16 +2534,18 @@ export const setAiPaused = mutation({
       updatedAt: now,
     });
 
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "note",
-      actorId: member._id,
-      actorType: "human",
-      content: args.paused ? "IA pausada nesta conversa" : "IA reativada nesta conversa",
-      metadata: { conversationId: args.conversationId },
-      createdAt: now,
-    });
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "note",
+        actorId: member._id,
+        actorType: "human",
+        content: args.paused ? "IA pausada nesta conversa" : "IA reativada nesta conversa",
+        metadata: { conversationId: args.conversationId },
+        createdAt: now,
+      });
+    }
     return null;
   },
 });
@@ -1985,9 +2567,9 @@ export const assumeConversation = mutation({
       updatedAt: now,
     });
 
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead && lead.assignedTo !== member._id) {
-      await ctx.db.patch(conversation.leadId, {
+      await ctx.db.patch(lead._id, {
         assignedTo: member._id,
         lastActivityAt: now,
         updatedAt: now,
@@ -1995,7 +2577,7 @@ export const assumeConversation = mutation({
       await ctx.db.insert("auditLogs", {
         organizationId: conversation.organizationId,
         entityType: "lead",
-        entityId: conversation.leadId,
+        entityId: lead._id,
         action: "assign",
         actorId: member._id,
         actorType: "human",
@@ -2010,16 +2592,18 @@ export const assumeConversation = mutation({
       });
     }
 
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "assignment",
-      actorId: member._id,
-      actorType: "human",
-      content: `${member.name} assumiu a conversa (IA pausada)`,
-      metadata: { conversationId: args.conversationId },
-      createdAt: now,
-    });
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "assignment",
+        actorId: member._id,
+        actorType: "human",
+        content: `${member.name} assumiu a conversa (IA pausada)`,
+        metadata: { conversationId: args.conversationId },
+        createdAt: now,
+      });
+    }
     return null;
   },
 });

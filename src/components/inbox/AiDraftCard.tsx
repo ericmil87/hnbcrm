@@ -122,6 +122,11 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
   };
 
   const resolved = draft.status !== "pending";
+  // Rascunho do AGENTE DE GRUPO (F4): o loop de coaching é do atendente 1:1
+  // (`requestAiDraft` recusa conversa de grupo). Aqui a revisão é binária —
+  // enviar, editar e enviar, ou descartar —, e mostrar um campo "Instruir a IA"
+  // que só devolve erro seria pior que não mostrar nada.
+  const isGroupDraft = (message.metadata as { groupAgent?: boolean } | undefined)?.groupAgent === true;
 
   const handleSend = async (text?: string) => {
     setBusy(true);
@@ -276,6 +281,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
         </div>
 
         {/* Coaching: instruir a IA e receber outra versão deste rascunho */}
+        {!isGroupDraft && (
         <div className="border-t border-purple-500/20 px-4 py-3">
           {regenerating ? (
             <p className="flex items-center gap-2 text-xs text-text-secondary">
@@ -328,6 +334,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
             </>
           )}
         </div>
+        )}
 
         <div
           className={cn(

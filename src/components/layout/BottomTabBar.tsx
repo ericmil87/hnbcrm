@@ -20,10 +20,11 @@ import {
   FileText,
   MoreHorizontal,
   Megaphone,
+  Users2,
 } from "lucide-react";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
 
-export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns";
+export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns" | "groups";
 
 interface NavItem {
   id: Tab;
@@ -49,6 +50,7 @@ const moreTabs: NavItem[] = [
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
+  { id: "groups", label: "Grupos", icon: Users2, permission: { category: "inbox", level: "view_own" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 

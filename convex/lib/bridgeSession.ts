@@ -118,6 +118,12 @@ export const BRIDGE_WEBHOOK_EVENTS = [
   "LoggedOut",
   "TemporaryBan",
   "ClientOutdated",
+  // Grupos (v0.57): mudança de nome/tópico/admins/membros e entrada nossa num
+  // grupo. Aceitos como eventos de primeira classe pelo runtime do wuzapi
+  // (`supportedEventTypes` em constants.go — o README lista só 6, desatualizado).
+  // Sem eles o CRM só descobre que saiu/entrou gente na próxima sincronização.
+  "GroupInfo",
+  "JoinedGroup",
 ] as const;
 
 /**

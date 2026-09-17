@@ -402,6 +402,17 @@ export const deleteChannelConfig = mutation({
       });
     }
 
+    // Grupos de WhatsApp (v0.57): a sala e a conversa dela pertencem ao CANAL —
+    // sem o número não há como ler nem responder, e os docs virariam órfãos
+    // apontando para um canal que não existe. A cascata é batched e
+    // auto-reagendada (apaga também mensagens e blobs de mídia).
+    //
+    // As conversas 1:1 NÃO entram: elas pertencem a LEADS e sobrevivem à troca
+    // de número — o histórico do cliente não é do canal.
+    await ctx.scheduler.runAfter(0, internal.groupChats.internalCascadeDeleteChannelGroups, {
+      channelConfigId: args.configId,
+    });
+
     await ctx.db.delete(args.configId);
 
     await ctx.db.insert("auditLogs", {
@@ -1316,6 +1327,54 @@ export const internalGetBridgeCredentials = internalAction({
 });
 
 export { statusValidator as channelConfigStatusValidator };
+
+/**
+ * Aprende o LID e o telefone do NOSSO número a partir de uma mensagem que SAIU
+ * dele dentro de um grupo (review de correção nº 22).
+ *
+ * Em gateway self-hosted o CRM não sabia quem é. `GET /session/status` devolve
+ * `jid: ""` mesmo logado (medido em 3 instâncias) e `GET /admin/users` exige o
+ * admin token, que só existe no gateway GERENCIADO. Com os dois campos vazios,
+ * três regras nasciam mortas ao mesmo tempo: o gatilho da IA por MENÇÃO nunca
+ * casava, o evento `GroupInfo` nunca detectava que NÓS fomos removidos, e o
+ * público "membros de grupo" das campanhas mandava DM para o próprio número.
+ *
+ * A mensagem `fromMe` de grupo resolve os três de graça: em grupo o `Chat` é a
+ * sala e o `Info.Sender`/`Info.SenderAlt` somos nós. Só PREENCHE o que está
+ * vazio — jamais sobrescreve o que o pareamento gravou.
+ *
+ * O telefone passa pelo MESMO `claimBridgePhone` do health check, na mesma
+ * transação: aprender um número aqui não pode furar a regra "um número, uma
+ * conta" que a v0.56 fechou.
+ */
+export const internalLearnBridgeIdentity = internalMutation({
+  args: {
+    configId: v.id("channelConfigs"),
+    lid: v.optional(v.string()),
+    phone: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config || configProvider(config) !== "bridge") return null;
+
+    const lid = config.bridgeLid ? undefined : args.lid?.trim() || undefined;
+    const phoneDigits = args.phone?.replace(/\D/g, "") || undefined;
+    const phone = config.bridgePhone ? undefined : phoneDigits;
+    if (!lid && !phone) return null;
+
+    const now = Date.now();
+    if (phone) {
+      await claimBridgePhone(ctx, { config, phone, now });
+    }
+    await ctx.db.patch(args.configId, {
+      ...(lid ? { bridgeLid: lid } : {}),
+      ...(phone ? { bridgePhone: phone } : {}),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
 
 /**
  * Backfill idempotente de `bridgePhone` a partir de `displayPhoneNumber`.

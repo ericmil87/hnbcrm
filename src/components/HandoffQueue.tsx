@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
-import { Eye } from "lucide-react";
+import { Eye, Users } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
@@ -136,15 +136,25 @@ export function HandoffQueue() {
     }
   };
 
-  const handleReject = async (handoffId: string, instruction?: string): Promise<boolean> => {
+  const handleReject = async (
+    handoffId: string,
+    instruction?: string,
+    isGroup?: boolean
+  ): Promise<boolean> => {
     try {
       await rejectHandoff({
         handoffId: handoffId as Id<"handoffs">,
         ...(instruction ? { instruction } : {}),
       });
+      // Num GRUPO a IA não responde na hora: o gatilho dela é a menção. A
+      // instrução vira nota da equipe e entra no próximo turno da sala. Dizer
+      // "ela vai responder o cliente" ali seria mentira (review de correção
+      // nº 14).
       toast.success(
         instruction
-          ? "Devolvido à IA — ela vai responder o cliente com a sua orientação"
+          ? isGroup
+            ? "Devolvido à IA — sua orientação vale a partir da próxima menção na sala"
+            : "Devolvido à IA — ela vai responder o cliente com a sua orientação"
           : "Repasse rejeitado — a IA volta a atender"
       );
       return true;
@@ -166,7 +176,8 @@ export function HandoffQueue() {
   const handlePeekReject = async (handoffId: string, instruction?: string) => {
     setPeekBusy(true);
     try {
-      if (await handleReject(handoffId, instruction)) closePeek();
+      const isGroup = handoffs?.find((h) => h._id === handoffId)?.isGroup === true;
+      if (await handleReject(handoffId, instruction, isGroup)) closePeek();
     } finally {
       setPeekBusy(false);
     }
@@ -206,12 +217,25 @@ export function HandoffQueue() {
             <Card key={handoff._id}>
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
                 <div className="flex-1 min-w-0">
+                  {/* `title` vem pronto do servidor: o lead quando existe, o
+                      nome da SALA quando o repasse é de grupo. Antes o card de
+                      grupo saía com `<h3>` e subtítulo vazios, e o operador não
+                      sabia de onde veio o pedido (review de correção nº 13). */}
                   <h3 className="text-base md:text-lg font-semibold text-text-primary mb-1 truncate">
-                    {handoff.lead?.title}
+                    {handoff.isGroup && (
+                      <Users size={16} className="inline-block mr-1.5 -mt-0.5 text-brand-500" />
+                    )}
+                    {handoff.title ?? handoff.lead?.title ?? "Conversa"}
                   </h3>
                   <p className="text-sm text-text-secondary truncate">
-                    {handoff.contact?.firstName} {handoff.contact?.lastName}
-                    {handoff.contact?.company && ` • ${handoff.contact?.company}`}
+                    {handoff.isGroup ? (
+                      "Grupo de WhatsApp"
+                    ) : (
+                      <>
+                        {handoff.contact?.firstName} {handoff.contact?.lastName}
+                        {handoff.contact?.company && ` • ${handoff.contact?.company}`}
+                      </>
+                    )}
                   </p>
                 </div>
                 <Badge variant="warning" className="shrink-0 self-start sm:self-auto">
@@ -319,13 +343,21 @@ export function HandoffQueue() {
                     </Button>
                     {returnPopoverFor === handoff._id && (
                       <AiInstructionPopover
-                        title="Devolver à IA — responda o que ela precisa (opcional)"
-                        placeholder='Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                        title={
+                          handoff.isGroup
+                            ? "Devolver à IA — o que ela precisa saber (opcional)"
+                            : "Devolver à IA — responda o que ela precisa (opcional)"
+                        }
+                        placeholder={
+                          handoff.isGroup
+                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só rejeitar.'
+                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                        }
                         submitLabel="Devolver"
                         direction="up"
                         onSubmit={(instruction) => {
                           setReturnPopoverFor(null);
-                          void handleReject(handoff._id, instruction);
+                          void handleReject(handoff._id, instruction, handoff.isGroup);
                         }}
                         onClose={() => setReturnPopoverFor(null)}
                       />

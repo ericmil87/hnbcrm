@@ -25,6 +25,98 @@ export interface InboxMessage {
   metadata?: Record<string, any>;
   attachmentFiles?: InboxAttachmentFile[];
   sender?: { name?: string | null } | null;
+  // ── Conversa de GRUPO (v0.57) ──
+  // O autor é um MEMBRO da sala, não da equipe: `senderLid` é a chave estável
+  // (o telefone pode nem estar exposto) e `senderName` vem do PushName.
+  senderLid?: string;
+  senderPhone?: string;
+  senderName?: string;
+  senderContactId?: string;
+  senderContact?: {
+    _id: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    phone?: string | null;
+  } | null;
+  /** JIDs mencionados nesta mensagem (LID ou telefone). */
+  mentions?: string[];
+  /** Quem leu, em grupo — `Receipt.MessageSender` (cap 50 no servidor). */
+  readBy?: { jid: string; at: number }[];
+}
+
+/** Um participante como `groupChats.getGroup` devolve. */
+export interface GroupParticipant {
+  lid?: string;
+  phone?: string;
+  name?: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  contactId?: string;
+  joinedAt?: number;
+  leftAt?: number;
+  /**
+   * Somos NÓS? Decidido no servidor por `groupChats.getGroup` — a chave crua do
+   * nosso número não desce mais para quem só tem `inbox:view_own`.
+   */
+  isSelf?: boolean;
+}
+
+/** O documento de grupo enriquecido de `groupChats.getGroup`. */
+export interface GroupChatDoc {
+  _id: string;
+  organizationId: string;
+  channelConfigId: string;
+  conversationId?: string;
+  jid: string;
+  subject: string;
+  topic?: string;
+  isAnnounce?: boolean;
+  isEphemeral?: boolean;
+  disappearingTimer?: number;
+  weAreAdmin?: boolean;
+  weAreSuperAdmin?: boolean;
+  addressingMode?: "lid" | "pn";
+  participantsCount: number;
+  participants?: GroupParticipant[];
+  /**
+   * Chave (`lid ?? phone`) do NOSSO número. Só sai para quem tem
+   * `settings:manage` — para marcar "você" na lista use `participant.isSelf`.
+   */
+  selfKey?: string | null;
+  /**
+   * O CRM conhece o identificador do nosso próprio número neste canal? Em
+   * gateway self-hosted ele costuma ser desconhecido, e aí o gatilho da IA por
+   * MENÇÃO não dispara (review de correção nº 22).
+   */
+  selfKnown?: boolean;
+  monitored: boolean;
+  ai?: {
+    mode: "off" | "mention";
+    replyMode: "inherit" | "suggest" | "autopilot";
+    maxPerHour?: number;
+    maxPerDay?: number;
+    extraInstructions?: string;
+    /** F4 — gatilho extra, alerta sem LLM, radar de oportunidade e digest. */
+    keywords?: string[];
+    alertKeywords?: string[];
+    opportunityRadar?: boolean;
+    dailyDigestAt?: string;
+  };
+  /** Último resumo por IA da sala (F4, §9.2). */
+  summary?: { text: string; at: number; model?: string; hours?: number };
+  lastMessageAt?: number;
+  lastSyncAt?: number;
+  leftAt?: number;
+  removedAt?: number;
+  timeline?: { at: number; type: string; actorJid?: string; data?: string }[];
+  updatedAt: number;
+}
+
+/** Resumo do grupo que `getConversations`/`getConversationById` anexam. */
+export interface ConversationGroupSummary {
+  subject: string;
+  jid: string;
+  participantsCount: number;
 }
 
 // Quoted (reply) context stored on a message's metadata by the backend.

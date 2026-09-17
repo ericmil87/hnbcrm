@@ -1,0 +1,64 @@
+{
+  "_fixture": "REAL — GET /group/list da instância Acme no gateway gerenciado (aftvps.hnbcrm.com, wuzapi v1.0.8), medido em 2026-09-16. Grupo-Teste-Eric, criado pelo Eric com o Cláudio dentro. O messageSecret não existe nesta rota. Pegadinhas travadas por este arquivo: ParticipantCount vem 0 (o valor real é Participants.length = 2), Participants[].JID vem @lid e o telefone só existe em PhoneNumber, DisplayName vem vazio para todo mundo.",
+  "code": 200,
+  "data": {
+    "Groups": [
+      {
+        "AddressingMode": "lid",
+        "AnnounceVersionID": "1789592106103843",
+        "CreatorCountryCode": "BR",
+        "DefaultMembershipApprovalMode": "",
+        "DisappearingTimer": 7776000,
+        "GroupCreated": "2026-09-16T17:55:06-03:00",
+        "IsAnnounce": false,
+        "IsDefaultSubGroup": false,
+        "IsEphemeral": true,
+        "IsIncognito": false,
+        "IsJoinApprovalRequired": false,
+        "IsLocked": false,
+        "IsParent": false,
+        "JID": "120363431849092219@g.us",
+        "LinkedParentJID": "",
+        "MemberAddMode": "all_member_add",
+        "Name": "Grupo-Teste-Eric",
+        "NameSetAt": "2026-09-16T17:55:06-03:00",
+        "NameSetBy": "180002129735765@lid",
+        "NameSetByPN": "558181392929@s.whatsapp.net",
+        "OwnerJID": "180002129735765@lid",
+        "OwnerPN": "558181392929@s.whatsapp.net",
+        "ParticipantCount": 0,
+        "ParticipantVersionID": "1789592106103843",
+        "Participants": [
+          {
+            "AddRequest": null,
+            "DisplayName": "",
+            "Error": 0,
+            "IsAdmin": false,
+            "IsSuperAdmin": false,
+            "JID": "92965187932215@lid",
+            "LID": "92965187932215@lid",
+            "PhoneNumber": "558192985729@s.whatsapp.net"
+          },
+          {
+            "AddRequest": null,
+            "DisplayName": "",
+            "Error": 0,
+            "IsAdmin": true,
+            "IsSuperAdmin": true,
+            "JID": "180002129735765@lid",
+            "LID": "180002129735765@lid",
+            "PhoneNumber": "558181392929@s.whatsapp.net"
+          }
+        ],
+        "Suspended": false,
+        "Topic": "",
+        "TopicDeleted": false,
+        "TopicID": "",
+        "TopicSetAt": "0001-01-01T00:00:00Z",
+        "TopicSetBy": "",
+        "TopicSetByPN": ""
+      }
+    ]
+  },
+  "success": true
+}

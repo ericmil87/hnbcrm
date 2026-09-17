@@ -27,6 +27,12 @@ interface ConversationActionsMenuProps {
   labelIds: string[];
   /** Chamado após arquivar/desarquivar (ex.: voltar para a lista). */
   onArchivedChange?: (archived: boolean) => void;
+  /**
+   * Itens extras no topo do menu (conversa de GRUPO: parar de acompanhar,
+   * sair da sala, resumo por IA). Recebe o fechador do menu porque quem
+   * renderiza o item é quem sabe se a ação abre um diálogo antes de agir.
+   */
+  renderExtraItems?: (close: () => void) => React.ReactNode;
 }
 
 export function ConversationActionsMenu({
@@ -35,6 +41,7 @@ export function ConversationActionsMenu({
   archivedAt,
   labelIds,
   onArchivedChange,
+  renderExtraItems,
 }: ConversationActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -126,6 +133,11 @@ export function ConversationActionsMenu({
 
       {open && (
         <div className="absolute top-full right-0 mt-1 z-40 w-60 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
+          {renderExtraItems && (
+            <div className="border-b border-border pb-1 mb-1">
+              {renderExtraItems(() => setOpen(false))}
+            </div>
+          )}
           <button
             type="button"
             onClick={handleArchive}

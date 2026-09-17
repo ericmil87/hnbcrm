@@ -33,6 +33,7 @@ const FormBuilderPage = lazy(() => import("./components/forms/FormBuilderPage").
 const FormSubmissionsPage = lazy(() => import("./components/forms/FormSubmissionsPage").then(m => ({ default: m.FormSubmissionsPage })));
 const FormAnalyticsPage = lazy(() => import("./components/forms/FormAnalyticsPage").then(m => ({ default: m.FormAnalyticsPage })));
 const CampaignsPage = lazy(() => import("./components/CampaignsPage").then(m => ({ default: m.CampaignsPage })));
+const GroupsPage = lazy(() => import("./components/groups/GroupsPage").then(m => ({ default: m.GroupsPage })));
 const FormExperimentPage = lazy(() => import("./components/forms/FormExperimentPage").then(m => ({ default: m.FormExperimentPage })));
 
 // Wrapper component for Suspense boundaries
@@ -74,6 +75,7 @@ const router = createBrowserRouter([
       { path: "formularios/:formId/analytics", element: <LazyRoute Component={FormAnalyticsPage} /> },
       { path: "formularios/:formId/experimento/:experimentId", element: <LazyRoute Component={FormExperimentPage} /> },
       { path: "campanhas", element: <LazyRoute Component={CampaignsPage} /> },
+      { path: "grupos", element: <LazyRoute Component={GroupsPage} /> },
       { path: "configuracoes", element: <LazyRoute Component={Settings} /> },
     ],
   },

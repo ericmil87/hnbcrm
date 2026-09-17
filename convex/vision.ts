@@ -159,7 +159,9 @@ type ImageMessageForVision = {
   messageId: Id<"messages">;
   organizationId: Id<"organizations">;
   conversationId: Id<"conversations">;
-  leadId: Id<"leads">;
+  // Ausente em mensagem de conversa de grupo (v0.57) — a run em `agentRuns`
+  // já aceita `leadId` opcional.
+  leadId: Id<"leads"> | undefined;
   metadata: Record<string, unknown> | undefined;
   storageId: string;
   mimeType: string;
@@ -627,7 +629,7 @@ const imageMessageResultValidator = v.object({
   messageId: v.id("messages"),
   organizationId: v.id("organizations"),
   conversationId: v.id("conversations"),
-  leadId: v.id("leads"),
+  leadId: v.optional(v.id("leads")),
   metadata: v.optional(v.record(v.string(), v.any())),
   storageId: v.string(),
   mimeType: v.string(),

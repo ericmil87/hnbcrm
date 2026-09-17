@@ -337,7 +337,10 @@ describe("parser: fromMe", () => {
     expect(parsed.kind).toBe("ignored");
   });
 
-  test("grupo continua fora, mesmo sendo nosso", async () => {
+  // v0.57: grupo saiu do descarte e virou um caminho próprio. `fromMe` num
+  // grupo é a MESMA coisa do 1:1 — eco do CRM ou alguém digitando no celular —
+  // e o ingest decide se aquele grupo é acompanhado.
+  test("grupo NÃO é mais descartado no parser: vira group_message fromMe", async () => {
     const { parseBridgeEvent } = await import("./lib/bridgeParse");
     const parsed = parseBridgeEvent({
       type: "Message",
@@ -346,6 +349,11 @@ describe("parser: fromMe", () => {
         Message: { conversation: "oi turma" },
       },
     });
-    expect(parsed.kind).toBe("ignored");
+    expect(parsed.kind).toBe("group_message");
+    if (parsed.kind !== "group_message") return;
+    expect(parsed.message.fromMe).toBe(true);
+    expect(parsed.message.chatJid).toBe("12345@g.us");
+    // PushName nosso não vira nome de membro (mesma regra do 1:1).
+    expect(parsed.message.senderName).toBeUndefined();
   });
 });

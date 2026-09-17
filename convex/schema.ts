@@ -137,6 +137,10 @@ const providerConfigValidator = v.object({
       copilot: v.optional(productRoutingValidator),
       attendant: v.optional(productRoutingValidator),
       vision: v.optional(productRoutingValidator),
+      // Publicações programadas em grupos (F3). Ausente = herda a rota da org.
+      groupPosts: v.optional(productRoutingValidator),
+      // Agente que RESPONDE dentro do grupo (F4) — outro produto, outra rota.
+      groupAgent: v.optional(productRoutingValidator),
     })
   ),
 });
@@ -169,6 +173,20 @@ const aiConfigValidator = v.object({
   // RG/CNH) sai para um provider externo e cada imagem custa dinheiro. Opt-in
   // explícito por org.
   visionEnabled: v.optional(v.boolean()),
+  // Agente de grupo (v0.57, F4). DEFAULT FALSE como `visionEnabled`: responder
+  // dentro de um grupo alcança gente que nunca falou com a empresa. A F1 só
+  // declara o campo; quem o lê é a F4.
+  groupAgentEnabled: v.optional(v.boolean()),
+  // Aceite PRÓPRIO do autopilot em GRUPO (review de segurança nº 5). O
+  // `autopilotEarlyAck` do atendente 1 a 1 foi assinado para outro risco:
+  // responder sozinho a UMA pessoa que escreveu para a empresa. Publicar sozinho
+  // numa sala de dezenas de terceiros é um risco maior e pede aceite próprio.
+  // Sem ele (e com o atendente fora de `autopilot`), a política do grupo cai
+  // para `suggest` — avisar, não travar: o operador escolhe, com o aviso na
+  // frente e o audit `high` no rastro.
+  groupAutopilotAck: v.optional(
+    v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
+  ),
   providerConfig: v.optional(providerConfigValidator),
   // Teto amigável de uso mensal (nº de conversas atendidas). Kill-switch de custo.
   monthlyConversationBudget: v.optional(v.number()),
@@ -281,6 +299,29 @@ const campaignAudienceFiltersValidator = v.object({
   excludeRepliedToCampaigns: v.optional(v.boolean()),
 });
 
+// Filtros do público "membros de grupos" (v0.57 / F5, D15). Não se misturam com
+// os de segmento: ali a origem é um LEAD do CRM, aqui é um participante de uma
+// sala de WhatsApp que pode nunca ter falado com a empresa.
+const campaignMemberFiltersValidator = v.object({
+  excludeAdmins: v.optional(v.boolean()),
+  excludeExistingContacts: v.optional(v.boolean()),
+  excludeCampaignedWithinDays: v.optional(v.number()),
+  activeInGroupWithinDays: v.optional(v.number()), // falou no grupo nos últimos N dias
+  excludeGroupChatIds: v.optional(v.array(v.id("groupChats"))), // quem também está nestes grupos sai
+  /**
+   * Seleção explícita de pessoas (chave do participante = `lid ?? phone`).
+   *
+   * Ausente ou vazio = TODOS os elegíveis, o comportamento de sempre. Presente,
+   * só estas pessoas entram — e os demais filtros continuam valendo por cima
+   * (um admin escolhido some se "não mandar para administradores" estiver
+   * ligado). Chave que não existe nos grupos escolhidos é ignorada: a lista é
+   * um recorte do público, não uma fonte de destinatário.
+   *
+   * Teto 1024 = o teto de participantes de um grupo do WhatsApp.
+   */
+  includeKeys: v.optional(v.array(v.string())),
+});
+
 const campaignStatusValidator = v.union(
   v.literal("draft"),
   v.literal("scheduled"),
@@ -310,8 +351,106 @@ export {
   campaignVariantValidator,
   campaignTemplateParamValidator,
   campaignAudienceFiltersValidator,
+  campaignMemberFiltersValidator,
   campaignStatusValidator,
   campaignRecipientStatusValidator,
+};
+
+// ── Publicações programadas em grupos de WhatsApp (v0.57 / F3, D7 e D8) ──
+//
+// "Todo dia às 12h o Guardião posta no grupo XYZ". Uma publicação = destinos +
+// agenda + fonte de conteúdo + política de aprovação. O worker é um job
+// auto-reagendado POR publicação (molde do `campaignWorker.tick`), não um cron
+// global: pausar uma publicação não pode depender de filtrar um cron.
+
+// Agenda com granularidade de MINUTO e dias 1..7 (1 = segunda). É outra coisa
+// que `campaignScheduleValidator` (janela de hora cheia, dias 0..6 domingo-
+// primeiro): a campanha pergunta "posso enviar AGORA?", a publicação pergunta
+// "QUANDO é o próximo disparo?". O helper puro é `lib/groupPostSchedule.ts`.
+const groupPostScheduleValidator = v.object({
+  timezone: v.string(), // IANA
+  times: v.array(v.string()), // "HH:MM" locais, 1..10
+  days: v.array(v.number()), // 1..7 (1 = segunda … 7 = domingo)
+  startAt: v.optional(v.number()),
+  endAt: v.optional(v.number()),
+  jitterMinutes: v.optional(v.number()), // 0..30, determinístico por slot
+});
+
+const groupPostLibraryItemValidator = v.object({
+  text: v.string(), // aceita spintax {a|b} e {{grupo}}/{{data}}/{{dia_semana}}
+  attachmentFileIds: v.optional(v.array(v.id("files"))), // no máx. 1 (limite do bridge)
+  contentType: v.optional(
+    v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))
+  ),
+});
+
+const groupPostContentValidator = v.object({
+  kind: v.union(v.literal("library"), v.literal("ai")),
+  library: v.optional(
+    v.object({
+      items: v.array(groupPostLibraryItemValidator),
+      order: v.union(v.literal("sequential"), v.literal("random")),
+      noRepeatWindow: v.optional(v.number()), // aleatório: não repete os últimos N
+      cursor: v.optional(v.number()), // sequencial: próximo índice (circular)
+      // Últimos índices sorteados, só o tanto que `noRepeatWindow` pede. Não é
+      // histórico — é o estado mínimo da regra "não repita os últimos N".
+      recentIndexes: v.optional(v.array(v.number())),
+    })
+  ),
+  ai: v.optional(
+    v.object({
+      prompt: v.string(),
+      persona: v.optional(v.union(v.literal("attendant"), v.literal("custom"))),
+      customPersona: v.optional(v.string()), // usado quando persona === "custom"
+      useKnowledge: v.boolean(), // injeta o `knowledge` do atendente
+      maxChars: v.optional(v.number()),
+      generateMinutesBefore: v.number(), // 5..1440 (default de produto: 60)
+      requiresApproval: v.boolean(), // false exige `campaigns:full` para configurar
+      onMissedApproval: v.union(v.literal("skip"), v.literal("send")),
+    })
+  ),
+});
+
+// Texto gerado pela IA esperando decisão humana. Vive no doc (é um por vez) em
+// vez de tabela própria: a publicação só tem UM pendente, o do próximo slot.
+const groupPostPendingValidator = v.object({
+  text: v.string(),
+  attachmentFileIds: v.optional(v.array(v.id("files"))),
+  generatedAt: v.number(),
+  dueAt: v.number(), // instante do slot a que este texto pertence
+  slotKey: v.string(), // idempotência: texto de um slot não serve para outro
+  status: v.union(v.literal("pendingApproval"), v.literal("approved"), v.literal("rejected")),
+  approvedBy: v.optional(v.id("teamMembers")),
+  editedText: v.optional(v.string()), // o humano corrigiu antes de aprovar
+  model: v.optional(v.string()),
+  provider: v.optional(v.string()),
+});
+
+const groupPostTimelineValidator = v.object({
+  at: v.number(),
+  kind: v.string(), // created | activated | paused | resumed | ended | sent | skipped | failed | pending | approved | rejected | caps
+  detail: v.optional(v.string()),
+  actorId: v.optional(v.id("teamMembers")),
+  slotKey: v.optional(v.string()),
+  // Só nas entradas `kind: "sent"` — é o que a aba "Histórico" liga ao inbox.
+  sends: v.optional(
+    v.array(
+      v.object({
+        groupChatId: v.id("groupChats"),
+        conversationId: v.optional(v.id("conversations")),
+        messageId: v.optional(v.id("messages")),
+        error: v.optional(v.string()),
+      })
+    )
+  ),
+});
+
+export {
+  groupPostScheduleValidator,
+  groupPostLibraryItemValidator,
+  groupPostContentValidator,
+  groupPostPendingValidator,
+  groupPostTimelineValidator,
 };
 
 const applicationTables = {
@@ -677,6 +816,18 @@ const applicationTables = {
     // Resultado da última sincronização (para a UI não mentir sobre o estado).
     bridgeHistoryLastSyncAt: v.optional(v.number()),
     bridgeHistoryLastResult: v.optional(v.string()),
+    // ── Grupos de WhatsApp (bridge, POR NÚMERO) — v0.57 ──
+    // Opt-in explícito: ausente/false = o CRM não lista nem ingere grupo nenhum
+    // deste número. Ligar exige o aceite de risco abaixo (D12).
+    bridgeGroupsEnabled: v.optional(v.boolean()),
+    bridgeGroupsAck: v.optional(
+      v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
+    ),
+    // NOSSO LID nesta instância (`GET /user/lid/{bridgePhone}` → data.lid).
+    // É o que permite saber se somos admin do grupo e se fomos mencionados —
+    // `GET /session/status` devolve `jid: ""` mesmo logado (medido).
+    bridgeLid: v.optional(v.string()),
+    bridgeGroupsLastSyncAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -691,7 +842,17 @@ const applicationTables = {
   // Conversations
   conversations: defineTable({
     organizationId: v.id("organizations"),
-    leadId: v.id("leads"),
+    // OPCIONAL desde a v0.57 (grupos de WhatsApp): uma conversa `kind:"group"`
+    // é uma SALA, não um lead — forçar um lead sintético poluiria funil,
+    // dashboard e métricas. Toda conversa `kind:"direct"` (= ausente) continua
+    // tendo lead, e o ingest 1:1 nunca cria conversa sem ele.
+    leadId: v.optional(v.id("leads")),
+    // Ausente = "direct" (todo o histórico anterior a grupos).
+    kind: v.optional(v.union(v.literal("direct"), v.literal("group"))),
+    // JID do chat no provedor quando não há contato/lead para resolvê-lo:
+    // "1203…@g.us" numa conversa de grupo. É o destino do dispatch.
+    externalChatId: v.optional(v.string()),
+    groupChatId: v.optional(v.id("groupChats")),
     channel: v.union(
       v.literal("whatsapp"),
       v.literal("telegram"),
@@ -747,16 +908,35 @@ const applicationTables = {
     // Lista do inbox ordenada por última mensagem (desc) sem collect() da org.
     .index("by_organization_and_last_message", ["organizationId", "lastMessageAt"])
     // Badge da sidebar: range unreadCount > 0 direto no índice.
-    .index("by_organization_and_unread", ["organizationId", "unreadCount"]),
+    .index("by_organization_and_unread", ["organizationId", "unreadCount"])
+    // Conversa de grupo pelo JID, dentro de um canal (idempotência do ingest).
+    .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"]),
 
   // Messages
   messages: defineTable({
     organizationId: v.id("organizations"),
     conversationId: v.id("conversations"),
-    leadId: v.id("leads"),
+    // OPCIONAL desde a v0.57: mensagem de conversa de grupo não tem lead.
+    leadId: v.optional(v.id("leads")),
     direction: v.union(v.literal("inbound"), v.literal("outbound"), v.literal("internal")),
     senderId: v.optional(v.id("teamMembers")), // null for inbound from contact
     senderType: v.union(v.literal("contact"), v.literal("human"), v.literal("ai")),
+    // ── Grupo: quem, dentro da sala, mandou esta mensagem ──
+    // `senderLid` é o JID de privacidade ("…@lid"), a chave estável do membro;
+    // `senderPhone` é o MSISDN quando o evento o expõe (`Info.SenderAlt`).
+    // `senderName` vem do PushName — única fonte de nome no WhatsApp de grupo.
+    senderLid: v.optional(v.string()),
+    senderPhone: v.optional(v.string()),
+    senderName: v.optional(v.string()),
+    // Preenchido só quando o telefone do membro JÁ é um contato da org (D3:
+    // membro de grupo NÃO vira contato automaticamente).
+    senderContactId: v.optional(v.id("contacts")),
+    // JIDs mencionados (ContextInfo.MentionedJID) — LID ou telefone.
+    mentions: v.optional(v.array(v.string())),
+    // Em grupo o quote precisa do JID do AUTOR da mensagem citada.
+    quotedParticipantJid: v.optional(v.string()),
+    // Quem leu esta mensagem no grupo (Receipt.MessageSender), cap 50.
+    readBy: v.optional(v.array(v.object({ jid: v.string(), at: v.number() }))),
     content: v.string(),
     contentType: v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio")),
     attachments: v.optional(v.array(v.id("files"))),
@@ -804,12 +984,230 @@ const applicationTables = {
     createdAt: v.number(),
   }).index("by_organization", ["organizationId"]),
 
+  /**
+   * Grupos de WhatsApp conhecidos por um canal bridge (v0.57).
+   *
+   * Um grupo é uma SALA, não um lead: os metadados vivem aqui e a troca de
+   * mensagens reusa `conversations`/`messages` com `kind:"group"`. Acompanhar é
+   * OPT-IN por grupo (`monitored`, default false) — o número do cliente está em
+   * grupo de família/escola, e ingerir tudo seria vazamento (D4).
+   *
+   * Escopo: org + canal. O MESMO grupo pareado em dois números da mesma org
+   * gera duas linhas (uma por canal) — aceito e documentado na v1.
+   */
+  groupChats: defineTable({
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    // Conversa `kind:"group"` — criada só quando o grupo passa a ser monitorado.
+    conversationId: v.optional(v.id("conversations")),
+    jid: v.string(), // "1203…@g.us"
+    subject: v.string(),
+    topic: v.optional(v.string()),
+    ownerJid: v.optional(v.string()),
+    pictureUrl: v.optional(v.string()),
+    createdAtWa: v.optional(v.number()),
+    isAnnounce: v.optional(v.boolean()),
+    isLocked: v.optional(v.boolean()),
+    isEphemeral: v.optional(v.boolean()),
+    disappearingTimer: v.optional(v.number()),
+    isCommunityParent: v.optional(v.boolean()),
+    linkedParentJid: v.optional(v.string()),
+    weAreAdmin: v.optional(v.boolean()),
+    weAreSuperAdmin: v.optional(v.boolean()),
+    // "lid" = Participants[].JID vem como @lid e o telefone em PhoneNumber.
+    addressingMode: v.optional(v.union(v.literal("lid"), v.literal("pn"))),
+    // SEMPRE Participants.length: o /group/list devolve ParticipantCount 0.
+    participantsCount: v.optional(v.number()),
+    // Chave do participante = `lid ?? phone`. Nome só existe via PushName das
+    // mensagens (cache oportunista) — o gateway devolve DisplayName vazio.
+    participants: v.optional(
+      v.array(
+        v.object({
+          lid: v.optional(v.string()),
+          phone: v.optional(v.string()),
+          name: v.optional(v.string()),
+          isAdmin: v.boolean(),
+          isSuperAdmin: v.boolean(),
+          contactId: v.optional(v.id("contacts")),
+          joinedAt: v.optional(v.number()),
+          leftAt: v.optional(v.number()),
+        })
+      )
+    ),
+    monitored: v.boolean(),
+    monitoredSince: v.optional(v.number()),
+    monitoredBy: v.optional(v.id("teamMembers")),
+    // Política da IA no grupo (D6). A F1 gravou; a F4 lê e acrescentou os
+    // campos de gatilho por palavra-chave, alerta, radar e digest.
+    ai: v.optional(
+      v.object({
+        mode: v.union(v.literal("off"), v.literal("mention")),
+        replyMode: v.union(
+          v.literal("inherit"),
+          v.literal("suggest"),
+          v.literal("autopilot")
+        ),
+        maxPerHour: v.optional(v.number()),
+        maxPerDay: v.optional(v.number()),
+        extraInstructions: v.optional(v.string()),
+        // F4 — gatilho EXTRA do agente (além de menção/citação): a mensagem que
+        // contiver uma destas palavras chama a IA. Vazio/ausente = só menção.
+        keywords: v.optional(v.array(v.string())),
+        // F4 — alerta SEM LLM: palavra que gera notificação `group_mention`
+        // para o time (ex.: "reclamação", "cancelar"). Não aciona a IA.
+        alertKeywords: v.optional(v.array(v.string())),
+        // F4 — radar de oportunidade (§9.3). Default OFF: classifica mensagem
+        // de membro em lote de 15 min e sugere criar lead.
+        opportunityRadar: v.optional(v.boolean()),
+        // F4 — digest diário "HH:MM" no fuso da org. Ausente = sem digest.
+        dailyDigestAt: v.optional(v.string()),
+        // Quando o ÚLTIMO digest saiu. Campo próprio de propósito: a
+        // idempotência do cron horário olhava `summary.at`, o mesmo campo que
+        // o "Resumo por IA" manual grava — pedir um resumo à tarde cancelava o
+        // digest daquele dia (achado menor do review de correção).
+        lastDigestAt: v.optional(v.number()),
+      })
+    ),
+    summary: v.optional(
+      v.object({
+        text: v.string(),
+        at: v.number(),
+        model: v.optional(v.string()),
+        // Janela resumida (24 = 1 dia, 168 = 7 dias) — a UI mostra "das últimas
+        // 24 h" sem precisar guardar a escolha em outro lugar.
+        hours: v.optional(v.number()),
+      })
+    ),
+    // F4 — estado do radar de oportunidade. `scheduledFor` é o coalescing: com
+    // um lote já agendado, mensagem nova não agenda outro (uma chamada por
+    // janela de 15 min por grupo, não uma por mensagem).
+    radar: v.optional(
+      v.object({
+        scheduledFor: v.optional(v.number()),
+        lastRunAt: v.optional(v.number()),
+      })
+    ),
+    leftAt: v.optional(v.number()),
+    removedAt: v.optional(v.number()), // sumiu do /group/list
+    lastSyncAt: v.optional(v.number()),
+    lastMessageAt: v.optional(v.number()),
+    // Eventos do grupo (join/leave/promote/rename) — `activities` exige leadId,
+    // então a linha do tempo da sala mora aqui (cap 100, FIFO).
+    timeline: v.optional(
+      v.array(
+        v.object({
+          at: v.number(),
+          type: v.string(),
+          actorJid: v.optional(v.string()),
+          data: v.optional(v.string()),
+        })
+      )
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_channel_config", ["channelConfigId"])
+    .index("by_channel_config_and_jid", ["channelConfigId", "jid"])
+    .index("by_organization_and_monitored", ["organizationId", "monitored"])
+    .index("by_conversation", ["conversationId"]),
+
+  /**
+   * Publicações programadas em grupos (v0.57, F3 — D7/D8 do plano).
+   *
+   * Uma linha = uma rotina de postagem ("seg/qua/sex às 09h, uma dica da
+   * biblioteca em sequência", "todo dia 12h a mensagem do dia pela IA, com
+   * aprovação"). O worker (`groupPostWorker.tick`) é um job auto-reagendado
+   * por publicação com `tickToken` anti-zumbi.
+   *
+   * `channelConfigId` é DENORMALIZADO dos targets porque todos os grupos de uma
+   * publicação são do mesmo canal (v1) e porque o worker consulta canal, sessão
+   * e tetos antes de olhar grupo nenhum.
+   */
+  groupPosts: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("ended")
+    ),
+    channelConfigId: v.id("channelConfigs"),
+    targets: v.array(
+      v.object({
+        groupChatId: v.id("groupChats"),
+        /**
+         * Desde quando este destino aparece inválido (grupo desmonitorado,
+         * saímos dele, apagado). O destino só SAI da publicação depois de
+         * `TARGET_GRACE_MS` assim — remover na primeira ocorrência apagava a
+         * escolha do operador por um blip, e restaurar o grupo não a trazia
+         * de volta.
+         */
+        missingSince: v.optional(v.number()),
+      })
+    ),
+    schedule: groupPostScheduleValidator,
+    content: groupPostContentValidator,
+    pending: v.optional(groupPostPendingValidator),
+    stats: v.object({
+      sent: v.number(), // slots disparados com sucesso em pelo menos um grupo
+      skipped: v.number(),
+      failed: v.number(),
+      lastSentAt: v.optional(v.number()),
+      lastError: v.optional(v.string()),
+    }),
+    timeline: v.optional(v.array(groupPostTimelineValidator)), // cap 100 (FIFO)
+    /**
+     * Último slot JÁ resolvido (`lib/groupPostSchedule.slotKey`). É a
+     * idempotência do disparo: dois ticks para o mesmo horário (retry, zumbi,
+     * watchdog) só postam uma vez.
+     */
+    lastSlotKey: v.optional(v.string()),
+    // Estado do worker (mesmo trio das campanhas)
+    schedulerFnId: v.optional(v.string()),
+    tickToken: v.optional(v.string()),
+    nextRunAt: v.optional(v.number()), // instante do PRÓXIMO disparo (com jitter)
+    /**
+     * Chave do slot-BASE que originou o `nextRunAt` acima, gravada por quem
+     * agenda (`nextRun`). Deduzir a chave do instante jitterado dava a chave
+     * errada quando dois horários ficam a menos de `jitterMinutes` um do
+     * outro, e a idempotência engolia o segundo disparo do dia.
+     */
+    nextSlotKey: v.optional(v.string()),
+    /**
+     * Ticks seguidos que encontraram o canal em estado TRANSITÓRIO (sessão
+     * "disconnected", que uma única checagem de saúde com timeout já grava).
+     * O tick adia com backoff e só pausa depois de esgotar as tentativas —
+     * antes disso um blip de 1 minuto matava uma agenda que vive meses.
+     * Zerado assim que o canal responde.
+     */
+    channelRetries: v.optional(v.number()),
+    pausedReason: v.optional(v.string()),
+    pausedBy: v.optional(v.id("teamMembers")),
+    createdBy: v.id("teamMembers"),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_channel_config", ["channelConfigId"])
+    // Watchdog (cron horário), DEPLOYMENT-WIDE de propósito: a pergunta é
+    // "alguma publicação ativa perdeu o agendamento?", que não é de uma org.
+    .index("by_status_and_next_run", ["status", "nextRunAt"]),
+
   // Mensagens agendadas do inbox — entregues via ctx.scheduler.runAt.
   scheduledMessages: defineTable({
     organizationId: v.id("organizations"),
     conversationId: v.id("conversations"),
     content: v.string(),
     scheduledAt: v.number(),
+    // Sala de GRUPO: JIDs mencionados, guardados junto do texto. Sem isto, o
+    // "@fulano" escrito no compositor sobrevivia como texto mas não notificava
+    // ninguém na entrega (achado menor do review de correção).
+    mentions: v.optional(v.array(v.string())),
     status: v.union(
       v.literal("pending"),
       v.literal("sent"),
@@ -840,10 +1238,16 @@ const applicationTables = {
   // Handoffs
   handoffs: defineTable({
     organizationId: v.id("organizations"),
-    leadId: v.id("leads"),
+    // OPCIONAL desde a v0.57: repasse vindo de uma conversa de grupo não tem
+    // lead (a sala não é um lead). O card mostra o nome do grupo.
+    leadId: v.optional(v.id("leads")),
     // Conversa de origem do repasse — resolvida na criação (fallback: conversa
     // mais recente não arquivada do lead). Repasses antigos não têm o campo.
     conversationId: v.optional(v.id("conversations")),
+    // Título do card quando NÃO há lead (repasse de grupo): o nome da sala,
+    // congelado na criação. Sem isto o card de /app/repasses sai anônimo — o
+    // nome está em `groupChats.subject`, a dois saltos de `enrichHandoffs`.
+    subjectLabel: v.optional(v.string()),
     fromMemberId: v.id("teamMembers"),
     toMemberId: v.optional(v.id("teamMembers")),
     reason: v.string(),
@@ -865,6 +1269,11 @@ const applicationTables = {
     .index("by_lead", ["leadId"])
     .index("by_status", ["status"])
     .index("by_organization_and_status", ["organizationId", "status"])
+    // Repasse SEM lead (grupo) não tem `lead.handoffState` para segurar a
+    // duplicata, e a elegibilidade do agente de grupo precisa saber se a sala
+    // já foi escalada. Os dois faziam `.take(100)` no índice por org — numa org
+    // com mais de 100 pendentes, o repasse da sala ficava fora da varredura.
+    .index("by_conversation_and_status", ["conversationId", "status"])
     .index("by_status_and_created", ["status", "createdAt"]),
 
   // Activities (timeline events on leads)
@@ -1087,7 +1496,23 @@ const applicationTables = {
       v.literal("handoff_resolved"),
       v.literal("ai_draft_pending"),
       v.literal("campaign_completed"),
-      v.literal("campaign_paused")
+      v.literal("campaign_paused"),
+      // Grupos (v0.57): entramos/fomos adicionados a um grupo (cadastrado com
+      // monitored:false — quem decide acompanhar é uma pessoa).
+      v.literal("group_joined"),
+      // Alguém mencionou o NOSSO número numa conversa de grupo monitorada.
+      v.literal("group_mention"),
+      // Publicações programadas (F3): texto da IA esperando aprovação / a
+      // publicação parou sozinha (canal caído, grupo perdido, LLM falhou).
+      v.literal("group_post_pending"),
+      v.literal("group_post_failed"),
+      // F4 — o radar classificou a mensagem de um membro como oportunidade.
+      // Carrega `groupChatId` + `data.participantKey`/`data.suggestedDm`: o
+      // botão do sino cria o lead e abre a conversa 1:1 com um rascunho. A IA
+      // NUNCA manda a DM sozinha (D3 + risco de ban).
+      v.literal("group_opportunity"),
+      // F4 — digest diário do grupo (resumo + perguntas sem resposta).
+      v.literal("group_digest")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -1097,6 +1522,12 @@ const applicationTables = {
     handoffId: v.optional(v.id("handoffs")),
     conversationId: v.optional(v.id("conversations")),
     campaignId: v.optional(v.id("campaigns")),
+    groupPostId: v.optional(v.id("groupPosts")),
+    groupChatId: v.optional(v.id("groupChats")),
+    // Carga extra do item do sino (F4): `participantKey` e `suggestedDm` da
+    // oportunidade, `hours` do digest. Nunca é instrução — é só o que o botão
+    // da notificação precisa para agir.
+    data: v.optional(v.record(v.string(), v.any())),
     actorId: v.optional(v.id("teamMembers")),
     readAt: v.optional(v.number()),
     createdAt: v.number(),
@@ -1202,6 +1633,15 @@ const applicationTables = {
     // Campanhas — concluída / pausada por kill switch
     campaignCompleted: v.optional(v.boolean()),
     campaignPaused: v.optional(v.boolean()),
+    // Grupos (v0.57) — entrada em grupo novo / menção ao nosso número
+    groupJoined: v.optional(v.boolean()),
+    groupMention: v.optional(v.boolean()),
+    // Publicações programadas (F3) — aprovação pendente / publicação parada
+    groupPostPending: v.optional(v.boolean()),
+    groupPostFailed: v.optional(v.boolean()),
+    // IA em grupos (F4) — oportunidade detectada / digest diário
+    groupOpportunity: v.optional(v.boolean()),
+    groupDigest: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1488,7 +1928,15 @@ const applicationTables = {
       v.literal("attendant"),
       v.literal("simulator"),
       // Passe de visão (convex/vision.ts): 1 chamada por IMAGEM, não por turno.
-      v.literal("vision")
+      v.literal("vision"),
+      // Geração da "mensagem do dia" de uma publicação programada em grupo.
+      v.literal("group_post"),
+      // F4 — turno do agente DENTRO de um grupo (respondeu a uma menção).
+      v.literal("group_reply"),
+      // F4 — classificação barata de oportunidade num lote de mensagens.
+      v.literal("group_radar"),
+      // F4 — resumo/digest de um grupo (sob demanda ou diário).
+      v.literal("group_summary")
     ),
     status: v.union(
       v.literal("running"),
@@ -1553,7 +2001,12 @@ const applicationTables = {
     // pediu/regenerou um rascunho (commit SEMPRE como sugestão); "return_to_ai"
     // = devolução da conversa à IA (respeita o modo do perfil). A instrução vive
     // no ITEM (contrato da run) e é copiada ao metadata do rascunho no commit.
-    origin: v.optional(v.union(v.literal("coach"), v.literal("return_to_ai"))),
+    // "group_mention" (F4) = turno do AGENTE DE GRUPO: outro produto, outro
+    // prompt, outras tools e tetos próprios do grupo. Compartilha a fila só
+    // pelo que ela já resolve (debounce, coalescing, backoff).
+    origin: v.optional(
+      v.union(v.literal("coach"), v.literal("return_to_ai"), v.literal("group_mention"))
+    ),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
     // Rascunho que esta run substitui (regeneração) — vira status "revised".
@@ -1608,8 +2061,20 @@ const applicationTables = {
       ),
     }),
     audience: v.object({
-      source: v.union(v.literal("segment"), v.literal("import"), v.literal("manual")),
+      // v0.57 (F5): "groups" = o destinatário é a SALA (1 por JID); "group_members"
+      // = disparo 1 a 1 para os participantes das salas escolhidas (D15).
+      source: v.union(
+        v.literal("segment"),
+        v.literal("import"),
+        v.literal("manual"),
+        v.literal("groups"),
+        v.literal("group_members")
+      ),
       filters: v.optional(campaignAudienceFiltersValidator),
+      // Grupos escolhidos (groups/group_members). No público `manual` vindo da
+      // seleção de membros carrega SÓ a origem, para o relatório por grupo.
+      groupChatIds: v.optional(v.array(v.id("groupChats"))),
+      memberFilters: v.optional(campaignMemberFiltersValidator),
       importFileId: v.optional(v.id("files")),
       // Onde criar o lead de um número NOVO (ausente = board default, 1º estágio)
       targetBoardId: v.optional(v.id("boards")),
@@ -1626,6 +2091,8 @@ const applicationTables = {
       consentAck: v.optional(campaignAckValidator), // base legal para contatar a lista
       bridgeRiskAck: v.optional(campaignAckValidator), // API não-oficial pode banir
       newNumberRiskAck: v.optional(campaignAckValidator), // bridge lançado com número de < 3 dias (aviso, não trava)
+      // D15: mensagem privada a quem não iniciou a conversa (membros de grupo)
+      groupMembersDmAck: v.optional(campaignAckValidator),
       checkNumbersFirst: v.boolean(), // bridge: /user/check antes de enviar
       allowLinks: v.optional(v.boolean()), // bridge: permite link no 1º contato (default false)
       stopOnReplyRateBelow: v.optional(v.number()), // 0-1; ausente = desligado
@@ -1646,6 +2113,21 @@ const applicationTables = {
       optedOut: v.number(),
       consecutiveFailures: v.number(),
       estimatedCostUsd: v.optional(v.number()),
+      // Contador POR GRUPO DE ORIGEM (F5): é o teto de N membros/dia por grupo,
+      // que o `capsExceeded` do canal não enxerga. Chave = Id<"groupChats">.
+      // A quebra completa do relatório (entregues/lidas/respostas por grupo) é
+      // calculada varrendo `campaignRecipients` — aqui fica só o que o worker
+      // precisa ler a cada envio.
+      byGroup: v.optional(
+        v.record(
+          v.string(),
+          v.object({
+            sent: v.number(),
+            sentToday: v.number(),
+            sentTodayKey: v.string(), // dia UTC, mesma convenção de channelPacing
+          })
+        )
+      ),
     }),
     // Timeline de eventos da campanha (lançada, pausada, retomada…). Cap 100.
     timeline: v.optional(
@@ -1683,8 +2165,18 @@ const applicationTables = {
   campaignRecipients: defineTable({
     organizationId: v.id("organizations"),
     campaignId: v.id("campaigns"),
-    phone: v.string(), // E.164 sem "+" (lib/phone.ts)
+    // E.164 sem "+" (lib/phone.ts) para uma pessoa. Quando o destinatário é uma
+    // SALA (`groupChatId` preenchido) guarda o JID INTEIRO ("120…@g.us"): com o
+    // "@" ele nunca colide com um telefone real na supressão nem no índice
+    // `by_organization_and_phone`, e é literalmente o que vai no `Phone` do envio.
+    phone: v.string(),
     displayName: v.optional(v.string()),
+    // Destinatário = a sala (public "groups").
+    groupChatId: v.optional(v.id("groupChats")),
+    // Destinatário = pessoa, mas veio da lista de membros desta sala
+    // (public "group_members", ou seleção manual no painel de membros).
+    sourceGroupChatId: v.optional(v.id("groupChats")),
+    memberName: v.optional(v.string()), // PushName do membro; vira {{nome}} sem contato
     vars: v.optional(v.record(v.string(), v.string())), // {{placeholders}}
     contactId: v.optional(v.id("contacts")),
     leadId: v.optional(v.id("leads")),
@@ -1707,6 +2199,12 @@ const applicationTables = {
     .index("by_organization", ["organizationId"]) // backup JSON pagina por aqui
     .index("by_campaign", ["campaignId"])
     .index("by_campaign_and_status", ["campaignId", "status"])
+    // O worker escolhe o próximo pendente numa janela finita. Sem `scheduledFor`
+    // no índice, a janela pegava os 50 PRIMEIROS por criação — e as linhas
+    // futuras do primeiro grupo escondiam as linhas prontas de todos os outros.
+    // (`undefined` ordena antes de qualquer número: quem não tem agendamento
+    // é justamente quem está pronto agora.)
+    .index("by_campaign_and_status_and_scheduled", ["campaignId", "status", "scheduledFor"])
     .index("by_campaign_and_phone", ["campaignId", "phone"])
     .index("by_message", ["messageId"])
     .index("by_conversation", ["conversationId"])
@@ -1762,8 +2260,14 @@ const applicationTables = {
     campaignDaily: v.optional(v.object({ day: v.string(), sent: v.number(), newContacts: v.number() })),
     campaignHourly: v.optional(v.object({ hour: v.string(), sent: v.number() })),
     // Congelamento do canal para CAMPANHAS (131048 / sessão bridge caída):
-    // campanhas não disparam antes disto; o atendimento reativo segue.
+    // campanhas não disparam antes disto; o atendimento reativo segue. As
+    // publicações programadas em grupo respeitam o MESMO congelamento.
     campaignFrozenUntil: v.optional(v.number()),
+    // Publicações programadas em grupo (F3): SLOTS disparados no dia UTC, COM
+    // enforcement (teto em lib/groupPostCore.MAX_POSTS_PER_CHANNEL_PER_DAY).
+    // Um slot que posta em 5 grupos conta 1 — quem espaça as 5 mensagens é o
+    // pacing normal do canal.
+    groupPostDaily: v.optional(v.object({ day: v.string(), sent: v.number() })),
   }).index("by_channel_config", ["channelConfigId"]),
 
   // Segredos por-org (BYO API key de LLM), cifrados via lib/secretCrypto.

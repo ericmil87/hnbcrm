@@ -85,8 +85,9 @@ describe("bridgeSession request builders", () => {
       name: "org_abc_123",
       token: "instancetoken",
       webhook: "https://deploy.convex.site/webhooks/bridge",
-      // Confirmado no piloto: ReadReceipt = ticks; demais são sinais de sessão
-      events: "Message,ReadReceipt,LoggedOut,TemporaryBan,ClientOutdated",
+      // Confirmado no piloto: ReadReceipt = ticks; demais são sinais de sessão.
+      // GroupInfo/JoinedGroup entraram na v0.57 (grupos de WhatsApp).
+      events: "Message,ReadReceipt,LoggedOut,TemporaryBan,ClientOutdated,GroupInfo,JoinedGroup",
       // Confirmado no piloto: sem hmacKey na criação o webhook chega sem assinatura
       hmacKey: "fake-hmac-secret-with-at-least-32-chars!",
     });

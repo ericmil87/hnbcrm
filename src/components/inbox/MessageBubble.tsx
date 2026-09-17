@@ -1,13 +1,21 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { GroupMentionText } from "./GroupMentionText";
+import {
+  groupSenderColor,
+  initialsOf,
+  maskPhone,
+  participantDisplayName,
+} from "@/lib/groupDisplay";
 import { MessageAttachments } from "./MessageAttachments";
 import { MessageActionsBar } from "./MessageActionsBar";
 import { ReactionChips } from "./ReactionChips";
 import { QuotedBlock } from "./QuotedBlock";
 import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
+import { formatMessageTimestamp } from "@/lib/messageTime";
 import {
   InboxMessage,
   getQuoted,
@@ -40,6 +48,16 @@ interface MessageBubbleProps {
   visionEnabled?: boolean;
   /** Transient highlight after jumping to this message from a quote. */
   highlighted?: boolean;
+  /**
+   * Conversa de GRUPO: o autor de uma mensagem recebida é um membro da sala, e
+   * não o contato da conversa. Ausente = conversa 1:1 (comportamento de antes).
+   */
+  group?: {
+    /** Rótulos que a menção pode assumir no texto (ver `mentionTokensFor`). */
+    mentionTokens: string[];
+    /** Abre o contato do membro, quando ele já existe na org (D3). */
+    onOpenContact?: (contactId: string) => void;
+  };
   onReply: (message: InboxMessage) => void;
   onReact: (message: InboxMessage, emoji: string) => void;
   onForward: (message: InboxMessage) => void;
@@ -109,19 +127,34 @@ function getBubbleStyle(message: InboxMessage): BubbleStyle {
   };
 }
 
+const DELIVERY_LABELS: Record<string, string> = {
+  sent: "Enviada",
+  delivered: "Entregue",
+  read: "Lida",
+  failed: "Falhou",
+};
+
 function DeliveryTick({ message }: { message: InboxMessage }) {
   const status = message.deliveryStatus;
   if (!status) return null;
+  // Em grupo o recibo é por MEMBRO (`Receipt.MessageSender`): o tique mostra o
+  // primeiro que entregou/leu, e o tooltip conta quantos já leram — que é a
+  // única leitura honesta de "lido" numa sala de N pessoas.
+  const readCount = message.readBy?.length ?? 0;
+  const title =
+    readCount > 0
+      ? `${DELIVERY_LABELS[status] ?? status} · Lido por ${readCount}`
+      : DELIVERY_LABELS[status] ?? status;
   if (status === "failed") {
-    return <AlertCircle className="size-3.5 text-semantic-error shrink-0" />;
+    return <AlertCircle className="size-3.5 text-semantic-error shrink-0" aria-label={title} />;
   }
   if (status === "read") {
-    return <CheckCheck className="size-3.5 text-brand-400 shrink-0" />;
+    return <CheckCheck className="size-3.5 text-brand-400 shrink-0" aria-label={title} />;
   }
   if (status === "delivered") {
-    return <CheckCheck className="size-3.5 text-current opacity-70 shrink-0" />;
+    return <CheckCheck className="size-3.5 text-current opacity-70 shrink-0" aria-label={title} />;
   }
-  return <Check className="size-3.5 text-current opacity-70 shrink-0" />;
+  return <Check className="size-3.5 text-current opacity-70 shrink-0" aria-label={title} />;
 }
 
 export function MessageBubble({
@@ -134,6 +167,7 @@ export function MessageBubble({
   describing = false,
   visionEnabled = false,
   highlighted = false,
+  group,
   onReply,
   onReact,
   onForward,
@@ -192,14 +226,37 @@ export function MessageBubble({
       ? message.content
       : null;
 
+  // Autor da mensagem numa sala: só faz sentido no que CHEGA do grupo. O que
+  // sai continua sendo "Equipe"/"Agente IA", e a mensagem vinda do aparelho
+  // (v0.56, `metadata.via:"device"`) também — ela é nossa.
+  const groupSender =
+    group && !message.isInternal && message.direction === "inbound"
+      ? (() => {
+          const name = participantDisplayName({
+            name: message.senderName,
+            phone: message.senderPhone,
+          });
+          const contactFullName = message.senderContact
+            ? [message.senderContact.firstName, message.senderContact.lastName]
+                .filter(Boolean)
+                .join(" ")
+                .trim()
+            : "";
+          const label = contactFullName || name;
+          return {
+            name: label || maskPhone(message.senderPhone) || "Membro",
+            initials: initialsOf(label || "?"),
+            color: groupSenderColor(message.senderLid ?? message.senderPhone),
+            contactId: message.senderContactId ?? null,
+          };
+        })()
+      : null;
+
   // A lone sticker renders without a bubble background, WhatsApp-style.
   const bubbleless =
     sticker && !visibleText && !message.isInternal && !mediaProblem && !quoted;
 
-  const timestamp = new Date(message.createdAt).toLocaleTimeString("pt-BR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const timestamp = formatMessageTimestamp(message.createdAt);
 
   const canShowActions = actionsEnabled && (canInteract || needsTranscription || needsVision);
 
@@ -242,10 +299,16 @@ export function MessageBubble({
               setMenuOpen(false);
               onReact(message, emoji);
             }}
-            onForward={() => {
-              setMenuOpen(false);
-              onForward(message);
-            }}
+            onForward={
+              // Numa sala de grupo não há encaminhar: o conteúdo é de dezenas
+              // de terceiros e o servidor recusa (review de correção nº 1).
+              group
+                ? undefined
+                : () => {
+                    setMenuOpen(false);
+                    onForward(message);
+                  }
+            }
             onTranscribe={
               needsTranscription
                 ? () => {
@@ -268,10 +331,18 @@ export function MessageBubble({
     </div>
   ) : null;
 
+  const readCount = message.readBy?.length ?? 0;
   const footer = (
     <div className={cn("flex items-center justify-end gap-1 mt-1", style.footerText)}>
       <span className="text-[10px] tabular-nums">{timestamp}</span>
-      {showDeliveryTick && <DeliveryTick message={message} />}
+      {showDeliveryTick && (
+        <span
+          className="inline-flex items-center"
+          title={readCount > 0 ? `Lido por ${readCount}` : undefined}
+        >
+          <DeliveryTick message={message} />
+        </span>
+      )}
     </div>
   );
 
@@ -310,15 +381,41 @@ export function MessageBubble({
             highlighted && "ring-2 ring-brand-500 ring-offset-2 ring-offset-surface-base transition-shadow"
           )}
         >
-          <div className={cn("text-xs font-medium", style.labelColor)}>
-            {/* Mensagem de contato não tem sender (team member) — usa o nome do
-                contato (pushName do WhatsApp ou nome editado no lead) e só cai
-                no rótulo genérico "Contato" quando o nome não está disponível. */}
-            {message.sender?.name ||
+          <div className={cn("flex items-center gap-1.5 text-xs font-medium", style.labelColor)}>
+            {groupSender ? (
+              <>
+                <span
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+                  style={{ backgroundColor: groupSender.color }}
+                  aria-hidden
+                >
+                  {groupSender.initials}
+                </span>
+                <span className="truncate" style={{ color: groupSender.color }}>
+                  {groupSender.name}
+                </span>
+                {groupSender.contactId && group?.onOpenContact && (
+                  <button
+                    type="button"
+                    onClick={() => group.onOpenContact?.(groupSender.contactId!)}
+                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-[10px] font-medium text-brand-400 transition-colors hover:bg-brand-500/25"
+                    title="Abrir contato"
+                  >
+                    <UserRound size={9} />
+                    Contato
+                  </button>
+                )}
+              </>
+            ) : (
+              /* Mensagem de contato não tem sender (team member) — usa o nome do
+                 contato (pushName do WhatsApp ou nome editado no lead) e só cai
+                 no rótulo genérico "Contato" quando o nome não está disponível. */
+              message.sender?.name ||
               (!message.isInternal &&
               (message.direction === "inbound" || message.senderType === "contact")
                 ? contactName || style.label
-                : style.label)}
+                : style.label)
+            )}
             {message.metadata?.campaign && (
               <span
                 className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-[10px] font-medium opacity-80"
@@ -382,6 +479,8 @@ export function MessageBubble({
 
           {message.isInternal ? (
             <MentionRenderer content={message.content} className="text-sm" />
+          ) : visibleText && group && group.mentionTokens.length > 0 ? (
+            <GroupMentionText text={visibleText} tokens={group.mentionTokens} />
           ) : (
             visibleText && <p className="text-sm whitespace-pre-wrap break-words">{visibleText}</p>
           )}

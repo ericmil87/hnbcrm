@@ -26,6 +26,10 @@ export interface PeekHandoff {
   suggestedActions?: string[];
   createdAt: number;
   conversationId?: string | null;
+  /** Título pronto do servidor: o lead, ou o nome da SALA num repasse de grupo. */
+  title?: string | null;
+  /** Repasse vindo de uma conversa de grupo — não tem lead nem contato. */
+  isGroup?: boolean;
   lead?: {
     title?: string;
     value?: number;
@@ -203,7 +207,7 @@ export function HandoffPeekSlideOver({
     <SlideOver
       open
       onClose={onClose}
-      title={`Repasse — ${handoff.lead?.title ?? "Lead"}`}
+      title={`Repasse — ${handoff.title ?? handoff.lead?.title ?? "Conversa"}`}
       titleIcon={<ArrowLeftRight size={18} className="text-semantic-warning shrink-0" />}
       className="md:w-[540px]"
       bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
@@ -432,8 +436,16 @@ export function HandoffPeekSlideOver({
             </Button>
             {returnOpen && (
               <AiInstructionPopover
-                title="Devolver à IA — responda o que ela precisa (opcional)"
-                placeholder='Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                title={
+                  handoff.isGroup
+                    ? "Devolver à IA — o que ela precisa saber (opcional)"
+                    : "Devolver à IA — responda o que ela precisa (opcional)"
+                }
+                placeholder={
+                  handoff.isGroup
+                    ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só rejeitar.'
+                    : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                }
                 submitLabel="Devolver"
                 direction="up"
                 onSubmit={(instruction) => {

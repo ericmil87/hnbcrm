@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutletContext, useNavigate, useSearchParams } from "react-router";
+import { useOutletContext, useNavigate, useSearchParams, useLocation } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -7,7 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -30,7 +30,14 @@ import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsM
 import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { ContactDetailPanel } from "@/components/ContactDetailPanel";
-import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
+import { GroupMembersPanel, GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
+import { GroupSummaryModal } from "@/components/inbox/GroupSummaryModal";
+import { mentionTokensFor } from "@/components/inbox/GroupMentionText";
+import {
+  useGroupMentions,
+  GroupMentionDropdown,
+} from "@/components/inbox/GroupMentionComposer";
+import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
 
 // v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
 // estado da IA no header da conversa.
@@ -78,6 +85,25 @@ function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing
   return null;
 }
 
+// Filtro "Todas / Diretas / Grupos" da lista de conversas.
+type ConversationKindFilter = "all" | "direct" | "group";
+const KIND_FILTER_KEY = "hnbcrm.inbox.kindFilter";
+const KIND_FILTERS: { id: ConversationKindFilter; label: string }[] = [
+  { id: "all", label: "Todas" },
+  { id: "direct", label: "Diretas" },
+  { id: "group", label: "Grupos" },
+];
+
+function readKindFilter(): ConversationKindFilter {
+  try {
+    const stored = window.localStorage.getItem(KIND_FILTER_KEY);
+    if (stored === "direct" || stored === "group" || stored === "all") return stored;
+  } catch {
+    /* localStorage bloqueado (janela anônima, dados de site desligados) */
+  }
+  return "all";
+}
+
 /**
  * Resolve o `?conversation=` que não está na lista carregada (fora do take(200)
  * ou arquivada). Fica isolado num filho sob ErrorBoundary porque a query
@@ -103,6 +129,7 @@ export function Inbox() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const conversationParam = searchParams.get("conversation");
   const { can, member } = usePermissions(organizationId);
   const currentMemberId = member?._id ?? null;
@@ -116,6 +143,17 @@ export function Inbox() {
   // Arquivadas + filtro por etiqueta na lista de conversas.
   const [showArchived, setShowArchived] = useState(false);
   const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
+  // Diretas x grupos (v0.57). Persistido porque quem acompanha 30 grupos quase
+  // sempre quer a mesma aba de novo; leitura e escrita protegidas porque o
+  // localStorage lança em janela anônima e com dados de site bloqueados.
+  const [kindFilter, setKindFilter] = useState<ConversationKindFilter>(() => readKindFilter());
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(KIND_FILTER_KEY, kindFilter);
+    } catch {
+      /* sem persistência é só perder a preferência, não quebrar a tela */
+    }
+  }, [kindFilter]);
 
   // Conversa alcançada por deep-link que não está na lista carregada — o
   // resolver abaixo mantém este estado em dia (o documento continua reativo).
@@ -145,9 +183,20 @@ export function Inbox() {
   // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
   const [showLeadPanel, setShowLeadPanel] = useState(false);
   const [showContactPanel, setShowContactPanel] = useState(false);
+  // Grupo: painel de membros e o contato de um membro (D3 — pode não existir).
+  const [showMembersPanel, setShowMembersPanel] = useState(false);
+  const [showGroupSummary, setShowGroupSummary] = useState(false);
+  const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
+  const [confirmGroupAction, setConfirmGroupAction] = useState<null | "unmonitor" | "leave">(null);
   useEffect(() => {
     setShowLeadPanel(false);
     setShowContactPanel(false);
+    setShowMembersPanel(false);
+    // Faltava: o modal de resumo ficava aberto ao trocar de conversa, mostrando
+    // o resumo da sala ANTERIOR (achado menor do review de correção).
+    setShowGroupSummary(false);
+    setMemberContactId(null);
+    setConfirmGroupAction(null);
   }, [selectedConversation]);
 
   useEffect(() => {
@@ -224,6 +273,9 @@ export function Inbox() {
   const describeImage = useAction(api.vision.describeImage);
   // Visão é um AND (D10 do plano): IA ativa na org E leitura de imagens ligada.
   const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
+  // IA em grupos (F4): o mestre da org + o interruptor do produto. Os recursos
+  // POR GRUPO (responder, radar, digest) ficam na política de cada sala.
+  const groupAiEnabled = Boolean(aiStatus?.active && aiStatus?.groupAgentEnabled);
 
   // Typing indicator throttle bookkeeping.
   const typingLastSentRef = useRef(0);
@@ -271,16 +323,22 @@ export function Inbox() {
     const scheduledAt = new Date(scheduleValue).getTime();
     if (Number.isNaN(scheduledAt)) return;
     try {
+      // Menção também no agendado: o "@fulano" sobrevivia como TEXTO mas não
+      // notificava ninguém na entrega (achado menor do review de correção).
+      const trimmed = newMessage.trim();
+      const memberMentions = isGroupConversation ? groupMentions.mentionsFor(trimmed) : [];
       await scheduleMessage({
         conversationId: selectedConversation as Id<"conversations">,
-        content: newMessage.trim(),
+        content: trimmed,
         scheduledAt,
+        ...(memberMentions.length ? { mentions: memberMentions } : {}),
       });
       toast.success(
         `Mensagem agendada para ${new Date(scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
       );
       setNewMessage("");
       setScheduleOpen(false);
+      groupMentions.reset();
       stopTyping();
     } catch (err) {
       toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Falha ao agendar");
@@ -338,16 +396,35 @@ export function Inbox() {
     (c): c is NonNullable<typeof c> => c !== null
   );
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
-  const filteredConversations = filterLabelId
-    ? validConversations.filter((c) => ((c.labelIds ?? []) as string[]).includes(filterLabelId))
-    : validConversations;
+  // Os chips aparecem quando há grupo na lista OU quando o filtro guardado não
+  // é "Todas" (review de correção nº 17). Sem a segunda condição, um filtro
+  // "Grupos" persistido numa sessão anterior escondia os próprios chips assim
+  // que a org parava de acompanhar as salas: a caixa ficava vazia para sempre,
+  // sem controle na tela para voltar.
+  const hasGroupConversations =
+    validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
+  const filteredConversations = validConversations.filter((c) => {
+    if (filterLabelId && !((c.labelIds ?? []) as string[]).includes(filterLabelId)) return false;
+    if (kindFilter === "group") return c.kind === "group";
+    if (kindFilter === "direct") return c.kind !== "group";
+    return true;
+  });
 
   // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
   // fora da lista carregada (fora do take(200), ou arquivada ainda carregando).
   const conversationInList =
     conversationParam !== null && validConversations.some((c) => c._id === conversationParam);
+  // Só fixa se ela PERTENCE à aba/filtro em tela: uma conversa ativa aberta por
+  // link aparecia no topo de "Arquivadas" (e um 1:1 no topo de "Grupos") só por
+  // não estar na lista carregada — parecia arquivada sem estar.
+  const linkedMatchesView =
+    !!linkedConversation &&
+    Boolean(linkedConversation.archivedAt) === showArchived &&
+    (kindFilter === "all" ||
+      (kindFilter === "group" ? linkedConversation.kind === "group" : linkedConversation.kind !== "group"));
   const pinnedConversation =
     linkedConversation &&
+    linkedMatchesView &&
     linkedConversation._id === selectedConversation &&
     !validConversations.some((c) => c._id === linkedConversation._id)
       ? linkedConversation
@@ -362,11 +439,90 @@ export function Inbox() {
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
 
+  // ── Conversa de GRUPO (v0.57) ──
+  // Uma conversa de grupo NÃO tem lead nem contato: tudo que depende deles
+  // (funil, "Ver lead", repasse, rascunho de IA) sai da tela, e o que a
+  // substitui é a sala — assunto, membros e a política do grupo.
+  const isGroupConversation = currentConversation?.kind === "group";
+  const groupChatId = currentConversation?.groupChatId as Id<"groupChats"> | undefined;
+  const groupChat = useQuery(
+    api.groupChats.getGroup,
+    isGroupConversation && groupChatId ? { groupChatId } : "skip"
+  ) as (GroupChatDoc & { selfKey?: string | null }) | null | undefined;
+  const groupSummary = currentConversation?.groupChat as
+    | { subject: string; jid: string; participantsCount: number }
+    | null
+    | undefined;
+  const groupSubject = groupChat?.subject ?? groupSummary?.subject ?? "Grupo";
+  const groupParticipantsCount =
+    groupChat?.participantsCount ?? groupSummary?.participantsCount ?? 0;
+  const groupParticipants = groupChat?.participants ?? [];
+
+  const setGroupMonitored = useMutation(api.groupChats.setMonitored);
+  const leaveGroup = useAction(api.groupChats.leaveGroup);
+  // Mexer na sala (acompanhar, entrar, sair) é `settings:manage` (D11).
+  const canManageGroups = can("settings", "manage");
+  // Disparar para os membros é campanha (F5), não configuração de canal.
+  const canManageCampaigns = can("campaigns", "manage");
+
+  /** Abre o wizard de campanha já preenchido com este grupo (F5). */
+  const dispatchToGroupMembers = (source: "group_members" | "manual", phones?: string[]) => {
+    if (!groupChatId) return;
+    const params =
+      source === "manual" && phones && phones.length > 0
+        ? `source=manual&sourceGroupChatId=${groupChatId}&phones=${encodeURIComponent(phones.join(","))}`
+        : `source=group_members&groupChatId=${groupChatId}`;
+    navigate(`${TAB_ROUTES.campaigns}?novo=1&${params}`);
+  };
+
+  // Nome por chave de participante — alimenta o negrito das menções recebidas
+  // (o corpo traz "@558…" ou "@Fulano", e os dois precisam casar).
+  const groupNameByKey = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of groupParticipants) {
+      const name = p.name?.trim();
+      if (!name) continue;
+      if (p.lid) {
+        map.set(p.lid, name);
+        map.set(p.lid.split("@")[0], name);
+      }
+      if (p.phone) {
+        map.set(p.phone, name);
+        map.set(`${p.phone}@s.whatsapp.net`, name);
+      }
+    }
+    return map;
+  }, [groupParticipants]);
+
+  // Menção a membro no grupo: o "@" abre a lista de participantes, o texto
+  // recebe "@<nome>" e os JIDs escolhidos viajam em `mentions[]` no envio.
+  const groupMentions = useGroupMentions({
+    participants: groupParticipants,
+    value: newMessage,
+    enabled: isGroupConversation && !isInternal,
+    onChange: (next, cursorPosition) => {
+      setNewMessage(next);
+      requestAnimationFrame(() => {
+        const el = composerInputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(cursorPosition, cursorPosition);
+      });
+    },
+  });
+
   const openContactId = currentConversation?.contact?._id as Id<"contacts"> | undefined;
   const contactHeadingText = currentConversation ? contactName || "Sem nome" : "";
 
   const renderContactHeading = (className: string) =>
-    openContactId ? (
+    isGroupConversation ? (
+      <h2 className={className}>
+        <span className="flex items-center gap-2 min-w-0">
+          <Users size={16} className="shrink-0 text-text-muted" aria-hidden />
+          <span className="truncate">{groupSubject}</span>
+        </span>
+      </h2>
+    ) : openContactId ? (
       <h2 className={className}>
         <button
           type="button"
@@ -438,21 +594,190 @@ export function Inbox() {
 
   // Repasse pendente do lead da conversa aberta → banner com ação inline.
   const openHandoffState = currentConversation?.lead?.handoffState as LeadHandoffState;
-  const handoffPending = isHandoffPending(openHandoffState);
-  const pendingHandoff = useQuery(
+  const leadHandoffPending = isHandoffPending(openHandoffState);
+  const pendingLeadHandoff = useQuery(
     api.handoffs.getPendingHandoffForLead,
-    handoffPending && openLeadId ? { leadId: openLeadId } : "skip"
+    leadHandoffPending && openLeadId ? { leadId: openLeadId } : "skip"
   ) as { _id: string } | null | undefined;
 
+  // SALA DE GRUPO não tem lead, e o banner âmbar saía de
+  // `conversation.lead.handoffState`: numa sala o operador não via nem que
+  // havia repasse aberto nem o botão de aceitar inline. A fonte aqui é a
+  // CONVERSA (índice `by_conversation_and_status`).
+  const pendingGroupHandoff = useQuery(
+    api.handoffs.getPendingHandoffForConversation,
+    isGroupConversation && currentConversation
+      ? { conversationId: currentConversation._id as Id<"conversations"> }
+      : "skip"
+  ) as { _id: string; reason?: string } | null | undefined;
+
+  const pendingHandoff = isGroupConversation ? pendingGroupHandoff : pendingLeadHandoff;
+  const handoffPending = isGroupConversation ? !!pendingGroupHandoff : leadHandoffPending;
+  const handoffReason = isGroupConversation
+    ? pendingGroupHandoff?.reason
+    : openHandoffState?.reason;
+
   const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
+  const returnToAi = useMutation(api.attendant.returnToAi);
+
+  // A sala está com a IA em silêncio? (aceitar repasse pausa por 24 h)
+  const groupAiPaused =
+    isGroupConversation &&
+    typeof currentConversation?.aiPausedUntil === "number" &&
+    currentConversation.aiPausedUntil > Date.now();
 
   const handleAcceptHandoff = () => {
     if (!pendingHandoff) return;
     toast.promise(acceptHandoff({ handoffId: pendingHandoff._id as Id<"handoffs"> }), {
       loading: "Assumindo conversa…",
-      success: "Conversa assumida — IA pausada",
+      success: isGroupConversation
+        ? "Repasse assumido — a IA da sala fica em silêncio por 24 h"
+        : "Conversa assumida — IA pausada",
       error: (e) => mutationErrorMessage(e, "Falha ao assumir o repasse"),
     });
+  };
+
+  /**
+   * Itens de grupo no menu "⋮" da conversa. Parar de acompanhar e sair pedem
+   * confirmação (sair é irreversível pelo CRM — voltar exige convite novo) e
+   * exigem `settings:manage`, o mesmo gate do backend.
+   */
+  const renderGroupMenuItems = (close: () => void) => (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          close();
+          setShowMembersPanel(true);
+        }}
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+      >
+        <Users size={15} />
+        Ver membros
+      </button>
+      {/*
+        Resumo por IA (F4). Fica visível mesmo com a IA de grupos desligada,
+        mas desabilitado com o motivo — esconder o item faria a pessoa procurar
+        um recurso que existe e ela não sabe como ligar.
+      */}
+      <button
+        type="button"
+        disabled={!groupAiEnabled}
+        title={
+          groupAiEnabled
+            ? undefined
+            : "Ative a IA em grupos em Configurações → IA para usar o resumo"
+        }
+        onClick={() => {
+          close();
+          setShowGroupSummary(true);
+        }}
+        className={
+          groupAiEnabled
+            ? "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+            : "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
+        }
+      >
+        <Sparkles size={15} />
+        Resumo por IA
+        {!groupAiEnabled && (
+          <span className="ml-auto text-[10px] uppercase tracking-wide">IA desligada</span>
+        )}
+      </button>
+      {canManageCampaigns && (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            dispatchToGroupMembers("group_members");
+          }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+        >
+          <Send size={15} />
+          Disparar 1 a 1 para os membros
+        </button>
+      )}
+      {/*
+        "Devolver à IA" numa sala (review de correção nº 6). Aceitar um repasse
+        de grupo silencia a IA por 24 h; sem este item, não havia como devolver
+        antes disso — o único caminho era esperar. Só aparece quando a sala está
+        de fato pausada.
+      */}
+      {can("inbox", "reply") && groupAiPaused && (
+        <button
+          type="button"
+          onClick={() => {
+            close();
+            void handleReturnGroupToAi();
+          }}
+          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+        >
+          <Sparkles size={15} />
+          Devolver à IA
+        </button>
+      )}
+      {canManageGroups && (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              setConfirmGroupAction("unmonitor");
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+          >
+            <EyeOff size={15} />
+            Parar de acompanhar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              setConfirmGroupAction("leave");
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
+          >
+            <LogOut size={15} />
+            Sair do grupo
+          </button>
+        </>
+      )}
+    </>
+  );
+
+  const handleReturnGroupToAi = async () => {
+    if (!currentConversation) return;
+    try {
+      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
+      toast.success("A IA volta a responder quando for mencionada na sala");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao devolver à IA"));
+    }
+  };
+
+  // Sem `toast.promise` aqui: o formatador de sucesso dele roda durante a
+  // renderização do toast, e voltar para a lista é `setState` — o efeito
+  // colateral fica no `then`, não no render.
+  const handleStopMonitoring = async () => {
+    if (!groupChatId) return;
+    try {
+      await setGroupMonitored({ groupChatId, monitored: false });
+      handleBackToList();
+      toast.success("Parou de acompanhar o grupo — a conversa foi arquivada");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!groupChatId) return;
+    try {
+      const result = await leaveGroup({ groupChatId });
+      handleBackToList();
+      toast.success(result.detail);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao sair do grupo"));
+    }
   };
 
   // Com um rascunho já aguardando revisão, pedir outra sugestão não faz
@@ -565,6 +890,10 @@ export function Inbox() {
     try {
       const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
       const attachments = stagedFiles.map((f) => f.fileId);
+      // Só os JIDs cujo "@<nome>" sobreviveu no texto — quem apagou a menção
+      // não quer mais notificar aquela pessoa.
+      const memberMentions =
+        isGroupConversation && !isInternal ? groupMentions.mentionsFor(trimmed) : [];
 
       await sendMessage({
         conversationId: selectedConversation as Id<"conversations">,
@@ -574,10 +903,12 @@ export function Inbox() {
         attachments: attachments.length ? attachments : undefined,
         mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
         replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
+        mentions: memberMentions.length ? memberMentions : undefined,
       });
       setNewMessage("");
       setStagedFiles([]);
       setReplyTo(null);
+      groupMentions.reset();
       stopTyping();
     } catch (error) {
       toast.error("Falha ao enviar mensagem");
@@ -676,6 +1007,7 @@ export function Inbox() {
     setReplyTo(null);
     setNewMessage("");
     setRecorderActive(false);
+    groupMentions.reset();
     stopTyping();
     lastReadSigRef.current = null;
   };
@@ -716,9 +1048,23 @@ export function Inbox() {
     setReplyTo(null);
     setNewMessage("");
     setRecorderActive(false);
+    groupMentions.reset();
     lastReadSigRef.current = null;
     syncConversationParam(conversationId);
   };
+
+  // Rascunho vindo de outra tela (F4: "Criar lead + abrir no privado" do sino).
+  // Chega em `location.state` e NÃO é enviado por ninguém automaticamente — só
+  // preenche o compositor. Consumido uma vez: o state é limpo em seguida, para
+  // o rascunho não voltar sozinho a cada re-render ou ao usar o back.
+  const consumedDraftRef = useRef<string | null>(null);
+  useEffect(() => {
+    const draft = (location.state as { draftMessage?: string } | null)?.draftMessage;
+    if (!draft || consumedDraftRef.current === draft) return;
+    consumedDraftRef.current = draft;
+    setNewMessage(draft);
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+  }, [location.state, location.pathname, location.search, navigate]);
 
   const handleBackToList = () => {
     resetConversationState();
@@ -1024,6 +1370,29 @@ export function Inbox() {
               >
                 Arquivadas
               </button>
+              {/* Diretas x grupos — só aparece quando a org tem grupo algum. */}
+              {hasGroupConversations && (
+                <>
+                  <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
+                  {KIND_FILTERS.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setKindFilter(f.id)}
+                      className={cn(
+                        "shrink-0 flex items-center gap-1 h-7 px-2.5 rounded-full text-xs border transition-colors",
+                        kindFilter === f.id
+                          ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                          : "border-border-strong text-text-muted hover:text-text-primary"
+                      )}
+                      aria-pressed={kindFilter === f.id}
+                    >
+                      {f.id === "group" && <Users size={11} />}
+                      {f.label}
+                    </button>
+                  ))}
+                </>
+              )}
               {conversationLabels && conversationLabels.length > 0 && (
                 <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
               )}
@@ -1146,11 +1515,24 @@ export function Inbox() {
             )
           ) : listedConversations.length === 0 ? (
             <div className="p-4 text-center text-text-muted">
-              {showArchived
-                ? "Nenhuma conversa arquivada"
-                : filterLabelId
-                  ? "Nenhuma conversa com essa etiqueta"
-                  : "Nenhuma conversa ainda"}
+              {/* O filtro Diretas/Grupos vem ANTES de "arquivadas" na cadeia
+                  (review de correção nº 17): com o filtro em "Grupos" e nenhum
+                  grupo arquivado, a tela dizia "Nenhuma conversa arquivada" —
+                  mentindo, porque havia conversas diretas arquivadas
+                  escondidas pelo filtro. */}
+              {kindFilter === "group"
+                ? showArchived
+                  ? "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas"
+                  : "Nenhum grupo acompanhado — ligue os grupos do número em Configurações → Canais"
+                : kindFilter === "direct"
+                  ? showArchived
+                    ? "Nenhuma conversa direta arquivada"
+                    : "Nenhuma conversa direta"
+                  : showArchived
+                    ? "Nenhuma conversa arquivada"
+                    : filterLabelId
+                      ? "Nenhuma conversa com essa etiqueta"
+                      : "Nenhuma conversa ainda"}
             </div>
           ) : (
             listedConversations.map((conversation) => (
@@ -1193,8 +1575,18 @@ export function Inbox() {
                       (conversation.unreadCount ?? 0) > 0 ? "font-semibold" : "font-medium"
                     )}
                   >
+                    {conversation.kind === "group" && (
+                      <Users
+                        size={14}
+                        className="shrink-0 text-text-muted"
+                        aria-label="Conversa de grupo"
+                      />
+                    )}
                     <span className="truncate">
-                      {conversation.contact?.firstName} {conversation.contact?.lastName}
+                      {conversation.kind === "group"
+                        ? conversation.groupChat?.subject ?? "Grupo"
+                        : `${conversation.contact?.firstName ?? ""} ${conversation.contact?.lastName ?? ""}`.trim() ||
+                          "Sem nome"}
                     </span>
                     {((conversation.labelIds ?? []) as string[]).map((labelId) => {
                       const label = labelById.get(labelId);
@@ -1212,6 +1604,13 @@ export function Inbox() {
                     {conversation.channel}
                   </Badge>
                 </div>
+
+                {conversation.kind === "group" && (
+                  <p className="mb-1 text-sm text-text-secondary tabular-nums">
+                    {conversation.groupChat?.participantsCount ?? 0} membro
+                    {(conversation.groupChat?.participantsCount ?? 0) === 1 ? "" : "s"}
+                  </p>
+                )}
 
                 {conversation.lead && (
                   <div className="flex items-center gap-1.5 mb-1 min-w-0">
@@ -1382,15 +1781,26 @@ export function Inbox() {
                     onArchivedChange={(archived) => {
                       if (archived && !showArchived) handleBackToList();
                     }}
+                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
                   />
                 )}
               </div>
               {funnelLine && <div className="pl-11">{funnelLine}</div>}
+              {isGroupConversation && (
+                <div className="pl-11">
+                  <GroupMembersButton
+                    participantsCount={groupParticipantsCount}
+                    onClick={() => setShowMembersPanel(true)}
+                  />
+                </div>
+              )}
               {contactTyping && (
-                <span className="pl-11 text-xs text-brand-500 animate-pulse">digitando…</span>
+                <span className="pl-11 text-xs text-brand-500 animate-pulse">
+                  {isGroupConversation ? "alguém está digitando…" : "digitando…"}
+                </span>
               )}
               {aiStatus?.active && currentConversation && channelIsWhatsapp &&
-                aiControlsAllowed && (
+                aiControlsAllowed && !isGroupConversation && (
                 <div className="pl-11 flex flex-wrap items-center gap-2">
                   <AiConversationControls
                     conversationId={currentConversation._id as Id<"conversations">}
@@ -1424,13 +1834,21 @@ export function Inbox() {
               <div className="min-w-0">
                 {renderContactHeading("text-base font-semibold text-text-primary truncate")}
                 {funnelLine}
+                {isGroupConversation && (
+                  <GroupMembersButton
+                    participantsCount={groupParticipantsCount}
+                    onClick={() => setShowMembersPanel(true)}
+                  />
+                )}
                 {contactTyping && (
-                  <span className="text-xs text-brand-500 animate-pulse">digitando…</span>
+                  <span className="text-xs text-brand-500 animate-pulse">
+                    {isGroupConversation ? "alguém está digitando…" : "digitando…"}
+                  </span>
                 )}
               </div>
               <div className="flex items-center gap-2">
                 {aiStatus?.active && currentConversation && channelIsWhatsapp &&
-                aiControlsAllowed && (
+                aiControlsAllowed && !isGroupConversation && (
                   <>
                     <AiConversationControls
                       conversationId={currentConversation._id as Id<"conversations">}
@@ -1466,6 +1884,7 @@ export function Inbox() {
                     onArchivedChange={(archived) => {
                       if (archived && !showArchived) handleBackToList();
                     }}
+                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
                   />
                 )}
               </div>
@@ -1479,8 +1898,8 @@ export function Inbox() {
                     <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
                     <span className="min-w-0">
                       <span className="font-medium text-semantic-warning">Repasse pendente</span>
-                      {openHandoffState?.reason && (
-                        <span className="text-text-secondary"> — {openHandoffState.reason}</span>
+                      {handoffReason && (
+                        <span className="text-text-secondary"> — {handoffReason}</span>
                       )}
                     </span>
                   </p>
@@ -1548,6 +1967,15 @@ export function Inbox() {
                       describing={describingIds.has(message._id)}
                       visionEnabled={visionEnabled}
                       highlighted={highlightId === message._id}
+                      group={
+                        isGroupConversation
+                          ? {
+                              mentionTokens: mentionTokensFor(message.mentions, groupNameByKey),
+                              onOpenContact: (contactId) =>
+                                setMemberContactId(contactId as Id<"contacts">),
+                            }
+                          : undefined
+                      }
                       onReply={setReplyTo}
                       onReact={handleReact}
                       onForward={setForwardTarget}
@@ -1620,6 +2048,12 @@ export function Inbox() {
                     onPick={quickReplies.pick}
                     onManage={() => quickReplies.setManageOpen(true)}
                   />
+                  <GroupMentionDropdown
+                    open={groupMentions.open}
+                    items={groupMentions.items}
+                    activeIndex={groupMentions.activeIndex}
+                    onPick={groupMentions.pick}
+                  />
                   {!recorderActive && (
                     <>
                       <FileUploadButton
@@ -1637,9 +2071,17 @@ export function Inbox() {
                         value={newMessage}
                         onChange={(value) => {
                           setNewMessage(value);
+                          // O "@" do grupo depende da posição do cursor, que só
+                          // existe no DOM depois que o React aplica o valor.
+                          requestAnimationFrame(() =>
+                            groupMentions.setCursor(
+                              composerInputRef.current?.selectionStart ?? value.length
+                            )
+                          );
                           handleComposerActivity();
                         }}
                         onKeyDown={(e) => {
+                          if (groupMentions.handleKeyDown(e)) return;
                           if (quickReplies.handleKeyDown(e)) return;
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
@@ -1650,7 +2092,13 @@ export function Inbox() {
                         }}
                         teamMembers={teamMembers ?? []}
                         mentionEnabled={isInternal}
-                        placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
+                        placeholder={
+                          isInternal
+                            ? "Escreva uma nota interna... Use @ para mencionar"
+                            : isGroupConversation
+                              ? "Mensagem para o grupo... Use @ para mencionar um membro"
+                              : "Digite uma mensagem..."
+                        }
                         rows={1}
                         className={cn(
                           "bg-surface-sunken",
@@ -1800,6 +2248,65 @@ export function Inbox() {
           onClose={() => setShowContactPanel(false)}
         />
       )}
+
+      {/* Grupo: resumo por IA (F4) */}
+      {isGroupConversation && groupChatId && showGroupSummary && (
+        <GroupSummaryModal
+          open
+          groupChatId={groupChatId}
+          groupSubject={groupSubject}
+          initial={groupChat?.summary ?? null}
+          onClose={() => setShowGroupSummary(false)}
+        />
+      )}
+
+      {/* Grupo: membros da sala + o contato de um membro, sobrepostos */}
+      {isGroupConversation && groupChatId && (
+        <GroupMembersPanel
+          // `key` por sala: sem ela a busca e a seleção vazavam de um grupo
+          // para outro ("3 selecionado(s)" sem nada marcado).
+          key={groupChatId}
+          open={showMembersPanel}
+          groupChatId={groupChatId}
+          organizationId={organizationId}
+          onClose={() => setShowMembersPanel(false)}
+          onOpenContact={(contactId) => setMemberContactId(contactId)}
+          {...(canManageCampaigns
+            ? { onDispatchSelected: (phones: string[]) => dispatchToGroupMembers("manual", phones) }
+            : {})}
+        />
+      )}
+      {/* Montado DEPOIS do painel de membros para ficar por cima (v0.48). */}
+      {memberContactId && (
+        <ContactDetailPanel
+          contactId={memberContactId}
+          onClose={() => setMemberContactId(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmGroupAction === "unmonitor"}
+        onClose={() => setConfirmGroupAction(null)}
+        onConfirm={() => {
+          setConfirmGroupAction(null);
+          void handleStopMonitoring();
+        }}
+        title={`Parar de acompanhar '${groupSubject}'?`}
+        description="O CRM deixa de receber as mensagens desta sala e a conversa é arquivada. O histórico já ingerido continua aqui, e dá para voltar a acompanhar depois."
+        confirmLabel="Parar de acompanhar"
+      />
+      <ConfirmDialog
+        open={confirmGroupAction === "leave"}
+        onClose={() => setConfirmGroupAction(null)}
+        onConfirm={() => {
+          setConfirmGroupAction(null);
+          void handleLeaveGroup();
+        }}
+        title={`Sair de '${groupSubject}'?`}
+        description="O número sai do grupo de verdade, no WhatsApp — os membros veem a saída. Voltar exige um convite novo. Esta ação é registrada na auditoria."
+        confirmLabel="Sair do grupo"
+        variant="danger"
+      />
     </div>
   );
 }

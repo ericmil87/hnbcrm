@@ -45,6 +45,7 @@ import { toDataUri } from "./lib/bridgeMedia";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
 import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
+import { getLeadRef } from "./lib/leadRef";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -300,7 +301,7 @@ export const internalGetDispatchContext = internalQuery({
     // never resolve different configs for the same conversation (v4.1 DIFF 3).
     const config = await resolveConversationChannelConfig(ctx, conversation);
 
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
 
     // Latest inbound wamid — used for the mark-as-read receipt
@@ -310,6 +311,35 @@ export const internalGetDispatchContext = internalQuery({
       .order("desc")
       .take(50);
     const latestInbound = recent.find((m) => m.direction === "inbound" && m.externalId);
+
+    // GRUPO (v0.57): o destino é o JID da sala. Este é o ÚNICO ponto onde
+    // `toPhone` nasce, então a bifurcação aqui cobre texto, mídia, reação,
+    // presença e recibo — nenhum outro caminho precisa saber de grupo.
+    const isGroup = conversation.kind === "group";
+    const toPhone = isGroup
+      ? conversation.externalChatId ?? null
+      : contact?.whatsappNumber ?? contact?.phone ?? null;
+
+    // Quote dentro de um grupo EXIGE o JID do autor da mensagem citada — sem
+    // ele o WhatsApp não renderiza a resposta. O autor sai da própria mensagem
+    // citada (`senderLid`/`senderPhone`), nunca do destino: `${toPhone}@s.whatsapp.net`
+    // com um JID de grupo produziria "1203…@s.whatsapp.net", que não existe.
+    let quoteParticipantJid: string | null = null;
+    if (isGroup) {
+      const quotedExternalId = (message.metadata?.quoted as { externalId?: string } | undefined)
+        ?.externalId;
+      if (quotedExternalId) {
+        const quotedTarget = await ctx.db
+          .query("messages")
+          .withIndex("by_organization_and_external_id", (q) =>
+            q.eq("organizationId", message.organizationId).eq("externalId", quotedExternalId)
+          )
+          .first();
+        quoteParticipantJid =
+          quotedTarget?.senderLid ??
+          (quotedTarget?.senderPhone ? `${quotedTarget.senderPhone}@s.whatsapp.net` : null);
+      }
+    }
 
     const attachmentFiles = message.attachments
       ? (await Promise.all(message.attachments.map((id) => ctx.db.get(id)))).filter(
@@ -321,7 +351,9 @@ export const internalGetDispatchContext = internalQuery({
       message,
       conversation,
       config,
-      toPhone: contact?.whatsappNumber ?? contact?.phone ?? null,
+      toPhone,
+      isGroup,
+      quoteParticipantJid,
       latestInboundExternalId: latestInbound?.externalId ?? null,
       attachmentFiles,
     };
@@ -391,6 +423,10 @@ async function dispatchViaBridge(
     toPhone: string | null;
     attachmentFiles: any[];
     typingDelayMs?: number;
+    // Grupo (v0.57): `toPhone` é o JID "…@g.us" e o quote precisa do JID do
+    // AUTOR da mensagem citada, resolvido no contexto de dispatch.
+    isGroup?: boolean;
+    quoteParticipantJid?: string | null;
   }
 ): Promise<void> {
   const { messageId, message, config, toPhone, attachmentFiles } = args;
@@ -463,12 +499,28 @@ async function dispatchViaBridge(
   const quotedMeta = message.metadata?.quoted as
     | { externalId?: string; fromMe?: boolean }
     | undefined;
+  // Em grupo o participante é SEMPRE necessário (inclusive citando a gente
+  // mesmo) e vem do autor da mensagem citada. Em 1:1 o wuzapi infere o
+  // participante quando a citada é nossa; só a do contato precisa do JID.
+  const quoteParticipant = args.isGroup
+    ? args.quoteParticipantJid ?? undefined
+    : quotedMeta?.fromMe
+      ? undefined
+      : `${toPhone}@s.whatsapp.net`;
   const quote: BridgeQuote | undefined = quotedMeta?.externalId
     ? {
         stanzaId: quotedMeta.externalId,
-        ...(quotedMeta.fromMe ? {} : { participant: `${toPhone}@s.whatsapp.net` }),
+        ...(quoteParticipant ? { participant: quoteParticipant } : {}),
       }
     : undefined;
+
+  // Menções (`@fulano`): os JIDs vêm da composição no app e viram
+  // `ContextInfo.MentionedJID`. Sem isto o texto mostra o "@" mas o WhatsApp
+  // não destaca nem notifica ninguém.
+  const mentions: string[] | undefined =
+    Array.isArray(message.mentions) && message.mentions.length > 0
+      ? (message.mentions as string[])
+      : undefined;
 
   // Media message → upload the FIRST attachment via the matching /chat/send/*
   // endpoint. A media contentType with no attachment is a malformed message.
@@ -530,6 +582,7 @@ async function dispatchViaBridge(
       caption: captionFor(message.content),
       filename: file.name,
       quote,
+      mentions,
     });
     // The bridge sends one attachment per message; note any extras we skip.
     if (attachmentFiles.length > 1) {
@@ -544,6 +597,7 @@ async function dispatchViaBridge(
       toPhone,
       body: message.content,
       quote,
+      mentions,
     });
   }
 
@@ -619,6 +673,7 @@ async function dispatchMessage(
   if (!context) return null;
 
   const { message, config, toPhone, latestInboundExternalId, attachmentFiles } = context;
+  const isGroup: boolean = context.isGroup === true;
 
   // Already dispatched (redelivery / duplicate scheduling)
   if (message.externalId || message.deliveryStatus) return null;
@@ -641,6 +696,21 @@ async function dispatchMessage(
       toPhone,
       attachmentFiles,
       typingDelayMs: args.typingDelayMs,
+      isGroup,
+      quoteParticipantJid: context.quoteParticipantJid ?? null,
+    });
+    return null;
+  }
+
+  // Grupos só existem no bridge na v1. A Meta Groups API tem contrato próprio
+  // (`recipient_type: "group"`, grupo criado PELO negócio, máx. 8 pessoas) e
+  // fica para a fase oficial — mandar pelo caminho 1:1 tentaria enviar para um
+  // "telefone" que é o id da sala.
+  if (isGroup) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail:
+        "Conversa de grupo só pode ser enviada pelo canal bridge — a API oficial da Meta ainda não está disponível para grupos neste CRM",
     });
     return null;
   }
@@ -863,15 +933,17 @@ export const internalMarkDispatchFailed = internalMutation({
       },
     });
 
-    await ctx.db.insert("activities", {
-      organizationId: message.organizationId,
-      leadId: message.leadId,
-      type: "note",
-      actorType: "system",
-      content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
-      metadata: { conversationId: message.conversationId, messageId: args.messageId },
-      createdAt: Date.now(),
-    });
+    if (message.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: message.organizationId,
+        leadId: message.leadId,
+        type: "note",
+        actorType: "system",
+        content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
+        metadata: { conversationId: message.conversationId, messageId: args.messageId },
+        createdAt: Date.now(),
+      });
+    }
     // Campanhas: mapa de erros (131049 retry 24h, 131050 opt-out, 131048/132015 pausa…)
     await applyCampaignDeliveryUpdate(ctx, {
       messageId: args.messageId,
@@ -976,7 +1048,7 @@ export const internalFreezeChannelPacing = internalMutation({
       });
     }
 
-    if (!recentlyFrozen) {
+    if (!recentlyFrozen && message.leadId) {
       await ctx.db.insert("activities", {
         organizationId: message.organizationId,
         leadId: message.leadId,
@@ -1054,7 +1126,11 @@ export const internalDispatchReaction = internalAction({
 export const internalBridgeMarkRead = internalAction({
   args: {
     configId: v.id("channelConfigs"),
+    // Em grupo é o JID da sala ("…@g.us").
     chatPhone: v.string(),
+    // Em grupo é OBRIGATÓRIO na prática: o autor das mensagens lidas. Em 1:1
+    // fica ausente e o builder usa o próprio `chatPhone`.
+    senderPhone: v.optional(v.string()),
     externalIds: v.array(v.string()),
   },
   returns: v.null(),
@@ -1072,6 +1148,7 @@ export const internalBridgeMarkRead = internalAction({
         token,
         ids: args.externalIds,
         chatPhone: args.chatPhone,
+        ...(args.senderPhone ? { senderPhone: args.senderPhone } : {}),
       });
       await fetch(request.url, { method: "POST", headers: request.headers, body: request.body });
     } catch (e) {

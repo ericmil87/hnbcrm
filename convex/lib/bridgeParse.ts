@@ -39,6 +39,10 @@ export interface ParsedBridgeInbound {
 export interface ParsedBridgeReceipt {
   status: "delivered" | "read" | "failed";
   externalIds: string[]; // whatsmeow message IDs this receipt refers to
+  // Preenchidos SÓ em recibo de grupo: o JID da sala e quem confirmou. Num
+  // grupo o recibo chega uma vez por membro, então `readBy` precisa saber quem.
+  chatJid?: string;
+  readerJid?: string;
 }
 
 /** A quoted/replied-to message reference lifted from a whatsmeow ContextInfo. */
@@ -63,11 +67,86 @@ export interface ParsedBridgePresence {
   state: "composing" | "paused";
 }
 
+// ── Grupos (v0.57) ──
+//
+// Um grupo NÃO é um contato: o parser nunca tenta virar `@g.us` em telefone
+// (`jidToPhone` devolveria o id numérico da sala como se fosse um MSISDN). O
+// autor é um MEMBRO, identificado pelo LID (`Info.Sender` no modo "lid") e/ou
+// pelo telefone (`Info.SenderAlt`). O nome só existe no `PushName`.
+
+/** Uma mensagem dentro de um grupo monitorado (ou não — quem filtra é o ingest). */
+export interface ParsedBridgeGroupMessage {
+  chatJid: string; // "1203…@g.us"
+  externalId: string;
+  fromMe: boolean;
+  senderLid?: string; // "…@lid" — chave estável do membro
+  senderPhone?: string; // dígitos, quando o evento expõe o MSISDN
+  senderName?: string; // PushName (undefined quando fromMe — o nome seria o nosso)
+  timestamp: number;
+  contentType: "text" | "image" | "file" | "audio";
+  content: string;
+  media?: ParsedBridgeMedia;
+  mentions?: string[]; // ContextInfo.MentionedJID, como veio (LID ou telefone)
+  quote?: { stanzaId: string; participant?: string };
+  metadata: Record<string, unknown>;
+}
+
+/** Reação de um membro a uma mensagem do grupo. */
+export interface ParsedBridgeGroupReaction {
+  chatJid: string;
+  targetExternalId: string;
+  emoji: string; // "" = reação removida
+  senderLid?: string;
+  senderPhone?: string;
+  senderName?: string;
+  timestamp: number;
+}
+
+/** whatsmeow `GroupInfo`: alguma coisa mudou num grupo em que estamos. */
+export interface ParsedBridgeGroupInfoEvent {
+  jid: string;
+  actorJid?: string; // quem fez a mudança (Sender)
+  timestamp: number;
+  name?: string;
+  topic?: string;
+  isLocked?: boolean;
+  isAnnounce?: boolean;
+  join: string[];
+  leave: string[];
+  promote: string[];
+  demote: string[];
+  joinReason?: string;
+  newInviteLink?: string;
+}
+
+/** whatsmeow `JoinedGroup`: nós entramos (ou fomos adicionados). */
+export interface ParsedBridgeJoinedGroup {
+  jid: string;
+  reason?: string;
+  type?: string; // "new" quando o grupo acabou de ser criado
+  timestamp: number;
+  /** O `GroupInfo` embutido, cru — normalizado por `lib/bridgeGroups.ts`. */
+  groupInfoRaw: Record<string, unknown>;
+}
+
+/** Alguém digitando dentro de um grupo. */
+export interface ParsedBridgeGroupPresence {
+  chatJid: string;
+  senderLid?: string;
+  senderPhone?: string;
+  state: "composing" | "paused";
+}
+
 export type ParsedBridgeEvent =
   | { kind: "message"; message: ParsedBridgeInbound }
   | { kind: "receipt"; receipt: ParsedBridgeReceipt }
   | { kind: "reaction"; reaction: ParsedBridgeReaction }
   | { kind: "chat_presence"; presence: ParsedBridgePresence }
+  | { kind: "group_message"; message: ParsedBridgeGroupMessage }
+  | { kind: "group_reaction"; reaction: ParsedBridgeGroupReaction }
+  | { kind: "group_info"; info: ParsedBridgeGroupInfoEvent }
+  | { kind: "joined_group"; joined: ParsedBridgeJoinedGroup }
+  | { kind: "group_presence"; presence: ParsedBridgeGroupPresence }
   | { kind: "ignored"; reason: string };
 
 /** First defined value among the given keys (tolerates casing differences). */
@@ -193,6 +272,30 @@ function quotedFrom(node: Record<string, any> | undefined): ParsedBridgeQuoted |
   };
 }
 
+/**
+ * O nó ContextInfo da mensagem, venha ele do texto estendido ou de uma mídia.
+ * É onde moram menções (`mentionedJid`), quote (`stanzaId`/`participant`) e o
+ * `expiration` das mensagens temporárias.
+ */
+function contextInfoOf(waMsg: Record<string, any>): Record<string, any> | undefined {
+  const node =
+    pick(waMsg, "extendedTextMessage", "ExtendedTextMessage") ??
+    pick(waMsg, "imageMessage", "ImageMessage") ??
+    pick(waMsg, "stickerMessage", "StickerMessage") ??
+    pick(waMsg, "audioMessage", "AudioMessage") ??
+    pick(waMsg, "videoMessage", "VideoMessage") ??
+    pick(waMsg, "documentMessage", "DocumentMessage");
+  const ci = pick(node, "contextInfo", "ContextInfo");
+  return ci && typeof ci === "object" ? (ci as Record<string, any>) : undefined;
+}
+
+/** JIDs mencionados na mensagem (podem vir em LID ou em telefone). */
+function mentionsFrom(ci: Record<string, any> | undefined): string[] {
+  const raw = pick(ci, "mentionedJid", "mentionedJID", "MentionedJID", "MentionedJid");
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((j): j is string => typeof j === "string" && j.length > 0);
+}
+
 /** Map a decrypted whatsmeow waE2E.Message to our content shape. */
 function extractContent(waMsg: Record<string, any>): ExtractedContent {
   const conversation = pick(waMsg, "conversation", "Conversation");
@@ -309,14 +412,16 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
 
   const chatJid = String(pick(info, "Chat", "chat") ?? "");
   const senderJid = String(pick(info, "Sender", "sender") ?? "");
-  // Ignore group messages for now (plan U2 scope)
+  // Grupo tem caminho PRÓPRIO desde a v0.57: o chat é uma sala (`@g.us`, que
+  // `jidToPhone` transformaria num MSISDN falso) e o autor é um membro. Quem
+  // decide ingerir ou descartar é o ingest, que sabe se o grupo é monitorado.
   if (
     info.IsGroup === true ||
     info.isGroup === true ||
     chatJid.endsWith("@g.us") ||
     senderJid.endsWith("@g.us")
   ) {
-    return { kind: "ignored", reason: "group" };
+    return parseGroupMessage(info, waMsg, chatJid, senderJid, fromMe);
   }
 
   const externalId = pick(info, "ID", "Id", "id");
@@ -389,6 +494,224 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
 }
 
 /**
+ * Mensagem dentro de um grupo (`Info.IsGroup`), incluindo reação de membro.
+ *
+ * Identidade do autor, medida no gateway real (16/09/2026, modo `lid`):
+ *  - `Info.Sender` = "…@lid" (id de privacidade, NÃO é telefone);
+ *  - `Info.SenderAlt` = "5581…@s.whatsapp.net" (o MSISDN);
+ *  - em grupo modo `pn` os dois papéis se invertem, então olhamos o SUFIXO de
+ *    cada JID em vez de confiar na posição.
+ *
+ * `PushName` é do membro que falou — a ÚNICA fonte de nome (o gateway devolve
+ * `DisplayName` vazio em `/group/info`). Quando a mensagem é nossa (`fromMe`) o
+ * PushName é o NOSSO, então é descartado, mesma regra do 1:1.
+ */
+function parseGroupMessage(
+  info: Record<string, any>,
+  waMsg: Record<string, any>,
+  chatJid: string,
+  senderJid: string,
+  fromMe: boolean
+): ParsedBridgeEvent {
+  if (!chatJid.endsWith("@g.us")) {
+    // `IsGroup` sem um chat `@g.us`: payload inconsistente — não inventar sala.
+    return { kind: "ignored", reason: "group event without group chat jid" };
+  }
+  const externalId = strUndef(pick(info, "ID", "Id", "id"));
+  if (!externalId) return { kind: "ignored", reason: "group message without id" };
+
+  const senderAltJid = String(pick(info, "SenderAlt", "senderAlt") ?? "");
+  const senderCandidates = [senderJid, senderAltJid].filter((j) => j && !j.endsWith("@g.us"));
+  const senderLid = senderCandidates.find((j) => isLidJid(j));
+  const phoneJid = senderCandidates.find((j) => !isLidJid(j));
+  const senderPhone = phoneJid ? jidToPhone(phoneJid) ?? undefined : undefined;
+  const senderName = fromMe ? undefined : strUndef(pick(info, "PushName", "pushName"));
+  const timestamp = parseTimestamp(pick(info, "Timestamp", "timestamp"));
+
+  // Reação: não é mensagem — o ingest usa para patchar a mensagem alvo.
+  const reactionNode = pick(waMsg, "reactionMessage", "ReactionMessage");
+  if (reactionNode) {
+    // A NOSSA reação fica fora: o ingest grava reação com autoria de membro, e
+    // deixar passar atribuiria a um participante um emoji que fomos nós que pusemos.
+    if (fromMe) return { kind: "ignored", reason: "group reaction fromMe" };
+    const parsedReaction = reactionFrom(reactionNode);
+    if (!parsedReaction) return { kind: "ignored", reason: "group reaction without target id" };
+    return {
+      kind: "group_reaction",
+      reaction: {
+        chatJid,
+        targetExternalId: parsedReaction.targetExternalId,
+        emoji: parsedReaction.emoji,
+        ...(senderLid ? { senderLid } : {}),
+        ...(senderPhone ? { senderPhone } : {}),
+        ...(senderName ? { senderName } : {}),
+        timestamp,
+      },
+    };
+  }
+
+  const extracted = extractContent(waMsg);
+  const ci = contextInfoOf(waMsg);
+  const mentions = mentionsFrom(ci);
+  const stanzaId = strUndef(pick(ci, "stanzaId", "stanzaID", "StanzaID", "StanzaId"));
+  // Em grupo o quote SÓ renderiza com o JID do autor da mensagem citada.
+  const quoteParticipant = strUndef(pick(ci, "participant", "Participant"));
+
+  return {
+    kind: "group_message",
+    message: {
+      chatJid,
+      externalId,
+      fromMe,
+      ...(senderLid ? { senderLid } : {}),
+      ...(senderPhone ? { senderPhone } : {}),
+      ...(senderName ? { senderName } : {}),
+      timestamp,
+      contentType: extracted.contentType,
+      content: extracted.content,
+      ...(extracted.media ? { media: extracted.media } : {}),
+      ...(mentions.length > 0 ? { mentions } : {}),
+      ...(stanzaId
+        ? { quote: { stanzaId, ...(quoteParticipant ? { participant: quoteParticipant } : {}) } }
+        : {}),
+      metadata: extracted.metadataExtra,
+    },
+  };
+}
+
+/**
+ * Teto de itens de UMA lista do evento `GroupInfo`.
+ *
+ * Cada entrada custa um `mergeParticipant` LINEAR sobre a lista guardada e uma
+ * linha na timeline, dentro de UMA mutation. Um evento com milhares de entradas
+ * faria trabalho quadrático e estouraria a transação. O HMAC prova que o payload
+ * veio do gateway — não que o gateway está íntegro nem que o whatsmeow não vai
+ * emitir um evento patológico (review de segurança nº 7). O valor é o mesmo
+ * `GROUP_PARTICIPANTS_CAP` do núcleo (limite estrutural do WhatsApp); duplicado
+ * aqui porque o parser é PURO e não importa nada de `lib/groupChatCore`.
+ */
+const GROUP_EVENT_JID_CAP = 1024;
+
+/** Lista de JIDs de um campo do evento GroupInfo (Join/Leave/Promote/Demote). */
+function jidList(event: Record<string, any>, ...keys: string[]): string[] {
+  const raw = pick(event, ...keys);
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (out.length >= GROUP_EVENT_JID_CAP) break;
+    if (typeof item === "string" && item.length > 0) out.push(item);
+    // whatsmeow serializa types.JID como string, mas uma variante em objeto
+    // ({User, Server}) já apareceu em forks — aceitar não custa nada.
+    else if (item && typeof item === "object") {
+      const user = strUndef(pick(item as Record<string, any>, "User", "user"));
+      const server = strUndef(pick(item as Record<string, any>, "Server", "server"));
+      if (user) out.push(server ? `${user}@${server}` : user);
+    }
+  }
+  return out;
+}
+
+/**
+ * whatsmeow `GroupInfo` — mudou nome/tópico/config, ou entrou/saiu/foi
+ * promovido alguém. `Name`/`Topic` são structs aninhadas (`{Name: "..."}`),
+ * e vêm AUSENTES quando não foi isso que mudou: só patcha o que veio.
+ *
+ * FIXTURE SINTÉTICA: montada a partir das structs do whatsmeow
+ * (`types/events.GroupInfo`) — este evento ainda não foi capturado do gateway
+ * real (a assinatura só passa a incluí-lo a partir desta versão).
+ */
+function parseGroupInfoEvent(event: Record<string, any>): ParsedBridgeEvent {
+  const jid = strUndef(pick(event, "JID", "jid"));
+  if (!jid || !jid.endsWith("@g.us")) {
+    return { kind: "ignored", reason: "group info without group jid" };
+  }
+  const nameNode = pick(event, "Name", "name");
+  const topicNode = pick(event, "Topic", "topic");
+  const lockedNode = pick(event, "Locked", "locked");
+  const announceNode = pick(event, "Announce", "announce");
+
+  const name =
+    typeof nameNode === "string"
+      ? strUndef(nameNode)
+      : strUndef(pick(nameNode, "Name", "name"));
+  const topic =
+    typeof topicNode === "string"
+      ? topicNode
+      : typeof pick(topicNode, "Topic", "topic") === "string"
+        ? (pick(topicNode, "Topic", "topic") as string)
+        : undefined;
+  const isLocked =
+    typeof lockedNode === "boolean"
+      ? lockedNode
+      : typeof pick(lockedNode, "IsLocked", "isLocked") === "boolean"
+        ? (pick(lockedNode, "IsLocked", "isLocked") as boolean)
+        : undefined;
+  const isAnnounce =
+    typeof announceNode === "boolean"
+      ? announceNode
+      : typeof pick(announceNode, "IsAnnounce", "isAnnounce") === "boolean"
+        ? (pick(announceNode, "IsAnnounce", "isAnnounce") as boolean)
+        : undefined;
+
+  return {
+    kind: "group_info",
+    info: {
+      jid,
+      ...(strUndef(pick(event, "Sender", "sender"))
+        ? { actorJid: strUndef(pick(event, "Sender", "sender")) }
+        : {}),
+      timestamp: parseTimestamp(pick(event, "Timestamp", "timestamp")),
+      ...(name !== undefined ? { name } : {}),
+      ...(topic !== undefined ? { topic } : {}),
+      ...(isLocked !== undefined ? { isLocked } : {}),
+      ...(isAnnounce !== undefined ? { isAnnounce } : {}),
+      join: jidList(event, "Join", "join"),
+      leave: jidList(event, "Leave", "leave"),
+      promote: jidList(event, "Promote", "promote"),
+      demote: jidList(event, "Demote", "demote"),
+      ...(strUndef(pick(event, "JoinReason", "joinReason"))
+        ? { joinReason: strUndef(pick(event, "JoinReason", "joinReason")) }
+        : {}),
+      ...(strUndef(pick(event, "NewInviteLink", "newInviteLink"))
+        ? { newInviteLink: strUndef(pick(event, "NewInviteLink", "newInviteLink")) }
+        : {}),
+    },
+  };
+}
+
+/**
+ * whatsmeow `JoinedGroup` — entramos num grupo (ou fomos adicionados). O
+ * `GroupInfo` completo vem EMBUTIDO (mesma struct de `/group/info`), então o
+ * corpo cru segue para `lib/bridgeGroups.parseGroupInfoStruct`, que é a
+ * referência única de normalização de grupo.
+ *
+ * FIXTURE SINTÉTICA — mesma ressalva de `parseGroupInfoEvent`.
+ */
+function parseJoinedGroupEvent(event: Record<string, any>): ParsedBridgeEvent {
+  // O struct do grupo pode estar embutido (campos no topo) ou aninhado.
+  const nested = pick(event, "GroupInfo", "groupInfo");
+  const groupRaw = (nested && typeof nested === "object" ? nested : event) as Record<string, any>;
+  const jid = strUndef(pick(groupRaw, "JID", "jid"));
+  if (!jid || !jid.endsWith("@g.us")) {
+    return { kind: "ignored", reason: "joined group without group jid" };
+  }
+  return {
+    kind: "joined_group",
+    joined: {
+      jid,
+      ...(strUndef(pick(event, "Reason", "reason"))
+        ? { reason: strUndef(pick(event, "Reason", "reason")) }
+        : {}),
+      ...(strUndef(pick(event, "Type", "type"))
+        ? { type: strUndef(pick(event, "Type", "type")) }
+        : {}),
+      timestamp: parseTimestamp(pick(groupRaw, "GroupCreated", "groupCreated")),
+      groupInfoRaw: groupRaw,
+    },
+  };
+}
+
+/**
  * Map whatsmeow ReceiptType → our deliveryStatus union (schema: sent | delivered
  * | read | failed). Receipt types confirmed against the real gateway in the
  * 2026-07-19 pilot.
@@ -416,9 +739,19 @@ function mapReceiptType(t: string): "delivered" | "read" | "failed" | null {
 }
 
 function parseReceipt(event: Record<string, any>): ParsedBridgeEvent {
+  const chatJid = String(pick(event, "Chat", "chat") ?? "");
+  const isGroup =
+    pick(event, "IsGroup", "isGroup") === true || chatJid.endsWith("@g.us");
+
   // A receipt about our sent message comes FROM the recipient (IsFromMe false).
   // An IsFromMe receipt would be our own read on another device — ignore it.
-  if (event?.IsFromMe === true || event?.isFromMe === true) {
+  //
+  // EXCEÇÃO DE GRUPO: num recibo de grupo o `Sender` do evento é a NOSSA conta
+  // (somos o dono da mensagem confirmada) e quem leu vem em `MessageSender`,
+  // então `IsFromMe` vem true no caminho normal. Aplicar o descarte aqui
+  // mataria TODO recibo de grupo. A leitura do próprio aparelho continua fora
+  // por outro caminho: `read-self`/`played-self` não mapeiam para status algum.
+  if (!isGroup && (event?.IsFromMe === true || event?.isFromMe === true)) {
     return { kind: "ignored", reason: "receipt fromMe" };
   }
   const ids = pick(event, "MessageIDs", "MessageIds", "messageIds", "IDs", "Ids");
@@ -430,7 +763,25 @@ function parseReceipt(event: Record<string, any>): ParsedBridgeEvent {
   if (!status || externalIds.length === 0) {
     return { kind: "ignored", reason: "receipt without mappable status/ids" };
   }
-  return { kind: "receipt", receipt: { status, externalIds } };
+  if (!isGroup) return { kind: "receipt", receipt: { status, externalIds } };
+
+  // Quem confirmou: `MessageSender` é o campo documentado; `Sender`/`Participant`
+  // ficam como reserva defensiva (a sala nunca serve de leitor).
+  const readerJid = [
+    strUndef(pick(event, "MessageSender", "messageSender")),
+    strUndef(pick(event, "Participant", "participant")),
+    strUndef(pick(event, "Sender", "sender")),
+  ].find((j) => j !== undefined && !j.endsWith("@g.us"));
+
+  return {
+    kind: "receipt",
+    receipt: {
+      status,
+      externalIds,
+      chatJid,
+      ...(readerJid ? { readerJid } : {}),
+    },
+  };
 }
 
 /**
@@ -467,6 +818,8 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   const t = (type ?? "").toLowerCase();
   if (t.includes("receipt") || t === "ack") return parseReceipt(event);
   if (t === "chatpresence" || t === "chat_presence") return parseChatPresence(event);
+  if (t === "groupinfo" || t === "group_info") return parseGroupInfoEvent(event);
+  if (t === "joinedgroup" || t === "joined_group") return parseJoinedGroupEvent(event);
   if (
     t === "message" ||
     pick(event, "Info", "info") !== undefined ||
@@ -480,22 +833,42 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
 
 /**
  * whatsmeow ChatPresence: { Chat, Sender, IsFromMe, IsGroup, State, Media }.
- * Só interessa "digitando/parou" de contato em chat 1:1 — self/grupo é ignorado.
+ * Chat 1:1 → "digitando/parou" do contato. Grupo → quem digita é um MEMBRO
+ * (`group_presence`, com LID/telefone em vez do telefone do chat). Presença do
+ * nosso próprio aparelho é descartada nos dois casos.
  */
 function parseChatPresence(event: Record<string, any>): ParsedBridgeEvent {
   const chatJid = String(pick(event, "Chat", "chat") ?? "");
   const senderJid = String(pick(event, "Sender", "sender") ?? "");
-  if (
-    pick(event, "IsFromMe", "isFromMe") === true ||
-    pick(event, "IsGroup", "isGroup") === true ||
-    chatJid.endsWith("@g.us") ||
-    senderJid.endsWith("@g.us")
-  ) {
-    return { kind: "ignored", reason: "presence from self/group" };
-  }
+  const fromMe = pick(event, "IsFromMe", "isFromMe") === true;
   const rawState = String(pick(event, "State", "state") ?? "").toLowerCase();
   const state =
     rawState === "composing" ? "composing" : rawState === "paused" ? "paused" : null;
+
+  const isGroup = pick(event, "IsGroup", "isGroup") === true || chatJid.endsWith("@g.us");
+  if (isGroup) {
+    if (fromMe) return { kind: "ignored", reason: "group presence from self" };
+    if (!state || !chatJid.endsWith("@g.us")) {
+      return { kind: "ignored", reason: "group presence without state/chat" };
+    }
+    const senderAltJid = String(pick(event, "SenderAlt", "senderAlt") ?? "");
+    const candidates = [senderJid, senderAltJid].filter((j) => j && !j.endsWith("@g.us"));
+    const senderLid = candidates.find((j) => isLidJid(j));
+    const phoneJid = candidates.find((j) => !isLidJid(j));
+    return {
+      kind: "group_presence",
+      presence: {
+        chatJid,
+        ...(senderLid ? { senderLid } : {}),
+        ...(phoneJid && jidToPhone(phoneJid) ? { senderPhone: jidToPhone(phoneJid)! } : {}),
+        state,
+      },
+    };
+  }
+
+  if (fromMe || senderJid.endsWith("@g.us")) {
+    return { kind: "ignored", reason: "presence from self/group" };
+  }
   const phone = jidToPhone(senderJid) ?? jidToPhone(chatJid);
   if (!state || !phone) return { kind: "ignored", reason: "presence without state/phone" };
   return { kind: "chat_presence", presence: { phone, state } };

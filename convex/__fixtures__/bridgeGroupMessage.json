@@ -1,0 +1,75 @@
+{
+ "Info": {
+  "Chat": "120363431849092219@g.us",
+  "Sender": "180002129735765@lid",
+  "IsFromMe": false,
+  "IsGroup": true,
+  "AddressingMode": "lid",
+  "SenderAlt": "558181392929@s.whatsapp.net",
+  "RecipientAlt": "",
+  "BroadcastListOwner": "",
+  "BroadcastRecipients": null,
+  "ID": "2A38BE827E5EFDAC743C",
+  "ServerID": 0,
+  "Type": "text",
+  "PushName": "Eric Milfont",
+  "Timestamp": "2026-09-16T18:04:41-03:00",
+  "Category": "",
+  "Multicast": false,
+  "MediaType": "",
+  "Edit": "",
+  "MsgBotInfo": {
+   "EditType": "",
+   "EditTargetID": "",
+   "EditSenderTimestampMS": "0001-01-01T00:00:00Z"
+  },
+  "MsgMetaInfo": {
+   "TargetID": "",
+   "TargetSender": "",
+   "TargetChat": "",
+   "DeprecatedLIDSession": null,
+   "ThreadMessageID": "",
+   "ThreadMessageSenderJID": ""
+  },
+  "VerifiedName": null,
+  "DeviceSentMeta": null
+ },
+ "Message": {
+  "extendedTextMessage": {
+   "text": "ola tudo bem? a palavra é pernambucana",
+   "contextInfo": {
+    "expiration": 7776000,
+    "disappearingMode": {
+     "initiator": 2,
+     "trigger": 2,
+     "initiatedByMe": false
+    }
+   }
+  }
+ },
+ "IsEphemeral": false,
+ "IsViewOnce": false,
+ "IsViewOnceV2": false,
+ "IsViewOnceV2Extension": false,
+ "IsDocumentWithCaption": false,
+ "IsLottieSticker": false,
+ "IsBotInvoke": false,
+ "IsEdit": false,
+ "SourceWebMsg": null,
+ "UnavailableRequestID": "",
+ "RetryCount": 0,
+ "NewsletterMeta": null,
+ "RawMessage": {
+  "extendedTextMessage": {
+   "text": "ola tudo bem? a palavra é pernambucana",
+   "contextInfo": {
+    "expiration": 7776000,
+    "disappearingMode": {
+     "initiator": 2,
+     "trigger": 2,
+     "initiatedByMe": false
+    }
+   }
+  }
+ }
+}

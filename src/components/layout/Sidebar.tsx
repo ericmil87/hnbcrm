@@ -20,6 +20,7 @@ import {
   Settings,
   LogOut,
   Megaphone,
+  Users2,
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
@@ -44,6 +45,7 @@ const navItems: NavItem[] = [
   { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
+  { id: "groups", label: "Grupos", icon: Users2, permission: { category: "inbox", level: "view_own" } },
   { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
 ];
 

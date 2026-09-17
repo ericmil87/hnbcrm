@@ -37,12 +37,22 @@ export interface BridgeQuote {
   participant?: string;
 }
 
-/** Build the wuzapi `ContextInfo` object from a quote (omitting empty fields). */
-function contextInfoFor(quote: BridgeQuote | undefined): Record<string, unknown> | undefined {
-  if (!quote || !quote.stanzaId) return undefined;
-  const ctx: Record<string, unknown> = { StanzaId: quote.stanzaId };
-  if (quote.participant && quote.participant.length > 0) ctx.Participant = quote.participant;
-  return ctx;
+/**
+ * Build the wuzapi `ContextInfo` object from a quote and/or mentions (omitting
+ * empty fields). `MentionedJID` é o que faz o WhatsApp destacar o "@fulano" e
+ * notificar a pessoa — sem ele o texto sai com o arroba e mais nada.
+ */
+function contextInfoFor(
+  quote: BridgeQuote | undefined,
+  mentions?: string[]
+): Record<string, unknown> | undefined {
+  const ctx: Record<string, unknown> = {};
+  if (quote && quote.stanzaId) {
+    ctx.StanzaId = quote.stanzaId;
+    if (quote.participant && quote.participant.length > 0) ctx.Participant = quote.participant;
+  }
+  if (mentions && mentions.length > 0) ctx.MentionedJID = mentions;
+  return Object.keys(ctx).length > 0 ? ctx : undefined;
 }
 
 /**
@@ -59,13 +69,16 @@ function contextInfoFor(quote: BridgeQuote | undefined): Record<string, unknown>
 export function buildBridgeTextSendRequest(params: {
   baseUrl: string;
   token: string;
+  // Em grupo é o JID completo da sala ("1203…@g.us"): o `parseJID` do wuzapi
+  // aceita JID inteiro quando tem "@", então o mesmo endpoint serve aos dois.
   toPhone: string;
   body: string;
   quote?: BridgeQuote;
+  mentions?: string[];
 }): BridgeSendRequest {
   const base = params.baseUrl.replace(/\/+$/, "");
   const body: Record<string, unknown> = { Phone: params.toPhone, Body: params.body };
-  const contextInfo = contextInfoFor(params.quote);
+  const contextInfo = contextInfoFor(params.quote, params.mentions);
   if (contextInfo) body.ContextInfo = contextInfo;
   return {
     url: `${base}/chat/send/text`,
@@ -208,6 +221,7 @@ export function buildBridgeMediaSendRequest(params: {
   caption?: string;
   filename?: string;
   quote?: BridgeQuote;
+  mentions?: string[];
 }): BridgeSendRequest {
   const base = params.baseUrl.replace(/\/+$/, "");
   const { path, field } = MEDIA_ENDPOINT[params.kind];
@@ -224,7 +238,7 @@ export function buildBridgeMediaSendRequest(params: {
     body.FileName = params.filename;
   }
   // VALIDAR: media endpoints accept ContextInfo for quoted replies just like /chat/send/text.
-  const contextInfo = contextInfoFor(params.quote);
+  const contextInfo = contextInfoFor(params.quote, params.mentions);
   if (contextInfo) body.ContextInfo = contextInfo;
 
   return {

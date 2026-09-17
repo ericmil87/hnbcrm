@@ -17,6 +17,12 @@ const DEFAULTS = {
   aiDraftPending: true,
   campaignCompleted: true,
   campaignPaused: true,
+  groupJoined: true,
+  groupMention: true,
+  groupPostPending: true,
+  groupPostFailed: true,
+  groupOpportunity: true,
+  groupDigest: true,
 };
 
 // Get current member's notification preferences
@@ -51,6 +57,12 @@ export const getMyPreferences = query({
       aiDraftPending: prefs.aiDraftPending ?? DEFAULTS.aiDraftPending,
       campaignCompleted: prefs.campaignCompleted ?? DEFAULTS.campaignCompleted,
       campaignPaused: prefs.campaignPaused ?? DEFAULTS.campaignPaused,
+      groupJoined: prefs.groupJoined ?? DEFAULTS.groupJoined,
+      groupMention: prefs.groupMention ?? DEFAULTS.groupMention,
+      groupPostPending: prefs.groupPostPending ?? DEFAULTS.groupPostPending,
+      groupPostFailed: prefs.groupPostFailed ?? DEFAULTS.groupPostFailed,
+      groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
+      groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       _id: prefs._id,
       _exists: true,
     };
@@ -74,6 +86,12 @@ export const updateMyPreferences = mutation({
     aiDraftPending: v.optional(v.boolean()),
     campaignCompleted: v.optional(v.boolean()),
     campaignPaused: v.optional(v.boolean()),
+    groupJoined: v.optional(v.boolean()),
+    groupMention: v.optional(v.boolean()),
+    groupPostPending: v.optional(v.boolean()),
+    groupPostFailed: v.optional(v.boolean()),
+    groupOpportunity: v.optional(v.boolean()),
+    groupDigest: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -103,6 +121,15 @@ export const updateMyPreferences = mutation({
       campaignCompleted:
         args.campaignCompleted ?? existing?.campaignCompleted ?? DEFAULTS.campaignCompleted,
       campaignPaused: args.campaignPaused ?? existing?.campaignPaused ?? DEFAULTS.campaignPaused,
+      groupJoined: args.groupJoined ?? existing?.groupJoined ?? DEFAULTS.groupJoined,
+      groupMention: args.groupMention ?? existing?.groupMention ?? DEFAULTS.groupMention,
+      groupPostPending:
+        args.groupPostPending ?? existing?.groupPostPending ?? DEFAULTS.groupPostPending,
+      groupPostFailed:
+        args.groupPostFailed ?? existing?.groupPostFailed ?? DEFAULTS.groupPostFailed,
+      groupOpportunity:
+        args.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
+      groupDigest: args.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
     };
 
     if (existing) {
@@ -199,6 +226,15 @@ export const internalGetPreferences = internalQuery({
       dailyDigest: prefs.dailyDigest,
       taskCommentMention: prefs.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: prefs.taskDueSoon ?? DEFAULTS.taskDueSoon,
+      aiDraftPending: prefs.aiDraftPending ?? DEFAULTS.aiDraftPending,
+      campaignCompleted: prefs.campaignCompleted ?? DEFAULTS.campaignCompleted,
+      campaignPaused: prefs.campaignPaused ?? DEFAULTS.campaignPaused,
+      groupJoined: prefs.groupJoined ?? DEFAULTS.groupJoined,
+      groupMention: prefs.groupMention ?? DEFAULTS.groupMention,
+      groupPostPending: prefs.groupPostPending ?? DEFAULTS.groupPostPending,
+      groupPostFailed: prefs.groupPostFailed ?? DEFAULTS.groupPostFailed,
+      groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
+      groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       _exists: true,
     };
   },
@@ -233,6 +269,19 @@ export const internalUpsertPreferences = internalMutation({
       taskCommentMention:
         args.updates.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
       taskDueSoon: args.updates.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
+      aiDraftPending: args.updates.aiDraftPending ?? existing?.aiDraftPending ?? DEFAULTS.aiDraftPending,
+      campaignCompleted:
+        args.updates.campaignCompleted ?? existing?.campaignCompleted ?? DEFAULTS.campaignCompleted,
+      campaignPaused: args.updates.campaignPaused ?? existing?.campaignPaused ?? DEFAULTS.campaignPaused,
+      groupJoined: args.updates.groupJoined ?? existing?.groupJoined ?? DEFAULTS.groupJoined,
+      groupMention: args.updates.groupMention ?? existing?.groupMention ?? DEFAULTS.groupMention,
+      groupPostPending:
+        args.updates.groupPostPending ?? existing?.groupPostPending ?? DEFAULTS.groupPostPending,
+      groupPostFailed:
+        args.updates.groupPostFailed ?? existing?.groupPostFailed ?? DEFAULTS.groupPostFailed,
+      groupOpportunity:
+        args.updates.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
+      groupDigest: args.updates.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
     };
 
     if (existing) {

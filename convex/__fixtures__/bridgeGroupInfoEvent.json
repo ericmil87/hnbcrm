@@ -1,0 +1,16 @@
+{
+  "_fixture": "SINTÉTICA — montada a partir da struct types/events.GroupInfo do whatsmeow. Este evento AINDA NÃO foi capturado do gateway real: a assinatura do webhook só passa a incluir GroupInfo a partir da v0.57 (BRIDGE_WEBHOOK_EVENTS). Revalidar na F8 (E2E vivo) antes de tratar os nomes de campo como confirmados.",
+  "JID": "120363431849092219@g.us",
+  "Sender": "180002129735765@lid",
+  "Timestamp": "2026-09-16T19:10:00-03:00",
+  "Name": {
+    "Name": "Grupo-Teste-Eric (renomeado)",
+    "NameSetAt": "2026-09-16T19:10:00-03:00",
+    "NameSetBy": "180002129735765@lid"
+  },
+  "Join": ["557199990000@s.whatsapp.net"],
+  "Leave": ["92965187932215@lid"],
+  "Promote": [],
+  "Demote": [],
+  "JoinReason": "invite"
+}

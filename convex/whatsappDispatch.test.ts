@@ -243,7 +243,7 @@ describe("internalDispatchMessage", () => {
       const message = await ctx.db.get(messageId);
       const activities = await ctx.db
         .query("activities")
-        .withIndex("by_lead", (q) => q.eq("leadId", message!.leadId))
+        .withIndex("by_lead", (q) => q.eq("leadId", message!.leadId!))
         .collect();
       return { message, activities };
     });

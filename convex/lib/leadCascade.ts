@@ -96,7 +96,13 @@ async function deleteFileWithBlob(ctx: MutationCtx, fileId: Id<"files">): Promis
   return 1;
 }
 
-async function deleteConversation(
+/**
+ * Apaga uma conversa inteira (mensagens + blobs + fila da IA + agendadas) sob
+ * orçamento de escritas. Exportada porque a cascata de exclusão de CANAL
+ * (grupos de WhatsApp, v0.57) precisa exatamente disto — uma conversa de grupo
+ * não tem lead, então não passa por `cascadeLeadChildren`.
+ */
+export async function deleteConversationCascade(
   ctx: MutationCtx,
   conversationId: Id<"conversations">,
   budget: WriteBudget
@@ -169,7 +175,7 @@ export async function cascadeLeadChildren(
       .withIndex("by_lead", (q) => q.eq("leadId", leadId))
       .first();
     if (!conversation) break;
-    if (!(await deleteConversation(ctx, conversation._id, budget))) return false;
+    if (!(await deleteConversationCascade(ctx, conversation._id, budget))) return false;
   }
   if (budget.left <= 0) return false;
 

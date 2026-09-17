@@ -5,6 +5,8 @@ import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { getLeadRef } from "./lib/leadRef";
+import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 
 // Mensagens agendadas: o composer agenda um texto para uma conversa; a entrega
 // roda via ctx.scheduler.runAt e reaproveita o mesmo caminho de dispatch do
@@ -15,6 +17,10 @@ export const schedule = mutation({
     conversationId: v.id("conversations"),
     content: v.string(),
     scheduledAt: v.number(),
+    // Sala de GRUPO: JIDs mencionados (mesma semântica do `sendMessage`).
+    // Validados contra os participantes na hora da ENTREGA — quem saiu da sala
+    // entre o agendamento e o envio não é notificado.
+    mentions: v.optional(v.array(v.string())),
   },
   returns: v.id("scheduledMessages"),
   handler: async (ctx, args) => {
@@ -26,6 +32,10 @@ export const schedule = mutation({
       "inbox",
       "reply"
     );
+    // Sala de grupo: mesmas guardas do envio imediato. Agendar para uma sala
+    // que já não é acompanhada seria publicar nela dias depois, sem ninguém
+    // olhando (review de correção nº 2).
+    await assertGroupConversationSendable(ctx, conversation);
 
     const content = args.content.trim();
     if (!content) throw new Error("Mensagem vazia");
@@ -34,11 +44,17 @@ export const schedule = mutation({
       throw new Error("Escolha um horário pelo menos 1 minuto no futuro");
     }
 
+    const mentions =
+      conversation.kind === "group" && args.mentions && args.mentions.length > 0
+        ? args.mentions.filter((j) => typeof j === "string" && j.length > 0).slice(0, 1024)
+        : undefined;
+
     const scheduledMessageId = await ctx.db.insert("scheduledMessages", {
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
       content,
       scheduledAt: args.scheduledAt,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
       status: "pending",
       createdBy: userMember._id,
       createdAt: now,
@@ -122,8 +138,24 @@ export const deliver = internalMutation({
       return null;
     }
 
+    // Entre o agendamento e a entrega o operador pode ter parado de acompanhar
+    // a sala, ou o número pode ter saído dela. Re-checar aqui é o que impede a
+    // mensagem de cair num grupo de terceiros horas depois da decisão contrária.
+    try {
+      await assertGroupConversationSendable(ctx, conversation);
+    } catch (e) {
+      await ctx.db.patch(args.scheduledMessageId, {
+        status: "failed",
+        error: e instanceof Error ? e.message : "Grupo indisponível",
+      });
+      return null;
+    }
+
     const now = Date.now();
     const actorType = member.type === "ai" ? ("ai" as const) : ("human" as const);
+    // Menção revalidada AGORA: quem saiu da sala entre o agendamento e a
+    // entrega não entra no `MentionedJID`.
+    const mentions = await resolveGroupMentions(ctx, conversation, row.mentions);
 
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
@@ -135,6 +167,7 @@ export const deliver = internalMutation({
       content: row.content,
       contentType: "text",
       isInternal: false,
+      ...(mentions && mentions.length > 0 ? { mentions } : {}),
       metadata: { scheduled: true },
       createdAt: now,
     });
@@ -145,9 +178,9 @@ export const deliver = internalMutation({
       updatedAt: now,
     });
 
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead) {
-      await ctx.db.patch(conversation.leadId, {
+      await ctx.db.patch(lead._id, {
         lastActivityAt: now,
         updatedAt: now,
         conversationStatus: "active",
@@ -171,24 +204,30 @@ export const deliver = internalMutation({
       createdAt: now,
     });
 
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "message_sent",
-      actorId: member._id,
-      actorType,
-      content: `Mensagem agendada enviada via ${conversation.channel}`,
-      metadata: { conversationId: row.conversationId, scheduled: true },
-      createdAt: now,
-    });
+    // Conversa de grupo não tem lead — a timeline do lead simplesmente não
+    // recebe nada (o audit acima cobre o rastro).
+    if (conversation.leadId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: conversation.leadId,
+        type: "message_sent",
+        actorId: member._id,
+        actorType,
+        content: `Mensagem agendada enviada via ${conversation.channel}`,
+        metadata: { conversationId: row.conversationId, scheduled: true },
+        createdAt: now,
+      });
+    }
 
+    // Sala de grupo tem evento próprio — `message.sent` segue exclusivo do 1 a 1.
     await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
       organizationId: conversation.organizationId,
-      event: "message.sent",
+      event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
       payload: {
         messageId,
         conversationId: row.conversationId,
         leadId: conversation.leadId,
+        ...(conversation.kind === "group" ? { kind: "group" } : {}),
         channel: conversation.channel,
         senderType: actorType,
         senderId: member._id,
