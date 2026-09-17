@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "19 de julho de 2026";
+const EFFECTIVE_DATE = "17 de setembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -20,8 +20,8 @@ export function PrivacyPage() {
     <>
       <SEO
         title="Política de Privacidade"
-        description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp e seus direitos sob a LGPD."
-        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade"
+        description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp, os grupos de WhatsApp e seus direitos sob a LGPD."
+        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade, grupos de whatsapp"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
@@ -89,6 +89,15 @@ export function PrivacyPage() {
                 metadados relacionados ao atendimento.
               </p>
               <p>
+                <span className="text-text-primary font-medium">
+                  Membros de grupos de WhatsApp:
+                </span>{" "}
+                quando a organização opta por acompanhar um grupo, tratamos o identificador do participante
+                no WhatsApp (JID e LID), o telefone, o nome de exibição quando a pessoa escreve na sala e o
+                conteúdo das mensagens do grupo. São dados de terceiros, que podem não ter qualquer contato
+                anterior com a organização — o tratamento está descrito na cláusula 5 abaixo.
+              </p>
+              <p>
                 <span className="text-text-primary font-medium">Dados técnicos:</span> informações mínimas
                 necessárias ao funcionamento e à segurança do serviço, como registros de acesso e uso de
                 chaves de API.
@@ -124,7 +133,52 @@ export function PrivacyPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="armazenamento" title="5. Armazenamento e infraestrutura">
+            <LegalSection id="grupos-whatsapp" title="5. Grupos de WhatsApp">
+              <p>
+                O acompanhamento de grupos de WhatsApp é opcional e ativado grupo a grupo pela própria
+                organização. <span className="text-text-primary font-medium">Somente os grupos marcados
+                como acompanhados</span> têm a lista de participantes e o conteúdo das mensagens
+                armazenados; dos demais grupos de que o número participa guardamos apenas o nome da sala, a
+                quantidade de participantes e a data da última atividade, sem nome nem telefone de membros.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Finalidade:</span> registrar no histórico de
+                atendimento da organização as conversas das salas que ela escolheu acompanhar, permitir que
+                a equipe responda a partir da caixa de entrada e, quando a organização ativar os recursos de
+                IA, gerar resumos e identificar oportunidades comerciais.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Base legal:</span> a definição e a
+                documentação da base legal — em regra o legítimo interesse ou o consentimento do titular —
+                cabem à organização controladora, que responde por ela perante os titulares e a autoridade
+                competente. O HNBCRM atua como operador desses dados.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Retenção:</span> os participantes ficam
+                armazenados enquanto o grupo estiver marcado como acompanhado. Ao deixar de acompanhar, a
+                lista de participantes é apagada e a conversa é arquivada; a exclusão do canal de WhatsApp
+                remove os dados das salas associadas àquele número.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Compartilhamento:</span> se a organização
+                ativar os recursos de IA em grupos, o conteúdo das mensagens da sala é enviado ao provedor
+                de modelo de linguagem configurado por ela. Os webhooks e a API que a organização configurar
+                podem transmitir identificadores (JID e LID), telefones e conteúdo das mensagens a sistemas
+                externos escolhidos por ela, sob responsabilidade dela.
+              </p>
+              <p>
+                O envio de mensagens individuais a membros de grupos depende de declaração expressa, pela
+                organização, de que possui base legal e consentimento para o contato; a plataforma aplica
+                limites de envio e a lista de supressão (pedidos de não contato). As demais condições e
+                riscos estão nos nossos{" "}
+                <Link to="/termos" className="text-brand-400 hover:text-brand-300 transition-colors">
+                  Termos de Uso
+                </Link>
+                .
+              </p>
+            </LegalSection>
+
+            <LegalSection id="armazenamento" title="6. Armazenamento e infraestrutura">
               <p>
                 Os dados da plataforma são armazenados e processados na infraestrutura da Convex, provedor de
                 backend em tempo real utilizado pelo HNBCRM. As credenciais sensíveis de integrações (como
@@ -132,25 +186,37 @@ export function PrivacyPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="compartilhamento" title="6. Compartilhamento com terceiros">
+            <LegalSection id="compartilhamento" title="7. Compartilhamento com terceiros">
               <p>
                 Compartilhamos dados apenas com prestadores de serviço estritamente necessários à operação
                 da plataforma (por exemplo, a infraestrutura de backend e o serviço de envio de e-mails
                 transacionais), e com as plataformas de mensagem que cada organização opta por integrar. Não
                 comercializamos dados pessoais.
               </p>
+              <p>
+                Os recursos de inteligência artificial são opcionais e, quando a organização os ativa,
+                enviam o conteúdo necessário à resposta ao provedor de modelo de linguagem configurado por
+                ela. Do mesmo modo, os webhooks e as chaves de API criados pela organização transmitem dados
+                aos sistemas externos que ela escolher. Em ambos os casos, a escolha do destino e a
+                conformidade dessa transmissão são de responsabilidade da organização controladora.
+              </p>
             </LegalSection>
 
-            <LegalSection id="retencao" title="7. Retenção">
+            <LegalSection id="retencao" title="8. Retenção">
               <p>
                 Os dados são mantidos enquanto a conta e a organização estiverem ativas e pelo tempo
                 necessário para cumprir as finalidades descritas ou obrigações legais. Encerrada a conta, os
                 dados podem ser excluídos ou anonimizados, ressalvadas as hipóteses de guarda obrigatória
                 previstas em lei.
               </p>
+              <p>
+                Os dados de membros de grupos de WhatsApp seguem a retenção específica da cláusula 5: a
+                lista de participantes existe enquanto o grupo estiver acompanhado e é apagada quando a
+                organização deixa de acompanhá-lo; a exclusão do canal remove os dados das salas.
+              </p>
             </LegalSection>
 
-            <LegalSection id="direitos" title="8. Direitos do titular">
+            <LegalSection id="direitos" title="9. Direitos do titular">
               <p>
                 Nos termos da LGPD, o titular pode solicitar: confirmação da existência de tratamento;
                 acesso aos dados; correção de dados incompletos ou desatualizados; anonimização, bloqueio ou
@@ -160,11 +226,13 @@ export function PrivacyPage() {
               <p>
                 Quando os dados são tratados pelo HNBCRM na qualidade de operador em nome de uma organização,
                 as requisições devem ser direcionadas à organização controladora, que poderá acioná-lo como
-                operador para atendê-las.
+                operador para atendê-las. Isso vale também para os membros de grupos de WhatsApp: a
+                organização que acompanha a sala é quem deve atender aos pedidos de acesso, correção e
+                eliminação dos dados desses participantes.
               </p>
             </LegalSection>
 
-            <LegalSection id="seguranca" title="9. Segurança">
+            <LegalSection id="seguranca" title="10. Segurança">
               <p>
                 Adotamos medidas técnicas e organizacionais razoáveis para proteger os dados, incluindo
                 isolamento estrito por organização (multi-tenant), controle de acesso baseado em permissões,
@@ -174,14 +242,14 @@ export function PrivacyPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="alteracoes" title="10. Alterações desta Política">
+            <LegalSection id="alteracoes" title="11. Alterações desta Política">
               <p>
                 Esta Política pode ser atualizada periodicamente. Alterações relevantes serão comunicadas por
                 meios razoáveis, e a data de vigência no topo desta página será atualizada.
               </p>
             </LegalSection>
 
-            <LegalSection id="contato" title="11. Contato">
+            <LegalSection id="contato" title="12. Contato">
               <p>
                 Para exercer direitos ou esclarecer dúvidas sobre esta Política, utilize os canais de contato
                 indicados no repositório do projeto. Consulte também os nossos{" "}

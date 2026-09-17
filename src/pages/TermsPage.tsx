@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "19 de julho de 2026";
+const EFFECTIVE_DATE = "17 de setembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -20,8 +20,8 @@ export function TermsPage() {
     <>
       <SEO
         title="Termos de Uso"
-        description="Termos de Uso do HNBCRM — condições de uso da plataforma, planos, propriedade intelectual, limitação de responsabilidade e o canal WhatsApp não oficial."
-        keywords="termos de uso, termos de serviço, hnbcrm, whatsapp, saas"
+        description="Termos de Uso do HNBCRM — condições de uso da plataforma, planos, propriedade intelectual, limitação de responsabilidade, o canal WhatsApp não oficial e os grupos de WhatsApp."
+        keywords="termos de uso, termos de serviço, hnbcrm, whatsapp, grupos de whatsapp, saas"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
@@ -181,7 +181,65 @@ export function TermsPage() {
               </div>
             </section>
 
-            <LegalSection id="propriedade" title="6. Propriedade intelectual">
+            <LegalSection id="grupos-whatsapp" title="6. Grupos de WhatsApp">
+              <p>
+                O HNBCRM permite acompanhar grupos de WhatsApp do número conectado pelo canal bridge. O
+                recurso é opcional e depende de duas ativações independentes: habilitar grupos no número,
+                mediante aceite expresso de um administrador, e marcar individualmente cada grupo como
+                acompanhado.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">
+                  Somente os grupos marcados como acompanhados
+                </span>{" "}
+                têm a lista de participantes e o conteúdo das mensagens armazenados na plataforma. Dos
+                demais grupos de que o número participa guardamos apenas o nome da sala, a quantidade de
+                participantes e a data da última atividade — nome e telefone de membros não são gravados.
+                Ao deixar de acompanhar um grupo, a lista de participantes é apagada e a conversa é
+                arquivada; excluir o canal remove os dados das salas daquele número.
+              </p>
+              <p>Ao acompanhar um grupo, você reconhece e concorda que:</p>
+              <ul className="list-disc list-inside space-y-1.5">
+                <li>
+                  Os participantes de um grupo são terceiros que podem nunca ter contatado a sua empresa.
+                  Cabe a você, na condição de controlador, definir, documentar e manter a base legal para
+                  tratar o nome, o telefone e as mensagens dessas pessoas, nos termos da Lei nº
+                  13.709/2018 (LGPD). O HNBCRM atua como operador, tratando esses dados conforme as suas
+                  instruções;
+                </li>
+                <li>
+                  Os webhooks e a API que você configurar podem transmitir a sistemas externos de sua
+                  escolha os identificadores dos participantes (JID e LID do WhatsApp), seus telefones e o
+                  conteúdo das mensagens da sala. A escolha desses destinos, a segurança deles e a
+                  conformidade legal dessa transmissão são de sua exclusiva responsabilidade;
+                </li>
+                <li>
+                  Os recursos de IA em grupos — resumo da sala, resumo diário, radar de oportunidade e
+                  respostas quando o número é mencionado — enviam o conteúdo das mensagens ao provedor de
+                  modelo de linguagem configurado para a sua organização, nas mesmas condições aplicáveis
+                  aos demais recursos de IA da plataforma. Esses recursos são opcionais, vêm desligados e
+                  só podem ser ativados por um administrador; permitir que a IA publique na sala sem
+                  revisão humana exige um aceite adicional e específico;
+                </li>
+                <li>
+                  O envio de mensagens individuais para membros de grupos exige a declaração, a cada
+                  disparo, de que você possui base legal e o consentimento necessário para contatá-los. A
+                  plataforma aplica automaticamente limites de envio por grupo e por período e a lista de
+                  supressão (pedidos de não contato), mas a responsabilidade pelo consentimento, pelo
+                  conteúdo e por eventual caracterização de spam permanece sua. Realizado pelo canal não
+                  oficial, esse tipo de disparo é o principal gatilho do banimento descrito na cláusula 5,
+                  cujo risco você assume integralmente;
+                </li>
+                <li>
+                  As requisições de titulares (confirmação, acesso, correção ou eliminação) relativas a
+                  membros de grupos devem ser atendidas por você. O HNBCRM disponibiliza os meios para
+                  isso: deixar de acompanhar o grupo apaga a lista de participantes e excluir o canal
+                  remove os dados das salas associadas.
+                </li>
+              </ul>
+            </LegalSection>
+
+            <LegalSection id="propriedade" title="7. Propriedade intelectual">
               <p>
                 O HNBCRM é distribuído como software de código aberto sob a licença MIT. O código-fonte está
                 disponível publicamente e pode ser utilizado nos termos dessa licença. A marca, o nome, o
@@ -194,7 +252,7 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="limitacao" title="7. Limitação de responsabilidade">
+            <LegalSection id="limitacao" title="8. Limitação de responsabilidade">
               <p>
                 O serviço é fornecido "no estado em que se encontra" e "conforme disponível", sem garantias
                 de qualquer natureza, expressas ou implícitas. Na máxima extensão permitida pela lei
@@ -205,7 +263,7 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="rescisao" title="8. Rescisão">
+            <LegalSection id="rescisao" title="9. Rescisão">
               <p>
                 Você pode encerrar sua conta a qualquer momento. Podemos suspender ou encerrar o acesso em
                 caso de violação destes Termos, de uso indevido da plataforma ou por exigência legal. Com o
@@ -217,7 +275,7 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="alteracoes" title="9. Alterações destes Termos">
+            <LegalSection id="alteracoes" title="10. Alterações destes Termos">
               <p>
                 Podemos atualizar estes Termos periodicamente. Alterações relevantes serão comunicadas por
                 meios razoáveis. O uso continuado do serviço após a vigência das alterações representa a sua
@@ -225,7 +283,7 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="foro" title="10. Legislação aplicável e foro">
+            <LegalSection id="foro" title="11. Legislação aplicável e foro">
               <p>
                 Estes Termos são regidos pelas leis da República Federativa do Brasil. Fica eleito o foro da
                 comarca do domicílio do titular dos dados para dirimir quaisquer controvérsias, salvo
@@ -233,7 +291,7 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="contato" title="11. Contato">
+            <LegalSection id="contato" title="12. Contato">
               <p>
                 Dúvidas sobre estes Termos podem ser encaminhadas pelos canais de contato indicados no
                 repositório do projeto e na nossa{" "}

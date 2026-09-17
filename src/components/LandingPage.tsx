@@ -29,6 +29,7 @@ import {
   BookOpen,
   Github,
   Megaphone,
+  MessagesSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -239,6 +240,12 @@ function FeaturesSection() {
         "Disparos segmentados ou por CSV, com limites anti-ban, preview ao vivo, opt-out automático e relatório por destinatário.",
     },
     {
+      icon: MessagesSquare,
+      title: "Grupos de WhatsApp",
+      description:
+        "Acompanhe grupos na caixa de entrada, programe publicações (mensagem do dia por IA ou biblioteca) e deixe a IA responder quando for mencionada, com resumo diário da sala. Disparo para membros com limites anti-ban.",
+    },
+    {
       icon: ArrowRightLeft,
       title: "Repasses IA ↔ Humano",
       description: "Handoffs inteligentes entre agentes de IA e vendedores.",
@@ -376,14 +383,14 @@ function DeveloperSection() {
     {
       icon: Globe,
       title: "API REST Completa",
-      description: "64 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticação via API Key.",
+      description: "113 endpoints para gerenciar leads, contatos, conversas, handoffs e mais. Autenticação via API Key.",
       link: "/developers#rest-api",
       linkText: "Ver Documentação",
     },
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "46 ferramentas para agentes de IA via Model Context Protocol. Compatível com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
+      description: "66 ferramentas para agentes de IA via Model Context Protocol. Compatível com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
