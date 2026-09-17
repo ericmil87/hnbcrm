@@ -50,6 +50,12 @@ import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import { isSticker, visionEnabledForOrg } from "./lib/mediaEnrichment";
 import { campaignContextForConversation } from "./lib/campaignContext";
+// Simulador de GRUPO (F4): o mesmo prompt que o runtime do agente de grupo usa.
+// `lib/groupAgentCore.ts` é puro e NÃO importa este arquivo — é o que mantém a
+// dependência num sentido só.
+import { buildGroupSystemPrompt, groupSpeakerLabel } from "./lib/groupAgentCore";
+import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
+import { getLeadRef } from "./lib/leadRef";
 
 // ── Constantes de runtime ──
 // Silêncio que fecha a rajada de inbounds antes da IA responder. Default do
@@ -149,6 +155,12 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   const { org, agent, conversation, lead, contact, channelProvider, now } = input;
   const profile = agent?.agentProfile;
 
+  // 0. SALA DE GRUPO nunca é do atendente 1 a 1 (quem atende é o agente de
+  // grupo, `convex/groupAgent.ts`, com elegibilidade própria). Hoje nenhum
+  // caminho chega aqui com uma sala, mas as condições 5 e 6 usam `lead?.` e
+  // atravessariam em silêncio uma conversa sem lead — recusar explicitamente é
+  // o que impede um caller futuro de responder num grupo pelo caminho errado.
+  if (conversation.kind === "group") return { ok: false, reason: "conversa_de_grupo" };
   // 1. IA da org ativa (enabled + aceite LGPD)
   if (!orgAiActive(org)) return { ok: false, reason: "ia_desativada" };
   // 2. toggle específico do atendente (P3; undefined = ligado)
@@ -390,7 +402,7 @@ export const internalEnqueueFromInbound = internalMutation({
     const org = await ctx.db.get(conversation.organizationId);
     if (!orgAiActive(org)) return null; // IA desligada: no-op silencioso e barato
 
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
     const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
@@ -596,7 +608,7 @@ export function historyTextOf(
 // (`hasMediaProblem`). A v0.51 esperava por ele, e isso atrasava em 60 s toda
 // resposta a uma mídia que falhou — esperando bytes que nunca viriam. Sem
 // anexo, o `continue` abaixo já resolve.
-async function hasMediaAwaitingEnrichment(
+export async function hasMediaAwaitingEnrichment(
   ctx: MutationCtx,
   conversationId: Id<"conversations">,
   windowStart: number,
@@ -668,7 +680,7 @@ export const internalClaimForProcessing = internalMutation({
     }
     const org = await ctx.db.get(item.organizationId);
     const agent = await ctx.db.get(item.agentMemberId);
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
 
@@ -1412,7 +1424,7 @@ export const internalCommitAiReply = internalMutation({
 
     const org = await ctx.db.get(conversation.organizationId);
     const agent = await ctx.db.get(args.agentMemberId);
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
     // Mesmo helper do enqueue — o re-check do commit enxerga o MESMO canal
     // (revogação do bridgeAiAck durante a geração aborta aqui; v4.1 DIFF 1/2).
@@ -1647,7 +1659,9 @@ export const internalCommitAiSuggestion = internalMutation({
       updatedAt: now,
       aiTurnLock: undefined,
     });
-    await ctx.db.insert("activities", {
+    // Conversa de grupo não tem lead e `activities.leadId` é obrigatório — o
+    // agente de grupo (F4) registra em `groupChats.timeline`.
+    if (conversation.leadId) await ctx.db.insert("activities", {
       organizationId: conversation.organizationId,
       leadId: conversation.leadId,
       type: "note",
@@ -1666,7 +1680,7 @@ export const internalCommitAiSuggestion = internalMutation({
     // auto-notificado). Dono é a IA ou ninguém (ex.: instrução via peek do
     // repasse, sem assumir) → avisa o próprio instrutor, com actorId do agente
     // para o self-skip do helper não engolir o aviso.
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead) {
       const owner = lead.assignedTo ? await ctx.db.get(lead.assignedTo) : null;
       const recipientId =
@@ -1753,7 +1767,7 @@ export const internalRecordQueueFailure = internalMutation({
       error: sanitizeLlmError(args.error),
       updatedAt: now,
     });
-    const lead = conversation ? await ctx.db.get(conversation.leadId) : null;
+    const lead = conversation ? await getLeadRef(ctx.db, conversation.leadId) : null;
     // Item iniciado por humano (coach/devolução) não escala para repasse: quem
     // pediu JÁ está na conversa — o erro aparece no estado da IA do inbox.
     if (lead && item.origin === undefined) {
@@ -2362,6 +2376,13 @@ export const acceptAiDraft = mutation({
     const wasEdited = args.editedText !== undefined && args.editedText.trim() !== draft.content.trim();
 
     const now = Date.now();
+    // Conversa de GRUPO (F4): as menções que o agente escolheu ficaram
+    // gravadas na linha do rascunho. Sem copiá-las aqui, o "@Fulano" sairia no
+    // texto e o WhatsApp não destacaria nem notificaria ninguém.
+    const draftMentions =
+      conversation.kind === "group" && draft.mentions && draft.mentions.length > 0
+        ? draft.mentions
+        : undefined;
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
       conversationId: conversation._id,
@@ -2372,6 +2393,7 @@ export const acceptAiDraft = mutation({
       content: finalText,
       contentType: "text",
       isInternal: false,
+      ...(draftMentions ? { mentions: draftMentions } : {}),
       metadata: {
         aiDraft: { approvedBy: member._id, fromDraftId: draft._id, edited: wasEdited },
       },
@@ -2415,6 +2437,13 @@ export const acceptAiDraft = mutation({
           appliedActions.push({ index, label, ok: false, error: "Ação não aprovável" });
           continue;
         }
+        // Toda tool aprovável do atendente age sobre um LEAD. Numa conversa de
+        // grupo não existe lead (o agente de grupo da F4 nem propõe estas ações).
+        const draftLeadId = conversation.leadId;
+        if (!draftLeadId) {
+          appliedActions.push({ index, label, ok: false, error: "Conversa sem lead" });
+          continue;
+        }
         try {
           const result = await executeAttendantToolCore(ctx, {
             name: action.name,
@@ -2422,7 +2451,7 @@ export const acceptAiDraft = mutation({
             organizationId: conversation.organizationId,
             agentMemberId: draft.senderId,
             conversationId: conversation._id,
-            leadId: conversation.leadId,
+            leadId: draftLeadId,
             approvedBy: member._id,
           });
           const error = (result as { error?: unknown })?.error;
@@ -2509,12 +2538,22 @@ export const requestAiDraft = mutation({
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
 
+    // Grupos (v0.57): o atendente 1:1 não serve aqui — ele responde a toda
+    // mensagem de todo membro e chama tools de lead numa conversa sem lead.
+    // Quem atende a sala é o AGENTE DE GRUPO (F4, `convex/groupAgent.ts`), e o
+    // gatilho dele é a MENÇÃO, não um botão: pedir um rascunho avulso numa sala
+    // é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
+    if (conversation.kind === "group") {
+      throw new Error(
+        "Num grupo a IA responde quando é mencionada — não dá para pedir um rascunho avulso"
+      );
+    }
     const org = await ctx.db.get(conversation.organizationId);
     if (!orgAiActive(org)) throw new Error("A IA da organização não está ativa");
     if (org!.settings.aiConfig?.attendantEnabled === false) {
       throw new Error("O atendente IA está desativado nesta organização");
     }
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (!lead) throw new Error("Lead da conversa não encontrado");
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
     const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
@@ -2571,7 +2610,7 @@ export const requestAiDraft = mutation({
       createdAt: now,
       updatedAt: now,
     });
-    await ctx.db.insert("activities", {
+    if (conversation.leadId) await ctx.db.insert("activities", {
       organizationId: conversation.organizationId,
       leadId: conversation.leadId,
       type: "note",
@@ -2665,6 +2704,88 @@ async function queueInstructedAiTurn(
   await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, { queueItemId });
 }
 
+/**
+ * "Devolver à IA" de uma SALA DE GRUPO (review de correção nº 6 e nº 14).
+ *
+ * Deliberadamente menor que o caminho 1 a 1: não há lead para reatribuir nem
+ * atendente para resolver por canal, e não se dispara turno — o gatilho do
+ * agente de grupo é a MENÇÃO. O que acontece é o essencial e honesto:
+ * despausar a sala, cancelar o repasse pendente dela e, quando veio instrução,
+ * gravá-la como nota da equipe (ela entra no bloco "INFORMAÇÕES DA SUA EQUIPE"
+ * do prompt do grupo em todos os turnos seguintes — sem isto, aquele bloco era
+ * código morto em produção, porque nenhum caminho escrevia `aiTeamNotes` numa
+ * conversa de grupo).
+ */
+async function returnGroupConversationToAi(
+  ctx: MutationCtx,
+  params: {
+    conversation: Doc<"conversations">;
+    memberId: Id<"teamMembers">;
+    memberName: string;
+    instruction?: string;
+    now: number;
+  }
+): Promise<void> {
+  const { conversation, memberId, memberName, instruction, now } = params;
+
+  await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+
+  if (instruction) {
+    await appendAiTeamNote(ctx, conversation, { text: instruction, byMemberId: memberId, at: now });
+  }
+
+  // Repasse pendente DESTA conversa → cancelado. Índice por conversa: sem lead
+  // não existe `by_lead` para consultar.
+  const pending = await ctx.db
+    .query("handoffs")
+    .withIndex("by_conversation_and_status", (q) =>
+      q.eq("conversationId", conversation._id).eq("status", "pending")
+    )
+    .first();
+  if (pending) {
+    await ctx.db.patch(pending._id, {
+      status: "canceled",
+      resolvedBy: memberId,
+      resolvedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      organizationId: conversation.organizationId,
+      event: "handoff.canceled",
+      payload: {
+        handoffId: pending._id,
+        conversationId: conversation._id,
+        canceledBy: memberId,
+      },
+    });
+  }
+
+  // `activities.leadId` é obrigatório e a timeline é do LEAD — numa sala o
+  // rastro fica no audit.
+  await ctx.db.insert("auditLogs", {
+    organizationId: conversation.organizationId,
+    entityType: "conversation",
+    entityId: conversation._id,
+    action: "update",
+    actorId: memberId,
+    actorType: "human",
+    metadata: { kind: "group", returnedToAi: true, hasInstruction: !!instruction },
+    description: `${memberName} devolveu a conversa do grupo para a IA${instruction ? " com instrução" : ""}`,
+    severity: "low",
+    createdAt: now,
+  });
+
+  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    organizationId: conversation.organizationId,
+    event: "conversation.returned_to_ai",
+    payload: {
+      conversationId: conversation._id,
+      kind: "group",
+      memberId,
+      hasInstruction: !!instruction,
+    },
+  });
+}
+
 // Devolve a conversa à IA numa transação só: despausa, reatribui o lead ao
 // atendente (ou limpa a atribuição), cancela repasse pendente e — com
 // `instruction` — persiste a nota da equipe e já enfileira um turno da IA com
@@ -2681,8 +2802,28 @@ export const returnToAi = mutation({
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
 
+    // GRUPO: caminho próprio, deliberadamente MENOR (review de correção nº 6).
+    // Devolver a sala à IA é despausar, encerrar o repasse e — quando veio
+    // instrução — gravá-la como NOTA DA EQUIPE, que entra em todos os turnos
+    // seguintes daquela sala. O que NÃO acontece é disparar um turno agora: o
+    // gatilho do agente de grupo é a MENÇÃO, e publicar um texto avulso numa
+    // sala é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
+    if (conversation.kind === "group") {
+      const groupInstruction = args.instruction?.trim() || undefined;
+      if (groupInstruction && groupInstruction.length > MAX_INSTRUCTION_CHARS) {
+        throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+      }
+      await returnGroupConversationToAi(ctx, {
+        conversation,
+        memberId: member._id,
+        memberName: member.name,
+        instruction: groupInstruction,
+        now: Date.now(),
+      });
+      return null;
+    }
     const org = await ctx.db.get(conversation.organizationId);
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (!lead) throw new Error("Lead da conversa não encontrado");
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
     const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
@@ -2804,8 +2945,26 @@ export const internalQueueInstructedTurn = internalMutation({
     if (!conversation) return null;
     const org = await ctx.db.get(conversation.organizationId);
     if (!orgAiActive(org)) return null;
+
+    // SALA DE GRUPO (review de correção nº 14): antes desta guarda o fluxo caía
+    // no `getLeadRef` logo abaixo, achava `null` e devolvia — a instrução que o
+    // operador escreveu no popover do repasse ia para o lixo enquanto a tela
+    // dizia "Devolvido à IA — ela vai responder o cliente com a sua orientação".
+    // Agora a instrução vira nota da equipe da sala e o repasse é encerrado.
+    if (conversation.kind === "group") {
+      const actor = await ctx.db.get(args.instructedBy);
+      await returnGroupConversationToAi(ctx, {
+        conversation,
+        memberId: args.instructedBy,
+        memberName: actor?.name ?? "A equipe",
+        instruction: args.instruction,
+        now: Date.now(),
+      });
+      return null;
+    }
+
     if (org!.settings.aiConfig?.attendantEnabled === false) return null;
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (!lead) return null;
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
     const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
@@ -2852,6 +3011,18 @@ export const simulateAttendant = action({
         // Arquivo simulado (PDF/planilha): o texto é o NOME do arquivo — é tudo
         // o que chega de verdade. Exercita a REGRA 8.
         file: v.optional(v.boolean()),
+        // GRUPO (F4): quem falou. Num grupo o histórico é "membro:<nome>", e é
+        // justamente isso que permite validar "responda só a quem perguntou".
+        senderName: v.optional(v.string()),
+      })
+    ),
+    // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
+    // regras. Ausente = atendimento 1:1 de sempre.
+    group: v.optional(
+      v.object({
+        subject: v.string(),
+        participantsCount: v.optional(v.number()),
+        extraInstructions: v.optional(v.string()),
       })
     ),
   },
@@ -2880,7 +3051,15 @@ export const simulateAttendant = action({
       const texto = t.content.slice(0, 2000);
       const contentType = t.audio ? "audio" : t.image ? "image" : t.file ? "file" : "text";
       return {
-        de: t.role === "customer" ? "cliente" : "ia",
+        de: args.group
+          ? groupSpeakerLabel({
+              direction: t.role === "customer" ? "inbound" : "outbound",
+              senderType: t.role === "customer" ? "contact" : "ai",
+              senderName: t.senderName,
+            })
+          : t.role === "customer"
+            ? "cliente"
+            : "ia",
         // Mesmo formatador do runtime — simulação e produção não podem divergir.
         // O `visionEnabled` da simulação é TRUE quando a linha é de imagem: o
         // simulador existe para exercitar o caminho, e a org pode estar com a
@@ -2909,19 +3088,49 @@ export const simulateAttendant = action({
       lead: Record<string, unknown>;
       contact: Record<string, unknown> | null;
     };
-    const simulatorTools = toChatTools(attendantToolsFor(context));
+    // GRUPO: prompt, tools e instrução final são os do agente de grupo — o
+    // simulador existe para exercitar o que roda de verdade.
+    const simulatorTools = toChatTools(
+      args.group
+        ? GROUP_AGENT_TOOLS.filter((t) => t.name !== "flagOpportunity")
+        : attendantToolsFor(context)
+    );
 
-    const messages: ChatMessage[] = [
-      { role: "system", content: buildAttendantSystemPrompt(context) },
-      {
-        role: "user",
-        content: `${wrapUntrustedJson("contexto do atendimento (SIMULAÇÃO)", {
-          lead: context.lead,
-          contato: context.contact,
-          historico: history,
-        })}\n\nResponda ao cliente agora (última mensagem do histórico acima).`,
-      },
-    ];
+    const messages: ChatMessage[] = args.group
+      ? [
+          {
+            role: "system",
+            content: buildGroupSystemPrompt({
+              agentName: context.agentName,
+              orgName: context.orgName,
+              language: context.language,
+              persona: context.systemPrompt,
+              knowledge: context.knowledge,
+              groupSubject: args.group.subject,
+              participantsCount: args.group.participantsCount ?? 12,
+              extraInstructions: args.group.extraInstructions ?? null,
+              teamNotes: [],
+            }),
+          },
+          {
+            role: "user",
+            content: `${wrapUntrustedJson("conversa do grupo (SIMULAÇÃO)", {
+              grupo: args.group.subject,
+              historico: history,
+            })}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`,
+          },
+        ]
+      : [
+          { role: "system", content: buildAttendantSystemPrompt(context) },
+          {
+            role: "user",
+            content: `${wrapUntrustedJson("contexto do atendimento (SIMULAÇÃO)", {
+              lead: context.lead,
+              contato: context.contact,
+              historico: history,
+            })}\n\nResponda ao cliente agora (última mensagem do histórico acima).`,
+          },
+        ];
     const actions: string[] = [];
     let reply: string | null = null;
 
@@ -2941,7 +3150,7 @@ export const simulateAttendant = action({
           break;
         }
         for (const tc of toolCalls) {
-          if (tc.function.name === "replyToCustomer") {
+          if (tc.function.name === "replyToCustomer" || tc.function.name === "replyToGroup") {
             try {
               const parsed = JSON.parse(tc.function.arguments || "{}");
               reply = typeof parsed.text === "string" ? parsed.text.trim() : reply;

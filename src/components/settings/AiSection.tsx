@@ -122,6 +122,7 @@ type AiStatus = {
   copilotEnabled: boolean;
   attendantEnabled: boolean;
   visionEnabled: boolean;
+  groupAgentEnabled: boolean;
   bridgeAiAckDone: boolean;
   hasAttendant: boolean;
   hasBridgeChannel: boolean;
@@ -132,7 +133,10 @@ type AiStatus = {
   platformOrder: string;
   // Override por produto. order "inherit" = herda o platformOrder da org;
   // model "" (só na visão) = Automático, a cadeia inteira com fallover.
-  products: Record<"copilot" | "attendant" | "vision", { order: string; model: string }>;
+  products: Record<
+    "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent",
+    { order: string; model: string }
+  >;
   byo: { provider: string; baseUrl: string | null; keyLast4: string | null } | null;
 };
 
@@ -326,7 +330,7 @@ function ActivationWizardModal({
 // guarda só o que é mesmo da organização inteira: rota padrão, chave própria e
 // privacidade.
 
-type ProductKey = "copilot" | "attendant" | "vision";
+type ProductKey = "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent";
 
 type ModelOption = {
   id: string;
@@ -414,6 +418,38 @@ function RoutingSelect({
   );
 }
 
+/** O mesmo seletor de rota, com um rótulo próprio (dois num só card). */
+function RoutingSelectLabeled({
+  label,
+  value,
+  orgOrder,
+  byoProvider,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  orgOrder: string;
+  byoProvider: string | null;
+  onChange: (v: string) => void;
+}) {
+  const orgLabel =
+    PLATFORM_ORDER_OPTIONS.find((o) => o.value === orgOrder)?.label ?? "padrão da organização";
+  if (byoProvider) return null;
+  return (
+    <div>
+      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLS}>
+        <option value="inherit">Herdar da organização — {orgLabel}</option>
+        {PLATFORM_ORDER_OPTIONS.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 /** Linha de um produto: interruptor + painel de configuração recolhível. */
 function ProductRow({
   title,
@@ -488,7 +524,12 @@ function FeatureTogglesCard({
   const routeFor = (id: string) => modelOptions?.find((m) => m.id === id)?.route;
 
   const toggle = async (
-    args: { copilotEnabled?: boolean; attendantEnabled?: boolean; visionEnabled?: boolean },
+    args: {
+      copilotEnabled?: boolean;
+      attendantEnabled?: boolean;
+      visionEnabled?: boolean;
+      groupAgentEnabled?: boolean;
+    },
     okMessage: string
   ) => {
     setBusy(true);
@@ -682,6 +723,46 @@ function FeatureTogglesCard({
             orgOrder={status.platformOrder}
             byoProvider={byoProvider}
             onChange={(v) => saveRouting("vision", { order: v })}
+          />
+        </ProductRow>
+
+        {/*
+          Grupos de WhatsApp (F4). UM interruptor liga as três coisas que a IA
+          faz num grupo — responder quando mencionada, resumir a sala e apontar
+          oportunidades — e também libera a geração de texto das publicações
+          programadas. Cada GRUPO ainda decide a própria política (responder ou
+          só observar) na tela de Grupos; aqui é a chave da organização inteira.
+        */}
+        <ProductRow
+          title="IA em grupos de WhatsApp"
+          description="Responde quando mencionada no grupo, resume a conversa e aponta oportunidades — nunca manda mensagem privada sozinha. Cada grupo é configurado à parte, e vem desligado. Também libera a geração de texto das publicações programadas."
+          enabled={status.groupAgentEnabled}
+          busy={busy}
+          onToggle={() =>
+            void toggle(
+              { groupAgentEnabled: !status.groupAgentEnabled },
+              status.groupAgentEnabled ? "IA em grupos desativada" : "IA em grupos ativada"
+            )
+          }
+        >
+          <div className="sm:col-span-2">
+            <p className="text-xs text-text-muted">
+              O modelo é o mesmo do atendente virtual (a persona e o conhecimento dele também).
+              Só o roteamento pode ser diferente.
+            </p>
+          </div>
+          <RoutingSelect
+            value={status.products.groupAgent.order}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("groupAgent", { order: v })}
+          />
+          <RoutingSelectLabeled
+            label="Roteamento das publicações programadas"
+            value={status.products.groupPosts.order}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("groupPosts", { order: v })}
           />
         </ProductRow>
       </div>
@@ -1827,8 +1908,13 @@ type SimTurn = {
   audio?: boolean;
   image?: boolean;
   file?: boolean;
+  /** Quem falou, no modo grupo — a IA responde "só a quem perguntou". */
+  senderName?: string;
   actions?: string[];
 };
+
+/** Sala fictícia do modo grupo do simulador. */
+const SIM_GROUP = { subject: "Grupo de clientes (teste)", participantsCount: 12 };
 
 const SIM_KINDS: Array<{
   kind: Exclude<SimKind, "text">;
@@ -1873,6 +1959,11 @@ function SimulatorModal({
   const [transcript, setTranscript] = useState<SimTurn[]>([]);
   const [input, setInput] = useState("");
   const [kind, setKind] = useState<SimKind>("text");
+  // Modo GRUPO: troca o prompt e as tools pelos do agente de grupo (F4). É a
+  // única forma de validar "não confirme pagamento no grupo" e "assunto
+  // individual vai para o privado" sem mandar mensagem numa sala de verdade.
+  const [groupMode, setGroupMode] = useState(false);
+  const [senderName, setSenderName] = useState("Eric");
   const [busy, setBusy] = useState(false);
 
   const handleSend = async () => {
@@ -1887,6 +1978,7 @@ function SimulatorModal({
         audio: kind === "audio",
         image: kind === "image",
         file: kind === "file",
+        ...(groupMode && senderName.trim() ? { senderName: senderName.trim() } : {}),
       },
     ];
     setTranscript(next);
@@ -1895,13 +1987,15 @@ function SimulatorModal({
       const result = await simulate({
         organizationId,
         agentMemberId,
-        transcript: next.map(({ role, content, audio, image, file }) => ({
+        transcript: next.map(({ role, content, audio, image, file, senderName: from }) => ({
           role,
           content,
           audio,
           image,
           file,
+          senderName: from,
         })),
+        ...(groupMode ? { group: SIM_GROUP } : {}),
       });
       if (result.error) {
         toast.error(result.error);
@@ -1919,7 +2013,11 @@ function SimulatorModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Simulador — testar o atendente">
+    <Modal
+      open
+      onClose={onClose}
+      title={groupMode ? "Simulador — testar num grupo" : "Simulador — testar o atendente"}
+    >
       <div className="space-y-3">
         <p className="text-xs text-text-muted">
           Sandbox: nada aqui toca o WhatsApp nem altera dados do CRM. Escreva como se fosse o
@@ -1927,6 +2025,35 @@ function SimulatorModal({
           texto vira a transcrição), imagem (o texto vira a descrição que a leitura de imagens
           produziria) e arquivo (só o nome chega à IA, como acontece com um PDF de verdade).
         </p>
+        <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-sunken p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-xs text-text-primary">
+            <input
+              type="checkbox"
+              checked={groupMode}
+              onChange={(e) => {
+                setGroupMode(e.target.checked);
+                setTranscript([]);
+              }}
+              className="h-4 w-4 accent-brand-600"
+            />
+            Simular dentro de um grupo
+          </label>
+          {groupMode && (
+            <>
+              <input
+                value={senderName}
+                onChange={(e) => setSenderName(e.target.value)}
+                placeholder="Quem está falando"
+                aria-label="Nome do membro que está falando"
+                className="w-40 px-2.5 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-xs focus:outline-none focus:border-brand-500"
+              />
+              <span className="text-[11px] text-text-muted">
+                Usa as regras da sala: sem dado de outro cliente, sem confirmar pagamento,
+                assunto individual vai para o privado.
+              </span>
+            </>
+          )}
+        </div>
         <div className="h-72 overflow-y-auto space-y-2 rounded-lg bg-surface-sunken p-3">
           {transcript.length === 0 && (
             <p className="text-sm text-text-muted text-center py-8">

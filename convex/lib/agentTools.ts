@@ -21,13 +21,23 @@ export interface AgentToolSpec {
   parameters: Record<string, unknown>;
   /** Gate RBAC aplicado server-side via assertAgentCan no executor. */
   permission: { category: PermissionCategory; level: string };
-  audience: "copilot" | "attendant" | "both";
+  /** "groupAgent" = a IA que responde DENTRO de um grupo (F4), sem tools de lead. */
+  audience: "copilot" | "attendant" | "both" | "groupAgent";
   effect: "read" | "write" | "destructive";
   /** Whitelist de campos que o executor pode devolver ao modelo. */
   resultFields: string[];
 }
 
-/** Campos que o runtime injeta e o modelo jamais controla. */
+/**
+ * Campos que o runtime injeta e o modelo jamais controla.
+ *
+ * `groupChatId`/`groupPostId` entraram na lista pelo review de segurança nº 11:
+ * hoje nenhuma tool do agente DE GRUPO aceita id (o par sala/conversa vem do
+ * CLAIM), mas nada quebrava se uma futura aceitasse — e aí o modelo passaria a
+ * escolher em qual sala publicar. As tools do COPILOTO continuam recebendo os
+ * dois do modelo, pelo mesmo mecanismo que já isenta `leadId`/`contactId`: o
+ * copiloto navega a org com o RBAC do usuário e o executor revalida a org.
+ */
 export const INJECTED_PARAM_NAMES = [
   "organizationId",
   "teamMemberId",
@@ -35,6 +45,8 @@ export const INJECTED_PARAM_NAMES = [
   "conversationId",
   "leadId",
   "contactId",
+  "groupChatId",
+  "groupPostId",
 ] as const;
 
 function schema(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
@@ -172,6 +184,78 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     audience: "attendant",
     effect: "write",
     resultFields: ["status", "handoffId"],
+  },
+];
+
+// ── Tools do AGENTE DE GRUPO (F4, D6): a superfície mais estreita do produto. ──
+// Três tools e nada mais. Sem tools de LEAD/CONTATO de propósito: numa sala de
+// grupo não existe lead (a conversa não tem `leadId`), e dar a elas um id
+// qualquer seria escrever no CRM por causa de uma frase de um desconhecido.
+// Tudo o que o agente sabe chega INJETADO no contexto do turno.
+export const GROUP_AGENT_TOOLS: AgentToolSpec[] = [
+  {
+    name: "replyToGroup",
+    description:
+      "Publica (ou, em modo sugestão, rascunha) a sua resposta NO GRUPO — todos os membros leem. Use uma única vez por turno.",
+    parameters: schema(
+      {
+        text: {
+          type: "string",
+          description: "Texto curto da resposta em português (até 3 linhas)",
+        },
+        mentionKeys: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Opcional: chaves de participantes a mencionar, EXATAMENTE como aparecem em participantes[].chave no contexto",
+        },
+      },
+      ["text"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "groupAgent",
+    effect: "write",
+    resultFields: ["status", "messageId", "mode"],
+  },
+  {
+    // Nome próprio (não `requestHandoff`): os nomes de tool são únicos no
+    // registry inteiro, e o repasse de grupo cria um handoff SEM lead.
+    name: "requestGroupHandoff",
+    description:
+      "Chama um humano do time para esta conversa de grupo (assunto sensível, reclamação grave, pedido explícito de atendente). Depois avise no grupo, em uma linha, que já acionou a equipe.",
+    parameters: schema(
+      {
+        reason: { type: "string", description: "Motivo curto do repasse" },
+        summary: {
+          type: "string",
+          description: "Resumo do que está acontecendo no grupo, para quem assumir",
+        },
+      },
+      ["reason"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "groupAgent",
+    effect: "write",
+    resultFields: ["status", "handoffId"],
+  },
+  {
+    name: "flagOpportunity",
+    description:
+      "Avisa a equipe de que um membro do grupo demonstrou intenção de compra ou pediu orçamento. NÃO cria lead nem manda mensagem privada — só notifica uma pessoa do time, que decide.",
+    parameters: schema(
+      {
+        participantKey: {
+          type: "string",
+          description: "A chave do participante, como aparece em participantes[].chave no contexto",
+        },
+        summary: { type: "string", description: "O que a pessoa quer, em até 140 caracteres" },
+      },
+      ["participantKey", "summary"]
+    ),
+    permission: { category: "leads", level: "view_own" },
+    audience: "groupAgent",
+    effect: "write",
+    resultFields: ["status"],
   },
 ];
 
@@ -315,9 +399,14 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
   {
     name: "previewCampaignAudience",
     description:
-      "Conta quantos leads um segmento alcançaria numa campanha (por board, estágios, tags, temperatura, prioridade, última atividade) e mostra uma amostra — sem criar nada.",
+      "Conta quantos destinatários uma campanha alcançaria e mostra uma amostra — sem criar nada. Três públicos: leads do CRM (segment, default), as SALAS de grupos monitorados (groups) ou os MEMBROS dessas salas, 1 a 1 (group_members).",
     parameters: schema(
       {
+        source: {
+          type: "string",
+          enum: ["segment", "groups", "group_members"],
+          description: "Default: segment (leads do CRM)",
+        },
         boardName: { type: "string", description: "Nome do board (funil)" },
         stageNames: { type: "array", items: { type: "string" }, description: "Nomes dos estágios" },
         tags: { type: "array", items: { type: "string" } },
@@ -327,13 +416,96 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
         lastActivityAfterDays: { type: "number", description: "Só leads com atividade nos últimos N dias" },
         onlyOpenWindow: { type: "boolean", description: "Só quem tem a janela de 24h do WhatsApp aberta" },
         excludeCampaignedWithinDays: { type: "number", description: "Excluir quem recebeu campanha nos últimos N dias" },
+        groupNames: {
+          type: "array",
+          items: { type: "string" },
+          description: "groups/group_members: nomes dos grupos monitorados (use listGroups para descobrir)",
+        },
+        memberFilters: {
+          type: "object",
+          description: "group_members: filtros sobre os participantes",
+          properties: {
+            excludeAdmins: { type: "boolean" },
+            excludeExistingContacts: { type: "boolean", description: "Fora quem já é contato da org" },
+            excludeCampaignedWithinDays: { type: "number" },
+            activeInGroupWithinDays: { type: "number", description: "Só quem falou no grupo nos últimos N dias" },
+            excludeGroupNames: {
+              type: "array",
+              items: { type: "string" },
+              description: "Fora quem também está nestes grupos",
+            },
+            includeKeys: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Só estas pessoas (chave do membro = campo `key` da lista `members` da prévia). Vazio = todos os elegíveis.",
+            },
+          },
+          additionalProperties: false,
+        },
       },
       []
     ),
     permission: { category: "campaigns", level: "manage" },
     audience: "copilot",
     effect: "read",
-    resultFields: ["count", "excluded", "sample", "truncated"],
+    resultFields: ["count", "excluded", "sample", "truncated", "funnel", "perGroup", "estimatedDays", "reach"],
+  },
+  // ── Grupos de WhatsApp (F4) ──
+  // Nenhuma destas tocará o doc de `channelConfigs`: o retorno é montado campo
+  // a campo a partir de `groupChats`/`groupPosts` (o token do gateway mora no
+  // canal, e `SECRET_FIELD_PATTERN` é a segunda linha de defesa).
+  {
+    name: "listGroups",
+    description:
+      "Lista os grupos de WhatsApp conhecidos pelo CRM (nome, nº de membros, se está sendo acompanhado, política de IA e última atividade).",
+    parameters: schema(
+      {
+        onlyMonitored: { type: "boolean", description: "Só os grupos acompanhados" },
+        query: { type: "string", description: "Filtro pelo nome do grupo" },
+      },
+      []
+    ),
+    permission: { category: "inbox", level: "view_own" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["groups", "total"],
+  },
+  {
+    name: "getGroupDetail",
+    description:
+      "Detalhe de um grupo: assunto, membros (nome e se é admin), atividade recente e política de IA. Use o groupChatId que veio de listGroups.",
+    parameters: schema({ groupChatId: { type: "string" } }, ["groupChatId"]),
+    permission: { category: "inbox", level: "view_own" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["group", "members", "membersTotal"],
+  },
+  {
+    name: "listGroupPosts",
+    description: "Lista as publicações programadas em grupos (nome, status, agenda e destinos).",
+    parameters: schema(
+      {
+        status: { type: "string", enum: ["draft", "active", "paused", "ended"] },
+      },
+      []
+    ),
+    permission: { category: "campaigns", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["posts", "total"],
+  },
+  {
+    name: "getGroupPostHistory",
+    description: "Histórico de disparos de uma publicação programada (enviados, pulados, falhas).",
+    parameters: schema(
+      { groupPostId: { type: "string" }, limit: { type: "number" } },
+      ["groupPostId"]
+    ),
+    permission: { category: "campaigns", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["post", "history"],
   },
 ];
 
@@ -513,7 +685,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
   {
     name: "createCampaignDraft",
     description:
-      "Cria um RASCUNHO de campanha de WhatsApp (disparo em massa) com mensagem e público. NUNCA lança: o lançamento exige aceites (consentimento LGPD, risco do bridge) feitos por um humano na tela de Campanhas. Prefira 2+ variantes de texto e {{nome}} para personalizar.",
+      "Cria um RASCUNHO de campanha de WhatsApp (disparo em massa) com mensagem e público. NUNCA lança: o lançamento exige aceites (consentimento LGPD, risco do bridge e, no público group_members, o aceite de mandar privado para quem não iniciou conversa) feitos por um humano na tela de Campanhas. Prefira 2+ variantes de texto e {{nome}} para personalizar.",
     parameters: schema(
       {
         name: { type: "string" },
@@ -527,7 +699,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
         audience: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: ["segment", "manual"] },
+            kind: { type: "string", enum: ["segment", "manual", "groups", "group_members"] },
             boardName: { type: "string" },
             stageNames: { type: "array", items: { type: "string" } },
             tags: { type: "array", items: { type: "string" } },
@@ -536,6 +708,24 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
             onlyOpenWindow: { type: "boolean" },
             excludeCampaignedWithinDays: { type: "number" },
             phones: { type: "array", items: { type: "string" }, description: "Manual: números (até 500)" },
+            groupNames: {
+              type: "array",
+              items: { type: "string" },
+              description: "groups/group_members: nomes dos grupos monitorados (mesmo canal)",
+            },
+            memberFilters: {
+              type: "object",
+              description: "group_members: filtros sobre os participantes",
+              properties: {
+                excludeAdmins: { type: "boolean" },
+                excludeExistingContacts: { type: "boolean" },
+                excludeCampaignedWithinDays: { type: "number" },
+                activeInGroupWithinDays: { type: "number" },
+                excludeGroupNames: { type: "array", items: { type: "string" } },
+                includeKeys: { type: "array", items: { type: "string" } },
+              },
+              additionalProperties: false,
+            },
           },
           required: ["kind"],
           additionalProperties: false,
@@ -591,10 +781,100 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     effect: "destructive",
     resultFields: ["status", "pendingActionId", "preview"],
   },
+  // ── Grupos de WhatsApp (F4) ──
+  {
+    name: "getGroupSummary",
+    description:
+      "Resumo por IA do que aconteceu num grupo. Devolve o resumo salvo quando ele é recente; senão MANDA GERAR um novo (leva alguns segundos — avise que é para perguntar de novo em seguida).",
+    parameters: schema(
+      {
+        groupChatId: { type: "string" },
+        hours: { type: "number", enum: [24, 168], description: "Janela: 24 (1 dia) ou 168 (7 dias)" },
+      },
+      ["groupChatId"]
+    ),
+    permission: { category: "inbox", level: "view_own" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "summary", "at", "hours", "ageMinutes"],
+  },
+  {
+    name: "createGroupPostDraft",
+    description:
+      "Cria o RASCUNHO de uma publicação programada em grupos com mensagens prontas (biblioteca). Não ativa: quem ativa é uma pessoa.",
+    parameters: schema(
+      {
+        name: { type: "string", description: "Nome da rotina (ex.: 'Bom dia do Guardião')" },
+        groupChatIds: { type: "array", items: { type: "string" }, description: "Grupos de destino (do MESMO número)" },
+        times: { type: "array", items: { type: "string" }, description: 'Horários "HH:MM" (ex.: ["12:00"])' },
+        days: { type: "array", items: { type: "number" }, description: "Dias da semana 1=seg … 7=dom; vazio = todos" },
+        timezone: { type: "string", description: 'Fuso (default: o da organização, ex. "America/Sao_Paulo")' },
+        messages: { type: "array", items: { type: "string" }, description: "Textos da biblioteca, em ordem" },
+        order: { type: "string", enum: ["sequential", "random"] },
+      },
+      ["name", "groupChatIds", "times", "messages"]
+    ),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "groupPostId", "name", "schedule", "groups", "next"],
+  },
+  {
+    name: "pauseGroupPost",
+    description: "Pausa uma publicação programada ativa.",
+    parameters: schema(
+      { groupPostId: { type: "string" }, reason: { type: "string" } },
+      ["groupPostId"]
+    ),
+    permission: { category: "campaigns", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "groupPostId"],
+  },
+  {
+    name: "activateGroupPost",
+    description:
+      "PROPÕE ativar uma publicação programada. Não ativa agora: gera uma confirmação que o usuário precisa aprovar (a partir da ativação o CRM escreve sozinho no grupo).",
+    parameters: schema({ groupPostId: { type: "string" } }, ["groupPostId"]),
+    permission: { category: "campaigns", level: "full" },
+    audience: "copilot",
+    effect: "destructive",
+    resultFields: ["status", "pendingActionId", "preview"],
+  },
+  {
+    name: "sendGroupMessage",
+    description:
+      "PROPÕE publicar uma mensagem num grupo agora. Não envia: gera uma confirmação que o usuário precisa aprovar.",
+    parameters: schema(
+      { groupChatId: { type: "string" }, text: { type: "string" } },
+      ["groupChatId", "text"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "copilot",
+    effect: "destructive",
+    resultFields: ["status", "pendingActionId", "preview"],
+  },
+  {
+    name: "createLeadFromGroupMember",
+    description:
+      "Cria contato + lead + conversa privada a partir de um membro de grupo (o membro precisa expor o telefone).",
+    parameters: schema(
+      {
+        groupChatId: { type: "string" },
+        participantKey: { type: "string", description: "A chave do membro, como aparece em getGroupDetail" },
+      },
+      ["groupChatId", "participantKey"]
+    ),
+    permission: { category: "leads", level: "edit_own" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "leadId", "contactId", "conversationId", "created"],
+  },
 ];
 
 export const ALL_AGENT_TOOLS: AgentToolSpec[] = [
   ...ATTENDANT_TOOLS,
+  ...GROUP_AGENT_TOOLS,
   ...COPILOT_READ_TOOLS,
   ...COPILOT_WRITE_TOOLS,
 ];

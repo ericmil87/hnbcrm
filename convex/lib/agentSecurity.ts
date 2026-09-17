@@ -35,6 +35,12 @@ export const TOOL_DENYLIST: readonly string[] = [
   "internalGetActiveConfigByVerifyToken",
   "internalGetDefaultActiveConfig",
   "internalGetOrgSecretEncrypted", // BYO key cifrada — só o runtime lê
+  // Grupos (F4): os internals de grupo devolvem o contexto do CANAL (baseUrl +
+  // token cifrado do gateway) para as actions. Nenhum deles pode virar tool.
+  "internalGetChannelGroupContext",
+  "internalGetGroupActionContext",
+  "internalSyncGroups",
+  "internalSetBridgeLid",
 ];
 
 /**
@@ -49,6 +55,37 @@ export interface AgentRecordScope {
   conversationId: Id<"conversations">;
   leadId: Id<"leads">;
   contactId?: Id<"contacts">;
+}
+
+/**
+ * Escopo de uma run do AGENTE DE GRUPO (F4). Sem `leadId` de propósito: a
+ * conversa de grupo não tem lead, e o agente não possui nenhuma tool que
+ * escreva num lead — ele só publica na sala, abre repasse e sinaliza
+ * oportunidade. O par (grupo, conversa) vem do GATILHO, nunca do modelo.
+ */
+export interface GroupAgentRecordScope {
+  organizationId: Id<"organizations">;
+  groupChatId: Id<"groupChats">;
+  conversationId: Id<"conversations">;
+}
+
+/**
+ * Camada 2 para o grupo: a entidade tem de ser exatamente o grupo/conversa do
+ * turno em curso. Usada nos commits (que recebem ids da action) — um id
+ * divergente aborta mesmo com RBAC em dia.
+ */
+export function assertGroupRecordScope(
+  scope: GroupAgentRecordScope,
+  target:
+    | { kind: "group"; id: Id<"groupChats"> }
+    | { kind: "conversation"; id: Id<"conversations"> }
+): void {
+  const allowed =
+    (target.kind === "group" && target.id === scope.groupChatId) ||
+    (target.kind === "conversation" && target.id === scope.conversationId);
+  if (!allowed) {
+    throw new Error("Registro fora do escopo do grupo em curso");
+  }
 }
 
 type EntityWithOrg = { organizationId: Id<"organizations"> };

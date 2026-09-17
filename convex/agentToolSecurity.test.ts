@@ -10,6 +10,7 @@ import { describe, expect, test } from "vitest";
 import {
   ALL_AGENT_TOOLS,
   ATTENDANT_TOOLS,
+  GROUP_AGENT_TOOLS,
   INJECTED_PARAM_NAMES,
   projectToolResult,
 } from "./lib/agentTools";
@@ -46,7 +47,9 @@ describe("superfície de tools de IA (teste de build)", () => {
     // executor re-valida a org via assertAgentCan). Já conversationId /
     // organizationId / *MemberId NUNCA são o modelo que fornece — e para o
     // ATENDENTE nem leadId/contactId (escopo vem do gatilho).
-    const copilotAllowed = new Set(["leadId", "contactId"]);
+    // `groupChatId`/`groupPostId`: o copiloto os recebe do modelo (ele navega a
+    // org), o agente DE GRUPO nunca — a sala dele vem do claim.
+    const copilotAllowed = new Set(["leadId", "contactId", "groupChatId", "groupPostId"]);
     for (const tool of ALL_AGENT_TOOLS) {
       const props = Object.keys(
         (tool.parameters as { properties?: Record<string, unknown> }).properties ?? {}
@@ -62,7 +65,7 @@ describe("superfície de tools de IA (teste de build)", () => {
   });
 
   test("atendente: zero tools destrutivas, zero listagem org-wide", () => {
-    for (const tool of ATTENDANT_TOOLS) {
+    for (const tool of [...ATTENDANT_TOOLS, ...GROUP_AGENT_TOOLS]) {
       expect(tool.effect, `${tool.name} não pode ser destrutiva`).not.toBe("destructive");
       expect(
         /list|search|getContacts|getConversations/i.test(tool.name),
@@ -91,6 +94,58 @@ describe("superfície de tools de IA (teste de build)", () => {
           `${tool.name}: projeção deixou passar campo-segredo '${key}'`
         ).toBe(false);
       }
+    }
+  });
+
+  // ── Agente de grupo (F4) ──
+  // A sala tem gente de fora da empresa e a conversa NÃO tem lead: a superfície
+  // é de três tools, e qualquer coisa a mais aqui é um caminho novo do texto de
+  // um desconhecido para o banco de dados.
+  test("agente de grupo: exatamente três tools, nenhuma de lead/contato", () => {
+    expect(GROUP_AGENT_TOOLS.map((t) => t.name).sort()).toEqual([
+      "flagOpportunity",
+      "replyToGroup",
+      "requestGroupHandoff",
+    ]);
+    for (const tool of GROUP_AGENT_TOOLS) {
+      expect(tool.audience).toBe("groupAgent");
+      expect(
+        /lead|contact|campaign|task|board|field/i.test(tool.name),
+        `${tool.name} parece tocar CRM fora da sala`
+      ).toBe(false);
+    }
+  });
+
+  test("agente de grupo: nenhuma tool do ATENDENTE vaza para o grupo", () => {
+    const groupNames = new Set(GROUP_AGENT_TOOLS.map((t) => t.name));
+    for (const tool of ATTENDANT_TOOLS) {
+      expect(groupNames.has(tool.name), `${tool.name} do 1:1 apareceu no grupo`).toBe(false);
+    }
+  });
+
+  test("tools de grupo do copiloto não devolvem nada do canal", () => {
+    // O token do gateway mora em `channelConfigs`. Nenhum retorno declarado
+    // pode sequer nomear o canal — o executor monta tudo campo a campo.
+    const groupTools = ALL_AGENT_TOOLS.filter((t) =>
+      /group/i.test(t.name) || t.audience === "groupAgent"
+    );
+    expect(groupTools.length).toBeGreaterThan(5);
+    for (const tool of groupTools) {
+      for (const field of tool.resultFields) {
+        expect(
+          /channelConfig|bridgeToken|bridgeBaseUrl|instance/i.test(field),
+          `${tool.name}.${field} devolveria dado do canal`
+        ).toBe(false);
+      }
+      const projected = projectToolResult(tool, {
+        status: "ok",
+        bridgeTokenEncrypted: "v1:iv:cipher",
+        bridgeBaseUrl: "https://wuzapi.example.com",
+        channelConfigId: "abc",
+      });
+      expect(Object.keys(projected)).not.toContain("bridgeTokenEncrypted");
+      expect(Object.keys(projected)).not.toContain("bridgeBaseUrl");
+      expect(Object.keys(projected)).not.toContain("channelConfigId");
     }
   });
 

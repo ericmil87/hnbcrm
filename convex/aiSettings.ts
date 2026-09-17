@@ -39,6 +39,12 @@ export const getAiStatus = query({
     // Leitura de imagens (visão): custa por imagem, então default FALSE —
     // ao contrário dos dois acima, onde undefined significa ligado.
     visionEnabled: v.boolean(),
+    // IA DENTRO de grupos de WhatsApp (F4). Como a visão, `undefined` = OFF:
+    // responder num grupo alcança gente que nunca falou com a empresa.
+    groupAgentEnabled: v.boolean(),
+    // Aceite próprio do autopilot em GRUPO (review de segurança nº 5). A UI da
+    // política da sala usa isto para avisar antes de oferecer "autopilot".
+    groupAutopilotAckDone: v.boolean(),
     // Aceite de risco do canal bridge (P1): habilita atendente em canais não-oficiais.
     bridgeAiAckDone: v.boolean(),
     // v4.2: estado p/ o wizard de ativação em 1 fluxo.
@@ -61,6 +67,8 @@ export const getAiStatus = query({
       copilot: v.object({ order: v.string(), model: v.string() }),
       attendant: v.object({ order: v.string(), model: v.string() }),
       vision: v.object({ order: v.string(), model: v.string() }),
+      groupPosts: v.object({ order: v.string(), model: v.string() }),
+      groupAgent: v.object({ order: v.string(), model: v.string() }),
     }),
     byo: v.union(
       v.object({
@@ -94,6 +102,8 @@ export const getAiStatus = query({
       copilotEnabled: aiConfig?.copilotEnabled !== false,
       attendantEnabled: aiConfig?.attendantEnabled !== false,
       visionEnabled: aiConfig?.visionEnabled === true,
+      groupAgentEnabled: aiConfig?.groupAgentEnabled === true,
+      groupAutopilotAckDone: aiConfig?.groupAutopilotAck !== undefined,
       bridgeAiAckDone: aiConfig?.bridgeAiAck !== undefined,
       hasAttendant: aiMembers.some(
         (m) => m.status === "active" && m.agentProfile?.kind === "attendant"
@@ -113,6 +123,8 @@ export const getAiStatus = query({
         copilot: productRoutingOf(aiConfig?.providerConfig?.products?.copilot),
         attendant: productRoutingOf(aiConfig?.providerConfig?.products?.attendant),
         vision: productRoutingOf(aiConfig?.providerConfig?.products?.vision),
+        groupPosts: productRoutingOf(aiConfig?.providerConfig?.products?.groupPosts),
+        groupAgent: productRoutingOf(aiConfig?.providerConfig?.products?.groupAgent),
       },
       providerMode: aiConfig?.providerConfig?.mode ?? "platform",
       platformOrder: aiConfig?.providerConfig?.platformOrder ?? "auto",
@@ -137,6 +149,7 @@ export const setFeatureToggles = mutation({
     copilotEnabled: v.optional(v.boolean()),
     attendantEnabled: v.optional(v.boolean()),
     visionEnabled: v.optional(v.boolean()),
+    groupAgentEnabled: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -156,6 +169,9 @@ export const setFeatureToggles = mutation({
             ? { attendantEnabled: args.attendantEnabled }
             : {}),
           ...(args.visionEnabled !== undefined ? { visionEnabled: args.visionEnabled } : {}),
+          ...(args.groupAgentEnabled !== undefined
+            ? { groupAgentEnabled: args.groupAgentEnabled }
+            : {}),
         },
       },
       updatedAt: now,
@@ -173,15 +189,17 @@ export const setFeatureToggles = mutation({
           copilotEnabled: current.copilotEnabled !== false,
           attendantEnabled: current.attendantEnabled !== false,
           visionEnabled: current.visionEnabled === true,
+          groupAgentEnabled: current.groupAgentEnabled === true,
         },
         after: {
           copilotEnabled: args.copilotEnabled ?? current.copilotEnabled !== false,
           attendantEnabled: args.attendantEnabled ?? current.attendantEnabled !== false,
           visionEnabled: args.visionEnabled ?? current.visionEnabled === true,
+          groupAgentEnabled: args.groupAgentEnabled ?? current.groupAgentEnabled === true,
         },
       },
       metadata: { aiConfig: true },
-      description: "Atualizou os toggles de Copiloto/Atendente/leitura de imagens da IA",
+      description: "Atualizou os toggles dos produtos de IA (copiloto, atendente, imagens, grupos)",
       severity: "medium",
       createdAt: now,
     });
@@ -246,6 +264,80 @@ export const setBridgeAiAck = mutation({
       description: args.accept
         ? "Aceitou o risco de banimento e liberou o atendente IA em canais bridge (não-oficiais)"
         : "Revogou o aceite de risco — atendente IA bloqueado em canais bridge",
+      severity: "high",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * Aceite PRÓPRIO do autopilot em GRUPO (review de segurança nº 5).
+ *
+ * O `autopilotEarlyAck` do atendente 1 a 1 foi assinado para outro risco: a IA
+ * responder sozinha a UMA pessoa que escreveu para a empresa. Publicar sozinha
+ * numa sala com dezenas de terceiros — gente que nunca falou com a empresa —
+ * é risco maior, e passava apoiado num aceite dado para o menor.
+ *
+ * Com o atendente já em `autopilot` este aceite é dispensável: a política do
+ * grupo herda o que a org já pratica. Ele existe para o caso do atendente em
+ * `suggest` e a sala em `autopilot`.
+ *
+ * Revogar remove o objeto e vale IMEDIATAMENTE: `effectiveReplyMode` é lido no
+ * CLAIM de cada turno, então a sala cai para sugestão já no próximo.
+ */
+export const setGroupAutopilotAck = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    accept: v.boolean(),
+    riskAck: v.optional(v.boolean()), // obrigatório true ao aceitar
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org?.settings.aiConfig) throw new Error("Ative a IA primeiro");
+    const current = org.settings.aiConfig;
+
+    const now = Date.now();
+    if (args.accept) {
+      if (args.riskAck !== true) {
+        throw new Error(
+          "Para a IA publicar sozinha num grupo, confirme que aceita responder sem revisão humana para todos os participantes da sala"
+        );
+      }
+      if (current.groupAutopilotAck !== undefined) return null; // idempotente
+      await ctx.db.patch(args.organizationId, {
+        settings: {
+          ...org.settings,
+          aiConfig: { ...current, groupAutopilotAck: { acceptedAt: now, acceptedBy: member._id } },
+        },
+        updatedAt: now,
+      });
+    } else {
+      if (current.groupAutopilotAck === undefined) return null;
+      const { groupAutopilotAck: _removed, ...rest } = current;
+      await ctx.db.patch(args.organizationId, {
+        settings: { ...org.settings, aiConfig: rest },
+        updatedAt: now,
+      });
+    }
+
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { groupAutopilotAck: current.groupAutopilotAck !== undefined },
+        after: { groupAutopilotAck: args.accept },
+      },
+      metadata: { aiConfig: true, groupAutopilot: true },
+      description: args.accept
+        ? "Aceitou que a IA publique SOZINHA em grupos de WhatsApp, sem revisão humana"
+        : "Revogou o aceite — a IA em grupos volta ao modo sugestão",
       severity: "high",
       createdAt: now,
     });
@@ -1205,7 +1297,15 @@ export const setPlatformOrder = mutation({
 export const setProductRouting = mutation({
   args: {
     organizationId: v.id("organizations"),
-    product: v.union(v.literal("copilot"), v.literal("attendant"), v.literal("vision")),
+    product: v.union(
+      v.literal("copilot"),
+      v.literal("attendant"),
+      v.literal("vision"),
+      // Publicações programadas em grupo (F3) e agente de grupo (F4) escolhem a
+      // própria rota; só a visão escolhe o próprio MODELO por aqui.
+      v.literal("groupPosts"),
+      v.literal("groupAgent")
+    ),
     // "inherit" limpa o override e volta a seguir o padrão da org.
     order: v.optional(
       v.union(

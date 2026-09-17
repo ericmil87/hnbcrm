@@ -42,7 +42,18 @@ import {
   resumeCampaignHandler,
   cancelCampaignHandler,
 } from "./campaigns";
+import { normalizeIncludeKeys } from "./lib/campaignAudience";
 import { configProvider } from "./channelConfigs";
+// Grupos de WhatsApp (F4): executores num arquivo próprio — ver o cabeçalho de
+// `lib/groupCopilotTools.ts` para o porquê.
+import {
+  confirmGroupPendingAction,
+  isGroupPendingTool,
+  isGroupReadTool,
+  isGroupWriteTool,
+  runGroupReadTool,
+  runGroupWriteTool,
+} from "./lib/groupCopilotTools";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -370,6 +381,10 @@ async function runReadTool(
     case "listTasks":
       return await listTasksTool(ctx, organizationId, toolArgs);
     default:
+      // Grupos de WhatsApp (F4) — executores em `lib/groupCopilotTools.ts`.
+      if (isGroupReadTool(name)) {
+        return await runGroupReadTool(ctx, name, toolArgs, organizationId);
+      }
       return { error: `Tool não implementada: ${name}` };
   }
 }
@@ -837,12 +852,118 @@ function maskPhone(phone: string): string {
   return phone.length > 8 ? `${phone.slice(0, 4)}${"*".repeat(phone.length - 8)}${phone.slice(-4)}` : phone;
 }
 
+/**
+ * Grupos por NOME (o copiloto fala em nome, não em id). Só grupos monitorados:
+ * é o mesmo recorte que o wizard oferece, e um grupo que ninguém acompanha não
+ * tem conversa para receber nada.
+ */
+async function resolveGroupNames(
+  ctx: ReadCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  names: unknown
+): Promise<{ ids: Id<"groupChats">[] } | { error: string }> {
+  const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === "string") : [];
+  if (list.length === 0) return { error: "Informe groupNames (nomes dos grupos monitorados)" };
+  const groups = await ctx.db
+    .query("groupChats")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(500);
+  const monitored = groups.filter((g) => g.monitored && g.removedAt === undefined && g.leftAt === undefined);
+  const ids: Id<"groupChats">[] = [];
+  for (const raw of list) {
+    const needle = raw.trim().toLowerCase();
+    const exact = monitored.find((g) => g.subject.toLowerCase() === needle);
+    // Sem casamento exato, o parcial só vale quando é ÚNICO: com "Clientes SP"
+    // e "Clientes RJ" na org, pedir "grupo Clientes" escolhia o primeiro em
+    // silêncio e a campanha ia para a sala errada (achado menor do review).
+    const partial = monitored.filter((g) => g.subject.toLowerCase().includes(needle));
+    if (!exact && partial.length > 1) {
+      return {
+        error: `"${raw}" casa com mais de um grupo (${partial
+          .map((g) => g.subject)
+          .join(", ")}) — use o nome exato`,
+      };
+    }
+    const match = exact ?? partial[0];
+    if (!match) {
+      return {
+        error: `Grupo "${raw}" não encontrado entre os monitorados (${
+          monitored.map((g) => g.subject).join(", ") || "nenhum"
+        })`,
+      };
+    }
+    ids.push(match._id);
+  }
+  return { ids };
+}
+
+async function resolveMemberFilters(
+  ctx: ReadCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  input: unknown
+): Promise<{ filters: Record<string, unknown> } | { error: string }> {
+  const raw = (input ?? {}) as Record<string, unknown>;
+  const filters: Record<string, unknown> = {};
+  if (raw.excludeAdmins === true) filters.excludeAdmins = true;
+  if (raw.excludeExistingContacts === true) filters.excludeExistingContacts = true;
+  if (typeof raw.excludeCampaignedWithinDays === "number") {
+    filters.excludeCampaignedWithinDays = raw.excludeCampaignedWithinDays;
+  }
+  if (typeof raw.activeInGroupWithinDays === "number") {
+    filters.activeInGroupWithinDays = raw.activeInGroupWithinDays;
+  }
+  if (Array.isArray(raw.excludeGroupNames) && raw.excludeGroupNames.length > 0) {
+    const resolved = await resolveGroupNames(ctx, organizationId, raw.excludeGroupNames);
+    if ("error" in resolved) return resolved;
+    filters.excludeGroupChatIds = resolved.ids;
+  }
+  // Seleção explícita de pessoas (chave = `lid ?? phone`, como a lista da
+  // prévia devolve). Chave desconhecida é ignorada lá adiante; aqui só o teto
+  // vira erro, e ele vira erro de TOOL (texto para a IA), não exceção.
+  if (Array.isArray(raw.includeKeys) && raw.includeKeys.length > 0) {
+    try {
+      const keys = normalizeIncludeKeys(raw.includeKeys.map((k: unknown) => String(k)));
+      if (keys) filters.includeKeys = keys;
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  return { filters };
+}
+
 async function previewCampaignAudienceTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
   toolArgs: Record<string, unknown>,
   scope: { memberId: Id<"teamMembers">; now: number }
 ): Promise<Record<string, unknown>> {
+  const source = typeof toolArgs.source === "string" ? toolArgs.source : "segment";
+  if (source === "groups" || source === "group_members") {
+    const groups = await resolveGroupNames(ctx, organizationId, toolArgs.groupNames);
+    if ("error" in groups) return groups;
+    const memberFilters = await resolveMemberFilters(ctx, organizationId, toolArgs.memberFilters);
+    if ("error" in memberFilters) return memberFilters;
+    const preview = (await previewAudienceHandler(ctx, {
+      organizationId,
+      filters: {},
+      now: scope.now,
+      source: source as "groups" | "group_members",
+      groupChatIds: groups.ids,
+      ...(source === "group_members" ? { memberFilters: memberFilters.filters as any } : {}),
+      actorMemberId: scope.memberId,
+    })) as Record<string, any>;
+    return {
+      count: preview.count,
+      excluded: preview.excluded,
+      truncated: preview.truncated,
+      funnel: preview.funnel ?? null,
+      perGroup: preview.perGroup ?? [],
+      estimatedDays: preview.estimatedDays ?? 0,
+      ...(preview.reach !== undefined ? { reach: preview.reach } : {}),
+      // A amostra de membros JÁ vem mascarada do builder (são terceiros).
+      sample: preview.sample ?? [],
+    };
+  }
   const resolved = await resolveAudienceFilters(ctx, organizationId, toolArgs, scope.now);
   if ("error" in resolved) return resolved;
   const preview = (await previewAudienceHandler(ctx, {
@@ -1409,7 +1530,12 @@ async function runWriteTool(
         : [];
       if (variants.length === 0) return { error: "Informe ao menos uma variante de texto" };
       const audienceIn = (toolArgs.audience ?? {}) as Record<string, unknown>;
-      const kind = audienceIn.kind === "segment" ? "segment" : "manual";
+      const kind =
+        audienceIn.kind === "segment" ||
+        audienceIn.kind === "groups" ||
+        audienceIn.kind === "group_members"
+          ? (audienceIn.kind as "segment" | "groups" | "group_members")
+          : "manual";
 
       // Canal: pelo nome, ou o único WhatsApp ativo da org.
       const channels = (
@@ -1434,10 +1560,21 @@ async function runWriteTool(
       }
 
       let filters: Record<string, unknown> | undefined;
+      let groupChatIds: Id<"groupChats">[] | undefined;
+      let memberFilters: Record<string, unknown> | undefined;
       if (kind === "segment") {
         const resolved = await resolveAudienceFilters(ctx, organizationId, audienceIn, now);
         if ("error" in resolved) return resolved;
         filters = resolved.filters;
+      } else if (kind === "groups" || kind === "group_members") {
+        const resolved = await resolveGroupNames(ctx, organizationId, audienceIn.groupNames);
+        if ("error" in resolved) return resolved;
+        groupChatIds = resolved.ids;
+        if (kind === "group_members") {
+          const mf = await resolveMemberFilters(ctx, organizationId, audienceIn.memberFilters);
+          if ("error" in mf) return mf;
+          memberFilters = mf.filters;
+        }
       }
       let targetBoardId: Id<"boards"> | undefined;
       let targetStageId: Id<"stages"> | undefined;
@@ -1469,6 +1606,10 @@ async function runWriteTool(
         audience: {
           source: kind,
           ...(filters ? { filters: filters as any } : {}),
+          ...(groupChatIds ? { groupChatIds } : {}),
+          ...(memberFilters && Object.keys(memberFilters).length > 0
+            ? { memberFilters: memberFilters as any }
+            : {}),
           ...(targetBoardId ? { targetBoardId } : {}),
           ...(targetStageId ? { targetStageId } : {}),
         },
@@ -1496,7 +1637,7 @@ async function runWriteTool(
         recipientsAdded,
         invalid,
         url: CAMPAIGN_URL(campaignId),
-        next: `Rascunho salvo no canal "${channel.displayName}" (${provider}). O lançamento é feito por um humano na tela de Campanhas, onde ficam os aceites obrigatórios${provider === "bridge" ? " (inclusive o risco de banimento do bridge)" : ""}.`,
+        next: `Rascunho salvo no canal "${channel.displayName}" (${provider}). O lançamento é feito por um humano na tela de Campanhas, onde ficam os aceites obrigatórios${provider === "bridge" ? " (inclusive o risco de banimento do bridge)" : ""}${kind === "group_members" ? " e o aceite de mandar mensagem privada a quem não iniciou conversa" : ""}.`,
       };
     }
 
@@ -1580,6 +1721,15 @@ async function runWriteTool(
     }
 
     default:
+      // Grupos de WhatsApp (F4) — executores em `lib/groupCopilotTools.ts`.
+      if (isGroupWriteTool(name)) {
+        return await runGroupWriteTool(ctx, name, toolArgs, {
+          organizationId,
+          member,
+          threadId: scope.threadId,
+          pendingActionTtlMs: PENDING_ACTION_TTL_MS,
+        });
+      }
       return { error: `Tool não implementada: ${name}` };
   }
 }
@@ -1672,8 +1822,21 @@ export const confirmPendingAction = mutation({
         await cancelCampaignHandler(ctx, { campaignId, actorMemberId: member._id, via: "copilot" });
         break;
       }
-      default:
+      default: {
+        // Grupos (F4): publicar num grupo exige `inbox:reply`; ativar uma
+        // publicação exige `campaigns:full` — re-checados AGORA, não na
+        // proposta (o papel do usuário pode ter mudado no meio).
+        if (isGroupPendingTool(pending.tool)) {
+          if (pending.tool === "sendGroupMessage") {
+            await assertAgentCan(ctx, member._id, "inbox", "reply");
+          } else {
+            await assertAgentCan(ctx, member._id, "campaigns", "full");
+          }
+          await confirmGroupPendingAction(ctx, pending, member);
+          break;
+        }
         throw new Error(`Ação desconhecida: ${pending.tool}`);
+      }
     }
 
     await ctx.db.patch(pending._id, { status: "executed", executedAt: now });
