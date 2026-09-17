@@ -255,6 +255,25 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "GET /api/v1/whatsapp/templates": { category: "campaigns", level: "view" }, // whatsappTemplates.listTemplates
   "POST /api/v1/whatsapp/templates/sync": { category: "campaigns", level: "manage" }, // whatsappTemplates.syncMetaTemplates (campaigns:manage OU settings:manage no app)
   "GET /api/v1/whatsapp/tier": { category: "campaigns", level: "view" }, // whatsappTemplates.readMetaTier (leitura do limite do portfólio)
+
+  // Grupos de WhatsApp — convex/groupChats.ts (ler/escrever numa sala é `inbox`;
+  // acompanhar e sincronizar mexem na configuração do número, daí `settings`)
+  "GET /api/v1/groups": { category: "inbox", level: "view_own" }, // groupChats.listGroups
+  "GET /api/v1/groups/get": { category: "inbox", level: "view_own" }, // groupChats.getGroup
+  "GET /api/v1/groups/messages": { category: "inbox", level: "view_own" }, // conversations.getMessages (requireAuth) da conversa do grupo
+  "POST /api/v1/groups/send": { category: "inbox", level: "view_own" }, // conversations.sendMessage (requireAuth) — mesmo nível de POST /conversations/send
+  "POST /api/v1/groups/monitor": { category: "settings", level: "manage" }, // groupChats.setMonitored
+  "POST /api/v1/groups/sync": { category: "settings", level: "manage" }, // groupChats.syncGroups
+
+  // Publicações programadas em grupos — convex/groupPosts.ts (categoria `campaigns`)
+  "GET /api/v1/group-posts": { category: "campaigns", level: "view" }, // groupPosts.list
+  "GET /api/v1/group-posts/get": { category: "campaigns", level: "view" }, // groupPosts.get
+  "POST /api/v1/group-posts/create": { category: "campaigns", level: "manage" }, // groupPosts.create (conteúdo IA sem aprovação exige `full` DENTRO do handler)
+  "POST /api/v1/group-posts/update": { category: "campaigns", level: "manage" }, // groupPosts.update (idem)
+  "POST /api/v1/group-posts/activate": { category: "campaigns", level: "full" }, // groupPosts.activate (a partir daqui o CRM escreve sozinho na sala)
+  "POST /api/v1/group-posts/pause": { category: "campaigns", level: "manage" }, // groupPosts.pause
+  "POST /api/v1/group-posts/approve": { category: "campaigns", level: "manage" }, // groupPosts.approvePending
+  "POST /api/v1/group-posts/reject": { category: "campaigns", level: "manage" }, // groupPosts.rejectPending
 };
 
 /**
@@ -820,12 +839,19 @@ http.route({
       const leadId = url.searchParams.get("leadId");
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "200"), 500);
       const cursor = url.searchParams.get("cursor") || undefined;
+      // `kind` ausente = `direct`: a rota devolve só conversa 1 a 1, como antes
+      // da v0.57. Sala de grupo (sem lead nem contato) só sai quando pedida.
+      const kindParam = url.searchParams.get("kind");
+      if (kindParam && !["direct", "group", "all"].includes(kindParam)) {
+        return errorResponse("kind deve ser direct, group ou all", 400);
+      }
 
       const result = await ctx.runQuery(internal.conversations.internalGetConversations, {
         organizationId: apiKeyRecord.organizationId,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
         limit,
         cursor,
+        ...(kindParam ? { kind: kindParam as "direct" | "group" | "all" } : {}),
       });
 
       return jsonResponse(result as any);
@@ -3093,9 +3119,18 @@ http.route({
       const channelConfigId = url.searchParams.get("channelConfigId");
       if (!channelConfigId) return errorResponse("channelConfigId required", 400);
       const tier = url.searchParams.get("tier") ?? undefined;
+      // v0.57: "groups" tem tabela de limites própria (salas, não pessoas)
+      const audienceSource = url.searchParams.get("audienceSource");
       const defaults = await ctx.runQuery(internal.campaignsInternal.internalGetSafeDefaults, {
         channelConfigId: channelConfigId as Id<"channelConfigs">,
         ...(tier ? { tier } : {}),
+        ...(audienceSource === "segment" ||
+        audienceSource === "import" ||
+        audienceSource === "manual" ||
+        audienceSource === "groups" ||
+        audienceSource === "group_members"
+          ? { audienceSource }
+          : {}),
         now: Date.now(),
         actorMemberId: apiKeyRecord.teamMemberId,
       });
@@ -3119,6 +3154,13 @@ http.route({
         organizationId: apiKeyRecord.organizationId,
         filters: body.filters ?? {},
         now: Date.now(),
+        // Públicos de grupo (v0.57): "groups" | "group_members"
+        ...(body.source ? { source: body.source } : {}),
+        ...(Array.isArray(body.groupChatIds)
+          ? { groupChatIds: body.groupChatIds as Id<"groupChats">[] }
+          : {}),
+        ...(body.memberFilters ? { memberFilters: body.memberFilters } : {}),
+        ...(body.channelConfigId ? { channelConfigId: body.channelConfigId as Id<"channelConfigs"> } : {}),
         actorMemberId: apiKeyRecord.teamMemberId,
       });
       return jsonResponse({ preview });
@@ -3224,6 +3266,10 @@ http.route({
         const result = await ctx.runMutation(internal.campaignsInternal.internalAddManualRecipients, {
           campaignId,
           entries: body.entries,
+          // Origem opcional: seleção de membros de um grupo (relatório por grupo)
+          ...(body.sourceGroupChatId
+            ? { sourceGroupChatId: body.sourceGroupChatId as Id<"groupChats"> }
+            : {}),
           actorMemberId: apiKeyRecord.teamMemberId,
         });
         return jsonResponse({ success: true, ...result });
@@ -3261,6 +3307,8 @@ http.route({
         consentAck: body.consentAck === true,
         bridgeRiskAck: body.bridgeRiskAck === true,
         newNumberRiskAck: body.newNumberRiskAck === true,
+        // D15: público "group_members" exige este aceite (DM a quem não iniciou)
+        groupMembersDmAck: body.groupMembersDmAck === true,
         overrideAck: body.overrideAck === true,
         overrideWord: typeof body.overrideWord === "string" ? body.overrideWord : undefined,
         tierAtLaunch: typeof body.tierAtLaunch === "string" ? body.tierAtLaunch : undefined,
@@ -3513,6 +3561,380 @@ http.route({
   }),
 });
 
+// ---- Grupos de WhatsApp — convex/groupChats.ts + convex/groupPosts.ts ----
+// Mesmos caminhos FLAT das campanhas (`/groups/get?groupChatId=`). Entrar,
+// sair, criar grupo e mexer em participantes NÃO têm rota (§10 do plano):
+// são irreversíveis e alcançam gente de fora, então ficam só na UI.
+
+/** Mesmo mapeamento de erro das campanhas (404 / 403 / 400). */
+const groupErrorResponse = campaignErrorResponse;
+
+http.route({
+  path: "/api/v1/groups",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/groups");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const channelConfigId = url.searchParams.get("channelConfigId");
+      const groups = await ctx.runQuery(internal.groupsInternal.internalListGroups, {
+        organizationId: apiKeyRecord.organizationId,
+        ...(channelConfigId ? { channelConfigId: channelConfigId as Id<"channelConfigs"> } : {}),
+        ...(url.searchParams.get("includeRemoved") === "true" ? { includeRemoved: true } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ groups });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/groups/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/groups/get");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const groupChatId = url.searchParams.get("groupChatId");
+      if (!groupChatId) return errorResponse("groupChatId required", 400);
+      const group = await ctx.runQuery(internal.groupsInternal.internalGetGroup, {
+        groupChatId: groupChatId as Id<"groupChats">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      if (!group) return errorResponse("Grupo não encontrado", 404);
+      return jsonResponse({ group });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/groups/messages",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/groups/messages");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const groupChatId = url.searchParams.get("groupChatId");
+      if (!groupChatId) return errorResponse("groupChatId required", 400);
+      const messages = await ctx.runQuery(internal.groupsInternal.internalListGroupMessages, {
+        groupChatId: groupChatId as Id<"groupChats">,
+        limit: parseLimit(url.searchParams.get("limit"), 50, 200),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ messages });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/groups/send",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/groups/send");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupChatId) return errorResponse("groupChatId required", 400);
+      const attachments = Array.isArray(body.attachments)
+        ? (body.attachments as Id<"files">[])
+        : undefined;
+      if (!body.content && !(attachments && attachments.length > 0)) {
+        return errorResponse("content (or attachments) required", 400);
+      }
+      // Resolve a conversa da sala e re-checa o RBAC do membro da chave; o
+      // envio em si é o MESMO caminho de POST /conversations/send (pacing,
+      // webhook e dispatch inclusos).
+      const target = await ctx.runQuery(
+        internal.groupsInternal.internalResolveGroupConversation,
+        {
+          groupChatId: body.groupChatId as Id<"groupChats">,
+          actorMemberId: apiKeyRecord.teamMemberId,
+        }
+      );
+      const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
+        conversationId: target.conversationId,
+        content: body.content ?? "",
+        contentType: body.contentType || "text",
+        attachments,
+        ...(Array.isArray(body.mentions) ? { mentions: body.mentions as string[] } : {}),
+        ...(body.replyToMessageId
+          ? { replyToMessageId: body.replyToMessageId as Id<"messages"> }
+          : {}),
+        teamMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse(
+        { success: true, messageId, conversationId: target.conversationId },
+        201
+      );
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/groups/monitor",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/groups/monitor");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupChatId) return errorResponse("groupChatId required", 400);
+      if (typeof body.monitored !== "boolean") {
+        return errorResponse("monitored (boolean) required", 400);
+      }
+      const groupChatId = await ctx.runMutation(internal.groupsInternal.internalSetMonitored, {
+        groupChatId: body.groupChatId as Id<"groupChats">,
+        monitored: body.monitored,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, groupChatId, monitored: body.monitored });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/groups/sync",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/groups/sync");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.channelConfigId) return errorResponse("channelConfigId required", 400);
+      const result = await ctx.runAction(internal.groupsInternal.internalSyncGroups, {
+        channelConfigId: body.channelConfigId as Id<"channelConfigs">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true, ...result });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+// ---- Publicações programadas em grupos — convex/groupPosts.ts ----
+
+http.route({
+  path: "/api/v1/group-posts",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/group-posts");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const status = url.searchParams.get("status");
+      const channelConfigId = url.searchParams.get("channelConfigId");
+      const posts = await ctx.runQuery(internal.groupsInternal.internalListGroupPosts, {
+        organizationId: apiKeyRecord.organizationId,
+        ...(status ? { status: status as any } : {}),
+        ...(channelConfigId ? { channelConfigId: channelConfigId as Id<"channelConfigs"> } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      return jsonResponse({ posts });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/group-posts/get");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const groupPostId = url.searchParams.get("groupPostId");
+      if (!groupPostId) return errorResponse("groupPostId required", 400);
+      const post = await ctx.runQuery(internal.groupsInternal.internalGetGroupPost, {
+        groupPostId: groupPostId as Id<"groupPosts">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      if (!post) return errorResponse("Publicação não encontrada", 404);
+      return jsonResponse({ post });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/create",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/create");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.name) return errorResponse("name required", 400);
+      if (!Array.isArray(body.groupChatIds) || body.groupChatIds.length === 0) {
+        return errorResponse("groupChatIds required", 400);
+      }
+      if (!body.schedule) return errorResponse("schedule required", 400);
+      if (!body.content) return errorResponse("content required", 400);
+      const groupPostId = await ctx.runMutation(
+        internal.groupsInternal.internalCreateGroupPost,
+        {
+          organizationId: apiKeyRecord.organizationId,
+          name: body.name,
+          groupChatIds: body.groupChatIds as Id<"groupChats">[],
+          schedule: body.schedule,
+          content: body.content,
+          actorMemberId: apiKeyRecord.teamMemberId,
+          via: "api",
+        }
+      );
+      return jsonResponse({ success: true, groupPostId }, 201);
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/update");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupPostId) return errorResponse("groupPostId required", 400);
+      await ctx.runMutation(internal.groupsInternal.internalUpdateGroupPost, {
+        groupPostId: body.groupPostId as Id<"groupPosts">,
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...(Array.isArray(body.groupChatIds)
+          ? { groupChatIds: body.groupChatIds as Id<"groupChats">[] }
+          : {}),
+        ...(body.schedule !== undefined ? { schedule: body.schedule } : {}),
+        ...(body.content !== undefined ? { content: body.content } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/activate",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/activate");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupPostId) return errorResponse("groupPostId required", 400);
+      await ctx.runMutation(internal.groupsInternal.internalActivateGroupPost, {
+        groupPostId: body.groupPostId as Id<"groupPosts">,
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/pause",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/pause");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupPostId) return errorResponse("groupPostId required", 400);
+      await ctx.runMutation(internal.groupsInternal.internalPauseGroupPost, {
+        groupPostId: body.groupPostId as Id<"groupPosts">,
+        ...(body.reason ? { reason: body.reason } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/approve",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/approve");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupPostId) return errorResponse("groupPostId required", 400);
+      await ctx.runMutation(internal.groupsInternal.internalApproveGroupPost, {
+        groupPostId: body.groupPostId as Id<"groupPosts">,
+        ...(body.editedText ? { editedText: body.editedText } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
+http.route({
+  path: "/api/v1/group-posts/reject",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/group-posts/reject");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.groupPostId) return errorResponse("groupPostId required", 400);
+      await ctx.runMutation(internal.groupsInternal.internalRejectGroupPost, {
+        groupPostId: body.groupPostId as Id<"groupPosts">,
+        ...(body.reason ? { reason: body.reason } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+        via: "api",
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return groupErrorResponse(error);
+    }
+  }),
+});
+
 // ---- WhatsApp Cloud API webhooks (multi-tenant: routed by phone_number_id) ----
 
 http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
@@ -3612,5 +4034,19 @@ http.route({ path: "/api/v1/opt-outs", method: "OPTIONS", handler: optionsHandle
 http.route({ path: "/api/v1/whatsapp/templates", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/whatsapp/templates/sync", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/whatsapp/tier", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups/messages", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups/send", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups/monitor", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/groups/sync", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/create", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/update", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/activate", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/pause", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/approve", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/group-posts/reject", method: "OPTIONS", handler: optionsHandler });
 
 export default http;

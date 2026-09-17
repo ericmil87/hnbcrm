@@ -14,7 +14,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (58 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (66 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
@@ -89,18 +89,18 @@ Paths below omit the \`/api/v1\` prefix:
 | Required permission | Routes |
 |---------------------|--------|
 | \`auditLogs: view\` | GET /audit-logs |
-| \`campaigns: view\` | GET /campaigns, GET /campaigns/get, GET /campaigns/report, GET /campaigns/recipients, GET /campaigns/safe-defaults, GET /opt-outs, GET /whatsapp/templates, GET /whatsapp/tier |
-| \`campaigns: manage\` | POST /campaigns/create, POST /campaigns/update, POST /campaigns/recipients, POST /campaigns/preview-audience, POST /campaigns/pause, POST /campaigns/resume, POST /campaigns/retry-failed, POST /opt-outs, POST /whatsapp/templates/sync |
-| \`campaigns: full\` | POST /campaigns/launch, POST /campaigns/cancel, POST /campaigns/delete, DELETE /opt-outs |
+| \`campaigns: view\` | GET /campaigns, GET /campaigns/get, GET /campaigns/report, GET /campaigns/recipients, GET /campaigns/safe-defaults, GET /opt-outs, GET /whatsapp/templates, GET /whatsapp/tier, GET /group-posts, GET /group-posts/get |
+| \`campaigns: manage\` | POST /campaigns/create, POST /campaigns/update, POST /campaigns/recipients, POST /campaigns/preview-audience, POST /campaigns/pause, POST /campaigns/resume, POST /campaigns/retry-failed, POST /opt-outs, POST /whatsapp/templates/sync, POST /group-posts/create, POST /group-posts/update, POST /group-posts/pause, POST /group-posts/approve, POST /group-posts/reject |
+| \`campaigns: full\` | POST /campaigns/launch, POST /campaigns/cancel, POST /campaigns/delete, DELETE /opt-outs, POST /group-posts/activate |
 | \`contacts: edit\` | POST /contacts/create, POST /contacts/enrich |
 | \`contacts: view\` | GET /contacts, GET /contacts/get, POST /contacts/update, GET /contacts/gaps, GET /contacts/search |
 | \`inbox: reply\` | POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
-| \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending |
+| \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending, GET /groups, GET /groups/get, GET /groups/messages, POST /groups/send |
 | \`leads: edit_own\` | POST /inbound/lead, POST /files/upload-url, POST /files, DELETE /files/:id |
 | \`leads: full\` | POST /leads/delete |
 | \`leads: view_own\` | GET /leads, GET /leads/get, POST /leads/update, POST /leads/move-stage, POST /leads/assign, GET /files/:id/url, GET /boards, GET /field-definitions, GET /lead-sources, GET /activities, POST /activities |
 | \`reports: view\` | GET /dashboard |
-| \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows |
+| \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows, POST /groups/monitor, POST /groups/sync |
 | \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add, GET /calendar/events, GET /calendar/events/get, POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete |
 | valid API key only | GET /team-members, GET /notifications/preferences, PUT /notifications/preferences (self-scoped — mirrors the app, which requires only membership for these) |
 
@@ -668,7 +668,14 @@ Get enrichment gaps for a contact (which fields are missing).
 #### GET /api/v1/conversations
 List conversations with cursor-based pagination.
 
-**Query params:** leadId, limit, cursor (all optional)
+**Query params:** leadId, limit, cursor, kind (all optional)
+
+\`kind\` selects which conversations come back: \`direct\` (the DEFAULT — 1:1 only,
+each with lead/contact/assignee), \`group\` (WhatsApp group rooms, which have no
+lead and carry \`groupChat: { subject, jid, participantsCount }\` instead) or
+\`all\`. Every row also carries an explicit \`kind\` field. Integrations written
+before group support keep working unchanged: without the param they never see a
+group room.
 
 **Response:** \`{ conversations: [...], nextCursor, hasMore }\`
 
@@ -696,7 +703,7 @@ Inject an inbound message from a contact — for external bridges on any channel
 ### Handoff Endpoints
 
 #### GET /api/v1/handoffs
-List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved).
+List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved), \`title\` (the lead title, or the WhatsApp group name for a handoff raised inside a room) and \`isGroup\` (true when the handoff has no lead because it came from a group).
 
 **Query params:** status (pending, accepted, rejected, canceled), limit, cursor (all optional)
 
@@ -723,7 +730,7 @@ Reject a handoff.
 
 ### Campaign Endpoints (WhatsApp bulk messaging)
 
-Campaigns send WhatsApp messages in bulk through one channel (official Meta Cloud API or the unofficial bridge). New numbers become contact + lead + conversation at send time; replies flow through the normal inbox (and the AI attendant, which receives the campaign context). Every campaign enforces sending limits (safe defaults per channel age/tier, hard caps never exceeded), a business-hours window, the org-wide suppression list (opt-outs), and kill switches (low reply/delivery rate, consecutive failures, Meta quality errors). Statuses: draft → scheduled/running → paused/completed/canceled/failed. **Launching requires the human operator's explicit acknowledgements** (\`consentAck\` = consent/legal basis to contact the list; \`bridgeRiskAck\` on bridge channels = permanent ban risk; \`newNumberRiskAck\` when the bridge number was connected less than 3 days ago = the most-banned pattern, warned but not blocked) — never set them on a person's behalf without their confirmation. Recipient statuses: pending, queued, sent, delivered, read, replied, failed, skipped, opted_out. Meta error mapping: 131026/131047/130403 → failed (no retry); 131049 (per-user marketing cap) → one retry after 24h; 131050 (user opted out) → opted_out + suppression; 131048/132015 → campaign paused.
+Campaigns send WhatsApp messages in bulk through one channel (official Meta Cloud API or the unofficial bridge). Five audiences: \`segment\` (leads already in the CRM), \`import\`, \`manual\`, \`groups\` (bridge only — the recipient is the WhatsApp GROUP itself, one message per room, with its own lower caps of 20 rooms/day and ≥60 s between them) and \`group_members\` (bridge only — a private message to each participant of the chosen rooms, capped at 10 members per source group per day and automatically spread over days). New numbers become contact + lead + conversation at send time; replies flow through the normal inbox (and the AI attendant, which receives the campaign context). Every campaign enforces sending limits (safe defaults per channel age/tier, hard caps never exceeded), a business-hours window, the org-wide suppression list (opt-outs), and kill switches (low reply/delivery rate, consecutive failures, Meta quality errors). Statuses: draft → scheduled/running → paused/completed/canceled/failed. **Launching requires the human operator's explicit acknowledgements** (\`consentAck\` = consent/legal basis to contact the list; \`bridgeRiskAck\` on bridge channels = permanent ban risk; \`newNumberRiskAck\` when the bridge number was connected less than 3 days ago = the most-banned pattern, warned but not blocked) — never set them on a person's behalf without their confirmation. Recipient statuses: pending, queued, sent, delivered, read, replied, failed, skipped, opted_out. Meta error mapping: 131026/131047/130403 → failed (no retry); 131049 (per-user marketing cap) → one retry after 24h; 131050 (user opted out) → opted_out + suppression; 131048/132015 → campaign paused.
 
 #### GET /api/v1/campaigns
 List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns: [{ _id, name, status, provider, contentKind, channel, creatorName, stats, pausedReason, ... }] }\`
@@ -732,7 +739,7 @@ List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns
 **Query params:** campaignId. **Response:** \`{ campaign }\` (content, audience, schedule, pacing, safety, stats, timeline).
 
 #### GET /api/v1/campaigns/report
-**Query params:** campaignId. **Response:** \`{ report: { stats, rates: { delivered, read, replied, failed, optedOut }, errorBreakdown, skipBreakdown, estimatedCostUsd, progress, timeline } }\`
+**Query params:** campaignId. **Response:** \`{ report: { stats, rates: { delivered, read, replied, failed, optedOut }, errorBreakdown, skipBreakdown, estimatedCostUsd, progress, timeline, audienceSource, byGroup } }\` — \`byGroup\` breaks sent/delivered/read/replied down per group (source or target), and is empty outside the group audiences.
 
 #### GET /api/v1/campaigns/recipients
 **Query params:** campaignId (required), status, search, limit (≤500), cursor. **Response:** \`{ recipients: [...], nextCursor, hasMore }\`
@@ -741,10 +748,10 @@ List campaigns. **Query params:** status (optional). **Response:** \`{ campaigns
 **Query params:** channelConfigId (required), tier. **Response:** \`{ defaults: { provider, warmupDay, safe, hardCap, newNumberRisk, warmupWarning, schedule, safety } }\` — \`newNumberRisk\` (string or null) is set when the bridge number was connected less than 3 days ago; launching then requires \`newNumberRiskAck\`.
 
 #### POST /api/v1/campaigns/preview-audience
-**Body:** filters (boardId, stageIds, tags, assignedTo, temperature, priority, lastActivityBefore, lastActivityAfter, onlyOpenWindow, excludeCampaignedWithinDays, excludeRepliedToCampaigns). **Response:** \`{ preview: { count, sample, excluded, scanned, truncated } }\`
+**Body:** \`source\` (\`segment\` default, \`groups\`, \`group_members\`), filters (boardId, stageIds, tags, assignedTo, temperature, priority, lastActivityBefore, lastActivityAfter, onlyOpenWindow, excludeCampaignedWithinDays, excludeRepliedToCampaigns), and for the group audiences \`groupChatIds\` + \`memberFilters\` (excludeAdmins, excludeExistingContacts, excludeCampaignedWithinDays, activeInGroupWithinDays, excludeGroupChatIds, includeKeys) + \`channelConfigId\`. **Response:** \`{ preview: { count, sample, excluded, scanned, truncated, funnel, perGroup, estimatedDays, reach, members, membersTruncated, membersTotal } }\` — \`funnel\` is total → withPhone → deduped → afterOptOut → final, and member phone samples come masked. For \`group_members\`, \`members\` lists every participant still in the room (up to 500, \`membersTruncated\` when there are more) as \`{ key, name?, phoneMasked, phone?, isAdmin, groupChatId, groupSubject, isContact, excludedReason? }\` — \`phone\` is the raw number and only appears for keys with \`inbox:view_all\`; \`excludedReason\` says why someone is out (\`admin\`, \`opted_out\`, \`duplicate\`, \`self\`, \`no_phone\`, \`existing_contact\`, \`campaigned_recently\`, \`inactive_in_group\`, \`in_excluded_group\`, \`not_selected\`). Pass those \`key\` values back in \`memberFilters.includeKeys\` (max 1024) to send to a hand-picked subset; unknown keys are ignored and the other filters still apply on top.
 
 #### POST /api/v1/campaigns/create
-Create a DRAFT. **Body:** name (required), channelConfigId (required), content (required: \`{ kind: "text"|"template", variants: [{ text, attachmentFileIds? }], contentType?, template?: { name, language, category?, headerFileId?, bodyParams?: [{ source: "field"|"const", value }] } }\`), audience (\`{ source: "segment"|"manual"|"import", filters?, targetBoardId?, targetStageId?, targetTags? }\`, default manual), schedule, pacing, safeMode, safety, description. On bridge channels with more than 30 recipients the message needs 2+ text variants or spintax \`{a|b}\`; links are refused unless \`safety.allowLinks\`. Meta text campaigns only reach recipients with an open 24h window (\`filters.onlyOpenWindow\`); use a template for new numbers. **Response:** \`{ success: true, campaignId }\` (201)
+Create a DRAFT. **Body:** name (required), channelConfigId (required), content (required: \`{ kind: "text"|"template", variants: [{ text, attachmentFileIds? }], contentType?, template?: { name, language, category?, headerFileId?, bodyParams?: [{ source: "field"|"const", value }] } }\`), audience (\`{ source: "segment"|"manual"|"import"|"groups"|"group_members", filters?, groupChatIds?, memberFilters?, targetBoardId?, targetStageId?, targetTags? }\`, default manual), schedule, pacing, safeMode, safety, description. On bridge channels with more than 30 recipients the message needs 2+ text variants or spintax \`{a|b}\`; links are refused unless \`safety.allowLinks\`. Meta text campaigns only reach recipients with an open 24h window (\`filters.onlyOpenWindow\`); use a template for new numbers. **Response:** \`{ success: true, campaignId }\` (201)
 
 #### POST /api/v1/campaigns/update
 **Body:** campaignId, patch (name, description, channelConfigId, content, audience, schedule, pacing, safeMode, safety). Drafts: everything; paused/scheduled: only schedule/pacing/safety/safeMode.
@@ -753,10 +760,10 @@ Create a DRAFT. **Body:** name (required), channelConfigId (required), content (
 Draft/canceled/completed only (campaigns:full). **Body:** campaignId
 
 #### POST /api/v1/campaigns/recipients
-Add recipients to a DRAFT. **Body:** campaignId + one of: \`entries: [{ phone, name?, vars? }]\` (≤500) — or \`csv\` (text ≤5 MB) / \`fileId\` (uploaded with fileType import_file) with \`mapping: { phone, name?, email?, company?, varsColumns? }\` and \`dryRun\`. Without mapping the CSV call returns headers + suggestedMapping. **Response:** \`{ success, added, invalid, duplicates, suppressed, existingContacts?, preview? }\`
+Add recipients to a DRAFT. **Body:** campaignId, optional \`sourceGroupChatId\` (the group those numbers came from — kept for the per-group report) + one of: \`entries: [{ phone, name?, vars? }]\` (≤500) — or \`csv\` (text ≤5 MB) / \`fileId\` (uploaded with fileType import_file) with \`mapping: { phone, name?, email?, company?, varsColumns? }\` and \`dryRun\`. Without mapping the CSV call returns headers + suggestedMapping. **Response:** \`{ success, added, invalid, duplicates, suppressed, existingContacts?, preview? }\`
 
 #### POST /api/v1/campaigns/launch
-**Body:** campaignId, consentAck (required true), bridgeRiskAck (required true on bridge), newNumberRiskAck (required true when safe-defaults returns newNumberRisk — bridge number connected < 3 days ago), overrideAck + overrideWord "ENTENDO" (only when limits exceed the safe defaults), tierAtLaunch, templateQualityAtLaunch. **Response:** \`{ success, status: "running"|"scheduled", warnings, estimatedCostUsd }\`
+**Body:** campaignId, consentAck (required true), bridgeRiskAck (required true on bridge), newNumberRiskAck (required true when safe-defaults returns newNumberRisk — bridge number connected < 3 days ago), groupMembersDmAck (required true when \`audience.source = "group_members"\` — direct-messaging people who never contacted the business), overrideAck + overrideWord "ENTENDO" (only when limits exceed the safe defaults), tierAtLaunch, templateQualityAtLaunch. **Response:** \`{ success, status: "running"|"scheduled", warnings, estimatedCostUsd }\`
 
 #### POST /api/v1/campaigns/pause · POST /api/v1/campaigns/resume · POST /api/v1/campaigns/cancel · POST /api/v1/campaigns/retry-failed
 **Body:** campaignId (+ reason on pause). retry-failed re-queues eligible failures (131049 elapsed, network errors, canceled) → \`{ requeued }\`.
@@ -782,6 +789,53 @@ Add recipients to a DRAFT. **Body:** campaignId + one of: \`entries: [{ phone, n
 
 #### GET /api/v1/whatsapp/tier
 **Query params:** channelConfigId. **Response:** \`{ tier: "TIER_250"|"TIER_2K"|"TIER_10K"|"TIER_100K"|"TIER_UNLIMITED"|"unknown", limit }\`
+
+### WhatsApp Group Endpoints
+
+WhatsApp groups are available on **bridge channels only** (the unofficial gateway) and only after the risk acknowledgement is accepted on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to, but only ingests messages from the ones marked as followed — the number is also in family and school groups, and ingesting everything would be a leak, not a feature. Group members do NOT become contacts or leads automatically; they live in the group's \`participants[]\`, with \`contactId\` filled in only when the phone already belonged to a contact. **Joining, leaving, creating a group and changing participants have no REST route on purpose** — they are irreversible and reach people outside the company, so they stay in the app, behind human confirmation.
+
+#### GET /api/v1/groups
+**Query params:** channelConfigId (optional), includeRemoved (optional). **Response:** \`{ groups: [{ _id, jid, subject, monitored, participantsCount, weAreAdmin, isAnnounce, isEphemeral, lastMessageAt, ... }] }\` — the participant list is NOT included (a group can hold 1024 members); use \`/groups/get\`.
+
+#### GET /api/v1/groups/get
+**Query params:** groupChatId (required). **Response:** \`{ group: { ...group, participants: [{ lid, phone, name, isAdmin, isSuperAdmin, contactId, isSelf }], selfKey, selfKnown, ai } }\`. A group of another organization returns 404. \`participants\` is EMPTY for a group that is not monitored — member names and phone numbers belong to third parties and are only stored while the room is actually being followed. \`isSelf\` marks the connected number; \`selfKey\` (its raw identifier) is only returned to a key with settings:manage, and \`selfKnown\` says whether the CRM knows it at all.
+
+#### GET /api/v1/groups/messages
+**Query params:** groupChatId (required), limit (default 50, max 200). **Response:** \`{ messages: [{ _id, direction, content, contentType, deliveryStatus, readBy, mentions, senderName, senderPhone, senderLid, senderContactId, senderContactName, transcriptText, imageDescription, createdAt }] }\` — NEWEST first. The author of an inbound group message is a member, not a team member: \`senderName\` comes from their WhatsApp PushName.
+
+#### POST /api/v1/groups/send
+Send a message in a FOLLOWED group. **Body:** groupChatId (required), content (or attachments), contentType, mentions (JIDs of mentioned members → \`ContextInfo.MentionedJID\`), replyToMessageId, attachments. The "@name" in the text is your choice; \`mentions\` is what makes WhatsApp highlight and notify. Same send path as \`/conversations/send\` (pacing, webhook \`message.sent\`, dispatch). **Response:** \`{ success: true, messageId, conversationId }\` (201)
+
+#### POST /api/v1/groups/monitor
+Start or stop following a group. Following creates the group conversation in the inbox; unfollowing ARCHIVES it (the history already ingested is never deleted). **Body:** groupChatId, monitored (boolean). Requires \`settings: manage\`. **Response:** \`{ success, groupChatId, monitored }\`
+
+#### POST /api/v1/groups/sync
+Refresh the group list of a number from the gateway (names, admins, participants). It NEVER turns following on or off — that is always a person's decision. **Body:** channelConfigId. Requires \`settings: manage\`. **Response:** \`{ success, upserted, removed, detail }\`
+
+### Scheduled Group Post Endpoints
+
+A scheduled group post is "every day at noon the assistant posts in group X". It combines targets (followed groups of the SAME channel), a schedule (local times, weekdays, timezone), content (a library of ready-made messages rotated sequentially/randomly, or AI generation) and an approval policy. Statuses: draft → active → paused/ended. Activation is \`campaigns: full\` because from that moment the CRM writes by itself into rooms full of real people.
+
+#### GET /api/v1/group-posts
+**Query params:** status (draft|active|paused|ended), channelConfigId. **Response:** \`{ posts: [{ _id, name, status, scheduleText, targetNames, nextRunAt, stats, pendingApproval, ... }] }\`
+
+#### GET /api/v1/group-posts/get
+**Query params:** groupPostId. **Response:** \`{ post: { ...post, scheduleText, targets: [{ groupChatId, subject, jid, monitored, left }], channel } }\`
+
+#### POST /api/v1/group-posts/create
+Create a DRAFT. **Body:** name, groupChatIds (all followed, same channel), schedule (\`{ timezone, times: ["12:00"], days?: [1..7], startAt?, endAt?, jitterMinutes? }\`), content (\`{ kind: "library", library: { items: [{ text, attachmentFileIds? }], order: "sequential"|"random", noRepeatWindow? } }\` or \`{ kind: "ai", ai: { prompt, persona?, customPersona?, requiresApproval?, generateMinutesBefore?, onMissedApproval? } }\`). AI content requires the organization's AI and the group AI switch to be on; \`requiresApproval: false\` additionally requires \`campaigns: full\`. **Response:** \`{ success, groupPostId }\` (201)
+
+#### POST /api/v1/group-posts/update
+**Body:** groupPostId + any of name, groupChatIds, schedule, content. An active post is rescheduled on the spot; changing the content invalidates any text waiting for approval.
+
+#### POST /api/v1/group-posts/activate
+**Body:** groupPostId. Re-validates every target (someone may have stopped following the room) and the schedule. Audited as \`high\`. Requires \`campaigns: full\`.
+
+#### POST /api/v1/group-posts/pause
+**Body:** groupPostId, reason (optional).
+
+#### POST /api/v1/group-posts/approve · POST /api/v1/group-posts/reject
+Decide on the AI text waiting for review. **Body:** groupPostId (+ editedText on approve, reason on reject).
 
 ### Reference Endpoints
 
@@ -1240,7 +1294,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 58 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 66 tools for AI agents:
 
 ### Lead Management
 
@@ -1528,6 +1582,29 @@ Suppression list: list (search, limit, cursor) / add (phone or contactId, reason
 #### crm_list_whatsapp_templates
 Meta templates cached for a channel. **channelConfigId**, onlyApproved.
 
+### WhatsApp Groups
+
+#### crm_list_groups
+Groups known to the org's bridge channels. **channelConfigId**, includeRemoved (optional). Following a room is opt-in per group, so a listed group is not necessarily ingested.
+
+#### crm_get_group
+One group with the full participant list (PushName, phone, LID, admin flags, linked contact) and the room's AI policy. **groupChatId** (required).
+
+#### crm_send_group_message
+Send a message to a FOLLOWED group. **groupChatId**, **content** (required), mentions (JIDs), replyToMessageId. Writes to a room with people outside the company and cannot be unsent.
+
+#### crm_list_group_posts / crm_get_group_post
+Scheduled group posts: list (status, channelConfigId) / detail (**groupPostId**).
+
+#### crm_create_group_post
+Create a DRAFT scheduled post. **name**, **groupChatIds** (same channel, all followed), **schedule** (timezone, times, days), **content** (library of messages or AI prompt). Never publishes — activating is done by a human in the app (campaigns:full).
+
+#### crm_pause_group_post
+Pause an active scheduled post. **groupPostId**, reason (optional).
+
+#### crm_approve_group_post
+Approve the AI text waiting for review. **groupPostId**, editedText (optional).
+
 ---
 
 ## Webhook Events
@@ -1544,7 +1621,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | contact.created | New contact created |
 | contact.updated | Contact fields updated |
 | conversation.created | New conversation started |
-| message.sent | Message sent to conversation (payload includes senderType + senderId) |
+| message.sent | Message sent to a 1:1 conversation (payload includes leadId, senderType + senderId). Group rooms fire group.message.sent instead |
 | message.received | Inbound message received from a contact |
 | handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure) |
 | handoff.accepted | Handoff accepted (payload includes conversationId) |
@@ -1573,6 +1650,17 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | campaign.canceled | Campaign canceled (payload: campaignId, name, stats) |
 | campaign.recipient_replied | A campaign recipient replied within 7 days (payload: campaignId, recipientId, conversationId, leadId, phone) |
 | contact.opted_out | A phone entered the suppression list (payload: phone, source, campaignId?, contactId?) |
+| group.joined | The connected number joined (or was added to) a WhatsApp group — registered with monitoring OFF (payload: groupChatId, jid, subject, channelConfigId, participantsCount, reason) |
+| group.left | The connected number left the group, or was removed (payload: groupChatId, jid, subject) |
+| group.updated | Group name/topic/admins/participants changed (payload: groupChatId, jid, subject, join, leave, promote, demote) |
+| group.message.sent | Outbound message published in a MONITORED group — manual reply, AI reply, scheduled post or campaign (payload: messageId, conversationId, kind, channel, senderType, senderId; NO leadId, a room is not a lead) |
+| group.message.received | Inbound message in a MONITORED group (payload: messageId, conversationId, groupChatId, jid, subject, senderLid, senderPhone, senderName, contactId, externalId) — 1:1 messages keep using message.received |
+| group.post.activated | A scheduled group post was activated (payload: groupPostId, name, nextRunAt, groups) |
+| group.post.pending | The AI wrote the text of the next slot (payload: groupPostId, name, slotKey, dueAt, requiresApproval, text) |
+| group.post.sent | A scheduled group post fired (payload: groupPostId, name, slotKey, generated, groups, delivered, messageIds) |
+| group.post.failed | A scheduled group post could not run — generation error, no valid group, channel down (payload: groupPostId, name, reason, slotKey?, stage?) |
+| group.post.paused | A scheduled group post was paused, manually or automatically (payload: groupPostId, name, reason, automatic) |
+| group.post.ended | A scheduled group post ended (payload: groupPostId, name, reason, stats) |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
 

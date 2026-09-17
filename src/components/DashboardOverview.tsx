@@ -668,8 +668,8 @@ function existingFeatures(
     {
       icon: Globe,
       title: "API REST",
-      description: "64 endpoints autenticados para integrações externas via X-API-Key",
-      dataBadge: "64 endpoints",
+      description: "113 endpoints autenticados para integrações externas via X-API-Key",
+      dataBadge: "113 endpoints",
       tab: "settings" as Tab,
       onClick: () => onTabChange("settings"),
     },

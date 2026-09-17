@@ -19,6 +19,22 @@ const audienceFilters = z
   })
   .describe("Segment filters (for audience.source = 'segment')");
 
+const memberFilters = z
+  .object({
+    excludeAdmins: z.boolean().optional(),
+    excludeExistingContacts: z.boolean().optional().describe("Drop members who already are contacts"),
+    excludeCampaignedWithinDays: z.number().optional(),
+    activeInGroupWithinDays: z.number().optional().describe("Only members who spoke in the group in the last N days"),
+    excludeGroupChatIds: z.array(z.string()).optional().describe("Drop members who also belong to these groups"),
+    includeKeys: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Only these members (participant key = `lid ?? phone`, as returned by preview-audience `members[].key`). Empty = every eligible member."
+      ),
+  })
+  .describe("Member filters (for audience.source = 'group_members')");
+
 export function registerCampaignTools(server: McpServer, client: HnbCrmClient) {
   server.tool(
     "crm_list_campaigns",
@@ -98,8 +114,17 @@ export function registerCampaignTools(server: McpServer, client: HnbCrmClient) {
         .describe("Message content"),
       audience: z
         .object({
-          source: z.enum(["segment", "import", "manual"]),
+          source: z
+            .enum(["segment", "import", "manual", "groups", "group_members"])
+            .describe(
+              "'groups' posts in the WhatsApp GROUPS themselves (one recipient per room); 'group_members' direct-messages the members of those rooms one by one (bridge channels only)"
+            ),
           filters: audienceFilters.optional(),
+          groupChatIds: z
+            .array(z.string())
+            .optional()
+            .describe("Monitored groups of the SAME channel (source 'groups' or 'group_members')"),
+          memberFilters: memberFilters.optional(),
           targetBoardId: z.string().optional().describe("Board where NEW numbers become leads"),
           targetStageId: z.string().optional(),
           targetTags: z.array(z.string()).optional(),
@@ -153,6 +178,10 @@ export function registerCampaignTools(server: McpServer, client: HnbCrmClient) {
     "Add recipients to a DRAFT campaign: either `entries` (up to 500 phone numbers with optional name/vars) or a `csv` text (≤5 MB) with a column `mapping`. With csv, set dryRun=true first to validate (returns valid/invalid/duplicates/suppressed counts). Phones are normalized to E.164 (default country 55). Suppressed (opted-out) numbers are never added.",
     {
       campaignId: z.string(),
+      sourceGroupChatId: z
+        .string()
+        .optional()
+        .describe("Group these numbers came from (kept for the per-group report)"),
       entries: z
         .array(
           z.object({
@@ -188,12 +217,18 @@ export function registerCampaignTools(server: McpServer, client: HnbCrmClient) {
 
   server.tool(
     "crm_launch_campaign",
-    "Launch a draft campaign. REQUIRES explicit acknowledgements from the human operator you act for: consentAck=true (the organization has consent / legal basis to contact the list — LGPD) and, on bridge (unofficial) channels, bridgeRiskAck=true (the number can be permanently banned). If the bridge number was connected less than 3 days ago (safe-defaults returns newNumberRisk), newNumberRiskAck=true is also required — the most-banned pattern; warned, not blocked. Limits above the safe defaults additionally require overrideAck=true and overrideWord='ENTENDO'. Requires campaigns:full. Never set these flags without the human's explicit confirmation.",
+    "Launch a draft campaign. REQUIRES explicit acknowledgements from the human operator you act for: consentAck=true (the organization has consent / legal basis to contact the list — LGPD) and, on bridge (unofficial) channels, bridgeRiskAck=true (the number can be permanently banned). If the bridge number was connected less than 3 days ago (safe-defaults returns newNumberRisk), newNumberRiskAck=true is also required — the most-banned pattern; warned, not blocked. Campaigns whose audience is 'group_members' also require groupMembersDmAck=true. Limits above the safe defaults additionally require overrideAck=true and overrideWord='ENTENDO'. Requires campaigns:full. Never set these flags without the human's explicit confirmation.",
     {
       campaignId: z.string(),
       consentAck: z.boolean().describe("Human confirmed consent/legal basis for the list"),
       bridgeRiskAck: z.boolean().optional().describe("Human accepted the ban risk (bridge channels)"),
       newNumberRiskAck: z.boolean().optional().describe("Human accepted launching from a bridge number connected less than 3 days ago"),
+      groupMembersDmAck: z
+        .boolean()
+        .optional()
+        .describe(
+          "REQUIRED for audience.source = 'group_members': the human accepted direct-messaging people who never started a conversation with the business — the most blocked pattern on WhatsApp"
+        ),
       overrideAck: z.boolean().optional(),
       overrideWord: z.string().optional().describe("Type ENTENDO to launch above safe limits"),
       tierAtLaunch: z.string().optional().describe("Meta portfolio tier (from crm_get_whatsapp_tier)"),

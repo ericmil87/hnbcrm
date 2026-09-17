@@ -13,6 +13,7 @@ import { registerTaskTools } from "./tools/tasks.js";
 import { registerCalendarTools } from "./tools/calendar.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { registerCampaignTools } from "./tools/campaigns.js";
+import { registerGroupTools } from "./tools/groups.js";
 import { registerResources } from "./resources.js";
 
 function createServer(apiUrl: string, apiKey: string) {
@@ -33,6 +34,7 @@ function createServer(apiUrl: string, apiKey: string) {
   registerCalendarTools(server, client);
   registerNotificationTools(server, client);
   registerCampaignTools(server, client);
+  registerGroupTools(server, client);
   registerResources(server, client);
 
   return server;

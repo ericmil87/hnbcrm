@@ -8,13 +8,18 @@ export function registerConversationTools(
 ) {
   server.tool(
     "crm_list_conversations",
-    "List conversations, optionally filtered by lead ID. Each conversation includes its channel, status, and associated lead.",
+    "List conversations, optionally filtered by lead ID. Each conversation includes its channel, status, and associated lead. By default only 1:1 conversations are returned — WhatsApp group rooms have no lead or contact and only appear with kind=group or kind=all. To send into a group, use crm_send_group_message, not crm_send_message.",
     {
       leadId: z.string().optional().describe("Filter by lead ID"),
+      kind: z
+        .enum(["direct", "group", "all"])
+        .optional()
+        .describe("direct (default) = 1:1 only; group = WhatsApp group rooms; all = both"),
     },
     async (args) => {
       const params: Record<string, string> = {};
       if (args.leadId) params.leadId = args.leadId;
+      if (args.kind) params.kind = args.kind;
       const result = await client.get("/api/v1/conversations", params);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],

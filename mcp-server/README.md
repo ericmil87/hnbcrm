@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **58 tools across 10 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns and notification preferences via AI agents.
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **66 tools across 11 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns, WhatsApp groups and notification preferences via AI agents.
 
 ## Prerequisites
 
@@ -246,6 +246,13 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | `crm_get_notification_preferences` | Get email notification preferences for the current agent |
 | `crm_update_notification_preferences` | Update email notification preferences (e.g., disable dailyDigest) |
 
+Opt-out model: a flag that was never set counts as enabled. The 19 flags are
+`invite`, `leadAssigned`, `newMessage`, `dailyDigest`, `handoffRequested`, `handoffResolved`,
+`taskAssigned`, `taskOverdue`, `taskDueSoon`, `taskCommentMention`, `aiDraftPending`,
+`campaignCompleted`, `campaignPaused`, and the WhatsApp-group ones `groupJoined`, `groupMention`,
+`groupPostPending`, `groupPostFailed`, `groupOpportunity`, `groupDigest`. Only the flags you send
+are changed.
+
 ### Campaigns (12 tools)
 
 WhatsApp bulk-messaging campaigns (official Cloud API or unofficial bridge). Launching always requires the human operator's explicit acknowledgements (LGPD consent; bridge ban risk) — never set those flags on your own.
@@ -264,6 +271,21 @@ WhatsApp bulk-messaging campaigns (official Cloud API or unofficial bridge). Lau
 | `crm_list_opt_outs` | Suppression list (numbers that never receive campaigns) |
 | `crm_add_opt_out` | Add a phone/contact to the suppression list |
 | `crm_list_whatsapp_templates` | Meta message templates cached for a channel |
+
+### WhatsApp Groups (8 tools)
+
+WhatsApp groups work on **bridge channels only**, after the risk acknowledgement on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to but only ingests the followed ones. Group members do not become contacts or leads automatically. Joining, leaving, creating a group and changing participants are deliberately NOT exposed here — they are irreversible and reach people outside the company, so they stay in the app.
+
+| Tool | Description |
+|------|-------------|
+| `crm_list_groups` | List the groups of the org's bridge channels (subject, members, followed or not) |
+| `crm_get_group` | One group with its full participant list and the room's AI policy |
+| `crm_send_group_message` | Send a message in a followed group, with `mentions` (JIDs) to notify members |
+| `crm_list_group_posts` | Scheduled group posts ("every day at noon the assistant posts in group X") |
+| `crm_get_group_post` | Targets, schedule, content and any text waiting for approval |
+| `crm_create_group_post` | Create a DRAFT scheduled post — it never publishes; activating is a human decision in the app |
+| `crm_pause_group_post` | Pause an active scheduled post |
+| `crm_approve_group_post` | Approve (optionally editing) the AI text waiting for review |
 
 ## Resources
 

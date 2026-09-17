@@ -91,7 +91,7 @@ export function DevelopersPage() {
     <>
       <SEO
         title="Developer Documentation"
-        description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 64 endpoints documentados com playground interativo."
+        description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 113 endpoints documentados com playground interativo."
         keywords="api, rest, mcp, webhooks, developer, integration, ai agents"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -504,7 +504,7 @@ npm run dev`}</CodeBlock>
               Tools MCP — Referência
             </h2>
             <p className="text-text-secondary">
-              O servidor MCP expõe 58 ferramentas organizadas por categoria. Cada
+              O servidor MCP expõe 66 ferramentas organizadas por categoria. Cada
               ferramenta corresponde a uma ação no CRM.
             </p>
 
@@ -651,6 +651,37 @@ npm run dev`}</CodeBlock>
                     <ToolRow name="crm_list_opt_outs" description="Lista de supressão (não contatar)" params="search?" />
                     <ToolRow name="crm_add_opt_out" description="Marca um telefone como não contatar" params="phone | contactId" />
                     <ToolRow name="crm_list_whatsapp_templates" description="Templates Meta em cache do canal" params="channelConfigId" />
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+
+            {/* Grupos de WhatsApp */}
+            <Card className="p-0 overflow-hidden">
+              <div className="px-4 py-3 bg-surface-overlay border-b border-border">
+                <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                  Grupos de WhatsApp
+                  <Badge variant="brand">8 tools</Badge>
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-border bg-surface-sunken/50">
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
+                      <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <ToolRow name="crm_list_groups" description="Grupos dos números bridge (acompanhar é opt-in por grupo)" params="channelConfigId?" />
+                    <ToolRow name="crm_get_group" description="Grupo com a lista de participantes e a política de IA" params="groupChatId" />
+                    <ToolRow name="crm_send_group_message" description="Envia mensagem num grupo acompanhado (com menções)" params="groupChatId, content, mentions?" />
+                    <ToolRow name="crm_list_group_posts" description="Publicações programadas nos grupos" params="status?" />
+                    <ToolRow name="crm_get_group_post" description="Detalhes de uma publicação programada" params="groupPostId" />
+                    <ToolRow name="crm_create_group_post" description="Cria a publicação como rascunho (nunca ativa)" params="name, groupChatIds, schedule, content" />
+                    <ToolRow name="crm_pause_group_post" description="Pausa uma publicação ativa" params="groupPostId" />
+                    <ToolRow name="crm_approve_group_post" description="Aprova o texto da IA que aguarda revisão" params="groupPostId, editedText?" />
                   </tbody>
                 </table>
               </div>
@@ -1044,7 +1075,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
             <p className="text-sm text-text-secondary">
               Todos os endpoints requerem o header{" "}
               <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">X-API-Key</code>.
-              Respostas em JSON. {ALL_ENDPOINTS.length} endpoints documentados no playground (85 no total — referência completa em /llms-full.txt).
+              Respostas em JSON. {ALL_ENDPOINTS.length} endpoints documentados no playground (113 no total — referência completa em /llms-full.txt).
             </p>
 
             {API_CATEGORIES.map((category) => {
@@ -1157,6 +1188,17 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "campaign.canceled",
                   "campaign.recipient_replied",
                   "contact.opted_out",
+                  "group.joined",
+                  "group.left",
+                  "group.updated",
+                  "group.message.received",
+                  "group.message.sent",
+                  "group.post.activated",
+                  "group.post.pending",
+                  "group.post.sent",
+                  "group.post.failed",
+                  "group.post.paused",
+                  "group.post.ended",
                 ].map((event) => (
                   <code
                     key={event}

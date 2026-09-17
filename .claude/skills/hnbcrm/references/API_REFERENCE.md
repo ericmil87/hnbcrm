@@ -95,6 +95,20 @@ The last column shows whether the **default** permissions of the `ai` and `agent
 | `POST /api/v1/calendar/events/complete` | `tasks: view_own` | sim |
 | `GET /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
 | `PUT /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
+| `GET /api/v1/groups` | `inbox: view_own` | sim |
+| `GET /api/v1/groups/get` | `inbox: view_own` | sim |
+| `GET /api/v1/groups/messages` | `inbox: view_own` | sim |
+| `POST /api/v1/groups/send` | `inbox: view_own` | sim |
+| `POST /api/v1/groups/monitor` | `settings: manage` | **não** |
+| `POST /api/v1/groups/sync` | `settings: manage` | **não** |
+| `GET /api/v1/group-posts` | `campaigns: view` | sim |
+| `GET /api/v1/group-posts/get` | `campaigns: view` | sim |
+| `POST /api/v1/group-posts/create` | `campaigns: manage` | **não** |
+| `POST /api/v1/group-posts/update` | `campaigns: manage` | **não** |
+| `POST /api/v1/group-posts/activate` | `campaigns: full` | **não** |
+| `POST /api/v1/group-posts/pause` | `campaigns: manage` | **não** |
+| `POST /api/v1/group-posts/approve` | `campaigns: manage` | **não** |
+| `POST /api/v1/group-posts/reject` | `campaigns: manage` | **não** |
 
 Public routes (no API key, no permission): `GET /api/v1/forms/public`, `POST /api/v1/forms/public/submit`, `POST /api/v1/forms/public/partial`, `POST /api/v1/forms/experiment/view`, `GET /api/v1/embed.js`, `GET /api/v1/openapi.json`, `POST /api/v1/webhooks/resend`.
 
@@ -747,6 +761,34 @@ Shortcut for `GET /api/v1/handoffs?status=pending`.
 | `crm_get_notification_preferences` | GET /api/v1/notifications/preferences |
 | `crm_update_notification_preferences` | PUT /api/v1/notifications/preferences |
 
+Both are self-scoped: they read and write the preferences of the team member the API key belongs to, never someone else's.
+
+### Preference Flags
+
+Opt-out model — a flag that was never written counts as enabled. `PUT` changes only the flags present in the body; the rest keep their value.
+
+| Flag | Notification |
+|------|--------------|
+| `invite` | Invitation to join the organization |
+| `leadAssigned` | A lead was assigned to you |
+| `newMessage` | New message in one of your conversations |
+| `dailyDigest` | Daily operations digest |
+| `handoffRequested` | AI asked for a human handoff |
+| `handoffResolved` | Handoff accepted or rejected |
+| `taskAssigned` | Task assigned to you |
+| `taskOverdue` | Task passed its due date |
+| `taskDueSoon` | Early reminder before a task's due date |
+| `taskCommentMention` | You were mentioned in a task comment |
+| `aiDraftPending` | AI attendant draft waiting for review (suggest mode) |
+| `campaignCompleted` | WhatsApp campaign finished sending |
+| `campaignPaused` | Campaign paused automatically (kill switch, frozen channel, cap reached) |
+| `groupJoined` | The CRM number joined a WhatsApp group |
+| `groupMention` | Mention of the CRM number in a group, or an alert keyword matched in the room |
+| `groupPostPending` | Scheduled group post waiting for approval |
+| `groupPostFailed` | Scheduled group post failed or was paused |
+| `groupOpportunity` | AI opportunity radar spotted a possible lead in a group |
+| `groupDigest` | Daily digest of the monitored groups |
+
 ---
 
 ## Data Export / Import (REST only)
@@ -867,3 +909,17 @@ Permissions (category `campaigns`, defaults: admin `full`, manager `manage`, age
 | `POST /api/v1/campaigns/launch`, `/cancel`, `/delete`, `DELETE /api/v1/opt-outs` | `campaigns: full` | **não** |
 
 Rules for agents: a campaign is a draft until a human launches it. `crm_launch_campaign` requires `consentAck: true` (and `bridgeRiskAck: true` on bridge channels, plus `newNumberRiskAck: true` when `/campaigns/safe-defaults` returns `newNumberRisk` — bridge number connected < 3 days ago) — these represent the HUMAN operator's explicit acknowledgement; ask and quote their confirmation before setting them. Prefer 2+ text variants and `{{nome}}` placeholders; never raise limits above the safe defaults returned by `/campaigns/safe-defaults`. Numbers in the suppression list (`crm_list_opt_outs`) never receive campaigns; when a customer asks not to be contacted, call `crm_add_opt_out`.
+
+## WhatsApp Groups
+
+Tools: `crm_list_groups`, `crm_get_group`, `crm_send_group_message`, `crm_list_group_posts`, `crm_get_group_post`, `crm_create_group_post`, `crm_pause_group_post`, `crm_approve_group_post` → REST `/api/v1/groups/*` and `/api/v1/group-posts/*`.
+
+Groups run on **bridge channels only** (the unofficial gateway), after the organization accepted the ban-risk acknowledgement on that number.
+
+Rules for agents:
+
+- **Following a room is opt-in per group.** `crm_list_groups` shows every group the number belongs to, but only the ones with `monitored: true` are ingested. Turning it on is `settings: manage` (an admin decision) and there is no MCP tool for it — ask a human, or use `POST /api/v1/groups/monitor` with an admin key.
+- **Members are not contacts or leads.** They live in the group's `participants[]`, with `contactId` filled in only when the phone already belonged to a contact. Creating a lead from a member is done in the app.
+- **`crm_send_group_message` writes to a room full of people outside the company and cannot be unsent.** Say what you are about to post and to which group before calling it. To mention someone, put `@FirstName` in the text AND pass their JID in `mentions` — the text alone highlights nothing.
+- **Joining, leaving, creating a group and changing participants are not exposed** over REST or MCP, on purpose.
+- **A scheduled group post never publishes by itself until a human activates it.** `crm_create_group_post` always creates a draft; activation is `campaigns: full` and is done in the app. `crm_approve_group_post` decides on one AI-generated text for one slot, not on the routine as a whole.

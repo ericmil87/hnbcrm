@@ -35,7 +35,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields
 - **Data Export/Import** — Per-entity CSV exports (denormalized columns + custom fields, BOM, formula-injection safe) and versioned full-org JSON backup (secrets always stripped, LGPD art. 18 portability); CSV import wizard for contacts and leads with PT-BR/EN header mapping suggestions, dry-run preview, duplicate strategies, and one-click rollback
 - **REST API** — Full CRUD at `/api/v1/` with API key authentication, per-route RBAC enforcement (mirrors in-app permissions, fail-closed 403), 300 req/min rate limit per key, and HMAC webhooks
-- **MCP Server** — AI agents connect via Model Context Protocol with 58 tools for full CRM access (leads, pipeline, tasks, calendar, WhatsApp campaigns)
+- **MCP Server** — AI agents connect via Model Context Protocol with 66 tools for full CRM access (leads, pipeline, tasks, calendar, WhatsApp campaigns, WhatsApp groups)
 - **Agent Skills** — Open skill package (AgentSkills.io standard) with workflows, data model, and setup guides
 - **Multi-tenant** — Organization-level isolation with role-based access (Admin, Manager, Agent, AI)
 - **Real-time** — Powered by Convex for instant updates across all connected clients
@@ -117,7 +117,7 @@ public/             Logo assets
 
 **REST API** — RESTful endpoints at `/api/v1/` authenticated via `X-API-Key` header. Covers leads, contacts, conversations, handoffs, tasks, calendar, boards, team members, and data export/import. Every route enforces the RBAC permission of the key's member (fail-closed, 403), rate-limited at 300 req/min per key. Route → permission table at `/llms-full.txt`; OpenAPI spec at `/openapi.json`. See `convex/router.ts` for the source of truth.
 
-**MCP Server** — The `mcp-server/` directory contains an MCP server (`hnbcrm-mcp`) with 58 tools and 4 resources for AI agent integration. See [mcp-server/README.md](mcp-server/README.md) for setup.
+**MCP Server** — The `mcp-server/` directory contains an MCP server (`hnbcrm-mcp`) with 66 tools and 4 resources for AI agent integration. See [mcp-server/README.md](mcp-server/README.md) for setup.
 
 **Agent Skills** — The `.claude/skills/hnbcrm/` directory contains a portable Agent Skill following the [AgentSkills.io](https://agentskills.io) open standard. Includes workflows, data model reference, API mapping, and platform setup guides. Copy the skill into any compatible agent workspace — [Hermes Agent](https://github.com/NousResearch/hermes-agent) (`~/.hermes/skills/`), Claude Code, Cursor, OpenClaw, and more.
 
