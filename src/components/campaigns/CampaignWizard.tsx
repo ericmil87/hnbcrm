@@ -32,27 +32,67 @@ import { StepMessage } from "./steps/StepMessage";
 import { StepLimits } from "./steps/StepLimits";
 import { StepReview } from "./steps/StepReview";
 
+/**
+ * Pré-preenchimento vindo de fora do wizard (portas de entrada da F5): a página
+ * de Grupos, o header do grupo no inbox e a seleção no painel de membros.
+ */
+export interface CampaignPrefill {
+  source?: "groups" | "group_members" | "manual";
+  /** Grupos de origem já marcados (ou, no `manual`, só a origem da seleção). */
+  groupChatIds?: Id<"groupChats">[];
+  /** Números vindos da seleção de membros — viram público manual. */
+  phones?: string[];
+  name?: string;
+}
+
 interface CampaignWizardProps {
   organizationId: Id<"organizations">;
   campaignId: Id<"campaigns"> | null;
   onClose: () => void;
   onSaved?: (campaignId: Id<"campaigns">) => void;
   onLaunched?: (campaignId: Id<"campaigns">) => void;
+  prefill?: CampaignPrefill;
 }
 
-export function CampaignWizard({ organizationId, campaignId: initialId, onClose, onSaved, onLaunched }: CampaignWizardProps) {
+export function CampaignWizard({ organizationId, campaignId: initialId, onClose, onSaved, onLaunched, prefill }: CampaignWizardProps) {
   const { can } = usePermissions(organizationId);
   const canLaunch = can("campaigns", "full");
 
   const [campaignId, setCampaignId] = useState<Id<"campaigns"> | null>(initialId);
   const existing = useQuery(api.campaigns.getCampaign, campaignId ? { campaignId } : "skip") as CampaignDoc | null | undefined;
-  const [draft, setDraftState] = useState<WizardDraft>(() => emptyDraft());
+  const [draft, setDraftState] = useState<WizardDraft>(() => {
+    const base = emptyDraft();
+    if (!prefill) return base;
+    return {
+      ...base,
+      name: prefill.name ?? base.name,
+      audience: {
+        ...base.audience,
+        source: prefill.source ?? base.audience.source,
+        groupChatIds: prefill.groupChatIds ?? [],
+      },
+    };
+  });
+  // Números que vieram da seleção de membros: entram como público manual assim
+  // que a campanha existir (addManualRecipients precisa de um campaignId).
+  const [pendingPhones, setPendingPhones] = useState<string[]>(() => prefill?.phones ?? []);
+  const addManualRecipients = useMutation(api.campaigns.addManualRecipients);
   const [hydrated, setHydrated] = useState(initialId === null);
   const [step, setStep] = useState<WizardStep>("channel");
   const [saving, setSaving] = useState(false);
   const [consentAck, setConsentAck] = useState(false);
   const [bridgeRiskAck, setBridgeRiskAck] = useState(false);
   const [newNumberRiskAck, setNewNumberRiskAck] = useState(false);
+  const [groupMembersDmAck, setGroupMembersDmAck] = useState(false);
+  /**
+   * D15 também vale para a campanha `manual` criada pelo "Disparar para
+   * selecionados" do painel de membros: são as MESMAS pessoas, tiradas da
+   * mesma sala. O servidor exige o aceite nos dois casos — a tela tem de
+   * oferecê-lo, senão o lançamento só falha no último clique.
+   */
+  const needsGroupMembersDmAck =
+    draft.audience.source === "group_members" ||
+    (draft.audience.source === "manual" && draft.audience.groupChatIds.length > 0);
   const [now] = useState(() => Date.now());
 
   const setDraft = useCallback((updater: (prev: WizardDraft) => WizardDraft) => setDraftState(updater), []);
@@ -76,18 +116,34 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
 
   const safeDefaults = useQuery(
     api.campaigns.getSafeDefaults,
-    draft.channelConfigId ? { channelConfigId: draft.channelConfigId, now, ...(draft.tierAtLaunch ? { tier: draft.tierAtLaunch } : {}) } : "skip"
+    draft.channelConfigId
+      ? {
+          channelConfigId: draft.channelConfigId,
+          now,
+          audienceSource: draft.audience.source,
+          ...(draft.tierAtLaunch ? { tier: draft.tierAtLaunch } : {}),
+        }
+      : "skip"
   ) as SafeDefaults | undefined;
   // Número bridge recém-conectado: avisa e pede aceite próprio, mas não trava
   const newNumberRisk = safeDefaults?.newNumberRisk ?? null;
 
   const stepIndex = WIZARD_STEPS.indexOf(step);
+  // Público de grupo: o "total" que vale para as regras de variantes é o número
+  // de salas (o de membros só existe depois do snapshot).
+  const groupTotal = draft.audience.source === "groups" ? draft.audience.groupChatIds.length : 0;
 
   // Validação local por passo (mensagens amigáveis antes de bater no servidor)
   const stepError = useMemo((): string | null => {
     if (step === "channel") {
       if (!draft.name.trim()) return "Dê um nome à campanha";
       if (!draft.channelConfigId) return "Escolha o número que vai disparar";
+    }
+    if (step === "audience") {
+      if (draft.audience.source === "groups" || draft.audience.source === "group_members") {
+        if (draft.provider !== "bridge") return "Grupos só existem no canal bridge (API não-oficial)";
+        if (draft.audience.groupChatIds.length === 0) return "Escolha pelo menos um grupo";
+      }
     }
     if (step === "message") {
       if (draft.content.kind === "template") {
@@ -98,7 +154,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
         if (draft.provider === "meta" && !(draft.audience.source === "segment" && draft.audience.filters.onlyOpenWindow)) {
           return "Na Cloud API, números fora da janela de 24h exigem template";
         }
-        if (draft.provider === "bridge" && recipientsTotal > 30) {
+        if (draft.provider === "bridge" && Math.max(recipientsTotal, groupTotal) > 30) {
           const variations = draft.content.variants.reduce((acc, vr) => acc + countSpintaxVariations(vr.text), 0);
           if (draft.content.variants.length < 2 && variations < 2) return "Acima de 30 destinatários no bridge, use 2+ variantes ou spintax";
         }
@@ -116,7 +172,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
       }
     }
     return null;
-  }, [step, draft, safeDefaults, recipientsTotal]);
+  }, [step, draft, safeDefaults, recipientsTotal, groupTotal]);
 
   const persist = useCallback(async (): Promise<Id<"campaigns"> | null> => {
     if (!draft.channelConfigId) return null;
@@ -139,6 +195,16 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
           ...common,
         });
         setCampaignId(id);
+        // Seleção de membros: os números entram agora, com o grupo de origem
+        // gravado no rascunho (audience.groupChatIds) para o relatório.
+        if (pendingPhones.length > 0) {
+          const result = await addManualRecipients({
+            campaignId: id,
+            entries: pendingPhones.map((phone) => ({ phone })),
+          });
+          setPendingPhones([]);
+          toast.success(`${result.added} número(s) adicionado(s) da seleção do grupo`);
+        }
         onSaved?.(id);
         return id;
       }
@@ -164,7 +230,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
     } finally {
       setSaving(false);
     }
-  }, [draft, campaignId, isDraft, organizationId, createCampaign, updateCampaign, onSaved]);
+  }, [draft, campaignId, isDraft, organizationId, createCampaign, updateCampaign, onSaved, pendingPhones, addManualRecipients]);
 
   const goNext = async () => {
     if (stepError) {
@@ -192,6 +258,10 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
       toast.error("Confirme o aceite de risco do número recém-conectado");
       return;
     }
+    if (needsGroupMembersDmAck && !groupMembersDmAck) {
+      toast.error("Confirme o aceite de mandar mensagem privada a quem não iniciou conversa");
+      return;
+    }
     setSaving(true);
     try {
       const withinSafe = !safeDefaults || !draft.pacing || isWithinSafe(draft.pacing, safeDefaults.safe);
@@ -200,6 +270,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
         consentAck: true,
         ...(draft.provider === "bridge" ? { bridgeRiskAck: true } : {}),
         ...(newNumberRisk ? { newNumberRiskAck: true } : {}),
+        ...(needsGroupMembersDmAck ? { groupMembersDmAck: true } : {}),
         ...(!withinSafe ? { overrideAck: true, overrideWord: draft.overrideWord.trim() } : {}),
         ...(draft.tierAtLaunch ? { tierAtLaunch: draft.tierAtLaunch } : {}),
         ...(draft.templateQuality ? { templateQualityAtLaunch: draft.templateQuality } : {}),
@@ -314,6 +385,9 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
             newNumberRisk={newNumberRisk}
             newNumberRiskAck={newNumberRiskAck}
             onNewNumberRiskAck={setNewNumberRiskAck}
+            needsGroupMembersDmAck={needsGroupMembersDmAck}
+            groupMembersDmAck={groupMembersDmAck}
+            onGroupMembersDmAck={setGroupMembersDmAck}
             canLaunch={canLaunch && isDraft}
             estimatedCostUsd={estimatedCost}
             warnings={[]}
@@ -337,7 +411,16 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
           </Button>
         ) : isDraft ? (
           canLaunch ? (
-            <Button onClick={() => void handleLaunch()} disabled={saving || !consentAck || (draft.provider === "bridge" && !bridgeRiskAck) || (newNumberRisk !== null && !newNumberRiskAck)}>
+            <Button
+              onClick={() => void handleLaunch()}
+              disabled={
+                saving ||
+                !consentAck ||
+                (draft.provider === "bridge" && !bridgeRiskAck) ||
+                (newNumberRisk !== null && !newNumberRiskAck) ||
+                (needsGroupMembersDmAck && !groupMembersDmAck)
+              }
+            >
               {saving ? <Spinner size="sm" /> : <Rocket size={16} />}
               Lançar campanha
             </Button>

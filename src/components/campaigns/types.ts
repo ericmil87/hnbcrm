@@ -89,11 +89,57 @@ export interface AudienceFilters {
   excludeRepliedToCampaigns?: boolean;
 }
 
-export type AudienceSource = "segment" | "import" | "manual";
+/** v0.57: "groups" = a SALA é o destinatário; "group_members" = DM 1 a 1. */
+export type AudienceSource = "segment" | "import" | "manual" | "groups" | "group_members";
+
+export interface MemberFilters {
+  excludeAdmins?: boolean;
+  excludeExistingContacts?: boolean;
+  excludeCampaignedWithinDays?: number;
+  activeInGroupWithinDays?: number;
+  excludeGroupChatIds?: Id<"groupChats">[];
+  /**
+   * Seleção explícita de pessoas (chave do participante = `lid ?? phone`).
+   * Ausente = todos os elegíveis. Os demais filtros continuam valendo por cima.
+   */
+  includeKeys?: string[];
+}
+
+/** Por que um membro do grupo ficou de fora do disparo. */
+export type MemberExclusionReason =
+  | "self"
+  | "left"
+  | "no_phone"
+  | "invalid_phone"
+  | "duplicate"
+  | "opted_out"
+  | "admin"
+  | "existing_contact"
+  | "campaigned_recently"
+  | "inactive_in_group"
+  | "in_excluded_group"
+  | "not_selected";
+
+/** Uma linha da lista "quem vai receber" (prévia do público `group_members`). */
+export interface PreviewMemberRow {
+  key: string;
+  name?: string;
+  phoneMasked: string;
+  /** Número inteiro — só vem para quem tem `inbox:view_all`. */
+  phone?: string;
+  isAdmin: boolean;
+  groupChatId: Id<"groupChats">;
+  groupSubject: string;
+  isContact: boolean;
+  /** Ausente = entra no disparo. */
+  excludedReason?: MemberExclusionReason;
+}
 
 export interface CampaignAudience {
   source: AudienceSource;
   filters?: AudienceFilters;
+  groupChatIds?: Id<"groupChats">[];
+  memberFilters?: MemberFilters;
   importFileId?: Id<"files">;
   targetBoardId?: Id<"boards">;
   targetStageId?: Id<"stages">;
@@ -180,6 +226,7 @@ export interface CampaignDoc {
     consentAck?: { acceptedAt: number; acceptedBy: string };
     bridgeRiskAck?: { acceptedAt: number; acceptedBy: string };
     newNumberRiskAck?: { acceptedAt: number; acceptedBy: string };
+    groupMembersDmAck?: { acceptedAt: number; acceptedBy: string };
   };
   stats: CampaignStats;
   timeline?: TimelineEntry[];
@@ -248,6 +295,9 @@ export interface CampaignReport {
   startedAt: number | null;
   completedAt: number | null;
   progress: number;
+  /** Só nos públicos de grupo (vazio nos demais). */
+  byGroup: CampaignGroupBreakdown[];
+  audienceSource: AudienceSource;
 }
 
 export interface SafeDefaults {
@@ -267,6 +317,8 @@ export interface SafeDefaults {
   tier: string | null;
   schedule: CampaignSchedule;
   safety: CampaignSafetyInput;
+  /** Teto de membros por grupo de origem/dia (público "group_members"). */
+  perGroupPerDay?: number;
 }
 
 export interface WhatsappTemplateItem {
@@ -285,18 +337,87 @@ export interface WhatsappTemplateItem {
   buttons: { type: string; text: string; url?: string; dynamic?: boolean }[];
 }
 
+/** Funil do público de membros de grupo (§7.1 do plano de grupos). */
+export interface AudienceFunnel {
+  total: number;
+  withPhone: number;
+  deduped: number;
+  afterOptOut: number;
+  afterFilters: number;
+  final: number;
+}
+
 export interface AudiencePreview {
   count: number;
   sample: {
-    leadId: string;
-    contactId: string;
-    phone: string;
-    displayName: string | null;
-    vars: Record<string, string>;
+    leadId?: string;
+    contactId?: string;
+    phone?: string;
+    displayName?: string | null;
+    vars?: Record<string, string>;
+    // públicos de grupo
+    name?: string | null;
+    group?: string;
+    groupChatId?: Id<"groupChats">;
+    participantsCount?: number;
   }[];
   excluded: Record<string, number>;
   scanned: number;
   truncated: boolean;
+  /** Público de membros: quantos o teto cortou, e qual é o teto. */
+  overLimit?: number;
+  limit?: number;
+  source?: AudienceSource;
+  funnel?: AudienceFunnel | null;
+  perGroup?: { groupChatId: Id<"groupChats">; subject: string; count: number }[];
+  estimatedDays?: number;
+  perGroupPerDay?: number;
+  /**
+   * Público "group_members": a prévia RECUSOU o público (hoje: o CRM não sabe
+   * qual é o nosso número naquelas salas). Vem como dado, não como exceção,
+   * para a tela explicar em vez de sumir.
+   */
+  blockedReason?: string;
+  /**
+   * Público "group_members": TODO MUNDO que ainda está nas salas escolhidas,
+   * com o motivo de quem ficou de fora. É a lista da seção "Quem vai receber".
+   * `membersTruncated` é sobre ESTA lista (teto `membersLimit`), não sobre o
+   * público — esse é `truncated`/`overLimit`.
+   */
+  members?: PreviewMemberRow[];
+  membersTruncated?: boolean;
+  membersTotal?: number;
+  membersLimit?: number;
+  /** Público "groups": soma dos membros das salas (alcance estimado). */
+  reach?: number;
+  skipped?: { subject: string; reason: string }[];
+}
+
+export interface CampaignGroupBreakdown {
+  groupChatId: string;
+  subject: string;
+  total: number;
+  sent: number;
+  delivered: number;
+  read: number;
+  replied: number;
+  failed: number;
+  skipped: number;
+  pending: number;
+}
+
+/** Item da lista de grupos monitorados (convex/groupChats.listGroups). */
+export interface MonitoredGroup {
+  _id: Id<"groupChats">;
+  subject: string;
+  jid: string;
+  channelConfigId: Id<"channelConfigs">;
+  conversationId?: Id<"conversations">;
+  monitored: boolean;
+  participantsCount: number;
+  lastMessageAt?: number;
+  removedAt?: number;
+  leftAt?: number;
 }
 
 export interface ImportMapping {

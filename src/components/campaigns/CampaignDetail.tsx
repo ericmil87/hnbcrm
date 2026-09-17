@@ -56,6 +56,14 @@ interface CampaignDetailProps {
   onDuplicated: (campaignId: Id<"campaigns">) => void;
 }
 
+const AUDIENCE_SOURCE_LABELS: Record<string, string> = {
+  segment: "Segmento",
+  import: "Importado",
+  manual: "Manual",
+  groups: "Grupos de WhatsApp (a sala)",
+  group_members: "Membros de grupos (privado, 1 a 1)",
+};
+
 export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, onDuplicated }: CampaignDetailProps) {
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);
@@ -232,10 +240,50 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
           </div>
         )}
 
+        {/* Por grupo de origem (F5) */}
+        {report.byGroup.length > 0 && (
+          <div className="rounded-lg border border-border bg-surface-sunken p-4">
+            <p className="text-sm font-medium text-text-primary mb-2">
+              {campaign.audience.source === "groups" ? "Por grupo" : "Por grupo de origem"}
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead className="text-text-muted">
+                  <tr className="text-left">
+                    <th className="py-1 pr-2 font-medium">Grupo</th>
+                    <th className="py-1 px-2 font-medium text-right">Enviadas</th>
+                    <th className="py-1 px-2 font-medium text-right">Entregues</th>
+                    <th className="py-1 px-2 font-medium text-right">Lidas</th>
+                    <th className="py-1 px-2 font-medium text-right">Responderam</th>
+                    <th className="py-1 pl-2 font-medium text-right">Na fila</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {report.byGroup.map((g) => (
+                    <tr key={g.groupChatId}>
+                      <td className="py-1.5 pr-2 text-text-primary max-w-[220px] truncate">{g.subject}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary">{g.sent}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary">{g.delivered}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-text-secondary">{g.read}</td>
+                      <td className="py-1.5 px-2 text-right tabular-nums text-brand-400">{g.replied}</td>
+                      <td className="py-1.5 pl-2 text-right tabular-nums text-text-muted">{g.pending}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {campaign.audience.source === "group_members" && (
+              <p className="mt-2 text-[11px] text-text-muted">
+                O envio é espalhado em dias respeitando o teto por grupo — a coluna "Na fila" cai a cada dia.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Config */}
         <div className="rounded-lg border border-border bg-surface-sunken p-4 text-sm space-y-1.5">
           <Row label="Canal" value={`${campaign.channel?.displayName ?? "—"} · ${PROVIDER_LABELS[campaign.provider]}`} />
-          <Row label="Público" value={campaign.audience.source === "segment" ? "Segmento" : campaign.audience.source === "import" ? "Importado" : "Manual"} />
+          <Row label="Público" value={AUDIENCE_SOURCE_LABELS[campaign.audience.source] ?? campaign.audience.source} />
           <Row label="Mensagem" value={campaign.content.kind === "template" ? `Template «${campaign.content.template?.name}»` : `${campaign.content.variants.length} variante(s)`} />
           <Row label="Limites" value={`${pacingSummary(campaign.pacing)}${campaign.safeMode ? " · modo seguro" : " · OVERRIDE"}`} />
           <Row label="Janela" value={scheduleSummary(campaign.schedule)} />

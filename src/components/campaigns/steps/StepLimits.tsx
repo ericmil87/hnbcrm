@@ -37,7 +37,12 @@ export function StepLimits({ draft, setDraft, now, editable }: StepLimitsProps) 
   const defaults = useQuery(
     api.campaigns.getSafeDefaults,
     draft.channelConfigId
-      ? { channelConfigId: draft.channelConfigId, now, ...(draft.tierAtLaunch ? { tier: draft.tierAtLaunch } : {}) }
+      ? {
+          channelConfigId: draft.channelConfigId,
+          now,
+          audienceSource: draft.audience.source,
+          ...(draft.tierAtLaunch ? { tier: draft.tierAtLaunch } : {}),
+        }
       : "skip"
   ) as SafeDefaults | undefined;
 
@@ -45,7 +50,14 @@ export function StepLimits({ draft, setDraft, now, editable }: StepLimitsProps) 
   useEffect(() => {
     if (!defaults) return;
     setDraft((d) => {
-      if (d.pacing && d.schedule) return d;
+      // Modo seguro = "use o seguro": se o público mudou (1:1 → sala) e o
+      // pacing guardado ficou acima do novo teto, realinha em silêncio.
+      if (d.pacing && d.schedule) {
+        if (d.safeMode && !isWithinSafe(d.pacing, defaults.safe)) {
+          return { ...d, pacing: { ...defaults.safe }, overrideWord: "" };
+        }
+        return d;
+      }
       return {
         ...d,
         pacing: d.pacing ?? { ...(d.provider === "bridge" ? defaults.safe : defaults.orgDefaults ?? defaults.safe) },

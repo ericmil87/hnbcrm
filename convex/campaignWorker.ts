@@ -27,9 +27,15 @@ import {
   nextWindowOpenAt,
   capsExceeded,
   bumpCounters,
+  bumpSourceGroupCounter,
   evaluateKillSwitches,
   nextSendDelayMs,
   batchPauseMs,
+  groupMemberCaps,
+  isGroupAudience,
+  targetsGroupMembers,
+  nextUtcDayStart,
+  utcDayKey,
 } from "./lib/campaignPacing";
 import {
   pickVariantIndex,
@@ -63,21 +69,54 @@ async function tickGuard(
   return campaign;
 }
 
+/**
+ * Próximo pendente ELEGÍVEL agora.
+ *
+ * O teto por grupo de origem (F5) é avaliado aqui, não só no `capsExceeded`:
+ * se o grupo A já mandou os 10 de hoje mas o B não, a campanha continua pelo B
+ * em vez de parar até amanhã. `groupCapped` só volta true quando TODOS os
+ * candidatos da janela estão barrados pelo grupo deles.
+ */
 async function nextPendingRecipient(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
-  now: number
-): Promise<{ recipient: Doc<"campaignRecipients"> | null; earliestScheduled: number | null }> {
+  now: number,
+  perGroupPerDay?: number,
+  byGroup?: Record<string, { sent: number; sentToday: number; sentTodayKey: string }>
+): Promise<{
+  recipient: Doc<"campaignRecipients"> | null;
+  earliestScheduled: number | null;
+  groupCapped: boolean;
+}> {
+  // Ordenado por `scheduledFor` (sem agendamento primeiro = pronto agora), não
+  // por ordem de criação: com o espalhamento em dias, as linhas futuras do
+  // primeiro grupo ocupavam a janela inteira e o segundo grupo nunca era
+  // alcançado no dia 0.
   const rows = await ctx.db
     .query("campaignRecipients")
-    .withIndex("by_campaign_and_status", (q) => q.eq("campaignId", campaignId).eq("status", "pending"))
+    .withIndex("by_campaign_and_status_and_scheduled", (q) =>
+      q.eq("campaignId", campaignId).eq("status", "pending")
+    )
     .take(50);
+  const day = utcDayKey(now);
   let earliest: number | null = null;
+  let capped = false;
   for (const r of rows) {
-    if (!r.scheduledFor || r.scheduledFor <= now) return { recipient: r, earliestScheduled: null };
-    earliest = earliest === null ? r.scheduledFor : Math.min(earliest, r.scheduledFor);
+    if (r.scheduledFor && r.scheduledFor > now) {
+      earliest = earliest === null ? r.scheduledFor : Math.min(earliest, r.scheduledFor);
+      continue;
+    }
+    if (perGroupPerDay !== undefined && r.sourceGroupChatId) {
+      const counter = byGroup?.[String(r.sourceGroupChatId)];
+      const sentToday = counter && counter.sentTodayKey === day ? counter.sentToday : 0;
+      if (sentToday >= perGroupPerDay) {
+        capped = true;
+        continue;
+      }
+    }
+    return { recipient: r, earliestScheduled: null, groupCapped: false };
   }
-  return { recipient: null, earliestScheduled: earliest };
+  return { recipient: null, earliestScheduled: earliest, groupCapped: capped };
 }
 
 async function pacingRow(ctx: MutationCtx, channelConfigId: Id<"channelConfigs">) {
@@ -137,11 +176,37 @@ export const tick = internalMutation({
       return null;
     }
 
+    // Público de grupo: teto por grupo de ORIGEM, além dos tetos do canal (F5).
+    const groupAudience = isGroupAudience(campaign.audience.source);
+    // Vale também para a campanha `manual` criada pelo "Disparar para
+    // selecionados" do painel de membros: mesmas pessoas, mesmo risco.
+    const perGroupPerDay = targetsGroupMembers(campaign.audience)
+      ? groupMemberCaps({ safeMode: campaign.safeMode }).perGroupPerDay
+      : undefined;
+
     // Próximo destinatário
-    const { recipient, earliestScheduled } = await nextPendingRecipient(ctx, campaign._id, now);
+    const { recipient, earliestScheduled, groupCapped } = await nextPendingRecipient(
+      ctx,
+      campaign._id,
+      now,
+      perGroupPerDay,
+      campaign.stats.byGroup
+    );
     if (!recipient) {
       if (earliestScheduled !== null) {
         await scheduleCampaignTick(ctx, campaign, earliestScheduled, now);
+        return null;
+      }
+      if (groupCapped) {
+        // Todo mundo que sobrou é de grupo que já bateu o teto de hoje.
+        await scheduleCampaignTick(ctx, campaign, nextUtcDayStart(now), now);
+        await addTimelineOnce(
+          ctx,
+          campaign,
+          "caps",
+          `Teto diário por grupo de origem atingido (${perGroupPerDay}/grupo/dia) — continua amanhã`,
+          now
+        );
         return null;
       }
       if (await hasOutstanding(ctx, campaign._id)) {
@@ -153,20 +218,36 @@ export const tick = internalMutation({
       return null;
     }
 
-    // Supressão (pode ter entrado depois do snapshot)
-    if (await isPhoneSuppressed(ctx, campaign.organizationId, recipient.phone)) {
+    // Supressão (pode ter entrado depois do snapshot). NÃO se aplica a uma SALA:
+    // o "telefone" dela é o JID, e opt-out de grupo é parar de acompanhar (D13).
+    if (!recipient.groupChatId && (await isPhoneSuppressed(ctx, campaign.organizationId, recipient.phone))) {
       await transitionRecipient(ctx, recipient, "opted_out", { skipReason: "suppressed" }, { now, force: true });
       const fresh = (await ctx.db.get(campaign._id))!;
       await scheduleCampaignTick(ctx, fresh, now, now);
       return null;
     }
 
-    // Contato novo? (sem conversa WhatsApp com inbound)
-    const isNewContact = await recipientIsNewContact(ctx, campaign, recipient);
+    // Contato novo? (sem conversa WhatsApp com inbound). Sala nunca é "contato".
+    const isNewContact = recipient.groupChatId
+      ? false
+      : await recipientIsNewContact(ctx, campaign, recipient);
 
     // Tetos do canal
     const row = await pacingRow(ctx, campaign.channelConfigId);
-    const caps = capsExceeded({ pacing: campaign.pacing, counters: row, now, isNewContact });
+    const caps = capsExceeded({
+      pacing: campaign.pacing,
+      counters: row,
+      now,
+      isNewContact,
+      ...(perGroupPerDay !== undefined && recipient.sourceGroupChatId
+        ? {
+            sourceGroup: {
+              counter: campaign.stats.byGroup?.[String(recipient.sourceGroupChatId)],
+              perGroupPerDay,
+            },
+          }
+        : {}),
+    });
     if (!caps.ok) {
       await scheduleCampaignTick(ctx, campaign, caps.retryAt, now);
       await addTimelineOnce(ctx, campaign, "caps", caps.reason, now);
@@ -185,7 +266,9 @@ export const tick = internalMutation({
     // Reserva o destinatário (queued) para nenhum outro tick pegá-lo
     await transitionRecipient(ctx, recipient, "queued", { isNewContact }, { now });
 
-    if (provider === "bridge" && campaign.safety.checkNumbersFirst) {
+    // `checkNumbersFirst` não vale nos públicos de grupo: numa SALA não há
+    // número para checar, e um MEMBRO está no WhatsApp por definição.
+    if (provider === "bridge" && campaign.safety.checkNumbersFirst && !groupAudience) {
       await ctx.scheduler.runAfter(0, internal.campaignWorker.checkNumberAndSend, {
         campaignId: campaign._id,
         recipientId: recipient._id,
@@ -409,9 +492,18 @@ async function sendCore(
       return;
     }
 
+    // Destinatário = SALA: nada de contato/lead (D1/D3). A conversa do grupo já
+    // existe (é ela que faz o grupo aparecer no inbox) e o dispatch resolve o
+    // destino pelo `externalChatId` dela.
+    if (recipient.groupChatId) {
+      await sendToGroupCore(ctx, { campaign, recipient, creator, now, scheduleNext });
+      return;
+    }
+
     try {
-      // contato → lead → conversa (mesmos helpers do ingest)
-      const nameParts = (recipient.displayName ?? "").trim().split(/\s+/).filter(Boolean);
+      // contato → lead → conversa (mesmos helpers do ingest). Sem contato, o
+      // PushName do membro é o único nome que temos — vira {{nome}}.
+      const nameParts = (recipient.displayName ?? recipient.memberName ?? "").trim().split(/\s+/).filter(Boolean);
       const contactId =
         recipient.contactId ??
         (await findOrCreateContactByPhone(ctx, {
@@ -449,6 +541,12 @@ async function sendCore(
         leadPatch.sourceId = await findOrCreateCampaignSource(ctx, campaign.organizationId, now);
       }
       const tagsToAdd = [...(campaign.audience.targetTags ?? [])];
+      // O lead nascido de um membro carrega de onde veio: "grupo:<slug>" é o
+      // que permite achar depois "todo mundo que veio da sala X".
+      if (recipient.sourceGroupChatId) {
+        const sourceGroup = await ctx.db.get(recipient.sourceGroupChatId);
+        if (sourceGroup) tagsToAdd.push(`grupo:${slugifyTag(sourceGroup.subject)}`);
+      }
       const merged = Array.from(new Set([...lead.tags, ...tagsToAdd]));
       if (merged.length !== lead.tags.length) leadPatch.tags = merged;
       if (Object.keys(leadPatch).length > 0) await ctx.db.patch(leadId, { ...leadPatch, updatedAt: now });
@@ -467,7 +565,10 @@ async function sendCore(
 
       // Renderização
       const ordinal = campaign.stats.total - campaign.stats.pending - campaign.stats.queued;
-      const recipientVars = { displayName: recipient.displayName, vars: recipient.vars };
+      const recipientVars = {
+        displayName: recipient.displayName ?? recipient.memberName,
+        vars: recipient.vars,
+      };
       const seed = `${campaign._id}:${recipient._id}`;
       let content = "";
       let contentType: Doc<"messages">["contentType"] = "text";
@@ -569,6 +670,9 @@ async function sendCore(
       const fresh = (await ctx.db.get(campaign._id))!;
       await ctx.db.patch(campaign._id, {
         batchSentSinceLastPause: (fresh.batchSentSinceLastPause ?? 0) + 1,
+        ...(recipient.sourceGroupChatId
+          ? { stats: bumpByGroup(fresh.stats, recipient.sourceGroupChatId, now) }
+          : {}),
         updatedAt: now,
       });
       await scheduleNext();
@@ -580,5 +684,182 @@ async function sendCore(
       if (fresh.status === "running") await scheduleNext();
     }
     return;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Envio para SALA (público "groups", D9)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Slug curto e estável para a tag "grupo:<...>" do lead. */
+export function slugifyTag(subject: string): string {
+  return String(subject ?? "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "grupo";
+}
+
+/** Contador por grupo de origem dentro de `campaigns.stats`. */
+function bumpByGroup(
+  stats: Doc<"campaigns">["stats"],
+  groupChatId: Id<"groupChats">,
+  now: number
+): Doc<"campaigns">["stats"] {
+  const key = String(groupChatId);
+  const byGroup = { ...(stats.byGroup ?? {}) };
+  byGroup[key] = bumpSourceGroupCounter(byGroup[key], now);
+  return { ...stats, byGroup };
+}
+
+/**
+ * Manda a mensagem da campanha DENTRO da conversa do grupo.
+ *
+ * Reaproveita tudo: `applyOutboundMessageSideEffects` → pacing → dispatch, que
+ * desde a F1 resolve o destino pelo `externalChatId` da conversa (`…@g.us`).
+ * O que NÃO acontece aqui: contato, lead, `checkNumbers` e opt-out.
+ */
+async function sendToGroupCore(
+  ctx: MutationCtx,
+  args: {
+    campaign: Doc<"campaigns">;
+    recipient: Doc<"campaignRecipients">;
+    creator: Doc<"teamMembers">;
+    now: number;
+    scheduleNext: (extraMs?: number) => Promise<void>;
+  }
+): Promise<void> {
+  const { campaign, recipient, creator, now } = args;
+  const fail = async (message: string) => {
+    await transitionRecipient(ctx, recipient, "failed", { lastError: message }, { now, force: true });
+    await args.scheduleNext();
+  };
+  try {
+    const group = recipient.groupChatId ? await ctx.db.get(recipient.groupChatId) : null;
+    if (!group || group.organizationId !== campaign.organizationId) {
+      await fail("Grupo não existe mais nesta organização");
+      return;
+    }
+    if (group.leftAt !== undefined || group.removedAt !== undefined) {
+      await transitionRecipient(
+        ctx,
+        recipient,
+        "skipped",
+        { skipReason: "left_group", lastError: "Não estamos mais neste grupo" },
+        { now, force: true }
+      );
+      await args.scheduleNext();
+      return;
+    }
+    if (!group.monitored || !group.conversationId) {
+      await transitionRecipient(
+        ctx,
+        recipient,
+        "skipped",
+        { skipReason: "not_monitored", lastError: "O grupo deixou de ser acompanhado" },
+        { now, force: true }
+      );
+      await args.scheduleNext();
+      return;
+    }
+    const conversation = await ctx.db.get(group.conversationId);
+    if (!conversation || conversation.organizationId !== campaign.organizationId) {
+      await fail("Conversa do grupo não encontrada");
+      return;
+    }
+
+    const ordinal = campaign.stats.total - campaign.stats.pending - campaign.stats.queued;
+    const seed = `${campaign._id}:${recipient._id}`;
+    const variants = campaign.content.variants.filter(
+      (vr) => vr.text.trim() || (vr.attachmentFileIds?.length ?? 0) > 0
+    );
+    if (variants.length === 0) {
+      await fail("A campanha não tem conteúdo para enviar");
+      return;
+    }
+    const variantIndex = pickVariantIndex(ordinal, variants.length);
+    const variant = variants[variantIndex] ?? variants[0];
+    const renderVars = {
+      displayName: group.subject,
+      vars: { grupo: group.subject, ...(recipient.vars ?? {}) },
+    };
+    let content = renderText(variant.text, renderVars, seed);
+    const attachments =
+      variant.attachmentFileIds && variant.attachmentFileIds.length > 0 ? variant.attachmentFileIds : undefined;
+    let contentType: Doc<"messages">["contentType"] = "text";
+    if (attachments) {
+      const first = await ctx.db.get(attachments[0]);
+      const mime = first?.mimeType ?? "";
+      contentType =
+        campaign.content.contentType ??
+        (mime.startsWith("image/") ? "image" : mime.startsWith("audio/") ? "audio" : "file");
+      if (!content) {
+        content = contentType === "image" ? "[imagem]" : contentType === "audio" ? "[áudio]" : first?.name ?? "[arquivo]";
+      }
+    }
+
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: campaign.organizationId,
+      conversationId: conversation._id,
+      direction: "outbound",
+      senderId: creator._id,
+      senderType: "human",
+      content,
+      contentType,
+      attachments,
+      isInternal: false,
+      metadata: {
+        campaign: { campaignId: campaign._id, recipientId: recipient._id, groupChatId: group._id },
+        // `scheduled` liga o "digitando…" humanizado do bridge.
+        scheduled: true,
+      },
+      createdAt: now,
+    });
+    await applyOutboundMessageSideEffects(ctx, {
+      conversation,
+      member: creator,
+      messageId,
+      now,
+      activityContent: `Mensagem da campanha «${campaign.name}» enviada no grupo`,
+    });
+
+    await ctx.db.patch(recipient._id, {
+      conversationId: conversation._id,
+      messageId,
+      variantIndex,
+      attempts: recipient.attempts + 1,
+      lastError: undefined,
+    });
+
+    const row = await ctx.db
+      .query("channelPacing")
+      .withIndex("by_channel_config", (q) => q.eq("channelConfigId", campaign.channelConfigId))
+      .first();
+    const bumped = bumpCounters(row, now, false);
+    if (row) {
+      await ctx.db.patch(row._id, bumped);
+    } else {
+      await ctx.db.insert("channelPacing", {
+        organizationId: campaign.organizationId,
+        channelConfigId: campaign.channelConfigId,
+        nextDispatchAt: 0,
+        ...bumped,
+      });
+    }
+    const fresh = (await ctx.db.get(campaign._id))!;
+    await ctx.db.patch(campaign._id, {
+      batchSentSinceLastPause: (fresh.batchSentSinceLastPause ?? 0) + 1,
+      stats: bumpByGroup(fresh.stats, group._id, now),
+      updatedAt: now,
+    });
+    await args.scheduleNext();
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : "Falha ao preparar o envio no grupo";
+    await transitionRecipient(ctx, recipient, "failed", { lastError: detail }, { now, force: true });
+    const fresh = await ctx.db.get(campaign._id);
+    if (fresh) await ctx.db.patch(campaign._id, { lastError: detail, updatedAt: now });
+    await args.scheduleNext();
   }
 }

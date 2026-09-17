@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAction, useMutation, usePaginatedQuery, useQuery, type PaginatedQueryReference } from "convex/react";
 import { toast } from "sonner";
-import { AlertTriangle, FileSpreadsheet, Filter, ListPlus, Trash2, Users } from "lucide-react";
+import { AlertTriangle, FileSpreadsheet, Filter, ListPlus, MessagesSquare, Trash2, UserRoundSearch, Users } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
@@ -23,6 +23,7 @@ import type {
 } from "../types";
 import { RECIPIENT_STATUS_LABELS, formatPhone, xlsxFileToCsv } from "../campaignUtils";
 import type { WizardDraft } from "../wizardState";
+import { GroupsTab, GroupMembersTab, useMonitoredGroups } from "./GroupAudienceTabs";
 
 interface StepAudienceProps {
   organizationId: Id<"organizations">;
@@ -38,6 +39,12 @@ const SOURCE_TABS: { id: AudienceSource; label: string; icon: React.ElementType;
   { id: "segment", label: "Segmento", icon: Filter, hint: "Leads que já estão no CRM" },
   { id: "import", label: "Importar", icon: FileSpreadsheet, hint: "CSV ou XLSX com novos números" },
   { id: "manual", label: "Manual", icon: ListPlus, hint: "Colar números" },
+];
+
+/** Só aparecem quando o canal é bridge E tem grupo acompanhado (v0.57 / F5). */
+const GROUP_SOURCE_TABS: { id: AudienceSource; label: string; icon: React.ElementType; hint: string }[] = [
+  { id: "groups", label: "Grupos", icon: MessagesSquare, hint: "Postar nas salas monitoradas" },
+  { id: "group_members", label: "Membros de grupos", icon: UserRoundSearch, hint: "Privado, 1 a 1, para os participantes" },
 ];
 
 const EXCLUSION_LABELS: Record<string, string> = {
@@ -56,10 +63,20 @@ const selectClass =
 
 export function StepAudience({ organizationId, campaignId, draft, setDraft, isDraft, now, onRecipientsChanged }: StepAudienceProps) {
   const source = draft.audience.source;
+  // Grupos existem só no bridge, e só fazem sentido se houver sala acompanhada.
+  const monitoredGroups = useMonitoredGroups(
+    organizationId,
+    draft.provider === "bridge" ? draft.channelConfigId : null
+  );
+  const groupsAvailable = (monitoredGroups?.length ?? 0) > 0;
+  // Um rascunho salvo num público de grupo mantém os cartões visíveis mesmo se
+  // a lista ainda não carregou — senão a aba sumiria ao reabrir a campanha.
+  const showGroupTabs = groupsAvailable || source === "groups" || source === "group_members";
+  const tabs = showGroupTabs ? [...SOURCE_TABS, ...GROUP_SOURCE_TABS] : SOURCE_TABS;
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-3 gap-2">
-        {SOURCE_TABS.map((tab) => {
+      <div className={cn("grid gap-2", showGroupTabs ? "grid-cols-2 sm:grid-cols-5" : "grid-cols-3")}>
+        {tabs.map((tab) => {
           const Icon = tab.icon;
           const active = source === tab.id;
           return (
@@ -90,12 +107,21 @@ export function StepAudience({ organizationId, campaignId, draft, setDraft, isDr
         <ImportTab campaignId={campaignId} isDraft={isDraft} onImported={onRecipientsChanged} />
       )}
       {source === "manual" && <ManualTab campaignId={campaignId} isDraft={isDraft} onAdded={onRecipientsChanged} />}
+      {source === "groups" && (
+        <GroupsTab organizationId={organizationId} draft={draft} setDraft={setDraft} isDraft={isDraft} now={now} />
+      )}
+      {source === "group_members" && (
+        <GroupMembersTab organizationId={organizationId} draft={draft} setDraft={setDraft} isDraft={isDraft} now={now} />
+      )}
 
-      {source !== "segment" && campaignId && (
+      {(source === "import" || source === "manual") && campaignId && (
         <RecipientsList campaignId={campaignId} isDraft={isDraft} onChanged={onRecipientsChanged} />
       )}
 
-      <TargetSection organizationId={organizationId} draft={draft} setDraft={setDraft} disabled={!isDraft} />
+      {/* Onde o lead nasce — no público "grupos" ninguém vira lead (D1/D3). */}
+      {source !== "groups" && (
+        <TargetSection organizationId={organizationId} draft={draft} setDraft={setDraft} disabled={!isDraft} />
+      )}
     </div>
   );
 }
@@ -344,9 +370,9 @@ function SegmentTab({
                 <p className="text-xs font-medium text-text-muted mb-1.5">Amostra</p>
                 <ul className="space-y-1 text-xs">
                   {preview.sample.map((s) => (
-                    <li key={s.leadId} className="flex justify-between gap-2">
+                    <li key={s.leadId ?? s.phone} className="flex justify-between gap-2">
                       <span className="text-text-primary truncate">{s.displayName ?? "Sem nome"}</span>
-                      <span className="text-text-muted tabular-nums shrink-0">{formatPhone(s.phone)}</span>
+                      <span className="text-text-muted tabular-nums shrink-0">{formatPhone(s.phone ?? "")}</span>
                     </li>
                   ))}
                 </ul>

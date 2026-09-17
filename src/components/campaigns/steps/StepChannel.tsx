@@ -84,6 +84,17 @@ export function StepChannel({ organizationId, draft, setDraft, locked, now }: St
                       pacing: d.channelConfigId === channel._id ? d.pacing : null,
                       safety: d.channelConfigId === channel._id ? d.safety : {},
                       tierAtLaunch: null,
+                      // Uma sala pertence ao número que a pareou: manter os
+                      // grupos escolhidos depois de trocar de canal fazia a
+                      // prévia lançar ("o grupo está em outro número") e
+                      // derrubava o passo.
+                      // Rascunho novo (sem canal ainda) chega com o grupo
+                      // pré-selecionado pelo botão "Disparar 1 a 1" — só zera
+                      // quando é TROCA de canal de verdade.
+                      audience:
+                        d.channelConfigId === null || d.channelConfigId === channel._id
+                          ? d.audience
+                          : { ...d.audience, groupChatIds: [] },
                       content:
                         channel.provider === "bridge" && d.content.kind === "template"
                           ? { kind: "text", variants: [{ text: "" }], contentType: "text" }

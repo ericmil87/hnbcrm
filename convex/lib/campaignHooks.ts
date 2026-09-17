@@ -10,6 +10,7 @@ import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
+import { getLeadRef } from "./leadRef";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CAMPAIGN_REPLY_WINDOW_MS = 7 * DAY_MS;
@@ -21,7 +22,10 @@ export const TIMELINE_CAP = 100;
 export const DEFAULT_OPT_OUT_KEYWORDS = ["SAIR", "PARAR", "STOP", "CANCELAR"];
 
 type RecipientStatus = Doc<"campaignRecipients">["status"];
-type StatsKey = keyof Omit<Doc<"campaigns">["stats"], "consecutiveFailures" | "total" | "estimatedCostUsd">;
+type StatsKey = keyof Omit<
+  Doc<"campaigns">["stats"],
+  "consecutiveFailures" | "total" | "estimatedCostUsd" | "byGroup"
+>;
 
 const STATUS_TO_STAT: Record<RecipientStatus, StatsKey> = {
   pending: "pending",
@@ -482,6 +486,10 @@ export async function applyCampaignInboundHooks(
   args: { conversation: Doc<"conversations">; text: string; now: number }
 ): Promise<void> {
   const { conversation, now } = args;
+  // D13 (grupos, v0.57): NUNCA numa conversa de grupo. "SAIR" escrito por um
+  // membro dentro do grupo não pode marcar opt-out de ninguém — muito menos do
+  // grupo inteiro. O ingest de grupo já não chama isto; a guarda aqui é a rede.
+  if (conversation.kind === "group") return;
   const rows = await ctx.db
     .query("campaignRecipients")
     .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
@@ -495,7 +503,7 @@ export async function applyCampaignInboundHooks(
   let phone: string | undefined = rows[0]?.phone;
   let contactId: Id<"contacts"> | undefined = rows[0]?.contactId;
   if (!phone) {
-    const lead = await ctx.db.get(conversation.leadId);
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
     const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
     phone = contact?.whatsappNumber ?? contact?.phone ?? undefined;
     contactId = contact?._id;
@@ -511,7 +519,7 @@ export async function applyCampaignInboundHooks(
       reason: `Palavra-chave de descadastro: "${args.text.trim().slice(0, 40)}"`,
       now,
     });
-    if (inserted) {
+    if (inserted && conversation.leadId) {
       await ctx.db.insert("activities", {
         organizationId: conversation.organizationId,
         leadId: conversation.leadId,
@@ -542,15 +550,17 @@ export async function applyCampaignInboundHooks(
   const moved = await transitionRecipient(ctx, recent, "replied", { repliedAt: now }, { now });
   if (!moved) return;
   const campaign = await ctx.db.get(recent.campaignId);
-  await ctx.db.insert("activities", {
-    organizationId: conversation.organizationId,
-    leadId: conversation.leadId,
-    type: "note",
-    actorType: "system",
-    content: `Respondeu à campanha «${campaign?.name ?? "?"}»`,
-    metadata: { conversationId: conversation._id, campaignId: recent.campaignId, campaignReply: true },
-    createdAt: now,
-  });
+  if (conversation.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "note",
+      actorType: "system",
+      content: `Respondeu à campanha «${campaign?.name ?? "?"}»`,
+      metadata: { conversationId: conversation._id, campaignId: recent.campaignId, campaignReply: true },
+      createdAt: now,
+    });
+  }
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
     organizationId: conversation.organizationId,
     event: "campaign.recipient_replied",
@@ -559,6 +569,49 @@ export async function applyCampaignInboundHooks(
       recipientId: recent._id,
       phone: recent.phone,
       leadId: conversation.leadId,
+      conversationId: conversation._id,
+    },
+  });
+}
+
+/**
+ * Gancho de INBOUND em GRUPO (v0.57 / F5) — só `replied`, nada mais.
+ *
+ * `applyCampaignInboundHooks` é proibido em grupo (D13): "SAIR" escrito por um
+ * membro não pode suprimir ninguém. Mas uma campanha que postou na sala precisa
+ * saber que a sala respondeu, senão o relatório do público "grupos" mostra
+ * entrega e leitura e nunca resposta. Por isso este gancho é separado e faz uma
+ * coisa só: qualquer mensagem de membro nos 7 dias seguintes marca `replied`.
+ */
+export async function applyCampaignGroupReplyHook(
+  ctx: MutationCtx,
+  args: { conversation: Doc<"conversations">; now: number }
+): Promise<void> {
+  const { conversation, now } = args;
+  if (conversation.kind !== "group") return;
+  const rows = await ctx.db
+    .query("campaignRecipients")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversation._id))
+    .order("desc")
+    .take(10);
+  const recent = rows.find(
+    (r) =>
+      r.groupChatId !== undefined &&
+      (r.status === "sent" || r.status === "delivered" || r.status === "read") &&
+      (r.sentAt ?? r.createdAt) + CAMPAIGN_REPLY_WINDOW_MS > now
+  );
+  if (!recent) return;
+  const moved = await transitionRecipient(ctx, recent, "replied", { repliedAt: now }, { now });
+  if (!moved) return;
+  // Sem `activities` (a conversa do grupo não tem lead — D2) e sem opt-out.
+  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    organizationId: conversation.organizationId,
+    event: "campaign.recipient_replied",
+    payload: {
+      campaignId: recent.campaignId,
+      recipientId: recent._id,
+      phone: recent.phone,
+      groupChatId: recent.groupChatId,
       conversationId: conversation._id,
     },
   });

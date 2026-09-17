@@ -18,6 +18,14 @@ interface StepReviewProps {
   newNumberRisk: string | null;
   newNumberRiskAck: boolean;
   onNewNumberRiskAck: (v: boolean) => void;
+  /**
+   * D15: mensagem privada a quem não iniciou conversa. Vale para o público
+   * `group_members` E para a seleção manual vinda do painel de membros — o
+   * servidor cobra o aceite nos dois, então a tela precisa oferecê-lo nos dois.
+   */
+  needsGroupMembersDmAck: boolean;
+  groupMembersDmAck: boolean;
+  onGroupMembersDmAck: (v: boolean) => void;
   canLaunch: boolean;
   estimatedCostUsd: number | null;
   warnings: string[];
@@ -35,11 +43,21 @@ export function StepReview({
   newNumberRisk,
   newNumberRiskAck,
   onNewNumberRiskAck,
+  needsGroupMembersDmAck,
+  groupMembersDmAck,
+  onGroupMembersDmAck,
   canLaunch,
   estimatedCostUsd,
   warnings,
 }: StepReviewProps) {
   const isBridge = draft.provider === "bridge";
+  const source = draft.audience.source;
+  const groupCount = draft.audience.groupChatIds.length;
+  const isGroups = source === "groups";
+  const isGroupMembers = source === "group_members";
+  // Seleção explícita no passo Público: o resumo diz que a lista é a dedo, não
+  // "todos os membros da sala" — é a diferença entre 8 pessoas e 300.
+  const handPicked = isGroupMembers ? draft.audience.memberFilters.includeKeys?.length ?? 0 : 0;
   const pacing = draft.pacing;
   const schedule = draft.schedule as CampaignSchedule;
   const withinSafe = pacing && safePacing ? isWithinSafe(pacing, safePacing) : true;
@@ -57,13 +75,31 @@ export function StepReview({
           <SummaryTile
             icon={Users}
             label="Destinatários"
-            value={draft.audience.source === "segment" ? "calculado no lançamento" : recipientsTotal.toLocaleString("pt-BR")}
-            sub={draft.audience.source === "segment" ? "segmento congelado ao lançar" : draft.audience.source === "import" ? "importados" : "manuais"}
+            value={
+              isGroups
+                ? `${groupCount} grupo${groupCount === 1 ? "" : "s"}`
+                : source === "segment" || isGroupMembers
+                ? "calculado no lançamento"
+                : recipientsTotal.toLocaleString("pt-BR")
+            }
+            sub={
+              isGroups
+                ? "a mensagem vai NA sala"
+                : isGroupMembers
+                ? handPicked > 0
+                  ? `${handPicked} pessoa${handPicked === 1 ? "" : "s"} escolhida${handPicked === 1 ? "" : "s"} a dedo, no privado`
+                  : `membros de ${groupCount} grupo${groupCount === 1 ? "" : "s"}, no privado`
+                : source === "segment"
+                ? "segmento congelado ao lançar"
+                : source === "import"
+                ? "importados"
+                : "manuais"
+            }
           />
           <SummaryTile
             icon={Clock}
             label="Duração estimada"
-            value={draft.audience.source === "segment" ? "depende do público" : formatDuration(durationMs)}
+            value={source === "segment" || isGroupMembers ? "depende do público" : formatDuration(durationMs)}
             sub={schedule ? scheduleSummary(schedule) : ""}
           />
           <SummaryTile
@@ -128,6 +164,14 @@ export function StepReview({
               onChange={(e) => onNewNumberRiskAck(e.target.checked)}
               label="Aceito disparar por este número mesmo recém-conectado, antes do aquecimento recomendado"
               description={newNumberRisk}
+            />
+          )}
+          {needsGroupMembersDmAck && (
+            <Checkbox
+              checked={groupMembersDmAck}
+              onChange={(e) => onGroupMembersDmAck(e.target.checked)}
+              label="Entendo que vou mandar mensagem privada a pessoas que não iniciaram conversa com a empresa"
+              description="É o disparo mais bloqueado pelo WhatsApp e o de maior risco de denúncia. O envio é espalhado em dias, com teto por grupo de origem, e fica registrado na auditoria com os grupos e os filtros usados."
             />
           )}
           {!canLaunch && (

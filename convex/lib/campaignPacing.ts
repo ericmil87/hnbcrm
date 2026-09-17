@@ -73,6 +73,84 @@ export const BRIDGE_HARD_CAP = {
   maxPerHour: 40,
 } as const;
 
+// ── Grupos (v0.57 / F5 — D9 e D15) ──
+//
+// Mesma natureza dos números acima: ESTIMATIVA calibrável, não limite oficial.
+// São mais baixos que os do 1:1 de propósito — a mesma mensagem em N salas
+// alcança N×membros pessoas de uma vez, e cada uma pode denunciar.
+
+/** Público "grupos": a sala é o destinatário. Bridge, modo seguro. */
+export const GROUP_SAFE_CAPS = {
+  maxPerDay: 20,
+  maxPerHour: 8,
+  minDelaySec: 60,
+  maxDelaySec: 180,
+  batchSize: 10,
+  batchPauseMin: 30,
+} as const;
+
+/** Teto DURO de grupos — nem o override passa daqui. */
+export const GROUP_HARD_CAP = {
+  maxPerDay: 50,
+  maxPerHour: 20,
+  minDelaySec: 30,
+} as const;
+
+/** Público "membros de grupos": teto por GRUPO DE ORIGEM, por dia. */
+export const GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY = 10;
+export const GROUP_MEMBER_HARD_PER_GROUP_PER_DAY = 50;
+
+export type CampaignAudienceSource = "segment" | "import" | "manual" | "groups" | "group_members";
+
+export function isGroupAudience(source: string | undefined): boolean {
+  return source === "groups" || source === "group_members";
+}
+
+/**
+ * A campanha manda DM para gente tirada da lista de membros de um grupo?
+ *
+ * Não basta olhar `source === "group_members"`: a porta de entrada mais usada é
+ * "Disparar para selecionados" no painel de membros, que cria uma campanha
+ * `manual` carimbando o grupo de origem em `audience.groupChatIds`. Era o
+ * caminho que contornava o aceite D15, o teto por grupo e o espalhamento —
+ * exatamente o risco que o aceite existe para cobrir.
+ */
+export function targetsGroupMembers(audience: {
+  source?: string;
+  groupChatIds?: unknown[];
+}): boolean {
+  if (audience.source === "group_members") return true;
+  return audience.source === "manual" && (audience.groupChatIds?.length ?? 0) > 0;
+}
+
+/** Pacing seguro do público "grupos" (só bridge na v1). */
+export function groupCaps(): CampaignPacing {
+  return {
+    minDelaySec: GROUP_SAFE_CAPS.minDelaySec,
+    maxDelaySec: GROUP_SAFE_CAPS.maxDelaySec,
+    batchSize: GROUP_SAFE_CAPS.batchSize,
+    batchPauseMin: GROUP_SAFE_CAPS.batchPauseMin,
+    maxPerHour: GROUP_SAFE_CAPS.maxPerHour,
+    maxPerDay: GROUP_SAFE_CAPS.maxPerDay,
+    respectWarmup: true,
+  };
+}
+
+/**
+ * Teto por grupo de origem no público "membros de grupos".
+ * `safeMode: false` só chega ao teto DURO — quem digitou "ENTENDO" ainda não
+ * pode transformar uma sala de 300 pessoas numa lista de 300 DMs no mesmo dia.
+ */
+export function groupMemberCaps(args: { safeMode: boolean; perGroupPerDay?: number }): {
+  perGroupPerDay: number;
+} {
+  const requested = args.perGroupPerDay ?? GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY;
+  const ceiling = args.safeMode
+    ? GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY
+    : GROUP_MEMBER_HARD_PER_GROUP_PER_DAY;
+  return { perGroupPerDay: Math.max(1, Math.min(Math.floor(requested), ceiling)) };
+}
+
 /**
  * Bridge: abaixo desta idade (dias) o número é "recém-conectado" — AVISA e o
  * lançamento exige o aceite explícito `newNumberRiskAck`, mas NÃO trava: somos
@@ -133,7 +211,21 @@ export function safeDefaultsFor(args: {
   provider: CampaignProvider;
   warmupDay?: number;
   tier?: string;
+  /** "groups" tem tabela própria (D9); os demais seguem o provider. */
+  audienceSource?: CampaignAudienceSource;
 }): SafeDefaults {
+  if (args.audienceSource === "groups") {
+    // A sala é o destinatário: 20 salas/dia, 8/h, >= 60 s entre elas. O aviso
+    // de número recém-conectado continua valendo (é o mesmo número).
+    const day = args.warmupDay ?? 1;
+    const result: SafeDefaults = { pacing: groupCaps() };
+    if (day < BRIDGE_MIN_AGE_DAYS) {
+      result.newNumberRisk = `Número conectado há ${day} dia(s). Postar em massa em grupos com um número recém-conectado é o padrão mais banido — o recomendado é esperar ${BRIDGE_MIN_AGE_DAYS} dias de uso normal. Dá para lançar assim mesmo, com o risco aceito na revisão.`;
+    } else if (day <= BRIDGE_WARN_AGE_DAYS) {
+      result.warmupWarning = `Número conectado há ${day} dias — ainda em aquecimento. Em grupos, o limite seguro é ${GROUP_SAFE_CAPS.maxPerDay} salas/dia.`;
+    }
+    return result;
+  }
   if (args.provider === "meta") {
     const limit = tierLimit(args.tier);
     const unlimited = limit >= META_TIER_LIMITS.TIER_UNLIMITED;
@@ -177,7 +269,8 @@ export function safeDefaultsFor(args: {
 export function clampToHardCap(
   pacing: CampaignPacing,
   provider: CampaignProvider,
-  tier?: string
+  tier?: string,
+  audienceSource?: CampaignAudienceSource
 ): CampaignPacing {
   const p: CampaignPacing = {
     ...pacing,
@@ -189,6 +282,15 @@ export function clampToHardCap(
     maxPerDay: Math.max(1, Math.floor(pacing.maxPerDay)),
   };
   if (p.maxDelaySec < p.minDelaySec) p.maxDelaySec = p.minDelaySec;
+  if (audienceSource === "groups") {
+    // Teto DURO de grupos: menor que o do 1:1 e aplicado ANTES dele, porque uma
+    // mensagem numa sala de 300 pessoas não é "um envio".
+    p.maxPerDay = Math.min(p.maxPerDay, GROUP_HARD_CAP.maxPerDay);
+    p.maxPerHour = Math.min(p.maxPerHour, GROUP_HARD_CAP.maxPerHour);
+    p.minDelaySec = Math.max(p.minDelaySec, GROUP_HARD_CAP.minDelaySec);
+    if (p.maxDelaySec < p.minDelaySec) p.maxDelaySec = p.minDelaySec;
+    return p;
+  }
   if (provider === "bridge") {
     p.maxPerDay = Math.min(p.maxPerDay, BRIDGE_HARD_CAP.maxPerDay);
     p.maxPerHour = Math.min(p.maxPerHour, BRIDGE_HARD_CAP.maxPerHour);
@@ -302,11 +404,23 @@ export function utcHourKey(ts: number): string {
 
 export type CapsResult = { ok: true } | { ok: false; reason: string; retryAt: number };
 
+export interface SourceGroupCounter {
+  sentToday: number;
+  sentTodayKey: string;
+}
+
 export function capsExceeded(args: {
   pacing: CampaignPacing;
   counters: ChannelPacingCounters | null | undefined;
   now: number;
   isNewContact: boolean;
+  /**
+   * Público "membros de grupos": contador do GRUPO DE ORIGEM deste
+   * destinatário (`campaigns.stats.byGroup[groupId]`) + o teto por dia. O
+   * `channelPacing` não sabe de grupo nenhum — este é o limite que impede
+   * "10 pessoas do mesmo grupo receberam a mesma mensagem hoje".
+   */
+  sourceGroup?: { counter: SourceGroupCounter | undefined; perGroupPerDay: number } | null;
 }): CapsResult {
   const { pacing, counters, now } = args;
   if (counters?.campaignFrozenUntil && counters.campaignFrozenUntil > now) {
@@ -335,7 +449,30 @@ export function capsExceeded(args: {
   if (hourlySent >= pacing.maxPerHour) {
     return { ok: false, reason: "Teto por hora do canal atingido", retryAt: nextUtcHourStart(now) };
   }
+  if (args.sourceGroup) {
+    const c = args.sourceGroup.counter;
+    const sentToday = c && c.sentTodayKey === day ? c.sentToday : 0;
+    if (sentToday >= args.sourceGroup.perGroupPerDay) {
+      return {
+        ok: false,
+        reason: `Teto diário deste grupo de origem atingido (${args.sourceGroup.perGroupPerDay} membros/dia)`,
+        retryAt: nextUtcDayStart(now),
+      };
+    }
+  }
   return { ok: true };
+}
+
+/** Contador do grupo de origem depois de um envio (dia UTC, como o do canal). */
+export function bumpSourceGroupCounter(
+  counter: (SourceGroupCounter & { sent: number }) | undefined,
+  now: number
+): SourceGroupCounter & { sent: number } {
+  const day = utcDayKey(now);
+  if (counter && counter.sentTodayKey === day) {
+    return { sent: counter.sent + 1, sentToday: counter.sentToday + 1, sentTodayKey: day };
+  }
+  return { sent: (counter?.sent ?? 0) + 1, sentToday: 1, sentTodayKey: day };
 }
 
 export function nextUtcDayStart(now: number): number {

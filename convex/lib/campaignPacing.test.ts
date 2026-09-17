@@ -14,6 +14,15 @@ import {
   tierLimit,
   BRIDGE_HARD_CAP,
   localParts,
+  groupCaps,
+  groupMemberCaps,
+  bumpSourceGroupCounter,
+  isGroupAudience,
+  targetsGroupMembers,
+  GROUP_HARD_CAP,
+  GROUP_SAFE_CAPS,
+  GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY,
+  GROUP_MEMBER_HARD_PER_GROUP_PER_DAY,
 } from "./campaignPacing";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -170,5 +179,152 @@ describe("kill switches", () => {
   });
   test("desligado quando ausente", () => {
     expect(evaluateKillSwitches({ stats: { ...base, sent: 500 }, safety: {} })).toBeNull();
+  });
+});
+
+// ── Grupos (v0.57 / F5 — D9 e D15) ──
+
+describe("tetos de GRUPO", () => {
+  test("o modo seguro de grupo é bem menor que o do 1:1", () => {
+    const caps = groupCaps();
+    expect(caps.maxPerDay).toBe(20);
+    expect(caps.maxPerHour).toBe(8);
+    expect(caps.minDelaySec).toBeGreaterThanOrEqual(60);
+    // Uma sala não é "um envio": o teto de grupo é menor que o do bridge 1:1.
+    expect(caps.maxPerDay).toBeLessThan(BRIDGE_HARD_CAP.maxPerDay);
+  });
+
+  test("safeDefaultsFor com audienceSource=groups usa a tabela de grupos", () => {
+    const safe = safeDefaultsFor({ provider: "bridge", warmupDay: 30, audienceSource: "groups" });
+    expect(safe.pacing.maxPerDay).toBe(GROUP_SAFE_CAPS.maxPerDay);
+    expect(safe.pacing.maxPerHour).toBe(GROUP_SAFE_CAPS.maxPerHour);
+  });
+
+  test("número recém-conectado continua avisando no público de grupos", () => {
+    const safe = safeDefaultsFor({ provider: "bridge", warmupDay: 1, audienceSource: "groups" });
+    expect(safe.newNumberRisk).toMatch(/recém-conectado/i);
+    const warm = safeDefaultsFor({ provider: "bridge", warmupDay: 5, audienceSource: "groups" });
+    expect(warm.newNumberRisk).toBeUndefined();
+    expect(warm.warmupWarning).toMatch(/aquecimento/);
+  });
+
+  test("o override não passa do teto DURO de grupos", () => {
+    const wild = {
+      minDelaySec: 1,
+      maxDelaySec: 2,
+      batchSize: 0,
+      batchPauseMin: 0,
+      maxPerHour: 999,
+      maxPerDay: 9999,
+    };
+    const clamped = clampToHardCap(wild, "bridge", undefined, "groups");
+    expect(clamped.maxPerDay).toBe(GROUP_HARD_CAP.maxPerDay);
+    expect(clamped.maxPerHour).toBe(GROUP_HARD_CAP.maxPerHour);
+    expect(clamped.minDelaySec).toBe(GROUP_HARD_CAP.minDelaySec);
+    // …e é MAIS restrito que o teto duro do 1:1 no mesmo canal.
+    expect(clamped.maxPerDay).toBeLessThan(clampToHardCap(wild, "bridge").maxPerDay);
+  });
+
+  test("público de membros mantém os tetos normais do canal", () => {
+    const wild = {
+      minDelaySec: 1,
+      maxDelaySec: 2,
+      batchSize: 0,
+      batchPauseMin: 0,
+      maxPerHour: 999,
+      maxPerDay: 9999,
+    };
+    expect(clampToHardCap(wild, "bridge", undefined, "group_members").maxPerDay).toBe(
+      BRIDGE_HARD_CAP.maxPerDay
+    );
+  });
+
+  test("isGroupAudience só é verdade para os dois públicos novos", () => {
+    expect(isGroupAudience("groups")).toBe(true);
+    expect(isGroupAudience("group_members")).toBe(true);
+    expect(isGroupAudience("segment")).toBe(false);
+    expect(isGroupAudience(undefined)).toBe(false);
+  });
+
+  test("targetsGroupMembers pega também a campanha manual vinda de um grupo", () => {
+    expect(targetsGroupMembers({ source: "group_members" })).toBe(true);
+    // "Disparar para selecionados": manual, mas com o grupo de origem no rascunho.
+    expect(targetsGroupMembers({ source: "manual", groupChatIds: ["g1"] })).toBe(true);
+    // Manual de verdade (números colados) continua fora.
+    expect(targetsGroupMembers({ source: "manual" })).toBe(false);
+    expect(targetsGroupMembers({ source: "manual", groupChatIds: [] })).toBe(false);
+    // A SALA como destinatário não é DM para membro.
+    expect(targetsGroupMembers({ source: "groups", groupChatIds: ["g1"] })).toBe(false);
+    expect(targetsGroupMembers({ source: "segment" })).toBe(false);
+  });
+});
+
+describe("teto por grupo de origem (membros)", () => {
+  test("modo seguro trava em 10/grupo/dia mesmo pedindo mais", () => {
+    expect(groupMemberCaps({ safeMode: true }).perGroupPerDay).toBe(GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY);
+    expect(groupMemberCaps({ safeMode: true, perGroupPerDay: 100 }).perGroupPerDay).toBe(
+      GROUP_MEMBER_SAFE_PER_GROUP_PER_DAY
+    );
+    expect(groupMemberCaps({ safeMode: true, perGroupPerDay: 3 }).perGroupPerDay).toBe(3);
+  });
+
+  test("fora do modo seguro o teto DURO ainda é 50/grupo/dia", () => {
+    expect(groupMemberCaps({ safeMode: false, perGroupPerDay: 1000 }).perGroupPerDay).toBe(
+      GROUP_MEMBER_HARD_PER_GROUP_PER_DAY
+    );
+  });
+
+  test("capsExceeded barra o grupo que já bateu o teto de hoje", () => {
+    const now = Date.UTC(2026, 8, 16, 12);
+    const pacing = {
+      minDelaySec: 30,
+      maxDelaySec: 60,
+      batchSize: 0,
+      batchPauseMin: 0,
+      maxPerHour: 30,
+      maxPerDay: 150,
+    };
+    const blocked = capsExceeded({
+      pacing,
+      counters: null,
+      now,
+      isNewContact: false,
+      sourceGroup: { counter: { sentToday: 10, sentTodayKey: "2026-09-16" }, perGroupPerDay: 10 },
+    });
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) {
+      expect(blocked.reason).toMatch(/grupo de origem/);
+      expect(blocked.retryAt).toBeGreaterThan(now);
+    }
+  });
+
+  test("contador de ontem não conta hoje", () => {
+    const now = Date.UTC(2026, 8, 16, 12);
+    const ok = capsExceeded({
+      pacing: {
+        minDelaySec: 30,
+        maxDelaySec: 60,
+        batchSize: 0,
+        batchPauseMin: 0,
+        maxPerHour: 30,
+        maxPerDay: 150,
+      },
+      counters: null,
+      now,
+      isNewContact: false,
+      sourceGroup: { counter: { sentToday: 99, sentTodayKey: "2026-09-15" }, perGroupPerDay: 10 },
+    });
+    expect(ok.ok).toBe(true);
+  });
+
+  test("bumpSourceGroupCounter acumula no dia e zera o diário na virada", () => {
+    const d1 = Date.UTC(2026, 8, 16, 23);
+    const d2 = Date.UTC(2026, 8, 17, 1);
+    const first = bumpSourceGroupCounter(undefined, d1);
+    expect(first).toEqual({ sent: 1, sentToday: 1, sentTodayKey: "2026-09-16" });
+    const second = bumpSourceGroupCounter(first, d1);
+    expect(second).toEqual({ sent: 2, sentToday: 2, sentTodayKey: "2026-09-16" });
+    const nextDay = bumpSourceGroupCounter(second, d2);
+    expect(nextDay).toEqual({ sent: 3, sentToday: 1, sentTodayKey: "2026-09-17" });
   });
 });

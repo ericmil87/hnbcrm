@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -10,11 +10,12 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
-import { CampaignWizard } from "@/components/campaigns/CampaignWizard";
+import { CampaignWizard, type CampaignPrefill } from "@/components/campaigns/CampaignWizard";
 import { CampaignDetail } from "@/components/campaigns/CampaignDetail";
 import { OptOutsPanel } from "@/components/campaigns/OptOutsPanel";
 import type { CampaignListItem, CampaignProvider, CampaignStatus } from "@/components/campaigns/types";
@@ -44,6 +45,7 @@ export function CampaignsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = (searchParams.get("campanha") as Id<"campaigns"> | null) ?? null;
   const [wizardId, setWizardId] = useState<Id<"campaigns"> | null | "new">(null);
+  const [prefill, setPrefill] = useState<CampaignPrefill | null>(null);
   const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]["id"]>("all");
   const [providerFilter, setProviderFilter] = useState<CampaignProvider | "all">("all");
   const [confirmDelete, setConfirmDelete] = useState<Id<"campaigns"> | null>(null);
@@ -81,6 +83,40 @@ export function CampaignsPage() {
       { replace: true }
     );
   }, [setSearchParams]);
+
+  /**
+   * Portas de entrada da F5: /app/campanhas?novo=1&source=…&groupChatId=…&phones=…
+   *
+   * A página de Grupos, o header do grupo no inbox e a seleção no painel de
+   * membros caem todos aqui, com o wizard já preenchido. Os params são
+   * consumidos uma vez e limpos da URL — recarregar não reabre o wizard.
+   */
+  useEffect(() => {
+    if (searchParams.get("novo") !== "1") return;
+    const source = searchParams.get("source");
+    const groupChatId = searchParams.get("groupChatId") ?? searchParams.get("sourceGroupChatId");
+    const phonesParam = searchParams.get("phones");
+    const phones = phonesParam
+      ? phonesParam.split(",").map((p) => p.trim()).filter(Boolean).slice(0, 500)
+      : [];
+    const next: CampaignPrefill = {
+      ...(source === "groups" || source === "group_members" || source === "manual"
+        ? { source }
+        : {}),
+      ...(groupChatId ? { groupChatIds: [groupChatId as Id<"groupChats">] } : {}),
+      ...(phones.length > 0 ? { phones } : {}),
+    };
+    setPrefill(next);
+    setWizardId("new");
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        for (const key of ["novo", "source", "groupChatId", "sourceGroupChatId", "phones"]) p.delete(key);
+        return p;
+      },
+      { replace: true }
+    );
+  }, [searchParams, setSearchParams]);
 
   const filtered = useMemo(() => {
     return (campaigns ?? []).filter((c) => {
@@ -285,22 +321,40 @@ export function CampaignsPage() {
         </>
       )}
 
+      {/*
+        Fronteiras de erro nos dois pontos que recebem id CRU da URL
+        (`?campanha=`, e o `groupChatId` que vira prévia de público): link
+        truncado, campanha de outra org ou grupo que deixou de ser acompanhado
+        fazem a query LANÇAR, e sem isto o ErrorBoundary do AuthLayout troca a
+        página inteira por "Algo deu errado".
+      */}
       {wizardId !== null && (
-        <CampaignWizard
-          organizationId={organizationId}
-          campaignId={wizardId === "new" ? null : wizardId}
-          onClose={() => setWizardId(null)}
-          onLaunched={(id) => openDetail(id)}
-        />
+        <ErrorBoundary
+          key={wizardId === "new" ? `new-${prefill?.groupChatIds?.[0] ?? "0"}` : wizardId}
+          fallback={<></>}
+        >
+          <CampaignWizard
+            organizationId={organizationId}
+            campaignId={wizardId === "new" ? null : wizardId}
+            {...(wizardId === "new" && prefill ? { prefill } : {})}
+            onClose={() => {
+              setWizardId(null);
+              setPrefill(null);
+            }}
+            onLaunched={(id) => openDetail(id)}
+          />
+        </ErrorBoundary>
       )}
       {selectedId && wizardId === null && (
-        <CampaignDetail
-          organizationId={organizationId}
-          campaignId={selectedId}
-          onClose={closeDetail}
-          onEdit={(id) => { closeDetail(); setWizardId(id); }}
-          onDuplicated={(id) => { closeDetail(); setWizardId(id); }}
-        />
+        <ErrorBoundary key={selectedId} fallback={<></>}>
+          <CampaignDetail
+            organizationId={organizationId}
+            campaignId={selectedId}
+            onClose={closeDetail}
+            onEdit={(id) => { closeDetail(); setWizardId(id); }}
+            onDuplicated={(id) => { closeDetail(); setWizardId(id); }}
+          />
+        </ErrorBoundary>
       )}
 
       <ConfirmDialog

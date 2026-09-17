@@ -8,6 +8,7 @@ import type {
   CampaignProvider,
   CampaignSafetyInput,
   CampaignSchedule,
+  MemberFilters,
 } from "./types";
 
 export const WIZARD_STEPS = ["channel", "audience", "message", "limits", "review"] as const;
@@ -30,6 +31,12 @@ export interface WizardDraft {
   audience: {
     source: AudienceSource;
     filters: AudienceFilters;
+    /**
+     * Públicos de grupo. No público `manual` vindo da seleção de membros
+     * carrega SÓ a origem (um id), para o relatório por grupo.
+     */
+    groupChatIds: Id<"groupChats">[];
+    memberFilters: MemberFilters;
     importFileId?: Id<"files">;
     targetBoardId?: Id<"boards">;
     targetStageId?: Id<"stages">;
@@ -54,7 +61,7 @@ export function emptyDraft(): WizardDraft {
     channelConfigId: null,
     provider: null,
     content: { kind: "text", variants: [{ text: DEFAULT_VARIANT_TEXT }], contentType: "text" },
-    audience: { source: "segment", filters: {}, targetTags: [] },
+    audience: { source: "segment", filters: {}, groupChatIds: [], memberFilters: {}, targetTags: [] },
     schedule: null,
     pacing: null,
     safeMode: true,
@@ -80,6 +87,8 @@ export function draftFromCampaign(c: CampaignDoc): WizardDraft {
     audience: {
       source: c.audience.source,
       filters: c.audience.filters ?? {},
+      groupChatIds: c.audience.groupChatIds ?? [],
+      memberFilters: c.audience.memberFilters ?? {},
       importFileId: c.audience.importFileId,
       targetBoardId: c.audience.targetBoardId,
       targetStageId: c.audience.targetStageId,
@@ -134,10 +143,19 @@ export function audiencePayload(draft: WizardDraft) {
     if (v === "" || v === null || (Array.isArray(v) && v.length === 0)) continue;
     (cleanFilters as Record<string, unknown>)[k] = v;
   }
+  const groupSource = draft.audience.source === "groups" || draft.audience.source === "group_members";
+  const memberFilters = compact({ ...draft.audience.memberFilters }) as MemberFilters;
   return compact({
     source: draft.audience.source,
     filters: draft.audience.source === "segment" ? cleanFilters : undefined,
-    importFileId: draft.audience.importFileId,
+    // `manual` também leva o grupo de origem (uma sala) quando a campanha
+    // nasceu da seleção no painel de membros.
+    groupChatIds: draft.audience.groupChatIds.length > 0 ? draft.audience.groupChatIds : undefined,
+    memberFilters:
+      draft.audience.source === "group_members" && Object.keys(memberFilters).length > 0
+        ? memberFilters
+        : undefined,
+    importFileId: groupSource ? undefined : draft.audience.importFileId,
     targetBoardId: draft.audience.targetBoardId,
     targetStageId: draft.audience.targetStageId,
     targetTags: draft.audience.targetTags.length > 0 ? draft.audience.targetTags : undefined,
