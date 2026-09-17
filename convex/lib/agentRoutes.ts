@@ -14,7 +14,13 @@ import { resolvePlatformChain, resolveByoRoute, ResolvedRoute } from "./llm";
 export type PlatformOrder = "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
 
 /** Produtos de IA que escolhem a própria rota (Configurações → IA). */
-export type AiProduct = "copilot" | "attendant" | "vision";
+export type AiProduct =
+  | "copilot"
+  | "attendant"
+  | "vision"
+  | "groupPosts"
+  /** Agente que responde DENTRO de um grupo de WhatsApp (F4). */
+  | "groupAgent";
 
 export interface ProductRouting {
   order?: PlatformOrder;

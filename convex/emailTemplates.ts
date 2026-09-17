@@ -59,6 +59,21 @@ function ctaButton(label: string, url: string): string {
   </table>`;
 }
 
+/**
+ * Escapa HTML de texto que veio de FORA (gerado por LLM, escrito pelo usuário).
+ * Os templates antigos interpolam dados do próprio CRM; aqui o corpo é um texto
+ * livre que vai ser publicado num grupo — `<script>` nele não pode virar tag
+ * dentro do e-mail de aprovação.
+ */
+function escapeHtml(text: string): string {
+  return String(text ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function heading(text: string): string {
   return `<h2 style="margin: 0 0 16px; font-size: 20px; font-weight: 700; color: ${TEXT_PRIMARY};">${text}</h2>`;
 }
@@ -503,10 +518,81 @@ export function buildTemplate(
       return buildFormSubmissionTemplate(data as any);
     case "formConfirmation":
       return buildFormConfirmationTemplate(data as any);
+    case "groupPostPending":
+      return buildGroupPostPendingTemplate(data as any);
+    case "groupPostFailed":
+      return buildGroupPostFailedTemplate(data as any);
     default:
       return {
         subject: "Notificacao HNBCRM",
         html: `<p>Evento: ${eventType}</p>`,
       };
   }
+}
+
+// ── Publicações programadas em grupos (F3) ──
+//
+// O e-mail existe porque a aprovação é CONTRA O RELÓGIO: o texto foi gerado N
+// minutos antes do horário e, se ninguém aprovar, o `onMissedApproval` decide.
+// O sino sozinho não alcança quem não está com a aba aberta.
+
+export function buildGroupPostPendingTemplate(data: {
+  postName: string;
+  postId?: string;
+  groups?: string;
+  scheduledFor: string;
+  text: string;
+  appUrl?: string;
+  missedBehavior?: "skip" | "send";
+}): TemplateResult {
+  const appUrl = data.appUrl || "https://app.hnbcrm.com.br";
+  const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
+  const missed =
+    data.missedBehavior === "send"
+      ? "Sem resposta até o horário, o texto vai ser publicado do jeito que está."
+      : "Sem resposta até o horário, a publicação deste horário é pulada.";
+  return {
+    subject: `Aprovar publicacao: ${data.postName}`,
+    html: baseTemplate({
+      preheader: `A IA escreveu a publicacao "${data.postName}" para ${data.scheduledFor}.`,
+      appUrl,
+      content: `
+        ${heading("Publicação esperando aprovação")}
+        ${paragraph(`A IA escreveu o texto da publicação <strong style="color: ${TEXT_PRIMARY};">${data.postName}</strong>. ${missed}`)}
+        ${infoTable(`
+          ${infoRow("Publicação", data.postName)}
+          ${infoRow("Horário", data.scheduledFor)}
+          ${data.groups ? infoRow("Grupos", data.groups) : ""}
+        `)}
+        ${paragraph(`<em style="color: ${TEXT_SECONDARY};">${escapeHtml(data.text).slice(0, 1200)}</em>`)}
+        ${ctaButton("Revisar e aprovar", postUrl)}
+      `,
+    }),
+  };
+}
+
+export function buildGroupPostFailedTemplate(data: {
+  postName: string;
+  postId?: string;
+  reason: string;
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || "https://app.hnbcrm.com.br";
+  const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
+  return {
+    subject: `Publicacao interrompida: ${data.postName}`,
+    html: baseTemplate({
+      preheader: `A publicacao "${data.postName}" parou: ${data.reason}`,
+      appUrl,
+      content: `
+        ${heading("Publicação interrompida")}
+        ${paragraph(`A publicação <strong style="color: ${TEXT_PRIMARY};">${data.postName}</strong> não pôde continuar e foi pausada.`)}
+        ${infoTable(`
+          ${infoRow("Publicação", data.postName)}
+          ${infoRow("Motivo", escapeHtml(data.reason))}
+        `)}
+        ${ctaButton("Abrir publicação", postUrl)}
+      `,
+    }),
+  };
 }

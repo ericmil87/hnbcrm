@@ -15,7 +15,12 @@ export const internalStartRun = internalMutation({
       v.literal("copilot"),
       v.literal("attendant"),
       v.literal("simulator"),
-      v.literal("vision")
+      v.literal("vision"),
+      v.literal("group_post"),
+      // IA em grupos (F4): turno no grupo, radar de oportunidade e resumo.
+      v.literal("group_reply"),
+      v.literal("group_radar"),
+      v.literal("group_summary")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),
