@@ -1,16 +1,72 @@
 import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { Resend, vOnEmailEventArgs } from "@convex-dev/resend";
 import { buildTemplate } from "./emailTemplates";
+import { appUrl } from "./lib/appUrl";
+import { isDeliverableEmail, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 
-// Resend component instance — testMode: true for dev safety, set to false in production
+// O default do componente é `testMode: true`, e nesse modo ele LANÇA para todo
+// destinatário que não seja `@resend.dev`. Este arquivo passou meses sem desligar
+// a flag: nenhum e-mail transacional saiu, e como 14 dos 15 call sites agendam o
+// envio, o erro só aparecia no log do Convex. Agora o envio real é o padrão e o
+// sandbox é opt-in (`RESEND_TEST_MODE=true` + destinatário `delivered@resend.dev`).
+// `emailConfig.test.ts` quebra se o default voltar.
+export function resendTestMode(): boolean {
+  return process.env.RESEND_TEST_MODE === "true";
+}
+
 export const resend: Resend = new Resend(components.resend, {
+  testMode: resendTestMode(),
   onEmailEvent: internal.email.handleEmailEvent,
 });
 
+const fromAddress = () => process.env.RESEND_FROM_EMAIL ?? "HNBCRM <noreply@mail.hnbcrm.com>";
+
+// ── Porta de saída ÚNICA ──
+// Todo e-mail transacional sai por aqui. NUNCA lança: e-mail é efeito colateral,
+// e um throw aqui reverte a mutation de quem chamou (no convite, isso engolia a
+// senha temporária que só existia na memória da action). Devolve `false` quando
+// nada foi enfileirado.
+export async function sendTransactionalEmail(
+  ctx: MutationCtx,
+  args: { to: string; subject: string; html: string; replyTo?: string; kind: string },
+): Promise<boolean> {
+  const to = normalizeEmail(args.to);
+  if (!isDeliverableEmail(to)) {
+    console.warn(`[email] ${args.kind}: destinatário inválido ou de teste (${maskEmailForLog(to)}) — não enviado`);
+    return false;
+  }
+
+  const suppressed = await ctx.db
+    .query("emailSuppressions")
+    .withIndex("by_email", (q) => q.eq("email", to))
+    .first();
+  if (suppressed) {
+    console.warn(`[email] ${args.kind}: ${maskEmailForLog(to)} suprimido (${suppressed.reason}) — não enviado`);
+    return false;
+  }
+
+  try {
+    await resend.sendEmail(ctx, {
+      from: fromAddress(),
+      to,
+      subject: args.subject,
+      html: args.html,
+      ...(args.replyTo && isDeliverableEmail(args.replyTo) ? { replyTo: [args.replyTo] } : {}),
+    });
+    return true;
+  } catch (error) {
+    console.error(
+      `[email] ${args.kind}: falha ao enfileirar para ${maskEmailForLog(to)}:`,
+      error instanceof Error ? error.message : String(error),
+    );
+    return false;
+  }
+}
+
 // ── Central notification dispatcher ──
-// All email sends go through this single entry point.
+// All notification emails go through this single entry point.
 export const dispatchNotification = internalMutation({
   args: {
     organizationId: v.id("organizations"),
@@ -18,11 +74,23 @@ export const dispatchNotification = internalMutation({
     eventType: v.string(),
     templateData: v.any(),
   },
-  returns: v.null(),
+  returns: v.boolean(),
   handler: async (ctx, args) => {
     // 1. Get recipient — skip if AI agent or no email
     const member = await ctx.db.get(args.recipientMemberId);
-    if (!member || member.type !== "human" || !member.email) return null;
+    if (!member || member.type !== "human" || !member.email) return false;
+
+    // Defesa em profundidade multi-tenant: os call sites deveriam barrar membro
+    // de outra org, e nem todos barram. Dado de uma org nunca sai por e-mail
+    // para membro de outra.
+    if (member.organizationId !== args.organizationId) {
+      console.warn(`[email] ${args.eventType}: destinatário de outra organização — não enviado`);
+      return false;
+    }
+
+    // Membro sem conta vinculada (seed, importado) não tem como abrir o link do
+    // e-mail — e são justamente os endereços fictícios que virariam bounce.
+    if (!member.userId) return false;
 
     // 2. Check preferences (invite is always sent regardless of prefs)
     if (args.eventType !== "invite") {
@@ -31,32 +99,62 @@ export const dispatchNotification = internalMutation({
         .withIndex("by_member", (q) => q.eq("teamMemberId", args.recipientMemberId))
         .first();
       // Opt-out model: no row = all enabled. Check explicit false.
-      if (prefs && (prefs as any)[args.eventType] === false) return null;
+      if (prefs && (prefs as any)[args.eventType] === false) return false;
     }
 
-    // 3. Build template
-    const template = buildTemplate(args.eventType, args.templateData);
+    // 3. Build template — eventType desconhecido não vira e-mail vazio
+    let template;
+    try {
+      template = buildTemplate(args.eventType, args.templateData);
+    } catch (error) {
+      console.error(`[email] ${args.eventType}:`, error instanceof Error ? error.message : String(error));
+      return false;
+    }
 
-    // 4. Send via Resend component
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "HNBCRM <noreply@mail.hnbcrm.com>";
-    await resend.sendEmail(ctx, {
-      from: fromEmail,
+    // 4. Send
+    return await sendTransactionalEmail(ctx, {
       to: member.email,
       subject: template.subject,
       html: template.html,
+      kind: args.eventType,
     });
-
-    return null;
   },
 });
 
 // ── Resend webhook event handler ──
+// Hard bounce e denúncia de spam suprimem o endereço para sempre: insistir num
+// endereço morto é o caminho mais curto para o domínio cair em spam para todos.
 export const handleEmailEvent = internalMutation({
   args: vOnEmailEventArgs.fields,
   returns: v.null(),
-  handler: async (_ctx, args) => {
-    // Log email events for debugging — can be extended to update delivery status
-    console.log(`[Resend] Email ${args.id} event:`, args.event);
+  handler: async (ctx, args) => {
+    const event = args.event;
+    console.log(`[Resend] Email ${args.id} event: ${event.type}`);
+
+    let reason: "bounced" | "complained" | null = null;
+    let detail: string | undefined;
+    if (event.type === "email.complained") {
+      reason = "complained";
+    } else if (event.type === "email.bounced") {
+      // Bounce transitório (caixa cheia, servidor fora) não condena o endereço.
+      if (event.data.bounce.type.toLowerCase() !== "permanent") return null;
+      reason = "bounced";
+      detail = `${event.data.bounce.subType}: ${event.data.bounce.message}`.slice(0, 300);
+    }
+    if (!reason) return null;
+
+    const recipients = Array.isArray(event.data.to) ? event.data.to : [event.data.to];
+    for (const raw of recipients) {
+      const email = normalizeEmail(raw);
+      if (!email) continue;
+      const existing = await ctx.db
+        .query("emailSuppressions")
+        .withIndex("by_email", (q) => q.eq("email", email))
+        .first();
+      if (existing) continue;
+      await ctx.db.insert("emailSuppressions", { email, reason, detail, createdAt: Date.now() });
+      console.warn(`[email] ${maskEmailForLog(email)} suprimido: ${reason}`);
+    }
     return null;
   },
 });
@@ -83,13 +181,12 @@ export const sendConfirmationEmail = internalMutation({
       fieldLabels: args.fieldLabels,
     });
 
-    const fromEmail = process.env.RESEND_FROM_EMAIL ?? "HNBCRM <noreply@mail.hnbcrm.com>";
-    await resend.sendEmail(ctx, {
-      from: fromEmail,
+    await sendTransactionalEmail(ctx, {
       to: args.toEmail,
       subject: template.subject,
       html: template.html,
-      ...(args.replyTo ? { replyTo: [args.replyTo] } : {}),
+      replyTo: args.replyTo,
+      kind: "formConfirmation",
     });
 
     return null;
@@ -103,7 +200,7 @@ export const sendDailyDigest = internalMutation({
   handler: async (ctx) => {
     const now = Date.now();
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
-    const appUrl = process.env.APP_URL ?? "https://app.hnbcrm.com.br";
+    const digestAppUrl = appUrl();
 
     // Format date for subject
     const dateStr = new Date(now).toLocaleDateString("pt-BR", {
@@ -124,7 +221,10 @@ export const sendDailyDigest = internalMutation({
         )
         .collect();
 
-      if (members.length === 0) continue;
+      // Só quem tem conta vinculada recebe (mesmo gate do dispatch) — filtrar
+      // aqui evita agendar dezenas de jobs no-op por dia para membros-semente.
+      const recipients = members.filter((m) => m.userId && m.email);
+      if (recipients.length === 0) continue;
 
       // Gather yesterday's stats
       const recentLeads = await ctx.db
@@ -159,9 +259,12 @@ export const sendDailyDigest = internalMutation({
         .collect();
       const pendingHandoffsCount = pendingHandoffs.length;
 
+      // Dia sem nada para contar não vira e-mail: digest zerado todo dia é o
+      // que ensina o usuário a ignorar (ou denunciar) o remetente.
+      if (newLeadsCount + completedTasksCount + pendingHandoffsCount + overdueTasksCount === 0) continue;
+
       // Send to each eligible member
-      for (const member of members) {
-        if (!member.email) continue;
+      for (const member of recipients) {
 
         // Check if member opted out of dailyDigest
         const prefs = await ctx.db
@@ -181,7 +284,7 @@ export const sendDailyDigest = internalMutation({
             completedTasksCount,
             pendingHandoffsCount,
             overdueTasksCount,
-            appUrl,
+            appUrl: digestAppUrl,
           },
         });
       }

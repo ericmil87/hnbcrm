@@ -1,6 +1,8 @@
 // Pure TypeScript email template builders — no Node.js APIs needed.
 // All text in PT-BR. Returns { subject, html } for each template type.
 
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
+
 const BRAND_ORANGE = "#EA580C";
 const BG_DARK = "#0d0d0d";
 const CARD_BG = "#1a1a1a";
@@ -8,7 +10,7 @@ const TEXT_PRIMARY = "#f5f5f5";
 const TEXT_SECONDARY = "#a3a3a3";
 const BORDER_COLOR = "#2a2a2a";
 
-function baseTemplate(opts: {
+export function baseTemplate(opts: {
   preheader: string;
   content: string;
   appUrl: string;
@@ -51,7 +53,7 @@ function baseTemplate(opts: {
 </html>`;
 }
 
-function ctaButton(label: string, url: string): string {
+export function ctaButton(label: string, url: string): string {
   return `<table cellpadding="0" cellspacing="0" role="presentation" style="margin-top: 24px;">
     <tr><td style="background-color: ${BRAND_ORANGE}; border-radius: 9999px; padding: 12px 28px;">
       <a href="${url}" style="color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">${label}</a>
@@ -65,7 +67,7 @@ function ctaButton(label: string, url: string): string {
  * livre que vai ser publicado num grupo — `<script>` nele não pode virar tag
  * dentro do e-mail de aprovação.
  */
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return String(text ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -74,11 +76,15 @@ function escapeHtml(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function heading(text: string): string {
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function heading(text: string): string {
   return `<h2 style="margin: 0 0 16px; font-size: 20px; font-weight: 700; color: ${TEXT_PRIMARY};">${text}</h2>`;
 }
 
-function paragraph(text: string): string {
+export function paragraph(text: string): string {
   return `<p style="margin: 0 0 12px; font-size: 14px; line-height: 1.6; color: ${TEXT_SECONDARY};">${text}</p>`;
 }
 
@@ -241,7 +247,7 @@ export function buildTaskCommentMentionTemplate(data: {
   commentExcerpt?: string;
   appUrl?: string;
 }): TemplateResult {
-  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || "https://app.hnbcrm.com.br";
+  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || resolveAppUrl();
   const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
   const excerptBlock = data.commentExcerpt
     ? `<div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
@@ -271,7 +277,7 @@ export function buildTaskDueSoonTemplate(data: {
   minutesBefore?: number;
   appUrl?: string;
 }): TemplateResult {
-  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || "https://app.hnbcrm.com.br";
+  const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || resolveAppUrl();
   const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
   const leadTime = data.minutesBefore
     ? data.minutesBefore >= 60
@@ -416,18 +422,21 @@ export function buildFormSubmissionTemplate(data: {
   leadUrl: string;
 }): TemplateResult {
   const appUrl = data.leadUrl.replace(/\/app\/.*$/, "");
+  // `contactName`/`contactEmail` vêm de um formulário PÚBLICO e anônimo e caem
+  // na caixa da equipe: sem escape, quem preenche injeta link/HTML no e-mail.
+  const formName = escapeHtml(data.formName);
   return {
     subject: `Nova submissao de formulario: ${data.formName}`,
     html: baseTemplate({
-      preheader: `Uma nova submissao foi recebida no formulario "${data.formName}".`,
+      preheader: `Uma nova submissao foi recebida no formulario "${formName}".`,
       appUrl,
       content: `
         ${heading("Nova Submissao de Formulario")}
-        ${paragraph(`Uma nova submissao foi recebida no formulario <strong style="color: ${TEXT_PRIMARY};">${data.formName}</strong>.`)}
+        ${paragraph(`Uma nova submissao foi recebida no formulario <strong style="color: ${TEXT_PRIMARY};">${formName}</strong>.`)}
         ${infoTable(`
-          ${infoRow("Formulario", data.formName)}
-          ${data.contactEmail ? infoRow("Email", data.contactEmail) : ""}
-          ${data.contactName ? infoRow("Contato", data.contactName) : ""}
+          ${infoRow("Formulario", formName)}
+          ${data.contactEmail ? infoRow("Email", escapeHtml(data.contactEmail)) : ""}
+          ${data.contactName ? infoRow("Contato", escapeHtml(data.contactName)) : ""}
         `)}
         ${ctaButton("Ver Lead", data.leadUrl)}
       `,
@@ -447,12 +456,15 @@ export function buildFormConfirmationTemplate(data: {
   // Replace {variable} placeholders in body
   let bodyContent = data.body || "Obrigado por preencher o formulario. Recebemos sua submissao com sucesso.";
   if (data.submittedData && data.fieldLabels) {
-    for (const [fieldId, value] of Object.entries(data.submittedData)) {
+    for (const [fieldId, rawValue] of Object.entries(data.submittedData)) {
+      // Valor digitado por quem preencheu: escapado, e via função de replace
+      // para que um "$&" no valor não seja interpretado como padrão.
+      const value = escapeHtml(String(rawValue ?? ""));
       const label = data.fieldLabels[fieldId];
       if (label) {
-        bodyContent = bodyContent.replace(new RegExp(`\\{${label}\\}`, "gi"), value);
+        bodyContent = bodyContent.replace(new RegExp(`\\{${escapeRegExp(label)}\\}`, "gi"), () => value);
       }
-      bodyContent = bodyContent.replace(new RegExp(`\\{${fieldId}\\}`, "gi"), value);
+      bodyContent = bodyContent.replace(new RegExp(`\\{${escapeRegExp(fieldId)}\\}`, "gi"), () => value);
     }
   }
 
@@ -460,10 +472,10 @@ export function buildFormConfirmationTemplate(data: {
   let dataSummary = "";
   if (data.submittedData && data.fieldLabels) {
     const rows = Object.entries(data.submittedData)
-      .filter(([, v]) => v && v.trim())
+      .filter(([, v]) => String(v ?? "").trim())
       .map(([fieldId, value]) => {
         const label = data.fieldLabels![fieldId] || fieldId;
-        return infoRow(label, value);
+        return infoRow(escapeHtml(label), escapeHtml(String(value)));
       })
       .join("");
     if (rows) {
@@ -474,8 +486,8 @@ export function buildFormConfirmationTemplate(data: {
   return {
     subject,
     html: baseTemplate({
-      preheader: `Confirmacao de envio: ${data.formName}`,
-      appUrl: "https://app.hnbcrm.com.br",
+      preheader: `Confirmacao de envio: ${escapeHtml(data.formName)}`,
+      appUrl: resolveAppUrl(),
       content: `
         ${heading("Confirmacao de Envio")}
         ${paragraph(bodyContent)}
@@ -523,10 +535,9 @@ export function buildTemplate(
     case "groupPostFailed":
       return buildGroupPostFailedTemplate(data as any);
     default:
-      return {
-        subject: "Notificacao HNBCRM",
-        html: `<p>Evento: ${eventType}</p>`,
-      };
+      // Fail-closed: um typo de eventType virava um e-mail vazio ("Evento: x")
+      // entregue ao cliente. `dispatchNotification` captura e loga.
+      throw new Error(`Template de e-mail desconhecido: ${eventType}`);
   }
 }
 
@@ -545,7 +556,7 @@ export function buildGroupPostPendingTemplate(data: {
   appUrl?: string;
   missedBehavior?: "skip" | "send";
 }): TemplateResult {
-  const appUrl = data.appUrl || "https://app.hnbcrm.com.br";
+  const appUrl = data.appUrl || resolveAppUrl();
   const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
   const missed =
     data.missedBehavior === "send"
@@ -577,7 +588,7 @@ export function buildGroupPostFailedTemplate(data: {
   reason: string;
   appUrl?: string;
 }): TemplateResult {
-  const appUrl = data.appUrl || "https://app.hnbcrm.com.br";
+  const appUrl = data.appUrl || resolveAppUrl();
   const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
   return {
     subject: `Publicacao interrompida: ${data.postName}`,

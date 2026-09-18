@@ -22,6 +22,7 @@ import {
   Eye,
   EyeOff,
   ShieldAlert,
+  MailWarning,
   Key,
   Sparkles,
 } from "lucide-react";
@@ -68,6 +69,8 @@ export function InviteMemberModal({
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [resultApiKey, setResultApiKey] = useState<string | null>(null);
   const [resultMemberName, setResultMemberName] = useState<string>("");
+  const [resultEmail, setResultEmail] = useState<string>("");
+  const [resultEmailSent, setResultEmailSent] = useState<boolean | undefined>(undefined);
   const [copied, setCopied] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
@@ -117,6 +120,8 @@ export function InviteMemberModal({
 
         setResultMemberName(name.trim());
         setTempPassword(result.tempPassword ?? null);
+        setResultEmail(email.trim());
+        setResultEmailSent(result.emailSent);
         setStep("result");
         toast.success(
           result.isNewUser
@@ -173,6 +178,8 @@ export function InviteMemberModal({
     setTempPassword(null);
     setResultApiKey(null);
     setResultMemberName("");
+    setResultEmail("");
+    setResultEmailSent(undefined);
     setCopied(false);
     setRevealed(false);
     setGenerateApiKey(true);
@@ -468,6 +475,23 @@ export function InviteMemberModal({
               </button>
             </div>
           </div>
+
+          {resultEmailSent === false && (
+            <div className="flex gap-3 bg-semantic-warning/10 border border-semantic-warning/30 rounded-lg p-3">
+              <MailWarning size={20} className="flex-shrink-0 text-semantic-warning mt-0.5" />
+              <p className="text-sm text-text-primary leading-relaxed font-medium">
+                Não foi possível enviar o e-mail de convite. Copie a senha agora e
+                envie para a pessoa por outro canal — ela não será exibida de novo.
+              </p>
+            </div>
+          )}
+
+          {resultEmailSent === true && (
+            <p className="text-xs text-text-muted text-center">
+              Convite enviado por e-mail para{" "}
+              <span className="text-text-secondary">{resultEmail}</span>.
+            </p>
+          )}
 
           <Button
             variant="primary"

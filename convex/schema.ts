@@ -1654,6 +1654,27 @@ const applicationTables = {
     .index("by_organization_and_member", ["organizationId", "teamMemberId"])
     .index("by_member", ["teamMemberId"]),
 
+  // Supressão de e-mail — DEPLOYMENT-WIDE de propósito (sem organizationId):
+  // endereço que deu hard bounce ou marcou como spam queima a reputação do
+  // domínio remetente, que é um só para todas as orgs. Alimentada pelo webhook
+  // do Resend (`email.handleEmailEvent`); nenhum envio transacional sai para
+  // quem está aqui.
+  emailSuppressions: defineTable({
+    email: v.string(), // normalizado (trim + minúsculas)
+    reason: v.union(v.literal("bounced"), v.literal("complained")),
+    detail: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
+
+  // Teto de e-mails de autenticação por endereço (janela fixa). O flow "reset"
+  // é PÚBLICO e o Convex Auth só limita tentativas de código, não pedidos —
+  // sem isto, qualquer um bombardeia uma caixa alheia usando o nosso domínio.
+  authEmailThrottle: defineTable({
+    email: v.string(), // normalizado
+    windowStart: v.number(),
+    count: v.number(),
+  }).index("by_email", ["email"]),
+
   // Forms (embeddable lead capture)
   forms: defineTable({
     organizationId: v.id("organizations"),

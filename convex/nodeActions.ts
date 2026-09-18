@@ -6,6 +6,8 @@ import { internalAction, action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { permissionsValidator } from "./schema";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { hasEmailShape } from "./lib/emailAddress";
 
 function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -76,12 +78,21 @@ export const inviteHumanMember = action({
     teamMemberId: v.id("teamMembers"),
     isNewUser: v.boolean(),
     tempPassword: v.optional(v.string()),
+    emailSent: v.boolean(),
   }),
   handler: async (ctx, args): Promise<{
     teamMemberId: Id<"teamMembers">;
     isNewUser: boolean;
     tempPassword?: string;
+    emailSent: boolean;
   }> => {
+    // Antes de QUALQUER escrita: o banco já tem membro com e-mail "toni" e
+    // "oli@milfont.netdd" — conta criada com endereço impossível não recebe
+    // convite nem consegue recuperar a senha depois.
+    if (!hasEmailShape(args.email)) {
+      throw new Error("E-mail inválido. Confira o endereço e tente de novo.");
+    }
+
     // Verify caller has team:manage
     const callerMember: any = await ctx.runQuery(
       internal.teamMembers.internalVerifyTeamManager,
@@ -143,29 +154,40 @@ export const inviteHumanMember = action({
       }
     );
 
-    // Send invite email for new users
+    // Send invite email for new users.
+    // Action não é transacional: usuário, conta e membro JÁ estão gravados, e a
+    // senha em claro só existe aqui. Se o e-mail lançasse, o `return` abaixo
+    // nunca rodava, a senha se perdia e reconvidar era recusado ("já é membro")
+    // — um membro-zumbi sem credencial. Por isso nada aqui pode lançar, e
+    // `emailSent` diz à tela se ela precisa mandar o admin copiar a senha.
+    let emailSent = false;
     if (isNewUser && tempPassword) {
-      const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
-        organizationId: args.organizationId,
-      });
-      await ctx.runMutation(internal.email.dispatchNotification, {
-        organizationId: args.organizationId,
-        recipientMemberId: teamMemberId,
-        eventType: "invite",
-        templateData: {
-          memberName: args.name,
-          orgName: org?.name ?? "HNBCRM",
-          email: args.email,
-          tempPassword,
-          loginUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/entrar`,
-        },
-      });
+      try {
+        const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
+          organizationId: args.organizationId,
+        });
+        emailSent = await ctx.runMutation(internal.email.dispatchNotification, {
+          organizationId: args.organizationId,
+          recipientMemberId: teamMemberId,
+          eventType: "invite",
+          templateData: {
+            memberName: args.name,
+            orgName: org?.name ?? "HNBCRM",
+            email: args.email,
+            tempPassword,
+            loginUrl: `${resolveAppUrl()}/entrar`,
+          },
+        });
+      } catch (error) {
+        console.error("[invite] falha ao enviar o e-mail de convite:", error instanceof Error ? error.message : String(error));
+      }
     }
 
     return {
       teamMemberId,
       isNewUser,
       tempPassword: isNewUser ? tempPassword : undefined,
+      emailSent,
     };
   },
 });

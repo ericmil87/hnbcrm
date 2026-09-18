@@ -448,6 +448,40 @@ export const updateMemberAvatar = mutation({
   },
 });
 
+// Chamada pelo frontend logo após um "reset-verification" bem-sucedido
+// (código de e-mail + senha nova). Quem acabou de provar que tem acesso ao
+// e-mail e escolheu a própria senha nova não deveria ser forçado a trocá-la
+// de novo no primeiro login — esse flag existe para senha TEMPORÁRIA de
+// convite, e a redefinição por código já cumpre esse papel.
+//
+// Limite de segurança: só mexe nos teamMembers do PRÓPRIO usuário
+// autenticado (via `by_user`, sem organizationId no arg — a troca de senha
+// não é escopada a uma org) — nunca aceita um id de outro usuário.
+export const clearMustChangePasswordAfterReset = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const members = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .collect();
+
+    for (const member of members) {
+      if (member.mustChangePassword) {
+        await ctx.db.patch(member._id, {
+          mustChangePassword: false,
+          updatedAt: Date.now(),
+        });
+      }
+    }
+
+    return null;
+  },
+});
+
 // ===== Internal functions =====
 
 // Internal: Get team members for organization (used by HTTP API router)

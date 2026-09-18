@@ -54,6 +54,7 @@ import {
   runGroupReadTool,
   runGroupWriteTool,
 } from "./lib/groupCopilotTools";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -1315,7 +1316,7 @@ async function runWriteTool(
           templateData: {
             leadTitle: lead.title,
             assignedByName: member.name,
-            leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+            leadUrl: `${resolveAppUrl()}/app/pipeline`,
           },
         });
       }

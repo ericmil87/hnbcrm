@@ -59,8 +59,13 @@
 | `activities.ts` | Activity timeline events on leads |
 | `auditLogs.ts` | Audit trail queries |
 | `dashboard.ts` | Aggregation queries for dashboard |
-| `email.ts` | Central email dispatch, Resend instance, daily digest handler |
-| `emailTemplates.ts` | Pure TS email template builders (8 templates, PT-BR) |
+| `email.ts` | Resend instance (envio REAL por padrão — `RESEND_TEST_MODE=true` liga o sandbox; o default do componente é testMode e LANÇA p/ destinatário real), porta de saída única `sendTransactionalEmail` (valida endereço, checa `emailSuppressions`, NUNCA lança), `dispatchNotification` (gates: mesma org, membro com `userId`, preferência, template conhecido → devolve boolean), `handleEmailEvent` (hard bounce/denúncia → supressão), daily digest (só quem tem conta; pula dia zerado) |
+| `authEmails.ts` | E-mails de autenticação fora de `notificationPreferences`: `sendPasswordResetCode` (teto 5/h por endereço em `authEmailThrottle`) e `sendWelcomeEmail` (agendado por `createOrganization`) |
+| `authEmailTemplates.ts` | Templates puros de reset de senha e boas-vindas (reusam o layout de `emailTemplates.ts`, tudo escapado) |
+| `passwordReset.ts` | Provider OTP do flow `reset` do Convex Auth: 8 dígitos sem viés, 15 min, envia via `ctx.runMutation` (o 2º arg de `sendVerificationRequest` é um ctx de action real) |
+| `lib/appUrl.ts` | `appUrl()` — fonte ÚNICA de link em e-mail/notificação (env `APP_URL`, fallback `https://hnbcrm.com`) |
+| `lib/emailAddress.ts` | Puro: `normalizeEmail`, `hasEmailShape` (só formato — convite), `isDeliverableEmail` (formato + veto a domínio reservado/de seed), `maskEmailForLog` |
+| `emailTemplates.ts` | Pure TS email template builders (14 templates, PT-BR); `buildTemplate` é fail-closed (eventType desconhecido lança) e entrada de formulário público sai escapada |
 | `webhooks.ts` | Webhook CRUD |
 | `webhookTrigger.ts` | Internal action that fires webhooks |
 | `exports.ts` | Jobs de export (CSV por entidade + backup JSON `hnbcrm-backup` v1 sanitizado): criação gated por `settings:manage`, 1 ativo/org, paginação 500 via `lib/cursor.ts`, blob no File Storage (expira em 7 dias, cron horário `internalCleanupExpired`), download por URL assinada; internals `internal*` p/ REST |

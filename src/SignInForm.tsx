@@ -1,11 +1,23 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 
 export function SignInForm() {
   const { signIn } = useAuthActions();
   const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
   const [submitting, setSubmitting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+  if (showForgotPassword) {
+    return (
+      <ForgotPasswordForm
+        initialEmail={email}
+        onBack={() => setShowForgotPassword(false)}
+      />
+    );
+  }
 
   return (
     <div className="w-full">
@@ -36,6 +48,8 @@ export function SignInForm() {
           type="email"
           name="email"
           placeholder="Email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
           required
         />
         <input
@@ -45,6 +59,17 @@ export function SignInForm() {
           placeholder="Senha"
           required
         />
+        {flow === "signIn" && (
+          <div className="text-right -mt-3">
+            <button
+              type="button"
+              className="text-sm text-brand-500 hover:text-brand-400 hover:underline font-medium cursor-pointer"
+              onClick={() => setShowForgotPassword(true)}
+            >
+              Esqueci minha senha
+            </button>
+          </div>
+        )}
         <button className="auth-button" type="submit" disabled={submitting}>
           {flow === "signIn" ? "Entrar" : "Cadastrar"}
         </button>

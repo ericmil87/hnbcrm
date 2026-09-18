@@ -10,8 +10,9 @@ import { resolvePermissions, hasPermission, type Role } from "./lib/permissions"
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
-const APP_URL = () => process.env.APP_URL ?? "https://app.hnbcrm.com.br";
+const APP_URL = () => resolveAppUrl();
 
 /**
  * Quanto tempo a IA de um GRUPO fica em silêncio depois que alguém aceita o

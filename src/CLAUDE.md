@@ -6,7 +6,7 @@
 src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
 ├── App.tsx                     # (legacy, unused — superseded by router + AuthLayout)
-├── SignInForm.tsx              # Password + Anonymous sign-in (PT-BR)
+├── SignInForm.tsx              # Password + Anonymous sign-in (PT-BR) + link "Esqueci minha senha" → components/auth/ForgotPasswordForm.tsx (2 telas: e-mail → código de 8 dígitos + nova senha; mensagem neutra anti-enumeração, reenvio com cooldown de 60 s)
 ├── SignOutButton.tsx           # Sign-out button
 ├── index.css                  # CSS custom properties (dark/light), auth classes, shimmer
 ├── lib/

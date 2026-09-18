@@ -8,6 +8,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { createNotification, filterMembersOfOrg } from "./lib/notify";
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 // Espaçamento entre tasks numa coluna do kanban (permite inserir no meio sem renumerar).
 const ORDER_STEP = 1000;
@@ -35,7 +36,7 @@ function dedupeIds<T extends string>(ids: T[]): T[] {
 }
 
 function appUrl(): string {
-  return process.env.APP_URL ?? "https://app.hnbcrm.com.br";
+  return resolveAppUrl();
 }
 
 function taskDeepLink(taskId: Id<"tasks">): string {

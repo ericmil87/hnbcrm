@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator } from "./schema";
@@ -83,6 +84,12 @@ export const createOrganization = mutation({
       status: "active",
       createdAt: now,
       updatedAt: now,
+    });
+
+    // E-mail de boas-vindas para o admin que acabou de se cadastrar.
+    await ctx.scheduler.runAfter(0, internal.authEmails.sendWelcomeEmail, {
+      organizationId: orgId,
+      teamMemberId,
     });
 
     // Create default board and stages

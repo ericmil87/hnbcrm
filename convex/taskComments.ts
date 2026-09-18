@@ -7,6 +7,7 @@ import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { createNotification, filterMembersOfOrg } from "./lib/notify";
 import { parseCursor, buildCursorFromCreatedAt, paginateResults } from "./lib/cursor";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 const MENTION_EXCERPT_LENGTH = 240;
 
@@ -39,7 +40,7 @@ async function notifyMentions(
   if (mentioned.length === 0) return;
 
   const snippet = excerpt(opts.content);
-  const url = `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/tarefas?task=${opts.task._id}`;
+  const url = `${resolveAppUrl()}/app/tarefas?task=${opts.task._id}`;
 
   for (const memberId of mentioned) {
     await createNotification(ctx, {

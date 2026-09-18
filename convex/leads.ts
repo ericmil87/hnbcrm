@@ -16,6 +16,7 @@ import {
   newBudget,
   scheduleLeadCascade,
 } from "./lib/leadCascade";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 // Get leads for organization
 export const getLeads = query({
@@ -609,6 +610,11 @@ export const assignLead = mutation({
 
     // Get assignee name for activity
     const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
+    // Responsável tem que ser da MESMA org do lead: sem isto, um id de membro de
+    // outra org era aceito, e a notificação levava o título do lead para fora.
+    if (args.assignedTo && (!newAssignee || newAssignee.organizationId !== lead.organizationId)) {
+      throw new Error("Responsável não encontrado nesta organização");
+    }
 
     await ctx.db.patch(args.leadId, {
       assignedTo: args.assignedTo,
@@ -664,7 +670,7 @@ export const assignLead = mutation({
           value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
           contactName: undefined,
           assignedByName: userMember.name,
-          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+          leadUrl: `${resolveAppUrl()}/app/pipeline`,
         },
       });
     }
@@ -1355,6 +1361,11 @@ export const internalAssignLead = internalMutation({
 
     // Get assignee name for activity
     const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
+    // Responsável tem que ser da MESMA org do lead: sem isto, um id de membro de
+    // outra org era aceito, e a notificação levava o título do lead para fora.
+    if (args.assignedTo && (!newAssignee || newAssignee.organizationId !== lead.organizationId)) {
+      throw new Error("Responsável não encontrado nesta organização");
+    }
 
     await ctx.db.patch(args.leadId, {
       assignedTo: args.assignedTo,
@@ -1410,7 +1421,7 @@ export const internalAssignLead = internalMutation({
           value: lead.value > 0 ? `${lead.currency} ${lead.value.toLocaleString("pt-BR")}` : undefined,
           contactName: undefined,
           assignedByName: teamMember.name,
-          leadUrl: `${process.env.APP_URL ?? "https://app.hnbcrm.com.br"}/app/pipeline`,
+          leadUrl: `${resolveAppUrl()}/app/pipeline`,
         },
       });
     }

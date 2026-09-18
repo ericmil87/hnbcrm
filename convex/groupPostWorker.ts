@@ -68,6 +68,7 @@ import {
   pickLibraryItem,
   renderPostText,
 } from "./lib/groupPostCore";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 /**
  * Atraso máximo tolerado para ainda disparar um slot. Além disso o slot é
@@ -168,7 +169,7 @@ async function failAndPause(
       postName: post.name,
       postId: post._id,
       reason,
-      appUrl: process.env.APP_URL ?? "https://app.hnbcrm.com.br",
+      appUrl: resolveAppUrl(),
     },
   });
 }
@@ -745,7 +746,7 @@ export const tick = internalMutation({
           postName: post.name,
           postId: post._id,
           reason: sends.find((s) => s.error)?.error ?? "Nenhum grupo recebeu a mensagem",
-          appUrl: process.env.APP_URL ?? "https://app.hnbcrm.com.br",
+          appUrl: resolveAppUrl(),
         },
       });
     }
@@ -963,7 +964,7 @@ export const internalStorePending = internalMutation({
         scheduledFor,
         text: args.text,
         missedBehavior: post.content.ai?.onMissedApproval ?? "skip",
-        appUrl: process.env.APP_URL ?? "https://app.hnbcrm.com.br",
+        appUrl: resolveAppUrl(),
       },
     });
     return null;
@@ -1007,7 +1008,7 @@ export const internalRecordGenerateFailure = internalMutation({
         postName: post.name,
         postId: post._id,
         reason,
-        appUrl: process.env.APP_URL ?? "https://app.hnbcrm.com.br",
+        appUrl: resolveAppUrl(),
       },
     });
     return null;

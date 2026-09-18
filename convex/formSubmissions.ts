@@ -6,6 +6,7 @@ import { Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
+import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 // ── Phase 6: Server-side validation helper ──
 
@@ -459,7 +460,7 @@ export const internalProcessSubmission = internalMutation({
 
     // Email notifications
     if (form.settings.notifyOnSubmission && form.settings.notifyMemberIds) {
-      const appUrl = process.env.APP_URL ?? "https://app.hnbcrm.com.br";
+      const appUrl = resolveAppUrl();
       for (const memberId of form.settings.notifyMemberIds) {
         await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
           organizationId: form.organizationId,
