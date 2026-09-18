@@ -105,6 +105,7 @@ import type * as lib_notify from "../lib/notify.js";
 import type * as lib_outboundSideEffects from "../lib/outboundSideEffects.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_phone from "../lib/phone.js";
+import type * as lib_promptDateTime from "../lib/promptDateTime.js";
 import type * as lib_promptEnvelope from "../lib/promptEnvelope.js";
 import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
@@ -244,6 +245,7 @@ declare const fullApi: ApiFromModules<{
   "lib/outboundSideEffects": typeof lib_outboundSideEffects;
   "lib/permissions": typeof lib_permissions;
   "lib/phone": typeof lib_phone;
+  "lib/promptDateTime": typeof lib_promptDateTime;
   "lib/promptEnvelope": typeof lib_promptEnvelope;
   "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;

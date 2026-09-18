@@ -243,6 +243,15 @@ describe("prompt do grupo (§9.1)", () => {
     expect(buildGroupSystemPrompt({ ...ctx, opportunityRadar: true })).toContain("flagOpportunity");
   });
 
+  test("o carimbo de data/hora, quando vem, fica no FIM (cache de prefixo)", () => {
+    const bloco = "DATA E HORA ATUAIS: sexta-feira, 18/09/2026, 14:32 (fuso America/Sao_Paulo).";
+    const prompt = buildGroupSystemPrompt({ ...ctx, dateTimeBlock: bloco });
+    expect(prompt).toContain(bloco);
+    expect(prompt.trimEnd().endsWith(bloco)).toBe(true);
+    // Sem o bloco (perfil do atendente com o carimbo desligado) nada sobra.
+    expect(buildGroupSystemPrompt(ctx)).not.toContain("DATA E HORA ATUAIS");
+  });
+
   test("instruções da sala e notas da equipe entram como conteúdo confiável", () => {
     const prompt = buildGroupSystemPrompt({
       ...ctx,

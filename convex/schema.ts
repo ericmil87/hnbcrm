@@ -213,6 +213,11 @@ const agentProfileValidator = v.object({
       days: v.optional(v.array(v.number())), // 0=Dom … 6=Sáb; ausente = todos
     })
   ),
+  // Carimbo de data/hora no FIM do system prompt (sem ele o modelo chuta a data
+  // do treino e não aplica regra do conhecimento que dependa de dia).
+  // ATENÇÃO à semântica: ausente/undefined = LIGADO, só `false` desliga —
+  // o INVERSO de `aiConfig.visionEnabled`, que é opt-in (undefined = off).
+  includeCurrentDateTime: v.optional(v.boolean()),
   handoffKeywords: v.optional(v.array(v.string())), // ex.: ["humano", "atendente"]
   maxRepliesPerConversation: v.optional(v.number()), // default 20
   maxRepliesPerHour: v.optional(v.number()), // teto por janela (cliente-que-é-bot)

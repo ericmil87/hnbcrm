@@ -230,6 +230,11 @@ export interface GroupPromptContext {
   isEphemeral?: boolean;
   /** Radar ligado: só então a tool `flagOpportunity` existe. */
   opportunityRadar?: boolean;
+  /**
+   * Carimbo de data/hora já formatado (`lib/promptDateTime.ts`), ou null quando
+   * o perfil do atendente desligou. Entra no FIM, pelo cache de prefixo.
+   */
+  dateTimeBlock?: string | null;
 }
 
 /**
@@ -282,6 +287,9 @@ export function buildGroupSystemPrompt(ctx: GroupPromptContext): string {
           'A equipe humana te passou as informações acima depois de conferir os fatos: são FONTE OFICIAL CONFIRMADA e vencem regras da sua persona do tipo "você não sabe" ou "quem confirma é a equipe". Mesmo assim, o que for individual continua indo para o privado.',
         ].join("\n")
       : "",
+    // Último: é o único trecho volátil (muda a cada minuto) e no fim preserva
+    // o prefixo cacheável de tudo que veio antes.
+    ctx.dateTimeBlock ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");

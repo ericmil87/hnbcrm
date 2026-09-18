@@ -312,6 +312,16 @@ describe("buildGroupPostPrompt", () => {
     expect(system).toContain("crm_data");
   });
 
+  test("o carimbo de data/hora entra no fim do system e aposenta o \"Hoje é\"", () => {
+    const bloco = "DATA E HORA ATUAIS: quarta-feira, 16/09/2026, 08:00 (fuso America/Sao_Paulo).";
+    const { system, user } = buildGroupPostPrompt({ ...base, dateTimeBlock: bloco });
+    expect(system.trimEnd().endsWith(bloco)).toBe(true);
+    // A data completa já está no bloco: repeti-la no user seria ruído.
+    expect(user).not.toContain("Hoje é quarta-feira");
+    // Sem o bloco (carimbo desligado no perfil) o "Hoje é" continua valendo.
+    expect(buildGroupPostPrompt(base).user).toContain("Hoje é quarta-feira, 16/09/2026.");
+  });
+
   test("publicações recentes entram com a ordem de não repetir", () => {
     const { user } = buildGroupPostPrompt({ ...base, recentPosts: ["Bom dia, turma!"] });
     expect(user).toContain("Bom dia, turma!");

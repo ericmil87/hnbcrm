@@ -38,6 +38,12 @@ export interface GroupPostPromptContext {
   /** Data/dia por extenso no fuso da publicação. */
   dateText: string;
   weekdayText: string;
+  /**
+   * Carimbo completo de data/hora (`lib/promptDateTime.ts`), quando o perfil do
+   * atendente o mantém ligado. Presente, ele SUBSTITUI o "Hoje é …" do user —
+   * traz a mesma data com hora e a régua dos próximos dias.
+   */
+  dateTimeBlock?: string | null;
 }
 
 export interface GroupPostPromptMessages {
@@ -65,13 +71,17 @@ export function buildGroupPostPrompt(ctx: GroupPostPromptContext): GroupPostProm
     ctx.knowledge
       ? `CONHECIMENTO DO NEGÓCIO (use como fonte da verdade):\n${ctx.knowledge}`
       : "",
+    // Último: parte volátil do prompt, fora do prefixo que o provider cacheia.
+    ctx.dateTimeBlock ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
 
   const user = [
     `O QUE PUBLICAR HOJE (instrução da equipe):\n${ctx.instruction}`,
-    `Hoje é ${ctx.weekdayText}, ${ctx.dateText}.`,
+    // O carimbo completo já diz o dia (com hora e próximos dias): repetir só a
+    // data aqui seria ruído.
+    ctx.dateTimeBlock ? "" : `Hoje é ${ctx.weekdayText}, ${ctx.dateText}.`,
     wrapUntrustedJson("contexto_da_publicacao", {
       grupos: ctx.groupNames.slice(0, 20),
       publicacoes_recentes: ctx.recentPosts.slice(0, 5),

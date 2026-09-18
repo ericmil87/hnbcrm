@@ -56,6 +56,11 @@ import { campaignContextForConversation } from "./lib/campaignContext";
 import { buildGroupSystemPrompt, groupSpeakerLabel } from "./lib/groupAgentCore";
 import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
 import { getLeadRef } from "./lib/leadRef";
+import {
+  buildCurrentDateTimeBlock,
+  resolveAgentTimezone,
+  shouldIncludeCurrentDateTime,
+} from "./lib/promptDateTime";
 
 // ── Constantes de runtime ──
 // Silêncio que fecha a rajada de inbounds antes da IA responder. Default do
@@ -952,6 +957,14 @@ export const internalClaimForProcessing = internalMutation({
           : null,
         history,
         teamNotes: (conversation.aiTeamNotes ?? []).map((n) => ({ text: n.text, at: n.at })),
+        // Data/hora: fuso do horário de atendimento > fuso da org > default.
+        // Opt-OUT (ausente = ligado), ao contrário da visão.
+        dateTimeBlock: shouldIncludeCurrentDateTime(profile)
+          ? buildCurrentDateTimeBlock(
+              now,
+              resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone)
+            )
+          : null,
         // Campanha: a conversa nasceu de um disparo ativo? (entra no envelope)
         campaignContext: await campaignContextForConversation(ctx, conversation, now, org!.settings.timezone),
         // Loop de coaching (P2): instrução do humano viaja no item da fila e
@@ -1843,6 +1856,9 @@ type RunContext = {
   // Notas persistidas pela equipe humana nesta conversa (returnToAi/reject com
   // instrução) — entram no prompt de TODOS os turnos como fonte oficial.
   teamNotes: { text: string; at: number }[];
+  // Carimbo de data/hora, já formatado no fuso do agente (null = desligado no
+  // perfil). Vem pronto do claim porque `Date.now()` não existe em query.
+  dateTimeBlock: string | null;
   campaignContext: string | null;
   // Loop de coaching (P2) — presentes só em itens iniciados por humano.
   humanInitiated: boolean;
@@ -1869,6 +1885,7 @@ type PromptContext = Pick<
   | "needsDisclosure"
   | "disclosure"
   | "teamNotes"
+  | "dateTimeBlock"
   | "humanInstruction"
   | "previousDraftText"
 >;
@@ -1979,6 +1996,9 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
             : "Produza uma versão melhor e mais natural."
         }`
       : "",
+    // ÚLTIMO de propósito: é a única parte do prompt que muda a cada minuto, e
+    // no fim tudo que vem antes continua servindo de prefixo cacheável.
+    context.dateTimeBlock ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -2991,6 +3011,9 @@ export const internalQueueInstructedTurn = internalMutation({
 
 // ── Simulador (F4 usa; já nasce aqui por compartilhar o runtime) ──
 // Roda a persona SEM tocar o WhatsApp nem o banco: só inferência + relato.
+/** Maior instante que o `Date` representa (ECMA-262); além disso, Invalid Date. */
+const MAX_EPOCH_MS = 8.64e15;
+
 export const simulateAttendant = action({
   args: {
     organizationId: v.id("organizations"),
@@ -3016,6 +3039,10 @@ export const simulateAttendant = action({
         senderName: v.optional(v.string()),
       })
     ),
+    // "E se hoje fosse 07/10?" — epoch ms que substitui o AGORA do carimbo de
+    // data/hora, só na simulação (é como se testa o segundo lote de preço sem
+    // esperar a data). Não existe em nenhum caminho de produção.
+    simulatedNow: v.optional(v.number()),
     // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
     // regras. Ausente = atendimento 1:1 de sempre.
     group: v.optional(
@@ -3087,7 +3114,22 @@ export const simulateAttendant = action({
       temperature: number;
       lead: Record<string, unknown>;
       contact: Record<string, unknown> | null;
+      includeCurrentDateTime: boolean;
+      timezone: string;
     };
+    // `simulatedNow` existe SÓ aqui: é o que permite testar "e se hoje fosse
+    // 07/10?" sem esperar a data chegar. Nenhum caminho de produção o expõe.
+    // NaN/Infinity ou fora da faixa do Date fariam o Intl lançar RangeError
+    // ANTES do try desta action, e o botão "Testar" mostraria um erro cru —
+    // valor impossível é ignorado, e a simulação roda no relógio de verdade.
+    const simulated = args.simulatedNow;
+    const simulatedNow =
+      simulated !== undefined && Number.isFinite(simulated) && Math.abs(simulated) <= MAX_EPOCH_MS
+        ? simulated
+        : Date.now();
+    context.dateTimeBlock = context.includeCurrentDateTime
+      ? buildCurrentDateTimeBlock(simulatedNow, context.timezone)
+      : null;
     // GRUPO: prompt, tools e instrução final são os do agente de grupo — o
     // simulador existe para exercitar o que roda de verdade.
     const simulatorTools = toChatTools(
@@ -3110,6 +3152,7 @@ export const simulateAttendant = action({
               participantsCount: args.group.participantsCount ?? 12,
               extraInstructions: args.group.extraInstructions ?? null,
               teamNotes: [],
+              dateTimeBlock: context.dateTimeBlock,
             }),
           },
           {
@@ -3262,6 +3305,12 @@ export const internalGetSimulatorSetup = internalQuery({
       campaignContext: null,
       humanInstruction: null,
       previousDraftText: null,
+      // Data/hora: a query não pode ler o relógio (quebra reatividade), então
+      // devolve só os ingredientes — quem formata é a action (que também
+      // aceita o `simulatedNow`).
+      dateTimeBlock: null as string | null,
+      includeCurrentDateTime: shouldIncludeCurrentDateTime(profile),
+      timezone: resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone),
     };
   },
 });

@@ -1014,6 +1014,7 @@ type Attendant = {
     maxRepliesPerConversation?: number;
     maxRepliesPerHour?: number;
     messageDebounceSeconds?: number;
+    includeCurrentDateTime?: boolean;
     autopilotEarlyAck?: { acceptedAt: number; acceptedBy: string };
     pipelineConfig?: {
       boardId?: Id<"boards">;
@@ -1255,6 +1256,10 @@ function AttendantConfig({
   const [debounceSeconds, setDebounceSeconds] = useState(
     profile.messageDebounceSeconds !== undefined ? String(profile.messageDebounceSeconds) : ""
   );
+  // Ausente/undefined = LIGADO; só `false` explícito desliga.
+  const [includeCurrentDateTime, setIncludeCurrentDateTime] = useState<boolean>(
+    profile.includeCurrentDateTime !== false
+  );
 
   // Opções avançadas — regras de pipeline (P4).
   const pipelineConfig = profile.pipelineConfig;
@@ -1384,6 +1389,7 @@ function AttendantConfig({
           maxRepliesPerConversation: limitePorConversa.value,
           maxRepliesPerHour: limitePorHora.value,
           messageDebounceSeconds: agrupamento.value,
+          includeCurrentDateTime,
           pipelineConfig: pipelineIsEmpty
             ? null
             : {
@@ -1715,6 +1721,24 @@ function AttendantConfig({
                   <WarningNote messages={limitWarnings} />
                 </div>
               )}
+            </div>
+
+            <div className="flex items-center justify-between gap-4 pt-1">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-text-primary">
+                  Informar data e hora atuais à IA
+                </p>
+                <p className="text-xs text-text-muted mt-0.5">
+                  A IA passa a saber que dia e hora é agora (no fuso do horário de atendimento).
+                  Necessário para regras que dependem de data: lotes de preço, prazos, validade de
+                  cupom e agendamentos. Ligado por padrão.
+                </p>
+              </div>
+              <Switch
+                checked={includeCurrentDateTime}
+                onChange={() => setIncludeCurrentDateTime((v) => !v)}
+                label="Informar data e hora atuais à IA"
+              />
             </div>
           </FieldGroup>
 

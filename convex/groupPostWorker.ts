@@ -44,6 +44,10 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { buildGroupPostPrompt, cleanGeneratedPost } from "./lib/groupPostPrompt";
 import {
+  buildCurrentDateTimeBlock,
+  shouldIncludeCurrentDateTime,
+} from "./lib/promptDateTime";
+import {
   addPostTimeline,
   computeNextRun,
   endPostCore,
@@ -769,6 +773,9 @@ const generateContextValidator = v.object({
   groupNames: v.array(v.string()),
   recentPosts: v.array(v.string()),
   timezone: v.string(),
+  // Carimbo de data/hora: a flag é a do perfil do ATENDENTE (é a persona dele
+  // que escreve aqui). Ausente no perfil = ligado.
+  includeCurrentDateTime: v.boolean(),
   model: v.string(),
   strictZdr: v.boolean(),
   providerConfig: v.any(),
@@ -854,6 +861,7 @@ export const internalGetGenerateContext = internalQuery({
       groupNames,
       recentPosts,
       timezone: post.schedule.timezone,
+      includeCurrentDateTime: shouldIncludeCurrentDateTime(attendant?.agentProfile),
       model:
         aiConfig?.providerConfig?.products?.groupPosts?.model ??
         attendant?.agentProfile?.model ??
@@ -1062,6 +1070,7 @@ type GenerateSetup = {
   groupNames: string[];
   recentPosts: string[];
   timezone: string;
+  includeCurrentDateTime: boolean;
   model: string;
   providerConfig: OrgProviderConfig | null;
   runMemberId: Id<"teamMembers"> | null;
@@ -1104,6 +1113,10 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
     recentPosts: setup.recentPosts,
     dateText: vars.data,
     weekdayText: vars.dia_semana,
+    // O fuso é o da AGENDA da publicação (é nele que o horário foi marcado).
+    dateTimeBlock: setup.includeCurrentDateTime
+      ? buildCurrentDateTimeBlock(now, setup.timezone)
+      : null,
   });
 
   const runId = setup.runMemberId

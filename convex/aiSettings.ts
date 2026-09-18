@@ -476,6 +476,8 @@ const agentProfilePatchValidator = v.object({
       })
     )
   ),
+  // Opt-OUT: ausente = ligado, só `false` desliga (ver o schema).
+  includeCurrentDateTime: v.optional(v.boolean()),
   handoffKeywords: v.optional(v.array(v.string())),
   maxRepliesPerConversation: v.optional(v.number()),
   maxRepliesPerHour: v.optional(v.number()),

@@ -58,6 +58,8 @@ type SeedOpts = {
   maxPerDay?: number;
   keywords?: string[];
   opportunityRadar?: boolean;
+  /** Carimbo de data/hora do prompt (ausente = ligado, como em produção). */
+  includeCurrentDateTime?: boolean;
 };
 
 async function seedGroupOrg(t: TestConvex<typeof schema>, opts: SeedOpts = {}) {
@@ -103,6 +105,9 @@ async function seedGroupOrg(t: TestConvex<typeof schema>, opts: SeedOpts = {}) {
         knowledge: "Entregamos às terças.",
         ...(opts.autopilotEarlyAck
           ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: adminId } }
+          : {}),
+        ...(opts.includeCurrentDateTime !== undefined
+          ? { includeCurrentDateTime: opts.includeCurrentDateTime }
           : {}),
       },
       createdAt: now, updatedAt: now,
@@ -483,6 +488,26 @@ describe("turno: prompt, tools e commit", () => {
     const user = body.messages[1].content as string;
     expect(user).toContain('<crm_data untrusted="true">');
     expect(user).toContain("membro:Eric");
+  });
+
+  test("o carimbo de data/hora chega ao prompt do grupo, e some com a flag off", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    const item = await runTurn(t, seed);
+    const fetchMock = stubLlm([{ content: "ok" }]);
+    await t.action(internal.groupAgent.internalProcessGroupTurn, { queueItemId: item._id });
+    const system = bodyOf(fetchMock).messages[0].content as string;
+    expect(system).toContain("DATA E HORA ATUAIS");
+    expect(system).toContain("(fuso America/Sao_Paulo)");
+    expect(system).toContain("Próximos dias:");
+
+    // A MESMA flag do perfil do atendente 1:1 governa a sala.
+    const t2 = setup();
+    const seed2 = await seedGroupOrg(t2, { includeCurrentDateTime: false });
+    const item2 = await runTurn(t2, seed2);
+    const fetchMock2 = stubLlm([{ content: "ok" }]);
+    await t2.action(internal.groupAgent.internalProcessGroupTurn, { queueItemId: item2._id });
+    expect(bodyOf(fetchMock2).messages[0].content as string).not.toContain("DATA E HORA ATUAIS");
   });
 
   test("flagOpportunity só existe com o radar ligado", async () => {

@@ -38,6 +38,7 @@ import {
   COPILOT_WRITE_TOOLS,
 } from "./lib/agentTools";
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./lib/promptEnvelope";
+import { buildCurrentDateTimeBlock } from "./lib/promptDateTime";
 
 const MAX_TOOL_CALLS_PER_TURN = 12;
 const WALL_CLOCK_BUDGET_MS = 8 * 60 * 1000; // aborta antes do teto de 10 min da action
@@ -52,10 +53,14 @@ type StoredMessage = {
 
 // Prefixo ESTÁVEL primeiro (system + tools) para o cache automático de prefixo
 // dos providers; o que varia (histórico) vem depois.
-function buildSystemPrompt(session: {
-  member: { name: string };
-  org: { name: string; currency: string; timezone: string; industry: string | null };
-}): string {
+/** Exportado (como os demais construtores de prompt do produto) para teste. */
+export function buildSystemPrompt(
+  session: {
+    member: { name: string };
+    org: { name: string; currency: string; timezone: string; industry: string | null };
+  },
+  now: number
+): string {
   return [
     "Você é o Copiloto do HNBCRM, um CRM brasileiro multi-canal. Você opera o",
     `CRM EM NOME do usuário logado (${session.member.name}) — toda ação sua é`,
@@ -87,6 +92,11 @@ function buildSystemPrompt(session: {
     ENVELOPE_SYSTEM_NOTICE,
     `Contexto da organização: nome "${session.org.name}", moeda ${session.org.currency},`,
     `fuso ${session.org.timezone}${session.org.industry ? `, setor ${session.org.industry}` : ""}.`,
+    // Data/hora por ÚLTIMO: é o único trecho que muda a cada minuto, e no fim
+    // preserva o prefixo estável que o provider cacheia. Aqui não há
+    // agentProfile (quem fala é o usuário logado), então é sempre ligado —
+    // "tarefas de hoje" e "vencidas" dependem de saber a data.
+    `\n${buildCurrentDateTimeBlock(now, session.org.timezone)}`,
   ].join(" ");
 }
 
@@ -244,9 +254,9 @@ export const copilotStream = httpAction(async (ctx, request) => {
     });
   }
 
-  const systemPrompt = buildSystemPrompt(session);
-  const tools = toChatTools([...COPILOT_READ_TOOLS, ...COPILOT_WRITE_TOOLS]);
   const startedAt = Date.now();
+  const systemPrompt = buildSystemPrompt(session, startedAt);
+  const tools = toChatTools([...COPILOT_READ_TOOLS, ...COPILOT_WRITE_TOOLS]);
 
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {

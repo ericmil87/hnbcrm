@@ -790,10 +790,40 @@ describe("worker — conteúdo por IA", () => {
     expect(body.messages[0].content).toContain("Você é o Guardião");
     expect(body.messages[0].content).toContain("Entregas às quartas.");
     expect(body.messages[1].content).toContain("Anuncie a agenda da semana");
+    // …e o carimbo de data/hora, no fuso da AGENDA da publicação.
+    expect(body.messages[0].content).toContain("DATA E HORA ATUAIS");
+    expect(body.messages[0].content).toContain("Próximos dias:");
 
     const run = await t.run(async (ctx) => await ctx.db.query("agentRuns").first());
     expect(run?.kind).toBe("group_post");
     expect(run?.status).toBe("done");
+  });
+
+  test("includeCurrentDateTime:false no perfil do atendente tira o carimbo", async () => {
+    const s = await seed();
+    await enableAi(s);
+    // A publicação escreve com a persona do atendente, então segue a flag DELE.
+    await t.run(async (ctx) => {
+      const attendant = (await ctx.db.query("teamMembers").collect()).find(
+        (m) => m.agentProfile?.kind === "attendant"
+      )!;
+      await ctx.db.patch(attendant._id, {
+        agentProfile: { ...attendant.agentProfile!, includeCurrentDateTime: false },
+      });
+    });
+    const fetchMock = stubLlm("Agenda desta semana.");
+    const postId = await createPost(s, { content: aiContent() });
+    await activate(s, postId);
+    await t.action(internal.groupPostWorker.generate, {
+      groupPostId: postId,
+      slotKey: "2026-09-16T12:00",
+      runAt: SLOT_1,
+    });
+
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.messages[0].content).not.toContain("DATA E HORA ATUAIS");
+    // Sem o carimbo, o "Hoje é …" do user volta a ser a única fonte de data.
+    expect(body.messages[1].content).toContain("Hoje é");
   });
 
   test("texto aprovado é publicado no slot", async () => {

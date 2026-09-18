@@ -70,6 +70,11 @@ import {
   shouldTriggerGroupAgent,
   suggestedDmFor,
 } from "./lib/groupAgentCore";
+import {
+  buildCurrentDateTimeBlock,
+  resolveAgentTimezone,
+  shouldIncludeCurrentDateTime,
+} from "./lib/promptDateTime";
 
 // ── Constantes de runtime (espelham as do atendente onde o contrato é o mesmo) ──
 const DEFAULT_DEBOUNCE_SECONDS = 5;
@@ -552,6 +557,14 @@ export const internalClaimGroupTurn = internalMutation({
           teamNotes: (conversation.aiTeamNotes ?? []).map((n) => ({ text: n.text, at: n.at })),
           isEphemeral: group.isEphemeral === true,
           opportunityRadar: group.ai?.opportunityRadar === true,
+          // Mesma flag (e mesmo fuso) do perfil do atendente da org: quem
+          // desliga o carimbo desliga em todo lugar onde essa persona fala.
+          dateTimeBlock: shouldIncludeCurrentDateTime(profile)
+            ? buildCurrentDateTimeBlock(
+                now,
+                resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone)
+              )
+            : null,
         },
         envelope: {
           grupo: group.subject,
