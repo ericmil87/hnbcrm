@@ -207,6 +207,12 @@ describe("histórico e menções", () => {
     expect(sanitizeGroupReply(null)).toBeNull();
     expect(sanitizeGroupReply("x".repeat(5000))!.length).toBe(1200);
   });
+
+  test("markdown do modelo é convertido antes de ir para a sala", () => {
+    expect(sanitizeGroupReply("Aula de **sábado** cancelada")).toBe(
+      "Aula de *sábado* cancelada"
+    );
+  });
 });
 
 describe("prompt do grupo (§9.1)", () => {

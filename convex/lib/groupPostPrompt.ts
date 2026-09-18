@@ -19,6 +19,7 @@
  */
 
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./promptEnvelope";
+import { toWhatsAppText } from "./whatsappText";
 
 export interface GroupPostPromptContext {
   /** Nome do agente/assinatura (o atendente IA da org, ou o nome da empresa). */
@@ -99,8 +100,9 @@ export function buildGroupPostPrompt(ctx: GroupPostPromptContext): GroupPostProm
 
 /**
  * Limpa a saída do modelo: tira cerca de markdown, aspas envolventes,
- * raciocínio vazado (`<think>`) e prefixos do tipo "Mensagem:". Corta no teto
- * de caracteres SEM cortar palavra pela metade.
+ * raciocínio vazado (`<think>`) e prefixos do tipo "Mensagem:", converte o
+ * markdown restante para a formatação do WhatsApp e corta no teto de caracteres
+ * SEM cortar palavra pela metade.
  */
 export function cleanGeneratedPost(raw: string | unknown[] | null | undefined, maxChars: number): string {
   if (typeof raw !== "string") return "";
@@ -121,6 +123,10 @@ export function cleanGeneratedPost(raw: string | unknown[] | null | undefined, m
       text = text.slice(1, -1).trim();
     }
   }
+
+  // Markdown → WhatsApp antes do corte: é o texto convertido que vai ao ar, e
+  // é o tamanho dele que precisa caber no teto.
+  text = toWhatsAppText(text);
 
   if (text.length <= maxChars) return text;
   const cut = text.slice(0, maxChars);

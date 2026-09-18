@@ -280,6 +280,15 @@ describe("cleanGeneratedPost", () => {
     expect(cleanGeneratedPost(null, 100)).toBe("");
     expect(cleanGeneratedPost([{ type: "text" }], 100)).toBe("");
   });
+
+  test("markdown vira formatação do WhatsApp, e ANTES do corte", () => {
+    expect(cleanGeneratedPost("## Agenda\nEntrega **quarta**", 600)).toBe(
+      "*Agenda*\nEntrega *quarta*"
+    );
+    // O teto vale para o texto CONVERTIDO: `**x**` ocupa 2 caracteres a mais
+    // do que o `*x*` que o grupo vai ver.
+    expect(cleanGeneratedPost("**12345678**", 10)).toBe("*12345678*");
+  });
 });
 
 describe("buildGroupPostPrompt", () => {

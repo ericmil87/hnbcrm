@@ -20,6 +20,7 @@
  */
 
 import { ENVELOPE_SYSTEM_NOTICE } from "./promptEnvelope";
+import { toWhatsAppText } from "./whatsappText";
 
 // ── Constantes de produto ───────────────────────────────────────────────────
 
@@ -295,9 +296,13 @@ export function buildGroupSystemPrompt(ctx: GroupPromptContext): string {
     .join("\n\n");
 }
 
-/** Corta/limpa o texto que a IA quer publicar. */
+/**
+ * Corta/limpa o texto que a IA quer publicar. A conversão de markdown vem ANTES
+ * do corte: é ela que define o tamanho real do que sai (`**x**` ocupa 2
+ * caracteres a mais do que o `*x*` que o WhatsApp vai mostrar).
+ */
 export function sanitizeGroupReply(raw: string | null | undefined): string | null {
-  const text = (raw ?? "").trim();
+  const text = toWhatsAppText((raw ?? "").trim());
   if (!text) return null;
   return text.length > MAX_GROUP_REPLY_CHARS ? `${text.slice(0, MAX_GROUP_REPLY_CHARS - 1)}…` : text;
 }

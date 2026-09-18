@@ -56,6 +56,7 @@ import { campaignContextForConversation } from "./lib/campaignContext";
 import { buildGroupSystemPrompt, groupSpeakerLabel } from "./lib/groupAgentCore";
 import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
 import { getLeadRef } from "./lib/leadRef";
+import { toWhatsAppText } from "./lib/whatsappText";
 import {
   buildCurrentDateTimeBlock,
   resolveAgentTimezone,
@@ -2218,6 +2219,14 @@ export const internalProcessQueueItem = internalAction({
         throw new Error("Modelo não produziu resposta ao cliente");
       }
 
+      // Ponto ÚNICO de saída do texto da IA: aqui convergem o `replyToCustomer`
+      // e o fallback de texto puro, e daqui sai tanto o envio direto quanto o
+      // RASCUNHO (o humano precisa revisar o texto como ele vai sair). O
+      // markdown do modelo viraria asterisco cru na tela do cliente.
+      // A divulgação LGPD é prependada dentro do commit e NÃO passa por aqui —
+      // é texto escrito por humano na configuração.
+      replyText = toWhatsAppText(replyText);
+
       // Commit transacional (a checagem que conta).
       const commitArgsBase = {
         queueItemId: args.queueItemId,
@@ -3214,7 +3223,9 @@ export const simulateAttendant = action({
         }
         if (reply !== null) break;
       }
-      return { reply, actions, error: null };
+      // Mesma conversão do runtime: sem isto o "Testar" mostraria `**x**` onde a
+      // produção manda `*x*`, e a simulação deixaria de valer como ensaio.
+      return { reply: reply === null ? null : toWhatsAppText(reply), actions, error: null };
     } catch (e) {
       return {
         reply: null,

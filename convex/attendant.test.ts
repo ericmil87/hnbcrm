@@ -971,3 +971,100 @@ describe("recuperação do 400 'Upstream request failed' em continuação (achad
     vi.unstubAllGlobals();
   }, 30_000);
 });
+
+describe("markdown do modelo → formatação do WhatsApp", () => {
+  /** Roda um turno completo com o LLM devolvendo `reply` via replyToCustomer. */
+  async function runTurnWithReply(
+    t: TestConvex<typeof schema>,
+    seed: Awaited<ReturnType<typeof seedAttendantOrg>>,
+    reply: string
+  ) {
+    // Timers FALSOS o tempo todo: o caminho feliz não dorme (só o retry do
+    // chatWithRetry dorme), e assim o envio agendado pelo commit fica
+    // registrado sem executar — senão ele rodaria depois do fim do teste e
+    // escreveria fora de transação.
+    vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
+    const messageId = await insertInbound(t, seed, "Qual é o cupom?");
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
+    const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(item._id, { nextAttemptAt: Date.now() - 1_000 });
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [
+                {
+                  message: {
+                    role: "assistant",
+                    content: null,
+                    tool_calls: [
+                      {
+                        id: "call_r1",
+                        type: "function",
+                        function: {
+                          name: "replyToCustomer",
+                          arguments: JSON.stringify({ text: reply }),
+                        },
+                      },
+                    ],
+                  },
+                  finish_reason: "tool_calls",
+                },
+              ],
+              usage: { prompt_tokens: 100, completion_tokens: 20 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item._id });
+
+    return await t.run(async (ctx) =>
+      ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) =>
+          q.eq("conversationId", seed.conversationId)
+        )
+        .collect()
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test("autopilot: o que sai para o cliente já vem sem markdown", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t, { mode: "autopilot" });
+    const messages = await runTurnWithReply(
+      t,
+      seed,
+      "Use o cupom **PORTO50** até ~~06/10~~ 08/10!"
+    );
+
+    const outbound = messages.filter((m) => m.direction === "outbound");
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].content).toContain("*PORTO50*");
+    expect(outbound[0].content).toContain("~06/10~");
+    // O que o cliente veria antes da correção.
+    expect(outbound[0].content).not.toContain("**");
+    expect(outbound[0].content).not.toContain("~~");
+  });
+
+  test("sugestão: o rascunho que o humano revisa já é o texto final", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t); // modo suggest
+    const messages = await runTurnWithReply(t, seed, "A __Vivência Maré Nova__ começa 9h.");
+
+    const drafts = messages.filter((m) => m.isInternal && m.metadata?.aiDraft);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].content).toContain("*Vivência Maré Nova*");
+    expect(drafts[0].content).not.toContain("__");
+  });
+});
