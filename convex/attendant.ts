@@ -1427,7 +1427,14 @@ export async function executeAttendantToolCore(
         const avisos = plan.aviso ? [plan.aviso] : [];
 
         // Dedupe por propósito + teto de pendentes na conversa.
-        const pending = await pendingFollowUpsForConversation(ctx, args.conversationId);
+        // O follow-up DESTE turno fica fora da conta: ele está sendo executado
+        // agora e vai terminar `done` com o envio. Visto no E2E de 19/09/2026 —
+        // no turno proativo a IA encadeou "confiro de novo amanhã 9h", a dedupe
+        // casou com o próprio follow-up em execução, só mudou a data dele, e o
+        // envio em seguida o concluiu: o lembrete de amanhã sumiu sem rastro.
+        const pending = (
+          await pendingFollowUpsForConversation(ctx, args.conversationId)
+        ).filter((f) => f._id !== args.followUpId);
         // "Propósito parecido" = mesmo título normalizado. Sem isto, três
         // turnos seguidos falando de comprovante viravam três tarefas idênticas
         // e três mensagens no mesmo dia.

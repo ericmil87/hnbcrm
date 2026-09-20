@@ -1146,6 +1146,31 @@ describe("turno de follow-up", () => {
     expect(updated!.resultMessageId).toBe(outbound[0]._id);
   });
 
+  test("encadear no turno de follow-up cria um follow-up NOVO (não remarca o que está sendo executado)", async () => {
+    const t = setup();
+    const { followUp } = await fireReady(t, {
+      mode: "autopilot",
+      followUps: { mode: "send" },
+    });
+    const task = await t.run(async (ctx) => ctx.db.get(followUp.taskId));
+
+    await runQueuedTurn(t, [
+      // Mesmo título do follow-up em execução: é o caso que a dedupe engolia.
+      { kind: "tool", name: "scheduleFollowUp", args: { title: task!.title, dueInHours: 24, note: "Conferir de novo amanhã" } },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Oi! Conseguiu fazer o pix?" } },
+    ]);
+
+    const all = await t.run(async (ctx) => ctx.db.query("aiFollowUps").collect());
+    expect(all).toHaveLength(2);
+    const current = all.find((f) => f._id === followUp._id)!;
+    const chained = all.find((f) => f._id !== followUp._id)!;
+    expect(current.dueAt).toBe(followUp.dueAt); // o que está em execução não foi remarcado
+    expect(current.resultMessageId).toBeDefined();
+    expect(chained.status).toBe("scheduled");
+    expect(chained.taskId).not.toBe(followUp.taskId);
+    expect(chained.note).toBe("Conferir de novo amanhã");
+  });
+
   test("segunda chance: raciocínio em texto solto vira decisão por ferramenta, sem mensagem", async () => {
     const t = setup();
     const { followUp } = await fireReady(t, {
