@@ -65,6 +65,8 @@ If `crm_*` tools are available in your environment, use them directly. They hand
 
 > Note: the product also has task projects/kanban, colored labels, and multiple assignees per task (P1, 2026-08-14). None of that is exposed via MCP tools or the REST API yet — create/update still only take the original fields (title, description, priority, activityType, dueDate, leadId/contactId, single `assignedTo`, recurrence, checklist, tags). Project/label/multi-assignee management is app-UI only for now.
 
+> **AI follow-ups (v0.60):** `crm_get_task` (and `GET /api/v1/tasks/get`) now returns an `aiFollowUp` field on the task. When it is non-null, the AI attendant that owns the task is going to re-read the conversation and act on it (send a message, or decide none is needed) at `aiFollowUp.dueAt` — this is a *different* mechanism from a normal reminder task. Read `aiFollowUp.status` before touching the task: `scheduled`/`queued`/`drafted` mean the follow-up is still live (editing `dueDate` or reassigning it changes when/whether a customer gets contacted — do this deliberately, not as routine cleanup); `done`/`not_needed` mean it already ran (the outcome is in `aiFollowUp.reason`); `needs_human` means the AI could not execute it (reason in `aiFollowUp.reason`) and the task is now yours like any other; `canceled` means it is a plain task again. There is no MCP tool or REST endpoint to schedule or resolve a follow-up yet — that only happens through the attendant itself or the app UI.
+
 **Calendar tools**: `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_reschedule_event`
 
 ### REST API (Fallback)
