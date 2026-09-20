@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { expect, test, describe, afterEach, vi } from "vitest";
 import { chat, chatWithRetry, streamChat, accumulateToolCallDeltas, isUpstreamMislabeled400 } from "./openaiCompatible";
-import { resolvePlatformChain, chatWithFallback } from "./index";
+import { resolvePlatformChain,
+  withReasoningEffort, chatWithFallback } from "./index";
 import { sanitizeLlmError } from "./sanitize";
 import {
   resolveModelId,
@@ -512,5 +513,33 @@ describe("visionModelOptions — o que a org pode fixar na UI", () => {
     expect(deepseek.accuracy).toBe("7/7");
     expect(deepseek.inputTokens).toBe(495);
     expect(deepseek.latencyMs).toBeGreaterThan(0);
+  });
+});
+
+// ── Modelo só-OpenRouter + esforço de raciocínio (19/09/2026) ──
+describe("deepseek-v4-flash-0731 e withReasoningEffort", () => {
+  test("modelo só-OpenRouter pula o elo do OpenCode Go e resolve o id do provider", () => {
+    const chain = resolvePlatformChain("deepseek-v4-flash-0731", {
+      opencodeGoKey: "sk-go",
+      openrouterKey: "sk-or",
+    });
+    expect(chain.map((r) => r.providerId)).toEqual(["openrouter"]);
+    expect(chain[0].model).toBe("deepseek/deepseek-v4-flash-0731");
+    // Sem a key do OpenRouter não sobra rota — melhor que mandar id desconhecido.
+    expect(resolvePlatformChain("deepseek-v4-flash-0731", { opencodeGoKey: "sk-go" })).toHaveLength(0);
+  });
+
+  test("reasoning.effort entra só na rota OpenRouter e preserva a trava ZDR", () => {
+    const chain = withReasoningEffort(
+      resolvePlatformChain("deepseek-v4-flash", { opencodeGoKey: "sk-go", openrouterKey: "sk-or" }),
+      "low"
+    );
+    const go = chain.find((r) => r.providerId === "opencode-go")!;
+    const or = chain.find((r) => r.providerId === "openrouter")!;
+    expect(go.extraBody).toBeUndefined();
+    expect(or.extraBody).toMatchObject({
+      reasoning: { effort: "low" },
+      provider: { data_collection: "deny", require_parameters: true },
+    });
   });
 });

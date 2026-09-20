@@ -15,6 +15,7 @@ import {
   DEFAULT_MODELS,
   DEFAULT_STORED_MODELS,
   OPENCODE_GO_MODELS,
+  OPENROUTER_ONLY_MODELS,
   routeInfo,
   supportsVision,
   visionModelOptions,
@@ -955,6 +956,61 @@ export const internalSetFollowUpMode = internalMutation({
   },
 });
 
+/**
+ * Ops: troca um modelo por outro em TODOS os papéis da org que o usam
+ * (`setModels` exige sessão de usuário). Só aceita destino conhecido do registry.
+ *   npx convex run aiSettings:internalReplaceOrgModel '{"organizationId":"…","from":"deepseek-v4-flash","to":"deepseek-v4-flash-0731"}'
+ */
+export const internalReplaceOrgModel = internalMutation({
+  args: { organizationId: v.id("organizations"), from: v.string(), to: v.string() },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const known = [...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[];
+    if (!known.includes(args.to)) throw new Error(`Modelo desconhecido: ${args.to}`);
+    const org = await ctx.db.get(args.organizationId);
+    const current = org?.settings.aiConfig;
+    if (!org || !current) throw new Error("Org sem IA configurada");
+    const before = current.providerConfig?.models ?? { ...DEFAULT_STORED_MODELS };
+    const after = { ...before };
+    const changed: string[] = [];
+    for (const role of ["copilot", "attendant", "classify", "complex"] as const) {
+      if (after[role] === args.from) {
+        after[role] = args.to;
+        changed.push(role);
+      }
+    }
+    if (changed.length === 0) return changed;
+    const now = Date.now();
+    await ctx.db.patch(org._id, {
+      settings: {
+        ...org.settings,
+        aiConfig: {
+          ...current,
+          providerConfig: {
+            ...current.providerConfig,
+            mode: current.providerConfig?.mode ?? ("platform" as const),
+            zdr: current.providerConfig?.zdr ?? true,
+            models: after,
+          },
+        },
+      },
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: org._id,
+      entityType: "organization",
+      entityId: org._id,
+      action: "update",
+      actorType: "system",
+      changes: { before: { models: before }, after: { models: after } },
+      metadata: { via: "ops", aiModels: true },
+      description: `Ops trocou o modelo de IA '${args.from}' por '${args.to}' (${changed.join(", ")})`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return changed;
+  },
+});
+
 // ── Métricas de aceitação (modo sugestão) + uso/custo ──
 
 async function computeAcceptanceMetrics(
@@ -1147,10 +1203,11 @@ export const getModelOptions = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
-    return OPENCODE_GO_MODELS.map((id) => ({
-      id,
-      route: routeInfo("opencode-go", id),
-    }));
+    return [
+      ...OPENCODE_GO_MODELS.map((id) => ({ id, route: routeInfo("opencode-go", id) })),
+      // Só no OpenRouter (a cadeia pula o elo do OpenCode Go para eles).
+      ...OPENROUTER_ONLY_MODELS.map((id) => ({ id, route: routeInfo("openrouter", id) })),
+    ];
   },
 });
 

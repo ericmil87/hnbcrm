@@ -52,6 +52,11 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
     openrouter: "deepseek/deepseek-v4-flash",
     deepseek: "deepseek-chat",
   },
+  // GA do V4 Flash (re-pós-treinado p/ agente/tool use, 31/07/2026). Só existe
+  // no OpenRouter — ver OPENROUTER_ONLY_MODELS.
+  "deepseek-v4-flash-0731": {
+    openrouter: "deepseek/deepseek-v4-flash-0731",
+  },
   "deepseek-v4-pro": {
     openrouter: "deepseek/deepseek-v4-pro",
     deepseek: "deepseek-reasoner",
@@ -87,6 +92,11 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
     openrouter: "x-ai/grok-4.5",
   },
 };
+
+// Modelos que NÃO existem no OpenCode Go: a cadeia da plataforma pula aquele elo
+// (mandar um id desconhecido só produziria um 4xx que esconde o erro real do elo
+// seguinte — foi assim que o 429 do OpenRouter ficou invisível em 19/09/2026).
+export const OPENROUTER_ONLY_MODELS: readonly string[] = ["deepseek-v4-flash-0731"];
 
 // Ids confirmed present on OpenCode Go's /v1/models (identical to canonical).
 // Lista completa (31 ids) conferida contra o GET /v1/models da API VIVA em
@@ -272,6 +282,7 @@ export interface ModelCapabilities {
 export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // DeepSeek / Kimi strict json_schema via OpenCode Go is NOT CONFIRMED.
   "deepseek-v4-flash": { jsonSchemaStrict: false },
+  "deepseek-v4-flash-0731": { jsonSchemaStrict: false },
   "deepseek-v4-pro": { jsonSchemaStrict: false },
   "kimi-k2.7-code": { jsonSchemaStrict: false },
   "kimi-k3": { jsonSchemaStrict: false },

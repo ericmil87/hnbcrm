@@ -8,7 +8,7 @@
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { chatWithFallback, resolvePlatformChain, ResolvedRoute } from "./lib/llm";
+import { chatWithFallback, resolvePlatformChain, ResolvedRoute, withReasoningEffort } from "./lib/llm";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
@@ -222,6 +222,71 @@ export const pingProvider = internalAction({
         completionTokens: null,
         error: sanitizeLlmError(e instanceof Error ? e.message : "Falha desconhecida"),
       };
+    }
+  },
+});
+
+
+// Mede o custo do RACIOCÍNIO num pedido com cara de turno real (persona curta +
+// tool obrigatória), só na rota OpenRouter, com e sem `reasoning.effort`:
+//   npx convex run aiDiagnostics:measureReasoning '{"model":"deepseek-v4-flash-0731","effort":"low"}'
+export const measureReasoning = internalAction({
+  args: {
+    model: v.optional(v.string()),
+    effort: v.optional(v.union(v.literal("low"), v.literal("medium"), v.literal("high"))),
+    maxTokens: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (_ctx, args) => {
+    const model = args.model ?? DEFAULT_MODELS.attendant;
+    let routes = resolvePlatformChain(model, { openrouterKey: process.env.OPENROUTER_API_KEY });
+    if (args.effort) routes = withReasoningEffort(routes, args.effort);
+    const started = Date.now();
+    try {
+      const resp = await chatWithFallback(routes, {
+        messages: [
+          {
+            role: "system",
+            content:
+              "Você é o assistente virtual de um terapeuta. Fala português do Brasil, em tom leve. Use SEMPRE a ferramenta replyToCustomer para falar com o cliente.",
+          },
+          {
+            role: "user",
+            content:
+              'Histórico: o cliente disse ontem "vou fazer o pix e te mando o comprovante". Nada chegou. Chegou a hora do follow-up: mande um lembrete curto e leve.',
+          },
+        ],
+        tools: [
+          {
+            type: "function" as const,
+            function: {
+              name: "replyToCustomer",
+              description: "Envia a mensagem ao cliente",
+              parameters: {
+                type: "object",
+                properties: { text: { type: "string" } },
+                required: ["text"],
+                additionalProperties: false,
+              },
+            },
+          },
+        ],
+        toolChoice: "auto",
+        temperature: 0.4,
+        maxTokens: args.maxTokens ?? 3000,
+      });
+      const call = resp.message.tool_calls?.[0];
+      return {
+        ok: true,
+        ms: Date.now() - started,
+        finishReason: resp.finishReason,
+        completionTokens: resp.usage?.completionTokens ?? null,
+        tool: call?.function.name ?? null,
+        args: call?.function.arguments?.slice(0, 300) ?? null,
+        content: resp.message.content?.slice(0, 120) ?? null,
+      };
+    } catch (e) {
+      return { ok: false, ms: Date.now() - started, error: sanitizeLlmError(e instanceof Error ? e.message : String(e)) };
     }
   },
 });

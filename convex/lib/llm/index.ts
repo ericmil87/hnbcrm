@@ -16,6 +16,7 @@ import {
   NormalizedResponse,
 } from "./types";
 import {
+  OPENROUTER_ONLY_MODELS,
   OPENROUTER_ZDR_PROVIDER_BODY,
   ProviderId,
   resolveModelId,
@@ -64,7 +65,7 @@ export function resolvePlatformChain(
   env: { opencodeGoKey?: string; openrouterKey?: string }
 ): ResolvedRoute[] {
   const chain: ResolvedRoute[] = [];
-  if (env.opencodeGoKey) {
+  if (env.opencodeGoKey && !OPENROUTER_ONLY_MODELS.includes(canonicalModel)) {
     chain.push(makeRoute("opencode-go", BASE_URLS["opencode-go"]!, env.opencodeGoKey, canonicalModel));
   }
   if (env.openrouterKey) {
@@ -75,6 +76,23 @@ export function resolvePlatformChain(
     );
   }
   return chain;
+}
+
+/**
+ * Esforço de raciocínio, só nas rotas OpenRouter (`reasoning.effort` é parâmetro
+ * deles; os outros providers ignorariam ou recusariam). Os modelos de raciocínio
+ * gastam o `max_tokens` PENSANDO: medido em 19/09/2026, o turno de follow-up do
+ * atendente consumiu 3000/3000 tokens e a mensagem saiu cortada no meio.
+ */
+export function withReasoningEffort(
+  routes: ResolvedRoute[],
+  effort: "low" | "medium" | "high"
+): ResolvedRoute[] {
+  return routes.map((route) =>
+    route.providerId === "openrouter"
+      ? { ...route, extraBody: { ...route.extraBody, reasoning: { effort } } }
+      : route
+  );
 }
 
 // BYO: a single route from the org's own credentials. No platform fallback.

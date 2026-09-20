@@ -300,7 +300,7 @@ async function armDefault(
 
 type StubResponse =
   | { kind: "text"; content: string }
-  | { kind: "tool"; name: string; args: Record<string, unknown> }
+  | { kind: "tool"; name: string; args: Record<string, unknown>; truncated?: boolean }
   | { kind: "empty" };
 
 function stubLlmSequence(responses: StubResponse[]) {
@@ -328,7 +328,8 @@ function stubLlmSequence(responses: StubResponse[]) {
         choices: [
           {
             message,
-            finish_reason: response.kind === "tool" ? "tool_calls" : "stop",
+            finish_reason:
+              response.kind === "tool" ? (response.truncated ? "length" : "tool_calls") : "stop",
           },
         ],
         usage: { prompt_tokens: 50, completion_tokens: 10 },
@@ -1144,6 +1145,60 @@ describe("turno de follow-up", () => {
     expect(outbound[0].content).toContain("Conseguiu fazer o pix?");
     const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
     expect(updated!.resultMessageId).toBe(outbound[0]._id);
+  });
+
+  // E2E de 19/09/2026: a mensagem chegou ao cliente como "…me manda o comprov".
+  test("resposta CORTADA pelo teto de tokens é descartada inteira e refeita uma vez", async () => {
+    const t = setup();
+    const { followUp } = await fireReady(t, {
+      mode: "autopilot",
+      followUps: { mode: "send" },
+    });
+
+    const { fetchMock } = await runQueuedTurn(t, [
+      { kind: "tool", name: "replyToCustomer", args: { text: "Assim que fizer, me manda o comprov" }, truncated: true },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Assim que fizer, me manda o comprovante 😊" } },
+    ]);
+
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    const second = JSON.parse(((fetchMock.mock.calls[1] as unknown[])[1] as { body: string }).body) as {
+      messages: { role: string; content: string | null }[];
+    };
+    expect(second.messages.at(-1)!.content).toContain("CORTADA");
+    // A resposta truncada não entrou no histórico nem virou mensagem.
+    expect(second.messages.some((m) => m.role === "assistant")).toBe(false);
+
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+    );
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].content).toContain("comprovante 😊");
+    expect((await t.run(async (ctx) => ctx.db.get(followUp._id)))!.resultMessageId).toBe(outbound[0]._id);
+  });
+
+  test("cortada DUAS vezes: nada sai para o cliente (falha com retry, sem mensagem truncada)", async () => {
+    const t = setup();
+    await fireReady(t, { mode: "autopilot", followUps: { mode: "send" } });
+
+    await runQueuedTurn(t, [
+      { kind: "tool", name: "replyToCustomer", args: { text: "me manda o comprov" }, truncated: true },
+    ]);
+
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+    );
+    expect(outbound).toHaveLength(0);
+  });
+
+  test("turno de follow-up pede reasoning.effort baixo só na rota OpenRouter", async () => {
+    const t = setup();
+    await fireReady(t, { mode: "autopilot", followUps: { mode: "send" } });
+    const { fetchMock } = await runQueuedTurn(t, [
+      { kind: "tool", name: "replyToCustomer", args: { text: "Oi!" } },
+    ]);
+    // Nos testes só existe a rota OpenCode Go (stubEnv) — ela NÃO recebe o parâmetro.
+    const body = JSON.parse(((fetchMock.mock.calls[0] as unknown[])[1] as { body: string }).body);
+    expect(body.reasoning).toBeUndefined();
   });
 
   test("encadear no turno de follow-up cria um follow-up NOVO (não remarca o que está sendo executado)", async () => {

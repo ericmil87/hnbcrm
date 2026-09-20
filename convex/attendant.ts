@@ -42,7 +42,7 @@ import {
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./lib/promptEnvelope";
 import { buildSearchText } from "./lib/searchText";
 import { ChatMessage, flattenContent } from "./lib/llm/types";
-import { chatWithFallback } from "./lib/llm";
+import { chatWithFallback, withReasoningEffort } from "./lib/llm";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
@@ -1182,6 +1182,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOW_UP_HORIZON_MS = 30 * DAY_MS;
 /** Teto de saída do turno de follow-up (reasoning + tool call). Ver a "segunda chance" no runtime. */
 const FOLLOW_UP_MAX_TOKENS = 3000;
+/** Teto de saída do turno reativo. Resposta cortada (`finish_reason: length`) é descartada e refeita. */
+const REACTIVE_MAX_TOKENS = 2000;
 
 /**
  * Título do follow-up: MESMO saneamento da nota (URL, e-mail, telefone, chave
@@ -2835,6 +2837,10 @@ export const internalProcessQueueItem = internalAction({
       // sem ferramenta ganha UMA rodada corretiva exigindo a decisão.
       let followUpNudged = false;
       let nextToolChoice: "auto" | "required" = "auto";
+      let truncatedOnce = false;
+      // No turno de follow-up o raciocínio é o que estoura o teto ("releia e
+      // decida" sobre um prompt grande); `effort: low` só existe no OpenRouter.
+      const turnRoutes = context.followUp ? withReasoningEffort(routes, "low") : routes;
 
       for (let round = 0; round < context.maxToolCalls + 2; round++) {
         let resp;
@@ -2843,18 +2849,19 @@ export const internalProcessQueueItem = internalAction({
             messages,
             tools,
             temperature: context.temperature,
-            // Folga p/ reasoning do deepseek (700 estourava e vinha vazio). O
-            // turno de follow-up delibera mais (reler + decidir): 1200 estourava.
-            maxTokens: context.followUp ? FOLLOW_UP_MAX_TOKENS : 1200,
+            // Folga p/ reasoning do deepseek (700 estourava e vinha vazio; o turno
+            // reativo real já batia 907/1200 com 4 tools). O turno de follow-up
+            // delibera mais (reler + decidir).
+            maxTokens: context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS,
           };
           try {
-            resp = await chatWithFallback(routes, { ...request, toolChoice: nextToolChoice });
+            resp = await chatWithFallback(turnRoutes, { ...request, toolChoice: nextToolChoice });
           } catch (e) {
             // Nem todo provedor aceita tool_choice "required" (e o OpenRouter
             // roda com require_parameters): cai para "auto" em vez de perder a
             // rodada corretiva.
             if (nextToolChoice !== "required") throw e;
-            resp = await chatWithFallback(routes, { ...request, toolChoice: "auto" });
+            resp = await chatWithFallback(turnRoutes, { ...request, toolChoice: "auto" });
           }
           nextToolChoice = "auto";
         } catch (e) {
@@ -2911,6 +2918,28 @@ export const internalProcessQueueItem = internalAction({
 
         if (resp.finishReason === "content_filter") {
           throw new Error("content_filter: resposta bloqueada pelo provider");
+        }
+
+        // RESPOSTA CORTADA pelo teto de tokens. Visto no E2E de 19/09/2026: o
+        // modelo gastou os 3000 tokens pensando, o provedor FECHOU o JSON dos
+        // argumentos no ponto do corte e o cliente recebeu "…me manda o
+        // comprov". Nada de uma resposta truncada é confiável — nem o texto,
+        // nem os argumentos das outras tools (o `scheduleFollowUp` do mesmo
+        // turno rodou com nota possivelmente cortada). Descarta TUDO, pede de
+        // novo uma vez, e se cortar de novo falha (retry/backoff normais).
+        if (resp.finishReason === "length") {
+          if (truncatedOnce) {
+            throw new Error("Resposta do modelo truncada pelo limite de tokens");
+          }
+          truncatedOnce = true;
+          messages.push({
+            role: "user",
+            content:
+              "Sua resposta anterior foi CORTADA pelo limite de tamanho e descartada inteira. " +
+              "Refaça agora de forma direta: raciocine pouco, chame só as ferramentas necessárias " +
+              "e mantenha a mensagem ao cliente curta (até 500 caracteres).",
+          });
+          continue;
         }
 
         messages.push(resp.message);
