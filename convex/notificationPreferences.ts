@@ -23,6 +23,8 @@ const DEFAULTS = {
   groupPostFailed: true,
   groupOpportunity: true,
   groupDigest: true,
+  // v0.60 — a IA não conseguiu fazer o follow-up que agendou (só sino).
+  aiFollowupNeedsHuman: true,
 };
 
 // Get current member's notification preferences
@@ -63,6 +65,7 @@ export const getMyPreferences = query({
       groupPostFailed: prefs.groupPostFailed ?? DEFAULTS.groupPostFailed,
       groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
+      aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       _id: prefs._id,
       _exists: true,
     };
@@ -92,6 +95,7 @@ export const updateMyPreferences = mutation({
     groupPostFailed: v.optional(v.boolean()),
     groupOpportunity: v.optional(v.boolean()),
     groupDigest: v.optional(v.boolean()),
+    aiFollowupNeedsHuman: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -130,6 +134,8 @@ export const updateMyPreferences = mutation({
       groupOpportunity:
         args.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: args.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
+      aiFollowupNeedsHuman:
+        args.aiFollowupNeedsHuman ?? existing?.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
     };
 
     if (existing) {
@@ -235,6 +241,7 @@ export const internalGetPreferences = internalQuery({
       groupPostFailed: prefs.groupPostFailed ?? DEFAULTS.groupPostFailed,
       groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
+      aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       _exists: true,
     };
   },
@@ -282,6 +289,10 @@ export const internalUpsertPreferences = internalMutation({
       groupOpportunity:
         args.updates.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: args.updates.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
+      aiFollowupNeedsHuman:
+        args.updates.aiFollowupNeedsHuman ??
+        existing?.aiFollowupNeedsHuman ??
+        DEFAULTS.aiFollowupNeedsHuman,
     };
 
     if (existing) {

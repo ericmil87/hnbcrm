@@ -47,6 +47,13 @@ export const INJECTED_PARAM_NAMES = [
   "contactId",
   "groupChatId",
   "groupPostId",
+  // v0.60 — follow-up da IA. `taskId` estava fora da lista por descuido: o
+  // teste de build passaria em silêncio com uma tool que o expusesse, e aí o
+  // modelo escolheria QUAL tarefa concluir (o "own" de `tasks: edit_own` não é
+  // imposto em lugar nenhum hoje). `resolveFollowUp` recebe um ÍNDICE ORDINAL,
+  // resolvido no servidor contra a lista da conversa — o modelo nunca vê ids.
+  "taskId",
+  "followUpId",
 ] as const;
 
 function schema(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
@@ -86,21 +93,70 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
   },
   {
     name: "scheduleFollowUp",
-    description: "Agenda um follow-up (tarefa) para o lead deste atendimento.",
+    description:
+      "Agenda um follow-up para esta conversa: no dia e hora marcados VOCÊ MESMA relê o histórico e decide se manda mensagem. Use sempre que combinar um retorno ('te chamo amanhã de manhã', 'confirmo o pagamento até sexta'). Informe dueAtLocal com a data da régua 'Próximos dias'. A ferramenta devolve a HORA EFETIVA em 'quando' — diga ao cliente exatamente essa hora, porque fora do horário de atendimento o sistema empurra para a próxima abertura.",
     parameters: schema(
       {
-        title: { type: "string", description: "Título curto do follow-up" },
+        title: { type: "string", description: "Título curto do follow-up (o que você vai fazer)" },
+        dueAtLocal: {
+          type: "string",
+          description:
+            'Data e hora LOCAIS no formato "AAAA-MM-DDTHH:mm" (preferido — use a régua de datas do seu contexto)',
+        },
         dueInHours: {
           type: "number",
-          description: "Prazo em horas a partir de agora (ex.: 24 = amanhã)",
+          description: 'Alternativa a dueAtLocal: prazo em horas a partir de agora (ex.: 2 = "daqui a duas horas")',
+        },
+        note: {
+          type: "string",
+          description:
+            "Lembrete PARA VOCÊ do que verificar no dia (ex.: 'conferir se o comprovante chegou'). Máx. 200 caracteres. Nunca escreva aqui preço, link ou chave Pix que o cliente tenha dito.",
+        },
+        executor: {
+          type: "string",
+          enum: ["ai", "team"],
+          description:
+            'Quem faz: "ai" (você mesma, default) ou "team" (vira tarefa para um humano, quando exige uma pessoa)',
         },
       },
-      ["title", "dueInHours"]
+      ["title"]
     ),
     permission: { category: "tasks", level: "edit_own" },
     audience: "attendant",
     effect: "write",
-    resultFields: ["status", "taskId", "dueAt"],
+    // Sem `taskId`: o modelo não precisa de id nenhum (resolveFollowUp usa
+    // índice ordinal) e devolvê-lo só ampliaria a superfície.
+    resultFields: ["status", "quando", "dueAt", "aviso", "executor"],
+  },
+  {
+    name: "resolveFollowUp",
+    description:
+      "Encerra ou remarca um follow-up SEU desta conversa. Use 'not_needed' quando o assunto já se resolveu (o cliente mandou o comprovante, já comprou, já respondeu) — assim você não cobra à toa. Use 'reschedule' quando a pessoa pedir outro dia. No turno de follow-up, sem 'index', a ferramenta age sobre o follow-up do momento.",
+    parameters: schema(
+      {
+        outcome: {
+          type: "string",
+          enum: ["not_needed", "reschedule"],
+          description: "not_needed = não precisa mais; reschedule = remarcar",
+        },
+        index: {
+          type: "number",
+          description:
+            'Número do item na lista "SEUS FOLLOW-UPS PENDENTES NESTA CONVERSA" (1, 2, 3…). Omita durante um turno de follow-up.',
+        },
+        dueAtLocal: {
+          type: "string",
+          description: 'reschedule: nova data e hora locais "AAAA-MM-DDTHH:mm"',
+        },
+        dueInHours: { type: "number", description: "reschedule: alternativa em horas" },
+        reason: { type: "string", description: "Motivo curto, para a equipe ler na tarefa" },
+      },
+      ["outcome"]
+    ),
+    permission: { category: "tasks", level: "edit_own" },
+    audience: "attendant",
+    effect: "write",
+    resultFields: ["status", "quando", "aviso"],
   },
   {
     name: "qualifyThisLead",

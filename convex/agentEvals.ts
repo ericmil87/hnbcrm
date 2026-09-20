@@ -18,6 +18,11 @@ type TranscriptTurn = {
   file?: boolean;
 };
 
+/** Turno de FOLLOW-UP simulado no replay (v0.60). */
+type GoldenFollowUp = { title: string; note?: string };
+
+const followUpValidator = v.object({ title: v.string(), note: v.optional(v.string()) });
+
 const transcriptValidator = v.array(
   v.object({
     role: v.union(v.literal("customer"), v.literal("agent")),
@@ -131,6 +136,8 @@ export const createEval = mutation({
     transcript: transcriptValidator,
     expectation: v.string(),
     tags: v.optional(v.array(v.string())),
+    followUp: v.optional(followUpValidator),
+    simulatedNow: v.optional(v.number()),
   },
   returns: v.id("agentEvals"),
   handler: async (ctx, args) => {
@@ -143,6 +150,8 @@ export const createEval = mutation({
       transcript: args.transcript,
       expectation: args.expectation.trim(),
       tags: args.tags,
+      followUp: args.followUp,
+      simulatedNow: args.simulatedNow,
       createdBy: member._id,
       createdAt: Date.now(),
     });
@@ -189,6 +198,8 @@ export const replayEval = action({
       organizationId: Id<"organizations">;
       transcript: TranscriptTurn[];
       expectation: string;
+      followUp?: GoldenFollowUp;
+      simulatedNow?: number;
     } | null = await ctx.runQuery(internal.agentEvals.internalGetEval, {
       evalId: args.evalId,
     });
@@ -199,6 +210,10 @@ export const replayEval = action({
         organizationId: evalDoc.organizationId,
         agentMemberId: args.agentMemberId,
         transcript: evalDoc.transcript,
+        // Golden de follow-up roda o turno PROATIVO; `simulatedNow` congela o
+        // relógio (sem ele, golden com regra de data deriva com o dia real).
+        ...(evalDoc.followUp ? { followUp: evalDoc.followUp } : {}),
+        ...(evalDoc.simulatedNow !== undefined ? { simulatedNow: evalDoc.simulatedNow } : {}),
       });
     return { ...result, expectation: evalDoc.expectation };
   },
@@ -206,8 +221,82 @@ export const replayEval = action({
 
 
 
+// ── Goldens de FOLLOW-UP (v0.60) ──
+// As duas regras que a feature promete e que são fáceis de quebrar sem ninguém
+// notar: (1) no dia, a IA relê a conversa e NÃO cobra o que já foi resolvido;
+// (2) quando ainda faz sentido, ela retoma com leveza — não com cobrança.
+
+export const FOLLOW_UP_RESOLVED_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+  followUp: GoldenFollowUp;
+} = {
+  name: "Follow-up: o comprovante já chegou — não cobra",
+  transcript: [
+    { role: "customer", content: "Vou fazer o pix ainda hoje!" },
+    { role: "agent", content: "Combinado! Te chamo amanhã de manhã para confirmar 😊" },
+    {
+      role: "customer",
+      content:
+        "Comprovante de transferência Pix no valor de R$ 320,00, realizado em 19/09/2026 às 21:04.",
+      image: true,
+    },
+    { role: "agent", content: "Recebi seu comprovante de R$ 320,00 de 19/09! A equipe confere e te avisa." },
+  ],
+  expectation:
+    "NÃO mandar mensagem nenhuma: o assunto do follow-up (o comprovante) já foi resolvido no próprio " +
+    "histórico. A IA deve chamar resolveFollowUp com outcome 'not_needed'. Qualquer cobrança de " +
+    "comprovante aqui é o pior resultado possível da funcionalidade.",
+  tags: ["follow_up", "regressao"],
+  followUp: {
+    title: "Cobrar comprovante do Pix",
+    note: "conferir se o comprovante chegou antes de cobrar",
+  },
+};
+
+export const FOLLOW_UP_NUDGE_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+  followUp: GoldenFollowUp;
+} = {
+  name: "Follow-up: cliente sumiu — retoma com leveza",
+  transcript: [
+    { role: "customer", content: "Oi! Queria saber do plano anual" },
+    { role: "agent", content: "Oi! O anual sai por R$ 1.200 à vista ou 12x de R$ 110. Faz sentido para você?" },
+    { role: "customer", content: "Deixa eu ver aqui e te falo" },
+  ],
+  expectation:
+    "Mandar UMA mensagem curta e leve retomando o assunto do plano anual, sem cobrar, sem pressionar " +
+    "e sem repetir a proposta inteira. Deve chamar replyToCustomer (texto solto não chega ao cliente) " +
+    "e NÃO deve inventar desconto, prazo ou condição que não esteja no histórico.",
+  tags: ["follow_up", "regressao"],
+  followUp: {
+    title: "Retomar contato sobre o plano anual",
+    note: "ela ficou de responder sobre o anual",
+  },
+};
+
+/** Forma comum das goldens curadas (o follow-up só existe nas duas novas). */
+type CuratedGolden = {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+  followUp?: GoldenFollowUp;
+};
+
 // Todas as goldens curadas que acompanham o produto.
-export const CURATED_GOLDENS = [AUDIO_GOLDEN, VISION_RECEIPT_GOLDEN, FILE_PDF_GOLDEN];
+export const CURATED_GOLDENS: CuratedGolden[] = [
+  AUDIO_GOLDEN,
+  VISION_RECEIPT_GOLDEN,
+  FILE_PDF_GOLDEN,
+  FOLLOW_UP_RESOLVED_GOLDEN,
+  FOLLOW_UP_NUDGE_GOLDEN,
+];
 
 // Instala as goldens curadas numa org. Idempotente pelo nome — goldens são
 // criadas pela API/console (não há seed automático nem UI), então esta é a via
@@ -245,6 +334,7 @@ export const internalSeedCuratedGoldens = internalMutation({
           transcript: golden.transcript,
           expectation: golden.expectation,
           tags: golden.tags,
+          ...(golden.followUp ? { followUp: golden.followUp } : {}),
           createdBy: owner._id,
           createdAt: Date.now(),
         })

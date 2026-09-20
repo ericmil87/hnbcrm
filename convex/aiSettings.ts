@@ -7,7 +7,7 @@
  * O runtime (orgAiActive) só roda com enabled && lgpdAck.
  */
 import { v } from "convex/values";
-import { query, mutation, internalQuery, MutationCtx, QueryCtx } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
@@ -20,6 +20,12 @@ import {
   visionModelOptions,
 } from "./lib/llm/registry";
 import { personaById, personaForIndustry } from "./lib/agentPersonas";
+import {
+  DEFAULT_QUIET_END_HOUR,
+  DEFAULT_QUIET_START_HOUR,
+  MAX_CHAIN_LIMIT,
+  MAX_DAILY_CAP,
+} from "./lib/followUpSettings";
 
 // Normaliza o override de um produto para a UI: ausência vira o sentinela que o
 // select renderiza ("inherit" = herda a org; "" = modelo automático).
@@ -478,6 +484,20 @@ const agentProfilePatchValidator = v.object({
   ),
   // Opt-OUT: ausente = ligado, só `false` desliga (ver o schema).
   includeCurrentDateTime: v.optional(v.boolean()),
+  // Follow-ups que a IA executa sozinha (v0.60). `v.null()` volta ao default
+  // do produto ("Preparar rascunho"), como o pipelineConfig.
+  followUps: v.optional(
+    v.union(
+      v.null(),
+      v.object({
+        mode: v.union(v.literal("off"), v.literal("draft"), v.literal("send")),
+        maxChain: v.optional(v.number()),
+        quietStartHour: v.optional(v.number()),
+        quietEndHour: v.optional(v.number()),
+        dailyCap: v.optional(v.number()),
+      })
+    )
+  ),
   handoffKeywords: v.optional(v.array(v.string())),
   maxRepliesPerConversation: v.optional(v.number()),
   maxRepliesPerHour: v.optional(v.number()),
@@ -779,6 +799,44 @@ export const updateAgentProfile = mutation({
       throw new Error("Agrupar mensagens por: use um número inteiro de segundos entre 1 e 120");
     }
 
+    // Follow-ups: faixas validadas no SERVIDOR — a UI é só a primeira barreira,
+    // e um `quietStartHour` maior que o fim viraria "nunca manda" (ou, pior,
+    // "manda a qualquer hora") sem ninguém entender por quê.
+    const followUps = args.patch.followUps;
+    if (followUps !== undefined && followUps !== null) {
+      const { maxChain, quietStartHour, quietEndHour, dailyCap } = followUps;
+      if (
+        maxChain !== undefined &&
+        (!Number.isInteger(maxChain) || maxChain < 1 || maxChain > MAX_CHAIN_LIMIT)
+      ) {
+        throw new Error(
+          `Follow-ups seguidos sem resposta: use um número inteiro entre 1 e ${MAX_CHAIN_LIMIT}`
+        );
+      }
+      for (const [label, hour] of [
+        ["Início da janela de envio", quietStartHour],
+        ["Fim da janela de envio", quietEndHour],
+      ] as const) {
+        if (hour === undefined) continue;
+        if (!Number.isInteger(hour) || hour < 0 || hour > 24) {
+          throw new Error(`${label}: use uma hora inteira entre 0 e 24`);
+        }
+      }
+      const start = quietStartHour ?? DEFAULT_QUIET_START_HOUR;
+      const end = quietEndHour ?? DEFAULT_QUIET_END_HOUR;
+      if (start >= end) {
+        throw new Error("A janela de envio precisa começar antes de terminar");
+      }
+      if (
+        dailyCap !== undefined &&
+        (!Number.isInteger(dailyCap) || dailyCap < 0 || dailyCap > MAX_DAILY_CAP)
+      ) {
+        throw new Error(
+          `Teto diário de follow-ups: use um número inteiro entre 0 e ${MAX_DAILY_CAP} (0 = sem teto)`
+        );
+      }
+    }
+
     // P4: integridade do pipelineConfig — board da org; estágios do board certo.
     const pipelineConfig = args.patch.pipelineConfig;
     if (pipelineConfig !== undefined && pipelineConfig !== null) {
@@ -815,7 +873,7 @@ export const updateAgentProfile = mutation({
       }
     }
 
-    const { schedule, pipelineConfig: _pc, ...rest } = args.patch;
+    const { schedule, pipelineConfig: _pc, followUps: _fu, ...rest } = args.patch;
     const clean = Object.fromEntries(
       Object.entries(rest).filter(([, value]) => value !== undefined)
     );
@@ -827,6 +885,7 @@ export const updateAgentProfile = mutation({
       ...(pipelineConfig !== undefined
         ? { pipelineConfig: pipelineConfig ?? undefined }
         : {}),
+      ...(followUps !== undefined ? { followUps: followUps ?? undefined } : {}),
       ...(autopilotEarly ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
     };
     await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
@@ -855,6 +914,47 @@ export const updateAgentProfile = mutation({
   },
 });
 
+/**
+ * Ops: define só o MODO dos follow-ups de um atendente (os ajustes finos ficam
+ * como estão). Existe porque `updateAgentProfile` exige sessão de usuário —
+ * `npx convex run aiSettings:internalSetFollowUpMode '{"agentMemberId":"…","mode":"send"}'`.
+ */
+export const internalSetFollowUpMode = internalMutation({
+  args: {
+    agentMemberId: v.id("teamMembers"),
+    mode: v.union(v.literal("off"), v.literal("draft"), v.literal("send")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentMemberId);
+    if (!agent || agent.type !== "ai" || agent.agentProfile?.kind !== "attendant") {
+      throw new Error("Atendente IA não encontrado");
+    }
+    const now = Date.now();
+    const next = {
+      ...agent.agentProfile,
+      followUps: { ...agent.agentProfile.followUps, mode: args.mode },
+    };
+    await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: agent.organizationId,
+      entityType: "teamMember",
+      entityId: agent._id,
+      action: "update",
+      actorType: "system",
+      changes: {
+        before: { followUps: agent.agentProfile.followUps as unknown as Record<string, unknown> },
+        after: { followUps: next.followUps as unknown as Record<string, unknown> },
+      },
+      metadata: { name: agent.name, agentConfig: true, via: "ops" },
+      description: `Ops definiu os follow-ups do atendente '${agent.name}' como '${args.mode}'`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
 // ── Métricas de aceitação (modo sugestão) + uso/custo ──
 
 async function computeAcceptanceMetrics(
@@ -877,12 +977,21 @@ async function computeAcceptanceMetrics(
   let discarded = 0;
   let revised = 0;
   let coached = 0;
+  let proactive = 0;
   for (const run of relevant) {
     if (!run.resultMessageId) continue;
     // Runs iniciadas por humano (requestAiDraft/returnToAi) medem o COACHING,
     // não a autonomia da IA — fora do gate do autopilot, contadas à parte.
     if (run.humanInitiated) {
       coached++;
+      continue;
+    }
+    // Runs PROATIVAS (follow-up, v0.60) também ficam fora: descartar um
+    // rascunho de follow-up quer dizer "não era para mandar nada", não "a IA
+    // respondeu mal ao cliente" — contá-lo como rejeição derrubaria a taxa e
+    // travaria o gate do autopilot de quem nem estava avaliando isso.
+    if (run.proactive) {
+      proactive++;
       continue;
     }
     const message = await ctx.db.get(run.resultMessageId);
@@ -905,6 +1014,7 @@ async function computeAcceptanceMetrics(
     discarded,
     revised,
     coached,
+    proactive,
     reviewed,
     acceptanceRate: reviewed > 0 ? (sent + sentEdited) / reviewed : 0,
   };
@@ -922,6 +1032,7 @@ export const getAttendantMetrics = query({
     discarded: v.number(),
     revised: v.number(),
     coached: v.number(),
+    proactive: v.number(),
     reviewed: v.number(),
     acceptanceRate: v.number(),
     autopilotUnlocked: v.boolean(),

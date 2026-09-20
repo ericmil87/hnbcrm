@@ -1,5 +1,6 @@
-import { Id } from "../_generated/dataModel";
-import { MutationCtx } from "../_generated/server";
+import { Doc, Id } from "../_generated/dataModel";
+import { MutationCtx, QueryCtx } from "../_generated/server";
+import { resolvePermissions, hasPermission, type Role } from "./permissions";
 
 export type NotificationType =
   | "task_assigned"
@@ -16,7 +17,8 @@ export type NotificationType =
   | "group_post_pending"
   | "group_post_failed"
   | "group_opportunity"
-  | "group_digest";
+  | "group_digest"
+  | "ai_followup_needs_human";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -36,7 +38,43 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   group_post_failed: "groupPostFailed",
   group_opportunity: "groupOpportunity",
   group_digest: "groupDigest",
+  // Só sino: não existe template de e-mail para este evento (`buildTemplate` é
+  // fail-closed), e nenhum caminho chama `dispatchNotification` com ele.
+  ai_followup_needs_human: "aiFollowupNeedsHuman",
 };
+
+/**
+ * Humanos ATIVOS com direito de responder no inbox — o público de um aviso sem
+ * destinatário definido (repasse da IA, follow-up que precisou de gente). Cap
+ * de 25 para proteger a transação em orgs grandes.
+ *
+ * Mora aqui (e não em `handoffs.ts`, onde nasceu) porque o follow-up usa a
+ * MESMA regra de destinatário e importar `handoffs.ts` de `lib/` fecharia um
+ * ciclo de módulos.
+ */
+export async function inboxRepliers(
+  ctx: { db: QueryCtx["db"] },
+  organizationId: Id<"organizations">
+): Promise<Doc<"teamMembers">[]> {
+  const members = await ctx.db
+    .query("teamMembers")
+    .withIndex("by_organization_and_type", (q) =>
+      q.eq("organizationId", organizationId).eq("type", "human")
+    )
+    .collect();
+
+  return members
+    .filter(
+      (m) =>
+        m.status === "active" &&
+        hasPermission(
+          resolvePermissions(m.role as Role, m.permissions ?? undefined),
+          "inbox",
+          "reply"
+        )
+    )
+    .slice(0, 25);
+}
 
 /**
  * Filtra ids de membros mantendo só os que pertencem à organização informada.

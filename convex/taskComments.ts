@@ -5,68 +5,10 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { requireAuth } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
-import { createNotification, filterMembersOfOrg } from "./lib/notify";
 import { parseCursor, buildCursorFromCreatedAt, paginateResults } from "./lib/cursor";
-import { appUrl as resolveAppUrl } from "./lib/appUrl";
-
-const MENTION_EXCERPT_LENGTH = 240;
-
-function excerpt(content: string): string {
-  const clean = content.trim();
-  return clean.length > MENTION_EXCERPT_LENGTH
-    ? `${clean.slice(0, MENTION_EXCERPT_LENGTH)}…`
-    : clean;
-}
-
-// Menção em comentário: in-app + e-mail para cada mencionado (menos o autor).
-async function notifyMentions(
-  ctx: MutationCtx,
-  opts: {
-    task: Doc<"tasks">;
-    commentId: Id<"taskComments">;
-    content: string;
-    mentionedUserIds?: Id<"teamMembers">[];
-    author: Doc<"teamMembers">;
-  }
-): Promise<void> {
-  const requested = [...new Set(opts.mentionedUserIds ?? [])].filter(
-    (id) => id !== opts.author._id
-  );
-  if (requested.length === 0) return;
-
-  // Os ids vêm do cliente: só notifica membros da org DA TASK (o e-mail não tem
-  // gate de org em dispatchNotification — a barreira precisa ser aqui).
-  const mentioned = await filterMembersOfOrg(ctx, opts.task.organizationId, requested);
-  if (mentioned.length === 0) return;
-
-  const snippet = excerpt(opts.content);
-  const url = `${resolveAppUrl()}/app/tarefas?task=${opts.task._id}`;
-
-  for (const memberId of mentioned) {
-    await createNotification(ctx, {
-      organizationId: opts.task.organizationId,
-      memberId,
-      type: "task_comment_mention",
-      title: `${opts.author.name} mencionou você em um comentário`,
-      body: `${opts.task.title}: ${snippet}`,
-      taskId: opts.task._id,
-      actorId: opts.author._id,
-    });
-
-    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-      organizationId: opts.task.organizationId,
-      recipientMemberId: memberId,
-      eventType: "taskCommentMention",
-      templateData: {
-        authorName: opts.author.name,
-        taskTitle: opts.task.title,
-        taskId: opts.task._id,
-        commentExcerpt: snippet,
-        taskUrl: url,
-      },
-    });
-  }
-}
+// Núcleo único do comentário (insert + activity + webhook + menções). Mora em
+// lib/ porque o follow-up da IA também comenta na tarefa que concluiu.
+import { addTaskCommentCore } from "./lib/taskOps";
 
 // Get comments for a task
 export const getComments = query({
@@ -106,50 +48,13 @@ export const addComment = mutation({
 
     const userMember = await requireAuth(ctx, task.organizationId);
 
-    const now = Date.now();
-
-    const commentId = await ctx.db.insert("taskComments", {
-      organizationId: task.organizationId,
-      taskId: args.taskId,
-      authorId: userMember._id,
-      authorType: userMember.type === "ai" ? "ai" : "human",
-      content: args.content,
-      mentionedUserIds: args.mentionedUserIds,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    // Log activity if task is linked to a lead
-    if (task.leadId) {
-      await ctx.db.insert("activities", {
-        organizationId: task.organizationId,
-        leadId: task.leadId,
-        type: "note",
-        actorId: userMember._id,
-        actorType: userMember.type === "ai" ? "ai" : "human",
-        content: `Comment added on task "${task.title}"`,
-        metadata: { taskId: args.taskId, commentId },
-        createdAt: now,
-      });
-    }
-
-    // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-      organizationId: task.organizationId,
-      event: "task.comment_added",
-      payload: { taskId: args.taskId, commentId, content: args.content },
-    });
-
-    // Menções: in-app + e-mail
-    await notifyMentions(ctx, {
+    // Núcleo único: insert + activity + webhook + menções (in-app e e-mail).
+    return await addTaskCommentCore(ctx, {
       task,
-      commentId,
+      author: userMember,
       content: args.content,
       mentionedUserIds: args.mentionedUserIds,
-      author: userMember,
     });
-
-    return commentId;
   },
 });
 
@@ -221,47 +126,12 @@ export const internalAddComment = internalMutation({
       throw new Error("Task not found");
     }
 
-    const now = Date.now();
-
-    const commentId = await ctx.db.insert("taskComments", {
-      organizationId: task.organizationId,
-      taskId: args.taskId,
-      authorId: teamMember._id,
-      authorType: teamMember.type === "ai" ? "ai" : "human",
-      content: args.content,
-      mentionedUserIds: args.mentionedUserIds,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    if (task.leadId) {
-      await ctx.db.insert("activities", {
-        organizationId: task.organizationId,
-        leadId: task.leadId,
-        type: "note",
-        actorId: teamMember._id,
-        actorType: teamMember.type === "ai" ? "ai" : "human",
-        content: `Comment added on task "${task.title}"`,
-        metadata: { taskId: args.taskId, commentId },
-        createdAt: now,
-      });
-    }
-
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-      organizationId: task.organizationId,
-      event: "task.comment_added",
-      payload: { taskId: args.taskId, commentId, content: args.content },
-    });
-
-    await notifyMentions(ctx, {
+    return await addTaskCommentCore(ctx, {
       task,
-      commentId,
+      author: teamMember,
       content: args.content,
       mentionedUserIds: args.mentionedUserIds,
-      author: teamMember,
     });
-
-    return commentId;
   },
 });
 

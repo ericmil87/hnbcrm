@@ -21,6 +21,7 @@ import {
   recordParticipantFromMessage,
 } from "./lib/groupChatCore";
 import { createNotification } from "./lib/notify";
+import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
@@ -2566,6 +2567,15 @@ export const assumeConversation = mutation({
       aiPausedUntil: Number.MAX_SAFE_INTEGER,
       updatedAt: now,
     });
+
+    // Follow-ups que a IA tinha agendado aqui passam a ser de quem assumiu —
+    // com aviso no sino, nunca sumindo em silêncio.
+    await escalateFollowUpsOfConversation(
+      ctx,
+      args.conversationId,
+      `${member.name} assumiu a conversa`,
+      { assignTo: member._id }
+    );
 
     const lead = await getLeadRef(ctx.db, conversation.leadId);
     if (lead && lead.assignedTo !== member._id) {

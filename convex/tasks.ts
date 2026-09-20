@@ -9,9 +9,20 @@ import { createNotification, filterMembersOfOrg } from "./lib/notify";
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
-
-// Espaçamento entre tasks numa coluna do kanban (permite inserir no meio sem renumerar).
-const ORDER_STEP = 1000;
+// Núcleo compartilhado (lib/ para não criar ciclo com o follow-up da IA).
+import {
+  ORDER_STEP,
+  applyTaskCompletion,
+  columnsOfProject,
+  doneColumnForProject,
+  nextOrderInColumn,
+} from "./lib/taskOps";
+import {
+  assertNoActiveFollowUpForRecurrence,
+  followUpForTask,
+  resolveFollowUpForDeletedTask,
+  syncFollowUpForTask,
+} from "./lib/followUpOps";
 
 // Caminho indexado por responsável primário: cobre TODAS as tasks onde o membro
 // é o assignedTo. A membership secundária (`assigneeIds`) não tem índice — vem
@@ -73,36 +84,10 @@ async function validateColumn(
   return column;
 }
 
-async function columnsOfProject(
-  ctx: QueryCtx | MutationCtx,
-  projectId: Id<"taskProjects">
-): Promise<Doc<"taskColumns">[]> {
-  const columns = await ctx.db
-    .query("taskColumns")
-    .withIndex("by_project_and_order", (q) => q.eq("projectId", projectId))
-    .collect();
-  return columns.sort((a, b) => a.order - b.order);
-}
-
 // Coluna default de um projeto: a de menor `order` que não seja done column.
 async function defaultColumnForProject(ctx: QueryCtx | MutationCtx, projectId: Id<"taskProjects">) {
   const columns = await columnsOfProject(ctx, projectId);
   return columns.find((c) => !c.isDoneColumn) ?? columns[0] ?? null;
-}
-
-async function doneColumnForProject(ctx: QueryCtx | MutationCtx, projectId: Id<"taskProjects">) {
-  const columns = await columnsOfProject(ctx, projectId);
-  return columns.find((c) => c.isDoneColumn) ?? null;
-}
-
-async function nextOrderInColumn(ctx: QueryCtx | MutationCtx, columnId: Id<"taskColumns">): Promise<number> {
-  // O índice já ordena por `order`: a última linha é o maior valor da coluna.
-  const last = await ctx.db
-    .query("tasks")
-    .withIndex("by_column_and_order", (q) => q.eq("columnId", columnId))
-    .order("desc")
-    .first();
-  return (last?.order ?? 0) + ORDER_STEP;
 }
 
 // ===== Helpers: hierarquia, dependências, responsáveis =====
@@ -256,7 +241,12 @@ async function schedulePreDueReminder(
   });
 }
 
-// Fluxo único de conclusão (usado por completeTask, internalCompleteTask e moveTaskToColumn).
+/**
+ * Fluxo único de conclusão. O corpo mora em `lib/taskOps.ts` (o follow-up da
+ * IA conclui a tarefa que ela mesma criou, e importar `tasks.ts` de lá fecharia
+ * um ciclo de módulos); aqui fica o wrapper que também sincroniza o follow-up:
+ * tarefa concluída por um HUMANO desarma a execução automática.
+ */
 async function applyCompletion(
   ctx: MutationCtx,
   task: Doc<"tasks">,
@@ -264,58 +254,8 @@ async function applyCompletion(
   now: number,
   placement?: { columnId: Id<"taskColumns">; order: number }
 ): Promise<void> {
-  const patch: Record<string, any> = { status: "completed", completedAt: now, updatedAt: now };
-
-  if (placement) {
-    patch.columnId = placement.columnId;
-    patch.order = placement.order;
-  } else if (task.projectId) {
-    const doneColumn = await doneColumnForProject(ctx, task.projectId);
-    if (doneColumn && task.columnId !== doneColumn._id) {
-      patch.columnId = doneColumn._id;
-      patch.order = await nextOrderInColumn(ctx, doneColumn._id);
-    }
-  }
-
-  await ctx.db.patch(task._id, patch);
-
-  // Recorrência: gera a próxima instância
-  if (task.recurrence) {
-    await ctx.scheduler.runAfter(0, internal.tasks.processRecurringTasks);
-  }
-
-  await ctx.db.insert("auditLogs", {
-    organizationId: task.organizationId,
-    entityType: "task",
-    entityId: task._id,
-    action: "update",
-    actorId: actor._id,
-    actorType: actor.type === "ai" ? "ai" : "human",
-    changes: { before: { status: task.status }, after: { status: "completed" } },
-    metadata: { title: task.title },
-    description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes: { before: { status: task.status }, after: { status: "completed" } } }),
-    severity: "medium",
-    createdAt: now,
-  });
-
-  if (task.leadId) {
-    await ctx.db.insert("activities", {
-      organizationId: task.organizationId,
-      leadId: task.leadId,
-      type: "task_completed",
-      actorId: actor._id,
-      actorType: actor.type === "ai" ? "ai" : "human",
-      content: `Task "${task.title}" completed`,
-      metadata: { taskId: task._id },
-      createdAt: now,
-    });
-  }
-
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-    organizationId: task.organizationId,
-    event: "task.completed",
-    payload: { taskId: task._id, title: task.title },
-  });
+  await applyTaskCompletion(ctx, task, actor, now, placement);
+  await syncFollowUpForTask(ctx, task._id);
 }
 
 // Antes de deletar: órfã as subtarefas e limpa as tasks de dependências alheias.
@@ -1152,6 +1092,13 @@ export const updateTask = mutation({
       }
     }
 
+    // v1 do follow-up da IA: recorrência e execução automática não convivem
+    // (`processRecurringTasks` copia campos explicitamente, e a próxima
+    // ocorrência nasceria sem o vínculo — um follow-up fantasma).
+    if (args.recurrence !== undefined && changes.recurrence !== undefined) {
+      await assertNoActiveFollowUpForRecurrence(ctx, args.taskId);
+    }
+
     // ---- P1: responsáveis (assigneeIds é a fonte, assignedTo o espelho) ----
     const previousAssignees = readAssignees(task);
     let nextAssignees: Id<"teamMembers">[] | null = null;
@@ -1320,6 +1267,10 @@ export const updateTask = mutation({
       event: "task.updated",
       payload: { taskId: args.taskId, changes },
     });
+
+    // A tarefa é a fonte do "quando" e do "de quem": remarcar, concluir,
+    // cancelar ou trocar o responsável reflete no follow-up da IA.
+    await syncFollowUpForTask(ctx, args.taskId);
 
     return null;
   },
@@ -1511,6 +1462,9 @@ export const setAssignees = mutation({
       actor: userMember,
     });
 
+    // Responsável deixou de ser o atendente → a execução automática sai de cena.
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -1553,6 +1507,8 @@ export const cancelTask = mutation({
       event: "task.cancelled",
       payload: { taskId: args.taskId, title: task.title },
     });
+
+    await syncFollowUpForTask(ctx, args.taskId);
 
     return null;
   },
@@ -1620,6 +1576,8 @@ export const assignTask = mutation({
       actor: userMember,
     });
 
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -1673,6 +1631,8 @@ export const snoozeTask = mutation({
       payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
     });
 
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -1709,6 +1669,10 @@ export const deleteTask = mutation({
       event: "task.deleted",
       payload: { taskId: args.taskId, title: task.title },
     });
+
+    // Follow-up da IA ANTES do delete: depois não há doc para cancelar o
+    // agendamento em voo, e o `fire` acordaria para uma tarefa inexistente.
+    await resolveFollowUpForDeletedTask(ctx, args.taskId);
 
     // Órfã as subtarefas e limpa a task das dependências alheias
     await unlinkTaskReferences(ctx, [task]);
@@ -1813,18 +1777,23 @@ export const bulkUpdateTasks = mutation({
         await applyCompletion(ctx, task, userMember, now);
       } else if (args.action === "cancel") {
         await ctx.db.patch(taskId, { status: "cancelled", updatedAt: now });
+        await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "assign") {
         await ctx.db.patch(taskId, {
           assignedTo: assignees[0],
           assigneeIds: assignees,
           updatedAt: now,
         });
+        await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "delete") {
         toDelete.push(task);
       }
     }
 
     if (toDelete.length > 0) {
+      for (const task of toDelete) {
+        await resolveFollowUpForDeletedTask(ctx, task._id);
+      }
       await unlinkTaskReferences(ctx, toDelete);
       for (const task of toDelete) {
         const comments = await ctx.db.query("taskComments")
@@ -1984,7 +1953,23 @@ export const internalGetTask = internalQuery({
       ctx.db.get(task.createdBy),
     ]);
 
-    return { ...task, assignee, lead, contact, creator };
+    // Bots (REST `GET /api/v1/tasks/get` e MCP `crm_get_task`) precisam saber
+    // que esta tarefa é executada pela IA, e quando — senão um agente externo
+    // "ajuda" remarcando uma tarefa que na verdade dispara mensagem a cliente.
+    const followUp = await followUpForTask(ctx, task._id);
+    const aiFollowUp = followUp
+      ? {
+          status: followUp.status,
+          dueAt: followUp.dueAt,
+          note: followUp.note ?? null,
+          reason: followUp.reason ?? null,
+          chainIndex: followUp.chainIndex,
+          conversationId: followUp.conversationId,
+          agentMemberId: followUp.agentMemberId,
+        }
+      : null;
+
+    return { ...task, assignee, lead, contact, creator, aiFollowUp };
   },
 });
 
@@ -2297,6 +2282,8 @@ export const internalUpdateTask = internalMutation({
       payload: { taskId: args.taskId, changes },
     });
 
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -2354,6 +2341,7 @@ export const internalDeleteTask = internalMutation({
       payload: { taskId: args.taskId, title: task.title },
     });
 
+    await resolveFollowUpForDeletedTask(ctx, args.taskId);
     await unlinkTaskReferences(ctx, [task]);
 
     const comments = await ctx.db.query("taskComments")
@@ -2428,6 +2416,8 @@ export const internalAssignTask = internalMutation({
       });
     }
 
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -2479,6 +2469,8 @@ export const internalSnoozeTask = internalMutation({
       payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
     });
 
+    await syncFollowUpForTask(ctx, args.taskId);
+
     return null;
   },
 });
@@ -2514,6 +2506,7 @@ export const internalBulkUpdate = internalMutation({
         await applyCompletion(ctx, task, teamMember, now);
       } else if (args.action === "cancel") {
         await ctx.db.patch(taskId, { status: "cancelled", updatedAt: now });
+        await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "assign") {
         const assignees = args.assignedTo
           ? await normalizeAssignees(ctx, task.organizationId, [args.assignedTo])
@@ -2523,12 +2516,16 @@ export const internalBulkUpdate = internalMutation({
           assigneeIds: assignees,
           updatedAt: now,
         });
+        await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "delete") {
         toDelete.push(task);
       }
     }
 
     if (toDelete.length > 0) {
+      for (const task of toDelete) {
+        await resolveFollowUpForDeletedTask(ctx, task._id);
+      }
       await unlinkTaskReferences(ctx, toDelete);
       for (const task of toDelete) {
         const comments = await ctx.db.query("taskComments")

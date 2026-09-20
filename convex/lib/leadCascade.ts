@@ -23,6 +23,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
 import { deleteBlobIfUnreferenced } from "./fileRefs";
+import { purgeFollowUpsOfConversation } from "./followUpOps";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -107,6 +108,11 @@ export async function deleteConversationCascade(
   conversationId: Id<"conversations">,
   budget: WriteBudget
 ): Promise<boolean> {
+  // Follow-ups da IA PRIMEIRO: cancelar o `runAt` em voo antes de apagar a
+  // conversa. Sem isto o `fire` acorda amanhã para uma conversa que não existe
+  // mais — e a tarefa dele sobreviveria à cascata (ela só perde o `leadId`).
+  if (!(await purgeFollowUpsOfConversation(ctx, conversationId, budget))) return false;
+
   while (budget.left > 0) {
     const page = await ctx.db
       .query("messages")

@@ -897,7 +897,7 @@ Get a single task.
 
 **Query params:** id (required)
 
-**Response:** \`{ task: {...} }\`
+**Response:** \`{ task: {...} }\`. Since v0.60, the task document also carries an \`aiFollowUp\` field (\`null\` when the task is not an AI follow-up): \`{ status: "scheduled"|"queued"|"drafted"|"done"|"not_needed"|"needs_human"|"canceled", dueAt, note: string|null, reason: string|null, chainIndex, conversationId, agentMemberId }\`. This means the AI attendant that owns the task is going to re-read the conversation and act on it (send a message, or decide none is needed) at \`dueAt\` — a bot editing \`dueDate\`/\`assignedTo\` on such a task is changing when/whether a customer gets contacted, not just reassigning busywork. Scheduling or resolving a follow-up is app/attendant-only for now — there is no write endpoint for \`aiFollowUps\` yet.
 
 #### GET /api/v1/tasks/my
 Get the authenticated agent's pending and in-progress tasks.
@@ -1630,6 +1630,8 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | conversation.returned_to_ai | A human gave the conversation back to the AI attendant (optionally with an instruction) |
 | task.moved | Task moved to a different kanban column (P1) |
 | task.due_soon | Early reminder (reminderMinutesBefore) fired for a task (P1) |
+| task.followup_executed | An AI follow-up ran at its due time (payload: followUpId, taskId, conversationId, leadId, outcome \`done\`/\`not_needed\`, messageId) |
+| task.followup_needs_human | The AI could not run a follow-up it had scheduled; the task went back to a human (payload: followUpId, taskId, conversationId, leadId, reason, assignedTo) |
 | task_project.created | Task project created (P1) |
 | task_project.updated | Task project or one of its columns updated (P1) |
 | task_project.archived | Task project archived (P1) |

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -29,6 +29,9 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   group_post_failed: CalendarX,
   group_opportunity: TrendingUp,
   group_digest: FileText,
+  // v0.60 — a IA não conseguiu fazer o follow-up que ela mesma agendou; a
+  // tarefa voltou para a equipe.
+  ai_followup_needs_human: Bot,
 };
 
 const PAGE_SIZE = 15;
@@ -137,6 +140,19 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     if (n.type === "group_post_pending" || n.type === "group_post_failed") {
       navigate(
         n.groupPostId ? `${TAB_ROUTES.groups}?post=${n.groupPostId}` : TAB_ROUTES.groups
+      );
+      return;
+    }
+    // A IA não conseguiu executar um follow-up que ela mesma agendou: a
+    // tarefa é onde a equipe decide o que fazer agora — só cai na conversa se
+    // por algum motivo a tarefa não vier junto.
+    if (n.type === "ai_followup_needs_human") {
+      navigate(
+        n.taskId
+          ? `${TAB_ROUTES.tasks}?task=${n.taskId}`
+          : n.conversationId
+            ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}`
+            : TAB_ROUTES.tasks
       );
       return;
     }

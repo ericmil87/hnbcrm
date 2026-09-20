@@ -519,7 +519,8 @@ describe("simulador + golden com áudio (F4)", () => {
     expect(again).toEqual(first); // idempotente pelo nome
 
     const evals = await t.run(async (ctx) => ctx.db.query("agentEvals").collect());
-    expect(evals).toHaveLength(3);
+    // 3 de mídia (áudio, comprovante por imagem, PDF) + 2 de follow-up (v0.60).
+    expect(evals).toHaveLength(5);
     expect(evals.every((e) => e.createdBy === seed.humanId)).toBe(true);
 
     const audio = evals.find((e) => e.tags?.includes("audio"))!;
@@ -537,5 +538,14 @@ describe("simulador + golden com áudio (F4)", () => {
     expect(pdf.transcript.filter((turn) => turn.file)).toHaveLength(1);
     expect(pdf.transcript.find((turn) => turn.file)!.content).toMatch(/\.pdf$/);
     expect(pdf.expectation).toMatch(/NUNCA fingir ter lido/i);
+
+    // Follow-up (v0.60): as duas goldens levam o turno PROATIVO persistido —
+    // sem `followUp` no doc, o replay rodaria o turno reativo e a golden
+    // deixaria de proteger a regra que ela existe para proteger.
+    const followUps = evals.filter((e) => e.tags?.includes("follow_up"));
+    expect(followUps).toHaveLength(2);
+    expect(followUps.every((e) => !!e.followUp?.title)).toBe(true);
+    const resolvido = followUps.find((e) => /comprovante já chegou/i.test(e.name))!;
+    expect(resolvido.expectation).toMatch(/NÃO mandar mensagem/i);
   });
 });

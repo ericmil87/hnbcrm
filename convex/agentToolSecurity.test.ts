@@ -50,6 +50,9 @@ describe("superfície de tools de IA (teste de build)", () => {
     // `groupChatId`/`groupPostId`: o copiloto os recebe do modelo (ele navega a
     // org), o agente DE GRUPO nunca — a sala dele vem do claim.
     const copilotAllowed = new Set(["leadId", "contactId", "groupChatId", "groupPostId"]);
+    // `taskId`/`followUpId` (v0.60) não são exceção de ninguém: nem o copiloto
+    // recebe id de tarefa do modelo hoje, e o follow-up do atendente é
+    // endereçado por ÍNDICE ORDINAL resolvido no servidor.
     for (const tool of ALL_AGENT_TOOLS) {
       const props = Object.keys(
         (tool.parameters as { properties?: Record<string, unknown> }).properties ?? {}
@@ -147,6 +150,35 @@ describe("superfície de tools de IA (teste de build)", () => {
       expect(Object.keys(projected)).not.toContain("bridgeBaseUrl");
       expect(Object.keys(projected)).not.toContain("channelConfigId");
     }
+  });
+
+  // ── Follow-up da IA (v0.60) ──
+  test("atendente: resolveFollowUp existe e não recebe id nenhum do modelo", () => {
+    const tool = ATTENDANT_TOOLS.find((t) => t.name === "resolveFollowUp");
+    expect(tool, "resolveFollowUp precisa existir no registry do atendente").toBeTruthy();
+    const props = Object.keys(
+      (tool!.parameters as { properties?: Record<string, unknown> }).properties ?? {}
+    );
+    // O modelo endereça o follow-up por índice ordinal — jamais por id.
+    expect(props).toContain("index");
+    for (const injected of ["taskId", "followUpId", "conversationId", "leadId"]) {
+      expect(props.includes(injected), `resolveFollowUp expõe '${injected}'`).toBe(false);
+    }
+  });
+
+  test("scheduleFollowUp não devolve id de tarefa ao modelo", () => {
+    const tool = ATTENDANT_TOOLS.find((t) => t.name === "scheduleFollowUp")!;
+    for (const field of tool.resultFields) {
+      expect(
+        /^(taskId|followUpId|leadId|contactId|conversationId)$/.test(field),
+        `scheduleFollowUp devolveria o id '${field}' ao modelo`
+      ).toBe(false);
+    }
+  });
+
+  test("taskId e followUpId estão na lista de parâmetros injetados", () => {
+    expect(INJECTED_PARAM_NAMES).toContain("taskId");
+    expect(INJECTED_PARAM_NAMES).toContain("followUpId");
   });
 
   test("toda tool declara permissão RBAC", () => {

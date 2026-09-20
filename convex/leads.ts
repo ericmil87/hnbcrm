@@ -17,6 +17,7 @@ import {
   scheduleLeadCascade,
 } from "./lib/leadCascade";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { cancelFollowUpsOfLead } from "./lib/followUpOps";
 
 // Get leads for organization
 export const getLeads = query({
@@ -1741,6 +1742,14 @@ export const bulkArchiveLeads = mutation({
         archivedAt: args.archived ? now : undefined,
         updatedAt: now,
       });
+
+      // Arquivar o lead NÃO arquiva a conversa dele — e sem isto o atendente IA
+      // seguiria executando os follow-ups que agendou, cobrando um cliente de um
+      // negócio que a equipe acabou de tirar do funil. Cap por lead para o bulk
+      // não estourar a transação.
+      if (args.archived) {
+        await cancelFollowUpsOfLead(ctx, leadId, "lead_arquivado");
+      }
 
       // Audit log. Note: auditLogs.action is a constrained union (no archive verb),
       // so we record it as "update" with a custom PT-BR description + metadata flag.

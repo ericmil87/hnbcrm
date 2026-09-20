@@ -4,9 +4,11 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth, requirePermission } from "./lib/auth";
-import { createNotification } from "./lib/notify";
+// `inboxRepliers` mudou para lib/notify: o follow-up da IA usa a MESMA regra
+// de destinatário e não pode importar deste módulo (ciclo).
+import { createNotification, inboxRepliers } from "./lib/notify";
+import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { getLeadRef } from "./lib/leadRef";
-import { resolvePermissions, hasPermission, type Role } from "./lib/permissions";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -66,32 +68,6 @@ async function resolveLeadPrimaryConversationId(
   );
   const active = byRecency.find((c) => c.archivedAt === undefined);
   return (active ?? byRecency[0])._id;
-}
-
-// Humanos ativos com direito de RESPONDER no inbox — o público de um repasse
-// sem destinatário definido. Cap de 25 p/ proteger a transação em orgs grandes.
-async function inboxRepliers(
-  ctx: { db: QueryCtx["db"] },
-  organizationId: Id<"organizations">
-): Promise<Doc<"teamMembers">[]> {
-  const members = await ctx.db
-    .query("teamMembers")
-    .withIndex("by_organization_and_type", (q) =>
-      q.eq("organizationId", organizationId).eq("type", "human")
-    )
-    .collect();
-
-  return members
-    .filter(
-      (m) =>
-        m.status === "active" &&
-        hasPermission(
-          resolvePermissions(m.role as Role, m.permissions ?? undefined),
-          "inbox",
-          "reply"
-        )
-    )
-    .slice(0, 25);
 }
 
 /**
@@ -380,6 +356,15 @@ async function acceptHandoffCore(
     // (campo é validado na criação, mas repasse é documento durável).
     if (conversation && conversation.organizationId === handoff.organizationId) {
       conversationId = candidateId;
+      // Quem aceitou ASSUMIU a conversa: os follow-ups que a IA tinha marcado
+      // aqui viram tarefa dela — nunca mensagem automática por cima de um
+      // humano que já está no volante.
+      await escalateFollowUpsOfConversation(
+        ctx,
+        candidateId,
+        `${member.name} assumiu a conversa pelo repasse`,
+        { assignTo: member._id }
+      );
       await ctx.db.patch(candidateId, {
         // Conversa 1 a 1: pausa indefinida — o humano assumiu e "Devolver à IA"
         // está a um clique no inbox.

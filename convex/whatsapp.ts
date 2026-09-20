@@ -44,6 +44,7 @@ import {
 import { toDataUri } from "./lib/bridgeMedia";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
 import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
+import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import { getLeadRef } from "./lib/leadRef";
 
@@ -905,6 +906,9 @@ export const internalMarkDispatched = internalMutation({
     }
     // Campanhas: destinatário → sent (no-op fora de campanha)
     await applyCampaignDeliveryUpdate(ctx, { messageId: args.messageId, status: "sent" });
+    // Follow-up da IA: commit ≠ entregue. A tarefa só conclui AQUI, quando o
+    // provider aceitou a mensagem (no-op fora de follow-up).
+    await applyFollowUpDeliveryUpdate(ctx, { messageId: args.messageId, ok: true });
     return null;
   },
 });
@@ -950,6 +954,13 @@ export const internalMarkDispatchFailed = internalMutation({
       status: "failed",
       errorCode: args.errorCode,
       errorDetail: args.detail,
+    });
+    // Follow-up da IA: envio recusado NÃO conclui a tarefa — ela volta para a
+    // equipe com o motivo (no-op fora de follow-up).
+    await applyFollowUpDeliveryUpdate(ctx, {
+      messageId: args.messageId,
+      ok: false,
+      detail: args.detail,
     });
     return null;
   },

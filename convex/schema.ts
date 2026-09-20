@@ -250,6 +250,27 @@ const agentProfileValidator = v.object({
   autopilotEarlyAck: v.optional(
     v.object({ acceptedAt: v.number(), acceptedBy: v.id("teamMembers") })
   ),
+  /**
+   * Follow-ups que o PRÓPRIO atendente executa no vencimento (v0.60).
+   *
+   * Ausente = `mode:"draft"` (D1 da aprovação): a tarefa deixa de ser cosmética
+   * em toda org, mas nada sai sozinho. Os números são todos configuráveis pela
+   * UI de propósito — `lib/followUpSettings.ts` resolve os efetivos e é a fonte
+   * ÚNICA compartilhada por backend e frontend.
+   *
+   * `quietStartHour`/`quietEndHour` (default 8–20) valem SEMPRE, INTERSECTADOS
+   * com o `schedule` acima: um atendente 24h não pode cobrar Pix às 3h da
+   * manhã. `dailyCap` é por NÚMERO (canal), com 0 = sem teto.
+   */
+  followUps: v.optional(
+    v.object({
+      mode: v.union(v.literal("off"), v.literal("draft"), v.literal("send")),
+      maxChain: v.optional(v.number()),
+      quietStartHour: v.optional(v.number()),
+      quietEndHour: v.optional(v.number()),
+      dailyCap: v.optional(v.number()),
+    })
+  ),
 });
 
 // ── Campanhas de WhatsApp (disparo em massa) ──
@@ -1517,7 +1538,12 @@ const applicationTables = {
       // NUNCA manda a DM sozinha (D3 + risco de ban).
       v.literal("group_opportunity"),
       // F4 — digest diário do grupo (resumo + perguntas sem resposta).
-      v.literal("group_digest")
+      v.literal("group_digest"),
+      // v0.60 — a IA não conseguiu fazer o follow-up que ela mesma agendou
+      // (humano assumiu, teto, janela do Meta fechada, número caiu). A tarefa
+      // volta a ser de gente, e esta é a notificação que impede o P0.2 —
+      // "tarefa da IA vence e nada acontece, em silêncio".
+      v.literal("ai_followup_needs_human")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -1647,6 +1673,10 @@ const applicationTables = {
     // IA em grupos (F4) — oportunidade detectada / digest diário
     groupOpportunity: v.optional(v.boolean()),
     groupDigest: v.optional(v.boolean()),
+    // Follow-up da IA que precisou virar tarefa de gente (v0.60). Só sino —
+    // não existe template de e-mail para este evento (ver `emailTemplates.ts`,
+    // que é fail-closed), e `dispatchNotification` nunca é chamado com ele.
+    aiFollowupNeedsHuman: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1977,6 +2007,10 @@ const applicationTables = {
     // Run iniciada por humano (coach/return_to_ai): fica FORA das métricas de
     // aceitação — rascunho ditado pelo time não mede "a IA sozinha acerta?".
     humanInitiated: v.optional(v.boolean()),
+    // Turno PROATIVO (follow-up agendado pela própria IA): também fica fora do
+    // gate do autopilot. Um rascunho de follow-up descartado ("não era para
+    // mandar nada") não é rejeição do atendente — contá-lo derrubaria a taxa.
+    proactive: v.optional(v.boolean()),
     provider: v.optional(v.string()), // provider efetivo (ex. "opencode-go")
     model: v.optional(v.string()), // id canônico do modelo
     requestCount: v.number(), // nº de chamadas /chat/completions na run
@@ -2030,9 +2064,20 @@ const applicationTables = {
     // "group_mention" (F4) = turno do AGENTE DE GRUPO: outro produto, outro
     // prompt, outras tools e tetos próprios do grupo. Compartilha a fila só
     // pelo que ela já resolve (debounce, coalescing, backoff).
+    // "follow_up" (v0.60) = turno PROATIVO no vencimento de um follow-up que a
+    // própria IA agendou: nenhum inbound novo o disparou, e por isso ele PERDE
+    // para qualquer turno reativo/instruído (o coalescing devolve o follow-up
+    // para `scheduled`).
     origin: v.optional(
-      v.union(v.literal("coach"), v.literal("return_to_ai"), v.literal("group_mention"))
+      v.union(
+        v.literal("coach"),
+        v.literal("return_to_ai"),
+        v.literal("group_mention"),
+        v.literal("follow_up")
+      )
     ),
+    // Follow-up que originou este item (só com origin "follow_up").
+    followUpId: v.optional(v.id("aiFollowUps")),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
     // Rascunho que esta run substitui (regeneração) — vira status "revised".
@@ -2044,6 +2089,79 @@ const applicationTables = {
     .index("by_conversation_and_status", ["conversationId", "status"])
     .index("by_organization_and_status", ["organizationId", "status"])
     .index("by_status_and_next_attempt", ["status", "nextAttemptAt"]),
+
+  /**
+   * Follow-ups que o ATENDENTE executa sozinho no vencimento (v0.60).
+   *
+   * O estado de EXECUÇÃO mora aqui; a TAREFA (`tasks`) continua sendo a vitrine
+   * — é o que o humano vê, edita e remarca. Não virou campo em `tasks` porque
+   * `tasks.ts` tem oito escritores de prazo/estado, `processRecurringTasks`
+   * copia campos explicitamente (um campo novo não iria para a próxima
+   * ocorrência), o watchdog precisa de um índice por status+prazo que `tasks`
+   * não tem, e a NOTA da IA é texto influenciado pelo cliente — não pode se
+   * misturar a `tasks.description`, que é confiável por ser escrita por humano.
+   *
+   * `tasks.dueDate` é a fonte do "quando"; `dueAt` o espelha, e
+   * `syncFollowUpForTask` (lib/followUpOps.ts) mantém os dois casados.
+   */
+  aiFollowUps: defineTable({
+    organizationId: v.id("organizations"),
+    taskId: v.id("tasks"),
+    conversationId: v.id("conversations"),
+    leadId: v.id("leads"),
+    contactId: v.optional(v.id("contacts")),
+    agentMemberId: v.id("teamMembers"),
+    status: v.union(
+      v.literal("scheduled"), // armado, esperando o prazo
+      v.literal("queued"), // turno na fila do atendente
+      v.literal("drafted"), // rascunho no inbox aguardando um humano
+      v.literal("done"), // mensagem entregue (ou rascunho aceito)
+      v.literal("not_needed"), // a IA releu a conversa e concluiu que não precisa
+      v.literal("needs_human"), // não deu — a tarefa volta a ser de gente
+      v.literal("canceled")
+    ),
+    dueAt: v.number(),
+    /** Nota da IA para o "eu do futuro" — saneada (lib/followUpNote.ts). */
+    note: v.optional(v.string()),
+    /** Follow-ups SEGUIDOS sem nenhum inbound do cliente (anti-insistência). */
+    chainIndex: v.number(),
+    /** Adiamentos por fila ocupada / sessão instável (teto 3). */
+    deferrals: v.number(),
+    /** Agendamento em voo do `fire`, para cancelar ao remarcar. */
+    schedulerFnId: v.optional(v.string()),
+    /**
+     * Instante para o qual o follow-up está armado AGORA (já com jitter).
+     *
+     * Existe por causa do job ZUMBI: "Executar agora" consome o follow-up sem
+     * cancelar o `runAt` do prazo original, e se o turno abortar e a IA
+     * remarcar para depois, aquele job acordaria ANTES da nova data e mandaria
+     * a mensagem dias antes do combinado. `dueAt` não serve de referência
+     * porque os re-armes por adiamento (fila ocupada, janela, teto diário) não
+     * movem o prazo da tarefa — só este campo.
+     */
+    nextFireAt: v.optional(v.number()),
+    firedAt: v.optional(v.number()),
+    resultMessageId: v.optional(v.id("messages")),
+    draftMessageId: v.optional(v.id("messages")),
+    queueItemId: v.optional(v.id("aiReplyQueue")),
+    /** Motivo legível do desfecho (aparece na tarefa e na notificação). */
+    reason: v.optional(v.string()),
+    /**
+     * Código ESTÁVEL do motivo (`FOLLOW_UP_REASON_CODES` em lib/followUpOps).
+     * A UI tem o mapa dela; `reason` continua sendo a frase pronta para quem
+     * lê o doc cru (comentário na tarefa, REST). Ausente quando o motivo foi
+     * escrito à mão (ex.: "execução automática desligada por Fulano").
+     */
+    reasonCode: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    // Watchdog: DEPLOYMENT-WIDE de propósito (como `groupPosts.by_status_and_next_run`)
+    // — a pergunta é "que follow-up perdeu o agendamento?", sem org.
+    .index("by_status_and_due", ["status", "dueAt"])
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_task", ["taskId"])
+    .index("by_organization_and_status", ["organizationId", "status"]),
 
   // Cursor de pacing de inferência por org (espelha o nextDispatchAt do WhatsApp,
   // mas em doc próprio para não contender no doc da organização).
@@ -2294,6 +2412,12 @@ const applicationTables = {
     // Um slot que posta em 5 grupos conta 1 — quem espaça as 5 mensagens é o
     // pacing normal do canal.
     groupPostDaily: v.optional(v.object({ day: v.string(), sent: v.number() })),
+    // Follow-ups do atendente disparados no dia UTC, COM enforcement (teto em
+    // `agentProfile.followUps.dailyCap`; default 30 no bridge / 100 no Meta).
+    // Follow-up é envio FRIO: 300 conversas com "te chamo amanhã às 9h"
+    // saturariam o cursor do canal por mais de uma hora, e atrás dele ficam as
+    // respostas REATIVAS de quem está falando com a empresa agora.
+    followUpDaily: v.optional(v.object({ day: v.string(), sent: v.number() })),
   }).index("by_channel_config", ["channelConfigId"]),
 
   // Segredos por-org (BYO API key de LLM), cifrados via lib/secretCrypto.
@@ -2383,6 +2507,13 @@ const applicationTables = {
     ),
     expectation: v.string(),
     tags: v.optional(v.array(v.string())),
+    // Golden de FOLLOW-UP (v0.60): o replay roda o turno PROATIVO (outro user
+    // message, outras tools) em vez do turno reativo.
+    followUp: v.optional(v.object({ title: v.string(), note: v.optional(v.string()) })),
+    // "E se hoje fosse 07/10?" — congela o relógio do carimbo de data/hora no
+    // replay. Sem isto, golden com regra de data deriva com o dia real
+    // (pendência conhecida da v0.58).
+    simulatedNow: v.optional(v.number()),
     createdBy: v.id("teamMembers"),
     createdAt: v.number(),
   }).index("by_organization", ["organizationId"]),

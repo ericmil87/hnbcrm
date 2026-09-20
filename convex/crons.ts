@@ -19,6 +19,11 @@ crons.interval("group posts watchdog", { hours: 1 }, internal.groupPostWorker.in
 // grupos cujo `ai.dailyDigestAt` bate com a hora local da org.
 crons.interval("group daily digests", { hours: 1 }, internal.groupAgent.internalRunGroupDigests, {});
 
+// Follow-ups da IA: resgata quem perdeu o `runAt` (deploy, restore) e encerra
+// o que ficou preso em `queued`. A promessa da feature é que nada vence em
+// silêncio — este cron é a rede de segurança disso.
+crons.interval("ai follow-ups watchdog", { hours: 1 }, internal.attendantFollowUp.internalWatchdog, {});
+
 // Blobs de export vivem 7 dias (exportJobs.expiresAt); a limpeza roda de hora em hora.
 crons.interval("cleanup expired exports", { hours: 1 }, internal.exports.internalCleanupExpired, {});
 
