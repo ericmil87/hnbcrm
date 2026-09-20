@@ -1109,6 +1109,64 @@ describe("turno de follow-up", () => {
     expect(await t.run(async (ctx) => ctx.db.query("handoffs").collect())).toHaveLength(0);
   });
 
+  // E2E de 19/09/2026: o deepseek-v4-flash gastou os 1200 tokens pensando e
+  // devolveu 0 tool calls — o follow-up morria em needs_human sem decisão.
+  test("segunda chance: resposta vazia ganha UMA rodada corretiva e a mensagem sai", async () => {
+    const t = setup();
+    const { followUp } = await fireReady(t, {
+      mode: "autopilot",
+      followUps: { mode: "send" },
+    });
+
+    const { fetchMock } = await runQueuedTurn(t, [
+      { kind: "empty" },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Oi! Conseguiu fazer o pix?" } },
+    ]);
+
+    const bodies = fetchMock.mock.calls.map(
+      (c) => JSON.parse(((c as unknown[])[1] as { body: string }).body) as {
+        max_tokens: number;
+        tool_choice: string;
+        messages: { role: string; content: string | null }[];
+      }
+    );
+    expect(bodies[0].max_tokens).toBe(3000); // folga para o reasoning
+    expect(bodies[0].tool_choice).toBe("auto");
+    expect(bodies[1].tool_choice).toBe("required");
+    // A mensagem vazia do assistant saiu do histórico; entrou a cobrança de decisão.
+    expect(bodies[1].messages.some((m) => m.role === "assistant")).toBe(false);
+    expect(bodies[1].messages.at(-1)!.content).toContain("Você não chamou nenhuma ferramenta");
+
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+    );
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].content).toContain("Conseguiu fazer o pix?");
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated!.resultMessageId).toBe(outbound[0]._id);
+  });
+
+  test("segunda chance: raciocínio em texto solto vira decisão por ferramenta, sem mensagem", async () => {
+    const t = setup();
+    const { followUp } = await fireReady(t, {
+      mode: "autopilot",
+      followUps: { mode: "send" },
+    });
+
+    await runQueuedTurn(t, [
+      { kind: "text", content: "O comprovante já chegou, então não preciso mandar nada." },
+      { kind: "tool", name: "resolveFollowUp", args: { outcome: "not_needed", reason: "Comprovante já recebido" } },
+      { kind: "empty" },
+    ]);
+
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+    );
+    expect(outbound).toHaveLength(0); // o raciocínio NUNCA chega ao cliente
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated!.status).toBe("not_needed");
+  });
+
   test("cliente falou durante a geração: aborta e devolve o follow-up a scheduled", async () => {
     const t = setup();
     const { seed, followUp } = await fireReady(t, {

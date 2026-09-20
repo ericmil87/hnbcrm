@@ -1553,8 +1553,9 @@ function FollowUpCard({
               {runBusy ? "Executando…" : "Executar agora"}
             </Button>
           )}
-          {/* Desligou a execução automática e se arrependeu: dá para religar. */}
-          {status === "canceled" && canAdopt && (
+          {/* Desligou a execução automática (ou a IA não conseguiu) e a tarefa
+              voltou para o atendente: dá para religar. */}
+          {(status === "canceled" || status === "needs_human") && canAdopt && (
             <Button type="button" variant="secondary" size="sm" disabled={adoptBusy} onClick={onAdopt}>
               <Bot size={13} className="mr-1.5" />
               {adoptBusy ? "Pedindo…" : "Pedir para a IA executar"}

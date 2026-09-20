@@ -1180,6 +1180,8 @@ type AttendantToolExecArgs = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_FOLLOW_UP_HORIZON_MS = 30 * DAY_MS;
+/** Teto de saída do turno de follow-up (reasoning + tool call). Ver a "segunda chance" no runtime. */
+const FOLLOW_UP_MAX_TOKENS = 3000;
 
 /**
  * Título do follow-up: MESMO saneamento da nota (URL, e-mail, telefone, chave
@@ -2818,18 +2820,36 @@ export const internalProcessQueueItem = internalAction({
       // Turno de follow-up: "não mandar nada" é um DESFECHO, e precisa ter sido
       // decidido por ferramenta — texto solto do modelo não conta.
       let followUpResolvedThisRun = false;
+      // SEGUNDA CHANCE do turno de follow-up. Medido no E2E de 19/09/2026: o
+      // deepseek-v4-flash (modelo de raciocínio) recebeu "releia e decida",
+      // gastou os 1200 tokens INTEIROS pensando e devolveu 0 tool calls — e o
+      // follow-up morria em `needs_human` sem a IA ter decidido nada. Como o
+      // fallback de texto puro está desligado aqui (de propósito), uma resposta
+      // sem ferramenta ganha UMA rodada corretiva exigindo a decisão.
+      let followUpNudged = false;
+      let nextToolChoice: "auto" | "required" = "auto";
 
       for (let round = 0; round < context.maxToolCalls + 2; round++) {
         let resp;
         try {
-          resp = await chatWithFallback(routes, {
+          const request = {
             messages,
             tools,
-            toolChoice: "auto",
             temperature: context.temperature,
-            // Folga p/ reasoning do deepseek (700 estourava e vinha vazio).
-            maxTokens: 1200,
-          });
+            // Folga p/ reasoning do deepseek (700 estourava e vinha vazio). O
+            // turno de follow-up delibera mais (reler + decidir): 1200 estourava.
+            maxTokens: context.followUp ? FOLLOW_UP_MAX_TOKENS : 1200,
+          };
+          try {
+            resp = await chatWithFallback(routes, { ...request, toolChoice: nextToolChoice });
+          } catch (e) {
+            // Nem todo provedor aceita tool_choice "required" (e o OpenRouter
+            // roda com require_parameters): cai para "auto" em vez de perder a
+            // rodada corretiva.
+            if (nextToolChoice !== "required") throw e;
+            resp = await chatWithFallback(routes, { ...request, toolChoice: "auto" });
+          }
+          nextToolChoice = "auto";
         } catch (e) {
           // RECUPERAÇÃO da continuação: o OpenCode Go pode 400ar de forma
           // determinística na 2ª chamada com histórico de tool_calls (visto no
@@ -2897,6 +2917,21 @@ export const internalProcessQueueItem = internalAction({
           // agente de grupo (v0.57).
           if (!replyText && !context.followUp && resp.message.content?.trim()) {
             replyText = resp.message.content.trim();
+          }
+          if (context.followUp && !replyText && !followUpResolvedThisRun && !followUpNudged) {
+            followUpNudged = true;
+            nextToolChoice = "required";
+            // Mensagem de assistant VAZIA (o modelo estourou pensando) quebra a
+            // continuação em parte dos provedores — sai do histórico.
+            if (!resp.message.content?.trim()) messages.pop();
+            messages.push({
+              role: "user",
+              content:
+                "Você não chamou nenhuma ferramenta, então NADA aconteceu. Decida agora, sem explicar: " +
+                "chame replyToCustomer com a mensagem curta ao cliente, OU resolveFollowUp " +
+                '(outcome "not_needed" se o assunto já se resolveu; "reschedule" se o cliente pediu outra data).',
+            });
+            continue;
           }
           break;
         }
