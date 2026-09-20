@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw } from "lucide-react";
+import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
@@ -33,6 +33,9 @@ type AiDraftMeta = {
   instruction?: string;
   previousDraftId?: string;
   nextDraftId?: string;
+  // v0.60 — vínculo com o follow-up que a IA mesma agendou (segue o rascunho
+  // no coaching/supersede; ver convex/attendantFollowUp.ts).
+  followUpId?: string;
 };
 
 // Atalhos de coaching — clicar preenche o campo, o humano ainda pode editar
@@ -219,6 +222,12 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
   return (
     <div className="flex justify-end">
       <div className="w-full max-w-md rounded-xl border border-purple-500/40 bg-purple-500/5 overflow-hidden">
+        {draft.followUpId && (
+          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-medium text-purple-300/80">
+            <Bot size={11} className="shrink-0" />
+            Rascunho de follow-up agendado
+          </div>
+        )}
         <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
           <Sparkles size={14} className="text-purple-400 shrink-0" />
           <span className="flex-1 min-w-0 text-xs font-medium text-purple-300">

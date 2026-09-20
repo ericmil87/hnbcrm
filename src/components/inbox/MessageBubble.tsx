@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { GroupMentionText } from "./GroupMentionText";
@@ -422,6 +422,14 @@ export function MessageBubble({
                 title="Enviada por campanha"
               >
                 <Megaphone size={9} /> Campanha
+              </span>
+            )}
+            {message.metadata?.followUp && (
+              <span
+                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-[10px] font-medium opacity-80"
+                title="Follow-up executado pela IA"
+              >
+                <Bot size={9} /> follow-up
               </span>
             )}
           </div>

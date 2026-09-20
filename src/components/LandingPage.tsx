@@ -253,7 +253,7 @@ function FeaturesSection() {
     {
       icon: Bot,
       title: "IA Copiloto & Atendente",
-      description: "Assistente in-app que opera o CRM com seu time e atendente virtual que responde no WhatsApp em modo sugestão.",
+      description: "Assistente in-app que opera o CRM com seu time e atendente virtual que responde no WhatsApp em modo sugestão, com follow-up automático dos combinados com o cliente.",
     },
     {
       icon: Users,

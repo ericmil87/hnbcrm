@@ -18,6 +18,8 @@ import {
   Mic,
   Image as ImageIcon,
   FileText,
+  PowerOff,
+  FileEdit,
 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -1015,6 +1017,14 @@ type Attendant = {
     maxRepliesPerHour?: number;
     messageDebounceSeconds?: number;
     includeCurrentDateTime?: boolean;
+    // Follow-ups que o próprio atendente executa (v0.60) — ausente = "draft".
+    followUps?: {
+      mode: "off" | "draft" | "send";
+      maxChain?: number;
+      quietStartHour?: number;
+      quietEndHour?: number;
+      dailyCap?: number;
+    };
     autopilotEarlyAck?: { acceptedAt: number; acceptedBy: string };
     pipelineConfig?: {
       boardId?: Id<"boards">;
@@ -1217,6 +1227,102 @@ function replyLimitWarning(raw: string, label: string): string | null {
   return null;
 }
 
+// Follow-ups agendados pela IA (v0.60) — espelham os defaults e as faixas de
+// `convex/lib/followUpSettings.ts` (fonte ÚNICA server-side). A validação
+// aqui só evita uma volta ao servidor por erro óbvio; quem decide de verdade
+// é `aiSettings.updateAgentProfile`.
+const FOLLOW_UP_DEFAULT_MAX_CHAIN = 2;
+const FOLLOW_UP_MAX_CHAIN_LIMIT = 5;
+const FOLLOW_UP_DEFAULT_QUIET_START_HOUR = 8;
+const FOLLOW_UP_DEFAULT_QUIET_END_HOUR = 20;
+const FOLLOW_UP_MAX_DAILY_CAP = 500;
+
+function readFollowUpMaxChain(
+  raw: string
+): { ok: true; value: number | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > FOLLOW_UP_MAX_CHAIN_LIMIT) {
+    return {
+      ok: false,
+      message: `Máximo de follow-ups seguidos: use um número inteiro entre 1 e ${FOLLOW_UP_MAX_CHAIN_LIMIT}.`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+function readFollowUpHour(
+  raw: string,
+  label: string
+): { ok: true; value: number | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 24) {
+    return { ok: false, message: `${label}: use uma hora inteira entre 0 e 24.` };
+  }
+  return { ok: true, value: parsed };
+}
+
+function readFollowUpDailyCap(
+  raw: string
+): { ok: true; value: number | undefined } | { ok: false; message: string } {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default (automático)
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > FOLLOW_UP_MAX_DAILY_CAP) {
+    return {
+      ok: false,
+      message: `Teto diário de follow-ups: use um número inteiro entre 0 e ${FOLLOW_UP_MAX_DAILY_CAP} (0 = sem teto).`,
+    };
+  }
+  return { ok: true, value: parsed };
+}
+
+/** Cartão de uma das 3 posições do interruptor de follow-up (molde de `ModeButton` do wizard de grupos). */
+function FollowUpModeCard({
+  active,
+  icon: Icon,
+  title,
+  subtitle,
+  badge,
+  onClick,
+}: {
+  active: boolean;
+  icon: React.ElementType;
+  title: string;
+  subtitle: string;
+  badge?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      className={cn(
+        "rounded-card border p-3 text-left transition-colors min-h-[44px]",
+        active
+          ? "border-brand-500 bg-brand-500/10"
+          : "border-border bg-surface-raised hover:border-border-strong"
+      )}
+    >
+      <span className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+        <Icon size={15} className={active ? "text-brand-500" : "text-text-muted"} />
+        {title}
+        {badge && (
+          <span className="ml-auto shrink-0 rounded-full bg-semantic-success/10 px-1.5 py-0.5 text-[10px] font-medium text-semantic-success">
+            {badge}
+          </span>
+        )}
+      </span>
+      <span className="mt-1 block text-xs text-text-muted">{subtitle}</span>
+    </button>
+  );
+}
+
 function AttendantConfig({
   organizationId,
   attendant,
@@ -1260,6 +1366,30 @@ function AttendantConfig({
   const [includeCurrentDateTime, setIncludeCurrentDateTime] = useState<boolean>(
     profile.includeCurrentDateTime !== false
   );
+
+  // Follow-ups agendados pela IA (v0.60). Ausente = "draft" (D1). Os campos
+  // numéricos são string (igual aos tetos acima): vazio = mantém o default do
+  // servidor, que a UI só mostra como placeholder.
+  const followUpsCfg = profile.followUps;
+  const [fuMode, setFuMode] = useState<"off" | "draft" | "send">(followUpsCfg?.mode ?? "draft");
+  const [fuMaxChain, setFuMaxChain] = useState(
+    followUpsCfg?.maxChain !== undefined ? String(followUpsCfg.maxChain) : ""
+  );
+  const [fuQuietStart, setFuQuietStart] = useState(
+    followUpsCfg?.quietStartHour !== undefined ? String(followUpsCfg.quietStartHour) : ""
+  );
+  const [fuQuietEnd, setFuQuietEnd] = useState(
+    followUpsCfg?.quietEndHour !== undefined ? String(followUpsCfg.quietEndHour) : ""
+  );
+  const [fuDailyCap, setFuDailyCap] = useState(
+    followUpsCfg?.dailyCap !== undefined ? String(followUpsCfg.dailyCap) : ""
+  );
+  const handleResetFollowUpDefaults = () => {
+    setFuMaxChain("");
+    setFuQuietStart("");
+    setFuQuietEnd("");
+    setFuDailyCap("");
+  };
 
   // Opções avançadas — regras de pipeline (P4).
   const pipelineConfig = profile.pipelineConfig;
@@ -1365,6 +1495,33 @@ function AttendantConfig({
       return;
     }
 
+    const followUpMaxChain = readFollowUpMaxChain(fuMaxChain);
+    if (!followUpMaxChain.ok) {
+      toast.error(followUpMaxChain.message);
+      return;
+    }
+    const followUpQuietStart = readFollowUpHour(fuQuietStart, "Início da janela de envio");
+    if (!followUpQuietStart.ok) {
+      toast.error(followUpQuietStart.message);
+      return;
+    }
+    const followUpQuietEnd = readFollowUpHour(fuQuietEnd, "Fim da janela de envio");
+    if (!followUpQuietEnd.ok) {
+      toast.error(followUpQuietEnd.message);
+      return;
+    }
+    const followUpDailyCap = readFollowUpDailyCap(fuDailyCap);
+    if (!followUpDailyCap.ok) {
+      toast.error(followUpDailyCap.message);
+      return;
+    }
+    const effectiveQuietStart = followUpQuietStart.value ?? FOLLOW_UP_DEFAULT_QUIET_START_HOUR;
+    const effectiveQuietEnd = followUpQuietEnd.value ?? FOLLOW_UP_DEFAULT_QUIET_END_HOUR;
+    if (effectiveQuietStart >= effectiveQuietEnd) {
+      toast.error("Follow-ups: a janela de envio precisa começar antes de terminar.");
+      return;
+    }
+
     const trimmedAdvanceRules = pcAdvanceRules.trim();
     // "Vazio" só se allowMoveStages também está no default (true) — desligar o
     // switch com o resto vazio é uma restrição REAL e não pode virar null.
@@ -1390,6 +1547,13 @@ function AttendantConfig({
           maxRepliesPerHour: limitePorHora.value,
           messageDebounceSeconds: agrupamento.value,
           includeCurrentDateTime,
+          followUps: {
+            mode: fuMode,
+            maxChain: followUpMaxChain.value,
+            quietStartHour: followUpQuietStart.value,
+            quietEndHour: followUpQuietEnd.value,
+            dailyCap: followUpDailyCap.value,
+          },
           pipelineConfig: pipelineIsEmpty
             ? null
             : {
@@ -1477,6 +1641,12 @@ function AttendantConfig({
               {metrics.reviewed > 0 ? `${Math.round(metrics.acceptanceRate * 100)}%` : "—"}
             </span>
           </div>
+          {metrics.proactive > 0 && (
+            <div className="text-sm" title="Turnos que a própria IA disparou num follow-up que ela agendou">
+              <span className="text-text-muted">Follow-ups executados: </span>
+              <span className="font-medium text-text-primary">{metrics.proactive}</span>
+            </div>
+          )}
           <div className="flex-1" />
           {isAutopilot ? (
             <Button variant="secondary" onClick={() => void handleModeToggle()}>
@@ -1740,6 +1910,150 @@ function AttendantConfig({
                 label="Informar data e hora atuais à IA"
               />
             </div>
+          </FieldGroup>
+
+          <FieldGroup
+            title="Follow-ups agendados pela IA"
+            description={
+              'O que a IA faz quando chega a hora de um follow-up que ela mesma marcou (ex.: "te chamo amanhã de manhã"). No dia, ela relê a conversa — se o assunto já foi resolvido, não manda nada.'
+            }
+          >
+            <div role="radiogroup" aria-label="Follow-ups agendados pela IA" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <FollowUpModeCard
+                active={fuMode === "off"}
+                icon={PowerOff}
+                title="Desligado"
+                subtitle="A IA só cria a tarefa. No vencimento nada acontece sozinho — alguém do time precisa agir."
+                onClick={() => setFuMode("off")}
+              />
+              <FollowUpModeCard
+                active={fuMode === "draft"}
+                icon={FileEdit}
+                title="Preparar rascunho"
+                subtitle="No vencimento, a IA deixa um rascunho no inbox — você revisa e envia."
+                badge="Recomendado"
+                onClick={() => setFuMode("draft")}
+              />
+              <FollowUpModeCard
+                active={fuMode === "send"}
+                icon={Send}
+                title="Enviar sozinho"
+                subtitle="No vencimento, a IA manda a mensagem sozinha (em autopilot)."
+                onClick={() => setFuMode("send")}
+              />
+            </div>
+
+            {fuMode === "send" && (
+              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
+                <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
+                <p className="text-xs text-text-secondary">
+                  A IA manda a mensagem sem o cliente ter escrito nada antes. No WhatsApp não
+                  oficial (bridge) isso conta como envio frio; no oficial (Meta), fora da janela de
+                  24h o texto vira rascunho automaticamente.
+                  {!isAutopilot && (
+                    <>
+                      {" "}
+                      Este atendente está em <strong>modo sugestão</strong> — na prática, os
+                      follow-ups também viram rascunho até você ativar o autopilot.
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
+
+            {fuMode !== "off" && (
+              <div className="space-y-4 pt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[13px] font-medium text-text-secondary">Ajustes</p>
+                  <button
+                    type="button"
+                    onClick={handleResetFollowUpDefaults}
+                    className="text-xs text-brand-500 hover:text-brand-400 font-medium"
+                  >
+                    Restaurar padrões
+                  </button>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Máximo de follow-ups seguidos sem resposta
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={FOLLOW_UP_MAX_CHAIN_LIMIT}
+                    step={1}
+                    value={fuMaxChain}
+                    onChange={(e) => setFuMaxChain(e.target.value)}
+                    placeholder={String(FOLLOW_UP_DEFAULT_MAX_CHAIN)}
+                    className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                  <p className="text-xs text-text-muted mt-1.5">
+                    Depois disso a tarefa passa a ser de um humano — evita insistir com quem não
+                    respondeu. Em branco = padrão ({FOLLOW_UP_DEFAULT_MAX_CHAIN}).
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-[13px] font-medium text-text-secondary">Janela de envio</p>
+                  <div className="flex flex-wrap gap-4 mt-1.5">
+                    <div>
+                      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                        Início (h)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        value={fuQuietStart}
+                        onChange={(e) => setFuQuietStart(e.target.value)}
+                        placeholder={String(FOLLOW_UP_DEFAULT_QUIET_START_HOUR)}
+                        className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                        Fim (h)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        max={24}
+                        value={fuQuietEnd}
+                        onChange={(e) => setFuQuietEnd(e.target.value)}
+                        placeholder={String(FOLLOW_UP_DEFAULT_QUIET_END_HOUR)}
+                        className="w-24 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-text-muted mt-1.5">
+                    Vale JUNTO com o horário de atendimento acima — o mais restritivo dos dois
+                    decide. Em branco = padrão ({FOLLOW_UP_DEFAULT_QUIET_START_HOUR}h–
+                    {FOLLOW_UP_DEFAULT_QUIET_END_HOUR}h).
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Teto diário de follow-ups por número
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={FOLLOW_UP_MAX_DAILY_CAP}
+                    step={1}
+                    value={fuDailyCap}
+                    onChange={(e) => setFuDailyCap(e.target.value)}
+                    placeholder="Automático"
+                    className="w-32 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                  <p className="text-xs text-text-muted mt-1.5">
+                    Em branco = automático (30/dia no WhatsApp não oficial, 100/dia no oficial). 0 =
+                    sem teto.
+                  </p>
+                </div>
+              </div>
+            )}
           </FieldGroup>
 
           <FieldGroup

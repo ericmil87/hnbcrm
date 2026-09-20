@@ -28,6 +28,7 @@ import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { FollowUpChip } from "@/components/inbox/FollowUpChip";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { ContactDetailPanel } from "@/components/ContactDetailPanel";
 import { GroupMembersPanel, GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
@@ -1819,6 +1820,7 @@ export function Inbox() {
                       {aiChip.label}
                     </span>
                   )}
+                  <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
                 </div>
               )}
               {windowInfo && (
@@ -1867,6 +1869,7 @@ export function Inbox() {
                         {aiChip.label}
                       </span>
                     )}
+                    <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
                   </>
                 )}
                 {windowInfo && (

@@ -1168,6 +1168,8 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "conversation.returned_to_ai",
                   "task.moved",
                   "task.due_soon",
+                  "task.followup_executed",
+                  "task.followup_needs_human",
                   "task_project.created",
                   "task_project.updated",
                   "task_project.archived",

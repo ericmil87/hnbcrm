@@ -24,6 +24,14 @@ import {
 import { cn } from "@/lib/utils";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
+import { mutationErrorMessage } from "@/lib/errors";
+import {
+  FOLLOW_UP_STATUS_LABELS,
+  followUpBadgeTone,
+  followUpHeadline,
+  humanizeFollowUpReason,
+  type FollowUpStatus,
+} from "@/lib/followUp";
 import {
   Check,
   MoreHorizontal,
@@ -40,6 +48,8 @@ import {
   Target,
   MessageSquare,
   User,
+  Bot,
+  Sparkles,
 } from "lucide-react";
 
 // ============================================================================
@@ -132,6 +142,12 @@ export function TaskDetailSlideOver({
   const [snoozeDate, setSnoozeDate] = useState("");
   const [snoozeTime, setSnoozeTime] = useState("");
 
+  // Follow-up que o próprio Atendente IA executa (v0.60).
+  const [followUpRunBusy, setFollowUpRunBusy] = useState(false);
+  const [followUpCancelBusy, setFollowUpCancelBusy] = useState(false);
+  const [followUpCancelConfirm, setFollowUpCancelConfirm] = useState(false);
+  const [followUpAdoptBusy, setFollowUpAdoptBusy] = useState(false);
+
   // Menção "@" no composer de comentários: dropdown de membros do time.
   const [mentionedMembers, setMentionedMembers] = useState<MentionCandidate[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -155,9 +171,14 @@ export function TaskDetailSlideOver({
     setMentionedMembers([]);
     setMentionQuery(null);
     setMentionStartIndex(null);
+    setFollowUpCancelConfirm(false);
   }, [activeTaskId]);
 
   const task = useQuery(api.tasks.getTask, { taskId: activeTaskId });
+  // Follow-up que o próprio Atendente IA executa (v0.60) — null enquanto a
+  // tarefa não tem um. `taskId` é sempre válido aqui, então nunca precisa de
+  // "skip".
+  const followUp = useQuery(api.attendantFollowUp.getForTask, { taskId: activeTaskId });
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
   const comments = useQuery(api.taskComments.getComments, { taskId: activeTaskId });
   const projects = useQuery(api.taskProjects.getProjects, { organizationId });
@@ -198,6 +219,9 @@ export function TaskDetailSlideOver({
   const toggleChecklistItem = useMutation(api.tasks.toggleChecklistItem);
   const updateChecklist = useMutation(api.tasks.updateChecklist);
   const addComment = useMutation(api.taskComments.addComment);
+  const runFollowUpNow = useMutation(api.attendantFollowUp.runNow);
+  const cancelFollowUpAuto = useMutation(api.attendantFollowUp.cancelAuto);
+  const adoptFollowUpTask = useMutation(api.attendantFollowUp.adoptTask);
 
   const memberMap = useMemo(() => {
     const map = new Map<string, { name: string; type: "human" | "ai"; role: string }>();
@@ -390,6 +414,60 @@ export function TaskDetailSlideOver({
       toast.success(value ? "Lead vinculado à tarefa" : "Vínculo com o lead removido");
     } catch {
       toast.error("Falha ao atualizar o vínculo com o lead");
+    }
+  };
+
+  // "Executar agora": pula a janela de silêncio (decisão de quem clicou),
+  // mas passa pela MESMA cadeia de guardas do disparo automático — pode
+  // recusar (canal caído, teto do dia etc.), e `reason` já vem em PT-BR.
+  const handleRunFollowUpNow = async () => {
+    if (!followUp) return;
+    setFollowUpRunBusy(true);
+    try {
+      const result = await runFollowUpNow({ followUpId: followUp._id });
+      if (result.ok) {
+        toast.success("A IA está executando o follow-up agora");
+      } else {
+        toast.error(
+          result.reason
+            ? `A IA não conseguiu: ${humanizeFollowUpReason(result.reason)}`
+            : "A IA não conseguiu executar agora"
+        );
+      }
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, "Falha ao pedir a execução agora"));
+    } finally {
+      setFollowUpRunBusy(false);
+    }
+  };
+
+  const handleCancelFollowUpAuto = async () => {
+    if (!followUp) return;
+    setFollowUpCancelBusy(true);
+    try {
+      await cancelFollowUpAuto({ followUpId: followUp._id });
+      toast.success("Execução automática desligada — a tarefa continua com você");
+      setFollowUpCancelConfirm(false);
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, "Falha ao desligar a execução automática"));
+    } finally {
+      setFollowUpCancelBusy(false);
+    }
+  };
+
+  const handleAdoptFollowUpTask = async () => {
+    setFollowUpAdoptBusy(true);
+    try {
+      const result = await adoptFollowUpTask({ taskId: activeTaskId });
+      if (result.ok) {
+        toast.success("A IA vai executar esta tarefa no vencimento");
+      } else {
+        toast.error(result.reason);
+      }
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, "Falha ao pedir para a IA executar"));
+    } finally {
+      setFollowUpAdoptBusy(false);
     }
   };
 
@@ -806,8 +884,30 @@ export function TaskDetailSlideOver({
                 Lembrete: {new Date(task.snoozedUntil).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
               </Badge>
             )}
+            {followUp && (
+              <Badge variant={followUpBadgeTone(followUp.status as FollowUpStatus)}>
+                <Bot size={12} className="mr-1" />
+                {FOLLOW_UP_STATUS_LABELS[followUp.status as FollowUpStatus] ?? followUp.status}
+              </Badge>
+            )}
           </div>
         </div>
+
+        {/* Follow-up que o próprio Atendente IA executa (v0.60) */}
+        <FollowUpCard
+          followUp={followUp}
+          task={task}
+          navigate={navigate}
+          runBusy={followUpRunBusy}
+          cancelBusy={followUpCancelBusy}
+          cancelConfirm={followUpCancelConfirm}
+          onRunNow={() => void handleRunFollowUpNow()}
+          onCancelAutoClick={() => setFollowUpCancelConfirm(true)}
+          onCancelAutoConfirm={() => void handleCancelFollowUpAuto()}
+          onCancelAutoAbort={() => setFollowUpCancelConfirm(false)}
+          adoptBusy={followUpAdoptBusy}
+          onAdopt={() => void handleAdoptFollowUpTask()}
+        />
 
         {/* Fields */}
         <div className="px-4 py-4 space-y-4">
@@ -1304,6 +1404,193 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
     <div className="flex items-center justify-between gap-4">
       <span className="text-sm text-text-secondary shrink-0">{label}</span>
       <div className="min-w-0">{children}</div>
+    </div>
+  );
+}
+
+// ============================================================================
+// FollowUpCard — "Follow-up da IA" (v0.60)
+// ============================================================================
+
+type FollowUpSummary = {
+  _id: Id<"aiFollowUps">;
+  status: string;
+  dueAt: number;
+  note: string | null;
+  reason: string | null;
+  conversationId: Id<"conversations">;
+};
+
+/**
+ * Card "Follow-up da IA" logo abaixo do título/badges. Três desfechos:
+ *  - `undefined` (query ainda carregando) → nada, evita piscar;
+ *  - `null` (tarefa sem follow-up) → oferece "Pedir para a IA executar"
+ *    quando a tarefa está pendente, ligada a um lead e atribuída a um
+ *    atendente IA ativo; senão fica em silêncio;
+ *  - objeto → estado em linguagem clara + ações (`getTask`/`getForTask` usam
+ *    `returns: v.any()`, então `task` chega solto — só lemos os campos que
+ *    precisamos).
+ */
+function FollowUpCard({
+  followUp,
+  task,
+  navigate,
+  runBusy,
+  cancelBusy,
+  cancelConfirm,
+  onRunNow,
+  onCancelAutoClick,
+  onCancelAutoConfirm,
+  onCancelAutoAbort,
+  adoptBusy,
+  onAdopt,
+}: {
+  followUp: FollowUpSummary | null | undefined;
+  task: {
+    status: string;
+    leadId?: Id<"leads"> | null;
+    assignee?: { type?: string; status?: string; agentProfile?: { kind?: string } } | null;
+  };
+  navigate: ReturnType<typeof useNavigate>;
+  runBusy: boolean;
+  cancelBusy: boolean;
+  cancelConfirm: boolean;
+  onRunNow: () => void;
+  onCancelAutoClick: () => void;
+  onCancelAutoConfirm: () => void;
+  onCancelAutoAbort: () => void;
+  adoptBusy: boolean;
+  onAdopt: () => void;
+}) {
+  if (followUp === undefined) return null;
+
+  const canAdopt =
+    task.status === "pending" &&
+    !!task.leadId &&
+    task.assignee?.type === "ai" &&
+    task.assignee?.status === "active" &&
+    task.assignee?.agentProfile?.kind === "attendant";
+
+  if (followUp === null) {
+    if (!canAdopt) return null;
+    return (
+      <div className="px-4 pt-1">
+        <button
+          type="button"
+          onClick={onAdopt}
+          disabled={adoptBusy}
+          className="inline-flex items-center gap-1.5 py-1 text-xs font-medium text-brand-500 hover:text-brand-400 transition-colors disabled:opacity-60"
+        >
+          <Bot size={13} />
+          {adoptBusy ? "Pedindo…" : "Pedir para a IA executar"}
+        </button>
+      </div>
+    );
+  }
+
+  const status = followUp.status as FollowUpStatus;
+  const headline = followUpHeadline(status, followUp.dueAt);
+  const isActive = status === "scheduled" || status === "queued" || status === "drafted";
+  const isNeedsHuman = status === "needs_human";
+  const reasonLabel = humanizeFollowUpReason(followUp.reason);
+
+  return (
+    <div className="px-4 pt-1">
+      <div
+        className={cn(
+          "rounded-lg border p-3 space-y-2",
+          isNeedsHuman
+            ? "border-semantic-warning/40 bg-semantic-warning/10"
+            : "border-border bg-surface-sunken"
+        )}
+      >
+        <div className="flex items-start gap-2">
+          <Sparkles
+            size={16}
+            className={cn(
+              "shrink-0 mt-0.5",
+              isNeedsHuman ? "text-semantic-warning" : "text-purple-400"
+            )}
+          />
+          <div className="min-w-0 flex-1">
+            <p
+              className={cn(
+                "text-sm font-medium break-words",
+                isNeedsHuman ? "text-semantic-warning" : "text-text-primary"
+              )}
+            >
+              {headline}
+              {isNeedsHuman && reasonLabel ? `: ${reasonLabel}` : ""}
+            </p>
+            {followUp.note && (
+              <p className="text-xs text-text-secondary mt-1 break-words">
+                Nota da IA: &ldquo;{followUp.note}&rdquo;
+              </p>
+            )}
+            {!isNeedsHuman && reasonLabel && (
+              <p className="text-xs text-text-muted mt-1 break-words">Motivo: {reasonLabel}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {(status === "drafted" || status === "done") && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                navigate(`${TAB_ROUTES.inbox}?conversation=${followUp.conversationId}`)
+              }
+            >
+              <MessageSquare size={13} className="mr-1.5" />
+              {status === "drafted" ? "Ver conversa" : "Ver mensagem"}
+            </Button>
+          )}
+          {status === "scheduled" && (
+            <Button type="button" variant="secondary" size="sm" disabled={runBusy} onClick={onRunNow}>
+              <Send size={13} className="mr-1.5" />
+              {runBusy ? "Executando…" : "Executar agora"}
+            </Button>
+          )}
+          {/* Desligou a execução automática e se arrependeu: dá para religar. */}
+          {status === "canceled" && canAdopt && (
+            <Button type="button" variant="secondary" size="sm" disabled={adoptBusy} onClick={onAdopt}>
+              <Bot size={13} className="mr-1.5" />
+              {adoptBusy ? "Pedindo…" : "Pedir para a IA executar"}
+            </Button>
+          )}
+          {isActive && !cancelConfirm && (
+            <button
+              type="button"
+              onClick={onCancelAutoClick}
+              className="text-xs text-text-muted hover:text-semantic-error transition-colors py-1.5"
+            >
+              Não executar automaticamente
+            </button>
+          )}
+          {isActive && cancelConfirm && (
+            <span className="inline-flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+              Desligar a execução automática?
+              <button
+                type="button"
+                disabled={cancelBusy}
+                onClick={onCancelAutoConfirm}
+                className="font-medium text-semantic-error hover:text-semantic-error/80 disabled:opacity-60"
+              >
+                {cancelBusy ? "Desligando…" : "Confirmar"}
+              </button>
+              <button
+                type="button"
+                onClick={onCancelAutoAbort}
+                className="text-text-muted hover:text-text-secondary"
+              >
+                Voltar
+              </button>
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
