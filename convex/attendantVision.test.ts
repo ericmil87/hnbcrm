@@ -986,7 +986,10 @@ describe("imagem descartada no caminho não vira descrição (incidente 14/09)",
       allow_fallbacks: true,
     });
     // O lock compartilhado (atendente/copiloto) não foi mutado pela visão.
-    expect(OPENROUTER_ZDR_PROVIDER_BODY.provider.allow_fallbacks).toBe(false);
+    // Desde 19/09/2026 o body compartilhado também libera os fallbacks (o
+    // atendente caiu pelo mesmo 429); o que NUNCA pode soltar é o data_collection.
+    expect(OPENROUTER_ZDR_PROVIDER_BODY.provider.allow_fallbacks).toBe(true);
+    expect(OPENROUTER_ZDR_PROVIDER_BODY.provider.data_collection).toBe("deny");
   });
 
   test("reprocessar: marcar failed apaga o espelho errado e o autoDescribe lê de novo", async () => {

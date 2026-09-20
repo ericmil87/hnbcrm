@@ -294,7 +294,7 @@ export function supportsJsonSchemaStrict(canonical: string, providerId: string):
 // para detectar em runtime, então a lista tem de ser explícita.
 //
 // POR QUE POR ROTA, e não uma lista global: a rota OpenRouter carrega o ZDR
-// double-lock (data_collection:"deny" + allow_fallbacks:false) e, com esse body
+// lock ZDR (data_collection:"deny" + require_parameters) e, com esse body
 // exato, o MELHOR modelo da cadeia — "deepseek-v4-flash-vision-exp" — devolve
 // 404 "No endpoints found matching your data policy (Paid model training)".
 // Ele só existe pela rota OpenCode Go.
@@ -425,11 +425,19 @@ export function visionModelOptions(): Array<VisionModelFacts & { providers: Prov
 //
 // data_collection:"deny"  -> only providers that don't collect content.
 // require_parameters:true  -> only providers supporting tools/json_schema.
-// allow_fallbacks:false    -> never silently fall through to a non-ZDR route.
+// allow_fallbacks:true     -> outro provedor ELEGÍVEL atende quando o primário cai.
+//
+// `allow_fallbacks` NÃO é o que protege os dados: pela doc do OpenRouter ele só
+// decide se provedores de reserva podem atender, e o filtro `data_collection:
+// "deny"` vale também para eles. Com `false` o request ia só ao provedor
+// PRIMÁRIO e, com ele sobrecarregado, voltava 429 — medido duas vezes: na visão
+// em 14/09/2026 e no atendente em 19/09/2026 (`deepseek-v4-flash` 429 em 100%
+// das tentativas; com a rota OpenCode Go morta desde 08/09, o atendente ficou
+// FORA DO AR em produção). A trava de privacidade é `data_collection`.
 export const OPENROUTER_ZDR_PROVIDER_BODY = {
   provider: {
     data_collection: "deny",
     require_parameters: true,
-    allow_fallbacks: false,
+    allow_fallbacks: true,
   },
 } as const;
