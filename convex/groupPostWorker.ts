@@ -38,7 +38,7 @@ import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { createNotification } from "./lib/notify";
 import { membersWithPermission } from "./lib/groupChatCore";
 import { orgAiActive } from "./lib/agentSecurity";
-import { chatWithFallback } from "./lib/llm";
+import { chatWithFallback, withReasoningEffort } from "./lib/llm";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
@@ -84,9 +84,19 @@ const SLOT_GRACE_MS = 60 * 60 * 1000;
  * o que sobrevive a isso é queda de verdade e merece a pausa com aviso.
  */
 const CHANNEL_RETRY_DELAYS_MS = [2 * 60_000, 5 * 60_000, 15 * 60_000];
-/** Teto de tokens/tempo da geração. Texto de grupo é curto; 60 s sobra. */
-const GENERATE_TIMEOUT_MS = 60_000;
-const GENERATE_MAX_TOKENS = 1200;
+/**
+ * Teto de tokens/tempo da geração. O TEXTO de grupo é curto, mas o teto conta
+ * também o raciocínio: medido em 21/09/2026 com `deepseek-v4-flash-0731` e a
+ * persona + conhecimento do atendente no prompt (~8 mil tokens), 1200 tokens
+ * iam INTEIROS para o pensamento e o conteúdo voltava vazio — 3 de 3. É o mesmo
+ * defeito que cortou a resposta do atendente em 19/09; o remédio é o mesmo
+ * (esforço baixo + teto com folga + uma segunda tentativa).
+ */
+const GENERATE_TIMEOUT_MS = 90_000;
+const GENERATE_MAX_TOKENS = 3000;
+/** Anexada ao user message na segunda tentativa, depois de corte ou vazio. */
+const GENERATE_RETRY_NUDGE =
+  "ATENÇÃO: a tentativa anterior não produziu texto. Raciocine pouco e responda DIRETO com a mensagem final.";
 const DEFAULT_MAX_CHARS = 600;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1129,27 +1139,48 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
       })
     : null;
 
+  // Esforço baixo: a tarefa é redação curta, não raciocínio (só afeta a rota
+  // OpenRouter — ver `withReasoningEffort`).
+  const postRoutes = withReasoningEffort(routes, "low");
+  let requestCount = 0;
   try {
-    const resp = await chatWithFallback(
-      routes,
-      {
-        messages: [
-          { role: "system", content: prompt.system },
-          { role: "user", content: prompt.user },
-        ],
-        temperature: 0.7,
-        maxTokens: GENERATE_MAX_TOKENS,
-      },
-      { timeoutMs: GENERATE_TIMEOUT_MS }
-    );
-    const text = cleanGeneratedPost(resp.message.content, maxChars);
-    if (!text) {
+    let resp = null;
+    let text = "";
+    let lastFinishReason: string | undefined;
+    // Resposta CORTADA pelo teto é descartada inteira, mesmo que traga texto:
+    // meia mensagem publicada num grupo é pior que nenhuma.
+    for (let attempt = 0; attempt < 2 && !text; attempt++) {
+      requestCount++;
+      resp = await chatWithFallback(
+        postRoutes,
+        {
+          messages: [
+            { role: "system", content: prompt.system },
+            {
+              role: "user",
+              content: attempt === 0 ? prompt.user : `${prompt.user}\n\n${GENERATE_RETRY_NUDGE}`,
+            },
+          ],
+          temperature: 0.7,
+          maxTokens: GENERATE_MAX_TOKENS,
+        },
+        { timeoutMs: GENERATE_TIMEOUT_MS }
+      );
+      lastFinishReason = resp.finishReason;
+      text = resp.finishReason === "length" ? "" : cleanGeneratedPost(resp.message.content, maxChars);
+    }
+    if (!text || !resp) {
+      // O motivo vai para a run: "texto vazio" sozinho não distingue modelo que
+      // estourou o teto pensando de modelo que devolveu nada.
+      const detail = `Modelo devolveu texto vazio (finish_reason: ${lastFinishReason ?? "?"}, ${requestCount} tentativa(s))`;
       if (runId) {
         await ctx.runMutation(internal.agentRuns.internalFinishRun, {
           runId,
           status: "error",
-          requestCount: 1,
-          error: "Modelo devolveu texto vazio",
+          requestCount,
+          error: detail,
+          promptTokens: resp?.usage?.promptTokens,
+          completionTokens: resp?.usage?.completionTokens,
         });
       }
       return { ok: false, error: "A IA devolveu um texto vazio" };
@@ -1160,7 +1191,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
         status: "done",
         provider: resp.usedRoute.providerId,
         model: resp.usedRoute.canonicalModel,
-        requestCount: 1,
+        requestCount,
         promptTokens: resp.usage?.promptTokens,
         completionTokens: resp.usage?.completionTokens,
         cachedPromptTokens: resp.usage?.cachedPromptTokens,
@@ -1178,7 +1209,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
       await ctx.runMutation(internal.agentRuns.internalFinishRun, {
         runId,
         status: "error",
-        requestCount: 1,
+        requestCount: Math.max(1, requestCount),
         error,
       });
     }
