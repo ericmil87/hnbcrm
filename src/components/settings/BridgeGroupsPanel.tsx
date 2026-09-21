@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ChevronDown,
+  Inbox,
   Link2,
   LogOut,
   MessageSquare,
@@ -80,6 +81,10 @@ export function BridgeGroupsPanel({
   const [aiGroup, setAiGroup] = useState<GroupChatDoc | null>(null);
   const [confirmLeave, setConfirmLeave] = useState<GroupChatDoc | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
+  // Trava só O switch que está em voo — clique duplo num outro grupo enquanto
+  // o primeiro ainda não confirmou não pode ficar bloqueado por ele.
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [followAllBusy, setFollowAllBusy] = useState(false);
 
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinLink, setJoinLink] = useState("");
@@ -157,6 +162,7 @@ export function BridgeGroupsPanel({
   };
 
   const handleToggleMonitored = async (group: GroupChatDoc) => {
+    setPendingId(group._id);
     try {
       await setMonitored({
         groupChatId: group._id as Id<"groupChats">,
@@ -169,6 +175,28 @@ export function BridgeGroupsPanel({
       );
     } catch (error) {
       toast.error(mutationErrorMessage(error, "Falha ao mudar o acompanhamento"));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  // Callout "falta um passo": acompanha todo mundo de uma vez quando ninguém
+  // ainda escolheu nada. Sequencial (não Promise.all) para parar no primeiro
+  // erro sem deixar o resto pela metade sem explicação.
+  const handleFollowAll = async () => {
+    setFollowAllBusy(true);
+    try {
+      let count = 0;
+      for (const group of visible) {
+        if (group.monitored) continue;
+        await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
+        count++;
+      }
+      toast.success(`${count} grupo(s) na Caixa de Entrada`);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao acompanhar os grupos"));
+    } finally {
+      setFollowAllBusy(false);
     }
   };
 
@@ -225,9 +253,18 @@ export function BridgeGroupsPanel({
           <Users size={15} className="shrink-0 text-text-muted" />
           <span className="min-w-0">
             <span className="block text-sm text-text-primary">Grupos neste número</span>
-            <span className="block text-xs text-text-muted mt-0.5">
+            <span
+              className={cn(
+                "block text-xs mt-0.5",
+                enabled && visible.length > 0 && monitoredCount === 0
+                  ? "text-semantic-warning"
+                  : "text-text-muted"
+              )}
+            >
               {enabled
-                ? `${visible.length} grupo(s) · ${monitoredCount} acompanhado(s)`
+                ? visible.length > 0 && monitoredCount === 0
+                  ? `${visible.length} grupo(s) · nenhum acompanhado ainda`
+                  : `${visible.length} grupo(s) · ${monitoredCount} acompanhado(s)`
                 : "Acompanhar e responder salas de WhatsApp dentro do CRM"}
             </span>
           </span>
@@ -308,6 +345,36 @@ export function BridgeGroupsPanel({
                 )}
               </div>
 
+              {/* Falta um passo: a lista já chegou, mas ninguém escolheu
+                  acompanhar nada — sem isto o admin liga o número, vê os
+                  grupos aqui e não entende por que a Caixa de Entrada
+                  continua vazia. */}
+              {groups !== undefined && visible.length > 0 && monitoredCount === 0 && (
+                <div className="flex gap-2.5 rounded-lg border border-brand-500/40 bg-brand-500/5 p-3">
+                  <Inbox size={16} className="mt-0.5 shrink-0 text-brand-500" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <p className="text-sm font-medium text-text-primary">
+                        Falta um passo: escolha os grupos
+                      </p>
+                      <p className="mt-0.5 text-xs text-text-secondary leading-relaxed">
+                        Só os grupos que você acompanha aparecem na Caixa de Entrada,
+                        podem receber publicações programadas e ter a IA ligada. Os
+                        demais ficam só listados — nada é lido nem guardado.
+                      </p>
+                    </div>
+                    <PermissionGate organizationId={organizationId} category="settings" level="manage">
+                      {visible.length <= 10 && (
+                        <Button size="sm" disabled={followAllBusy} onClick={() => void handleFollowAll()}>
+                          {followAllBusy ? <Spinner size="sm" /> : null}
+                          Acompanhar todos ({visible.length})
+                        </Button>
+                      )}
+                    </PermissionGate>
+                  </div>
+                </div>
+              )}
+
               {groups === undefined ? (
                 <div className="flex justify-center py-4">
                   <Spinner size="md" />
@@ -351,6 +418,11 @@ export function BridgeGroupsPanel({
                             {group.participantsCount === 1 ? "" : "s"} · ativo{" "}
                             {relativeTime(group.lastMessageAt)}
                           </p>
+                          {!group.monitored && (
+                            <p className="mt-0.5 text-[11px] text-text-muted">
+                              Fora da Caixa de Entrada
+                            </p>
+                          )}
                         </div>
                         <PermissionGate
                           organizationId={organizationId}
@@ -367,20 +439,35 @@ export function BridgeGroupsPanel({
                             role="switch"
                             aria-checked={group.monitored}
                             aria-label={`Acompanhar ${group.subject}`}
+                            disabled={pendingId === group._id}
                             onClick={() => void handleToggleMonitored(group)}
-                            className={cn(
-                              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-                              group.monitored
-                                ? "bg-brand-500"
-                                : "bg-surface-overlay border border-border-strong"
-                            )}
+                            className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <span
                               className={cn(
-                                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                                group.monitored ? "translate-x-5" : "translate-x-1"
+                                "text-xs",
+                                group.monitored
+                                  ? "font-medium text-semantic-success"
+                                  : "text-text-muted"
                               )}
-                            />
+                            >
+                              {group.monitored ? "Acompanhando" : "Acompanhar"}
+                            </span>
+                            <span
+                              className={cn(
+                                "relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors",
+                                group.monitored
+                                  ? "bg-brand-500"
+                                  : "bg-surface-overlay border border-border-strong"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                                  group.monitored ? "translate-x-5" : "translate-x-1"
+                                )}
+                              />
+                            </span>
                           </button>
                         </PermissionGate>
                       </div>

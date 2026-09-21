@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { toast } from "sonner";
 import {
+  EyeOff,
   MessageSquare,
   Send,
   Settings as SettingsIcon,
@@ -15,6 +17,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { GroupMembersPanel } from "@/components/inbox/GroupMembersPanel";
@@ -24,6 +27,7 @@ import type { GroupChatDoc } from "@/components/inbox/types";
 import { TAB_ROUTES } from "@/lib/routes";
 import { activityLabel, relativeTime } from "@/lib/groupDisplay";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
 
 type GroupsTab = "groups" | "posts";
 
@@ -37,8 +41,10 @@ const TABS: { id: GroupsTab; label: string }[] = [
  *
  * A tela de Canais responde "quais salas este NÚMERO conhece?"; esta responde
  * "o que a empresa está acompanhando?", somando os números bridge. Ligar,
- * entrar e sair continuam no card do número: aqui não se muda a configuração
- * de canal, só se navega para ela.
+ * entrar e sair continuam no card do número; acompanhar/deixar de acompanhar
+ * uma sala JÁ CONHECIDA também pode ser feito aqui — é a mesma escolha por
+ * grupo (D4) do painel de canais, só que ao lado da lista do que já está
+ * acompanhado, para quem esqueceu o passo lá.
  */
 export function GroupsPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -46,6 +52,8 @@ export function GroupsPage() {
   const { can, isLoading } = usePermissions(organizationId);
   const canView = can("inbox", "view_own");
   const canManageCampaigns = can("campaigns", "manage");
+  const canManageSettings = can("settings", "manage");
+  const setMonitored = useMutation(api.groupChats.setMonitored);
 
   /**
    * Porta de entrada da F5: o wizard de campanha abre já preenchido.
@@ -69,6 +77,11 @@ export function GroupsPage() {
     tabParam === "posts" || searchParams.get("post") ? "posts" : "groups";
   const [membersFor, setMembersFor] = useState<Id<"groupChats"> | null>(null);
   const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
+  // Segue o mesmo padrão do painel de canais: um id em voo trava só a LINHA
+  // dele, e o "parar de acompanhar" pede confirmação por ser mais destrutivo
+  // (some da Caixa de Entrada e apaga a lista de membros).
+  const [followingId, setFollowingId] = useState<string | null>(null);
+  const [unfollowTarget, setUnfollowTarget] = useState<GroupChatDoc | null>(null);
 
   const groups = useQuery(
     api.groupChats.listGroups,
@@ -92,8 +105,37 @@ export function GroupsPage() {
       ),
     [groups]
   );
-  const knownButUnmonitored = (groups ?? []).length - monitored.length;
+  // Salas que o CRM conhece mas ninguém marcou "Acompanhar" — removida/saída
+  // FICA de fora (não é escolha do usuário, é o número que não está mais lá).
+  const unmonitored = useMemo(
+    () =>
+      (groups ?? []).filter(
+        (g) => !g.monitored && g.removedAt === undefined && g.leftAt === undefined
+      ),
+    [groups]
+  );
   const anyChannelEnabled = (channels ?? []).some((c) => c.groupsEnabled);
+
+  const handleFollow = async (group: GroupChatDoc) => {
+    setFollowingId(group._id);
+    try {
+      await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
+      toast.success(`Acompanhando '${group.subject}'`);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao acompanhar o grupo"));
+    } finally {
+      setFollowingId(null);
+    }
+  };
+
+  const handleUnfollow = async (group: GroupChatDoc) => {
+    try {
+      await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: false });
+      toast.success(`Parou de acompanhar '${group.subject}'`);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+    }
+  };
 
   const setTab = (tab: GroupsTab) => {
     setSearchParams(
@@ -170,25 +212,40 @@ export function GroupsPage() {
         <div className="flex justify-center py-16">
           <Spinner size="lg" />
         </div>
-      ) : monitored.length === 0 ? (
+      ) : monitored.length === 0 && unmonitored.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={
-            anyChannelEnabled
-              ? knownButUnmonitored > 0
-                ? "Nenhum grupo acompanhado ainda"
-                : "Nenhum grupo neste número"
-              : "Grupos desligados nos seus números"
-          }
+          title={anyChannelEnabled ? "Nenhum grupo neste número" : "Grupos desligados nos seus números"}
           description={
             anyChannelEnabled
-              ? knownButUnmonitored > 0
-                ? `O CRM conhece ${knownButUnmonitored} sala(s) deste número, mas nenhuma está sendo acompanhada. Acompanhar é uma escolha por grupo, no card do número.`
-                : "Sincronize a lista de salas no card do número em Configurações → Canais."
+              ? "Sincronize a lista de salas no card do número em Configurações → Canais."
               : "Ligue os grupos num número bridge em Configurações → Canais para o CRM listar as salas."
           }
           action={{ label: "Abrir Canais", onClick: goToChannels }}
         />
+      ) : monitored.length === 0 ? (
+        // Já sabemos de sala — só falta escolher. Fica no lugar do estado
+        // vazio (não faz sentido dizer "nenhum grupo" com N salas listadas
+        // logo abaixo).
+        <div className="space-y-4">
+          <div>
+            <h2 className="text-base font-medium text-text-primary">
+              Escolha os grupos para acompanhar
+            </h2>
+            <p className="mt-1 max-w-xl text-sm text-text-secondary">
+              Só os grupos que você acompanha aparecem na Caixa de Entrada, podem
+              receber publicações programadas e ter a IA ligada. Os demais ficam só
+              listados — nada é lido nem guardado.
+            </p>
+          </div>
+          <UnmonitoredGroupsSection
+            groups={unmonitored}
+            channelName={channelName}
+            canManage={canManageSettings}
+            followingId={followingId}
+            onFollow={(group) => void handleFollow(group)}
+          />
+        </div>
       ) : (
         <>
           {/* Mobile: cards */}
@@ -213,6 +270,7 @@ export function GroupsPage() {
                   {...(canManageCampaigns
                     ? { onDispatchMembers: () => dispatchToMembers(group._id as Id<"groupChats">) }
                     : {})}
+                  {...(canManageSettings ? { onUnfollow: () => setUnfollowTarget(group) } : {})}
                 />
               </li>
             ))}
@@ -256,6 +314,7 @@ export function GroupsPage() {
                         {...(canManageCampaigns
                           ? { onDispatchMembers: () => dispatchToMembers(group._id as Id<"groupChats">) }
                           : {})}
+                        {...(canManageSettings ? { onUnfollow: () => setUnfollowTarget(group) } : {})}
                       />
                     </td>
                   </tr>
@@ -263,6 +322,16 @@ export function GroupsPage() {
               </tbody>
             </table>
           </div>
+
+          {unmonitored.length > 0 && (
+            <UnmonitoredGroupsSection
+              groups={unmonitored}
+              channelName={channelName}
+              canManage={canManageSettings}
+              followingId={followingId}
+              onFollow={(group) => void handleFollow(group)}
+            />
+          )}
         </>
       )}
 
@@ -283,6 +352,20 @@ export function GroupsPage() {
           onClose={() => setMemberContactId(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={unfollowTarget !== null}
+        onClose={() => setUnfollowTarget(null)}
+        onConfirm={() => {
+          const target = unfollowTarget;
+          setUnfollowTarget(null);
+          if (target) void handleUnfollow(target);
+        }}
+        title={unfollowTarget ? `Parar de acompanhar '${unfollowTarget.subject}'?` : "Parar de acompanhar?"}
+        description="A conversa do grupo sai da Caixa de Entrada e a lista de membros é apagada do CRM. As mensagens já recebidas continuam guardadas. Publicações programadas para este grupo param de funcionar."
+        confirmLabel="Parar de acompanhar"
+        variant="danger"
+      />
     </div>
   );
 }
@@ -317,6 +400,7 @@ function GroupActions({
   onOpenInbox,
   onMembers,
   onDispatchMembers,
+  onUnfollow,
   align,
 }: {
   group: GroupChatDoc;
@@ -324,6 +408,8 @@ function GroupActions({
   onMembers: () => void;
   /** F5 — abre o wizard de campanha com este grupo já selecionado. */
   onDispatchMembers?: () => void;
+  /** Só passado com `settings:manage` — abre a confirmação de deixar de acompanhar. */
+  onUnfollow?: () => void;
   align?: "end";
 }) {
   return (
@@ -359,6 +445,70 @@ function GroupActions({
         <Send size={11} />
         Disparar 1 a 1 para os membros
       </button>
+      {onUnfollow && (
+        <button
+          type="button"
+          onClick={onUnfollow}
+          className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
+        >
+          <EyeOff size={11} />
+          Parar de acompanhar
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Salas que o CRM já conhece neste número mas ninguém marcou "Acompanhar"
+ * (D4 — opt-in por grupo). Some sozinha quando não sobra nenhuma.
+ */
+function UnmonitoredGroupsSection({
+  groups,
+  channelName,
+  canManage,
+  followingId,
+  onFollow,
+}: {
+  groups: GroupChatDoc[];
+  channelName: Map<string, string>;
+  canManage: boolean;
+  followingId: string | null;
+  onFollow: (group: GroupChatDoc) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <h2 className="text-sm font-medium text-text-secondary">Outras salas deste número</h2>
+      <ul className="space-y-2">
+        {groups.map((group) => (
+          <li
+            key={group._id}
+            className="flex flex-col gap-2 rounded-card border border-border-subtle bg-surface-sunken p-3 md:flex-row md:items-center md:justify-between"
+          >
+            <div className="min-w-0">
+              <GroupTitle group={group} />
+              <p className="mt-0.5 text-xs text-text-muted tabular-nums">
+                {channelName.get(group.channelConfigId) ?? "Número bridge"} ·{" "}
+                {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"}
+              </p>
+            </div>
+            {canManage ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={followingId === group._id}
+                onClick={() => onFollow(group)}
+                className="shrink-0 self-start md:self-auto"
+              >
+                {followingId === group._id ? <Spinner size="sm" /> : null}
+                Acompanhar
+              </Button>
+            ) : (
+              <span className="shrink-0 text-xs text-text-muted">Peça a um administrador</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

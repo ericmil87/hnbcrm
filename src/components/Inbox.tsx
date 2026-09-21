@@ -1521,11 +1521,18 @@ export function Inbox() {
                   grupo arquivado, a tela dizia "Nenhuma conversa arquivada" —
                   mentindo, porque havia conversas diretas arquivadas
                   escondidas pelo filtro. */}
-              {kindFilter === "group"
-                ? showArchived
-                  ? "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas"
-                  : "Nenhum grupo acompanhado — ligue os grupos do número em Configurações → Canais"
-                : kindFilter === "direct"
+              {kindFilter === "group" ? (
+                showArchived ? (
+                  "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas"
+                ) : (
+                  <div className="space-y-1.5">
+                    <p>Nenhum grupo acompanhado</p>
+                    <Button variant="ghost" size="sm" onClick={() => navigate(TAB_ROUTES.groups)}>
+                      Escolher grupos
+                    </Button>
+                  </div>
+                )
+              ) : kindFilter === "direct"
                   ? showArchived
                     ? "Nenhuma conversa direta arquivada"
                     : "Nenhuma conversa direta"
