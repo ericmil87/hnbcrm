@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.47.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.62.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -30,6 +30,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
 - **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions
 - **WhatsApp Channel** — Official Cloud API (24h window, templates) or self-hosted gateway (QR pairing), with media, voice notes, delivery/read ticks, typing presence both ways, and a channel health panel. Messages typed in the phone's own WhatsApp app are captured too, so the inbox matches the real conversation. A number can be active in only one account: pairing it elsewhere unlinks the previous device automatically, with a warning
+- **WhatsApp Groups** (self-hosted gateway only) — Follow group rooms opt-in per group (members never become contacts/leads automatically), with AI mention/keyword replies, scheduled posts, and campaign audiences. Media downloads follow a per-type policy (image/audio/video/document: always, only when directed at us — the default — or never), set per number with per-group overrides; anything skipped stays downloadable on demand for 14 days instead of failing
 - **Voice Transcription** — Self-hosted Whisper service transcribes voice notes locally (opt-in per org, no paid API), transcripts are searchable
 - **Smart Handoffs** — Transfer leads between humans and AI with full conversation history
 - **Contact Enrichment** — 20+ fields with social profiles, company data, and custom fields

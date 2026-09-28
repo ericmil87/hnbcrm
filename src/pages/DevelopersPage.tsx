@@ -674,8 +674,8 @@ npm run dev`}</CodeBlock>
                     </tr>
                   </thead>
                   <tbody>
-                    <ToolRow name="crm_list_groups" description="Grupos dos números bridge (acompanhar é opt-in por grupo)" params="channelConfigId?" />
-                    <ToolRow name="crm_get_group" description="Grupo com a lista de participantes e a política de IA" params="groupChatId" />
+                    <ToolRow name="crm_list_groups" description="Grupos dos números bridge (acompanhar é opt-in por grupo); cada item traz mediaPolicy/effectiveMedia (política de download de mídia por tipo)" params="channelConfigId?" />
+                    <ToolRow name="crm_get_group" description="Grupo com a lista de participantes, a política de IA e a política de mídia (mediaPolicy/effectiveMedia)" params="groupChatId" />
                     <ToolRow name="crm_send_group_message" description="Envia mensagem num grupo acompanhado (com menções)" params="groupChatId, content, mentions?" />
                     <ToolRow name="crm_list_group_posts" description="Publicações programadas nos grupos" params="status?" />
                     <ToolRow name="crm_get_group_post" description="Detalhes de uma publicação programada" params="groupPostId" />

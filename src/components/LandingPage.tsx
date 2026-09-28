@@ -243,7 +243,7 @@ function FeaturesSection() {
       icon: MessagesSquare,
       title: "Grupos de WhatsApp",
       description:
-        "Acompanhe grupos na caixa de entrada, programe publicações (mensagem do dia por IA ou biblioteca) e deixe a IA responder quando for mencionada, com resumo diário da sala. Disparo para membros com limites anti-ban.",
+        "Acompanhe grupos na caixa de entrada, programe publicações (mensagem do dia por IA ou biblioteca) e deixe a IA responder quando for mencionada, com resumo diário da sala. Disparo para membros com limites anti-ban. Você escolhe quais fotos, áudios e vídeos dos grupos baixar — economiza espaço.",
     },
     {
       icon: ArrowRightLeft,

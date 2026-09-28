@@ -345,7 +345,7 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     path: "/api/v1/conversations/messages",
     category: "Conversas",
     title: "Mensagens da Conversa",
-    description: "Retorna todas as mensagens de uma conversa.",
+    description: "Retorna todas as mensagens de uma conversa (funciona também para a conversa de uma sala de grupo — pegue o conversationId em GET /api/v1/groups/get). Diferente de GET /api/v1/groups/messages, aqui o documento da mensagem vem completo, incluindo `metadata`: em grupo, `metadata.mediaDeferred` marca um anexo que a política de mídia (v0.62) não baixou (kind, mimeType?, filename?, fileLength?, expiresAt, reason: \"policy\", e opcionalmente expired/tooBig/rejected) e `metadata.mediaPurged` marca um anexo removido depois pela limpeza de espaço ({ at, kind }).",
     params: [
       { name: "conversationId", type: "string", required: true, location: "query", description: "ID da conversa" },
     ],
@@ -1181,14 +1181,24 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     path: "/api/v1/groups",
     category: "Grupos",
     title: "Listar Grupos",
-    description: "Grupos conhecidos pelos números bridge da organização. Acompanhar é opt-in POR grupo: um grupo listado não é necessariamente ingerido. Não devolve a lista de participantes.",
+    description: "Grupos conhecidos pelos números bridge da organização. Acompanhar é opt-in POR grupo: um grupo listado não é necessariamente ingerido. Não devolve a lista de participantes. Cada item traz mediaPolicy (override do grupo, \"inherit\" quando segue o número) e effectiveMedia (o modo resolvido por tipo: all | mentions | off) — política de download de mídia introduzida na v0.62.",
     params: [
       { name: "channelConfigId", type: "string", required: false, location: "query", description: "Só os grupos deste número" },
       { name: "includeRemoved", type: "boolean", required: false, location: "query", description: "Inclui grupos dos quais o número saiu" },
     ],
     responseExample: {
       groups: [
-        { _id: "gr0up0001", jid: "120363111@g.us", subject: "Clientes SP", monitored: true, participantsCount: 42, weAreAdmin: false, lastMessageAt: 1757356800000 },
+        {
+          _id: "gr0up0001",
+          jid: "120363111@g.us",
+          subject: "Clientes SP",
+          monitored: true,
+          participantsCount: 42,
+          weAreAdmin: false,
+          lastMessageAt: 1757356800000,
+          mediaPolicy: { image: "inherit", audio: "inherit", video: "inherit", document: "inherit" },
+          effectiveMedia: { image: "mentions", audio: "mentions", video: "mentions", document: "mentions" },
+        },
       ],
     },
   },
@@ -1198,7 +1208,7 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     path: "/api/v1/groups/get",
     category: "Grupos",
     title: "Obter Grupo",
-    description: "Um grupo com a lista de participantes (nome do PushName, telefone, LID, admin, contato vinculado quando o telefone já é contato) e a política de IA da sala. Grupo NÃO acompanhado devolve participants vazio — o dado dos membros é de terceiros e só fica guardado enquanto a sala é de fato acompanhada.",
+    description: "Um grupo com a lista de participantes (nome do PushName, telefone, LID, admin, contato vinculado quando o telefone já é contato), a política de IA da sala e a política de mídia (mediaPolicy = override do grupo, effectiveMedia = modo resolvido por tipo image/audio/video/document — v0.62). Grupo NÃO acompanhado devolve participants vazio — o dado dos membros é de terceiros e só fica guardado enquanto a sala é de fato acompanhada.",
     params: [{ name: "groupChatId", type: "string", required: true, location: "query", description: "ID do grupo" }],
     responseExample: {
       group: {
@@ -1209,6 +1219,8 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
         participants: [{ lid: "111@lid", phone: "5511999990001", name: "Maria", isAdmin: false, isSuperAdmin: false, contactId: "c0nt4ct0001", isSelf: false }],
         selfKey: "92965187932215@lid",
         selfKnown: true,
+        mediaPolicy: { image: "inherit", audio: "inherit", video: "off", document: "inherit" },
+        effectiveMedia: { image: "mentions", audio: "mentions", video: "off", document: "mentions" },
       },
     },
   },
@@ -1218,7 +1230,7 @@ export const ALL_ENDPOINTS: ApiEndpoint[] = [
     path: "/api/v1/groups/messages",
     category: "Grupos",
     title: "Mensagens do Grupo",
-    description: "Mensagens da sala, das mais recentes para as mais antigas. O autor de uma mensagem recebida é um MEMBRO (o nome vem do PushName), não um membro da equipe.",
+    description: "Mensagens da sala, das mais recentes para as mais antigas. O autor de uma mensagem recebida é um MEMBRO (o nome vem do PushName), não um membro da equipe. Esta rota devolve um subconjunto curado de campos e NÃO inclui `metadata` — para saber se um anexo específico ficou pendente de download (mediaDeferred) ou foi removido pela limpeza (mediaPurged, v0.62), use GET /api/v1/conversations/messages com o mesmo conversationId. Não há rota REST para mudar a política de mídia ou baixar sob demanda uma mídia deferida — isso é só na UI (Configurações → canal bridge, ou /app/grupos).",
     params: [
       { name: "groupChatId", type: "string", required: true, location: "query", description: "ID do grupo" },
       { name: "limit", type: "number", required: false, location: "query", description: "Máx. 200", default: "50" },

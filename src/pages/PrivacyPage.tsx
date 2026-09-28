@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "17 de setembro de 2026";
+const EFFECTIVE_DATE = "28 de setembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -93,8 +93,9 @@ export function PrivacyPage() {
                   Membros de grupos de WhatsApp:
                 </span>{" "}
                 quando a organização opta por acompanhar um grupo, tratamos o identificador do participante
-                no WhatsApp (JID e LID), o telefone, o nome de exibição quando a pessoa escreve na sala e o
-                conteúdo das mensagens do grupo. São dados de terceiros, que podem não ter qualquer contato
+                no WhatsApp (JID e LID), o telefone, o nome de exibição quando a pessoa escreve na sala, o
+                conteúdo das mensagens do grupo e, conforme a política de mídia escolhida pela organização,
+                os arquivos de mídia enviados na sala. São dados de terceiros, que podem não ter qualquer contato
                 anterior com a organização — o tratamento está descrito na cláusula 5 abaixo.
               </p>
               <p>
@@ -160,6 +161,28 @@ export function PrivacyPage() {
                 remove os dados das salas associadas àquele número.
               </p>
               <p>
+                <span className="text-text-primary font-medium">Mídia dos grupos:</span> a organização
+                escolhe, por tipo (imagens, áudios, vídeos e documentos), se os arquivos enviados nos grupos
+                acompanhados são baixados sempre, nunca ou apenas quando a mensagem é dirigida a ela — isto
+                é, quando menciona o número da organização, responde a uma mensagem dela ou contém uma
+                palavra-chave configurada para o assistente de IA da sala. Esta última é a configuração
+                padrão. Figurinhas de grupos não são baixadas automaticamente.
+              </p>
+              <p>
+                Quando um arquivo não é baixado, a plataforma não armazena o seu conteúdo nem o submete a
+                transcrição ou a leitura por IA. Guardamos apenas metadados (tipo, nome do arquivo e tamanho)
+                e uma referência técnica, armazenada de forma criptografada, que permite a um usuário
+                autorizado da organização baixar o arquivo sob demanda por até 14 (quatorze) dias. Após esse
+                prazo, ou antes dele se a conversa ou o lead correspondente forem excluídos, a referência é
+                apagada e o arquivo deixa de poder ser obtido pela plataforma. Essa referência não integra
+                as cópias de segurança (backup) nem as exportações de dados disponibilizadas à organização.
+              </p>
+              <p>
+                Arquivos de mídia de grupos já armazenados podem ser removidos para liberar espaço de
+                armazenamento; nesse caso, a mensagem permanece no histórico com a indicação de que a mídia
+                foi removida.
+              </p>
+              <p>
                 <span className="text-text-primary font-medium">Compartilhamento:</span> se a organização
                 ativar os recursos de IA em grupos, o conteúdo das mensagens da sala é enviado ao provedor
                 de modelo de linguagem configurado por ela. Os webhooks e a API que a organização configurar
@@ -212,7 +235,9 @@ export function PrivacyPage() {
               <p>
                 Os dados de membros de grupos de WhatsApp seguem a retenção específica da cláusula 5: a
                 lista de participantes existe enquanto o grupo estiver acompanhado e é apagada quando a
-                organização deixa de acompanhá-lo; a exclusão do canal remove os dados das salas.
+                organização deixa de acompanhá-lo; a exclusão do canal remove os dados das salas. A
+                referência técnica que permite baixar sob demanda uma mídia de grupo não baixada é apagada
+                em até 14 (quatorze) dias.
               </p>
             </LegalSection>
 

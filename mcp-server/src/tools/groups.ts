@@ -53,7 +53,7 @@ const postContent = z
 export function registerGroupTools(server: McpServer, client: HnbCrmClient) {
   server.tool(
     "crm_list_groups",
-    "List the WhatsApp groups known to the organization's bridge channels (subject, JID, member count, whether the CRM is following the room, admin flags, last activity). Following a room is opt-in per group, so a listed group is not necessarily being ingested. Requires inbox:view_own.",
+    "List the WhatsApp groups known to the organization's bridge channels (subject, JID, member count, whether the CRM is following the room, admin flags, last activity). Following a room is opt-in per group, so a listed group is not necessarily being ingested. Each group includes mediaPolicy (its own override per media type, or 'inherit') and effectiveMedia (the resolved all/mentions/off per image, audio, video and document) — the media download policy introduced in v0.62. Requires inbox:view_own.",
     {
       channelConfigId: z.string().optional().describe("Only groups of this WhatsApp number"),
       includeRemoved: z
@@ -76,7 +76,7 @@ export function registerGroupTools(server: McpServer, client: HnbCrmClient) {
 
   server.tool(
     "crm_get_group",
-    "Get one WhatsApp group with its full participant list (name from PushName, phone, LID, admin flags, linked contact when the phone is already a contact), the AI policy for the room and the group settings. Requires inbox:view_own.",
+    "Get one WhatsApp group with its full participant list (name from PushName, phone, LID, admin flags, linked contact when the phone is already a contact), the AI policy for the room, the group settings and the media download policy (mediaPolicy/effectiveMedia, v0.62 — per media type: all, mentions-only, or off). Requires inbox:view_own.",
     { groupChatId: z.string().describe("Group ID (from crm_list_groups)") },
     { readOnlyHint: true, destructiveHint: false },
     async (args) => {

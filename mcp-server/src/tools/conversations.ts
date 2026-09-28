@@ -29,7 +29,7 @@ export function registerConversationTools(
 
   server.tool(
     "crm_get_messages",
-    "Retrieve all messages in a conversation thread, ordered chronologically. Includes both customer messages and internal notes.",
+    "Retrieve all messages in a conversation thread, ordered chronologically. Includes both customer messages and internal notes. Also works for a WhatsApp group room's conversation (its id is group.conversationId from crm_get_group). On a group, metadata.mediaDeferred marks an attachment the media policy chose not to download (v0.62) and metadata.mediaPurged marks one later removed by storage cleanup — crm_list_groups/crm_get_group do not expose these.",
     {
       conversationId: z.string().describe("The conversation ID"),
     },

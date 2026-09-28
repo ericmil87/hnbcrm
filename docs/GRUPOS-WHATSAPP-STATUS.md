@@ -11,6 +11,11 @@ backend), F2 (UI base), F3 (publicações programadas, backend + UI), F4 (IA em
 grupos), F5 (campanhas para salas e para membros), F5.5 (REST, MCP e
 preferências) e F8 na parte de review + docs. **Nada commitado** — o Eric commita.
 
+> **Atualização 2026-09-28:** tudo acima foi publicado na v0.57 e seguintes. A
+> **v0.62.0** (commit 6cfea3d) acrescentou a política de download de mídia dos
+> grupos — ver a seção "v0.62" abaixo, antes da F6. Purge em produção liberou
+> ~104 MB: storage 151 → 46,6 MB de 1 GB.
+
 **Números finais:** suíte inteira **1272 testes verdes em 68 arquivos**; 13
 arquivos de teste são de grupos e somam **403 testes**
 (`lib/bridgeGroups` 28, `bridgeGroupIngress` 41, `bridgeGroupDispatch` 10,
@@ -148,6 +153,23 @@ desconhecida).
 - [x] Filtro de canal na aba Publicações (`GroupPostsTab.tsx`), visível só com 2+ canais com grupos ligados — fecha o Desvio 6 da "F3 UI"
 - [x] Testes: `convex/groupsApi.test.ts` (13); suíte inteira **1209 verdes** em 68 arquivos; `npm run lint` verde (tsc convex + app + node, `convex dev --once`, `vite build`) e build do mcp-server verde
 - [ ] E2E vivo (F8): nenhuma rota foi exercitada contra o gateway e nenhuma mensagem real saiu
+
+## v0.62 — Mídia de grupos só quando é com a gente — CONCLUÍDA (2026-09-28, commit 6cfea3d)
+Motivo, medido em 27/09/2026 em produção: **103 de 151 MB do File Storage eram
+mídia de grupo** (78 MB em 9 vídeos), vinda de grupos locais de compra e venda, e
+**nenhum** desses anexos vinha de mensagem que mencionasse o número. Cada foto
+ainda agendava transcrição/visão. O plano gratuito do Convex tem 1 GB.
+- [x] Política de download por tipo (`image`/`audio`/`video`/`document`) com três modos: **Sempre** (`all`), **Só quando é com a gente** (`mentions`, o padrão) e **Nunca** (`off`). "Com a gente" = menção ao número, resposta (quote) a mensagem nossa, palavra-chave da IA da sala (com a IA ligada) ou mensagem enviada pelo próprio número — mesma regra do gatilho do agente de grupo (`shouldTriggerGroupAgent`). Figurinha de grupo nunca baixa sozinha.
+- [x] Decisão tomada ANTES do fetch ao gateway: o que não é baixado não gasta banda, storage nem chamada de visão/transcrição
+- [x] Padrão do número (`channelConfigs.bridgeGroupMedia`) em **Configurações → Canais → número → "Mídia dos grupos"** (atalhos "Economizar espaço" e "Baixar tudo") + ajuste por sala pelo botão **"Mídia"** em `/app/grupos` (`groupChats.mediaPolicy`, "herdar do número" não é gravado); mutations auditadas, gate `settings:manage`
+- [x] Mídia não baixada vira placeholder no inbox (`metadata.mediaDeferred` — tipo, nome, tamanho) com botão **"Baixar" por 14 dias**; a IA lê `[imagem não baixada]`, e a espera de enriquecimento não segura a resposta por ela
+- [x] Referência técnica do download (descriptor whatsmeow com `MediaKey`) guardada CIFRADA na tabela isolada `deferredGroupMedia` — fora de `messages`, fora do backup/exportação, apagada na expiração (cron diário) e pela cascata de exclusão de lead/conversa
+- [x] Download sob demanda reusa o helper do ingest 1 a 1 (teto 25 MB, allowlist, quota) com trava por token contra clique repetido; só 404/410 do whatsmeow expira a mídia
+- [x] Op de limpeza `groupMediaCleanup:internalPurgeGroupMedia` (dryRun por padrão, preserva mensagens "com a gente", guarda de blob compartilhado; o inbox mostra "Mídia removida para liberar espaço")
+- [x] **Resultado medido — purge em produção em 28/09/2026** (`olderThanDays: 0`): 135 arquivos apagados, **~104 MB liberados, storage 151 → 46,6 MB** (de 1 GB do free plan)
+- [x] Testes: `groupMediaPolicy.test.ts`, `lib/groupMediaPolicy.test.ts`, `src/lib/groupMedia.test.ts` (+ caso em `groupAgent.test.ts`)
+- [x] Privacidade/Termos atualizados (retenção de mídia de grupo, referência cifrada de 14 dias) — 2026-09-28
+- [ ] Validação viva: mandar foto numa sala acompanhada sem mencionar o número (deve chegar como "não baixada"), clicar "Baixar", e repetir com menção (deve baixar direto)
 
 ## F6 — Gestão avançada (só com aprovação do Eric)
 - [ ] criar grupo, add/remove/promote/demote, link de convite, pedidos de entrada — atrás de "ENTENDO" + tetos + audit
@@ -960,3 +982,9 @@ Review de correção `review-correctness` e review de segurança `review-securit
   verdes (120 no conjunto pedido), `npx tsc -p convex --noEmit` e
   `npx tsc -p tsconfig.app.json --noEmit` limpos.
 - 2026-09-17 — E2E vivo (Eric): 3 correções — (1) `StepChannel` zerava o grupo pré-selecionado do botão "Disparar 1 a 1" ao escolher o canal; (2) `StepLimits` pedia defaults seguros sem `audienceSource` (pacing 1:1 acima do teto de sala) + `launchCampaign` em modo seguro agora REALINHA ao seguro em vez de exigir ENTENDO; erros de `campaigns.ts` viraram `ConvexError` (mensagem chega ao toast); (3) Inbox fixava a conversa do deep-link no topo de "Arquivadas" mesmo ativa — só fixa quando bate com a aba e o filtro. Seleção de membros na prévia (`memberFilters.includeKeys`) entregue.
+- 2026-09-28 — **v0.62.0 (6cfea3d): mídia de grupos só quando é com a gente.**
+  Política por tipo (sempre / só quando é com a gente / nunca), padrão por número
+  e ajuste por sala, download sob demanda por 14 dias com referência cifrada fora
+  do backup, e op de limpeza. Medido antes: 103 de 151 MB do storage eram mídia de
+  grupo. Purge em produção no mesmo dia liberou ~104 MB (135 arquivos): storage
+  151 → 46,6 MB de 1 GB do free plan. Detalhes na seção "v0.62" acima.

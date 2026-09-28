@@ -274,12 +274,12 @@ WhatsApp bulk-messaging campaigns (official Cloud API or unofficial bridge). Lau
 
 ### WhatsApp Groups (8 tools)
 
-WhatsApp groups work on **bridge channels only**, after the risk acknowledgement on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to but only ingests the followed ones. Group members do not become contacts or leads automatically. Joining, leaving, creating a group and changing participants are deliberately NOT exposed here — they are irreversible and reach people outside the company, so they stay in the app.
+WhatsApp groups work on **bridge channels only**, after the risk acknowledgement on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to but only ingests the followed ones. Group members do not become contacts or leads automatically. Joining, leaving, creating a group and changing participants are deliberately NOT exposed here — they are irreversible and reach people outside the company, so they stay in the app. **Media download policy (v0.62):** each media type (image/audio/video/document) downloads `all`, only `mentions` (default — messages directed at us) or `off`, per number with an optional per-group override (`mediaPolicy`/`effectiveMedia` on both tools below). Media the policy skips is not a failure — the message gets `metadata.mediaDeferred` (visible via `crm_get_messages`, not here) and stays downloadable on demand for 14 days in the app; there is no tool to change the policy or trigger that download.
 
 | Tool | Description |
 |------|-------------|
-| `crm_list_groups` | List the groups of the org's bridge channels (subject, members, followed or not) |
-| `crm_get_group` | One group with its full participant list and the room's AI policy |
+| `crm_list_groups` | List the groups of the org's bridge channels (subject, members, followed or not, media policy) |
+| `crm_get_group` | One group with its full participant list, the room's AI policy and its media policy |
 | `crm_send_group_message` | Send a message in a followed group, with `mentions` (JIDs) to notify members |
 | `crm_list_group_posts` | Scheduled group posts ("every day at noon the assistant posts in group X") |
 | `crm_get_group_post` | Targets, schedule, content and any text waiting for approval |

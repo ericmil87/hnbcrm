@@ -680,7 +680,7 @@ group room.
 **Response:** \`{ conversations: [...], nextCursor, hasMore }\`
 
 #### GET /api/v1/conversations/messages
-Get messages for a conversation.
+Get messages for a conversation. Works for a group room's conversation too (its id is \`group.conversationId\` from \`GET /api/v1/groups/get\`) — unlike the curated \`GET /api/v1/groups/messages\`, this returns the full message document, including \`metadata\`. On a group conversation, \`metadata.mediaDeferred\` marks an attachment the v0.62 media policy chose not to download (\`{ kind, mimeType?, filename?, fileLength?, expiresAt, reason: "policy", expired?, tooBig?, rejected? }\`) and \`metadata.mediaPurged\` marks one removed later by the storage cleanup job (\`{ at, kind }\`).
 
 **Query params:** conversationId (required)
 
@@ -792,16 +792,16 @@ Add recipients to a DRAFT. **Body:** campaignId, optional \`sourceGroupChatId\` 
 
 ### WhatsApp Group Endpoints
 
-WhatsApp groups are available on **bridge channels only** (the unofficial gateway) and only after the risk acknowledgement is accepted on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to, but only ingests messages from the ones marked as followed — the number is also in family and school groups, and ingesting everything would be a leak, not a feature. Group members do NOT become contacts or leads automatically; they live in the group's \`participants[]\`, with \`contactId\` filled in only when the phone already belonged to a contact. **Joining, leaving, creating a group and changing participants have no REST route on purpose** — they are irreversible and reach people outside the company, so they stay in the app, behind human confirmation.
+WhatsApp groups are available on **bridge channels only** (the unofficial gateway) and only after the risk acknowledgement is accepted on that number. Following a room is **opt-in per group**: the CRM lists every group the number belongs to, but only ingests messages from the ones marked as followed — the number is also in family and school groups, and ingesting everything would be a leak, not a feature. Group members do NOT become contacts or leads automatically; they live in the group's \`participants[]\`, with \`contactId\` filled in only when the phone already belonged to a contact. **Joining, leaving, creating a group and changing participants have no REST route on purpose** — they are irreversible and reach people outside the company, so they stay in the app, behind human confirmation. **Media download policy (v0.62):** each media type (image/audio/video/document) downloads \`all\` (always), \`mentions\` (default — only messages directed at us: mention, quote of our message, AI keyword, or a message we sent from the phone) or \`off\` (never); a number-level default lives on the channel config, with an optional per-group override. Media the policy skips is never a failure — the message carries \`metadata.mediaDeferred\` instead and stays downloadable on demand for 14 days. **There is no REST route to change the media policy or to trigger an on-demand download** — both are app-only (Settings → bridge number card, and /app/grupos), same as join/leave.
 
 #### GET /api/v1/groups
-**Query params:** channelConfigId (optional), includeRemoved (optional). **Response:** \`{ groups: [{ _id, jid, subject, monitored, participantsCount, weAreAdmin, isAnnounce, isEphemeral, lastMessageAt, ... }] }\` — the participant list is NOT included (a group can hold 1024 members); use \`/groups/get\`.
+**Query params:** channelConfigId (optional), includeRemoved (optional). **Response:** \`{ groups: [{ _id, jid, subject, monitored, participantsCount, weAreAdmin, isAnnounce, isEphemeral, lastMessageAt, mediaPolicy, effectiveMedia, ... }] }\` — the participant list is NOT included (a group can hold 1024 members); use \`/groups/get\`. \`mediaPolicy\` is the group's own override per media type (\`"inherit"\` when it follows the number's default); \`effectiveMedia\` is the resolved mode per type (\`all\`/\`mentions\`/\`off\`) after applying that override over the number's default.
 
 #### GET /api/v1/groups/get
-**Query params:** groupChatId (required). **Response:** \`{ group: { ...group, participants: [{ lid, phone, name, isAdmin, isSuperAdmin, contactId, isSelf }], selfKey, selfKnown, ai } }\`. A group of another organization returns 404. \`participants\` is EMPTY for a group that is not monitored — member names and phone numbers belong to third parties and are only stored while the room is actually being followed. \`isSelf\` marks the connected number; \`selfKey\` (its raw identifier) is only returned to a key with settings:manage, and \`selfKnown\` says whether the CRM knows it at all.
+**Query params:** groupChatId (required). **Response:** \`{ group: { ...group, participants: [{ lid, phone, name, isAdmin, isSuperAdmin, contactId, isSelf }], selfKey, selfKnown, ai, mediaPolicy, effectiveMedia } }\`. A group of another organization returns 404. \`participants\` is EMPTY for a group that is not monitored — member names and phone numbers belong to third parties and are only stored while the room is actually being followed. \`isSelf\` marks the connected number; \`selfKey\` (its raw identifier) is only returned to a key with settings:manage, and \`selfKnown\` says whether the CRM knows it at all. \`mediaPolicy\`/\`effectiveMedia\` are the same per-type media download fields as in \`/groups\` (v0.62).
 
 #### GET /api/v1/groups/messages
-**Query params:** groupChatId (required), limit (default 50, max 200). **Response:** \`{ messages: [{ _id, direction, content, contentType, deliveryStatus, readBy, mentions, senderName, senderPhone, senderLid, senderContactId, senderContactName, transcriptText, imageDescription, createdAt }] }\` — NEWEST first. The author of an inbound group message is a member, not a team member: \`senderName\` comes from their WhatsApp PushName.
+**Query params:** groupChatId (required), limit (default 50, max 200). **Response:** \`{ messages: [{ _id, direction, content, contentType, deliveryStatus, readBy, mentions, senderName, senderPhone, senderLid, senderContactId, senderContactName, transcriptText, imageDescription, createdAt }] }\` — NEWEST first. The author of an inbound group message is a member, not a team member: \`senderName\` comes from their WhatsApp PushName. This shape is a curated projection and does **not** include \`metadata\` — to see whether a given attachment was deferred by the media policy (\`metadata.mediaDeferred\`) or later purged (\`metadata.mediaPurged\`, v0.62), call \`GET /api/v1/conversations/messages\` with the same conversation (its id is \`group.conversationId\` from \`/groups/get\`), which returns the full message document.
 
 #### POST /api/v1/groups/send
 Send a message in a FOLLOWED group. **Body:** groupChatId (required), content (or attachments), contentType, mentions (JIDs of mentioned members → \`ContextInfo.MentionedJID\`), replyToMessageId, attachments. The "@name" in the text is your choice; \`mentions\` is what makes WhatsApp highlight and notify. Same send path as \`/conversations/send\` (pacing, webhook \`message.sent\`, dispatch). **Response:** \`{ success: true, messageId, conversationId }\` (201)
@@ -1380,7 +1380,7 @@ List conversations, optionally filtered by lead.
 - **leadId** (string, optional): Filter by lead
 
 #### crm_get_messages
-Get messages for a conversation.
+Get messages for a conversation. Also works for a WhatsApp group room's conversation (its id is \`group.conversationId\` from \`crm_get_group\`); on a group, \`metadata.mediaDeferred\`/\`metadata.mediaPurged\` mark an attachment the media policy skipped or later purged (v0.62) — \`crm_list_groups\`/\`crm_get_group\` do not expose this, it only shows up here (full message document) or in the app.
 - **conversationId** (string, required): The conversation ID
 
 #### crm_send_message
@@ -1585,10 +1585,10 @@ Meta templates cached for a channel. **channelConfigId**, onlyApproved.
 ### WhatsApp Groups
 
 #### crm_list_groups
-Groups known to the org's bridge channels. **channelConfigId**, includeRemoved (optional). Following a room is opt-in per group, so a listed group is not necessarily ingested.
+Groups known to the org's bridge channels. **channelConfigId**, includeRemoved (optional). Following a room is opt-in per group, so a listed group is not necessarily ingested. Each group carries \`mediaPolicy\`/\`effectiveMedia\` — the per-type (image/audio/video/document) media download policy, v0.62.
 
 #### crm_get_group
-One group with the full participant list (PushName, phone, LID, admin flags, linked contact) and the room's AI policy. **groupChatId** (required).
+One group with the full participant list (PushName, phone, LID, admin flags, linked contact), the room's AI policy and its media download policy (\`mediaPolicy\`/\`effectiveMedia\`, v0.62). **groupChatId** (required).
 
 #### crm_send_group_message
 Send a message to a FOLLOWED group. **groupChatId**, **content** (required), mentions (JIDs), replyToMessageId. Writes to a room with people outside the company and cannot be unsent.

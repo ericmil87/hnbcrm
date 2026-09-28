@@ -1,12 +1,12 @@
 # HNBCRM — Project Status & Roadmap
 
-**Last Updated:** 2026-08-14
-**Current Version:** v0.45.0
+**Last Updated:** 2026-09-28
+**Current Version:** v0.62.0
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
 
-## Update 2026-08-14 (v0.34 → v0.45)
+## Update 2026-09-28 (v0.34 → v0.62)
 
 The numbered sections below still describe the v0.33 snapshot. What shipped since then:
 
@@ -21,6 +21,12 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.44 (2026-08-14)** — Vínculo tarefa ↔ lead visível e navegável, com deep-links de pipeline e inbox
 - **v0.45 (2026-08-14)** — Repasses IA ↔ humano fluidos (sino → espiar → aceitar cai no chat, banner na conversa) + loop de coaching no rascunho da IA (instruir/regenerar, pedir sugestão, devolver para IA)
 - **v0.56 (2026-09-16)** — Bridge: mensagem digitada no app do celular entra no CRM (`fromMe` → outbound), histórico do aparelho por número (opt-in, 100 msgs/7 dias) e regra "um número = uma conta" (parear em outra conta desativa a antiga, com aviso). Correção de fundo: o `Subscribe` do connect reescrevia a assinatura de eventos do gateway — os recibos de entrega/leitura estavam mortos desde 2026-08-07
+- **v0.57 (2026-09-17)** — Grupos de WhatsApp (bridge): acompanhar salas no inbox (opt-in por grupo), publicações programadas, agente de IA que responde quando chamado, campanhas para salas e para membros, REST/MCP
+- **v0.58 (2026-09-18)** — Agentes de IA sabem a data e a hora; markdown do LLM vira formatação de WhatsApp (v0.58.1)
+- **v0.59 (2026-09-18)** — E-mail transacional passa a sair de verdade; recuperar senha e boas-vindas
+- **v0.60 (2026-09-19)** — Atendente IA executa os follow-ups que ele mesmo agenda (v0.60.1: ligar grupos sem se perder + publicação por IA que de fato gera)
+- **v0.61 (2026-09-27)** — Multi-org N:N usuário↔empresa: remover corta o acesso, convite sem auto-link por e-mail, troca de empresa
+- **v0.62 (2026-09-28)** — Mídia de grupos só quando é com a gente: política de download por tipo (imagem/áudio/vídeo/documento — sempre, só quando é com a gente [padrão] ou nunca), padrão por número em Configurações → Canais → "Mídia dos grupos" e ajuste por sala em /app/grupos; mídia não baixada fica com botão "Baixar" por 14 dias (referência cifrada, fora do backup) e op de limpeza. Medido: 103 de 151 MB do storage eram mídia de grupo; o purge de 28/09 liberou ~104 MB (151 → 46,6 MB de 1 GB do free plan)
 
 ### Pendências atuais
 

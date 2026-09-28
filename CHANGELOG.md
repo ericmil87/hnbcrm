@@ -2,6 +2,202 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.62.0] - 2026-09-28
+
+### Grupos — mídia só quando é com a gente
+
+- Nova política de download de mídia em grupos, por tipo (imagem/áudio/vídeo/documento): sempre, só "com a gente" (padrão) ou nunca — a decisão é tomada ANTES de baixar do WhatsApp
+- Padrão "com a gente": baixa quando a mensagem menciona o número, responde (quote) uma mensagem nossa, usa palavra-chave do agente de grupo ou foi enviada por nós mesmos; figurinha de grupo nunca baixa sozinha
+- Padrão configurável por número (canal), com override por grupo individual
+- Mídia não baixada aparece como "[imagem não baixada]" no histórico lido pela IA (não conta como falha) e pode ser baixada sob demanda por até 14 dias, direto do inbox
+- Descriptor da mídia adiada fica cifrado numa tabela própria, fora do backup, com trava contra clique duplicado
+- Rotina de limpeza (simulação por padrão) apaga mídia antiga de grupo preservando o que foi enviado a nós; a primeira execução em produção liberou ~104 MB (151 → 46,6 MB)
+- UI: configuração de mídia no painel do número, resumo por sala em /app/grupos, botão "Baixar" no inbox
+- 1623 testes verdes
+
+**Modificados:** `convex/bridge.ts`, `convex/conversations.ts`, `convex/groupChats.ts`, `convex/whatsapp.ts`. **Novos:** `convex/groupMedia.ts`, `convex/groupMediaCleanup.ts`, `convex/lib/groupMediaPolicy.ts`, `convex/lib/bridgeMediaDownload.ts`, `src/components/inbox/DeferredMedia.tsx`, `src/components/groups/GroupMediaPolicyModal.tsx`, `src/components/settings/GroupMediaDefaultsSection.tsx`.
+
+## [0.61.0] - 2026-09-27
+
+### Multi-organização usuário↔empresa (N:N)
+
+- Um usuário agora pode pertencer a várias organizações, e cada organização pode ter vários membros vinculados a contas diferentes
+- **Remover um membro de fato corta o acesso** dele àquela organização; reconvidar reativa o mesmo vínculo em vez de criar um novo
+- **Fim do auto-vínculo por e-mail no cadastro**: antes, quem se cadastrasse primeiro com o e-mail de um membro pré-criado entrava direto na organização — inclusive como admin
+- Convite de pessoa sempre passa pelo mesmo fluxo, vinculando conta já existente sem tocar na senha dela e sem duplicar cadastro
+- Login e cadastro deixam de diferenciar maiúsculas/minúsculas no e-mail
+- Senha temporária obrigatória passa a ser da CONTA, não da organização — trava o app em qualquer empresa até o usuário trocar
+- Assistente de configuração inicial passa a ser por organização, visível só para admin
+- Novo seletor "Trocar de empresa" no lugar do antigo menu; link de outra organização troca sozinho ou avisa que não encontrou
+- 1567 testes verdes
+
+**Modificados:** `convex/lib/auth.ts`, `convex/teamMembers.ts`, `convex/organizations.ts`. **Novos:** `src/components/org/OrgSwitcher.tsx`, `src/lib/orgSwitch.ts`.
+
+## [0.60.1] - 2026-09-21
+
+### Grupos — acompanhar sem se perder + publicação por IA corrigida
+
+- Aviso em Configurações quando os grupos do número foram ligados mas nenhum está "Acompanhando" — motivo mais comum do inbox aparecer vazio depois de conectar grupos
+- Atalho "Acompanhar todos" e rótulo "Acompanhar/Acompanhando" diretamente no interruptor de cada grupo
+- Atalho para acompanhar grupos direto pela página /app/grupos, e aviso ao parar de acompanhar sobre o que se perde (histórico da sala, lista de membros, publicações agendadas)
+- Corrigida a geração de posts por IA em grupos: em produção, todas as gerações voltavam com texto vazio porque o modelo gastava o teto inteiro de tokens "pensando" antes de escrever — mesmo defeito já visto na resposta do atendente
+
+## [0.60.0] - 2026-09-19
+
+### Follow-up que a própria IA executa
+
+- A IA agora cobra sozinha o que ela mesma agendou: no vencimento de um follow-up, ela lê a conversa atualizada e decide mandar mensagem, não mandar nada ou remarcar — nunca reenvia um texto congelado na hora do agendamento
+- Tarefa criada pela própria IA para "cobrar depois" vira follow-up de verdade — antes vencia calada, porque nada no sistema tratava uma tarefa vencida atribuída à IA
+- Nova ação da IA para cancelar um follow-up quando o cliente já resolveu sozinho (ex: mandou o comprovante antes do prazo)
+- Três modos por atendente: desligado, rascunho para revisão humana (padrão) e autopilot; com teto diário por número, janela de silêncio (padrão 8h–20h) e limite de tentativas seguidas sem resposta do cliente
+- Follow-up nunca dispara em conversa/lead arquivado, contato em opt-out, canal caído ou fora do horário de atendimento
+- Vencido sem conseguir executar (canal desligado, conversa escalada) volta para um humano com notificação própria — nunca fica esquecido
+- Botão "IA executa" em qualquer tarefa já atribuída a um atendente de IA, mesmo criada manualmente
+- Correções encontradas em teste ao vivo: rota de IA fora do ar derrubava o turno inteiro, modelo sem decisão perdia o follow-up sem nenhuma ação, e resposta cortada pelo teto de tokens chegava truncada ao cliente — agora é descartada e refeita
+- 1522 testes verdes
+
+**Modificados:** `convex/attendant.ts`, `convex/tasks.ts`, `convex/crons.ts`. **Novos:** `convex/attendantFollowUp.ts`, `convex/lib/followUpOps.ts`, `convex/lib/followUpNote.ts`.
+
+## [0.59.0] - 2026-09-18
+
+### E-mail transacional volta a sair de verdade + recuperar senha
+
+- **Bug crítico corrigido: nenhum e-mail transacional saía havia meses** — o provedor tinha um modo de teste ligado por padrão que bloqueia qualquer destinatário fora de `@resend.dev`; ninguém percebeu porque o aviso in-app continuava funcionando normalmente
+- Envio real passa a ser o padrão; o modo de teste agora exige ativação explícita
+- Nova tela "Esqueci minha senha": código de 8 dígitos por e-mail, válido por 15 minutos, com limite de pedidos por hora para evitar abuso
+- E-mail de boas-vindas ao criar uma organização
+- Falha no envio de e-mail nunca mais derruba a ação que o disparou (convite, atribuição etc.)
+- Endereços claramente inválidos ou de domínios de teste deixam de receber e-mail
+- 1369 testes verdes
+
+## [0.58.1] - 2026-09-18
+
+### Formatação do LLM chega como formatação de WhatsApp
+
+- Texto gerado pela IA (atendente e publicações de grupo) chega ao WhatsApp já convertido: `**negrito**` vira `*negrito*`, títulos e listas seguem a formatação nativa do WhatsApp — antes o cliente via os asteriscos e símbolos crus
+- Links, e-mails e endereços `www.` são preservados intactos durante a conversão
+- 1344 testes verdes
+
+## [0.58.0] - 2026-09-18
+
+### Agentes de IA passam a saber a data e a hora
+
+- Atendente e copiloto agora sabem o dia, a hora e o fuso horário reais da conversa — antes nenhum prompt informava isso, então a IA não conseguia aplicar prazos ("R$67 até 06/10"), saber que é madrugada ou sugerir "quinta que vem" corretamente
+- Ligado por padrão em todo atendente; pode ser desligado individualmente
+- Fuso horário resolvido pela agenda do próprio atendente, com fallback para o fuso da organização
+- 1318 testes verdes
+
+## [0.57.0] - 2026-09-17
+
+### Grupos de WhatsApp no CRM
+
+- Grupo de WhatsApp vira conversa no inbox como qualquer outra, com "Acompanhar" opt-in por sala — por padrão nada é importado
+- Nova página /app/grupos: lista de grupos do número, membros, resumo sob demanda e sincronização
+- **Publicações programadas em grupos**: agenda por horário/dias, conteúdo fixo (biblioteca sequencial ou aleatória) ou gerado por IA, com aprovação opcional antes de publicar
+- **Agente de IA em grupos**: responde só quando é mencionada, quando respondem a uma mensagem sua, ou por palavra-chave — nunca a toda mensagem da sala; inclui resumo sob demanda, digest diário e radar de oportunidade
+- **Campanhas para grupos**: disparo para a sala inteira ou mensagem individual para cada membro do grupo
+- Nova API REST (14 rotas) e MCP (8 tools) para grupos e publicações, e notificações próprias (menção, publicação pendente, oportunidade)
+- Fora do escopo desta versão: criar grupo, adicionar/remover membro e a API oficial de grupos da Meta
+- 1295 testes verdes
+
+**Modificados:** `convex/bridge.ts`, `convex/whatsapp.ts`. **Novos:** `convex/groupChats.ts`, `convex/groupPosts.ts`, `convex/groupAgent.ts`, `src/components/groups/GroupsPage.tsx`.
+
+## [0.56.0] - 2026-09-16
+
+### Bridge — mensagem do aparelho, histórico e exclusividade do número
+
+- Mensagem digitada direto no aplicativo do celular (fora do CRM) agora aparece no inbox — antes o CRM ignorava tudo que viesse do próprio aparelho e a conversa ficava incompleta para quem lia depois
+- Recibos de entrega e leitura do WhatsApp voltam a chegar no bridge (estavam quebrados desde 07/08 por uma reescrita indevida da assinatura de eventos a cada reconexão)
+- Importação opt-in do histórico de mensagens do aparelho, por número (100 mensagens / 7 dias por padrão) — útil para recuperar conversa perdida
+- **Um número de WhatsApp só pode estar ativo em uma conta por vez**: conectar o mesmo número numa segunda organização desativa e desloga automaticamente o canal da primeira, com aviso e pausa de campanhas
+- Excluir um canal bridge agora desloga o aparelho de verdade (antes deixava a instância órfã logada no servidor do gateway para sempre)
+- 836 testes verdes
+
+## [0.55.0] - 2026-09-14
+
+### Campanhas de WhatsApp — disparo em massa
+
+- Envio em massa pelo canal Meta (oficial) ou bridge (não oficial), com wizard de 5 passos: conteúdo (com variantes/spintax/variáveis), público (segmento, lista importada ou manual), agenda, ritmo de envio e confirmação
+- Supressão de opt-out em toda a organização — por palavra-chave (SAIR/PARAR/STOP/CANCELAR), erro reportado pela Meta ou marcação manual — nenhuma campanha envia para quem já saiu
+- Limites de segurança calibrados por idade do número no bridge (números novos enviam bem menos) e por tier de mensageria na Meta, com um teto duro que nem o modo avançado ultrapassa
+- Lançamento exige base legal (LGPD) e, no bridge, aceite explícito do risco de banimento do número
+- **Autopilot antecipado**: quem já confia no atendente pode pular o período de observação (10 sugestões revisadas) com um aceite de risco explícito, em vez de esperar as métricas se acumularem sozinhas
+- Corrigido incidente real: a IA registrava "nenhuma imagem foi enviada" em comprovantes de Pix genuínos sempre que o provedor de IA descartava a imagem em silêncio — agora isso é detectado e a leitura é repetida noutro provedor
+- Nova API REST (21 rotas) e 12 tools MCP; relatório e rascunho de campanha pelo copiloto (lançar continua sendo sempre um ato humano)
+- 782 testes verdes
+
+**Modificados:** `convex/whatsapp.ts`. **Novos:** `convex/campaigns.ts`, `convex/campaignWorker.ts`, `convex/lib/campaignPacing.ts`, `convex/lib/campaignHooks.ts`, `src/components/campaigns/CampaignWizard.tsx`.
+
+## [0.54.0] - 2026-08-27
+
+### Markdown de verdade no chat do Copiloto
+
+- Respostas do Copiloto (tabelas, negrito, listas, código) passam a ser renderizadas de verdade — antes chegavam como texto cru, com asteriscos e barras verticais visíveis na tela
+- Renderizador próprio, sem depender de biblioteca externa, protegido contra HTML ou link malicioso vindo do modelo
+- Painel do Copiloto mais largo em telas grandes, com botão de copiar em cada resposta
+
+## [0.53.0] - 2026-08-27
+
+### IA para de responder no escuro a PDF + defesas da mídia recebida
+
+- Cliente manda um PDF (ex: comprovante) e a IA avisa que não consegue abrir o arquivo e pede um print, em vez de responder como se fosse uma mensagem de texto comum
+- Simulador de testes da IA ganha suporte a imagem e arquivo, além do áudio que já existia
+- **Mídia recebida pelo WhatsApp passa a ter as mesmas defesas do upload feito por humano**: allowlist de tipo de arquivo e quota de armazenamento — antes um contato conseguia encher o storage da organização enviando qualquer coisa
+- A chave que decifra mídia do WhatsApp deixou de ficar gravada para sempre no banco
+- Corrigido bug que atrasava em 60 segundos toda resposta da IA a uma mídia que tinha falhado ao baixar
+- 642 testes verdes
+
+## [0.52.0] - 2026-08-27
+
+### Um interruptor só para a IA ler imagens + rota por produto
+
+- Leitura de imagens (visão) passa a ter um único interruptor em Configurações → IA, em vez de dois em telas diferentes que precisavam estar ligados ao mesmo tempo
+- Cada produto de IA (copiloto, atendente, visão) pode escolher a própria rota de provedor e, no caso da visão, o próprio modelo — antes só existia uma rota para a organização inteira
+- Modelo de visão fixo é validado no servidor contra uma lista de modelos testados; um modelo inválido é recusado na hora, não só quando a primeira imagem falhar
+- 620 testes verdes
+
+## [0.51.0] - 2026-08-27
+
+### Atendente IA passa a ler imagens que o cliente manda
+
+- Cliente manda o print do comprovante de Pix e a IA responde ao que está na imagem, em vez de responder no escuro
+- Recurso opt-in, desligado por padrão — a imagem só é enviada a um provedor externo de IA com a organização ligando o recurso explicitamente
+- Cada imagem é descrita **uma única vez** e o resultado vira texto no histórico — uma conversa com 40 mensagens e 1 comprovante custa 1 chamada de visão, não 40
+- A IA lê e confirma o que está escrito no comprovante, mas nunca confirma o pagamento sozinha — quem dá baixa é a equipe
+- 610 testes verdes
+
+## [0.50.0] - 2026-08-27
+
+### Devolver à IA respondendo o que ela precisava
+
+- Quando um gerente informa um dado que faltava (valor, Pix, data) ao devolver a conversa para a IA, ela passa a usar essa informação nos próximos turnos, em vez de esquecer assim que a conversa continua
+- Repasse (handoff) rejeitado agora pode vir com uma instrução para a IA, que já dispara o próximo turno sabendo o que fazer
+- Corrigido caso em que a instrução se perdia quando o repasse não tinha nenhuma mensagem nova do cliente
+- 566 testes verdes
+
+## [0.49.0] - 2026-08-25
+
+### Não lidas em destaque no inbox
+
+- Conversas não lidas ganham destaque visual e a lista passa a ordenar pela atividade mais recente
+- Badges de contagem de não lidas na barra lateral
+- Corrigido menu de gestão de projeto em Tarefas que ficava recortado pela barra de filtros
+- 560 testes verdes
+
+## [0.48.0] - 2026-08-24
+
+### Arquivar/excluir pipelines e leads + painel de lead sobreposto
+
+- Pipeline (funil) agora pode ser arquivado e restaurado sem perder dados, ou excluído de vez — com opção de excluir também os leads (e contatos) daquele funil
+- Não é mais possível ficar sem nenhum pipeline ativo: o sistema sempre promove outro como padrão automaticamente
+- Exclusão de lead ganhou um núcleo único com auditoria completa: um snapshot de tudo que existia é gravado antes de apagar, consultável em /app/auditoria
+- Exclusão de contato só é permitida quando ele não tem mais nenhum outro lead vinculado
+- **Painel de detalhe do lead passa a abrir sobreposto** (sem navegar para outra tela) a partir do Inbox e da lista de leads vinculados no painel de contato
+- Corrigida acentuação em ~480 textos da interface em português
+- 556 testes verdes
+
+**Modificados:** `convex/boards.ts`. **Novos:** `convex/lib/leadCascade.ts`, `src/components/pipeline/DeleteBoardModal.tsx`.
+
 ## [0.47.0] - 2026-08-24
 
 ### Segurança da API — permissão em todas as rotas REST + anti CSV injection

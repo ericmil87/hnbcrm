@@ -145,6 +145,7 @@ An individual message in a conversation.
 | contentType | enum | `text`, `image`, `file`, `audio` |
 | isInternal | boolean | Internal note (not visible to contact) |
 | mentionedUserIds | Id\<teamMembers\>[] | @mentioned team members |
+| metadata | Record\<string, any\>? | Channel-specific extras. On a WhatsApp group message: `mediaDeferred` (attachment the group's media policy did not download, v0.62) or `mediaPurged` (attachment removed later by storage cleanup) — only visible via `crm_get_messages` / `GET /api/v1/conversations/messages`, not `crm_list_groups`/`crm_get_group`/`GET /api/v1/groups/messages` |
 
 ---
 

@@ -7,6 +7,11 @@ pesquisa externa (wuzapi/whatsmeow no fonte Go, Meta Groups API, Chatwoot/Evolut
 
 **Status por etapa:** `docs/GRUPOS-WHATSAPP-STATUS.md` (cada agente atualiza ao fechar a fase).
 
+> **Entregue (atualização 2026-09-28):** F0–F5.5 e a parte de review/docs da F8
+> publicadas a partir da v0.57; a **v0.62.0** acrescentou, fora deste plano, a política
+> de download de mídia dos grupos (baixar só o que é "com a gente" por padrão, download
+> sob demanda por 14 dias) — detalhes no STATUS. F6 e F7 seguem pendentes de aprovação.
+
 **Ordem combinada com o Eric:** primeiro a API NÃO-oficial (bridge/wuzapi). A API oficial
 (Meta Groups API) fica na §14 só como esboço e **só é detalhada depois do OK do Eric no caminho
 do bridge** — ver lembrete no fim do arquivo.
@@ -268,7 +273,7 @@ Ordem sugerida: F0 → F1 → F2 (valida R1/R2 cedo) → F3 (R8, o pedido mais c
 
 ## 13. Segurança, LGPD e lacunas do código que a v1 fecha
 - Multi-tenant: `groupChats` por `organizationId` + `channelConfigId`; o mesmo grupo em dois números da MESMA org gera dois `groupChats` (um por canal — e duas conversas; aceitável na v1, documentar). Exclusividade do número (v0.56) já impede o mesmo número em duas orgs.
-- LGPD: membros de grupo são terceiros que não falaram com a empresa — por isso D3/D4 (opt-in por grupo, sem contato automático, radar só com o interruptor). Cláusula nova nos Termos e no `lgpdAck` (grupos monitorados guardam nome/telefone dos membros e conteúdo). Export/backup incluem `groupChats`; a cascata de exclusão de canal apaga `groupChats` + conversas de grupo (+ blobs via `lib/fileRefs.ts`).
+- LGPD: membros de grupo são terceiros que não falaram com a empresa — por isso D3/D4 (opt-in por grupo, sem contato automático, radar só com o interruptor). Cláusula nova nos Termos e no `lgpdAck` (grupos monitorados guardam nome/telefone dos membros e conteúdo). Export/backup incluem `groupChats`; a cascata de exclusão de canal apaga `groupChats` + conversas de grupo (+ blobs via `lib/fileRefs.ts`). *(Entregue na v0.62: mídia de terceiros em grupo deixou de ser baixada por padrão quando a mensagem não é com a empresa; fica só metadado + referência cifrada por 14 dias, fora do backup.)*
 - Anti-ban: D10/D12, tetos da §6/§7, `TemporaryBan` congela publicações e campanhas, aviso genérico ao ligar grupos num número com < 7 dias.
 - Segredos: nada novo sai do servidor; `listGroups` nunca devolve o doc de `channelConfigs`.
 - Lacunas que a v1 toca: (a) `leadId` obrigatório em `conversations`/`messages`/`handoffs`/`activities` (63 usos) — a F1 relaxa só onde grupo passa e usa `auditLogs`/timeline para o resto; (b) `whatsapp.ts:461` monta o `participant` do quote a partir do `toPhone` (errado para grupo); (c) `BRIDGE_WEBHOOK_EVENTS` sem eventos de grupo; (d) `jidToPhone` aplicado a `@g.us` devolveria o id do grupo como se fosse MSISDN — o parser precisa bifurcar ANTES; (e) `/group/list` devolve `null` para vazio, `ParticipantCount` da lista vem 0 e `/group/info` 500 com `success:true` — `parseBridge*Response` precisa tratar os três; (f) `contactPresence` é um único estado por conversa; (g) webhooks sem registry (`llmsTxt.ts` + `DevelopersPage.tsx`).

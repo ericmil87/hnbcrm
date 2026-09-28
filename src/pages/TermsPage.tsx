@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "17 de setembro de 2026";
+const EFFECTIVE_DATE = "28 de setembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -197,6 +197,19 @@ export function TermsPage() {
                 participantes e a data da última atividade — nome e telefone de membros não são gravados.
                 Ao deixar de acompanhar um grupo, a lista de participantes é apagada e a conversa é
                 arquivada; excluir o canal remove os dados das salas daquele número.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Mídia dos grupos:</span> você define, por
+                número e, se quiser, por grupo, quais tipos de arquivo (imagens, áudios, vídeos e
+                documentos) são baixados: sempre, nunca ou somente quando a mensagem é dirigida à sua
+                empresa (menção ao número, resposta a uma mensagem dela ou palavra-chave do assistente de
+                IA da sala) — esta é a configuração padrão. O arquivo não baixado não é armazenado; ficam
+                apenas o tipo, o nome e o tamanho, e o download sob demanda permanece disponível por até
+                14 (quatorze) dias. Ao optar por baixar sempre, você reconhece que passará a armazenar — e,
+                se a transcrição de áudio ou a leitura de imagens por IA estiverem ativas, a processar —
+                arquivos de terceiros que não se dirigiram à sua empresa, cuja base legal é de sua
+                responsabilidade, nos termos abaixo. A plataforma pode remover arquivos de mídia de grupos já armazenados para
+                liberar espaço, mantendo a mensagem no histórico.
               </p>
               <p>Ao acompanhar um grupo, você reconhece e concorda que:</p>
               <ul className="list-disc list-inside space-y-1.5">

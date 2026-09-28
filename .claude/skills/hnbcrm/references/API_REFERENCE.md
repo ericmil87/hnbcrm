@@ -376,7 +376,7 @@ List conversations with cursor-based pagination, optionally filtered by lead.
 
 ### crm_get_messages
 
-Get all messages in a conversation thread.
+Get all messages in a conversation thread. Also works for a WhatsApp group room's conversation (its id is `group.conversationId`, from `crm_get_group`) — unlike `GET /api/v1/groups/messages`, this returns the full message document, including `metadata`.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
@@ -386,6 +386,8 @@ Get all messages in a conversation thread.
 **REST:** `GET /api/v1/conversations/messages?conversationId=X`
 
 **Response:** `{ messages: [...] }`
+
+On a group conversation, `metadata.mediaDeferred` on a message means its attachment was **not** downloaded by the group media policy (v0.62) — `content`/`contentType` will not describe it, there is nothing to read yet, and it is not a failure. The built-in AI attendant renders this internally as `[imagem não baixada]` (or `[áudio não baixado]`, etc.) in its own prompt history; you will not see that literal string via the API, only the `metadata.mediaDeferred` object (`{ kind, mimeType?, filename?, fileLength?, expiresAt, reason: "policy", expired?, tooBig?, rejected? }`). There is no MCP tool or REST route to download it on demand — that only exists in the app. `metadata.mediaPurged` (`{ at, kind }`) means an older attachment was later removed by the storage cleanup job; treat it the same way (nothing to read).
 
 ---
 
@@ -922,4 +924,5 @@ Rules for agents:
 - **Members are not contacts or leads.** They live in the group's `participants[]`, with `contactId` filled in only when the phone already belonged to a contact. Creating a lead from a member is done in the app.
 - **`crm_send_group_message` writes to a room full of people outside the company and cannot be unsent.** Say what you are about to post and to which group before calling it. To mention someone, put `@FirstName` in the text AND pass their JID in `mentions` — the text alone highlights nothing.
 - **Joining, leaving, creating a group and changing participants are not exposed** over REST or MCP, on purpose.
+- **Media download policy (v0.62).** `crm_list_groups`/`crm_get_group` include `mediaPolicy` (the group's own override, `"inherit"` when it follows the number) and `effectiveMedia` (the resolved mode per type — `all` | `mentions` | `off` — for image, audio, video and document). Default is `mentions`: only media in a message "directed at us" (mention, quote of our own message, AI keyword, or a message sent from our own phone) is downloaded; everything else is skipped and shows up as `metadata.mediaDeferred` on the message (see `crm_get_messages`), downloadable on demand in the app for 14 days. There is no MCP tool or REST route to change the policy or to trigger that on-demand download — both are app-only.
 - **A scheduled group post never publishes by itself until a human activates it.** `crm_create_group_post` always creates a draft; activation is `campaigns: full` and is done in the app. `crm_approve_group_post` decides on one AI-generated text for one slot, not on the routine as a whole.
