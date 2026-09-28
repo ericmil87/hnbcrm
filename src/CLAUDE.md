@@ -123,7 +123,7 @@ src/
     │       ├── FormField.tsx       # Individual field renderer
     │       └── FormSuccess.tsx     # Post-submit success screen
     ├── ErrorBoundary.tsx       # Error boundary wrapper
-    └── OrganizationSelector.tsx # Org switcher dropdown
+    └── org/OrgSwitcher.tsx     # Org switcher modal (lista, Nova organização, Sair) + form de criar org
 └── pages/
     ├── DevelopersPage.tsx      # Public developer portal at /developers
     ├── PlaygroundPage.tsx      # Full-screen interactive REST API playground at /developers/playground
