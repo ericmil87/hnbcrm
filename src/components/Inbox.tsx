@@ -9,6 +9,7 @@ import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
 import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
@@ -2100,7 +2101,7 @@ export function Inbox() {
                             }
                           }
                         }}
-                        teamMembers={teamMembers ?? []}
+                        teamMembers={assignableMembers(teamMembers)}
                         mentionEnabled={isInternal}
                         placeholder={
                           isInternal

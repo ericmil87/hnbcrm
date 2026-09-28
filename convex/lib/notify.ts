@@ -1,6 +1,7 @@
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { resolvePermissions, hasPermission, type Role } from "./permissions";
+import { isMembershipRevoked } from "./auth";
 
 export type NotificationType =
   | "task_assigned"
@@ -93,7 +94,10 @@ export async function filterMembersOfOrg(
   const allowed: Id<"teamMembers">[] = [];
   for (const memberId of memberIds) {
     const member = await ctx.db.get(memberId);
-    if (member && member.organizationId === organizationId) allowed.push(memberId);
+    // Removido da org não é notificado (nem enxergaria o aviso).
+    if (member && member.organizationId === organizationId && !isMembershipRevoked(member)) {
+      allowed.push(memberId);
+    }
   }
   return allowed;
 }

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { getActiveMembership } from "./lib/auth";
 
 // Get lead sources for organization
 export const getLeadSources = query({
@@ -12,12 +13,7 @@ export const getLeadSources = query({
     if (!userId) throw new Error("Not authenticated");
 
     // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 
@@ -49,12 +45,7 @@ export const createLeadSource = mutation({
     if (!userId) throw new Error("Not authenticated");
 
     // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 
@@ -113,12 +104,7 @@ export const updateLeadSource = mutation({
     if (!leadSource) throw new Error("Lead source not found");
 
     // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", leadSource.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, leadSource.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 
@@ -173,12 +159,7 @@ export const deleteLeadSource = mutation({
     if (!leadSource) throw new Error("Lead source not found");
 
     // Verify user is part of organization
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", leadSource.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, leadSource.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 

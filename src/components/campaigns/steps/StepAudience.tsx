@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import { memberLabel } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import type {
   AudiencePreview,
@@ -145,7 +146,7 @@ function SegmentTab({
     | { _id: Id<"stages">; name: string; color?: string }[]
     | undefined;
   const members = useQuery(api.teamMembers.getTeamMembers, { organizationId }) as
-    | { _id: Id<"teamMembers">; name: string; type?: string }[]
+    | { _id: Id<"teamMembers">; name: string; type?: string; removed?: boolean }[]
     | undefined;
 
   // Debounce dos filtros antes de bater no servidor
@@ -213,7 +214,7 @@ function SegmentTab({
               <option value="">Qualquer um</option>
               {(members ?? []).map((m) => (
                 <option key={m._id} value={m._id}>
-                  {m.name}
+                  {memberLabel(m)}
                   {m.type === "ai" ? " (IA)" : ""}
                 </option>
               ))}

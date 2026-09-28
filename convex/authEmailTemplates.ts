@@ -85,3 +85,39 @@ export function buildWelcomeTemplate(data: {
     }),
   };
 }
+
+/**
+ * Aviso a quem JÁ tinha conta e foi adicionado a mais uma organização (o
+ * convite de conta nova usa o template "invite", com senha temporária). Sem
+ * isto a pessoa nunca descobria a org nova: o seletor lembra a org anterior.
+ * `orgName`/`invitedByName` são texto de usuário → escapeHtml.
+ */
+export function buildAddedToOrgTemplate(data: {
+  memberName: string;
+  orgName: string;
+  invitedByName?: string;
+  pendingPasswordChange?: boolean;
+  appUrl: string;
+}): TemplateResult {
+  const memberName = escapeHtml(data.memberName);
+  const orgName = escapeHtml(data.orgName);
+  const by = data.invitedByName ? ` por ${escapeHtml(data.invitedByName)}` : "";
+  return {
+    // Assunto é texto puro: vai sem escape (entidade apareceria crua).
+    subject: `Você foi adicionado(a) à organização ${data.orgName} no HNBCRM`,
+    html: baseTemplate({
+      preheader: `${memberName}, você agora faz parte de ${orgName} no HNBCRM.`,
+      appUrl: data.appUrl,
+      content: `
+        ${heading(`Olá, ${memberName}!`)}
+        ${paragraph(`Você foi adicionado(a)${by} à organização <strong style="color: ${TEXT_PRIMARY};">${orgName}</strong> no HNBCRM.`)}
+        ${paragraph(
+          data.pendingPasswordChange
+            ? "Entre com o seu e-mail e a senha temporária que você recebeu no primeiro convite (ou use \"Esqueci a senha\" na tela de entrada). Você vai criar uma senha nova no primeiro acesso e depois escolher a organização no seletor."
+            : "Entre com o mesmo e-mail e a mesma senha de sempre e escolha a organização no seletor."
+        )}
+        ${ctaButton("Abrir o HNBCRM", `${data.appUrl}/app`)}
+      `,
+    }),
+  };
+}

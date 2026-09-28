@@ -19,6 +19,7 @@ import { EventBlock } from "./EventBlock";
 import type { CalendarEventType } from "./constants";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
+import { memberLabel } from "@/lib/teamMembers";
 
 export function CalendarPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -198,7 +199,7 @@ export function CalendarPage() {
           onNavigateNext={navigateNext}
           onGoToToday={goToToday}
           onCreateEvent={handleCreateEvent}
-          teamMembers={teamMembers.map((m) => ({ _id: m._id, name: m.name }))}
+          teamMembers={teamMembers.map((m) => ({ _id: m._id, name: memberLabel(m) }))}
           selectedMemberId={selectedMemberId}
           selectedEventTypes={selectedEventTypes}
           onMemberChange={setSelectedMemberId}

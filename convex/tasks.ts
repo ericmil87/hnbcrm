@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { requireAuth } from "./lib/auth";
+import { requireAuth, isActiveMemberOf, assertAssignableMember } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { createNotification, filterMembersOfOrg } from "./lib/notify";
@@ -135,17 +135,25 @@ async function normalizeBlockedBy(
   return unique;
 }
 
+// `alreadyAssigned`: quem JÁ era responsável passa só pela checagem de org —
+// editar o título de uma tarefa cujo responsável foi removido reenvia a lista
+// inteira, e isso não pode falhar. Removido só não entra como responsável NOVO.
 async function normalizeAssignees(
   ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
-  memberIds: Id<"teamMembers">[]
+  memberIds: Id<"teamMembers">[],
+  alreadyAssigned: Id<"teamMembers">[] = []
 ): Promise<Id<"teamMembers">[]> {
   const unique = dedupeIds(memberIds);
   for (const id of unique) {
-    const member = await ctx.db.get(id);
-    if (!member || member.organizationId !== organizationId) {
-      throw new Error("Responsável não encontrado nesta organização");
+    if (alreadyAssigned.includes(id)) {
+      const member = await ctx.db.get(id);
+      if (!member || member.organizationId !== organizationId) {
+        throw new Error("Responsável não encontrado nesta organização");
+      }
+      continue;
     }
+    await assertAssignableMember(ctx, organizationId, id);
   }
   return unique;
 }
@@ -637,6 +645,7 @@ export const getTask = query({
   handler: async (ctx, args) => {
     const task = await ctx.db.get(args.taskId);
     if (!task) return null;
+    if (!(await isActiveMemberOf(ctx, task.organizationId))) return null;
 
     await requireAuth(ctx, task.organizationId);
 
@@ -1103,10 +1112,10 @@ export const updateTask = mutation({
     const previousAssignees = readAssignees(task);
     let nextAssignees: Id<"teamMembers">[] | null = null;
     if (args.assigneeIds !== undefined) {
-      nextAssignees = await normalizeAssignees(ctx, task.organizationId, args.assigneeIds);
+      nextAssignees = await normalizeAssignees(ctx, task.organizationId, args.assigneeIds, previousAssignees);
     } else if (args.assignedTo !== undefined) {
       nextAssignees = args.assignedTo
-        ? await normalizeAssignees(ctx, task.organizationId, [args.assignedTo])
+        ? await normalizeAssignees(ctx, task.organizationId, [args.assignedTo], previousAssignees)
         : [];
     }
     if (nextAssignees && JSON.stringify(nextAssignees) !== JSON.stringify(previousAssignees)) {
@@ -1419,7 +1428,7 @@ export const setAssignees = mutation({
 
     const now = Date.now();
     const previousAssignees = readAssignees(task);
-    const assignees = await normalizeAssignees(ctx, task.organizationId, args.memberIds);
+    const assignees = await normalizeAssignees(ctx, task.organizationId, args.memberIds, previousAssignees);
 
     await ctx.db.patch(args.taskId, {
       assigneeIds: assignees,

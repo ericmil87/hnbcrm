@@ -18,9 +18,13 @@ import {
   resolvePermissions,
 } from "../../../convex/lib/permissions";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
+import { isPendingMember } from "@/lib/teamMembers";
+import { WizardInviteResults, type InviteOutcome } from "@/components/onboarding/WizardInviteResults";
 import {
   Pencil, Trash2, RotateCcw, Save, X,
   Key, Plus, Copy, Check, Eye, EyeOff, ShieldAlert, Ban, RefreshCw,
+  Send,
 } from "lucide-react";
 
 interface TeamMember {
@@ -30,6 +34,10 @@ interface TeamMember {
   role: string;
   type: string;
   status: string;
+  /** Vínculo com a org encerrado (backend: `removedAt` ou `status` legado). */
+  removed?: boolean;
+  userId?: Id<"users"> | null;
+  pending?: boolean;
   capabilities?: string[];
   permissions?: Permissions | null;
   mustChangePassword?: boolean;
@@ -60,7 +68,8 @@ const ROLE_LABELS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   active: "Ativo",
   busy: "Ocupado",
-  inactive: "Inativo",
+  inactive: "Removido",
+  pending: "Convite antigo",
 };
 
 export function MemberDetailSlideOver({
@@ -92,6 +101,10 @@ export function MemberDetailSlideOver({
   const updateMemberAvatar = useMutation(api.teamMembers.updateMemberAvatar);
   const removeMember = useMutation(api.teamMembers.removeTeamMember);
   const reactivateMember = useMutation(api.teamMembers.reactivateTeamMember);
+  const inviteHuman = useAction(api.nodeActions.inviteHumanMember);
+  const [isResending, setIsResending] = useState(false);
+  // Resultado do reenvio (tem senha temporária) — só em memória.
+  const [resendOutcome, setResendOutcome] = useState<InviteOutcome | null>(null);
   const createApiKeyAction = useAction(api.nodeActions.createApiKey);
   const revokeApiKeyMutation = useMutation(api.apiKeys.revokeApiKey);
 
@@ -106,7 +119,10 @@ export function MemberDetailSlideOver({
   if (!member) return null;
 
   const isSelf = currentMemberId === member._id;
-  const isInactive = member.status === "inactive";
+  const isInactive = member.removed === true || member.status === "inactive";
+  // Convite antigo sem conta — só vira acesso se o convite for reenviado.
+  const isPending = !isInactive && isPendingMember(member);
+  const displayStatus = isInactive ? "inactive" : isPending ? "pending" : member.status;
   const resolvedPermissions = resolvePermissions(
     member.role as Role,
     member.permissions as Permissions | undefined
@@ -136,12 +152,19 @@ export function MemberDetailSlideOver({
         teamMemberId: member._id,
         name: editName.trim() || undefined,
         role: editRole !== member.role ? editRole : undefined,
-        permissions: customPermissions ? editPermissions : undefined,
+        // Só reenvia permissões que MUDARAM: o servidor valida o objeto
+        // inteiro contra as permissões de quem edita, e reenviar as antigas
+        // (dadas por um admin) impedia um gerente de só renomear o membro.
+        permissions:
+          customPermissions &&
+          JSON.stringify(editPermissions) !== JSON.stringify(member.permissions ?? null)
+            ? editPermissions
+            : undefined,
       });
       toast.success("Membro atualizado!");
       setIsEditing(false);
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao atualizar membro.");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao atualizar membro."));
     } finally {
       setIsSaving(false);
     }
@@ -152,8 +175,38 @@ export function MemberDetailSlideOver({
       await removeMember({ teamMemberId: member._id });
       toast.success("Membro removido.");
       onClose();
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao remover membro.");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao remover membro."));
+    }
+  };
+
+  const handleResendInvite = async () => {
+    if (!member.email) return;
+    setIsResending(true);
+    try {
+      const result = await inviteHuman({
+        organizationId,
+        name: member.name,
+        email: member.email,
+        role: member.role === "admin" || member.role === "manager" ? member.role : "agent",
+      });
+      const kind = result.isNewUser ? "new" : result.reactivated ? "reactivated" : "existing";
+      setResendOutcome({
+        key: member._id,
+        name: member.name,
+        email: member.email,
+        kind,
+        tempPassword: result.tempPassword,
+        emailSent: result.emailSent,
+        pendingPasswordChange: !result.isNewUser && result.pendingPasswordChange,
+      });
+      toast.success(
+        kind === "new" ? "Convite reenviado." : `${member.name} já tinha conta e entrou na organização.`
+      );
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao reenviar convite."));
+    } finally {
+      setIsResending(false);
     }
   };
 
@@ -161,8 +214,8 @@ export function MemberDetailSlideOver({
     try {
       await reactivateMember({ teamMemberId: member._id });
       toast.success("Membro reativado!");
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao reativar membro.");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao reativar membro."));
     }
   };
 
@@ -185,8 +238,8 @@ export function MemberDetailSlideOver({
       setNewKeyValue(result.apiKey);
       setNewKeyName("");
       toast.success("Chave API criada!");
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao criar chave API.");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao criar chave API."));
     } finally {
       setCreatingKey(false);
     }
@@ -198,8 +251,8 @@ export function MemberDetailSlideOver({
       await revokeApiKeyMutation({ apiKeyId: revokeKeyId, organizationId });
       toast.success("Chave API revogada!");
       setRevokeKeyId(null);
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao revogar chave.");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao revogar chave."));
     }
   };
 
@@ -292,8 +345,8 @@ export function MemberDetailSlideOver({
             <Badge variant={member.type === "ai" ? "warning" : "info"}>
               {member.type === "ai" ? "IA" : "Humano"}
             </Badge>
-            <Badge variant={getStatusBadgeVariant(member.status)}>
-              {STATUS_LABELS[member.status] || member.status}
+            <Badge variant={getStatusBadgeVariant(displayStatus)}>
+              {STATUS_LABELS[displayStatus] || displayStatus}
             </Badge>
           </div>
 
@@ -556,6 +609,25 @@ export function MemberDetailSlideOver({
                 </div>
               ) : (
                 <>
+                  {isPending && (
+                    <div className="space-y-2 p-3 rounded-lg bg-surface-sunken border border-border">
+                      <p className="text-sm text-text-secondary">
+                        Convite antigo: esta pessoa ainda não tem acesso. Reenvie o convite para
+                        criar a conta (ou vincular a conta que já existe), ou remova o membro.
+                      </p>
+                      <Button
+                        variant="primary"
+                        onClick={handleResendInvite}
+                        disabled={isResending || !member.email}
+                        className="w-full"
+                      >
+                        <Send size={16} />
+                        {isResending ? "Enviando..." : "Reenviar convite"}
+                      </Button>
+                    </div>
+                  )}
+                  {resendOutcome && <WizardInviteResults outcomes={[resendOutcome]} />}
+
                   <Button
                     variant="secondary"
                     onClick={startEditing}
@@ -598,7 +670,7 @@ export function MemberDetailSlideOver({
         onClose={() => setShowRemoveConfirm(false)}
         onConfirm={handleRemove}
         title="Remover Membro"
-        description={`Tem certeza que deseja remover ${member.name} da equipe? O status será alterado para inativo.`}
+        description={`Remover ${member.name} da equipe? O acesso a esta organização (e às chaves API do membro) é cortado na hora. O histórico fica, e dá para reativar depois.`}
         confirmLabel="Remover"
         variant="danger"
       />

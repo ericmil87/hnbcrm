@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -125,6 +125,7 @@ export const getContactWithLeads = query({
   handler: async (ctx, args) => {
     const contact = await ctx.db.get(args.contactId);
     if (!contact) return null;
+    if (!(await isActiveMemberOf(ctx, contact.organizationId))) return null;
     await requireAuth(ctx, contact.organizationId);
 
     let photoUrl: string | null = null;

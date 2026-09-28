@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
+import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { Check, Users as UsersIcon } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -53,7 +54,8 @@ export function AssigneesPicker({ organizationId, selectedIds, onChange, classNa
   const selectedSet = new Set(selectedIds);
   const allMembers = teamMembers ?? [];
   const selectedMembers = allMembers.filter((m) => selectedSet.has(m._id));
-  const filtered = allMembers.filter((m) =>
+  // Removido da org não é opção nova — só continua na lista se já estava atribuído.
+  const filtered = assignableMembers(allMembers, selectedIds).filter((m) =>
     m.name.toLowerCase().includes(search.trim().toLowerCase())
   );
 
@@ -130,7 +132,7 @@ export function AssigneesPicker({ organizationId, selectedIds, onChange, classNa
               >
                 <Avatar name={member.name} type={member.type} size="sm" imageUrl={member.avatarUrl} />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-text-primary truncate">{member.name}</p>
+                  <p className="text-sm text-text-primary truncate">{memberLabel(member)}</p>
                   <p className="text-xs text-text-muted truncate">
                     {ROLE_LABELS[member.role] ?? member.role}
                   </p>

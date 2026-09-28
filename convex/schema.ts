@@ -521,6 +521,12 @@ const applicationTables = {
     agentProfile: v.optional(agentProfileValidator),
     mustChangePassword: v.optional(v.boolean()),
     invitedBy: v.optional(v.id("teamMembers")),
+    // Vínculo com a org. `status` é PRESENÇA (active/busy); a remoção grava
+    // `removedAt` e corta o acesso (lib/auth.ts → isMembershipRevoked). O
+    // `status: "inactive"` antigo segue valendo como "removido" (legado:
+    // era o único caminho que gravava inactive).
+    removedAt: v.optional(v.number()),
+    removedBy: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

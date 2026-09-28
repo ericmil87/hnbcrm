@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { assignableMembers } from "@/lib/teamMembers";
 
 interface CreateLeadModalProps {
   organizationId: Id<"organizations">;
@@ -314,7 +315,7 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
             style={{ fontSize: "16px" }}
           >
             <option value="">Não atribuído</option>
-            {teamMembers?.map((member) => (
+            {assignableMembers(teamMembers).map((member) => (
               <option key={member._id} value={member._id}>
                 {member.name} ({member.role})
               </option>

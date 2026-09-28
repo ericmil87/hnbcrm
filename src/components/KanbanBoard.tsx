@@ -22,6 +22,7 @@ import { Modal } from "@/components/ui/Modal";
 import { LeadsListView, type LeadSortKey } from "./leads/LeadsListView";
 import { LeadsBulkActionBar } from "./leads/LeadsBulkActionBar";
 import { cn } from "@/lib/utils";
+import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2, LayoutGrid, List, Archive, ArchiveRestore } from "lucide-react";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import {
@@ -1375,7 +1376,7 @@ export function KanbanBoard() {
               <option value="unassigned">Não atribuído</option>
               {teamMembers?.map((member) => (
                 <option key={member._id} value={member._id}>
-                  {member.name}
+                  {memberLabel(member)}
                 </option>
               ))}
             </select>
@@ -1548,7 +1549,7 @@ export function KanbanBoard() {
         <LeadsBulkActionBar
           count={selectedLeadIds.size}
           stages={(stages ?? []).map((s) => ({ _id: s._id, name: s.name, color: s.color }))}
-          teamMembers={(teamMembers ?? []).map((m) => ({ _id: m._id, name: m.name, type: m.type }))}
+          teamMembers={assignableMembers(teamMembers).map((m) => ({ _id: m._id, name: m.name, type: m.type }))}
           onMove={handleBulkMove}
           onAssign={handleBulkAssign}
           onAddTag={handleBulkAddTag}

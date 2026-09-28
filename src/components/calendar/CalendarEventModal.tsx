@@ -7,6 +7,7 @@ import { Checkbox } from "../ui/Checkbox";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import { cn } from "@/lib/utils";
+import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { EVENT_TYPE_LABELS, RECURRENCE_OPTIONS } from "./constants";
 import { toast } from "sonner";
 
@@ -308,9 +309,9 @@ export function CalendarEventModal({
               className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 text-sm"
             >
               <option value="">Nenhum</option>
-              {teamMembers.map((member) => (
+              {assignableMembers(teamMembers, [assignedTo]).map((member) => (
                 <option key={member._id} value={member._id}>
-                  {member.name}
+                  {memberLabel(member)}
                 </option>
               ))}
             </select>
@@ -324,7 +325,7 @@ export function CalendarEventModal({
               Participantes
             </label>
             <div className="flex flex-wrap gap-2">
-              {teamMembers.map((member) => (
+              {assignableMembers(teamMembers, attendees).map((member) => (
                 <button
                   key={member._id}
                   type="button"
@@ -336,7 +337,7 @@ export function CalendarEventModal({
                       : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
                   )}
                 >
-                  {member.name}
+                  {memberLabel(member)}
                 </button>
               ))}
             </div>

@@ -344,6 +344,23 @@ describe("activateOneFlow (wizard)", () => {
     expect(result.attendantId).toBe(seed.agentId);
     expect(result.bridgeEnabled).toBe(false); // org sem canal bridge
   });
+
+  test("reativar pelo 1-toque um atendente REMOVIDO limpa o vínculo (sem zumbi)", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { aiConfig: false });
+    const asAdmin = t.withIdentity({ subject: `${seed.userId}|s1` });
+    await asAdmin.mutation(api.teamMembers.removeTeamMember, { teamMemberId: seed.agentId });
+
+    const result = await asAdmin.mutation(api.aiSettings.activateOneFlow, {
+      organizationId: seed.organizationId,
+      lgpdAck: true,
+    });
+    expect(result.attendantId).toBe(seed.agentId);
+    const agent = await t.run(async (ctx) => ctx.db.get(seed.agentId));
+    expect(agent!.status).toBe("active");
+    expect(agent!.removedAt).toBeUndefined();
+    expect(agent!.removedBy).toBeUndefined();
+  });
 });
 
 describe("getConversationAiState", () => {

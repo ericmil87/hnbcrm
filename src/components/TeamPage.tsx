@@ -15,6 +15,7 @@ import { InviteMemberModal } from "@/components/team/InviteMemberModal";
 import { MemberDetailSlideOver } from "@/components/team/MemberDetailSlideOver";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
+import { isPendingMember } from "@/lib/teamMembers";
 import {
   Search,
   UserPlus,
@@ -26,7 +27,7 @@ import {
 
 type RoleFilter = "all" | "admin" | "manager" | "agent" | "ai";
 type TypeFilter = "all" | "human" | "ai";
-type StatusFilter = "all" | "active" | "inactive" | "busy";
+type StatusFilter = "all" | "active" | "busy" | "pending" | "removed";
 
 const ROLE_LABELS: Record<string, string> = {
   admin: "Admin",
@@ -38,8 +39,27 @@ const ROLE_LABELS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   active: "Ativo",
   busy: "Ocupado",
-  inactive: "Inativo",
+  pending: "Convite antigo",
+  removed: "Removido",
 };
+
+/**
+ * Vínculo com a org vem antes da presença: removido (`removed` do backend, ou
+ * o `status: "inactive"` legado) não é "membro inativo", é ex-membro — e fica
+ * fora da lista padrão e das contagens.
+ */
+function memberStatus(m: {
+  status: string;
+  type?: string;
+  userId?: string | null;
+  removed?: boolean;
+  pending?: boolean;
+}): "active" | "busy" | "pending" | "removed" {
+  if (m.removed || m.status === "inactive") return "removed";
+  // Convite antigo sem conta: ninguém entra com ele até alguém reenviar.
+  if (isPendingMember(m)) return "pending";
+  return m.status === "busy" ? "busy" : "active";
+}
 
 export function TeamPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -76,8 +96,9 @@ export function TeamPage() {
       // Type
       if (typeFilter !== "all" && m.type !== typeFilter) return false;
 
-      // Status
-      if (statusFilter !== "all" && m.status !== statusFilter) return false;
+      // Status — "Todos" = membros atuais; removidos só no filtro próprio
+      const status = memberStatus(m);
+      if (statusFilter === "all" ? status === "removed" : status !== statusFilter) return false;
 
       return true;
     });
@@ -91,11 +112,12 @@ export function TeamPage() {
   // Stats
   const stats = useMemo(() => {
     if (!teamMembers) return { total: 0, humans: 0, ais: 0, active: 0 };
+    const current = teamMembers.filter((m) => memberStatus(m) !== "removed");
     return {
-      total: teamMembers.length,
-      humans: teamMembers.filter((m) => m.type === "human").length,
-      ais: teamMembers.filter((m) => m.type === "ai").length,
-      active: teamMembers.filter((m) => m.status === "active").length,
+      total: current.length,
+      humans: current.filter((m) => m.type === "human").length,
+      ais: current.filter((m) => m.type === "ai").length,
+      active: current.filter((m) => memberStatus(m) === "active").length,
     };
   }, [teamMembers]);
 
@@ -122,7 +144,8 @@ export function TeamPage() {
     switch (status) {
       case "active": return "success" as const;
       case "busy": return "warning" as const;
-      case "inactive": return "error" as const;
+      case "removed": return "error" as const;
+      case "pending": return "default" as const;
       default: return "default" as const;
     }
   };
@@ -272,8 +295,8 @@ export function TeamPage() {
               <label className="block text-xs font-medium text-text-muted mb-1">
                 Status
               </label>
-              <div className="flex gap-1">
-                {(["all", "active", "inactive", "busy"] as StatusFilter[]).map((s) => (
+              <div className="flex flex-wrap gap-1">
+                {(["all", "active", "busy", "pending", "removed"] as StatusFilter[]).map((s) => (
                   <button
                     key={s}
                     onClick={() => setStatusFilter(s)}
@@ -318,14 +341,16 @@ export function TeamPage() {
         </div>
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredMembers.map((member) => (
+          {filteredMembers.map((member) => {
+            const status = memberStatus(member);
+            return (
             <Card
               key={member._id}
               variant="interactive"
               onClick={() => setSelectedMemberId(member._id)}
               className={cn(
                 "relative",
-                member.status === "inactive" && "opacity-60"
+                status === "removed" && "opacity-60"
               )}
             >
               <div className="flex items-center gap-3 mb-3">
@@ -333,7 +358,7 @@ export function TeamPage() {
                   name={member.name}
                   type={member.type as "human" | "ai"}
                   size="lg"
-                  status={member.status as "active" | "busy" | "inactive"}
+                  status={status === "removed" || status === "pending" ? "inactive" : status}
                 />
                 <div className="min-w-0 flex-1">
                   <h3 className="font-semibold text-text-primary truncate">
@@ -354,8 +379,8 @@ export function TeamPage() {
                 <Badge variant={member.type === "ai" ? "warning" : "info"}>
                   {member.type === "ai" ? "IA" : "Humano"}
                 </Badge>
-                <Badge variant={getStatusBadgeVariant(member.status)}>
-                  {STATUS_LABELS[member.status] || member.status}
+                <Badge variant={getStatusBadgeVariant(status)}>
+                  {STATUS_LABELS[status]}
                 </Badge>
               </div>
 
@@ -363,7 +388,8 @@ export function TeamPage() {
                 Desde {new Date(member.createdAt).toLocaleDateString("pt-BR")}
               </div>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 

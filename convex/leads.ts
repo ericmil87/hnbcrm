@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, isActiveMemberOf, assertAssignableMember } from "./lib/auth";
 import { assertAgentCan } from "./lib/agentSecurity";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
@@ -80,6 +80,7 @@ export const getLead = query({
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId);
     if (!lead) return null;
+    if (!(await isActiveMemberOf(ctx, lead.organizationId))) return null;
 
     await requireAuth(ctx, lead.organizationId);
 
@@ -134,6 +135,8 @@ export const createLead = mutation({
       stageId = stages[0]?._id;
       if (!stageId) throw new Error("No stages found for board");
     }
+
+    if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
 
     const now = Date.now();
     const org = await ctx.db.get(args.organizationId);
@@ -609,13 +612,16 @@ export const assignLead = mutation({
     const oldAssignedTo = lead.assignedTo;
     const now = Date.now();
 
-    // Get assignee name for activity
-    const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
-    // Responsável tem que ser da MESMA org do lead: sem isto, um id de membro de
-    // outra org era aceito, e a notificação levava o título do lead para fora.
-    if (args.assignedTo && (!newAssignee || newAssignee.organizationId !== lead.organizationId)) {
-      throw new Error("Responsável não encontrado nesta organização");
-    }
+    // Reatribuir ao MESMO responsável é no-op — inclusive quando ele foi
+    // removido depois: o painel ainda o lista como atual, e clicar nele não
+    // pode virar erro "removido".
+    if (args.assignedTo === lead.assignedTo) return null;
+
+    // Responsável tem que ser da MESMA org do lead (senão a notificação levava
+    // o título do lead para fora) e não pode ter sido removido.
+    const newAssignee = args.assignedTo
+      ? await assertAssignableMember(ctx, lead.organizationId, args.assignedTo)
+      : null;
 
     await ctx.db.patch(args.leadId, {
       assignedTo: args.assignedTo,
@@ -1067,6 +1073,8 @@ export const internalCreateLead = internalMutation({
       if (!stageId) throw new Error("No stages found for board");
     }
 
+    if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
+
     const now = Date.now();
     const org = await ctx.db.get(args.organizationId);
 
@@ -1350,23 +1358,20 @@ export const internalAssignLead = internalMutation({
     if (teamMember.organizationId !== lead.organizationId) {
       throw new Error("Membro não pertence à organização do lead");
     }
-    if (args.assignedTo) {
-      const assignee = await ctx.db.get(args.assignedTo);
-      if (!assignee || assignee.organizationId !== lead.organizationId) {
-        throw new Error("Responsável não pertence à organização do lead");
-      }
-    }
 
     const oldAssignedTo = lead.assignedTo;
     const now = Date.now();
 
-    // Get assignee name for activity
-    const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
-    // Responsável tem que ser da MESMA org do lead: sem isto, um id de membro de
-    // outra org era aceito, e a notificação levava o título do lead para fora.
-    if (args.assignedTo && (!newAssignee || newAssignee.organizationId !== lead.organizationId)) {
-      throw new Error("Responsável não encontrado nesta organização");
-    }
+    // Reatribuir ao MESMO responsável é no-op — inclusive quando ele foi
+    // removido depois: o painel ainda o lista como atual, e clicar nele não
+    // pode virar erro "removido".
+    if (args.assignedTo === lead.assignedTo) return null;
+
+    // Responsável tem que ser da MESMA org do lead (senão a notificação levava
+    // o título do lead para fora) e não pode ter sido removido.
+    const newAssignee = args.assignedTo
+      ? await assertAssignableMember(ctx, lead.organizationId, args.assignedTo)
+      : null;
 
     await ctx.db.patch(args.leadId, {
       assignedTo: args.assignedTo,
@@ -1539,7 +1544,9 @@ export const bulkAssignLeads = mutation({
     const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
 
     const now = Date.now();
-    const newAssignee = args.assignedTo ? await ctx.db.get(args.assignedTo) : null;
+    const newAssignee = args.assignedTo
+      ? await assertAssignableMember(ctx, args.organizationId, args.assignedTo)
+      : null;
     let updated = 0;
 
     for (const leadId of args.leadIds) {

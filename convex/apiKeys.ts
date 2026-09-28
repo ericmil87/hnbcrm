@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requirePermission } from "./lib/auth";
+import { requirePermission, getActiveMembership, isMembershipRevoked } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { batchGet } from "./lib/batchGet";
 
@@ -112,7 +112,16 @@ export const getByKeyHash = internalQuery({
       return null;
     }
 
+    // A chave vale só enquanto o membro dono dela for da MESMA org e não
+    // tiver sido removido — remover alguém tem de cortar a API também.
     const teamMember = await ctx.db.get(apiKey.teamMemberId);
+    if (
+      !teamMember ||
+      teamMember.organizationId !== apiKey.organizationId ||
+      isMembershipRevoked(teamMember)
+    ) {
+      return null;
+    }
     return {
       ...apiKey,
       teamMember,
@@ -163,12 +172,7 @@ export const verifyAdmin = internalQuery({
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember || userMember.role !== "admin") return null;
     return userMember;
@@ -187,6 +191,16 @@ export const insertApiKey = internalMutation({
   },
   returns: v.id("apiKeys"),
   handler: async (ctx, args) => {
+    // Chave de A amarrada a membro de B herdaria o papel de B e poria um
+    // actorId de fora nos logs de A.
+    const member = await ctx.db.get(args.teamMemberId);
+    if (!member || member.organizationId !== args.organizationId) {
+      throw new Error("Membro não pertence a esta organização");
+    }
+    if (isMembershipRevoked(member)) {
+      throw new Error("Membro removido não pode receber chave de API");
+    }
+
     const now = Date.now();
 
     const apiKeyId = await ctx.db.insert("apiKeys", {

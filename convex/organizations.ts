@@ -1,8 +1,8 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
-import { requireAuth } from "./lib/auth";
+import { requireAuth, getActiveMembership, isMembershipRevoked } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator } from "./schema";
 
@@ -19,10 +19,19 @@ export const getUserOrganizations = query({
       .withIndex("by_user", (q) => q.eq("userId", userId))
       .take(50);
 
+    // Removido da org = some do seletor (o vínculo acabou; o histórico fica).
+    const memberships = teamMembers.filter((m) => !isMembershipRevoked(m));
+    const seen = new Set<string>();
     const organizations = await Promise.all(
-      teamMembers.map(async (member) => {
+      memberships.map(async (member) => {
+        if (seen.has(member.organizationId)) return null;
+        seen.add(member.organizationId);
         const org = await ctx.db.get(member.organizationId);
-        return org ? { ...org, role: member.role, type: member.type } : null;
+        // `invited`: o vínculo nasceu de convite (quem criou a org não tem
+        // `invitedBy`) — o front só anuncia "você foi adicionado" nesse caso.
+        return org
+          ? { ...org, role: member.role, type: member.type, invited: member.invitedBy !== undefined }
+          : null;
       })
     );
 
@@ -50,7 +59,9 @@ export const createOrganization = mutation({
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
     
-    if (existing) throw new Error("Organization slug already exists");
+    // ConvexError: em produção um Error comum chega ao cliente como "Server
+    // Error"; o front traduz por /slug/i, então a palavra fica.
+    if (existing) throw new ConvexError("Este endereço (slug) já está em uso por outra organização");
 
     const now = Date.now();
     
@@ -59,8 +70,9 @@ export const createOrganization = mutation({
       name: args.name,
       slug: args.slug,
       settings: {
-        timezone: "UTC",
-        currency: "USD",
+        // Produto PT-BR: os defaults seguem o público (o assistente ajusta).
+        timezone: "America/Sao_Paulo",
+        currency: "BRL",
         // IA é opt-in total: nasce DESLIGADA; o admin ativa na seção IA
         // (que também exige o aceite LGPD antes de qualquer inferência).
         aiConfig: {
@@ -95,8 +107,8 @@ export const createOrganization = mutation({
     // Create default board and stages
     const boardId = await ctx.db.insert("boards", {
       organizationId: orgId,
-      name: "Sales Pipeline",
-      description: "Default sales pipeline",
+      name: "Funil de Vendas",
+      description: "Funil padrão",
       color: "#3B82F6",
       isDefault: true,
       order: 0,
@@ -105,12 +117,12 @@ export const createOrganization = mutation({
     });
 
     const stages = [
-      { name: "New Lead", color: "#EF4444", order: 0 },
-      { name: "Qualified", color: "#F59E0B", order: 1 },
-      { name: "Proposal", color: "#8B5CF6", order: 2 },
-      { name: "Negotiation", color: "#06B6D4", order: 3 },
-      { name: "Closed Won", color: "#10B981", order: 4, isClosedWon: true },
-      { name: "Closed Lost", color: "#6B7280", order: 5, isClosedLost: true },
+      { name: "Novo lead", color: "#EF4444", order: 0 },
+      { name: "Qualificado", color: "#F59E0B", order: 1 },
+      { name: "Proposta", color: "#8B5CF6", order: 2 },
+      { name: "Negociação", color: "#06B6D4", order: 3 },
+      { name: "Ganho", color: "#10B981", order: 4, isClosedWon: true },
+      { name: "Perdido", color: "#6B7280", order: 5, isClosedLost: true },
     ];
 
     for (const stage of stages) {
@@ -130,10 +142,10 @@ export const createOrganization = mutation({
     // Create default lead sources
     const sources = [
       { name: "Website", type: "website" as const },
-      { name: "Social Media", type: "social" as const },
-      { name: "Email Campaign", type: "email" as const },
-      { name: "Phone Call", type: "phone" as const },
-      { name: "Referral", type: "referral" as const },
+      { name: "Redes Sociais", type: "social" as const },
+      { name: "Campanha de E-mail", type: "email" as const },
+      { name: "Telefone", type: "phone" as const },
+      { name: "Indicação", type: "referral" as const },
       { name: "API", type: "api" as const },
     ];
 
@@ -179,6 +191,9 @@ export const getOrganizationBySlug = query({
       .first();
 
     if (!org) return null;
+    // Só membros resolvem o slug — senão qualquer usuário logado enumeraria
+    // as orgs (id + nome) do deployment.
+    if (!(await getActiveMembership(ctx, org._id, userId))) return null;
     return { _id: org._id, name: org.name, slug: org.slug };
   },
 });
@@ -211,7 +226,13 @@ export const updateOrganization = mutation({
       before.name = org.name;
     }
     if (args.settings !== undefined) {
-      changes.settings = args.settings;
+      // MERGE, nunca substituir: o validador acima só conhece timezone/
+      // currency/aiConfig, e o patch do objeto inteiro apagava
+      // optOutKeywords, campaignDefaults e o que mais vive em settings.
+      changes.settings = { ...(org.settings ?? {}), ...args.settings };
+      if (args.settings.aiConfig === undefined && org.settings?.aiConfig !== undefined) {
+        changes.settings.aiConfig = org.settings.aiConfig;
+      }
       before.settings = org.settings;
     }
 
@@ -258,5 +279,34 @@ export const internalGetOrganizationBySlug = internalQuery({
       .query("organizations")
       .withIndex("by_slug", (q) => q.eq("slug", args.slug))
       .first();
+  },
+});
+
+// Deep-link de entidade (`?task=`, `?conversation=`, `?lead=`, `?handoff=`):
+// diz a org do item SÓ se o usuário tem vínculo ativo nela, para o front
+// trocar de org antes de abrir. Para quem não é membro (ou id inválido,
+// inexistente, deslogado) devolve null — não revela a org de ninguém.
+export const resolveEntityOrg = query({
+  args: {
+    kind: v.union(v.literal("task"), v.literal("conversation"), v.literal("lead"), v.literal("handoff")),
+    id: v.string(),
+  },
+  returns: v.union(v.null(), v.object({ organizationId: v.id("organizations") })),
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const table =
+      args.kind === "task" ? "tasks"
+      : args.kind === "conversation" ? "conversations"
+      : args.kind === "lead" ? "leads"
+      : "handoffs";
+    const docId = ctx.db.normalizeId(table, args.id);
+    if (!docId) return null;
+    const doc = await ctx.db.get(docId);
+    if (!doc) return null;
+
+    if (!(await getActiveMembership(ctx, doc.organizationId, userId))) return null;
+    return { organizationId: doc.organizationId };
   },
 });

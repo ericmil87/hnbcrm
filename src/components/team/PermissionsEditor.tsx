@@ -11,17 +11,9 @@ import {
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 
-const CATEGORIES: PermissionCategory[] = [
-  "leads",
-  "contacts",
-  "inbox",
-  "tasks",
-  "reports",
-  "team",
-  "settings",
-  "auditLogs",
-  "apiKeys",
-];
+// Derivado dos rótulos (fonte única em convex/lib/permissions): categoria nova
+// aparece aqui sozinha — a lista fixa tinha esquecido "Campanhas".
+const CATEGORIES = Object.keys(CATEGORY_LABELS) as PermissionCategory[];
 
 interface PermissionsEditorProps {
   /** Current permission values */
@@ -85,7 +77,9 @@ export function PermissionsEditor({
         {/* Rows */}
         {CATEGORIES.map((category, i) => {
           const levels = getLevelsForCategory(category);
-          const currentLevel = value[category];
+          // Permissões explícitas antigas não têm categorias novas: vale o
+          // default do cargo (mesma regra do resolvePermissions no servidor).
+          const currentLevel = value[category] ?? (role ? DEFAULT_PERMISSIONS[role][category] : undefined);
 
           return (
             <div

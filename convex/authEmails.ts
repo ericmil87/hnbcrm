@@ -6,7 +6,11 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { sendTransactionalEmail } from "./email";
-import { buildPasswordResetTemplate, buildWelcomeTemplate } from "./authEmailTemplates";
+import {
+  buildAddedToOrgTemplate,
+  buildPasswordResetTemplate,
+  buildWelcomeTemplate,
+} from "./authEmailTemplates";
 import { RESET_CODE_TTL_MINUTES } from "./lib/passwordResetConfig";
 import { appUrl } from "./lib/appUrl";
 import { maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
@@ -92,5 +96,41 @@ export const sendWelcomeEmail = internalMutation({
       kind: "welcome",
     });
     return null;
+  },
+});
+
+// Chamado por nodeActions.inviteHumanMember quando o convidado JÁ tinha conta
+// (ou foi reativado). Aviso de acesso, fora de notificationPreferences — a
+// pessoa nem tinha preferências nesta org até agora. Devolve se enfileirou.
+export const sendAddedToOrgEmail = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    invitedByMemberId: v.optional(v.id("teamMembers")),
+    pendingPasswordChange: v.optional(v.boolean()),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.teamMemberId);
+    if (!member || member.organizationId !== args.organizationId || !member.email) {
+      return false;
+    }
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) return false;
+    const inviter = args.invitedByMemberId ? await ctx.db.get(args.invitedByMemberId) : null;
+
+    const template = buildAddedToOrgTemplate({
+      memberName: member.name,
+      orgName: org.name,
+      invitedByName: inviter && inviter.organizationId === args.organizationId ? inviter.name : undefined,
+      pendingPasswordChange: args.pendingPasswordChange,
+      appUrl: appUrl(),
+    });
+    return await sendTransactionalEmail(ctx, {
+      to: member.email,
+      subject: template.subject,
+      html: template.html,
+      kind: "addedToOrg",
+    });
   },
 });

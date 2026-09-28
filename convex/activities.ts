@@ -4,6 +4,7 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { Id } from "./_generated/dataModel";
 import { batchGet } from "./lib/batchGet";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { getActiveMembership } from "./lib/auth";
 
 // Get activities for a lead
 export const getActivities = query({
@@ -19,12 +20,7 @@ export const getActivities = query({
     const lead = await ctx.db.get(args.leadId);
     if (!lead) return [];
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", lead.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, lead.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 
@@ -69,12 +65,7 @@ export const createActivity = mutation({
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", lead.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, lead.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 

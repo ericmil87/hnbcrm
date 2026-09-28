@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { toast } from "sonner";
 import {
@@ -849,7 +850,7 @@ function ConversationTab({
               handleComposerActivity();
             }}
             onKeyDown={handleKeyDown}
-            teamMembers={teamMembers ?? []}
+            teamMembers={assignableMembers(teamMembers)}
             mentionEnabled={isInternal}
             placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
             rows={1}
@@ -1378,12 +1379,18 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
 
   // Assignee handlers
   const handleAssignLead = async (assignedTo?: Id<"teamMembers">) => {
+    // Escolher o responsável atual não muda nada — e, se ele foi removido da
+    // org (fica na lista só para exibição), o servidor recusaria a atribuição.
+    if (assignedTo === (lead?.assignedTo ?? undefined)) {
+      setShowAssigneePicker(false);
+      return;
+    }
     try {
       await assignLeadMutation({ leadId, assignedTo });
       setShowAssigneePicker(false);
       toast.success(assignedTo ? "Lead atribuído com sucesso" : "Lead desatribuído com sucesso");
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao atribuir lead");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao atribuir lead"));
     }
   };
 
@@ -1591,7 +1598,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                   <span className="text-sm text-text-primary font-medium">Não atribuído</span>
                 </div>
               </button>
-              {teamMembers?.map((member) => (
+              {assignableMembers(teamMembers, [lead.assignedTo]).map((member) => (
                 <button
                   key={member._id}
                   onClick={() => handleAssignLead(member._id)}
@@ -1602,7 +1609,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm text-text-primary font-medium">{member.name}</span>
+                      <span className="text-sm text-text-primary font-medium">{memberLabel(member)}</span>
                       <Badge variant="default" className="text-xs">
                         {member.type === "ai" ? "IA" : member.role === "admin" ? "Admin" : member.role === "manager" ? "Gerente" : "Agente"}
                       </Badge>
@@ -1923,7 +1930,7 @@ function TasksTab({
   const completeTask = useMutation(api.tasks.completeTask);
 
   const memberMap = new Map<string, { name: string; type: "human" | "ai" }>();
-  teamMembers?.forEach((m) => memberMap.set(m._id, { name: m.name, type: m.type }));
+  teamMembers?.forEach((m) => memberMap.set(m._id, { name: memberLabel(m), type: m.type }));
 
   const now = Date.now();
 

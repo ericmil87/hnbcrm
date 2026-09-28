@@ -704,8 +704,16 @@ export const activateOneFlow = mutation({
     let createdAttendant = false;
     if (existing) {
       attendantId = existing._id;
-      if (existing.status !== "active") {
-        await ctx.db.patch(existing._id, { status: "active", updatedAt: now });
+      // Reativar pelo 1-toque vale como `reactivateTeamMember`: sem limpar
+      // `removedAt`, o atendente voltava a responder mas seguia "removido"
+      // (API key morta, tarefas/follow-ups dele recusados, "Removido" na Equipe).
+      if (existing.status !== "active" || existing.removedAt !== undefined) {
+        await ctx.db.patch(existing._id, {
+          status: "active",
+          removedAt: undefined,
+          removedBy: undefined,
+          updatedAt: now,
+        });
       }
     } else {
       const orgFresh = (await ctx.db.get(args.organizationId))!;

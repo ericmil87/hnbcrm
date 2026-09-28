@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { getActiveMembership } from "./lib/auth";
 
 // Get field definitions for organization
 export const getFieldDefinitions = query({
@@ -14,12 +15,7 @@ export const getFieldDefinitions = query({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember) throw new Error("Not authorized");
 
@@ -64,12 +60,7 @@ export const createFieldDefinition = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
@@ -160,12 +151,7 @@ export const updateFieldDefinition = mutation({
     const fieldDef = await ctx.db.get(args.fieldDefinitionId);
     if (!fieldDef) throw new Error("Field definition not found");
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", fieldDef.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, fieldDef.organizationId, userId);
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");
@@ -228,12 +214,7 @@ export const deleteFieldDefinition = mutation({
     const fieldDef = await ctx.db.get(args.fieldDefinitionId);
     if (!fieldDef) throw new Error("Field definition not found");
 
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", fieldDef.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, fieldDef.organizationId, userId);
 
     if (!userMember || !["admin", "manager"].includes(userMember.role)) {
       throw new Error("Not authorized");

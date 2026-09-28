@@ -14,6 +14,7 @@ import {
   DEFAULT_PERMISSIONS,
 } from "../../../convex/lib/permissions";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
 import {
   User,
   Bot,
@@ -71,6 +72,12 @@ export function InviteMemberModal({
   const [resultMemberName, setResultMemberName] = useState<string>("");
   const [resultEmail, setResultEmail] = useState<string>("");
   const [resultEmailSent, setResultEmailSent] = useState<boolean | undefined>(undefined);
+  // Desfecho do convite humano: conta nova (com senha), conta que já existia
+  // (senha intacta) ou membro removido que voltou.
+  const [resultOutcome, setResultOutcome] = useState<"new" | "existing" | "reactivated" | null>(null);
+  // Conta existente que ainda não trocou a senha temporária de outro convite:
+  // não entra "com a senha de sempre" — entra com a temporária que já recebeu.
+  const [resultPendingPassword, setResultPendingPassword] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revealed, setRevealed] = useState(false);
 
@@ -122,11 +129,16 @@ export function InviteMemberModal({
         setTempPassword(result.tempPassword ?? null);
         setResultEmail(email.trim());
         setResultEmailSent(result.emailSent);
+        const outcome = result.isNewUser ? "new" : result.reactivated ? "reactivated" : "existing";
+        setResultOutcome(outcome);
+        setResultPendingPassword(!result.isNewUser && result.pendingPasswordChange);
         setStep("result");
         toast.success(
-          result.isNewUser
-            ? "Membro convidado com sucesso!"
-            : "Membro adicionado a organização!"
+          outcome === "new"
+            ? "Convite criado!"
+            : outcome === "reactivated"
+              ? `Acesso de ${name.trim()} reativado.`
+              : `${name.trim()} já tinha conta e entrou na organização.`
         );
       } else {
         // Create AI agent
@@ -153,8 +165,9 @@ export function InviteMemberModal({
         setStep("result");
         toast.success("Agente IA criado com sucesso!");
       }
-    } catch (error: any) {
-      toast.error(error.message || "Falha ao adicionar membro.");
+    } catch (error) {
+      // Recusas do servidor vêm como ConvexError (legíveis também em produção)
+      toast.error(mutationErrorMessage(error, "Falha ao adicionar membro."));
     } finally {
       setIsSubmitting(false);
     }
@@ -180,6 +193,8 @@ export function InviteMemberModal({
     setResultMemberName("");
     setResultEmail("");
     setResultEmailSent(undefined);
+    setResultOutcome(null);
+    setResultPendingPassword(false);
     setCopied(false);
     setRevealed(false);
     setGenerateApiKey(true);
@@ -451,9 +466,39 @@ export function InviteMemberModal({
           {resultMemberName}
         </p>
         <p className="text-sm text-text-secondary mt-1">
-          {memberType === "human" ? "Membro adicionado com sucesso." : "Agente IA criado com sucesso."}
+          {memberType === "ai"
+            ? "Agente IA criado com sucesso."
+            : resultOutcome === "reactivated"
+              ? "Já tinha sido membro: o acesso foi reativado."
+              : resultOutcome === "existing"
+                ? resultPendingPassword
+                  ? "Já tinha conta, mas ainda não trocou a senha temporária. Entra com a senha temporária que já recebeu e troca no primeiro acesso."
+                  : "Já tinha conta no HNBCRM e entrou na organização com a senha de sempre."
+                : "Conta criada com senha temporária."}
         </p>
       </div>
+
+      {/* Conta que já existia: sem senha nova — só o aviso por e-mail */}
+      {memberType === "human" && resultOutcome !== "new" && resultOutcome !== null && (
+        resultEmailSent ? (
+          <p className="text-xs text-text-muted text-center">
+            Avisamos por e-mail em{" "}
+            <span className="text-text-secondary">{resultEmail}</span>. A organização já aparece no
+            seletor de organizações da pessoa.
+          </p>
+        ) : (
+          <div className="flex gap-3 bg-semantic-warning/10 border border-semantic-warning/30 rounded-lg p-3">
+            <MailWarning size={20} className="flex-shrink-0 text-semantic-warning mt-0.5" />
+            <p className="text-sm text-text-primary leading-relaxed">
+              Não foi possível enviar o e-mail de aviso. Avise a pessoa por outro canal: basta entrar
+              {resultPendingPassword
+                ? " com a senha temporária que já recebeu (ou usar \"Esqueci a senha\")"
+                : " com a senha de sempre"}{" "}
+              e escolher esta organização no seletor.
+            </p>
+          </div>
+        )
+      )}
 
       {/* Human: show temp password */}
       {tempPassword && (
@@ -562,7 +607,12 @@ export function InviteMemberModal({
   const titles: Record<Step, string> = {
     type: "Adicionar Membro",
     form: memberType === "human" ? "Convidar Membro" : "Criar Agente IA",
-    result: memberType === "human" ? "Membro Criado" : "Agente IA Criado",
+    result:
+      memberType === "ai"
+        ? "Agente IA Criado"
+        : resultOutcome === "new"
+          ? "Membro Convidado"
+          : "Membro Adicionado",
   };
 
   return (

@@ -115,13 +115,19 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
   const [currency, setCurrency] = useState("");
   const [saving, setSaving] = useState(false);
 
-  useState(() => {
-    if (org) {
-      setName(org.name || "");
-      setTimezone(org.settings?.timezone || "UTC");
-      setCurrency(org.settings?.currency || "USD");
-    }
-  });
+  // Sincroniza o formulário com a org carregada — e de novo se a org mudar.
+  // O antigo `useState(() => …)` rodava uma vez só, então trocar de org com a
+  // tela aberta e clicar Salvar gravava nome/fuso/moeda da org anterior na nova.
+  const orgLoaded = !!org;
+  useEffect(() => {
+    if (!org) return;
+    setName(org.name || "");
+    setTimezone(org.settings?.timezone || "UTC");
+    setCurrency(org.settings?.currency || "USD");
+    // Só na chegada da org/troca de id: re-sincronizar a cada update reativo
+    // apagaria o que a pessoa está digitando.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [organizationId, orgLoaded]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -129,11 +135,10 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
       await updateOrganization({
         organizationId,
         name,
-        settings: {
-          timezone,
-          currency,
-          aiConfig: org?.settings?.aiConfig,
-        },
+        // Só o que esta tela edita: o servidor faz merge no resto de
+        // `settings` (aiConfig, opt-out, campanhas) — reenviar uma cópia
+        // lida antes sobrescreveria mudanças feitas em outra aba.
+        settings: { timezone, currency },
       });
       toast.success("Organização atualizada com sucesso");
     } catch (error) {
@@ -220,7 +225,8 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
   const createApiKey = useAction(api.nodeActions.createApiKey);
   const revokeApiKey = useMutation(api.apiKeys.revokeApiKey);
 
-  const aiAgents = teamMembers?.filter(m => m.type === "ai") ?? [];
+  // Chave API para membro removido nasceria morta (a autenticação recusa).
+  const aiAgents = teamMembers?.filter(m => m.type === "ai" && !m.removed) ?? [];
 
   const handleCreateApiKey = async (e: React.FormEvent) => {
     e.preventDefault();

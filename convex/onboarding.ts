@@ -1,12 +1,12 @@
 import { v } from "convex/values";
-import { query, mutation } from "./_generated/server";
+import { query, mutation, QueryCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 
 const wizardDataValidator = v.optional(v.any());
 
-// Get onboarding progress for the current user in an organization
 // Resposta para a org que NÃO tem registro em onboardingProgress mas já tem
 // dados: quem já usa o produto não pode ver o wizard de novo. Os tipos são
 // explícitos de propósito — sem eles os arrays inferem `never[]` e o consumidor
@@ -28,11 +28,17 @@ const ALREADY_ONBOARDED: {
   wizardCurrentStep: 4,
 };
 
+// Quem decide se o assistente aparece é a ORG (`onboardingMeta.
+// wizardCompletedAt`), não o registro do membro: o assistente configura o
+// funil da empresa, só admin pode rodá-lo (`setupPipelineFromWizard`), e um
+// agente convidado depois ficava preso nele sem saída. `shouldShowWizard` é a
+// ÚNICA resposta que o front deve usar; a query nunca devolve null.
 export const getOnboardingProgress = query({
   args: { organizationId: v.id("organizations") },
   returns: v.any(),
   handler: async (ctx, args) => {
     const userMember = await requireAuth(ctx, args.organizationId);
+    const org = await ctx.db.get(args.organizationId);
 
     const progress = await ctx.db
       .query("onboardingProgress")
@@ -43,37 +49,66 @@ export const getOnboardingProgress = query({
       )
       .first();
 
+    const shouldShowWizard = await computeShouldShowWizard(ctx, {
+      organizationId: args.organizationId,
+      isAdmin: userMember.role === "admin",
+      orgWizardCompleted: !!org?.onboardingMeta?.wizardCompletedAt,
+      memberWizardCompleted: progress ? progress.wizardCompleted : null,
+    });
+
     if (progress) {
-      return progress;
+      // wizardCompleted coerente com a decisão, para quem ainda lê o campo.
+      return {
+        ...progress,
+        wizardCompleted: shouldShowWizard ? progress.wizardCompleted : true,
+        shouldShowWizard,
+      };
     }
 
-    // No record exists — check if the org already has data (existing org)
-    const existingLead = await ctx.db
-      .query("leads")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .first();
-
-    if (existingLead) {
-      return { ...ALREADY_ONBOARDED };
+    if (shouldShowWizard) {
+      return {
+        wizardCompleted: false,
+        checklistDismissed: false,
+        seenSpotlights: [] as string[],
+        celebratedMilestones: [] as string[],
+        wizardCurrentStep: 0,
+        shouldShowWizard: true,
+      };
     }
-
-    const existingContact = await ctx.db
-      .query("contacts")
-      .withIndex("by_organization", (q) =>
-        q.eq("organizationId", args.organizationId)
-      )
-      .first();
-
-    if (existingContact) {
-      return { ...ALREADY_ONBOARDED };
-    }
-
-    // No record and no data — new org, trigger wizard
-    return null;
+    return { ...ALREADY_ONBOARDED, shouldShowWizard: false };
   },
 });
+
+/**
+ * Regra do assistente: só admin, só org que ainda não concluiu. Sem registro
+ * próprio, org que já tem lead ou contato conta como configurada (orgs
+ * anteriores ao `wizardCompletedAt`). Com registro em andamento, o admin
+ * continua de onde parou — os dados de exemplo do passo 2 não o expulsam.
+ */
+async function computeShouldShowWizard(
+  ctx: QueryCtx,
+  input: {
+    organizationId: Id<"organizations">;
+    isAdmin: boolean;
+    orgWizardCompleted: boolean;
+    memberWizardCompleted: boolean | null;
+  },
+): Promise<boolean> {
+  if (!input.isAdmin || input.orgWizardCompleted) return false;
+  if (input.memberWizardCompleted !== null) return !input.memberWizardCompleted;
+
+  const existingLead = await ctx.db
+    .query("leads")
+    .withIndex("by_organization", (q) => q.eq("organizationId", input.organizationId))
+    .first();
+  if (existingLead) return false;
+
+  const existingContact = await ctx.db
+    .query("contacts")
+    .withIndex("by_organization", (q) => q.eq("organizationId", input.organizationId))
+    .first();
+  return !existingContact;
+}
 
 // Get onboarding checklist with real-time progress from actual data
 export const getOnboardingChecklist = query({
@@ -279,7 +314,10 @@ export const completeWizard = mutation({
       updatedAt: now,
     });
 
-    // Fetch existing org to preserve aiConfig
+    // Só admin fecha o assistente da ORG; para os demais basta o registro
+    // próprio (não deveriam nem ver o assistente — ver getOnboardingProgress).
+    if (userMember.role !== "admin") return null;
+
     const existingOrg = await ctx.db.get(args.organizationId);
 
     // Patch organization with onboarding metadata and settings from wizard data
@@ -291,10 +329,11 @@ export const completeWizard = mutation({
         mainGoal: wizardData?.mainGoal,
         wizardCompletedAt: now,
       },
+      // Merge: o resto de settings (optOutKeywords, campaignDefaults…) fica.
       settings: {
+        ...(existingOrg?.settings ?? {}),
         timezone: wizardData?.timezone ?? "America/Sao_Paulo",
         currency: wizardData?.currency ?? "BRL",
-        aiConfig: existingOrg?.settings?.aiConfig,
       },
       updatedAt: now,
     });
@@ -342,6 +381,21 @@ export const setupPipelineFromWizard = mutation({
     const userMember = await requireAuth(ctx, args.organizationId);
     if (userMember.role !== "admin") {
       throw new Error("Not authorized. Only admins can set up pipelines.");
+    }
+
+    // Isto APAGA todos os boards/estágios/origens da org. Depois de concluído
+    // (ex.: um segundo admin caindo no assistente) ou com leads pendurados nos
+    // estágios, rodar de novo destruiria o funil em uso.
+    const org = await ctx.db.get(args.organizationId);
+    if (org?.onboardingMeta?.wizardCompletedAt) {
+      throw new Error("O assistente desta organização já foi concluído. Ajuste o funil em Configurações.");
+    }
+    const anyLead = await ctx.db
+      .query("leads")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    if (anyLead) {
+      throw new Error("O funil já tem leads. Ajuste os estágios em Configurações.");
     }
 
     const now = Date.now();

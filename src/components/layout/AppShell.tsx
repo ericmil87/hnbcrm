@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
-import { Sparkles } from "lucide-react";
+import { Building2, ChevronsUpDown, Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
 import { CopilotPanel } from "@/components/copilot/CopilotPanel";
@@ -11,11 +11,12 @@ import { Id } from "../../../convex/_generated/dataModel";
 interface AppShellProps {
   onSignOut: () => void;
   organizationId: Id<"organizations">;
-  orgSelector?: React.ReactNode;
+  orgName: string;
+  onOpenOrgSwitcher: () => void;
   children: React.ReactNode;
 }
 
-export function AppShell({ onSignOut, organizationId, orgSelector, children }: AppShellProps) {
+export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, children }: AppShellProps) {
   const [showMore, setShowMore] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
 
@@ -28,13 +29,24 @@ export function AppShell({ onSignOut, organizationId, orgSelector, children }: A
       <Sidebar
         onSignOut={onSignOut}
         organizationId={organizationId}
-        orgSelector={orgSelector}
+        orgName={orgName}
+        onOpenOrgSwitcher={onOpenOrgSwitcher}
       />
 
       {/* Main content area */}
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
-        {/* Header — sino de notificações (desktop e mobile) */}
-        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-end px-4 md:px-6 bg-surface-raised/95 backdrop-blur border-b border-border">
+        {/* Header — org atual (só mobile; no desktop fica na sidebar) + sino */}
+        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-between md:justify-end gap-3 px-4 md:px-6 bg-surface-raised/95 backdrop-blur border-b border-border">
+          <button
+            type="button"
+            onClick={onOpenOrgSwitcher}
+            className="md:hidden flex items-center gap-2 min-w-0 min-h-[44px] -ml-2 px-2 rounded-lg text-sm font-semibold text-text-primary hover:bg-surface-overlay transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+            aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
+          >
+            <Building2 size={18} className="shrink-0 text-brand-500" />
+            <span className="truncate">{orgName}</span>
+            <ChevronsUpDown size={14} className="shrink-0 text-text-muted" />
+          </button>
           <NotificationBell organizationId={organizationId} />
         </header>
 
@@ -50,6 +62,9 @@ export function AppShell({ onSignOut, organizationId, orgSelector, children }: A
         organizationId={organizationId}
         showMore={showMore}
         onToggleMore={() => setShowMore(!showMore)}
+        orgName={orgName}
+        onOpenOrgSwitcher={onOpenOrgSwitcher}
+        onSignOut={onSignOut}
       />
 
       {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}

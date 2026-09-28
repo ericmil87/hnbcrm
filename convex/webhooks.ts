@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { getActiveMembership } from "./lib/auth";
 
 // Get webhooks for organization (admin only)
 export const getWebhooks = query({
@@ -12,12 +13,7 @@ export const getWebhooks = query({
     if (!userId) throw new Error("Not authenticated");
 
     // Verify user is admin
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember || userMember.role !== "admin") {
       throw new Error("Not authorized");
@@ -45,12 +41,7 @@ export const createWebhook = mutation({
     if (!userId) throw new Error("Not authenticated");
 
     // Verify user is admin
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", args.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 
     if (!userMember || userMember.role !== "admin") {
       throw new Error("Not authorized");
@@ -104,12 +95,7 @@ export const updateWebhook = mutation({
     if (!webhook) throw new Error("Webhook not found");
 
     // Verify user is admin
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", webhook.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, webhook.organizationId, userId);
 
     if (!userMember || userMember.role !== "admin") {
       throw new Error("Not authorized");
@@ -170,12 +156,7 @@ export const deleteWebhook = mutation({
     if (!webhook) throw new Error("Webhook not found");
 
     // Verify user is admin
-    const userMember = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_user", (q) =>
-        q.eq("organizationId", webhook.organizationId).eq("userId", userId)
-      )
-      .first();
+    const userMember = await getActiveMembership(ctx, webhook.organizationId, userId);
 
     if (!userMember || userMember.role !== "admin") {
       throw new Error("Not authorized");

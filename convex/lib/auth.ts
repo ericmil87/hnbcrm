@@ -1,6 +1,7 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { ConvexError } from "convex/values";
 import { QueryCtx, MutationCtx } from "../_generated/server";
-import { Id } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
 import {
   resolvePermissions,
   hasPermission,
@@ -9,15 +10,81 @@ import {
   type Permissions,
 } from "./permissions";
 
-export async function requireAuth(ctx: QueryCtx | MutationCtx, organizationId: Id<"organizations">) {
-  const userId = await getAuthUserId(ctx);
-  if (!userId) throw new Error("Not authenticated");
-  const userMember = await ctx.db
+/**
+ * Membro que perdeu o vínculo com a org. `removedAt` é o marcador atual;
+ * `status: "inactive"` é o legado — até esta versão `removeTeamMember` só
+ * gravava isso, e nenhum outro caminho grava "inactive" (presença é
+ * active/busy), então tratá-lo como removido não afeta ninguém ativo.
+ */
+export function isMembershipRevoked(
+  member: Pick<Doc<"teamMembers">, "status" | "removedAt">,
+): boolean {
+  return member.removedAt !== undefined || member.status === "inactive";
+}
+
+/**
+ * Vínculo ATIVO do usuário com a org, ou null. Toda checagem de acesso por
+ * (org, usuário) passa por aqui — inclusive os lookups manuais fora de
+ * `requireAuth`. Lê algumas linhas em vez de `.first()`: se houver duplicata
+ * antiga do mesmo par, uma linha removida não pode esconder a ativa (nem o
+ * contrário).
+ */
+export async function getActiveMembership(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  userId: Id<"users">,
+): Promise<Doc<"teamMembers"> | null> {
+  const rows = await ctx.db
     .query("teamMembers")
     .withIndex("by_organization_and_user", (q) =>
       q.eq("organizationId", organizationId).eq("userId", userId)
     )
-    .first();
+    .take(10);
+  return rows.find((m) => !isMembershipRevoked(m)) ?? null;
+}
+
+/**
+ * Para queries de DETALHE por id (deep-links `?task=`, `?lead=`,
+ * `?conversation=`): entidade de uma org da qual o usuário não é membro ativo
+ * vira "não encontrada" (null) em vez de lançar — o link de outra org, ou um
+ * `?task=` que sobrou da org anterior após a troca, derrubava a tela inteira
+ * no ErrorBoundary. Membro sem permissão continua recebendo o erro de sempre
+ * (quem chama segue com requireAuth/requirePermission depois disto).
+ */
+export async function isActiveMemberOf(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+): Promise<boolean> {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return false;
+  return (await getActiveMembership(ctx, organizationId, userId)) !== null;
+}
+
+/**
+ * Porta ÚNICA de validação de quem RECEBE uma atribuição (responsável de
+ * lead/tarefa/evento, destinatário de repasse). Membro de outra org vazaria
+ * dados na notificação; membro removido receberia trabalho numa org em que
+ * nem entra mais. ConvexError: a mensagem chega legível ao cliente.
+ */
+export async function assertAssignableMember(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  memberId: Id<"teamMembers">,
+): Promise<Doc<"teamMembers">> {
+  const member = await ctx.db.get(memberId);
+  if (!member || member.organizationId !== organizationId) {
+    throw new ConvexError("Responsável não encontrado nesta organização");
+  }
+  if (isMembershipRevoked(member)) {
+    throw new ConvexError(`${member.name} foi removido(a) da organização e não pode receber atribuições`);
+  }
+  return member;
+}
+
+export async function requireAuth(ctx: QueryCtx | MutationCtx, organizationId: Id<"organizations">) {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) throw new Error("Not authenticated");
+  const userMember = await getActiveMembership(ctx, organizationId, userId);
   if (!userMember) throw new Error("Not authorized");
   return userMember;
 }

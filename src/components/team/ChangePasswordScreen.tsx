@@ -5,16 +5,19 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Lock } from "lucide-react";
+import { Lock, LogOut } from "lucide-react";
 
 interface ChangePasswordScreenProps {
   organizationId: Id<"organizations">;
   onSuccess: () => void;
+  /** Saída da tela — quem não sabe a senha temporária não pode ficar preso aqui. */
+  onSignOut: () => void;
 }
 
 export function ChangePasswordScreen({
   organizationId,
   onSuccess,
+  onSignOut,
 }: ChangePasswordScreenProps) {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -130,6 +133,15 @@ export function ChangePasswordScreen({
             {isSubmitting ? "Alterando..." : "Alterar Senha"}
           </Button>
         </form>
+
+        <button
+          type="button"
+          onClick={onSignOut}
+          className="mt-4 w-full flex items-center justify-center gap-2 min-h-[44px] rounded-full text-sm font-medium text-text-muted hover:text-semantic-error transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
+        >
+          <LogOut size={16} />
+          Sair
+        </button>
       </div>
     </div>
   );

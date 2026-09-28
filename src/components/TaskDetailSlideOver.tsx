@@ -22,6 +22,7 @@ import {
   STATUS_LABELS,
 } from "@/components/tasks/TaskKanbanBoard";
 import { cn } from "@/lib/utils";
+import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -225,14 +226,15 @@ export function TaskDetailSlideOver({
 
   const memberMap = useMemo(() => {
     const map = new Map<string, { name: string; type: "human" | "ai"; role: string }>();
-    teamMembers?.forEach((m) => map.set(m._id, { name: m.name, type: m.type, role: m.role }));
+    teamMembers?.forEach((m) => map.set(m._id, { name: memberLabel(m), type: m.type, role: m.role }));
     return map;
   }, [teamMembers]);
 
   const mentionCandidates = useMemo<MentionCandidate[]>(() => {
     if (mentionQuery === null) return [];
     const q = mentionQuery.trim().toLowerCase();
-    return (teamMembers ?? [])
+    // Mencionar quem saiu da org não notifica ninguém — fora das sugestões.
+    return assignableMembers(teamMembers)
       .filter((m) => m.name.toLowerCase().includes(q))
       .slice(0, 6)
       .map((m) => ({ _id: m._id, name: m.name, type: m.type, avatarUrl: m.avatarUrl }));

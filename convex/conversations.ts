@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -403,6 +403,7 @@ export const getConversationById = query({
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return null;
+    if (!(await isActiveMemberOf(ctx, conversation.organizationId))) return null;
 
     await requireAuth(ctx, conversation.organizationId);
 
@@ -444,6 +445,7 @@ export const getMessages = query({
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return [];
+    if (!(await isActiveMemberOf(ctx, conversation.organizationId))) return [];
 
     await requireAuth(ctx, conversation.organizationId);
 

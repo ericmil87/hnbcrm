@@ -3,7 +3,7 @@ import { query, mutation, internalQuery, internalMutation } from "./_generated/s
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, isActiveMemberOf, assertAssignableMember } from "./lib/auth";
 // `inboxRepliers` mudou para lib/notify: o follow-up da IA usa a MESMA regra
 // de destinatário e não pode importar deste módulo (ciclo).
 import { createNotification, inboxRepliers } from "./lib/notify";
@@ -113,10 +113,9 @@ export async function createHandoffCore(
   if (!fromMember || fromMember.organizationId !== organizationId) {
     throw new Error("Membro não pertence à organização do lead");
   }
-  const toMember = args.toMemberId ? await ctx.db.get(args.toMemberId) : null;
-  if (args.toMemberId && (!toMember || toMember.organizationId !== organizationId)) {
-    throw new Error("Destinatário não pertence à organização do lead");
-  }
+  const toMember = args.toMemberId
+    ? await assertAssignableMember(ctx, organizationId, args.toMemberId)
+    : null;
 
   // Anti-abuso (injeção "peça handoff 50×") e anti-duplicata: no máximo 1
   // repasse em aberto por lead. Gatilhos automáticos usam "skip" (é normal a
@@ -691,6 +690,7 @@ export const getPendingHandoffForLead = query({
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId);
     if (!lead) return null;
+    if (!(await isActiveMemberOf(ctx, lead.organizationId))) return null;
 
     await requirePermission(ctx, lead.organizationId, "inbox", "view_own");
 
@@ -730,6 +730,7 @@ export const getPendingHandoffForConversation = query({
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return null;
+    if (!(await isActiveMemberOf(ctx, conversation.organizationId))) return null;
     await requirePermission(ctx, conversation.organizationId, "inbox", "view_own");
 
     const pending = await ctx.db

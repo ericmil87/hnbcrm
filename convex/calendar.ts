@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { requireAuth } from "./lib/auth";
+import { requireAuth, assertAssignableMember } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -219,6 +219,7 @@ export const createEvent = mutation({
   returns: v.id("calendarEvents"),
   handler: async (ctx, args) => {
     const userMember = await requireAuth(ctx, args.organizationId);
+    if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
 
     const now = Date.now();
 
@@ -312,6 +313,11 @@ export const updateEvent = mutation({
     if (!event) throw new Error("Event not found");
 
     const userMember = await requireAuth(ctx, event.organizationId);
+    // Só o responsável NOVO é checado: reenviar o atual (removido) numa edição
+    // de título não pode falhar.
+    if (args.assignedTo !== undefined && args.assignedTo !== event.assignedTo) {
+      await assertAssignableMember(ctx, event.organizationId, args.assignedTo);
+    }
 
     const now = Date.now();
     const changes: Record<string, any> = {};
@@ -724,6 +730,7 @@ export const internalCreateEvent = internalMutation({
   handler: async (ctx, args) => {
     const teamMember = await ctx.db.get(args.teamMemberId);
     if (!teamMember) throw new Error("Team member not found");
+    if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
 
     const now = Date.now();
 

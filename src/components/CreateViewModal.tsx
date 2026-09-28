@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { memberLabel } from "@/lib/teamMembers";
 import { toast } from "sonner";
 
 interface CreateViewModalProps {
@@ -240,7 +241,7 @@ export function CreateViewModal({
                     ?.filter((m) => m.type === "human")
                     .map((member) => (
                       <option key={member._id} value={member._id}>
-                        {member.name}
+                        {memberLabel(member)}
                       </option>
                     ))}
                 </select>

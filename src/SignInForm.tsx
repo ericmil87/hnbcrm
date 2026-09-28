@@ -1,6 +1,8 @@
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { ConvexError } from "convex/values";
+import { mutationErrorMessage } from "@/lib/errors";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 
 export function SignInForm() {
@@ -30,7 +32,13 @@ export function SignInForm() {
           formData.set("flow", flow);
           void signIn("password", formData).catch((error) => {
             let toastTitle = "";
-            if (error.message.includes("Invalid password")) {
+            // Recusa explícita do servidor (ex.: cadastro com e-mail que já
+            // tem conta em qualquer caixa) vem como ConvexError legível.
+            const serverMessage =
+              error instanceof ConvexError ? mutationErrorMessage(error, "") : "";
+            if (serverMessage) {
+              toastTitle = serverMessage;
+            } else if (error.message.includes("Invalid password")) {
               toastTitle = "Senha inválida. Tente novamente.";
             } else {
               toastTitle =

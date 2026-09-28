@@ -5,6 +5,7 @@ import { Resend, vOnEmailEventArgs } from "@convex-dev/resend";
 import { buildTemplate } from "./emailTemplates";
 import { appUrl } from "./lib/appUrl";
 import { isDeliverableEmail, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
+import { isMembershipRevoked } from "./lib/auth";
 
 // O default do componente é `testMode: true`, e nesse modo ele LANÇA para todo
 // destinatário que não seja `@resend.dev`. Este arquivo passou meses sem desligar
@@ -91,6 +92,9 @@ export const dispatchNotification = internalMutation({
     // Membro sem conta vinculada (seed, importado) não tem como abrir o link do
     // e-mail — e são justamente os endereços fictícios que virariam bounce.
     if (!member.userId) return false;
+
+    // Removido da org não recebe mais nada dela (o vínculo acabou).
+    if (isMembershipRevoked(member)) return false;
 
     // 2. Check preferences (invite is always sent regardless of prefs)
     if (args.eventType !== "invite") {
@@ -223,7 +227,7 @@ export const sendDailyDigest = internalMutation({
 
       // Só quem tem conta vinculada recebe (mesmo gate do dispatch) — filtrar
       // aqui evita agendar dezenas de jobs no-op por dia para membros-semente.
-      const recipients = members.filter((m) => m.userId && m.email);
+      const recipients = members.filter((m) => m.userId && m.email && !isMembershipRevoked(m));
       if (recipients.length === 0) continue;
 
       // Gather yesterday's stats

@@ -12,6 +12,7 @@ import type { Tab } from "@/components/layout/BottomTabBar";
 import { TAB_ROUTES } from "@/lib/routes";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
+import { usePermissions } from "@/hooks/usePermissions";
 import { RecentActivityWidget } from "@/components/RecentActivityWidget";
 import { UpcomingTasksWidget } from "@/components/UpcomingTasksWidget";
 import { UpcomingEventsWidget } from "@/components/UpcomingEventsWidget";
@@ -46,6 +47,11 @@ export function DashboardOverview() {
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, { organizationId });
   // Banner discreto de ativação da IA — só aparece quando a IA ainda não está ativa.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  // Banner da IA e checklist de configuração são tarefas de quem configura a
+  // org (ativar IA, webhook, chave API exigem settings:manage) — para agente
+  // seriam convites a telas que ele não pode usar.
+  const { can } = usePermissions(organizationId);
+  const canConfigure = can("settings", "manage");
 
   if (!stats || !currentMember) {
     return <LoadingSkeleton />;
@@ -71,12 +77,12 @@ export function DashboardOverview() {
       </div>
 
       {/* Banner discreto — ativação da IA (só quando ainda não está ativa) */}
-      {aiStatus?.active === false && (
+      {canConfigure && aiStatus?.active === false && (
         <AiActivationBanner onClick={() => onTabChange("settings")} />
       )}
 
       {/* Onboarding Checklist */}
-      <OnboardingChecklist organizationId={organizationId} />
+      {canConfigure && <OnboardingChecklist organizationId={organizationId} />}
 
       {/* 2. Quick Stats Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">

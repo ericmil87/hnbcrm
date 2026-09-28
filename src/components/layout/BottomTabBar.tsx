@@ -19,6 +19,8 @@ import {
   Settings,
   FileText,
   MoreHorizontal,
+  Building2,
+  LogOut,
   Megaphone,
   Users2,
 } from "lucide-react";
@@ -58,9 +60,19 @@ interface BottomTabBarProps {
   organizationId: Id<"organizations">;
   showMore: boolean;
   onToggleMore: () => void;
+  orgName: string;
+  onOpenOrgSwitcher: () => void;
+  onSignOut: () => void;
 }
 
-export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomTabBarProps) {
+export function BottomTabBar({
+  organizationId,
+  showMore,
+  onToggleMore,
+  orgName,
+  onOpenOrgSwitcher,
+  onSignOut,
+}: BottomTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = PATH_TO_TAB[location.pathname];
@@ -113,8 +125,8 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
       )}
 
       {/* More menu popup */}
-      {showMore && visibleMore.length > 0 && (
-        <div className="fixed bottom-[calc(64px+env(safe-area-inset-bottom,0px))] right-2 z-50 bg-surface-overlay border border-border rounded-xl shadow-elevated animate-fade-in-up p-1 min-w-[160px]">
+      {showMore && (
+        <div className="md:hidden fixed bottom-[calc(64px+env(safe-area-inset-bottom,0px))] right-2 z-50 bg-surface-overlay border border-border rounded-xl shadow-elevated animate-fade-in-up p-1 min-w-[200px] max-w-[calc(100vw-1rem)] max-h-[calc(100vh-96px)] overflow-y-auto">
           {visibleMore.map((tab) => {
             const badgeLabel = formatBadge(badgeCounts[tab.id]);
             return (
@@ -135,6 +147,28 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
               </button>
             );
           })}
+
+          {/* Conta: organização atual + sair (no desktop ficam na sidebar) */}
+          <div className={cn(visibleMore.length > 0 && "mt-1 pt-1 border-t border-border")}>
+            <button
+              onClick={() => { onToggleMore(); onOpenOrgSwitcher(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors min-h-[44px]"
+              aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
+            >
+              <Building2 size={18} className="shrink-0 text-brand-500" />
+              <span className="flex-1 min-w-0 text-left">
+                <span className="block text-[11px] text-text-muted">Organização</span>
+                <span className="block truncate text-text-primary">{orgName}</span>
+              </span>
+            </button>
+            <button
+              onClick={() => { onToggleMore(); onSignOut(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors min-h-[44px]"
+            >
+              <LogOut size={18} className="shrink-0" />
+              <span className="flex-1 text-left">Sair</span>
+            </button>
+          </div>
         </div>
       )}
 
@@ -172,29 +206,28 @@ export function BottomTabBar({ organizationId, showMore, onToggleMore }: BottomT
             );
           })}
 
-          {/* More button (only if there are overflow items) */}
-          {visibleMore.length > 0 && (
-            <button
-              onClick={onToggleMore}
-              className={cn(
-                "relative flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
-                isMoreActive ? "text-brand-500" : "text-text-muted"
+          {/* Botão "Mais" — sempre visível: carrega também organização e "Sair" */}
+          <button
+            onClick={onToggleMore}
+            className={cn(
+              "relative flex flex-col items-center justify-center gap-0.5 min-w-[44px] min-h-[44px] transition-colors",
+              isMoreActive ? "text-brand-500" : "text-text-muted"
+            )}
+            aria-label="Mais opções"
+            aria-expanded={showMore}
+          >
+            <span className="relative">
+              <MoreHorizontal size={20} />
+              {/* Ponto quando algum item do menu "Mais" tem pendência (repasses) */}
+              {visibleMore.some((t) => formatBadge(badgeCounts[t.id])) && (
+                <span
+                  className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-brand-600"
+                  aria-hidden="true"
+                />
               )}
-              aria-label="Mais opções"
-            >
-              <span className="relative">
-                <MoreHorizontal size={20} />
-                {/* Ponto quando algum item do menu "Mais" tem pendência (repasses) */}
-                {visibleMore.some((t) => formatBadge(badgeCounts[t.id])) && (
-                  <span
-                    className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-brand-600"
-                    aria-hidden="true"
-                  />
-                )}
-              </span>
-              <span className="text-[11px] font-medium">Mais</span>
-            </button>
-          )}
+            </span>
+            <span className="text-[11px] font-medium">Mais</span>
+          </button>
         </div>
       </nav>
     </>

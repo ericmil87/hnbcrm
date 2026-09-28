@@ -7,7 +7,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { permissionsValidator } from "./schema";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
-import { hasEmailShape } from "./lib/emailAddress";
+import { hasEmailShape, normalizeEmail } from "./lib/emailAddress";
 
 function sha256(input: string): string {
   return crypto.createHash("sha256").update(input).digest("hex");
@@ -65,7 +65,10 @@ export const createApiKey = action({
   },
 });
 
-// Invite a human team member — creates auth account with temp password if user is new
+// Invite a human team member — creates auth account with temp password if user is new.
+// Três desfechos (para a tela): conta nova (`isNewUser` + `tempPassword`),
+// pessoa que JÁ tinha conta (`existingUser`, senha intacta, e-mail "você foi
+// adicionado") e membro removido reativado (`reactivated`).
 export const inviteHumanMember = action({
   args: {
     organizationId: v.id("organizations"),
@@ -77,12 +80,18 @@ export const inviteHumanMember = action({
   returns: v.object({
     teamMemberId: v.id("teamMembers"),
     isNewUser: v.boolean(),
+    existingUser: v.boolean(),
+    reactivated: v.boolean(),
+    pendingPasswordChange: v.boolean(),
     tempPassword: v.optional(v.string()),
     emailSent: v.boolean(),
   }),
   handler: async (ctx, args): Promise<{
     teamMemberId: Id<"teamMembers">;
     isNewUser: boolean;
+    existingUser: boolean;
+    reactivated: boolean;
+    pendingPasswordChange: boolean;
     tempPassword?: string;
     emailSent: boolean;
   }> => {
@@ -92,77 +101,86 @@ export const inviteHumanMember = action({
     if (!hasEmailShape(args.email)) {
       throw new Error("E-mail inválido. Confira o endereço e tente de novo.");
     }
+    const email = normalizeEmail(args.email);
 
-    // Verify caller has team:manage
-    const callerMember: any = await ctx.runQuery(
-      internal.teamMembers.internalVerifyTeamManager,
-      { organizationId: args.organizationId }
-    );
-    if (!callerMember) throw new Error("Permissão insuficiente");
+    // team:manage + cargo/permissões dentro das do convidante + "já é membro"
+    // — tudo ANTES de criar conta (action não é transacional).
+    const { callerMemberId } = await ctx.runQuery(internal.teamMembers.internalPrepareInvite, {
+      organizationId: args.organizationId,
+      email: args.email,
+      role: args.role,
+      permissions: args.permissions,
+    });
 
     let isNewUser = false;
-    let userId: Id<"users"> | undefined;
+    let userId: Id<"users">;
     let tempPassword: string | undefined;
 
-    const { Scrypt } = await import("lucia");
-    const scrypt = new Scrypt();
-
-    // Look for existing user in the auth system
+    // Conta existente em QUALQUER caixa (inclusive legado "Eric@X.com"): o
+    // e-mail vai cru — normalizado aqui, a forma digitada exata se perderia
+    // na escolha entre variantes.
     const existingUser: any = await ctx.runQuery(
       internal.authHelpers.queryUserByEmail,
       { email: args.email }
     );
 
+    let memberName = args.name;
     if (existingUser) {
       userId = existingUser._id;
-      isNewUser = false;
-
-      // Check if already a member of this org
-      const existingMember: any = await ctx.runQuery(
-        internal.teamMembers.internalGetMemberByUserId,
-        { organizationId: args.organizationId, userId: userId! }
-      );
-      if (existingMember) {
-        throw new Error("Este usuário já é membro desta organização");
+      // A pessoa já tem nome na conta; o assistente manda o e-mail (ou o
+      // começo dele) como nome quando o admin não digita nenhum.
+      if (typeof existingUser.name === "string" && existingUser.name.trim()) {
+        memberName = existingUser.name.trim();
       }
     } else {
-      // Create new user + auth account with temp password
-      isNewUser = true;
-      tempPassword = generateTempPassword();
-      const passwordHash = await scrypt.hash(tempPassword);
+      const { Scrypt } = await import("lucia");
+      const scrypt = new Scrypt();
+      const candidatePassword = generateTempPassword();
+      const passwordHash = await scrypt.hash(candidatePassword);
 
-      // Create user record + auth account
-      userId = await ctx.runMutation(internal.authHelpers.insertUserAndAuthAccount, {
+      // Idempotente: se outro convite criou a conta no meio do caminho, volta
+      // `created:false` e seguimos como usuário existente (sem senha).
+      const inserted = await ctx.runMutation(internal.authHelpers.insertUserAndAuthAccount, {
         email: args.email,
         name: args.name,
         passwordHash,
       });
+      userId = inserted.userId;
+      if (inserted.created) {
+        isNewUser = true;
+        tempPassword = candidatePassword;
+      }
     }
 
-    // Create the team member record
-    const teamMemberId = await ctx.runMutation(
-      internal.teamMembers.internalCreateInvitedMember,
+    // Conta existente ainda com senha temporária (convidada noutra org e sem
+    // ter trocado): o vínculo novo herda o flag.
+    const pendingPasswordChange =
+      isNewUser ||
+      (await ctx.runQuery(internal.teamMembers.internalUserMustChangePassword, { userId }));
+
+    // Grava o vínculo sem duplicar: reativa removido, adota pendente legado.
+    const { teamMemberId, outcome } = await ctx.runMutation(
+      internal.teamMembers.internalUpsertInvitedMember,
       {
         organizationId: args.organizationId,
         userId,
-        name: args.name,
-        email: args.email,
+        name: memberName,
+        email,
         role: args.role,
-        invitedBy: callerMember._id,
-        mustChangePassword: isNewUser,
+        invitedBy: callerMemberId,
+        mustChangePassword: pendingPasswordChange,
         permissions: args.permissions,
       }
     );
 
-    // Send invite email for new users.
     // Action não é transacional: usuário, conta e membro JÁ estão gravados, e a
     // senha em claro só existe aqui. Se o e-mail lançasse, o `return` abaixo
     // nunca rodava, a senha se perdia e reconvidar era recusado ("já é membro")
     // — um membro-zumbi sem credencial. Por isso nada aqui pode lançar, e
     // `emailSent` diz à tela se ela precisa mandar o admin copiar a senha.
     let emailSent = false;
-    if (isNewUser && tempPassword) {
-      try {
+    try {
+      if (isNewUser && tempPassword) {
         const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
           organizationId: args.organizationId,
         });
@@ -171,21 +189,33 @@ export const inviteHumanMember = action({
           recipientMemberId: teamMemberId,
           eventType: "invite",
           templateData: {
-            memberName: args.name,
+            memberName,
             orgName: org?.name ?? "HNBCRM",
-            email: args.email,
+            email,
             tempPassword,
             loginUrl: `${resolveAppUrl()}/entrar`,
           },
         });
-      } catch (error) {
-        console.error("[invite] falha ao enviar o e-mail de convite:", error instanceof Error ? error.message : String(error));
+      } else {
+        emailSent = await ctx.runMutation(internal.authEmails.sendAddedToOrgEmail, {
+          organizationId: args.organizationId,
+          teamMemberId,
+          invitedByMemberId: callerMemberId,
+          pendingPasswordChange,
+        });
       }
+    } catch (error) {
+      console.error("[invite] falha ao enviar o e-mail de convite:", error instanceof Error ? error.message : String(error));
     }
 
     return {
       teamMemberId,
       isNewUser,
+      existingUser: !isNewUser,
+      reactivated: outcome === "reactivated",
+      // Conta existente que AINDA está com a senha temporária de outro convite:
+      // a tela não pode dizer "entre com a senha de sempre".
+      pendingPasswordChange,
       tempPassword: isNewUser ? tempPassword : undefined,
       emailSent,
     };
@@ -223,18 +253,12 @@ export const changePassword = action({
       newSecret: newHash,
     });
 
-    // Clear mustChangePassword flag if set on any team member
+    // A senha é da conta: limpa o flag em TODOS os membros do usuário, não
+    // só no da org em que a troca foi feita.
     if (authAccount.userId) {
-      const member: any = await ctx.runQuery(
-        internal.teamMembers.internalGetMemberByUserId,
-        { organizationId: args.organizationId, userId: authAccount.userId }
-      );
-      if (member?.mustChangePassword) {
-        await ctx.runMutation(
-          internal.teamMembers.internalClearMustChangePassword,
-          { teamMemberId: member._id }
-        );
-      }
+      await ctx.runMutation(internal.teamMembers.internalClearMustChangePasswordForUser, {
+        userId: authAccount.userId,
+      });
     }
 
     return { success: true };

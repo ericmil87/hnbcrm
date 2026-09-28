@@ -3,6 +3,8 @@ import React from "react";
 interface ErrorBoundaryProps {
   children: React.ReactNode;
   fallback?: React.ReactNode;
+  /** Mudou (ex.: rota) → o erro anterior é descartado e os filhos renderizam de novo. */
+  resetKey?: unknown;
 }
 
 interface ErrorBoundaryState {
@@ -18,6 +20,12 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, error: null });
+    }
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {

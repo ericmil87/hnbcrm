@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
+import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 
 interface NavItem {
   id: Tab;
@@ -52,10 +53,11 @@ const navItems: NavItem[] = [
 interface SidebarProps {
   onSignOut: () => void;
   organizationId: Id<"organizations">;
-  orgSelector?: React.ReactNode;
+  orgName: string;
+  onOpenOrgSwitcher: () => void;
 }
 
-export function Sidebar({ onSignOut, organizationId, orgSelector }: SidebarProps) {
+export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = PATH_TO_TAB[location.pathname];
@@ -154,15 +156,12 @@ export function Sidebar({ onSignOut, organizationId, orgSelector }: SidebarProps
 
       {/* Bottom section */}
       <div className="border-t border-border p-2 space-y-1 shrink-0">
-        {orgSelector && (
-          <div className="px-1 py-2">
-            {orgSelector}
-          </div>
-        )}
+        <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
         <button
           onClick={onSignOut}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors min-h-[44px]"
           title="Sair"
+          aria-label="Sair"
         >
           <LogOut size={20} className="shrink-0" />
           <span className="hidden lg:block">Sair</span>
