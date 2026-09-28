@@ -27,4 +27,13 @@ crons.interval("ai follow-ups watchdog", { hours: 1 }, internal.attendantFollowU
 // Blobs de export vivem 7 dias (exportJobs.expiresAt); a limpeza roda de hora em hora.
 crons.interval("cleanup expired exports", { hours: 1 }, internal.exports.internalCleanupExpired, {});
 
+// Mídia de grupo não baixada (v0.62): o descriptor cifrado vive 14 dias — a
+// CDN do WhatsApp não guarda o blob para sempre. 06:00 UTC = 03:00 BRT.
+crons.daily(
+  "expire deferred group media",
+  { hourUTC: 6, minuteUTC: 0 },
+  internal.groupMedia.internalExpireDeferredMedia,
+  {}
+);
+
 export default crons;

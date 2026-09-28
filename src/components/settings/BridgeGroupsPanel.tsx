@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ChevronDown,
+  HardDrive,
   Inbox,
   Link2,
   LogOut,
@@ -25,11 +26,18 @@ import { Modal } from "@/components/ui/Modal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { GroupAiPolicyModal } from "@/components/groups/GroupAiPolicyModal";
+import { GroupMediaPolicyModal } from "@/components/groups/GroupMediaPolicyModal";
+import { GroupMediaDefaultsSection } from "@/components/settings/GroupMediaDefaultsSection";
+import { usePermissions } from "@/hooks/usePermissions";
 import type { GroupChatDoc } from "@/components/inbox/types";
 import { TAB_ROUTES } from "@/lib/routes";
 import { relativeTime } from "@/lib/groupDisplay";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import {
+  hasGroupMediaOverride,
+  normalizeGroupMediaOverrides,
+} from "@/lib/groupMedia";
 
 /**
  * Painel "Grupos" do card de um número bridge (ao lado do histórico do
@@ -56,6 +64,7 @@ export function BridgeGroupsPanel({
   };
 }) {
   const navigate = useNavigate();
+  const { can } = usePermissions(organizationId);
 
   const settings = useQuery(api.groupChats.listChannelGroupSettings, { organizationId });
   const mine = settings?.find((s) => s.channelConfigId === config._id);
@@ -79,6 +88,7 @@ export function BridgeGroupsPanel({
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [aiGroup, setAiGroup] = useState<GroupChatDoc | null>(null);
+  const [mediaGroup, setMediaGroup] = useState<GroupChatDoc | null>(null);
   const [confirmLeave, setConfirmLeave] = useState<GroupChatDoc | null>(null);
   const [confirmDisable, setConfirmDisable] = useState(false);
   // Trava só O switch que está em voo — clique duplo num outro grupo enquanto
@@ -375,6 +385,13 @@ export function BridgeGroupsPanel({
                 </div>
               )}
 
+              <GroupMediaDefaultsSection
+                organizationId={organizationId}
+                channelConfigId={config._id}
+                groupMedia={mine?.groupMedia}
+                canManage={can("settings", "manage")}
+              />
+
               {groups === undefined ? (
                 <div className="flex justify-center py-4">
                   <Spinner size="md" />
@@ -498,6 +515,19 @@ export function BridgeGroupsPanel({
                             <Sparkles size={11} />
                             IA{group.ai?.mode === "mention" ? " · mencionada" : ""}
                           </button>
+                          {group.monitored && (
+                            <button
+                              type="button"
+                              onClick={() => setMediaGroup(group)}
+                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+                            >
+                              <HardDrive size={11} />
+                              Mídia
+                              {hasGroupMediaOverride(normalizeGroupMediaOverrides(group.mediaPolicy))
+                                ? " · própria"
+                                : ""}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setConfirmLeave(group)}
@@ -621,6 +651,9 @@ export function BridgeGroupsPanel({
 
       {aiGroup && (
         <GroupAiPolicyModal open group={aiGroup} onClose={() => setAiGroup(null)} />
+      )}
+      {mediaGroup && (
+        <GroupMediaPolicyModal open group={mediaGroup} onClose={() => setMediaGroup(null)} />
       )}
 
       <ConfirmDialog

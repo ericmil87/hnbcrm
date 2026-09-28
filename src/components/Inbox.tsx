@@ -180,6 +180,7 @@ export function Inbox() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
   const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
   const [recorderActive, setRecorderActive] = useState(false);
 
   // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
@@ -273,6 +274,7 @@ export function Inbox() {
   const sendTypingState = useMutation(api.conversations.sendTypingState);
   const transcribe = useAction(api.transcription.transcribe);
   const describeImage = useAction(api.vision.describeImage);
+  const downloadDeferredMedia = useAction(api.groupChats.downloadDeferredMedia);
   // Visão é um AND (D10 do plano): IA ativa na org E leitura de imagens ligada.
   const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
   // IA em grupos (F4): o mestre da org + o interruptor do produto. Os recursos
@@ -968,6 +970,28 @@ export function Inbox() {
       toast.error("Não foi possível ler a imagem");
     } finally {
       setDescribingIds((prev) => {
+        const nextSet = new Set(prev);
+        nextSet.delete(message._id);
+        return nextSet;
+      });
+    }
+  };
+
+  // Mídia de grupo que a política não baixou (v0.62): o servidor devolve o
+  // motivo em PT-BR pronto (vencida, quota…); o sucesso aparece sozinho, pela
+  // query reativa trocando o placeholder pelo arquivo.
+  const handleDownloadMedia = async (message: InboxMessage) => {
+    setDownloadingIds((prev) => new Set(prev).add(message._id));
+    try {
+      const result = await downloadDeferredMedia({
+        organizationId,
+        messageId: message._id as Id<"messages">,
+      });
+      if (!result.ok) toast.error(result.reason);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Não foi possível baixar a mídia"));
+    } finally {
+      setDownloadingIds((prev) => {
         const nextSet = new Set(prev);
         nextSet.delete(message._id);
         return nextSet;
@@ -1976,6 +2000,7 @@ export function Inbox() {
                       contactName={contactName}
                       transcribing={transcribingIds.has(message._id)}
                       describing={describingIds.has(message._id)}
+                      downloadingMedia={downloadingIds.has(message._id)}
                       visionEnabled={visionEnabled}
                       highlighted={highlightId === message._id}
                       group={
@@ -1992,6 +2017,9 @@ export function Inbox() {
                       onForward={setForwardTarget}
                       onTranscribe={handleTranscribe}
                       onDescribeImage={(m) => void handleDescribeImage(m)}
+                      {...(canReply
+                        ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
+                        : {})}
                       onJumpToMessage={handleJumpToMessage}
                     />
                   )

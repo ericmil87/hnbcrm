@@ -21,6 +21,8 @@
 export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "apiKeys",
   "orgSecrets",
+  // Descriptor CIFRADO da mídia de grupo não baixada (carrega o `MediaKey`).
+  "deferredGroupMedia",
   "channelConfigs",
   "aiReplyQueue",
   "aiPacing",

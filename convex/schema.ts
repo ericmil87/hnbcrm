@@ -479,6 +479,20 @@ export {
   groupPostTimelineValidator,
 };
 
+// Política de download de mídia em grupo (v0.62, `lib/groupMediaPolicy.ts`).
+// Exportados: as mutations de `groupChats.ts` validam com os MESMOS validators.
+export const groupMediaModeValidator = v.union(
+  v.literal("all"),
+  v.literal("mentions"),
+  v.literal("off")
+);
+export const groupMediaOverrideModeValidator = v.union(
+  v.literal("inherit"),
+  v.literal("all"),
+  v.literal("mentions"),
+  v.literal("off")
+);
+
 const applicationTables = {
   // Organizations
   organizations: defineTable({
@@ -860,6 +874,17 @@ const applicationTables = {
     // `GET /session/status` devolve `jid: ""` mesmo logado (medido).
     bridgeLid: v.optional(v.string()),
     bridgeGroupsLastSyncAt: v.optional(v.number()),
+    // Padrão do NÚMERO para baixar mídia de grupo (v0.62), por tipo. Campo
+    // ausente = "mentions" (só o que é com a gente). Grupo pode sobrescrever
+    // em `groupChats.mediaPolicy`.
+    bridgeGroupMedia: v.optional(
+      v.object({
+        image: v.optional(groupMediaModeValidator),
+        audio: v.optional(groupMediaModeValidator),
+        video: v.optional(groupMediaModeValidator),
+        document: v.optional(groupMediaModeValidator),
+      })
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1117,6 +1142,16 @@ const applicationTables = {
       v.object({
         scheduledFor: v.optional(v.number()),
         lastRunAt: v.optional(v.number()),
+      })
+    ),
+    // Override POR GRUPO da política de mídia do número (v0.62). Campo ausente
+    // = "inherit". Gravamos só o que difere de "inherit".
+    mediaPolicy: v.optional(
+      v.object({
+        image: v.optional(groupMediaOverrideModeValidator),
+        audio: v.optional(groupMediaOverrideModeValidator),
+        video: v.optional(groupMediaOverrideModeValidator),
+        document: v.optional(groupMediaOverrideModeValidator),
       })
     ),
     leftAt: v.optional(v.number()),
@@ -1975,6 +2010,33 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
     .index("by_storage_id", ["storageId"]),
+
+  /**
+   * Mídia de grupo que a política NÃO baixou (v0.62) — o suficiente para baixar
+   * sob demanda depois. É SEGREDO: o descriptor do whatsmeow carrega o
+   * `MediaKey` que decifra o blob na CDN, por isso fica CIFRADO
+   * (`lib/secretCrypto`) numa tabela isolada — nunca em `messages` (v0.53) e
+   * nunca no backup JSON (`EXCLUDED_BACKUP_TABLES`). Vive 14 dias: o cron
+   * diário apaga a linha vencida e marca `mediaDeferred.expired` na mensagem;
+   * o download bem-sucedido também apaga.
+   */
+  deferredGroupMedia: defineTable({
+    organizationId: v.id("organizations"),
+    messageId: v.id("messages"),
+    channelConfigId: v.id("channelConfigs"),
+    descriptorEncrypted: v.string(),
+    kind: v.string(), // image | audio | video | document | sticker
+    mimeType: v.optional(v.string()),
+    filename: v.optional(v.string()),
+    fileLength: v.optional(v.number()),
+    expiresAt: v.number(),
+    // Trava do download sob demanda: dois cliques simultâneos não podem gerar
+    // dois arquivos. Vencida (action morreu no meio), o próximo clique reassume.
+    claimedUntil: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_expires_at", ["expiresAt"]),
 
   // ── AI Agent Config: tabelas do runtime ──
 

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import {
   EyeOff,
+  HardDrive,
   MessageSquare,
   Send,
   Settings as SettingsIcon,
@@ -23,11 +24,18 @@ import { Spinner } from "@/components/ui/Spinner";
 import { GroupMembersPanel } from "@/components/inbox/GroupMembersPanel";
 import { ContactDetailPanel } from "@/components/ContactDetailPanel";
 import { GroupPostsTab } from "@/components/groups/posts/GroupPostsTab";
+import { GroupMediaPolicyModal } from "@/components/groups/GroupMediaPolicyModal";
 import type { GroupChatDoc } from "@/components/inbox/types";
 import { TAB_ROUTES } from "@/lib/routes";
 import { activityLabel, relativeTime } from "@/lib/groupDisplay";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import {
+  hasGroupMediaOverride,
+  normalizeGroupMedia,
+  normalizeGroupMediaOverrides,
+  summarizeGroupMedia,
+} from "@/lib/groupMedia";
 
 type GroupsTab = "groups" | "posts";
 
@@ -82,6 +90,7 @@ export function GroupsPage() {
   // (some da Caixa de Entrada e apaga a lista de membros).
   const [followingId, setFollowingId] = useState<string | null>(null);
   const [unfollowTarget, setUnfollowTarget] = useState<GroupChatDoc | null>(null);
+  const [mediaTarget, setMediaTarget] = useState<GroupChatDoc | null>(null);
 
   const groups = useQuery(
     api.groupChats.listGroups,
@@ -261,6 +270,7 @@ export function GroupsPage() {
                   {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"} ·{" "}
                   {activityLabel(group.lastMessageAt)}
                 </p>
+                <GroupMediaSummary group={group} />
                 <GroupActions
                   group={group}
                   onOpenInbox={() =>
@@ -271,6 +281,7 @@ export function GroupsPage() {
                     ? { onDispatchMembers: () => dispatchToMembers(group._id as Id<"groupChats">) }
                     : {})}
                   {...(canManageSettings ? { onUnfollow: () => setUnfollowTarget(group) } : {})}
+                  onMedia={() => setMediaTarget(group)}
                 />
               </li>
             ))}
@@ -293,6 +304,7 @@ export function GroupsPage() {
                   <tr key={group._id} className="bg-surface-raised">
                     <td className="max-w-xs px-3 py-2.5">
                       <GroupTitle group={group} />
+                      <GroupMediaSummary group={group} className="mt-1" />
                     </td>
                     <td className="px-3 py-2.5 text-text-secondary">
                       {channelName.get(group.channelConfigId) ?? "—"}
@@ -315,6 +327,7 @@ export function GroupsPage() {
                           ? { onDispatchMembers: () => dispatchToMembers(group._id as Id<"groupChats">) }
                           : {})}
                         {...(canManageSettings ? { onUnfollow: () => setUnfollowTarget(group) } : {})}
+                        onMedia={() => setMediaTarget(group)}
                       />
                     </td>
                   </tr>
@@ -335,6 +348,9 @@ export function GroupsPage() {
         </>
       )}
 
+      {mediaTarget && (
+        <GroupMediaPolicyModal open group={mediaTarget} onClose={() => setMediaTarget(null)} />
+      )}
       {membersFor && (
         <GroupMembersPanel
           open
@@ -395,12 +411,28 @@ function GroupTitle({ group }: { group: GroupChatDoc }) {
   );
 }
 
+/**
+ * "Mídia: só com a gente" — o modo EFETIVO da sala (já resolvido contra o
+ * número), com um selo quando a sala tem regra própria.
+ */
+function GroupMediaSummary({ group, className }: { group: GroupChatDoc; className?: string }) {
+  const custom = hasGroupMediaOverride(normalizeGroupMediaOverrides(group.mediaPolicy));
+  return (
+    <p className={cn("flex items-center gap-1 text-xs text-text-muted", className)}>
+      <HardDrive size={11} className="shrink-0" aria-hidden />
+      <span className="truncate">{summarizeGroupMedia(normalizeGroupMedia(group.effectiveMedia))}</span>
+      {custom && <span className="shrink-0 text-brand-400">· regra da sala</span>}
+    </p>
+  );
+}
+
 function GroupActions({
   group,
   onOpenInbox,
   onMembers,
   onDispatchMembers,
   onUnfollow,
+  onMedia,
   align,
 }: {
   group: GroupChatDoc;
@@ -410,6 +442,8 @@ function GroupActions({
   onDispatchMembers?: () => void;
   /** Só passado com `settings:manage` — abre a confirmação de deixar de acompanhar. */
   onUnfollow?: () => void;
+  /** Abre a política de mídia da sala (quem não gerencia vê só leitura). */
+  onMedia: () => void;
   align?: "end";
 }) {
   return (
@@ -430,6 +464,14 @@ function GroupActions({
       >
         <Users size={11} />
         Membros
+      </button>
+      <button
+        type="button"
+        onClick={onMedia}
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+      >
+        <HardDrive size={11} />
+        Mídia
       </button>
       <button
         type="button"

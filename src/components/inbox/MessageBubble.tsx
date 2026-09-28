@@ -15,6 +15,8 @@ import { ReactionChips } from "./ReactionChips";
 import { QuotedBlock } from "./QuotedBlock";
 import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
+import { DeferredMedia } from "./DeferredMedia";
+import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatMessageTimestamp } from "@/lib/messageTime";
 import {
   InboxMessage,
@@ -44,6 +46,8 @@ interface MessageBubbleProps {
   transcribing?: boolean;
   /** True while a "ler imagem" request for this message is in flight. */
   describing?: boolean;
+  /** True while an on-demand download of deferred group media is in flight. */
+  downloadingMedia?: boolean;
   /** Org has AI vision on — sem isso a imagem não ganha CTA de leitura. */
   visionEnabled?: boolean;
   /** Transient highlight after jumping to this message from a quote. */
@@ -63,6 +67,11 @@ interface MessageBubbleProps {
   onForward: (message: InboxMessage) => void;
   onTranscribe: (message: InboxMessage) => void;
   onDescribeImage: (message: InboxMessage) => void;
+  /**
+   * Baixa sob demanda a mídia que a política de grupo não baixou (v0.62).
+   * Ausente = sem o botão (sem `inbox:reply`, ou tela só de leitura).
+   */
+  onDownloadMedia?: (message: InboxMessage) => void;
   /** Jump to the original message a reply quotes (if it's on screen). */
   onJumpToMessage: (messageId: string) => void;
 }
@@ -165,6 +174,7 @@ export function MessageBubble({
   contactName,
   transcribing = false,
   describing = false,
+  downloadingMedia = false,
   visionEnabled = false,
   highlighted = false,
   group,
@@ -173,6 +183,7 @@ export function MessageBubble({
   onForward,
   onTranscribe,
   onDescribeImage,
+  onDownloadMedia,
   onJumpToMessage,
 }: MessageBubbleProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -183,6 +194,12 @@ export function MessageBubble({
   const voiceNote = isVoiceNote(message);
   const imageMessage = isImageMessage(message);
   const mediaProblem = hasMediaProblem(message);
+  // Mídia de grupo não baixada (ou vencida/apagada) — placeholder neutro.
+  const mediaState = getMessageMediaState(message.metadata);
+  const deferredMedia = mediaState.state === "none" ? null : mediaState;
+  // Sem o arquivo não há o que transcrever/ler; mas mídia APAGADA já pode ter
+  // sido lida antes, e o texto (transcrição/descrição) continua valendo.
+  const mediaPurged = mediaState.state === "purged";
 
   const quoted = getQuoted(message);
   const reactions = getReactions(message);
@@ -199,7 +216,7 @@ export function MessageBubble({
       : null;
   // The bar's Transcribe entry only appears for a voice note still lacking text.
   const needsTranscription =
-    voiceNote && (!transcription || (transcription.status !== "done" && transcription.status !== "pending"));
+    voiceNote && !deferredMedia && (!transcription || (transcription.status !== "done" && transcription.status !== "pending"));
   // Ler imagem é pago por imagem e só vale para o que o cliente mandou: exige o
   // toggle mestre ligado, mídia presente e nenhuma leitura em cache/em voo.
   const canDescribeImage =
@@ -220,7 +237,7 @@ export function MessageBubble({
   // present (or expected). Real captions still render below the media.
   const suppressPlaceholder =
     isMediaPlaceholder(message.content) &&
-    (hasAttachments || voiceNote || mediaProblem);
+    (hasAttachments || voiceNote || mediaProblem || deferredMedia !== null);
   const visibleText =
     !message.isInternal && message.content && !suppressPlaceholder
       ? message.content
@@ -254,7 +271,12 @@ export function MessageBubble({
 
   // A lone sticker renders without a bubble background, WhatsApp-style.
   const bubbleless =
-    sticker && !visibleText && !message.isInternal && !mediaProblem && !quoted;
+    sticker &&
+    !visibleText &&
+    !message.isInternal &&
+    !mediaProblem &&
+    !deferredMedia &&
+    !quoted;
 
   const timestamp = formatMessageTimestamp(message.createdAt);
 
@@ -457,6 +479,15 @@ export function MessageBubble({
             </div>
           )}
 
+          {deferredMedia && !hasAttachments && (
+            <DeferredMedia
+              media={deferredMedia}
+              variant={style.variant}
+              downloading={downloadingMedia}
+              onDownload={onDownloadMedia ? () => onDownloadMedia(message) : undefined}
+            />
+          )}
+
           {hasAttachments && (
             <MessageAttachments
               files={attachments}
@@ -466,7 +497,7 @@ export function MessageBubble({
             />
           )}
 
-          {voiceNote && (
+          {voiceNote && (!deferredMedia || (mediaPurged && transcription?.status === "done")) && (
             <VoiceTranscription
               transcription={transcription}
               variant={style.variant}
@@ -475,7 +506,9 @@ export function MessageBubble({
             />
           )}
 
-          {imageMessage && !message.isInternal && (
+          {imageMessage &&
+            !message.isInternal &&
+            (!deferredMedia || (mediaPurged && vision?.status === "done")) && (
             <ImageDescription
               vision={vision}
               variant={style.variant}

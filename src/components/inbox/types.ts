@@ -102,6 +102,15 @@ export interface GroupChatDoc {
     opportunityRadar?: boolean;
     dailyDigestAt?: string;
   };
+  /**
+   * Política de download de mídia (v0.62): o override da sala, com `"inherit"`
+   * já preenchido, e o modo efetivo resolvido contra o padrão do número.
+   */
+  mediaPolicy?: Record<
+    "image" | "audio" | "video" | "document",
+    "inherit" | "all" | "mentions" | "off"
+  >;
+  effectiveMedia?: Record<"image" | "audio" | "video" | "document", "all" | "mentions" | "off">;
   /** Último resumo por IA da sala (F4, §9.2). */
   summary?: { text: string; at: number; model?: string; hours?: number };
   lastMessageAt?: number;
@@ -290,6 +299,11 @@ export function isImageMessage(message: InboxMessage): boolean {
   return message.contentType === "image";
 }
 
+// `mediaDeferred` (não baixada pela política de grupo) e `mediaPurged`
+// (apagada para liberar espaço) NÃO são problema: foram escolhas, e têm o
+// próprio placeholder neutro (`DeferredMedia`) — e vencem um `mediaPending`
+// residual, para a mesma mensagem não aparecer como "indisponível" e "baixar".
 export function hasMediaProblem(message: InboxMessage): boolean {
+  if (message.metadata?.mediaDeferred || message.metadata?.mediaPurged) return false;
   return Boolean(message.metadata?.mediaPending || message.metadata?.mediaError);
 }

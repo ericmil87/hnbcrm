@@ -64,6 +64,20 @@ import {
 import { createNotification } from "./lib/notify";
 import { deleteConversationCascade, newBudget } from "./lib/leadCascade";
 import { createLeadFromGroupMemberCore } from "./lib/groupMemberLead";
+import { groupMediaModeValidator, groupMediaOverrideModeValidator } from "./schema";
+import {
+  GROUP_MEDIA_KINDS,
+  fillGroupMediaOverride,
+  resolveEffectiveGroupMedia,
+  resolveNumberGroupMedia,
+  type GroupMediaOverride,
+} from "./lib/groupMediaPolicy";
+import { fetchAndStoreBridgeMedia } from "./lib/bridgeMediaDownload";
+import {
+  DEFERRED_FETCH_TIMEOUT_MS,
+  DEFERRED_TOO_BIG_REASON,
+  DEFERRED_UNAVAILABLE_REASON,
+} from "./groupMedia";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leitura (app)
@@ -122,11 +136,22 @@ export async function listGroupsHandler(ctx: QueryCtx, args: ListGroupsArgs) {
         .take(GROUP_LIST_CAP);
     }
 
+    // Política de mídia (v0.62): o efetivo depende do padrão do NÚMERO. Um
+    // `get` por canal distinto (a org tem poucos números), nunca por grupo.
+    const numberMedia = new Map<string, Doc<"channelConfigs">["bridgeGroupMedia"] | null>();
+    for (const g of groups) {
+      if (numberMedia.has(g.channelConfigId)) continue;
+      const config = await ctx.db.get(g.channelConfigId);
+      numberMedia.set(g.channelConfigId, config?.bridgeGroupMedia ?? null);
+    }
+
     return groups
       .filter((g) => (args.includeRemoved ? true : g.removedAt === undefined))
       .sort((a, b) => (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt))
       .map(({ participants, timeline, ...g }) => ({
         ...g,
+        mediaPolicy: fillGroupMediaOverride(g.mediaPolicy),
+        effectiveMedia: resolveEffectiveGroupMedia(numberMedia.get(g.channelConfigId), g.mediaPolicy),
         // A lista de participantes NÃO vai na listagem: um grupo pode ter 1024
         // membros, e 200 grupos assim são megabytes numa query reativa que a
         // tela inteira re-executa. Quem precisa dos membros abre `getGroup`.
@@ -184,6 +209,8 @@ export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
       // menção não funciona em gateway self-hosted (review de correção nº 22).
       selfKnown: selfKey !== null,
       participantsCount: countParticipants(group.participants, group.participantsCount),
+      mediaPolicy: fillGroupMediaOverride(group.mediaPolicy),
+      effectiveMedia: resolveEffectiveGroupMedia(config?.bridgeGroupMedia, group.mediaPolicy),
     };
   }
 export const getGroup = query({
@@ -539,6 +566,236 @@ export const setGroupsEnabled = mutation({
       createdAt: now,
     });
     return null;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Política de download de mídia (v0.62)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const groupMediaPolicyValidator = v.object({
+  image: groupMediaModeValidator,
+  audio: groupMediaModeValidator,
+  video: groupMediaModeValidator,
+  document: groupMediaModeValidator,
+});
+const groupMediaOverrideValidator = v.object({
+  image: groupMediaOverrideModeValidator,
+  audio: groupMediaOverrideModeValidator,
+  video: groupMediaOverrideModeValidator,
+  document: groupMediaOverrideModeValidator,
+});
+
+/**
+ * Padrão do NÚMERO: o que baixar de cada tipo de mídia nos grupos
+ * acompanhados. "mentions" (default) = só o que é com a gente; o resto fica
+ * disponível sob demanda por 14 dias.
+ */
+export const setGroupMediaDefaults = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    policy: groupMediaPolicyValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const config = await ctx.db.get(args.channelConfigId);
+    if (!config || config.organizationId !== args.organizationId) {
+      throw new Error("Canal não encontrado");
+    }
+    if (configProvider(config) !== "bridge") {
+      throw new Error("Grupos só estão disponíveis no canal bridge");
+    }
+
+    const before = resolveNumberGroupMedia(config.bridgeGroupMedia);
+    const after = { ...args.policy };
+    const now = Date.now();
+    await ctx.db.patch(config._id, { bridgeGroupMedia: after, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: config.organizationId,
+      entityType: "channelConfig",
+      entityId: config._id,
+      action: "update",
+      actorId: member._id,
+      actorType: member.type === "ai" ? "ai" : "human",
+      changes: { before: { groupMedia: before }, after: { groupMedia: after } },
+      metadata: { name: config.displayName },
+      description: `Política de mídia dos grupos do número '${config.displayName}' alterada`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/** Override POR GRUPO — `"inherit"` volta a seguir o padrão do número. */
+export const setGroupMediaPolicy = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    policy: groupMediaOverrideValidator,
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group || group.organizationId !== args.organizationId) {
+      throw new Error("Grupo não encontrado");
+    }
+
+    // Só o que difere de "inherit" é gravado; tudo "inherit" apaga o campo.
+    const stored: GroupMediaOverride = {};
+    for (const kind of GROUP_MEDIA_KINDS) {
+      const mode = args.policy[kind];
+      if (mode !== "inherit") stored[kind] = mode;
+    }
+    const hasOverride = Object.keys(stored).length > 0;
+    const now = Date.now();
+    await ctx.db.patch(group._id, {
+      mediaPolicy: hasOverride ? stored : undefined,
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: group.organizationId,
+      entityType: "groupChat",
+      entityId: group._id,
+      action: "update",
+      actorId: member._id,
+      actorType: member.type === "ai" ? "ai" : "human",
+      changes: {
+        before: { mediaPolicy: fillGroupMediaOverride(group.mediaPolicy) },
+        after: { mediaPolicy: fillGroupMediaOverride(stored) },
+      },
+      metadata: { name: group.subject, jid: group.jid },
+      description: `Política de mídia do grupo '${group.subject}' alterada`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/**
+ * O whatsmeow disse que o blob sumiu da CDN do WhatsApp? Só o erro DELE conta
+ * (`ErrMediaDownloadFailedWith404/410`: "download failed with status code
+ * 404"). Um 404/410 do próprio gateway — proxy em manutenção, base URL
+ * errada — é falha transitória: tratá-lo como expirado apagaria o descriptor
+ * para sempre por causa de um problema de infraestrutura nosso.
+ */
+export function looksLikeGoneFromCdn(reason: string): boolean {
+  return /download failed with status code (404|410)\b/i.test(reason);
+}
+
+/**
+ * Baixa sob demanda uma mídia de grupo que a política não baixou. Mesmo
+ * caminho do ingest (`fetchAndStoreBridgeMedia`: teto de 25 MB, allowlist,
+ * quota) e, no fim, o mesmo enriquecimento (transcrição/visão). Idempotente:
+ * a segunda chamada com a mídia já baixada devolve `ok`.
+ */
+export const downloadDeferredMedia = action({
+  args: { organizationId: v.id("organizations"), messageId: v.id("messages") },
+  returns: v.union(
+    v.object({ ok: v.literal(true) }),
+    v.object({ ok: v.literal(false), reason: v.string() })
+  ),
+  handler: async (ctx, args): Promise<{ ok: true } | { ok: false; reason: string }> => {
+    await ctx.runQuery(internal.groupChats.internalAuthorizeGroupAccess, {
+      organizationId: args.organizationId,
+      category: "inbox",
+      level: "reply",
+    });
+
+    const claim = await ctx.runMutation(internal.groupMedia.internalClaimDeferredMedia, {
+      organizationId: args.organizationId,
+      messageId: args.messageId,
+    });
+    if (claim.state === "done") return { ok: true };
+    if (claim.state === "unavailable") return { ok: false, reason: claim.reason };
+    if (claim.state === "busy") {
+      return { ok: false, reason: "Esta mídia já está sendo baixada — aguarde alguns segundos" };
+    }
+
+    type Final =
+      | { kind: "expired" }
+      | { kind: "tooBig" }
+      | { kind: "rejected"; reason: string };
+    const release = async (final?: Final) => {
+      await ctx.runMutation(internal.groupMedia.internalReleaseDeferredClaim, {
+        rowId: claim.rowId,
+        claimToken: claim.claimToken,
+        ...(final ? { final } : {}),
+      });
+    };
+
+    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+      configId: claim.channelConfigId,
+    });
+    if (
+      !config ||
+      config.organizationId !== args.organizationId ||
+      config.status !== "active" ||
+      configProvider(config) !== "bridge"
+    ) {
+      await release();
+      return { ok: false, reason: "O número deste grupo não está ativo — não dá para baixar agora" };
+    }
+
+    let descriptor: Record<string, any>;
+    try {
+      descriptor = JSON.parse(await decryptSecret(claim.descriptorEncrypted));
+    } catch {
+      await release({ kind: "expired" });
+      return { ok: false, reason: DEFERRED_UNAVAILABLE_REASON };
+    }
+
+    const result = await fetchAndStoreBridgeMedia(ctx, {
+      config,
+      media: {
+        kind: claim.kind,
+        mimeType: claim.mimeType,
+        filename: claim.filename,
+        descriptor,
+      },
+      externalId: claim.externalId,
+      timeoutMs: DEFERRED_FETCH_TIMEOUT_MS,
+    });
+    if (!result.ok) {
+      if (result.failure === "too_big") {
+        await release({ kind: "tooBig" });
+        return { ok: false, reason: DEFERRED_TOO_BIG_REASON };
+      }
+      if (result.failure === "rejected") {
+        // Quota estourada é transitória (alguém libera espaço); mimetype fora
+        // da allowlist não muda nunca — vira estado final, sem botão.
+        if (result.rejectedBy === "mime") {
+          await release({ kind: "rejected", reason: result.reason });
+        } else {
+          await release();
+        }
+        return { ok: false, reason: `Não foi possível guardar a mídia: ${result.reason}` };
+      }
+      if (looksLikeGoneFromCdn(result.reason)) {
+        await release({ kind: "expired" });
+        return { ok: false, reason: DEFERRED_UNAVAILABLE_REASON };
+      }
+      await release();
+      return {
+        ok: false,
+        reason: `Não foi possível baixar a mídia agora (${result.reason}). Tente de novo em instantes.`,
+      };
+    }
+
+    const outcome = await ctx.runMutation(internal.groupMedia.internalCompleteDeferredMedia, {
+      rowId: claim.rowId,
+      claimToken: claim.claimToken,
+      messageId: args.messageId,
+      fileId: result.fileId,
+    });
+    if (outcome === "attached" || outcome === "duplicate") return { ok: true };
+    return outcome === "gone"
+      ? { ok: false, reason: "A mensagem foi removida enquanto a mídia era baixada" }
+      : { ok: false, reason: "Outro pedido assumiu este download — tente de novo em instantes" };
   },
 });
 
@@ -1477,6 +1734,8 @@ export const listChannelGroupSettings = query({
       groupsEnabled: v.boolean(),
       groupsAckAt: v.union(v.number(), v.null()),
       lastSyncAt: v.union(v.number(), v.null()),
+      // Padrão de mídia do número, já resolvido (v0.62).
+      groupMedia: groupMediaPolicyValidator,
     })
   ),
   handler: async (ctx, args) => {
@@ -1496,6 +1755,7 @@ export const listChannelGroupSettings = query({
         groupsEnabled: c.bridgeGroupsEnabled === true,
         groupsAckAt: manages ? c.bridgeGroupsAck?.acceptedAt ?? null : null,
         lastSyncAt: c.bridgeGroupsLastSyncAt ?? null,
+        groupMedia: resolveNumberGroupMedia(c.bridgeGroupMedia),
       }));
   },
 });

@@ -98,6 +98,24 @@ async function deleteFileWithBlob(ctx: MutationCtx, fileId: Id<"files">): Promis
 }
 
 /**
+ * Mídia de grupo não baixada (v0.62): o descriptor CIFRADO da mensagem que
+ * está sendo excluída sai junto — senão ficaria um segredo órfão até o cron
+ * de 14 dias. Devolve quantas escritas fez (para o orçamento).
+ */
+async function deleteDeferredMediaOfMessage(
+  ctx: MutationCtx,
+  messageId: Id<"messages">
+): Promise<number> {
+  const row = await ctx.db
+    .query("deferredGroupMedia")
+    .withIndex("by_message", (q) => q.eq("messageId", messageId))
+    .first();
+  if (!row) return 0;
+  await ctx.db.delete(row._id);
+  return 1;
+}
+
+/**
  * Apaga uma conversa inteira (mensagens + blobs + fila da IA + agendadas) sob
  * orçamento de escritas. Exportada porque a cascata de exclusão de CANAL
  * (grupos de WhatsApp, v0.57) precisa exatamente disto — uma conversa de grupo
@@ -123,6 +141,7 @@ export async function deleteConversationCascade(
       for (const fileId of message.attachments ?? []) {
         budget.left -= await deleteFileWithBlob(ctx, fileId);
       }
+      budget.left -= await deleteDeferredMediaOfMessage(ctx, message._id);
       await ctx.db.delete(message._id);
       budget.left -= 1;
     }
@@ -196,6 +215,7 @@ export async function cascadeLeadChildren(
       for (const fileId of message.attachments ?? []) {
         budget.left -= await deleteFileWithBlob(ctx, fileId);
       }
+      budget.left -= await deleteDeferredMediaOfMessage(ctx, message._id);
       await ctx.db.delete(message._id);
       budget.left -= 1;
     }

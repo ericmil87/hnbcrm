@@ -16,7 +16,7 @@ import { ActionCtx, action, httpAction, internalAction, internalMutation, intern
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { configProvider } from "./channelConfigs";
-import { decryptSecret } from "./lib/secretCrypto";
+import { decryptSecret, encryptSecret } from "./lib/secretCrypto";
 import {
   extractBridgeInstanceId,
   parseBridgeEvent,
@@ -24,14 +24,14 @@ import {
 } from "./lib/bridgeParse";
 import { parseGroupInfoStruct } from "./lib/bridgeGroups";
 import {
-  BridgeMediaKind,
-  base64ToBytes,
-  buildBridgeDownloadRequest,
-  descriptorFileLength,
-  parseBridgeDownloadResponse,
   sanitizeBridgeMediaMeta,
   stripMediaKeyMaterial,
 } from "./lib/bridgeMedia";
+import { MAX_BRIDGE_MEDIA_BYTES, fetchAndStoreBridgeMedia } from "./lib/bridgeMediaDownload";
+import {
+  GROUP_MEDIA_DEFERRED_TTL_MS,
+  shouldAutoDownloadGroupMedia,
+} from "./lib/groupMediaPolicy";
 import {
   BRIDGE_HISTORY_MAX_CHATS,
   buildGetHistoryRequest,
@@ -44,14 +44,6 @@ import {
   selectHistoryRows,
 } from "./lib/bridgeHistory";
 import { getLeadRef } from "./lib/leadRef";
-
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // mirror the Meta path — skip larger, keep a note
-
-// whatsmeow media kinds we know how to download; anything else is treated as a document.
-const KNOWN_MEDIA_KINDS: readonly BridgeMediaKind[] = ["image", "sticker", "audio", "video", "document"];
-function normalizeMediaKind(kind: string): BridgeMediaKind {
-  return (KNOWN_MEDIA_KINDS as readonly string[]).includes(kind) ? (kind as BridgeMediaKind) : "document";
-}
 
 const parsedBridgeMessageValidator = v.object({
   externalId: v.string(),
@@ -105,63 +97,18 @@ async function downloadInboundMedia(
   // Só a parte diagnosticável fica na mensagem. O descriptor cru — com o
   // `MediaKey` do whatsmeow — vive apenas nesta action, o tempo do download.
   metadata.bridgeMedia = sanitizeBridgeMediaMeta(media);
-  try {
-    if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
-      throw new Error("Configuração bridge incompleta — mídia não baixada");
-    }
-    const descriptor = (media.descriptor ?? {}) as Record<string, any>;
-    const declaredLen = descriptorFileLength(descriptor);
-    if (declaredLen !== undefined && declaredLen > MAX_MEDIA_BYTES) {
-      // Skip the download entirely when the descriptor already says it's too big.
-      metadata.mediaSkipped = `mídia muito grande (${declaredLen} bytes)`;
-      metadata.mediaPending = true;
-      return undefined;
-    }
-    const token = await decryptSecret(config.bridgeTokenEncrypted);
-    const request = buildBridgeDownloadRequest({
-      baseUrl: config.bridgeBaseUrl,
-      token,
-      kind: normalizeMediaKind(media.kind),
-      descriptor,
-    });
-    const res = await fetch(request.url, {
-      method: "POST",
-      headers: request.headers,
-      body: request.body,
-    });
-    const body = await res.json().catch(() => ({}));
-    const parsed = parseBridgeDownloadResponse(res.ok, res.status, body);
-    if (!parsed.ok) {
-      metadata.mediaError = parsed.error;
-      metadata.mediaPending = true;
-      return undefined;
-    }
-    const bytes = base64ToBytes(parsed.base64);
-    if (bytes.byteLength > MAX_MEDIA_BYTES) {
-      metadata.mediaSkipped = `mídia muito grande (${bytes.byteLength} bytes)`;
-      metadata.mediaPending = true;
-      return undefined;
-    }
-    const mimeType = media.mimeType ?? parsed.mimeType ?? "application/octet-stream";
-    const storageId = await ctx.storage.store(new Blob([bytes], { type: mimeType }));
-    const saved = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
-      organizationId: config.organizationId,
-      storageId,
-      name: media.filename ?? `whatsapp-${args.externalId}`,
-      mimeType,
-      size: bytes.byteLength,
-    });
-    if (saved.ok) return [saved.fileId];
-    // Mimetype fora da allowlist ou quota da org estourada: a mensagem do
-    // contato segue inteira, só sem o anexo (mesmo tratamento da mídia grande).
-    metadata.mediaSkipped = saved.reason;
-    metadata.mediaPending = true;
-    return undefined;
-  } catch (e) {
-    metadata.mediaError = e instanceof Error ? e.message : "media pipeline failed";
-    metadata.mediaPending = true;
-    return undefined;
-  }
+  const result = await fetchAndStoreBridgeMedia(ctx, {
+    config,
+    media,
+    externalId: args.externalId,
+  });
+  if (result.ok) return [result.fileId];
+  // Grande demais, mimetype fora da allowlist ou quota da org estourada: a
+  // mensagem do contato segue inteira, só sem o anexo e com o motivo à vista.
+  if (result.failure === "error") metadata.mediaError = result.reason;
+  else metadata.mediaSkipped = result.reason;
+  metadata.mediaPending = true;
+  return undefined;
 }
 
 // POST /webhooks/bridge — wuzapi message + receipt deliveries
@@ -170,7 +117,7 @@ export const webhookReceive = httpAction(async (ctx, request) => {
 
   // Parse WITHOUT trusting the payload — only to extract the routing key
   let payload: Record<string, any>;
-  try {
+          try {
     payload = JSON.parse(rawBody);
   } catch {
     return new Response("Bad Request", { status: 400 });
@@ -430,6 +377,15 @@ const parsedGroupMessageValidator = v.object({
   metadata: v.optional(v.record(v.string(), v.any())),
 });
 
+type DeferredMediaArg = {
+  descriptorEncrypted: string;
+  kind: string;
+  mimeType?: string;
+  filename?: string;
+  fileLength?: number;
+  expiresAt: number;
+};
+
 /**
  * Ingere UMA mensagem de grupo.
  *
@@ -518,12 +474,77 @@ export const internalIngestGroupMessage = internalAction({
       if (quotedTarget?._id) metadata.quotedMessageId = quotedTarget._id;
     }
 
-    const attachments = await downloadInboundMedia(ctx, {
-      config,
-      media: args.message.media,
-      externalId: args.message.externalId,
-      metadata,
-    });
+    // Política de mídia do grupo (v0.62): decidida ANTES do download — o ponto
+    // é não gastar storage nem banda com a foto de bicicleta usada que alguém
+    // postou no grupo de compra e venda. O que não é baixado fica guardado
+    // (descriptor CIFRADO, tabela isolada) para download sob demanda.
+    let attachments: Id<"files">[] | undefined;
+    let deferredMedia: DeferredMediaArg | undefined;
+    const media = args.message.media;
+    if (media) {
+      const decision = shouldAutoDownloadGroupMedia({
+        mediaKind: media.kind,
+        contentType: args.message.contentType,
+        numberDefault: config.bridgeGroupMedia,
+        groupOverride: target.mediaPolicy,
+        fromMe: args.message.fromMe,
+        content: args.message.content,
+        mentions: args.message.mentions,
+        quotedParticipantJid: args.message.quote?.participant,
+        ourLid: config.bridgeLid,
+        ourPhone: config.bridgePhone,
+        aiMode: target.aiMode,
+        aiKeywords: target.aiKeywords,
+      });
+      if (decision.download) {
+        attachments = await downloadInboundMedia(ctx, {
+          config,
+          media,
+          externalId: args.message.externalId,
+          metadata,
+        });
+      } else {
+        const safe = sanitizeBridgeMediaMeta(media);
+        metadata.bridgeMedia = safe;
+        const expiresAt = Date.now() + GROUP_MEDIA_DEFERRED_TTL_MS;
+        // NÃO é falha: sem `mediaPending`/`mediaSkipped`/`mediaError` — o
+        // inbox mostra "baixar", não "problema de mídia".
+        const deferredMeta: Record<string, unknown> = {
+          kind: decision.kind,
+          ...(safe.mimeType ? { mimeType: safe.mimeType } : {}),
+          ...(safe.filename ? { filename: safe.filename } : {}),
+          ...(safe.fileLength !== undefined ? { fileLength: safe.fileLength } : {}),
+          expiresAt,
+          reason: "policy",
+        };
+        if (safe.fileLength !== undefined && safe.fileLength > MAX_BRIDGE_MEDIA_BYTES) {
+          // Passa do teto de 25 MB: nunca seria baixada, nem sob demanda. Nada
+          // de descriptor guardado e nada de botão — o front diz o porquê.
+          deferredMeta.tooBig = true;
+        } else {
+          try {
+            deferredMedia = {
+              descriptorEncrypted: await encryptSecret(JSON.stringify(media.descriptor ?? {})),
+              kind: decision.kind,
+              ...(safe.mimeType ? { mimeType: safe.mimeType } : {}),
+              ...(safe.filename ? { filename: safe.filename } : {}),
+              ...(safe.fileLength !== undefined ? { fileLength: safe.fileLength } : {}),
+              expiresAt,
+            };
+          } catch (e) {
+            // Sem chave de cifra não há como guardar o descriptor com segurança:
+            // a mídia nasce indisponível em vez de ir em texto claro.
+            console.warn(
+              `Mídia de grupo sem cifra disponível — não será possível baixar depois: ${
+                e instanceof Error ? e.message : String(e)
+              }`
+            );
+            deferredMeta.expired = true;
+          }
+        }
+        metadata.mediaDeferred = deferredMeta;
+      }
+    }
 
     const safeMetadata = stripMediaKeyMaterial(metadata) as Record<string, unknown>;
     const common = {
@@ -538,6 +559,7 @@ export const internalIngestGroupMessage = internalAction({
       quotedParticipantJid: args.message.quote?.participant,
       sentAt: args.message.timestamp,
       metadata: safeMetadata,
+      ...(deferredMedia ? { deferredMedia } : {}),
     };
 
     if (args.message.fromMe) {

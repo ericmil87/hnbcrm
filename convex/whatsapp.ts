@@ -1219,26 +1219,33 @@ export const internalSaveInboundAttachment = internalMutation({
   },
   returns: v.union(
     v.object({ ok: v.literal(true), fileId: v.id("files") }),
-    v.object({ ok: v.literal(false), reason: v.string() })
+    v.object({
+      ok: v.literal(false),
+      reason: v.string(),
+      // `mime` é definitivo (o tipo do arquivo não muda); `quota` passa quando
+      // alguém libera espaço. O download sob demanda de grupo (v0.62) usa isto
+      // para decidir se o botão de baixar continua existindo.
+      code: v.optional(v.union(v.literal("mime"), v.literal("quota"))),
+    })
   ),
   handler: async (ctx, args) => {
-    const discard = async (reason: string) => {
+    const discard = async (reason: string, code: "mime" | "quota") => {
       try {
         await ctx.storage.delete(args.storageId as never);
       } catch {
         // blob já sumiu — segue
       }
-      return { ok: false as const, reason };
+      return { ok: false as const, reason, code };
     };
 
     const mime = checkInboundMediaMimeType(args.mimeType);
-    if (!mime.ok) return await discard(mime.reason);
+    if (!mime.ok) return await discard(mime.reason, "mime");
 
     const quota = await checkInboundMediaQuota(ctx, {
       organizationId: args.organizationId,
       fileSize: args.size,
     });
-    if (!quota.ok) return await discard(quota.reason);
+    if (!quota.ok) return await discard(quota.reason, "quota");
 
     const fileId = await ctx.db.insert("files", {
       organizationId: args.organizationId,

@@ -567,6 +567,33 @@ export function historyTextOf(
   },
   opts?: { visionEnabled?: boolean }
 ): string {
+  // Mídia de GRUPO que a política não baixou (v0.62): nada foi transcrito nem
+  // descrito, e o placeholder do parser ("[imagem]", "[áudio]") faria a IA
+  // achar que a mídia chegou e só não deu para ler. Dizer que NÃO foi baixada
+  // é o honesto — e a legenda, quando existe, continua sendo contexto.
+  const deferred = m.metadata?.mediaDeferred as { kind?: string; filename?: string } | undefined;
+  if (deferred && typeof deferred === "object") {
+    const text = m.content.trim();
+    const isPlaceholder = text === "" || (text.startsWith("[") && text.endsWith("]"));
+    const withCaption = (label: string) =>
+      isPlaceholder ? label : `${label} — legenda: "${text}"`;
+    switch (deferred.kind) {
+      case "image":
+        return withCaption("[imagem não baixada]");
+      case "sticker":
+        return "[figurinha não baixada]";
+      case "audio":
+        return "[áudio não baixado]";
+      case "video":
+        return withCaption("[vídeo não baixado]");
+      default: {
+        // Documento: o `content` do parser já é o nome do arquivo (ou a legenda).
+        const name = deferred.filename?.trim() || (isPlaceholder ? "" : text);
+        return name ? `[arquivo não baixado: ${name}]` : "[arquivo não baixado]";
+      }
+    }
+  }
+
   if (m.contentType === "audio") {
     const transcript = m.transcriptText?.trim();
     if (transcript) return `[áudio transcrito]: ${transcript}`;
@@ -661,7 +688,10 @@ export async function hasMediaAwaitingEnrichment(
     if (m.isInternal) continue;
 
     // Sem anexo não há o que enriquecer — esperar seria espera eterna. É também
-    // o caso da mídia que falhou no download (ver o aviso sobre `mediaPending`).
+    // o caso da mídia que falhou no download (ver o aviso sobre `mediaPending`)
+    // e o da mídia de grupo que a política NÃO baixou (`mediaDeferred`, v0.62):
+    // ela só vira anexo se alguém pedir, e ninguém pode ficar esperando isso.
+    if (m.metadata?.mediaDeferred) continue;
     if ((m.attachments?.length ?? 0) === 0) continue;
 
     if (m.contentType === "audio") {

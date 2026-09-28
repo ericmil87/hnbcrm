@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -1762,9 +1762,50 @@ export const internalGetGroupIngestTarget = internalQuery({
       monitored: group.monitored === true && group.conversationId !== undefined,
       conversationId: group.conversationId ?? null,
       subject: group.subject,
+      // Política de mídia (v0.62): o ingest decide ANTES do download.
+      mediaPolicy: group.mediaPolicy ?? null,
+      aiMode: group.ai?.mode,
+      aiKeywords: group.ai?.keywords,
     };
   },
 });
+
+/**
+ * Mídia que a política do grupo não baixou (v0.62): o descriptor já chega
+ * CIFRADO da action de ingest e vai para `deferredGroupMedia` na MESMA
+ * transação que grava a mensagem — nunca existe mensagem com `mediaDeferred`
+ * sem a linha que permite baixá-la (ou o contrário).
+ */
+const deferredMediaArg = v.optional(
+  v.object({
+    descriptorEncrypted: v.string(),
+    kind: v.string(),
+    mimeType: v.optional(v.string()),
+    filename: v.optional(v.string()),
+    fileLength: v.optional(v.number()),
+    expiresAt: v.number(),
+  })
+);
+
+async function insertDeferredGroupMedia(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    channelConfigId: Id<"channelConfigs">;
+    messageId: Id<"messages">;
+    deferredMedia: Infer<typeof deferredMediaArg>;
+    now: number;
+  }
+): Promise<void> {
+  if (!args.deferredMedia) return;
+  await ctx.db.insert("deferredGroupMedia", {
+    organizationId: args.organizationId,
+    messageId: args.messageId,
+    channelConfigId: args.channelConfigId,
+    ...args.deferredMedia,
+    createdAt: args.now,
+  });
+}
 
 const groupSenderArgs = {
   senderLid: v.optional(v.string()),
@@ -1814,6 +1855,7 @@ export const internalReceiveGroupMessage = internalMutation({
     quotedParticipantJid: v.optional(v.string()),
     sentAt: v.optional(v.number()),
     metadata: v.optional(v.record(v.string(), v.any())),
+    deferredMedia: deferredMediaArg,
     ...groupSenderArgs,
   },
   returns: v.union(v.id("messages"), v.null()),
@@ -1869,6 +1911,13 @@ export const internalReceiveGroupMessage = internalMutation({
     if (args.attachments && args.attachments.length > 0) {
       await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
     }
+    await insertDeferredGroupMedia(ctx, {
+      organizationId: args.organizationId,
+      channelConfigId: args.channelConfigId,
+      messageId,
+      deferredMedia: args.deferredMedia,
+      now,
+    });
 
     await ctx.db.patch(conversation._id, {
       status: "active",
@@ -1982,6 +2031,7 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
     quotedParticipantJid: v.optional(v.string()),
     sentAt: v.optional(v.number()),
     metadata: v.optional(v.record(v.string(), v.any())),
+    deferredMedia: deferredMediaArg,
   },
   returns: v.union(v.id("messages"), v.null()),
   handler: async (ctx, args) => {
@@ -2024,6 +2074,13 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
     if (args.attachments && args.attachments.length > 0) {
       await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
     }
+    await insertDeferredGroupMedia(ctx, {
+      organizationId: args.organizationId,
+      channelConfigId: args.channelConfigId,
+      messageId,
+      deferredMedia: args.deferredMedia,
+      now,
+    });
 
     // Nunca anda para trás: a importação de histórico traz mensagens antigas.
     await ctx.db.patch(conversation._id, {

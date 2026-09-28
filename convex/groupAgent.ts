@@ -571,7 +571,12 @@ export const internalClaimGroupTurn = internalMutation({
           membros: participants,
           historico: history,
           mencionaram_voce_em: trigger
-            ? { de: groupSpeakerLabel(trigger), texto: trigger.content.slice(0, 1000) }
+            ? {
+                de: groupSpeakerLabel(trigger),
+                // Mesmo formato do histórico: mídia não baixada aparece como
+                // "[imagem não baixada]", nunca como o placeholder do parser.
+                texto: historyTextOf(trigger, { visionEnabled }).slice(0, 1000),
+              }
             : null,
         },
         participants: (group.participants ?? []).map((p) => ({

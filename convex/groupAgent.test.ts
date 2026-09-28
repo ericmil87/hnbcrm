@@ -449,6 +449,30 @@ describe("turno: prompt, tools e commit", () => {
     return item;
   }
 
+  test("mídia não baixada chega ao envelope como '[imagem não baixada]', também no gatilho", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    const messageId = await memberMessage(t, seed, { content: "[imagem]", mentions: [OUR_LID] });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(messageId, {
+        contentType: "image",
+        metadata: { mediaDeferred: { kind: "image", expiresAt: 0, reason: "policy" } },
+      });
+    });
+    await t.mutation(internal.groupAgent.internalEnqueueFromGroup, { messageId });
+    const item = (await queueItems(t))[0];
+    await releaseDebounce(t, item._id);
+
+    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-deferred",
+    });
+    expect(claim.kind).toBe("run");
+    const envelope = (claim as { context: { envelope: any } }).context.envelope;
+    expect(envelope.mencionaram_voce_em.texto).toBe("[imagem não baixada]");
+    expect(envelope.historico.at(-1).texto).toBe("[imagem não baixada]");
+  });
+
   test("modo sugestão cria RASCUNHO (nada sai para o grupo) e notifica quem revisa", async () => {
     const t = setup();
     const seed = await seedGroupOrg(t, { replyMode: "suggest" });
