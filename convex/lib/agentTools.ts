@@ -271,6 +271,30 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     effect: "write",
     resultFields: ["status", "handoffId"],
   },
+  // Guardrail anti-bot (v0.65): a camada do MODELO. A heurística determinística
+  // (lib/botGuard.ts) pega o ping-pong depois de algumas rodadas; esta tool
+  // deixa o próprio atendente parar na PRIMEIRA mensagem claramente automática.
+  // Executa nos DOIS modos (como requestHandoff) e DESCARTA o replyToCustomer
+  // do mesmo turno — responder a um robô é exatamente o loop que ela evita. Só
+  // é oferecida com o guard ligado no perfil (`agentProfile.botGuard`).
+  {
+    name: "flagAutomatedSender",
+    description:
+      "Use quando a mensagem do outro lado for claramente de um sistema automático (auto-resposta, confirmação de ticket/protocolo, boletim/propaganda em massa, outro assistente virtual). NÃO responda ao cliente nesse turno — chame só esta ferramenta: o atendimento vai para verificação humana.",
+    parameters: schema(
+      {
+        reason: {
+          type: "string",
+          description: "Por que parece automático (curto, ex.: 'auto-resposta com número de ticket')",
+        },
+      },
+      ["reason"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "attendant",
+    effect: "write",
+    resultFields: ["status"],
+  },
 ];
 
 // ── Tools do AGENTE DE GRUPO (F4, D6): a superfície mais estreita do produto. ──

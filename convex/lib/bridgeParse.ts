@@ -208,6 +208,18 @@ function jidToPhone(jid: string): string | null {
   return digits.length > 0 ? digits : null;
 }
 
+/**
+ * Canal/newsletter (`…@newsletter`) e lista de transmissão/status
+ * (`…@broadcast`, inclui `status@broadcast`) NÃO são contatos. Caso real
+ * (01/10/2026): boletins do canal do Google Gemini entraram como conversa 1 a 1
+ * porque `jidToPhone` transformou os dígitos do canal em "telefone" — o
+ * atendente respondeu à propaganda e o envio falhou com "no LID found for
+ * 1203…@s.whatsapp.net". Descartar no parser é o que impede o lead fantasma.
+ */
+export function isNewsletterOrBroadcastJid(jid: string): boolean {
+  return jid.endsWith("@newsletter") || jid.endsWith("@broadcast");
+}
+
 /** An @lid JID carries a privacy LID, not a phone — its digits are NOT a MSISDN. */
 function isLidJid(jid: string): boolean {
   return jid.endsWith("@lid");
@@ -422,6 +434,10 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
     senderJid.endsWith("@g.us")
   ) {
     return parseGroupMessage(info, waMsg, chatJid, senderJid, fromMe);
+  }
+  // Canal/newsletter e transmissão/status: nunca viram conversa (ver helper).
+  if (isNewsletterOrBroadcastJid(chatJid) || isNewsletterOrBroadcastJid(senderJid)) {
+    return { kind: "ignored", reason: "newsletter/broadcast chat" };
   }
 
   const externalId = pick(info, "ID", "Id", "id");
@@ -740,6 +756,9 @@ function mapReceiptType(t: string): "delivered" | "read" | "failed" | null {
 
 function parseReceipt(event: Record<string, any>): ParsedBridgeEvent {
   const chatJid = String(pick(event, "Chat", "chat") ?? "");
+  if (isNewsletterOrBroadcastJid(chatJid)) {
+    return { kind: "ignored", reason: "newsletter/broadcast chat" };
+  }
   const isGroup =
     pick(event, "IsGroup", "isGroup") === true || chatJid.endsWith("@g.us");
 
@@ -868,6 +887,9 @@ function parseChatPresence(event: Record<string, any>): ParsedBridgeEvent {
 
   if (fromMe || senderJid.endsWith("@g.us")) {
     return { kind: "ignored", reason: "presence from self/group" };
+  }
+  if (isNewsletterOrBroadcastJid(chatJid) || isNewsletterOrBroadcastJid(senderJid)) {
+    return { kind: "ignored", reason: "newsletter/broadcast chat" };
   }
   const phone = jidToPhone(senderJid) ?? jidToPhone(chatJid);
   if (!state || !phone) return { kind: "ignored", reason: "presence without state/phone" };

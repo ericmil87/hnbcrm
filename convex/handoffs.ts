@@ -9,6 +9,7 @@ import { requireAuth, requirePermission, isActiveMemberOf, assertAssignableMembe
 import { createNotification, inboxRepliers } from "./lib/notify";
 import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { getLeadRef } from "./lib/leadRef";
+import { botTagFor, clearBotSuspicion } from "./lib/botGuardOps";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -35,9 +36,15 @@ const handoffStatusValidator = v.union(
 );
 
 // De onde veio o repasse — só metadado (audit/activity/webhook), nunca regra.
-export type HandoffOrigin = "human" | "ai_keyword" | "ai_tool" | "ai_failure";
+// "bot_suspect" (v0.65) = guardrail anti-bot: o outro lado parece um robô e o
+// atendente parou de responder até um humano verificar.
+export type HandoffOrigin = "human" | "ai_keyword" | "ai_tool" | "ai_failure" | "bot_suspect";
 
-const handoffOriginValidator = v.union(
+// Origens que um CALLER pode declarar (REST/MCP/runtime via
+// internalRequestHandoff). `bot_suspect` fica de fora de propósito: só o
+// guardrail anti-bot (`applyBotSuspicion`, direto no core) rotula assim — e
+// rejeitar um repasse com essa origem LIMPA a suspeita de robô.
+const requestableHandoffOriginValidator = v.union(
   v.literal("human"),
   v.literal("ai_keyword"),
   v.literal("ai_tool"),
@@ -182,6 +189,7 @@ export async function createHandoffCore(
     reason: args.reason,
     summary: args.summary,
     suggestedActions: args.suggestedActions,
+    origin: args.origin,
     status: "pending",
     createdAt: now,
   });
@@ -514,6 +522,28 @@ async function rejectHandoffCore(
       if (conversation && conversation.aiPausedUntil !== undefined) {
         await ctx.db.patch(candidateId, { aiPausedUntil: undefined, updatedAt: now });
       }
+    }
+  }
+
+  // Guardrail anti-bot (v0.65): rejeitar o repasse de uma conversa marcada
+  // como "robô do outro lado" é o humano dizendo "é pessoa, devolve pra IA" —
+  // limpa a suspeita (a elegibilidade `suspeita_de_bot` deixaria a IA muda
+  // para sempre) e tira a etiqueta do lead. SÓ para repasse de ORIGEM
+  // `bot_suspect`: um repasse humano→humano rejeitado por outro motivo não
+  // pode devolver a IA ao robô (review de 02/10/2026). E só com
+  // `conversationId` explícito: o fallback "conversa mais recente do lead"
+  // poderia limpar a conversa errada.
+  if (handoff.origin === "bot_suspect" && handoff.conversationId) {
+    const conversation = await ctx.db.get(handoff.conversationId);
+    if (conversation && conversation.organizationId === handoff.organizationId) {
+      await clearBotSuspicion(ctx, {
+        conversation,
+        lead,
+        member,
+        tag: botTagFor(fromMember?.type === "ai" ? fromMember : null),
+        now,
+        via: "handoff_rejected",
+      });
     }
   }
 
@@ -907,7 +937,7 @@ export const internalRequestHandoff = internalMutation({
     summary: v.optional(v.string()),
     suggestedActions: v.array(v.string()),
     teamMemberId: v.id("teamMembers"),
-    origin: v.optional(handoffOriginValidator),
+    origin: v.optional(requestableHandoffOriginValidator),
   },
   returns: v.id("handoffs"),
   handler: async (ctx, args) => {

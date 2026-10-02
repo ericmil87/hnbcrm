@@ -218,6 +218,17 @@ const agentProfileValidator = v.object({
   // ATENÇÃO à semântica: ausente/undefined = LIGADO, só `false` desliga —
   // o INVERSO de `aiConfig.visionEnabled`, que é opt-in (undefined = off).
   includeCurrentDateTime: v.optional(v.boolean()),
+  // Guardrail anti-bot (v0.65): detecta quando "o cliente" é outro robô
+  // (auto-resposta, boletim, outro assistente virtual) e PARA o atendente antes
+  // do loop infinito — abre repasse para verificação + etiqueta o lead.
+  // Ausente/undefined = LIGADO (opt-out, como includeCurrentDateTime); só
+  // `enabled:false` desliga. `tag` default "bot-suspeito".
+  botGuard: v.optional(
+    v.object({
+      enabled: v.optional(v.boolean()),
+      tag: v.optional(v.string()),
+    })
+  ),
   handoffKeywords: v.optional(v.array(v.string())), // ex.: ["humano", "atendente"]
   maxRepliesPerConversation: v.optional(v.number()), // default 20
   maxRepliesPerHour: v.optional(v.number()), // teto por janela (cliente-que-é-bot)
@@ -1102,6 +1113,22 @@ const applicationTables = {
         })
       )
     ),
+    // Guardrail anti-bot (v0.65): a conversa foi marcada como "o outro lado
+    // parece um robô" — por heurística determinística (`heuristic`) ou pela
+    // própria IA (`model`, tool flagAutomatedSender). Enquanto não houver
+    // `clearedAt`, o atendente NÃO responde (condição de elegibilidade
+    // `suspeita_de_bot`). "Devolver para IA"/rejeitar o repasse limpa.
+    botSuspicion: v.optional(
+      v.object({
+        at: v.number(),
+        source: v.union(v.literal("heuristic"), v.literal("model")),
+        reason: v.string(),
+        score: v.optional(v.number()),
+        signals: v.optional(v.array(v.string())),
+        clearedAt: v.optional(v.number()),
+        clearedBy: v.optional(v.id("teamMembers")),
+      })
+    ),
     // ── MVP Central (opcionais; só gravados com o módulo ligado) ──
     unitId: v.optional(v.id("units")),
     departmentId: v.optional(v.id("departments")),
@@ -1509,6 +1536,18 @@ const applicationTables = {
     reason: v.string(),
     summary: v.optional(v.string()),
     suggestedActions: v.array(v.string()),
+    // De onde veio o repasse (v0.65, aditivo — repasses antigos não têm). Até
+    // aqui só ia para audit/activity/webhook; passou a ser gravado porque
+    // rejeitar um repasse `bot_suspect` limpa a suspeita de robô, e só ELE.
+    origin: v.optional(
+      v.union(
+        v.literal("human"),
+        v.literal("ai_keyword"),
+        v.literal("ai_tool"),
+        v.literal("ai_failure"),
+        v.literal("bot_suspect")
+      )
+    ),
     status: v.union(
       v.literal("pending"),
       v.literal("accepted"),

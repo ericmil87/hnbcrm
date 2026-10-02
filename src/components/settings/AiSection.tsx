@@ -35,6 +35,11 @@ import { Spinner } from "@/components/ui/Spinner";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { ExternalAgendaSection } from "./ExternalAgendaSection";
+import {
+  BOT_TAG_MAX_CHARS,
+  DEFAULT_BOT_TAG,
+  validateBotGuardTag,
+} from "../../../convex/lib/botGuard";
 
 // Switch grande do design system (role="switch") — a área clicável é maior que
 // o pill visual (touch target >= 44x44 via padding + margem negativa).
@@ -1018,6 +1023,8 @@ type Attendant = {
     maxRepliesPerHour?: number;
     messageDebounceSeconds?: number;
     includeCurrentDateTime?: boolean;
+    // Guardrail anti-bot (v0.65) — ausente = LIGADO; só `enabled:false` desliga.
+    botGuard?: { enabled?: boolean; tag?: string };
     // Follow-ups que o próprio atendente executa (v0.60) — ausente = "draft".
     followUps?: {
       mode: "off" | "draft" | "send";
@@ -1368,6 +1375,14 @@ function AttendantConfig({
   const [includeCurrentDateTime, setIncludeCurrentDateTime] = useState<boolean>(
     profile.includeCurrentDateTime !== false
   );
+  // Guardrail anti-bot (v0.65): mesma semântica — só `enabled:false` desliga.
+  const [botGuardEnabled, setBotGuardEnabled] = useState<boolean>(
+    profile.botGuard?.enabled !== false
+  );
+  const [botGuardTag, setBotGuardTag] = useState<string>(
+    profile.botGuard?.tag ?? DEFAULT_BOT_TAG
+  );
+  const [botGuardTagError, setBotGuardTagError] = useState<string | null>(null);
 
   // Follow-ups agendados pela IA (v0.60). Ausente = "draft" (D1). Os campos
   // numéricos são string (igual aos tetos acima): vazio = mantém o default do
@@ -1526,6 +1541,16 @@ function AttendantConfig({
       return;
     }
 
+    // Etiqueta do guardrail anti-bot: mesma regra do servidor. Com a proteção
+    // desligada o campo some, então etiqueta inválida volta ao default.
+    const botTagCheck = validateBotGuardTag(botGuardTag);
+    if (!botTagCheck.ok && botGuardEnabled) {
+      setBotGuardTagError(botTagCheck.error);
+      toast.error(`Proteção contra robôs: ${botTagCheck.error}`);
+      return;
+    }
+    const botGuardTagValue = botTagCheck.ok ? botTagCheck.tag : DEFAULT_BOT_TAG;
+
     const trimmedAdvanceRules = pcAdvanceRules.trim();
     // "Vazio" só se allowMoveStages também está no default (true) — desligar o
     // switch com o resto vazio é uma restrição REAL e não pode virar null.
@@ -1551,6 +1576,7 @@ function AttendantConfig({
           maxRepliesPerHour: limitePorHora.value,
           messageDebounceSeconds: agrupamento.value,
           includeCurrentDateTime,
+          botGuard: { enabled: botGuardEnabled, tag: botGuardTagValue },
           followUps: {
             mode: fuMode,
             maxChain: followUpMaxChain.value,
@@ -1914,6 +1940,57 @@ function AttendantConfig({
                 onChange={() => setIncludeCurrentDateTime((v) => !v)}
                 label="Informar data e hora atuais à IA"
               />
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-text-primary">
+                    Proteção contra robôs e mensagens automáticas
+                  </p>
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Quando o outro lado parece um robô (auto-resposta, boletim, outro assistente
+                    virtual), a IA para de responder, abre um repasse para verificação e etiqueta o
+                    lead. Evita loops entre dois robôs. Ligado por padrão.
+                  </p>
+                </div>
+                <Switch
+                  checked={botGuardEnabled}
+                  onChange={() => setBotGuardEnabled((v) => !v)}
+                  label="Proteção contra robôs e mensagens automáticas"
+                />
+              </div>
+              {botGuardEnabled && (
+                <div>
+                  <label
+                    htmlFor={`bot-guard-tag-${attendant._id}`}
+                    className="block text-[13px] font-medium text-text-secondary mb-1.5"
+                  >
+                    Etiqueta do lead
+                  </label>
+                  <input
+                    id={`bot-guard-tag-${attendant._id}`}
+                    type="text"
+                    value={botGuardTag}
+                    onChange={(e) => {
+                      setBotGuardTag(e.target.value);
+                      setBotGuardTagError(null);
+                    }}
+                    placeholder={DEFAULT_BOT_TAG}
+                    maxLength={BOT_TAG_MAX_CHARS}
+                    aria-invalid={botGuardTagError ? true : undefined}
+                    aria-describedby={`bot-guard-tag-help-${attendant._id}`}
+                    className="w-full px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                  <p
+                    id={`bot-guard-tag-help-${attendant._id}`}
+                    className={cn("text-xs mt-1", botGuardTagError ? "text-semantic-error" : "text-text-muted")}
+                  >
+                    {botGuardTagError ??
+                      "Aplicada ao lead quando a suspeita é registrada — útil para filtrar no funil."}
+                  </p>
+                </div>
+              )}
             </div>
           </FieldGroup>
 

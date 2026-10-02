@@ -73,6 +73,8 @@ import type * as lib_appUrl from "../lib/appUrl.js";
 import type * as lib_auditDescription from "../lib/auditDescription.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_batchGet from "../lib/batchGet.js";
+import type * as lib_botGuard from "../lib/botGuard.js";
+import type * as lib_botGuardOps from "../lib/botGuardOps.js";
 import type * as lib_bridgeGroups from "../lib/bridgeGroups.js";
 import type * as lib_bridgeHistory from "../lib/bridgeHistory.js";
 import type * as lib_bridgeMedia from "../lib/bridgeMedia.js";
@@ -251,6 +253,8 @@ declare const fullApi: ApiFromModules<{
   "lib/auditDescription": typeof lib_auditDescription;
   "lib/auth": typeof lib_auth;
   "lib/batchGet": typeof lib_batchGet;
+  "lib/botGuard": typeof lib_botGuard;
+  "lib/botGuardOps": typeof lib_botGuardOps;
   "lib/bridgeGroups": typeof lib_bridgeGroups;
   "lib/bridgeHistory": typeof lib_bridgeHistory;
   "lib/bridgeMedia": typeof lib_bridgeMedia;

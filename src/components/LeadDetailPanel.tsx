@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { toast } from "sonner";
+import { InlineNameEditor, type InlineNameContact } from "@/components/inbox/InlineNameEditor";
 import {
   X,
   Search,
@@ -1430,11 +1431,17 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
         {lead.contact ? (
           <div className="bg-surface-sunken rounded-card p-4 space-y-3">
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-text-muted">Nome</span>
-                <span className="text-text-primary font-medium">
-                  {`${lead.contact.firstName || ""} ${lead.contact.lastName || ""}`.trim() || "—"}
-                </span>
+              <div className="flex items-center justify-between gap-3 min-w-0">
+                <span className="shrink-0 text-text-muted">Nome</span>
+                {/* Renomear ali mesmo — "Alterar" troca o contato vinculado,
+                    não o nome dele. */}
+                <InlineNameEditor
+                  contact={lead.contact as InlineNameContact}
+                  lead={{ _id: lead._id, title: lead.title }}
+                  placeholder="—"
+                  className="justify-end"
+                  textClassName="text-text-primary font-medium"
+                />
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Email</span>

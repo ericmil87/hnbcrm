@@ -1966,6 +1966,7 @@ describe("motivos (teste de build)", () => {
       "conversa_de_grupo", "ia_desativada", "atendente_desativado", "sem_atendente",
       "ia_pausada", "handoff_pendente", "lead_de_humano", "opt_out", "fora_do_horario",
       "teto_conversa", "teto_hora", "bridge_sem_aceite", "janela_24h",
+      "suspeita_de_bot",
     ];
     for (const reason of eligibilityReasons) {
       expect(FOLLOW_UP_REASON_CODES, reason).toContain(reason);

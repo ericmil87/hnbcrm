@@ -7,7 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -48,6 +48,7 @@ import {
 } from "@/components/inbox/central/InboxQueueBar";
 import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
+import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
 
 // v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
@@ -66,7 +67,23 @@ const AI_STATE_REASON_LABELS: Record<string, string> = {
   ia_desativada: "IA desativada",
   sem_atendente: "sem atendente configurado",
   budget_mensal: "limite mensal de conversas atingido",
+  suspeita_de_bot: "suspeita de robô/mensagem automática — aguardando verificação",
 };
+
+// Guardrail anti-bot (v0.65): `conversations.botSuspicion` sem `clearedAt` =
+// a IA parou de responder porque o outro lado parece um robô. "Devolver para
+// IA" (ou rejeitar o repasse) limpa no backend.
+type BotSuspicion = {
+  at: number;
+  source: "heuristic" | "model";
+  reason: string;
+  clearedAt?: number;
+};
+
+function activeBotSuspicion(conversation: { botSuspicion?: BotSuspicion } | null | undefined): BotSuspicion | null {
+  const s = conversation?.botSuspicion;
+  return s && s.clearedAt === undefined ? s : null;
+}
 
 // `lead.handoffState` some quando nunca houve repasse; "completed" é repasse
 // já resolvido. Qualquer outro estado = alguém precisa assumir a conversa.
@@ -550,16 +567,16 @@ export function Inbox() {
           <span className="truncate">{groupSubject}</span>
         </span>
       </h2>
-    ) : openContactId ? (
+    ) : openContactId && currentConversation?.contact ? (
       <h2 className={className}>
-        <button
-          type="button"
-          onClick={() => setShowContactPanel(true)}
-          className="block max-w-full truncate py-2.5 -my-2.5 text-left transition-colors hover:text-brand-500 hover:underline underline-offset-4 focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
-          aria-label={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
-        >
-          {contactHeadingText}
-        </button>
+        {/* Nome editável ali mesmo: clicar no nome abre o contato; o lápis (ou
+            o próprio "Sem nome") renomeia sem passar pelo painel do lead. */}
+        <InlineNameEditor
+          contact={currentConversation.contact as InlineNameContact}
+          lead={currentConversation.lead as InlineNameLead}
+          onOpen={() => setShowContactPanel(true)}
+          openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
+        />
       </h2>
     ) : (
       <h2 className={className}>{contactHeadingText}</h2>
@@ -772,6 +789,22 @@ export function Inbox() {
       )}
     </>
   );
+
+  // Suspeita de robô na conversa aberta (só 1 a 1).
+  const botSuspicion = isGroupConversation ? null : activeBotSuspicion(currentConversation as any);
+  const [returningFromBot, setReturningFromBot] = useState(false);
+  const handleNotABot = async () => {
+    if (!currentConversation) return;
+    setReturningFromBot(true);
+    try {
+      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
+      toast.success("Conversa devolvida à IA");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Falha ao devolver para a IA"));
+    } finally {
+      setReturningFromBot(false);
+    }
+  };
 
   const handleReturnGroupToAi = async () => {
     if (!currentConversation) return;
@@ -1699,6 +1732,16 @@ export function Inbox() {
                         Repasse
                       </span>
                     )}
+                    {activeBotSuspicion(conversation as any) && (
+                      <span
+                        className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
+                        title="Suspeita de robô"
+                        aria-label="Suspeita de robô"
+                        role="img"
+                      >
+                        <Bot size={12} aria-hidden />
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -2050,6 +2093,53 @@ export function Inbox() {
                           variant="button"
                         />
                       )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Suspeita de robô (v0.65) — adicional ao banner de repasse */}
+            {botSuspicion && currentConversation && !isGroupConversation && (
+              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
+                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
+                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
+                    <Bot size={16} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
+                    <span className="min-w-0">
+                      <span className="block font-medium text-semantic-warning">
+                        A IA parou de responder: o outro lado parece um robô ou mensagem automática
+                      </span>
+                      {botSuspicion.reason && (
+                        <span className="block text-xs text-text-secondary mt-0.5 break-words">
+                          {botSuspicion.reason}
+                        </span>
+                      )}
+                    </span>
+                  </p>
+                  {canReply && (
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={returningFromBot}
+                        onClick={() => void handleNotABot()}
+                      >
+                        É uma pessoa — devolver para a IA
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() =>
+                          navigate(
+                            pendingHandoff
+                              ? `${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`
+                              : TAB_ROUTES.handoffs
+                          )
+                        }
+                      >
+                        Ver repasse
+                      </Button>
                     </div>
                   )}
                 </div>

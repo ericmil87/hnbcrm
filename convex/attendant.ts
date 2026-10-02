@@ -89,6 +89,13 @@ import {
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { DEFAULT_AGENDA_HEADER, AgendaEvent, isAllowedImageUrl } from "./lib/externalAgenda";
 import { prepareAgendaImageFile, runConsultarAgenda } from "./attendantAgenda";
+import {
+  BOT_GUARD_HISTORY,
+  describeBotSignals,
+  evaluateBotSignals,
+  resolveBotGuardSettings,
+} from "./lib/botGuard";
+import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGuardOps";
 
 export { isWithinSchedule };
 
@@ -138,7 +145,7 @@ function estimateCostUsd(usage: {
   );
 }
 
-// ── Elegibilidade (11 condições; usada no enqueue e RE-checada no commit) ──
+// ── Elegibilidade (12 condições; usada no enqueue e RE-checada no commit) ──
 // `channelProvider` vem SEMPRE de resolveConversationChannelConfig (helper
 // único) para enqueue e commit nunca divergirem sobre qual canal é (v4.1 DIFF 2).
 
@@ -181,6 +188,17 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   // 5. sem handoff pendente no lead
   if (lead?.handoffState && lead.handoffState.status !== "completed") {
     return { ok: false, reason: "handoff_pendente" };
+  }
+  // 12 (v0.65, avaliada aqui, logo depois da nº 5, porque é o mesmo episódio:
+  // a suspeita abre um repasse). Suspeita de ROBÔ do outro lado ainda não
+  // limpa por um humano → a IA não responde. Fica de pé mesmo depois que o
+  // repasse sai de `pending` (aceito, cancelado ou "Devolver para IA" sem
+  // limpar): só `clearedAt` libera — e quem grava é `returnToAi`/rejeitar o
+  // repasse. Como é re-checada no commit, uma run em voo também aborta.
+  // NÃO entra em HUMAN_HOLD_REASONS: o coach não atravessa uma suspeita (o
+  // humano limpa explicitamente devolvendo para a IA).
+  if (conversation.botSuspicion && conversation.botSuspicion.clearedAt === undefined) {
+    return { ok: false, reason: "suspeita_de_bot" };
   }
   // 6. lead atribuído ao próprio atendente (ou sem atribuição)
   if (lead?.assignedTo !== undefined && lead.assignedTo !== agent._id) {
@@ -402,6 +420,16 @@ export function describeAttendantAction(
       }
       return `Atualizar lead: ${parts.length > 0 ? parts.join(" · ") : "dados da conversa"}`;
     }
+    case "flagAutomatedSender": {
+      let reason = "";
+      try {
+        const parsed = JSON.parse(argsJson || "{}");
+        if (typeof parsed.reason === "string") reason = parsed.reason.trim().slice(0, 120);
+      } catch {
+        // malformado: rótulo sem motivo
+      }
+      return `Marcar como robô/mensagem automática${reason ? `: ${reason}` : ""} (sem responder)`;
+    }
     default:
       return `${name}(${argsJson})`;
   }
@@ -415,6 +443,185 @@ function matchesHandoffKeyword(content: string, keywords: string[] | undefined):
   }
   return false;
 }
+
+// ── Guardrail anti-bot (v0.65) ──
+
+const BOT_SUSPICION_HANDOFF_REASON = "Possível robô/mensagem automática do outro lado";
+const BOT_SUSPICION_SUGGESTED_ACTIONS = [
+  "Verificar se é uma pessoa real",
+  "Se for pessoa: Devolver para IA (limpa a suspeita)",
+  "Se for robô: arquivar a conversa ou deixar o lead etiquetado",
+];
+
+/**
+ * Marca a conversa como "o outro lado parece um robô" e PARA o atendente —
+ * numa transação só: suspeita na conversa → etiqueta no lead → repasse
+ * `bot_suspect` (skip se já houver um aberto) → activity + audit + webhook
+ * `conversation.bot_suspected` → item `skipped` com `suspeita_de_bot` na fila
+ * (o chip "IA em espera" do inbox lê dali).
+ *
+ * Dois caminhos chegam aqui: a heurística do enqueue (`source:"heuristic"`) e a
+ * tool `flagAutomatedSender` do próprio modelo (`source:"model"`). Idempotente
+ * o suficiente para os dois: suspeita já ativa não é regravada (a primeira
+ * prova fica), e o repasse duplicado é pulado pelo core.
+ */
+export async function applyBotSuspicion(
+  ctx: MutationCtx,
+  args: {
+    conversation: Doc<"conversations">;
+    lead: Doc<"leads">;
+    agent: Doc<"teamMembers">;
+    source: "heuristic" | "model";
+    reason: string;
+    score?: number;
+    signals?: string[];
+    triggerMessageId?: Id<"messages">;
+    now: number;
+  }
+): Promise<{ applied: boolean }> {
+  const { conversation, agent, now } = args;
+  const fresh = await ctx.db.get(conversation._id);
+  if (!fresh || hasActiveBotSuspicion(fresh)) return { applied: false };
+  const { tag } = resolveBotGuardSettings(agent.agentProfile);
+  const reason = args.reason.trim().slice(0, 200) || "sinais de mensagem automática";
+
+  // 1. Suspeita na conversa (a condição 12 da elegibilidade passa a segurar).
+  await ctx.db.patch(conversation._id, {
+    botSuspicion: {
+      at: now,
+      source: args.source,
+      reason,
+      ...(args.score !== undefined ? { score: args.score } : {}),
+      ...(args.signals && args.signals.length > 0 ? { signals: args.signals.slice(0, 20) } : {}),
+    },
+    updatedAt: now,
+  });
+
+  // 2. Etiqueta no lead (preserva as demais; relê para não sobrescrever um
+  //    patch anterior da mesma transação).
+  const lead = (await ctx.db.get(args.lead._id)) ?? args.lead;
+  if (!lead.tags.includes(tag)) {
+    await ctx.db.patch(lead._id, { tags: [...lead.tags, tag], updatedAt: now });
+  }
+
+  // 3. Repasse para verificação humana.
+  const summary =
+    args.source === "model"
+      ? `A IA identificou mensagem automática: ${reason}`
+      : `Sinais de robô: ${reason}${args.score !== undefined ? ` (pontuação ${args.score})` : ""}`;
+  await createHandoffCore(ctx, {
+    leadId: lead._id,
+    conversationId: conversation._id,
+    fromMemberId: agent._id,
+    reason: BOT_SUSPICION_HANDOFF_REASON,
+    summary,
+    suggestedActions: BOT_SUSPICION_SUGGESTED_ACTIONS,
+    origin: "bot_suspect",
+    onDuplicate: "skip",
+  });
+
+  // 4. Rastro.
+  await ctx.db.insert("activities", {
+    organizationId: conversation.organizationId,
+    leadId: lead._id,
+    type: "note",
+    actorId: agent._id,
+    actorType: "ai",
+    content: `Possível robô do outro lado — a IA parou de responder e o lead ganhou a etiqueta "${tag}" (${reason})`,
+    metadata: {
+      conversationId: conversation._id,
+      botSuspicion: true,
+      source: args.source,
+      ...(args.score !== undefined ? { score: args.score } : {}),
+    },
+    createdAt: now,
+  });
+  await ctx.db.insert("auditLogs", {
+    organizationId: conversation.organizationId,
+    entityType: "conversation",
+    entityId: conversation._id,
+    action: "update",
+    actorId: agent._id,
+    actorType: "ai",
+    changes: {
+      before: { botSuspicion: null },
+      after: { botSuspicion: { source: args.source, reason, score: args.score ?? null }, tag },
+    },
+    metadata: { leadId: lead._id, title: lead.title, signals: args.signals ?? [] },
+    description: `Conversa do lead '${lead.title}' marcada como possível robô (${args.source === "model" ? "pela IA" : "por heurística"})`,
+    severity: "medium",
+    createdAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    organizationId: conversation.organizationId,
+    event: "conversation.bot_suspected",
+    payload: {
+      conversationId: conversation._id,
+      leadId: lead._id,
+      source: args.source,
+      reason,
+      score: args.score ?? null,
+      signals: args.signals ?? [],
+      tag,
+    },
+  });
+
+  // 5. Rastro na fila para o chip "IA em espera: suspeita de robô". Só no
+  //    caminho da heurística (tem a mensagem-gatilho, campo obrigatório da
+  //    fila): no caminho da tool o PRÓPRIO item em processamento é encerrado
+  //    como `skipped`/`suspeita_de_bot` pelo runtime.
+  if (args.triggerMessageId) {
+    await ctx.db.insert("aiReplyQueue", {
+      organizationId: conversation.organizationId,
+      conversationId: conversation._id,
+      triggerMessageId: args.triggerMessageId,
+      agentMemberId: agent._id,
+      status: "skipped",
+      error: "suspeita_de_bot",
+      attempts: 0,
+      nextAttemptAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  return { applied: true };
+}
+
+/**
+ * Tool `flagAutomatedSender` (camada do modelo do guardrail anti-bot). Chamada
+ * pelo runtime nos DOIS modos. Valida que conversa, lead e atendente são da
+ * mesma org (os ids vêm do contexto do turno, nunca do modelo).
+ */
+export const internalFlagAutomatedSender = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    leadId: v.id("leads"),
+    agentMemberId: v.id("teamMembers"),
+    reason: v.string(),
+  },
+  returns: v.object({ applied: v.boolean() }),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    const lead = await ctx.db.get(args.leadId);
+    const agent = await ctx.db.get(args.agentMemberId);
+    if (!conversation || !lead || !agent) throw new Error("Conversa, lead ou atendente não encontrado");
+    if (
+      lead.organizationId !== conversation.organizationId ||
+      agent.organizationId !== conversation.organizationId ||
+      conversation.leadId !== lead._id
+    ) {
+      throw new Error("Escopo inválido");
+    }
+    return await applyBotSuspicion(ctx, {
+      conversation,
+      lead,
+      agent,
+      source: "model",
+      reason: args.reason.slice(0, 200),
+      now: Date.now(),
+    });
+  },
+});
 
 // ── Gatilho: enfileirar a partir de um inbound (agendado pelo ingest) ──
 
@@ -487,6 +694,47 @@ export const internalEnqueueFromInbound = internalMutation({
         updatedAt: now,
       });
       return null;
+    }
+
+    // Guardrail anti-bot (v0.65): heurística DETERMINÍSTICA sobre o histórico
+    // recente — roda antes da inferência (não depende do modelo perceber) e só
+    // DEPOIS da elegibilidade: numa conversa que a IA nem pode tocar (lead de
+    // humano, IA pausada, repasse pendente) um cliente real respondendo rápido
+    // ao HUMANO ganharia etiqueta de robô e um repasse broadcast (review de
+    // 02/10/2026). Também só quando ainda não há suspeita ativa (com suspeita, a condição 12 da
+    // elegibilidade já segura e deixa o rastro abaixo). `sinceAt` = o instante
+    // em que um humano limpou a suspeita: os contadores recomeçam dali.
+    const botGuard = resolveBotGuardSettings(agent.agentProfile);
+    if (botGuard.enabled && !hasActiveBotSuspicion(conversation)) {
+      const recent = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+        .order("desc")
+        .take(BOT_GUARD_HISTORY);
+      const verdict = evaluateBotSignals({
+        messages: recent.reverse().map((m) => ({
+          direction: m.direction,
+          senderType: m.senderType,
+          content: m.content,
+          createdAt: m.createdAt,
+          isInternal: m.isInternal,
+        })),
+        sinceAt: conversation.botSuspicion?.clearedAt ?? 0,
+      });
+      if (verdict.triggered) {
+        await applyBotSuspicion(ctx, {
+          conversation,
+          lead,
+          agent,
+          source: "heuristic",
+          reason: describeBotSignals(verdict.signals),
+          score: verdict.score,
+          signals: verdict.signals,
+          triggerMessageId: args.messageId,
+          now,
+        });
+        return null;
+      }
     }
 
     // Janela de agrupamento configurável por atendente: cada inbound novo empurra
@@ -1174,6 +1422,7 @@ export const internalClaimForProcessing = internalMutation({
         // v0.64 — agenda externa: só a REFERÊNCIA da chave sai daqui; o
         // decrypt acontece na action (mesmo padrão do BYO em lib/agentRoutes).
         externalAgenda: externalAgendaForRun(profile.externalAgenda),
+        botGuardEnabled: resolveBotGuardSettings(profile).enabled,
       },
     };
   },
@@ -2786,6 +3035,8 @@ type RunContext = {
   pendingFollowUps: { titulo: string; quando: string; nota: string | null }[];
   /** Agenda externa configurada e ligada (v0.64) — null = sem `consultarAgenda`. */
   externalAgenda: ExternalAgendaRunConfig | null;
+  /** Guardrail anti-bot ligado (v0.65) — oferece `flagAutomatedSender` + REGRA 11. */
+  botGuardEnabled: boolean;
 };
 
 // Subconjunto do contexto que o prompt de sistema realmente usa — permite que o
@@ -2809,13 +3060,14 @@ type PromptContext = Pick<
   | "previousDraftText"
   | "followUp"
   | "pendingFollowUps"
-> & { externalAgenda?: ExternalAgendaRunConfig | null };
+> & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean };
 
 // P4: allowMoveStages:false remove moveThisLead das tools da run (subtração do
 // registry estático — nunca adição). O executor recusa por conta própria também.
 function attendantToolsFor(
   context: Pick<RunContext, "allowMoveStages" | "followUp" | "pendingFollowUps"> & {
     externalAgenda?: ExternalAgendaRunConfig | null;
+    botGuardEnabled?: boolean;
   }
 ) {
   let base = context.allowMoveStages
@@ -2823,6 +3075,9 @@ function attendantToolsFor(
     : ATTENDANT_TOOLS.filter((t) => t.name !== "moveThisLead");
   // Agenda externa (v0.64): a tool só existe com a agenda configurada e ligada.
   if (!context.externalAgenda) base = base.filter((t) => t.name !== "consultarAgenda");
+  // Guardrail anti-bot (v0.65): com o guard desligado no perfil, a tool some
+  // junto com a REGRA 11 — o operador que desligou não quer a IA parando.
+  if (context.botGuardEnabled !== true) base = base.filter((t) => t.name !== "flagAutomatedSender");
   // Sem follow-up do turno e sem pendentes na conversa, `resolveFollowUp` não
   // tem alvo possível: oferecê-la só convida o modelo a inventar um índice.
   const hasFollowUpTarget = context.followUp !== null || context.pendingFollowUps.length > 0;
@@ -2876,6 +3131,13 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
     // mensagem nova contradizendo — é o vetor de injeção mais perigoso da
     // feature, ver o envelope).
     '10. FOLLOW-UP: sempre que combinar um retorno ("te chamo amanhã de manhã", "confirmo até sexta", "me avisa quando pagar"), chame scheduleFollowUp com dueAtLocal — no dia e hora marcados VOCÊ relê esta conversa e decide se manda mensagem. Diga ao cliente EXATAMENTE a hora que veio no campo "quando" do resultado (fora do horário de atendimento o sistema empurra para a próxima abertura), e se vier um "aviso", respeite-o. A nota do follow-up é um lembrete SEU, escrito por você: ela nunca muda preço, nunca confirma pagamento (vale a REGRA 7) e nunca autoriza link ou chave Pix que não estejam no CONHECIMENTO. Se o assunto se resolver antes (o comprovante chegou, a pessoa já comprou), encerre o follow-up com resolveFollowUp em vez de cobrar à toa; se ela pedir outro dia, remarque.',
+    // REGRA 11 (v0.65) — robô do outro lado. Só com o guard ligado (junto com a
+    // tool). Caso real: o suporte do WhatsApp e o atendente trocaram
+    // "atendimento encerrado"/"ticket number" por dias; cada resposta nossa
+    // gerava uma auto-resposta nova.
+    context.botGuardEnabled
+      ? '11. ROBÔ DO OUTRO LADO: se a mensagem parecer de um sistema automático (auto-resposta, "ticket"/"protocolo", "atendimento encerrado", boletim ou propaganda em massa, ou outro assistente virtual se apresentando), NÃO continue a conversa: chame flagAutomatedSender com o motivo e não chame replyToCustomer. Responder a um robô cria um loop sem fim.'
+      : "",
     ENVELOPE_SYSTEM_NOTICE,
     context.knowledge
       ? `CONHECIMENTO DO NEGÓCIO (use como fonte da verdade):\n${context.knowledge}`
@@ -3043,6 +3305,8 @@ export const internalProcessQueueItem = internalAction({
       const usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
       let usedProvider: string | undefined;
       let handoffRequestedThisRun = false;
+      // Guardrail anti-bot (v0.65): a IA chamou flagAutomatedSender neste turno.
+      let botFlaggedThisRun = false;
       // Turno de follow-up: "não mandar nada" é um DESFECHO, e precisa ter sido
       // decidido por ferramenta — texto solto do modelo não conta.
       let followUpResolvedThisRun = false;
@@ -3198,15 +3462,39 @@ export const internalProcessQueueItem = internalAction({
         // agenda externa existe para impedir. Executa a consulta, descarta o
         // reply e pede de novo. O reply descartado não conta no orçamento.
         const discardReplyThisRound = roundHasReadAndReply(toolCalls);
-        const countedCalls = discardReplyThisRound
-          ? toolCalls.filter((tc) => tc.function.name !== "replyToCustomer").length
-          : toolCalls.length;
+        // Guardrail anti-bot: rodada com `flagAutomatedSender` processa a
+        // marcação PRIMEIRO e DESCARTA todas as outras tool calls — não só o
+        // reply. Atualizar lead, armar follow-up (que dispararia amanhã contra
+        // o robô e cairia em needs_human), mover estágio ou abrir outro
+        // repasse com base na conversa de um robô é lixo no CRM (review de
+        // 02/10/2026). Os descartes não contam no orçamento de tools.
+        const roundFlagsBot = toolCalls.some((tc) => tc.function.name === "flagAutomatedSender");
+        const roundCalls = roundFlagsBot
+          ? [
+              ...toolCalls.filter((tc) => tc.function.name === "flagAutomatedSender"),
+              ...toolCalls.filter((tc) => tc.function.name !== "flagAutomatedSender"),
+            ]
+          : toolCalls;
+        const countedCalls = roundFlagsBot
+          ? 1
+          : discardReplyThisRound
+            ? toolCalls.filter((tc) => tc.function.name !== "replyToCustomer").length
+            : toolCalls.length;
         if (toolCallNames.length + countedCalls > context.maxToolCalls) {
           throw new Error("Limite de tool calls por run excedido");
         }
 
-        for (const tc of toolCalls) {
+        for (const tc of roundCalls) {
           const name = tc.function.name;
+          if (roundFlagsBot && (name !== "flagAutomatedSender" || botFlaggedThisRun)) {
+            // Só para o log da run: o turno termina sem nova chamada ao modelo.
+            messages.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: JSON.stringify({ status: "descartado", motivo: "robo_do_outro_lado" }),
+            });
+            continue;
+          }
           if (discardReplyThisRound && name === "replyToCustomer") {
             messages.push({
               role: "tool",
@@ -3247,6 +3535,34 @@ export const internalProcessQueueItem = internalAction({
             );
             agendaEventsSeen.push(...agenda.events);
             result = projectToolResult(toolSpecByName("consultarAgenda")!, agenda.result);
+          } else if (name === "flagAutomatedSender") {
+            // Executa NOS DOIS modos, como o requestHandoff: parar de falar com
+            // um robô é sempre seguro. Diferente do requestHandoff — cujo
+            // replyToCustomer do mesmo turno SAI (`allowPendingHandoff`, o
+            // cliente humano recebe "vou te passar para a equipe") —, aqui o
+            // reply e TODAS as outras tools da rodada são descartados (ver
+            // `roundFlagsBot`): qualquer mensagem a um robô alimenta o loop.
+            botFlaggedThisRun = true;
+            let reason = "Mensagem automática identificada pela IA";
+            try {
+              const parsed = JSON.parse(tc.function.arguments || "{}");
+              if (typeof parsed.reason === "string" && parsed.reason.trim()) {
+                reason = parsed.reason.trim().slice(0, 200);
+              }
+            } catch {
+              // argumentos malformados: segue com o motivo padrão
+            }
+            // Falha da marcação LANÇA: cai no retry/falha normal da fila (que
+            // termina em repasse `ai_failure` e bloqueia a IA no lead). Encerrar
+            // como skipped/`suspeita_de_bot` sem nada gravado na conversa
+            // mentiria no chip e deixaria o loop pagando inferência.
+            await ctx.runMutation(internal.attendant.internalFlagAutomatedSender, {
+              conversationId: context.conversationId,
+              leadId: context.leadId,
+              agentMemberId: context.agentMemberId,
+              reason,
+            });
+            result = { status: "encaminhado_para_verificacao" };
           } else if (name === "requestHandoff") {
             // Handoff executa NOS DOIS modos (escalar pro humano é sempre seguro).
             try {
@@ -3350,6 +3666,32 @@ export const internalProcessQueueItem = internalAction({
         }
 
         if (replyText !== null) break; // resposta pronta — não gasta outra rodada
+        if (botFlaggedThisRun) break; // robô do outro lado: nada mais a fazer
+      }
+
+      // Guardrail anti-bot (v0.65): turno encerrado SEM mensagem — nem envio,
+      // nem rascunho. O item sai `skipped`/`suspeita_de_bot` (chip do inbox) e,
+      // num turno de follow-up, `releaseFollowUpFromQueue` escala para humano.
+      if (botFlaggedThisRun) {
+        await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+          runId: context.agentRunId,
+          status: "done",
+          provider: usedProvider,
+          model: context.model,
+          requestCount,
+          toolCallNames,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          cachedPromptTokens: usage.cachedPromptTokens,
+          costUsdEstimate: estimateCostUsd(usage),
+        });
+        await ctx.runMutation(internal.attendant.internalMarkItemSkipped, {
+          queueItemId: args.queueItemId,
+          conversationId: context.conversationId,
+          runId,
+          reason: "suspeita_de_bot",
+        });
+        return null;
       }
 
       if (!replyText) {
@@ -4128,6 +4470,18 @@ export const returnToAi = mutation({
     const now = Date.now();
     await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
 
+    // Guardrail anti-bot (v0.65): "Devolver para IA" é o humano dizendo "é
+    // pessoa" — limpa a suspeita (a condição 12 deixaria a IA muda) e tira a
+    // etiqueta do lead ANTES de enfileirar o turno abaixo.
+    await clearBotSuspicion(ctx, {
+      conversation,
+      lead,
+      member,
+      tag: botTagFor(agent),
+      now,
+      via: "return_to_ai",
+    });
+
     // Lead volta para o atendente (condição nº 6 da elegibilidade).
     // handoffState limpo encerra o episódio.
     await ctx.db.patch(lead._id, {
@@ -4473,6 +4827,7 @@ export const simulateAttendant = action({
     const actions: string[] = [];
     let reply: string | null = null;
     let replyImageUrl: string | null = null;
+    let botFlagged = false;
     const agendaEventsSeen: AgendaEvent[] = [];
     let truncatedOnce = false;
 
@@ -4574,6 +4929,7 @@ export const simulateAttendant = action({
               ),
             });
           } else {
+            if (tc.function.name === "flagAutomatedSender") botFlagged = true;
             // NUNCA executa de verdade — só relata, com rótulo humano (v4.2),
             // o movimento que faria (inclusive os valores capturados).
             actions.push(describeAttendantAction(tc.function.name, tc.function.arguments));
@@ -4585,6 +4941,13 @@ export const simulateAttendant = action({
           }
         }
         if (reply !== null) break;
+        if (botFlagged) break;
+      }
+      // Guardrail anti-bot: igual ao runtime, o reply de um turno que marcou
+      // robô NÃO sai — o simulador mostra só a ação.
+      if (botFlagged) {
+        reply = null;
+        replyImageUrl = null;
       }
       // Mesma conversão do runtime: sem isto o "Testar" mostraria `**x**` onde a
       // produção manda `*x*`, e a simulação deixaria de valer como ensaio.
@@ -4698,6 +5061,7 @@ export const internalGetSimulatorSetup = internalQuery({
       dateTimeBlock: null as string | null,
       // Agenda externa (v0.64): o simulador consulta DE VERDADE (é leitura).
       externalAgenda: externalAgendaForRun(profile.externalAgenda),
+      botGuardEnabled: resolveBotGuardSettings(profile).enabled,
       includeCurrentDateTime: shouldIncludeCurrentDateTime(profile),
       timezone: resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone),
     };

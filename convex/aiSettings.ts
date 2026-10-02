@@ -37,6 +37,7 @@ import {
   visionModelOptions,
 } from "./lib/llm/registry";
 import { personaById, personaForIndustry } from "./lib/agentPersonas";
+import { resolveBotGuardSettings, validateBotGuardTag } from "./lib/botGuard";
 import {
   DEFAULT_QUIET_END_HOUR,
   DEFAULT_QUIET_START_HOUR,
@@ -501,6 +502,17 @@ const agentProfilePatchValidator = v.object({
   ),
   // Opt-OUT: ausente = ligado, só `false` desliga (ver o schema).
   includeCurrentDateTime: v.optional(v.boolean()),
+  // Guardrail anti-bot (v0.65). Opt-OUT como o de cima; `v.null()` volta ao
+  // default (remove o campo = ligado com a etiqueta "bot-suspeito").
+  botGuard: v.optional(
+    v.union(
+      v.null(),
+      v.object({
+        enabled: v.optional(v.boolean()),
+        tag: v.optional(v.string()),
+      })
+    )
+  ),
   // Follow-ups que a IA executa sozinha (v0.60). `v.null()` volta ao default
   // do produto ("Preparar rascunho"), como o pipelineConfig.
   followUps: v.optional(
@@ -874,6 +886,17 @@ export const updateAgentProfile = mutation({
       }
     }
 
+    // Guardrail anti-bot: MERGE com o que já está gravado (um patch só com
+    // `enabled` não apaga a etiqueta custom); etiqueta validada no servidor
+    // (trim, 1–40, sem vírgula — a UI separa tags por vírgula); `tag:""`
+    // remove a etiqueta (volta à padrão); `null` remove o objeto inteiro.
+    const botGuard =
+      args.patch.botGuard === undefined
+        ? undefined
+        : args.patch.botGuard === null
+          ? null
+          : mergeBotGuard(agent.agentProfile.botGuard, args.patch.botGuard);
+
     // P4: integridade do pipelineConfig — board da org; estágios do board certo.
     const pipelineConfig = args.patch.pipelineConfig;
     if (pipelineConfig !== undefined && pipelineConfig !== null) {
@@ -910,7 +933,7 @@ export const updateAgentProfile = mutation({
       }
     }
 
-    const { schedule, pipelineConfig: _pc, followUps: _fu, ...rest } = args.patch;
+    const { schedule, pipelineConfig: _pc, followUps: _fu, botGuard: _bg, ...rest } = args.patch;
     const clean = Object.fromEntries(
       Object.entries(rest).filter(([, value]) => value !== undefined)
     );
@@ -923,6 +946,7 @@ export const updateAgentProfile = mutation({
         ? { pipelineConfig: pipelineConfig ?? undefined }
         : {}),
       ...(followUps !== undefined ? { followUps: followUps ?? undefined } : {}),
+      ...(botGuard !== undefined ? { botGuard: botGuard ?? undefined } : {}),
       ...(autopilotEarly ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
     };
     await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
@@ -948,6 +972,100 @@ export const updateAgentProfile = mutation({
       createdAt: now,
     });
     return null;
+  },
+});
+
+/**
+ * MERGE do `botGuard` (UI e ops usam o mesmo): campo ausente no patch fica como
+ * está; `tag:""` remove a etiqueta (volta à padrão "bot-suspeito"); etiqueta
+ * não vazia é validada (lança com mensagem PT-BR). Objeto que fica vazio vira
+ * `undefined` (= padrão: ligado).
+ */
+function mergeBotGuard(
+  current: { enabled?: boolean; tag?: string } | undefined,
+  patch: { enabled?: boolean; tag?: string }
+): { enabled?: boolean; tag?: string } | undefined {
+  const next: { enabled?: boolean; tag?: string } = { ...current };
+  if (patch.enabled !== undefined) next.enabled = patch.enabled;
+  if (patch.tag !== undefined) {
+    if (patch.tag.trim() === "") {
+      delete next.tag;
+    } else {
+      const checked = validateBotGuardTag(patch.tag);
+      if (!checked.ok) throw new Error(`Etiqueta de robô: ${checked.error}`);
+      next.tag = checked.tag;
+    }
+  }
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+/**
+ * Ops: liga/desliga o guardrail anti-bot (v0.65) sem sessão de usuário — de um
+ * atendente (`agentMemberId`) ou de TODOS os atendentes da org. Campos ausentes
+ * ficam como estão (merge). `dryRun` é TRUE por padrão:
+ * `npx convex run --prod aiSettings:internalSetBotGuard '{"organizationId":"…","enabled":false,"dryRun":false}'`.
+ */
+export const internalSetBotGuard = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.optional(v.id("teamMembers")),
+    enabled: v.optional(v.boolean()),
+    tag: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    let targets: Doc<"teamMembers">[];
+    if (args.agentMemberId) {
+      const agent = await ctx.db.get(args.agentMemberId);
+      if (!agent || agent.organizationId !== args.organizationId) {
+        throw new Error("Atendente IA não encontrado nesta organização");
+      }
+      targets = [agent];
+    } else {
+      targets = await ctx.db
+        .query("teamMembers")
+        .withIndex("by_organization_and_type", (q) =>
+          q.eq("organizationId", args.organizationId).eq("type", "ai")
+        )
+        .collect();
+    }
+    targets = targets.filter((m) => m.type === "ai" && m.agentProfile?.kind === "attendant");
+    if (targets.length === 0) throw new Error("Nenhum atendente IA encontrado");
+
+    const patch = { enabled: args.enabled, tag: args.tag };
+    const now = Date.now();
+    const results: Array<Record<string, unknown>> = [];
+    for (const agent of targets) {
+      const profile = agent.agentProfile!;
+      const before = profile.botGuard;
+      const after = mergeBotGuard(before, patch);
+      results.push({
+        agentMemberId: agent._id,
+        name: agent.name,
+        before: before ?? null,
+        after: after ?? null,
+        effective: resolveBotGuardSettings({ botGuard: after }),
+      });
+      if (args.dryRun !== false) continue;
+      await ctx.db.patch(agent._id, { agentProfile: { ...profile, botGuard: after }, updatedAt: now });
+      await ctx.db.insert("auditLogs", {
+        organizationId: agent.organizationId,
+        entityType: "teamMember",
+        entityId: agent._id,
+        action: "update",
+        actorType: "system",
+        changes: {
+          before: { botGuard: (before ?? null) as unknown as Record<string, unknown> },
+          after: { botGuard: (after ?? null) as unknown as Record<string, unknown> },
+        },
+        metadata: { name: agent.name, agentConfig: true, via: "ops" },
+        description: `Ops ${resolveBotGuardSettings({ botGuard: after }).enabled ? "ligou" : "desligou"} o guardrail anti-robô do atendente '${agent.name}'`,
+        severity: "medium",
+        createdAt: now,
+      });
+    }
+    return { dryRun: args.dryRun !== false, agents: results };
   },
 });
 

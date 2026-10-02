@@ -366,3 +366,53 @@ describe("GroupInfo: teto de itens por lista (review de segurança nº 7)", () =
     expect(parsed.info.join[0]).toBe(huge[0]);
   });
 });
+
+// Guardrail anti-bot (v0.65): canal/newsletter e transmissão/status não são
+// contatos. Caso real: boletins do canal do Google Gemini viraram conversa 1 a 1
+// porque os dígitos do canal foram lidos como telefone.
+describe("parseBridgeEvent — newsletter/broadcast", () => {
+  const NEWSLETTER_JID = "120363419019272923@newsletter"; // JID real do caso (canal público)
+
+  test("mensagem de canal (@newsletter) é ignorada — não vira telefone", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope(
+        { conversation: "Resgate 1 ano grátis ✨ Reaja com ✨" },
+        { Chat: NEWSLETTER_JID, Sender: NEWSLETTER_JID }
+      )
+    );
+    expect(res).toEqual({ kind: "ignored", reason: "newsletter/broadcast chat" });
+  });
+
+  test("newsletter só no Chat (Sender pessoal) também é ignorada", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope({ conversation: "boletim" }, { Chat: NEWSLETTER_JID, Sender: SENDER_JID })
+    );
+    expect(res.kind).toBe("ignored");
+  });
+
+  test("status@broadcast é ignorado", () => {
+    const res = parseBridgeEvent(
+      messageEnvelope({ conversation: "status" }, { Chat: "status@broadcast", Sender: SENDER_JID })
+    );
+    expect(res).toEqual({ kind: "ignored", reason: "newsletter/broadcast chat" });
+  });
+
+  test("recibo e presença de newsletter são ignorados", () => {
+    expect(
+      parseBridgeEvent(
+        receiptEnvelope({ MessageIDs: ["X1"], Type: "read", Chat: NEWSLETTER_JID, IsFromMe: false })
+      ).kind
+    ).toBe("ignored");
+    expect(
+      parseBridgeEvent({
+        type: "ChatPresence",
+        instanceId: INSTANCE_ID,
+        event: { Chat: NEWSLETTER_JID, Sender: NEWSLETTER_JID, State: "composing", IsFromMe: false },
+      }).kind
+    ).toBe("ignored");
+  });
+
+  test("chat 1 a 1 normal continua sendo mensagem", () => {
+    expect(parseBridgeEvent(messageEnvelope({ conversation: "oi" })).kind).toBe("message");
+  });
+});

@@ -1184,6 +1184,8 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "handoff.rejected",
                   "handoff.canceled",
                   "conversation.returned_to_ai",
+                  "conversation.bot_suspected",
+                  "conversation.bot_cleared",
                   "conversation.transferred",
                   "task.moved",
                   "task.due_soon",

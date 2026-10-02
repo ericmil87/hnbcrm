@@ -602,6 +602,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   teto_hora: "o teto de respostas por hora foi atingido",
   bridge_sem_aceite: "o canal não tem o aceite de risco do WhatsApp não oficial",
   janela_24h: "a janela de 24h do WhatsApp está fechada",
+  suspeita_de_bot: "o outro lado parece ser um robô — aguardando verificação humana",
   // ── Fila do atendente ──
   budget_mensal: "o teto mensal de conversas com IA foi atingido",
   conversa_removida: "a conversa não existe mais",

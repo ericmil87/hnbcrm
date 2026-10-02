@@ -60,6 +60,7 @@ export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
   teto_hora: "o teto de respostas por hora foi atingido",
   bridge_sem_aceite: "o canal não tem o aceite de risco do WhatsApp não oficial",
   janela_24h: "a janela de 24h do WhatsApp está fechada",
+  suspeita_de_bot: "o outro lado parece um robô ou mensagem automática — aguardando verificação",
 
   // Fila / turno do atendente
   nao_pendente: "o item já não estava mais pendente",
