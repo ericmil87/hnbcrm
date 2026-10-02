@@ -116,3 +116,8 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
 - 13:2x — Vercel apontado para o prod (bundle do hnbcrm.com carrega `careful-anaconda-127`); teste do Eric entrou no prod
   às 13:20:40 e a IA respondeu às 13:20:53. Re-armadas 2 publicações de grupo (`internalRearmGroupPosts`) e reenviada 1
   resposta da IA das 13:03 presa sem dispatch (`internalRedispatchStuckOutbound`).
+- 13:36–13:40 — logs do prod mostraram `Bridge webhook signature invalid` para a instância da org Townsville INC (9 em 45 s;
+  o segredo `WA_BRIDGE_HMAC_SECRET` é idêntico nos dois deployments, então a chave no cache do gateway é que divergia —
+  provavelmente já antes da migração). `opsMigration:internalReapplyBridgeHmac` (`POST /session/hmac/config` nas 3
+  instâncias, HTTP 200) resolveu: zero rejeições nos 2 min seguintes. Resend: URL do webhook editada no painel (mesmo
+  signing secret, já igual no prod).
