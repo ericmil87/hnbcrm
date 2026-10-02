@@ -4,7 +4,7 @@
   "description": "MCP server for HNBCRM — 66 tools to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns and WhatsApp groups via AI agents",
   "type": "module",
   "bin": {
-    "hnbcrm-mcp": "./dist/index.js"
+    "hnbcrm-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "files": [
