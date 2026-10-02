@@ -21,9 +21,11 @@ import {
   LogOut,
   Megaphone,
   Users2,
+  BarChart3,
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
+import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 
 interface NavItem {
@@ -32,10 +34,13 @@ interface NavItem {
   icon: React.ElementType;
   /** Permission category + minimum level required to see this nav item */
   permission?: { category: PermissionCategory; level: string };
+  /** Módulo opcional da org que precisa estar ligado para o item aparecer */
+  module?: keyof Omit<OrgModules, "demoMode">;
 }
 
 const navItems: NavItem[] = [
   { id: "dashboard", label: "Painel", icon: LayoutDashboard },
+  { id: "central", label: "Central", icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
   { id: "board", label: "Pipeline", icon: Kanban, permission: { category: "leads", level: "view_own" } },
   { id: "contacts", label: "Contatos", icon: Contact2, permission: { category: "contacts", level: "view" } },
   { id: "inbox", label: "Caixa de Entrada", icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
@@ -62,13 +67,15 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher 
   const navigate = useNavigate();
   const activeTab = PATH_TO_TAB[location.pathname];
   const { can } = usePermissions(organizationId);
+  const { modules } = useOrgModules(organizationId);
 
   const visibleItems = useMemo(() => {
     return navItems.filter((item) => {
+      if (item.module && !modules[item.module]) return false;
       if (!item.permission) return true;
       return can(item.permission.category, item.permission.level);
     });
-  }, [can]);
+  }, [can, modules]);
 
   // Badges reativos (estilo sino de notificações): mensagens não lidas na
   // Caixa de Entrada + repasses pendentes. Skip sem permissão de inbox.

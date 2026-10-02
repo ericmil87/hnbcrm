@@ -23,16 +23,20 @@ import {
   LogOut,
   Megaphone,
   Users2,
+  BarChart3,
 } from "lucide-react";
 import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
+import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 
-export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns" | "groups";
+export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns" | "groups" | "central";
 
 interface NavItem {
   id: Tab;
   label: string;
   icon: React.ElementType;
   permission?: { category: PermissionCategory; level: string };
+  /** Módulo opcional da org que precisa estar ligado para o item aparecer */
+  module?: keyof Omit<OrgModules, "demoMode">;
 }
 
 /** Primary tabs shown in the bottom bar */
@@ -46,6 +50,7 @@ const primaryTabs: NavItem[] = [
 
 /** Overflow tabs shown in the "More" menu */
 const moreTabs: NavItem[] = [
+  { id: "central", label: "Central", icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
   { id: "contacts", label: "Contatos", icon: Contact2, permission: { category: "contacts", level: "view" } },
   { id: "handoffs", label: "Repasses", icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
@@ -77,6 +82,7 @@ export function BottomTabBar({
   const navigate = useNavigate();
   const activeTab = PATH_TO_TAB[location.pathname];
   const { can } = usePermissions(organizationId);
+  const { modules } = useOrgModules(organizationId);
 
   const visiblePrimary = useMemo(() => {
     return primaryTabs.filter((t) => {
@@ -87,10 +93,11 @@ export function BottomTabBar({
 
   const visibleMore = useMemo(() => {
     return moreTabs.filter((t) => {
+      if (t.module && !modules[t.module]) return false;
       if (!t.permission) return true;
       return can(t.permission.category, t.permission.level);
     });
-  }, [can]);
+  }, [can, modules]);
 
   const moreTabIds = useMemo(() => new Set(visibleMore.map((t) => t.id)), [visibleMore]);
   const isMoreActive = moreTabIds.has(activeTab as Tab);

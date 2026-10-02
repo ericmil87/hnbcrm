@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LeadDetailPanel } from "./LeadDetailPanel";
 import { CreateLeadModal } from "./CreateLeadModal";
@@ -700,6 +701,11 @@ export function KanbanBoard() {
   const [priorityFilter, setPriorityFilter] = useState<string>("all");
   const [temperatureFilter, setTemperatureFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
+  // Unidade (MVP Central — só com o módulo `units` ligado na org).
+  const { modules: orgModules } = useOrgModules(organizationId);
+  const [unitFilter, setUnitFilter] = useState<string>("all");
+  const units = useQuery(api.units.listUnits, orgModules.units ? { organizationId } : "skip");
+  const effectiveUnitFilter = orgModules.units ? unitFilter : "all";
 
   // View mode (Kanban/List) + list-view selection + archiving
   const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
@@ -864,9 +870,16 @@ export function KanbanBoard() {
         }
       }
 
+      if (effectiveUnitFilter !== "all") {
+        const leadUnitId = (lead as { unitId?: string }).unitId;
+        if (effectiveUnitFilter === "none" ? !!leadUnitId : leadUnitId !== effectiveUnitFilter) {
+          return false;
+        }
+      }
+
       return true;
     });
-  }, [leads, searchQuery, priorityFilter, temperatureFilter, assigneeFilter]);
+  }, [leads, searchQuery, priorityFilter, temperatureFilter, assigneeFilter, effectiveUnitFilter]);
 
   // Sort for the list view (Kanban keeps stage-grouped order)
   const sortedLeads = useMemo(() => {
@@ -1382,6 +1395,27 @@ export function KanbanBoard() {
             </select>
             <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
           </div>
+
+          {orgModules.units && (units ?? []).length > 0 && (
+            <div className="relative">
+              <select
+                value={unitFilter}
+                onChange={(e) => setUnitFilter(e.target.value)}
+                aria-label="Filtrar por unidade"
+                className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
+                style={{ fontSize: "16px" }}
+              >
+                <option value="all">Todas Unidades</option>
+                <option value="none">Sem unidade</option>
+                {(units ?? []).map((unit) => (
+                  <option key={unit._id} value={unit._id}>
+                    {unit.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+            </div>
+          )}
 
           {/* View toggle (Kanban / Lista) + Arquivados */}
           <div className="flex items-center gap-2 ml-auto">

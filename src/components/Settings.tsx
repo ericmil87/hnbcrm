@@ -21,8 +21,10 @@ import { NotificationsSection } from "@/components/notifications/NotificationPre
 import { ChannelsSection } from "@/components/settings/ChannelsSection";
 import { AiSection } from "@/components/settings/AiSection";
 import { DataSection } from "@/components/settings/DataSection";
+import { CentralSection } from "@/components/settings/CentralSection";
+import { useOrgModules } from "@/hooks/useOrgModules";
 
-type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "data" | "notifications";
+type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "data" | "notifications" | "central";
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
   { id: "general", name: "Geral" },
@@ -34,6 +36,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
   { id: "channels", name: "Canais" },
   { id: "data", name: "Dados" },
   { id: "notifications", name: "Notificações" },
+  { id: "central", name: "Central" },
 ];
 
 function isSettingsSection(value: string | null): value is SettingsSection {
@@ -43,6 +46,7 @@ function isSettingsSection(value: string | null): value is SettingsSection {
 export function Settings() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
+  const { anyEnabled: anyModuleEnabled } = useOrgModules(organizationId);
 
   // Deep-link `/app/configuracoes?secao=<id>` (usado pelo Painel).
   const [searchParams] = useSearchParams();
@@ -67,7 +71,10 @@ export function Settings() {
     );
   }
 
-  const sections = SETTINGS_SECTIONS;
+  // "Central" (módulos opcionais): quem pode ligar vê sempre; os demais só
+  // depois que algum módulo estiver ligado.
+  const showCentral = can("settings", "manage") || anyModuleEnabled;
+  const sections = SETTINGS_SECTIONS.filter((section) => section.id !== "central" || showCentral);
 
   return (
     <div className="space-y-6">
@@ -100,6 +107,7 @@ export function Settings() {
       {activeSection === "channels" && <ChannelsSection organizationId={organizationId} />}
       {activeSection === "data" && <DataSection organizationId={organizationId} />}
       {activeSection === "notifications" && <NotificationsSection organizationId={organizationId} />}
+      {activeSection === "central" && showCentral && <CentralSection organizationId={organizationId} />}
     </div>
   );
 }

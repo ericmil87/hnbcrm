@@ -13,6 +13,7 @@ export const TAB_ROUTES: Record<Tab, string> = {
   forms: "/app/formularios",
   campaigns: "/app/campanhas",
   groups: "/app/grupos",
+  central: "/app/central",
   settings: "/app/configuracoes",
 };
 

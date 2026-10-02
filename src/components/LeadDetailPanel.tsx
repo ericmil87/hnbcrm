@@ -50,6 +50,7 @@ import { CreateTaskModal } from "./CreateTaskModal";
 import { LeadDocuments } from "./LeadDocuments";
 import { FileUploadButton, UploadedFile } from "@/components/ui/FileUploadButton";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
+import { LeadCentralSection } from "@/components/inbox/central/LeadCentralSection";
 import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { ForwardModal } from "@/components/inbox/ForwardModal";
 import {
@@ -1418,6 +1419,9 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
 
   return (
     <div className="p-4 space-y-6">
+      {/* Central (opcional por org): unidade, tipo de contato e origem */}
+      <LeadCentralSection organizationId={organizationId} lead={lead} />
+
       {/* Contact Section - Interactive */}
       <div>
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">

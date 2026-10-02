@@ -13,6 +13,7 @@ import { TAB_ROUTES } from "@/lib/routes";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { RecentActivityWidget } from "@/components/RecentActivityWidget";
 import { UpcomingTasksWidget } from "@/components/UpcomingTasksWidget";
 import { UpcomingEventsWidget } from "@/components/UpcomingEventsWidget";
@@ -37,6 +38,7 @@ import {
   FileUp,
   CheckSquare,
   ChevronRight,
+  BarChart3,
 } from "lucide-react";
 
 export function DashboardOverview() {
@@ -52,6 +54,9 @@ export function DashboardOverview() {
   // seriam convites a telas que ele não pode usar.
   const { can } = usePermissions(organizationId);
   const canConfigure = can("settings", "manage");
+  // Atalho do Painel da Central — só com o módulo opcional ligado.
+  const { modules } = useOrgModules(organizationId);
+  const showCentral = modules.central && can("reports", "view");
 
   if (!stats || !currentMember) {
     return <LoadingSkeleton />;
@@ -80,6 +85,8 @@ export function DashboardOverview() {
       {canConfigure && aiStatus?.active === false && (
         <AiActivationBanner onClick={() => onTabChange("settings")} />
       )}
+
+      {showCentral && <CentralShortcutCard onClick={() => onTabChange("central")} />}
 
       {/* Onboarding Checklist */}
       {canConfigure && <OnboardingChecklist organizationId={organizationId} />}
@@ -201,6 +208,31 @@ export function DashboardOverview() {
       {/* 7. Recent Activity */}
       <RecentActivityWidget organizationId={organizationId} />
     </div>
+  );
+}
+
+// ============================================================================
+// Atalho do Painel da Central (módulo opcional)
+// ============================================================================
+
+function CentralShortcutCard({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex w-full items-center gap-4 rounded-card border border-brand-500/30 bg-brand-500/5 p-4 text-left transition-colors hover:bg-brand-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base md:p-5"
+    >
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand-500/15 text-brand-500">
+        <BarChart3 size={22} aria-hidden="true" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold text-text-primary">Painel da Central</p>
+        <p className="text-sm text-text-secondary">
+          Reservas, receita, conversão e ROAS por hotel, campanha e setor — em tempo real.
+        </p>
+      </div>
+      <ChevronRight size={20} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+    </button>
   );
 }
 

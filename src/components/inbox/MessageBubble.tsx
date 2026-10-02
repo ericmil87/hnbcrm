@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
+import { FormattedMessageText } from "./FormattedMessageText";
 import { GroupMentionText } from "./GroupMentionText";
 import {
   groupSenderColor,
@@ -523,7 +524,9 @@ export function MessageBubble({
           ) : visibleText && group && group.mentionTokens.length > 0 ? (
             <GroupMentionText text={visibleText} tokens={group.mentionTokens} />
           ) : (
-            visibleText && <p className="text-sm whitespace-pre-wrap break-words">{visibleText}</p>
+            visibleText && (
+              <FormattedMessageText text={visibleText} variant={style.variant} className="text-sm" />
+            )
           )}
 
           {footer}

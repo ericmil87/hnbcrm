@@ -39,6 +39,15 @@ import {
   useGroupMentions,
   GroupMentionDropdown,
 } from "@/components/inbox/GroupMentionComposer";
+import { useOrgModules } from "@/hooks/useOrgModules";
+import {
+  InboxQueueBar,
+  EMPTY_QUEUE_FILTER,
+  queueFilterArgs,
+  type InboxQueueFilter,
+} from "@/components/inbox/central/InboxQueueBar";
+import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
+import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
 
 // v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
@@ -214,6 +223,20 @@ export function Inbox() {
   }, [searchTerm]);
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
+  // MVP "Central" (opcional por org): filas por setor/unidade, chips e o
+  // roteamento no header. Com os módulos desligados nada disto aparece e
+  // `getConversations` recebe exatamente os args de antes.
+  const { modules: centralModules, anyEnabled: centralEnabled } = useOrgModules(organizationId);
+  const queuesEnabled = centralModules.departments || centralModules.units;
+  const [queueFilter, setQueueFilter] = useState<InboxQueueFilter>(EMPTY_QUEUE_FILTER);
+  const inboxQueues = useQuery(
+    api.conversationRouting.getInboxQueues,
+    queuesEnabled ? { organizationId } : "skip"
+  );
+  const queueArgs = queueFilterArgs(queueFilter, centralModules);
+  const queueFilterActive = Object.keys(queueArgs).length > 0;
+  const unitById = new Map((inboxQueues?.units ?? []).map((u) => [u._id as string, u]));
+  const departmentById = new Map((inboxQueues?.departments ?? []).map((d) => [d._id as string, d]));
   // IA da org (opt-in): controla os controles de IA no header + rascunhos.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
   // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
@@ -227,6 +250,7 @@ export function Inbox() {
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
     ...(showArchived ? { archived: true } : {}),
+    ...queueArgs,
   });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
@@ -1336,6 +1360,9 @@ export function Inbox() {
       <div
         className={cn(
           "w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0",
+          // Central ligada: a coluna não encolhe (a barra de filas e a de
+          // roteamento disputavam espaço e a lista caía para ~230 px).
+          centralEnabled && "md:shrink-0",
           showMessages && "hidden md:flex"
         )}
       >
@@ -1459,6 +1486,15 @@ export function Inbox() {
               </button>
             </div>
           )}
+          {!isSearching && queuesEnabled && (
+            <InboxQueueBar
+              queues={inboxQueues}
+              showDepartments={centralModules.departments}
+              showUnits={centralModules.units}
+              value={queueFilter}
+              onChange={setQueueFilter}
+            />
+          )}
           {isSearching && (
             <div className="flex items-center gap-2">
               <input
@@ -1561,6 +1597,10 @@ export function Inbox() {
                   ? showArchived
                     ? "Nenhuma conversa direta arquivada"
                     : "Nenhuma conversa direta"
+                  : queueFilterActive
+                    ? showArchived
+                      ? "Nenhuma conversa arquivada nesta fila"
+                      : "Nenhuma conversa nesta fila"
                   : showArchived
                     ? "Nenhuma conversa arquivada"
                     : filterLabelId
@@ -1661,6 +1701,24 @@ export function Inbox() {
                     )}
                   </div>
                 )}
+
+                {centralEnabled && conversation.kind !== "group" && (() => {
+                  const unit = centralModules.units && conversation.unitId
+                    ? unitById.get(conversation.unitId as string)
+                    : undefined;
+                  const dept = centralModules.departments && conversation.departmentId
+                    ? departmentById.get(conversation.departmentId as string)
+                    : undefined;
+                  const attribution = centralModules.attribution ? conversation.lead?.attribution : undefined;
+                  if (!unit && !dept && !attribution) return null;
+                  return (
+                    <div className="mb-1.5 flex min-w-0 items-center gap-1">
+                      {attribution && <AttributionIcon attribution={attribution} />}
+                      {unit && <ColorChip name={unit.name} color={unit.color} title={`Unidade: ${unit.name}`} />}
+                      {dept && <ColorChip name={dept.name} color={dept.color} title={`Setor: ${dept.name}`} />}
+                    </div>
+                  );
+                })()}
 
                 <div className="flex items-center justify-between gap-2">
                   {conversation.lastMessagePreview ? (
@@ -1787,6 +1845,7 @@ export function Inbox() {
       <div
         className={cn(
           "flex-1 flex flex-col bg-surface-base min-h-0",
+          centralEnabled && "min-w-0",
           !showMessages && "hidden md:flex"
         )}
       >
@@ -1925,6 +1984,31 @@ export function Inbox() {
               </div>
             </div>
 
+            {/* Central (opcional): unidade/setor/responsável/tipo/desfecho + origem */}
+            {centralEnabled && currentConversation && !isGroupConversation && (
+              <ConversationRoutingBar
+                key={currentConversation._id}
+                organizationId={organizationId}
+                conversationId={currentConversation._id as Id<"conversations">}
+                modules={centralModules}
+                lead={
+                  currentConversation.lead
+                    ? {
+                        _id: currentConversation.lead._id as Id<"leads">,
+                        boardId: currentConversation.lead.boardId as Id<"boards">,
+                        value: currentConversation.lead.value as number | undefined,
+                        customFields: currentConversation.lead.customFields as
+                          | Record<string, unknown>
+                          | undefined,
+                      }
+                    : null
+                }
+                canReply={canReply}
+                canEditLead={can("leads", "edit_own")}
+                teamMembers={assignableMembers(teamMembers ?? [])}
+              />
+            )}
+
             {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
             {handoffPending && (
               <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
@@ -1987,7 +2071,15 @@ export function Inbox() {
                   </div>
                 )}
                 {(messages as InboxMessage[] | undefined)?.map((message) =>
-                  getAiDraft(message) ? (
+                  message.metadata?.kind === "transfer" && message.metadata?.transfer ? (
+                    // Transferência de setor (Central): evento de sistema, não bolha
+                    <TransferEvent
+                      key={message._id}
+                      actorName={message.sender?.name ?? null}
+                      transfer={message.metadata.transfer}
+                      createdAt={message.createdAt}
+                    />
+                  ) : getAiDraft(message) ? (
                     // Rascunho do atendente IA (modo sugestão): revisão humana
                     <AiDraftCard key={message._id} message={message} />
                   ) : (

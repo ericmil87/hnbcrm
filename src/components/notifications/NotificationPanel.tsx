@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot, ArrowRightLeft } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -32,6 +32,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   // v0.60 — a IA não conseguiu fazer o follow-up que ela mesma agendou; a
   // tarefa voltou para a equipe.
   ai_followup_needs_human: Bot,
+  // Central — conversa transferida para você ou para o seu setor.
+  conversation_transferred: ArrowRightLeft,
 };
 
 const PAGE_SIZE = 15;
@@ -146,6 +148,14 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     // A IA não conseguiu executar um follow-up que ela mesma agendou: a
     // tarefa é onde a equipe decide o que fazer agora — só cai na conversa se
     // por algum motivo a tarefa não vier junto.
+    if (n.type === "conversation_transferred") {
+      navigate(
+        n.conversationId
+          ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}`
+          : TAB_ROUTES.inbox
+      );
+      return;
+    }
     if (n.type === "ai_followup_needs_human") {
       navigate(
         n.taskId

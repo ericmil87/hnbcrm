@@ -22,6 +22,7 @@ const NOTIFICATION_EVENTS = [
   { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuída a você está prestes a vencer" },
   { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead é atribuído a você" },
   { key: "aiFollowupNeedsHuman", label: "Follow-up da IA precisa de você", desc: "Quando a IA não consegue executar sozinha um follow-up que ela mesma agendou" },
+  { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu setor" },
   { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
   { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },
 ] as const;
