@@ -131,3 +131,6 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
   `acme-corp-test` e `grupo-terrae-demo`) + `internalPurgeOrphanUsers` (68 usuários sem org apagados, com sessões, tokens e
   contas; restou só `ericteste@milfont.net`). A op recusa rodar fora do deployment indicado em `confirmDeployment`
   (compara com `CONVEX_SITE_URL`) e o dryRun valida os índices por tabela antes de qualquer delete.
+- 14:12–14:20 — **Preview × Production verificados**: branch de teste gerou `hnbcrm-repo-git-test-preview-dev-elevatepro.vercel.app`
+  com bundle apontando para `tacit-chicken-195` (dev) sem publicar backend (sem chave no Preview); hnbcrm.com segue em
+  `careful-anaconda-127`. Build Command condicional (§4) ativo; `VITE_CONVEX_URL` = prod em Production e dev em Preview.
