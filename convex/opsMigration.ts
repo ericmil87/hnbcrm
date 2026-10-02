@@ -16,7 +16,7 @@ import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { decryptSecret } from "./lib/secretCrypto";
-import { BRIDGE_WEBHOOK_EVENTS } from "./lib/bridgeSession";
+import { BRIDGE_WEBHOOK_EVENTS, buildBridgeHmacConfigRequest } from "./lib/bridgeSession";
 import { computeNextRunAt, scheduleGroupPostTick, wakeAtFor } from "./lib/groupPostOps";
 import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 
@@ -216,6 +216,39 @@ export const internalRedispatchStuckOutbound = internalMutation({
       out.push({ messageId: m._id, createdAt: m.createdAt, action: dryRun ? "dryRun" : "redispatched" });
       if (dryRun) continue;
       await scheduleWhatsappDispatch(ctx, conversation, m._id);
+    }
+    return out;
+  },
+});
+
+/**
+ * Reaplica a chave HMAC (WA_BRIDGE_HMAC_SECRET) no cache vivo de cada instância
+ * bridge ativa (`POST /session/hmac/config`). Idempotente para quem já assina
+ * certo; conserta instância cujo gateway perdeu/trocou a chave (webhook 401).
+ */
+export const internalReapplyBridgeHmac = internalAction({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.array(v.object({ name: v.string(), ok: v.boolean(), detail: v.string() })),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const hmacKey = process.env.WA_BRIDGE_HMAC_SECRET;
+    if (!hmacKey || hmacKey.length < 32) throw new Error("WA_BRIDGE_HMAC_SECRET ausente/curto neste deployment");
+    const channels = await ctx.runQuery(internal.opsMigration.internalListBridgeChannels, {});
+    const out: { name: string; ok: boolean; detail: string }[] = [];
+    for (const ch of channels) {
+      if (dryRun) {
+        out.push({ name: `${ch.name} (${ch.configId})`, ok: true, detail: "dryRun" });
+        continue;
+      }
+      try {
+        const token = await decryptSecret(ch.tokenEncrypted);
+        const req = buildBridgeHmacConfigRequest({ baseUrl: ch.baseUrl, token, hmacKey });
+        const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
+        const body = await res.text();
+        out.push({ name: `${ch.name} (${ch.configId})`, ok: res.ok, detail: `HTTP ${res.status} ${body.slice(0, 100)}` });
+      } catch (e) {
+        out.push({ name: `${ch.name} (${ch.configId})`, ok: false, detail: e instanceof Error ? e.message : String(e) });
+      }
     }
     return out;
   },
