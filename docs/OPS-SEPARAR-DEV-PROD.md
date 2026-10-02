@@ -121,3 +121,9 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
   provavelmente já antes da migração). `opsMigration:internalReapplyBridgeHmac` (`POST /session/hmac/config` nas 3
   instâncias, HTTP 200) resolveu: zero rejeições nos 2 min seguintes. Resend: URL do webhook editada no painel (mesmo
   signing secret, já igual no prod).
+- 13:52 — **API keys do dev desativadas** (21; `opsMigration:internalDeactivateAllApiKeys`): integração antiga que ainda chame
+  `tacit-chicken-195.convex.site` recebe 401 em vez de gravar no dev congelado. Keys com uso recente: "site" (org Aos
+  Filhos da Terra — o site envia leads via `CRM_INBOUND_URL` no Convex do próprio site, projeto em OUTRA conta Convex, sem
+  acesso daqui) e "agentevendedor" (21/09). **Pendente humano:** trocar `CRM_INBOUND_URL` no deployment de produção do site
+  Aos Filhos da Terra para `https://careful-anaconda-127.convex.site` (a `CRM_API_KEY` continua válida: existe no prod).
+  `.mcp.json` local e `docs/WHATSAPP-VALIDACAO-LOCAL.md` já apontam para o prod.
