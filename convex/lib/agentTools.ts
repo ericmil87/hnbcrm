@@ -70,13 +70,43 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     description:
       "Envia (ou, em modo sugestão, rascunha) a resposta ao cliente desta conversa. Use uma única vez por turno, ao final.",
     parameters: schema(
-      { text: { type: "string", description: "Texto da resposta em português (curto e direto)" } },
+      {
+        text: { type: "string", description: "Texto da resposta em português (curto e direto)" },
+        imageUrl: {
+          type: "string",
+          description:
+            "URL do flyer/imagem do evento, SOMENTE copiada do campo `image` de um resultado de consultarAgenda deste turno. Envia a imagem com `text` como legenda.",
+        },
+      },
       ["text"]
     ),
     permission: { category: "inbox", level: "reply" },
     audience: "attendant",
     effect: "write",
-    resultFields: ["status", "messageId", "mode"],
+    resultFields: ["status", "messageId", "mode", "imageUrl"],
+  },
+  {
+    // v0.64 — agenda externa (fonte de verdade fora do CRM). LEITURA pura,
+    // executada na action com `fetch`; só é oferecida quando a org configurou
+    // `agentProfile.externalAgenda`. O resultado é dado de terceiro: vai pelo
+    // envelope de tool result e passa por normalizeAgendaEvents (whitelist).
+    name: "consultarAgenda",
+    description:
+      "Consulta as próximas datas REAIS da casa (fonte de verdade). Use SEMPRE antes de falar de data, valor, vaga, local ou inscrição de qualquer evento/curso. Nunca cite data ou valor de memória. Chame SOZINHA e espere o resultado antes de responder.",
+    parameters: schema(
+      {
+        categoria: {
+          type: "string",
+          description:
+            "Opcional: filtra por categoria (ex.: temazcal, lua_cheia, busca_de_visao, ayahuasca, curso_xamanismo)",
+        },
+      },
+      []
+    ),
+    permission: { category: "inbox", level: "view_own" },
+    audience: "attendant",
+    effect: "read",
+    resultFields: ["status", "eventos", "total", "erro"],
   },
   {
     name: "moveThisLead",

@@ -95,7 +95,9 @@ export const listOrgSecrets = query({
       .query("orgSecrets")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .collect();
-    return secrets.map((s) => ({
+    // A chave da agenda externa (v0.64) é gerida no editor do atendente — não
+    // pode aparecer como opção de chave BYO de LLM nem ser excluída por aqui.
+    return secrets.filter((s) => s.purpose === "llm-api-key").map((s) => ({
       _id: s._id,
       name: s.name,
       provider: s.provider ?? null,

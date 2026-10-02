@@ -34,6 +34,7 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { Spinner } from "@/components/ui/Spinner";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+import { ExternalAgendaSection } from "./ExternalAgendaSection";
 
 // Switch grande do design system (role="switch") — a área clicável é maior que
 // o pill visual (touch target >= 44x44 via padding + margem negativa).
@@ -2092,6 +2093,8 @@ function AttendantConfig({
               />
             </div>
           </FieldGroup>
+
+          <ExternalAgendaSection organizationId={organizationId} agentMemberId={attendant._id} />
 
           <div className="pt-2 border-t border-border">
             <CollapsibleSection title="Opções avançadas">
