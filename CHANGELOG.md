@@ -2,6 +2,24 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.63.0] - 2026-10-02
+
+### Central de atendimento (módulos opcionais por organização — tudo desligado por padrão)
+
+- **Unidades** (hotéis/filiais) e **Setores** (filas com membros, cor, fila de entrada): cadastro em Configurações → Central; conversa e lead ganham unidade, setor e responsável próprio
+- **Transferir conversa** entre setores e pessoas, com nota interna, evento na timeline, notificação `conversation_transferred` e webhook `conversation.transferred`
+- **Tipo de contato** por conversa (lead de reserva, hóspede, fornecedor, agência, outro) e botões **Convertido / Não convertido** no inbox (reusam o fechamento de lead do Kanban — núcleo único `lib/leadStageMove.ts`)
+- Caixa de entrada com **filas** (Todas · Minhas · Sem setor · por setor · por unidade), chips de unidade/setor/origem e barra de roteamento na conversa
+- **Origem do anúncio**: leitura do `referral` de anúncios Click-to-WhatsApp (Meta Cloud API) para `leads.attribution`; tabela de **investimento em mídia** (`adSpend`, com colar CSV)
+- **Painel da Central** (`/app/central`): visão geral, por hotel, marketing (CAC e ROAS **de mídia paga**) e atendimento (por setor, IA × humano, 1ª resposta); carimbos `firstInboundAt`/`firstResponseAt` nas conversas
+- Formatação do WhatsApp (*negrito*, _itálico_, ~riscado~, `mono`) renderizada nas bolhas do inbox e links clicáveis (todas as orgs)
+- **Modo demonstração** por org (`settings.demoMode`): o dispatch de WhatsApp nunca sai para a rede; motor de simulação genérico `demoSim` (só funções internas, recusa org sem demoMode)
+
+### Correções
+
+- Atendente IA: resposta **cortada pelo teto de tokens** agora é detectada também quando o provedor informa `finish_reason: tool_calls` com `completion_tokens` igual ao teto (medido no OpenRouter) — a mensagem truncada não sai; o "Testar" usa o mesmo teto do runtime (antes, 1200 e voltava calado)
+- Painel da Central: funil só conta leads de reserva
+
 ## [0.62.0] - 2026-09-28
 
 ### Grupos — mídia só quando é com a gente
