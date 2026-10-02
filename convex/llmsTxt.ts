@@ -580,13 +580,20 @@ Universal lead capture. Creates lead + optional contact + optional conversation.
 | currency | string | no | Currency code |
 | priority | string | no | low, medium, high, urgent (default: medium) |
 | temperature | string | no | cold, warm, hot (default: cold) |
-| sourceId | Id | no | Lead source ID |
-| tags | string[] | no | Tags |
+| sourceId | Id | no | Lead source ID — must belong to the key's organization (otherwise **400 Invalid sourceId**, nothing is created) |
+| tags | string[] | no | Tags (also drive routing and the WhatsApp welcome, see below) |
 | customFields | object | no | Custom field values |
-| message | string | no | Initial message (creates conversation) |
+| message | string | no | Message the person typed in the form |
 | channel | string | no | Channel for message (default: webchat) |
 
-**Response:** \`{ success: true, leadId, contactId }\`
+**Behavior:**
+- **Phone normalization:** \`contact.phone\` is normalized to E.164 digits without "+" (Brazil default: \`+55 (11) 98765-4321\` → \`5511987654321\`) and stored in the contact's \`phone\` and \`whatsappNumber\` — the same format the WhatsApp ingest uses, so the person's reply lands on the same contact. An existing contact with the same number (or email) is reused. Non-normalizable phones are stored as sent.
+- **Routing by tag:** the organization may configure rules \`{ tag → board/stage }\`; the first rule whose tag is in \`tags\` wins. No match (or a rule pointing to an archived board) → default active board, first stage. Archived boards are never picked.
+- **Auto-assign** (when enabled in AI settings) only picks an active AI **attendant**.
+- **WhatsApp welcome (opt-in per organization):** when enabled and the lead has a phone and at least one of the configured consent tags, ONE welcome message is sent from the configured WhatsApp number (template with \`{primeiroNome}\`, \`{nome}\`, \`{titulo}\`, \`{tag:<prefix>}\`). Never sent twice to the same contact, never to numbers in the opt-out list; delivery failure opens a human handoff. The lead gets the tag \`contato:iniciado\`.
+- **\`message\`:** when the welcome applies to the lead or \`channel\` is \`whatsapp\`, the form message is stored as an **internal note** ("Formulário do site: …") on the WhatsApp conversation — it is never sent to the customer. Otherwise (legacy) it is recorded as a message on a \`channel\` conversation (default webchat).
+
+**Response (201):** \`{ success: true, leadId, contactId, boardId, stageId, routedByTag?, conversationId?, welcomeQueued, welcomeSkippedReason? }\` — \`welcomeSkippedReason\` is one of \`desligado\`, \`sem_telefone\`, \`sem_tag_exigida\`, \`opt_out\`, \`canal_inativo\`, \`canal_invalido\`, \`canal_desconectado\`, \`ja_contatado\`, \`mensagem_vazia\`, \`erro\` (only present when the welcome was enabled for this lead but did not go out).
 
 #### GET /api/v1/leads
 List leads for the organization with cursor-based pagination.
