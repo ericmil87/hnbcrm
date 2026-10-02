@@ -32,6 +32,10 @@ npm install -g hnbcrm-mcp
 
 > **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
 
+## v0.65 note (anti-bot guardrail)
+
+`crm_list_handoffs` now accepts `status=canceled` and every handoff carries `origin` (`human`, `ai_keyword`, `ai_tool`, `ai_failure`, `bot_suspect`). `bot_suspect` is raised by the built-in WhatsApp attendant when the other side looks like a bot (auto-reply, ticket confirmation, newsletter, another AI assistant): the AI stops replying, the lead gets a tag (default `bot-suspeito`) and `crm_list_conversations` shows `botSuspicion` on that conversation. Rejecting such a handoff (`crm_reject_handoff`) means "it is a real person" and hands the conversation back to the AI — only do it after a human checked.
+
 ## v0.63 note (Central de atendimento)
 
 The read tools (e.g. `crm_get_lead`, `crm_list_conversations`) return the raw documents from the REST API, so the v0.63 fields (`unitId`, `departmentId`, `assignedTo`, `contactKind`, `firstInboundAt`, `firstResponseAt`, `firstResponderType`, `attribution`) show up automatically when the organization uses the optional Central modules. No new tools were added: transfers, outcomes and ad spend have no MCP/REST write routes yet.
@@ -198,7 +202,7 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | Tool | Description |
 |------|-------------|
 | `crm_request_handoff` | Request AI-to-human handoff for a lead |
-| `crm_list_handoffs` | List handoff requests by status |
+| `crm_list_handoffs` | List handoff requests by status (pending, accepted, rejected, canceled); items carry `origin` |
 | `crm_accept_handoff` | Accept a pending handoff |
 | `crm_reject_handoff` | Reject a pending handoff with optional feedback |
 

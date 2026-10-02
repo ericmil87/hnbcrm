@@ -438,11 +438,11 @@ List handoff requests by status with cursor-based pagination.
 **MCP Parameters:**
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| status | string | no | `pending`, `accepted`, `rejected` |
+| status | string | no | `pending`, `accepted`, `rejected`, `canceled` |
 
 **REST:** `GET /api/v1/handoffs?status=pending&limit=200&cursor=CURSOR`
 
-**Response:** `{ handoffs: [...], nextCursor, hasMore }`
+**Response:** `{ handoffs: [...], nextCursor, hasMore }` — each item carries `origin` (`human`, `ai_keyword`, `ai_tool`, `ai_failure`, `bot_suspect`). `bot_suspect` (v0.65) = the built-in AI attendant stopped replying because the other side looks like a bot and wants a human to verify.
 
 ---
 
@@ -464,7 +464,7 @@ Accept a pending handoff.
 
 ### crm_reject_handoff
 
-Reject a pending handoff with optional feedback.
+Reject a pending handoff with optional feedback. On a `bot_suspect` handoff, rejecting means "the other side is a real person": the bot suspicion is cleared, the bot tag removed and the conversation returns to the AI attendant — only after a human verified it.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |

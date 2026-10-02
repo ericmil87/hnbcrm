@@ -35,10 +35,10 @@ export function registerHandoffTools(
 
   server.tool(
     "crm_list_handoffs",
-    "List handoff requests, optionally filtered by status (pending, accepted, or rejected). Useful for monitoring the AI-to-human handoff queue.",
+    "List handoff requests, optionally filtered by status (pending, accepted, rejected or canceled). Useful for monitoring the AI-to-human handoff queue. Each item carries `origin`: human, ai_keyword, ai_tool, ai_failure or bot_suspect (v0.65 anti-bot guardrail — the built-in attendant stopped replying because the other side looks like a bot and wants a human to verify).",
     {
       status: z
-        .enum(["pending", "accepted", "rejected"])
+        .enum(["pending", "accepted", "rejected", "canceled"])
         .optional()
         .describe("Filter by handoff status"),
     },
@@ -69,7 +69,7 @@ export function registerHandoffTools(
 
   server.tool(
     "crm_reject_handoff",
-    "Reject a pending handoff request with optional feedback. The lead stays with the current owner.",
+    "Reject a pending handoff request with optional feedback. The lead stays with the current owner. On a handoff with origin bot_suspect, rejecting means \"the other side is a real person\": the bot suspicion is cleared, the bot tag is removed from the lead and the conversation goes back to the AI attendant — only do it after a human verified it.",
     {
       handoffId: z.string().describe("ID of the handoff to reject"),
       notes: z.string().optional().describe("Reason for rejecting the handoff"),

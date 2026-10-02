@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.62.0-brand" />
+  <img alt="Version" src="https://img.shields.io/badge/version-0.65.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
   <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB" />
@@ -25,7 +25,7 @@ HNBCRM (Humans & Bots CRM) is a multi-tenant CRM built for teams that combine hu
 
 - **AI-Human Collaboration** — Human team members and AI bots are equal participants with shared context
 - **AI Copilot** — In-app assistant (opt-in per org) that reads and edits the CRM as the logged-in user (their RBAC), with streaming chat, tool use, and two-phase confirmation for destructive actions
-- **AI WhatsApp Attendant** — Virtual attendant that drafts replies to customers (suggest mode with human review by default; autopilot gated behind acceptance metrics), with per-record scoping, LGPD disclosure, deterministic human-handoff keywords and configurable pipeline rules
+- **AI WhatsApp Attendant** — Virtual attendant that drafts replies to customers (suggest mode with human review by default; autopilot gated behind acceptance metrics), with per-record scoping, LGPD disclosure, deterministic human-handoff keywords, configurable pipeline rules and an anti-bot guardrail (stops replying to auto-responders, newsletters or other AI assistants, opens a handoff for a human to verify and tags the lead — on by default)
 - **Anti-ban Send Queue** — Two-level pacing per conversation (Meta pair rate) and per phone number, humanized typing simulation on unofficial channels, official 4^X retry backoff, and automatic channel freeze on quality flags
 - **Visual Pipeline** — Kanban boards with drag-and-drop, customizable stages, and deal aging indicators
 - **Unified Inbox** — Multi-channel conversations with internal notes, reactions, replies/forwarding, emoji picker, full-text message search (including voice transcripts), quick replies (`/` shortcuts), scheduled messages with live countdown, labels & archiving with bulk actions

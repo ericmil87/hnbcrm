@@ -38,6 +38,7 @@ HNBCRM also ships two NATIVE AI products, separate from external AI agents conne
 - Copilot — in-app assistant that acts AS the logged-in user (their RBAC permissions), with streaming chat, read/write tools, and two-phase human confirmation for destructive actions.
 - Attendant — WhatsApp virtual attendant. Default mode is "suggest" (drafts replies for human review in the inbox); "autopilot" unlocks only after acceptance metrics (10+ reviewed suggestions, 60%+ acceptance). Serves official Meta channels always; bridge channels only after an explicit organization-level ban-risk acceptance. Supports per-attendant pipeline rules (initial board/stage for new leads, deterministic stage advance on BANT qualification, natural-language funnel rules).
 - Coaching loop (app UI only) — a human can instruct a draft in plain language and regenerate it, ask the AI for a draft from scratch, or hand a conversation back to the AI with an instruction. None of it is exposed over REST or MCP.
+- Anti-bot guardrail (v0.65, ON by default, per attendant) — when the other side looks like a bot (auto-reply, ticket confirmation, newsletter, another AI assistant), the attendant stops replying instead of looping forever: a deterministic heuristic over the recent conversation (plus the attendant's own judgment via a tool) opens a \`bot_suspect\` handoff for human verification, tags the lead (default \`bot-suspeito\`) and marks \`conversations.botSuspicion\`. Rejecting that handoff (REST/MCP included) means "it is a real person" and hands the conversation back to the AI; accepting keeps the tag. Configurable in Settings → IA → attendant → "Comportamento da conversa".
 
 ## Agent Skill (for AI Agents)
 
@@ -202,6 +203,7 @@ A message thread on a lead, scoped by channel.
 | messageCount | number | Total messages |
 | archivedAt | number? | When set, conversation is archived (hidden from the default inbox list) |
 | labelIds | Id<conversationLabels>[]? | Org-scoped labels applied to the conversation |
+| botSuspicion | object? | Anti-bot guardrail (v0.65): \`{ at, source: "heuristic"|"model", reason, score?, signals?, clearedAt?, clearedBy? }\`. Present without \`clearedAt\` = the AI attendant stopped replying because the other side looks like a bot (auto-reply, ticket confirmation, newsletter, another AI assistant); a \`bot_suspect\` handoff is open and the lead carries the bot tag (default \`bot-suspeito\`). Only a human clears it (return the conversation to the AI in the app, or reject that handoff) |
 
 ### Central de atendimento (v0.63, opcional por organização)
 Quatro módulos opcionais em \`organizations.settings.modules\`: \`units\` (unidades), \`departments\` (setores), \`attribution\` (origem de anúncio, investimento, ROAS/CAC) e \`central\` (painel /app/central). Todos ausentes = DESLIGADOS: a organização vê o comportamento anterior (queries devolvem vazio, mutations recusam com "Módulo não habilitado").
@@ -252,6 +254,7 @@ An AI-to-human (or human-to-human) handoff request.
 | summary | string | Conversation summary |
 | suggestedActions | string[] | Recommended next steps |
 | status | enum | pending, accepted, rejected, canceled |
+| origin | enum? | Who raised it: human, ai_keyword (customer typed a handoff keyword), ai_tool (the attendant called requestHandoff), ai_failure (the attendant failed), bot_suspect (anti-bot guardrail, v0.65 — the other side looks like a bot). Older rows have no origin |
 
 ### Team Member
 A human or AI agent on the team.
@@ -728,7 +731,7 @@ Inject an inbound message from a contact — for external bridges on any channel
 ### Handoff Endpoints
 
 #### GET /api/v1/handoffs
-List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved), \`title\` (the lead title, or the WhatsApp group name for a handoff raised inside a room) and \`isGroup\` (true when the handoff has no lead because it came from a group).
+List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved), \`title\` (the lead title, or the WhatsApp group name for a handoff raised inside a room), \`isGroup\` (true when the handoff has no lead because it came from a group) and, since v0.65, \`origin\` (see the Handoff model; \`bot_suspect\` = the anti-bot guardrail stopped the AI and wants a human to check whether the other side is a real person).
 
 **Query params:** status (pending, accepted, rejected, canceled), limit, cursor (all optional)
 
@@ -1427,8 +1430,8 @@ Request a handoff for a lead.
 - **suggestedActions** (string[], optional): Recommended next steps
 
 #### crm_list_handoffs
-List handoff requests, optionally filtered by status.
-- **status** (string, optional): Filter by status (pending, accepted, rejected)
+List handoff requests, optionally filtered by status. Each item carries \`origin\` (human, ai_keyword, ai_tool, ai_failure, bot_suspect).
+- **status** (string, optional): Filter by status (pending, accepted, rejected, canceled)
 
 #### crm_accept_handoff
 Accept a pending handoff request.
@@ -1436,7 +1439,7 @@ Accept a pending handoff request.
 - **notes** (string, optional): Notes about accepting
 
 #### crm_reject_handoff
-Reject a pending handoff request.
+Reject a pending handoff request. On a \`bot_suspect\` handoff this means "the other side is a real person": the bot suspicion is cleared, the bot tag removed and the conversation goes back to the AI attendant — only reject one after a human verified it.
 - **handoffId** (string, required): The handoff ID
 - **notes** (string, optional): Reason for rejection
 
@@ -1649,7 +1652,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | conversation.created | New conversation started |
 | message.sent | Message sent to a 1:1 conversation (payload includes leadId, senderType + senderId). Group rooms fire group.message.sent instead |
 | message.received | Inbound message received from a contact |
-| handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure) |
+| handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure, bot_suspect) |
 | handoff.accepted | Handoff accepted (payload includes conversationId) |
 | handoff.rejected | Handoff rejected |
 | handoff.canceled | Pending handoff canceled because the conversation was returned to the AI |

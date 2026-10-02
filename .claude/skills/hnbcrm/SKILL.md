@@ -132,6 +132,8 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 - `suggestedActions`: Concrete next steps for the human
 - `toMemberId`: Specific person if you know who should handle it (optional)
 
+**Bot on the other side (v0.65)** — the built-in WhatsApp attendant has an anti-bot guardrail: when the contact looks like an automated system (auto-reply, ticket confirmation, newsletter, another AI assistant) it stops replying, opens a handoff with `origin: "bot_suspect"` and tags the lead (default `bot-suspeito`). If you see one of those in `crm_list_handoffs`, do NOT reject it just to clear the queue — rejecting means "this is a real person" and sends the conversation back to the AI. Accept it (or leave it) when it really is a bot. The same rule applies to you: never keep replying to a contact whose messages look automated.
+
 ### 6. Conversation Management
 
 - **Read before replying**: Always call `crm_get_messages` to read the full thread before responding

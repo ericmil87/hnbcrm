@@ -6,7 +6,7 @@
 
 ---
 
-## Update 2026-09-28 (v0.34 → v0.62)
+## Update 2026-10-02 (v0.34 → v0.65)
 
 The numbered sections below still describe the v0.33 snapshot. What shipped since then:
 
@@ -27,6 +27,9 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.60 (2026-09-19)** — Atendente IA executa os follow-ups que ele mesmo agenda (v0.60.1: ligar grupos sem se perder + publicação por IA que de fato gera)
 - **v0.61 (2026-09-27)** — Multi-org N:N usuário↔empresa: remover corta o acesso, convite sem auto-link por e-mail, troca de empresa
 - **v0.62 (2026-09-28)** — Mídia de grupos só quando é com a gente: política de download por tipo (imagem/áudio/vídeo/documento — sempre, só quando é com a gente [padrão] ou nunca), padrão por número em Configurações → Canais → "Mídia dos grupos" e ajuste por sala em /app/grupos; mídia não baixada fica com botão "Baixar" por 14 dias (referência cifrada, fora do backup) e op de limpeza. Medido: 103 de 151 MB do storage eram mídia de grupo; o purge de 28/09 liberou ~104 MB (151 → 46,6 MB de 1 GB do free plan)
+- **v0.63 (2026-10-02)** — Central de atendimento (módulos opcionais por org): unidades, setores, transferência de conversa, desfecho, atribuição de anúncio, painel da Central, modo demonstração
+- **v0.64 (2026-10-02)** — Agenda externa consultável pelo atendente (+ flyer), follow-up nunca após o evento, lead do site com boas-vindas automáticas pelo WhatsApp
+- **v0.65 (2026-10-02)** — Guardrail anti-bot do atendente (ligado por padrão): para de responder a auto-resposta/boletim/outro assistente, abre repasse `bot_suspect` e etiqueta o lead; `@newsletter`/`@broadcast` descartados no parser; nome do contato editável direto no inbox
 
 ### Pendências atuais
 

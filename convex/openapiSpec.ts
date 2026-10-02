@@ -740,7 +740,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Handoffs"],
         "summary": "Listar handoffs",
-        "description": "Retorna a lista de handoffs da organização com filtro opcional por status. Requer permissão inbox: view_own na chave de API.",
+        "description": "Retorna a lista de handoffs da organização com filtro opcional por status. Cada item traz origin (human, ai_keyword, ai_tool, ai_failure, bot_suspect — este último é o guardrail anti-bot v0.65: a IA parou de responder porque o outro lado parece um robô). Requer permissão inbox: view_own na chave de API.",
         "operationId": "listHandoffs",
         "parameters": [
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected", "canceled"] }, "description": "Filtrar por status" },
@@ -829,7 +829,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Handoffs"],
         "summary": "Rejeitar handoff",
-        "description": "Rejeita uma solicitação de handoff pendente. Requer permissão inbox: reply na chave de API.",
+        "description": "Rejeita uma solicitação de handoff pendente. Num handoff de origem bot_suspect, rejeitar = \"é uma pessoa de verdade\": a suspeita de robô é limpa, a etiqueta sai do lead e a conversa volta para o atendente IA. Requer permissão inbox: reply na chave de API.",
         "operationId": "rejectHandoff",
         "requestBody": {
           "required": true,

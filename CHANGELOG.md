@@ -2,6 +2,33 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.65.0] - 2026-10-02
+
+### Guardrail anti-bot do atendente IA (ligado por padrão, desativável por atendente)
+
+- Quando o outro lado parece um robô (auto-resposta, confirmação de ticket/protocolo, boletim, outro assistente virtual), o atendente para de responder em vez de entrar em loop: abre um repasse para verificação humana (`origin: bot_suspect`), etiqueta o lead (padrão `bot-suspeito`) e marca a conversa (`botSuspicion`)
+- Duas camadas: heurística determinística sobre a conversa recente (texto repetido entre respostas nossas, resposta instantânea, mensagem longa em segundos, frases de sistema automático, auto-apresentação de assistente) — "umas mensagens tudo bem, na terceira para" — e a própria IA pela tool `flagAutomatedSender` (que descarta a resposta e as demais ações do turno)
+- Só um humano libera: "Devolver para IA" (botão "É uma pessoa" no banner novo da conversa) ou rejeitar aquele repasse; aceitar mantém a etiqueta
+- Configuração em Configurações → IA → editor do atendente → Comportamento da conversa (interruptor + etiqueta); ícone de robô na lista de conversas; webhooks `conversation.bot_suspected` e `conversation.bot_cleared`; `handoffs.origin` gravado e devolvido por `GET /api/v1/handoffs`
+- Canais/newsletters e listas de transmissão do WhatsApp (`@newsletter`, `@broadcast`) deixam de virar conversa 1 a 1 no gateway não oficial (antes o CRM criava um lead fantasma com os dígitos do canal e a IA respondia à propaganda)
+
+### Nome do contato editável ali mesmo
+
+- "Sem nome" no header do inbox (e em "Contato vinculado" do painel do lead) vira um campo ao clicar: Enter salva, Esc cancela; com nome, o lápis ao lado edita e o clique continua abrindo o contato
+- O título do lead acompanha o nome só enquanto ainda é automático (telefone, vazio, "Sem nome" ou o nome antigo); título escrito pela equipe não é tocado
+
+### MCP / API
+
+- `crm_list_handoffs` aceita `status=canceled`; descrições de repasse e conversa explicam `origin` e `botSuspicion`; servidor MCP 0.2.0
+
+## [0.64.0] - 2026-10-02
+
+### Agenda externa, flyer, follow-up de evento e lead do site (Guardião v4)
+
+- Tool de leitura `consultarAgenda` para o atendente (URL + chave cifrada por org, sem taxonomia fixa de categorias); `replyToCustomer.imageUrl` anexa o flyer de um evento devolvido pela consulta
+- Follow-up nunca após o evento (`followUps.eventDateField`)
+- `POST /api/v1/inbound/lead` com telefone normalizado, roteamento por tag e boas-vindas automáticas pelo WhatsApp (uma por contato, respeitando opt-out); a mensagem do formulário vira nota interna, nunca mensagem ao cliente
+
 ## [0.63.0] - 2026-10-02
 
 ### Central de atendimento (módulos opcionais por organização — tudo desligado por padrão)
