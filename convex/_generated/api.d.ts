@@ -147,6 +147,7 @@ import type * as notifications from "../notifications.js";
 import type * as onboarding from "../onboarding.js";
 import type * as onboardingSeed from "../onboardingSeed.js";
 import type * as openapiSpec from "../openapiSpec.js";
+import type * as opsMigration from "../opsMigration.js";
 import type * as optOuts from "../optOuts.js";
 import type * as orgModules from "../orgModules.js";
 import type * as orgSecrets from "../orgSecrets.js";
@@ -317,6 +318,7 @@ declare const fullApi: ApiFromModules<{
   onboarding: typeof onboarding;
   onboardingSeed: typeof onboardingSeed;
   openapiSpec: typeof openapiSpec;
+  opsMigration: typeof opsMigration;
   optOuts: typeof optOuts;
   orgModules: typeof orgModules;
   orgSecrets: typeof orgSecrets;
