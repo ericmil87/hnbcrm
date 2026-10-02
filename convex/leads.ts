@@ -18,6 +18,7 @@ import {
 } from "./lib/leadCascade";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { cancelFollowUpsOfLead } from "./lib/followUpOps";
+import { moveLeadToStageCore, stageClosePatch } from "./lib/leadStageMove";
 
 // Get leads for organization
 export const getLeads = query({
@@ -519,77 +520,17 @@ export const moveLeadToStage = mutation({
     if (!lead) throw new Error("Lead not found");
 
     const userMember = await requireAuth(ctx, lead.organizationId);
+    const newStage = await ctx.db.get(args.stageId);
 
-    const oldStageId = lead.stageId;
-    const now = Date.now();
-
-    // Get stage names for activity log
-    const [oldStage, newStage] = await Promise.all([
-      ctx.db.get(oldStageId),
-      ctx.db.get(args.stageId),
-    ]);
-
-    const patch: Record<string, any> = {
-      stageId: args.stageId,
-      lastActivityAt: now,
-      updatedAt: now,
-    };
-
-    // Handle closed stages
-    if (newStage?.isClosedWon) {
-      patch.closedAt = now;
-      patch.closedType = "won";
-      if (args.closedReason) patch.closedReason = args.closedReason;
-      if (args.finalValue !== undefined) patch.value = args.finalValue;
-    } else if (newStage?.isClosedLost) {
-      patch.closedAt = now;
-      patch.closedType = "lost";
-      if (args.closedReason) patch.closedReason = args.closedReason;
-      if (args.finalValue !== undefined) patch.value = args.finalValue;
-    } else {
-      // Moving to a non-closed stage clears close fields
-      patch.closedAt = undefined;
-      patch.closedReason = undefined;
-      patch.closedType = undefined;
-    }
-
-    await ctx.db.patch(args.leadId, patch);
-
-    // Log audit entry
-    await ctx.db.insert("auditLogs", {
-      organizationId: lead.organizationId,
-      entityType: "lead",
-      entityId: args.leadId,
-      action: "move",
-      actorId: userMember._id,
-      actorType: "human",
-      changes: {
-        before: { stageId: oldStageId },
-        after: { stageId: args.stageId },
-      },
-      metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name },
-      description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
-      severity: "medium",
-      createdAt: now,
-    });
-
-    // Log activity
-    await ctx.db.insert("activities", {
-      organizationId: lead.organizationId,
-      leadId: args.leadId,
-      type: "stage_change",
-      actorId: userMember._id,
-      actorType: userMember.type === "ai" ? "ai" : "human",
-      content: `Moved from "${oldStage?.name || "Unknown"}" to "${newStage?.name || "Unknown"}"`,
-      metadata: { oldStageId, newStageId: args.stageId },
-      createdAt: now,
-    });
-
-    // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-      organizationId: lead.organizationId,
-      event: "lead.stage_changed",
-      payload: { leadId: args.leadId, oldStageId, newStageId: args.stageId, oldStageName: oldStage?.name, newStageName: newStage?.name },
+    // Regra de fechamento + audit/activity/webhook: núcleo único em
+    // lib/leadStageMove (também usado pelo desfecho de conversa da Central).
+    await moveLeadToStageCore(ctx, {
+      lead,
+      newStage,
+      newStageId: args.stageId,
+      actor: userMember,
+      closedReason: args.closedReason,
+      finalValue: args.finalValue,
     });
 
     return null;
@@ -1473,18 +1414,8 @@ export const bulkMoveLeads = mutation({
         updatedAt: now,
       };
 
-      // Mirror single moveLeadToStage's closed-stage handling (minimal, no forced reason)
-      if (newStage.isClosedWon) {
-        patch.closedAt = now;
-        patch.closedType = "won";
-      } else if (newStage.isClosedLost) {
-        patch.closedAt = now;
-        patch.closedType = "lost";
-      } else {
-        patch.closedAt = undefined;
-        patch.closedReason = undefined;
-        patch.closedType = undefined;
-      }
+      // Mesma regra de fechamento do moveLeadToStage (sem motivo/valor)
+      Object.assign(patch, stageClosePatch(newStage, now));
 
       await ctx.db.patch(leadId, patch);
 

@@ -301,7 +301,7 @@ export async function createHandoffCore(
  * humano cair numa conversa viva. Retorna a conversa (quando existe) para o
  * chamador navegar até ela.
  */
-async function acceptHandoffCore(
+export async function acceptHandoffCore(
   ctx: MutationCtx,
   args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string }
 ): Promise<Id<"conversations"> | null> {

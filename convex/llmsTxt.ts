@@ -1628,6 +1628,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | handoff.rejected | Handoff rejected |
 | handoff.canceled | Pending handoff canceled because the conversation was returned to the AI |
 | conversation.returned_to_ai | A human gave the conversation back to the AI attendant (optionally with an instruction) |
+| conversation.transferred | A conversation was transferred to another department and/or team member (Central module; payload: conversationId, leadId, transferId, from/to departmentId, from/to memberId, byMemberId, note) |
 | task.moved | Task moved to a different kanban column (P1) |
 | task.due_soon | Early reminder (reminderMinutesBefore) fired for a task (P1) |
 | task.followup_executed | An AI follow-up ran at its due time (payload: followUpId, taskId, conversationId, leadId, outcome \`done\`/\`not_needed\`, messageId) |

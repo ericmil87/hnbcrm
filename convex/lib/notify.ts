@@ -19,7 +19,8 @@ export type NotificationType =
   | "group_post_failed"
   | "group_opportunity"
   | "group_digest"
-  | "ai_followup_needs_human";
+  | "ai_followup_needs_human"
+  | "conversation_transferred";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -42,6 +43,8 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   // Só sino: não existe template de e-mail para este evento (`buildTemplate` é
   // fail-closed), e nenhum caminho chama `dispatchNotification` com ele.
   ai_followup_needs_human: "aiFollowupNeedsHuman",
+  // MVP Central — só sino (sem template de e-mail).
+  conversation_transferred: "conversationTransferred",
 };
 
 /**

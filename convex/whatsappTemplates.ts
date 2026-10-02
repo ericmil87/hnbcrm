@@ -136,6 +136,10 @@ export async function syncMetaTemplatesHandler(ctx: ActionCtx, args: SyncMetaTem
       channelConfigId: args.channelConfigId,
       actorMemberId: args.actorMemberId,
     });
+    // Org de demonstração: nada vai à Meta.
+    if (await ctx.runQuery(internal.orgModules.internalIsDemoOrg, { organizationId: context.organizationId })) {
+      return { synced: 0, removed: 0, approved: 0 };
+    }
     const token = await decryptSecret(context.accessTokenEncrypted);
     const templates: Array<Record<string, unknown>> = [];
     let url: string | null =
@@ -244,6 +248,9 @@ export async function readMetaTierHandler(ctx: ActionCtx, args: ReadMetaTierArgs
       channelConfigId: args.channelConfigId,
       actorMemberId: args.actorMemberId,
     });
+    if (await ctx.runQuery(internal.orgModules.internalIsDemoOrg, { organizationId: context.organizationId })) {
+      return { tier: "DEMO", limit: null };
+    }
     const token = await decryptSecret(context.accessTokenEncrypted);
     const res = await fetch(
       `${GRAPH_API_BASE}/${context.phoneNumberId}?fields=whatsapp_business_manager_messaging_limit`,

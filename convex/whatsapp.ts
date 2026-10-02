@@ -47,6 +47,7 @@ import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
 import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import { getLeadRef } from "./lib/leadRef";
+import { isDemoOrg } from "./lib/orgModules";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -354,6 +355,8 @@ export const internalGetDispatchContext = internalQuery({
       config,
       toPhone,
       isGroup,
+      // Org de demonstração: o dispatch NUNCA sai para a rede (settings.demoMode).
+      demoMode: await isDemoOrg(ctx, message.organizationId),
       quoteParticipantJid,
       latestInboundExternalId: latestInbound?.externalId ?? null,
       attachmentFiles,
@@ -679,6 +682,16 @@ async function dispatchMessage(
   // Already dispatched (redelivery / duplicate scheduling)
   if (message.externalId || message.deliveryStatus) return null;
 
+  // Guarda de DEMONSTRAÇÃO — ponto único e mais baixo do egress (Meta e
+  // bridge, texto/mídia/template, retries): org com `settings.demoMode` nunca
+  // chama Graph/wuzapi. A mensagem vira `delivered` localmente.
+  if (context.demoMode === true) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDemoDelivered, {
+      messageId: args.messageId,
+    });
+    return null;
+  }
+
   if (!config || config.status !== "active") {
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId: args.messageId,
@@ -913,6 +926,27 @@ export const internalMarkDispatched = internalMutation({
   },
 });
 
+// Internal: "entrega" de org de demonstração — sem rede. Passa pelos MESMOS
+// ganchos de entrega (campanha/follow-up) para a demo se comportar igual.
+export const internalMarkDemoDelivered = internalMutation({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.externalId || message.deliveryStatus) return null;
+    if (!(await isDemoOrg(ctx, message.organizationId))) return null;
+    await ctx.db.patch(args.messageId, {
+      externalId: `demo:${args.messageId}`,
+      deliveryStatus: "delivered",
+      metadata: { ...(message.metadata ?? {}), demo: true },
+    });
+    await applyCampaignDeliveryUpdate(ctx, { messageId: args.messageId, status: "sent" });
+    await applyCampaignDeliveryUpdate(ctx, { messageId: args.messageId, status: "delivered" });
+    await applyFollowUpDeliveryUpdate(ctx, { messageId: args.messageId, ok: true });
+    return null;
+  },
+});
+
 // Internal: record a failed dispatch (visible in Inbox via deliveryStatus + activity)
 export const internalMarkDispatchFailed = internalMutation({
   args: {
@@ -1092,7 +1126,7 @@ export const internalDispatchReaction = internalAction({
     const context = await ctx.runQuery(internal.whatsapp.internalGetDispatchContext, {
       messageId: args.messageId,
     });
-    if (!context) return null;
+    if (!context || context.demoMode === true) return null;
     const { message, config, toPhone } = context;
     // Need a provider id on the target and a destination to react at all.
     if (!config || !toPhone || !message.externalId) return null;
@@ -1152,6 +1186,13 @@ export const internalBridgeMarkRead = internalAction({
     });
     if (!config || configProvider(config) !== "bridge") return null;
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+    if (
+      await ctx.runQuery(internal.orgModules.internalIsDemoOrg, {
+        organizationId: config.organizationId,
+      })
+    ) {
+      return null;
+    }
     try {
       const token = await decryptSecret(config.bridgeTokenEncrypted);
       const request = buildBridgeMarkReadRequest({
@@ -1183,6 +1224,13 @@ export const internalBridgeSendPresence = internalAction({
     });
     if (!config || configProvider(config) !== "bridge") return null;
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+    if (
+      await ctx.runQuery(internal.orgModules.internalIsDemoOrg, {
+        organizationId: config.organizationId,
+      })
+    ) {
+      return null;
+    }
     try {
       const token = await decryptSecret(config.bridgeTokenEncrypted);
       const request = buildBridgePresenceRequest({

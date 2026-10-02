@@ -26,6 +26,9 @@ import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/gro
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
+import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
+import { attributionFromReferral } from "./lib/leadAttribution";
+import { getModules } from "./lib/orgModules";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -291,13 +294,42 @@ export const getConversations = query({
     // Lista do inbox: false/ausente = só ativas; true = só arquivadas.
     // Ignorado quando leadId é passado (painel do lead mostra tudo).
     archived: v.optional(v.boolean()),
+    // MVP Central (filas do inbox) — opcionais; ausentes = comportamento antigo.
+    // unitId/departmentId/noDepartment usam índice próprio (mais recentes por
+    // criação, até `limit`); assignedToMe filtra `conversations.assignedTo`
+    // (responsável da CONVERSA, não do lead).
+    unitId: v.optional(v.id("units")),
+    departmentId: v.optional(v.id("departments")),
+    assignedToMe: v.optional(v.boolean()),
+    noDepartment: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    await requireAuth(ctx, args.organizationId);
+    const me = await requireAuth(ctx, args.organizationId);
 
     let conversations;
-    if (args.leadId && args.channel) {
+    if (!args.leadId && args.departmentId) {
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_department", (q) =>
+          q.eq("organizationId", args.organizationId).eq("departmentId", args.departmentId!)
+        )
+        .order("desc")
+        .take(args.limit ?? 200);
+    } else if (!args.leadId && args.noDepartment) {
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_department", (q) =>
+          q.eq("organizationId", args.organizationId).eq("departmentId", undefined)
+        )
+        .order("desc")
+        .take(args.limit ?? 200);
+    } else if (!args.leadId && args.unitId) {
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_unit", (q) =>
+          q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!)
+        )
+        .order("desc")
+        .take(args.limit ?? 200);
+    } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
         .take(args.limit ?? 200);
@@ -323,6 +355,14 @@ export const getConversations = query({
       conversations = conversations.filter(c =>
         args.archived ? !!c.archivedAt : !c.archivedAt
       );
+      // Filtros da Central que não escolheram o índice acima (combinações).
+      if (args.unitId) conversations = conversations.filter(c => c.unitId === args.unitId);
+      if (args.departmentId) {
+        conversations = conversations.filter(c => c.departmentId === args.departmentId);
+      } else if (args.noDepartment) {
+        conversations = conversations.filter(c => !c.departmentId);
+      }
+      if (args.assignedToMe) conversations = conversations.filter(c => c.assignedTo === me._id);
     }
 
     // Batch fetch related data
@@ -908,6 +948,9 @@ export const sendMessage = mutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(args.isInternal
+        ? {}
+        : firstResponsePatch(conversation, userMember.type === "ai" ? "ai" : "human", now)),
     });
 
     // Update lead activity
@@ -1332,6 +1375,9 @@ export const internalSendMessage = internalMutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(args.isInternal
+        ? {}
+        : firstResponsePatch(conversation, teamMember.type === "ai" ? "ai" : "human", now)),
     });
 
     // Update lead activity
@@ -1535,16 +1581,27 @@ export const internalReceiveMessage = internalMutation({
       messageCount: conversation.messageCount + 1,
       unreadCount: (conversation.unreadCount ?? 0) + 1, // zerado por markConversationRead
       updatedAt: now,
+      ...firstInboundPatch(conversation, now),
       ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
         ? { channelConfigId: args.channelConfigId }
         : {}),
     });
+
+    // Origem do anúncio (Meta Click-to-WhatsApp): primeiro toque, só com o
+    // módulo de atribuição ligado (lib/leadAttribution).
+    const attribution =
+      !lead.attribution && args.metadata?.referral
+        ? attributionFromReferral(args.metadata.referral, now)
+        : null;
+    const recordAttribution =
+      attribution !== null && (await getModules(ctx, args.organizationId)).attribution;
 
     // Update lead activity
     await ctx.db.patch(args.leadId, {
       lastActivityAt: now,
       updatedAt: now,
       conversationStatus: "active",
+      ...(recordAttribution ? { attribution: attribution! } : {}),
     });
 
     // Log activity
@@ -1688,6 +1745,8 @@ export const internalReceiveDeviceMessage = internalMutation({
       lastMessageAt,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      // Humano respondendo pelo app do celular também é primeira resposta.
+      ...firstResponsePatch(conversation, "human", sentAt),
       ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
         ? { channelConfigId: args.channelConfigId }
         : {}),

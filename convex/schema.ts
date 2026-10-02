@@ -493,6 +493,94 @@ export const groupMediaOverrideModeValidator = v.union(
   v.literal("off")
 );
 
+// ── MVP "Central" (unidades, setores, conversão, atribuição, painel) ──
+// Tudo opcional e desligado por padrão: só age numa org com
+// `settings.modules.<x> === true` (lib/orgModules.ts).
+export const orgModulesValidator = v.object({
+  units: v.optional(v.boolean()), // Unidades (hotéis/filiais)
+  departments: v.optional(v.boolean()), // Setores + transferência + filas
+  attribution: v.optional(v.boolean()), // Origem de anúncio, investimento, ROAS/CAC
+  central: v.optional(v.boolean()), // Painel da Central (/app/central)
+});
+
+// Tipo de contato da conversa/lead. Ausente = "lead" — só lead entra em
+// conversão, ROAS e CAC (hóspede, fornecedor e agência não são venda nova).
+export const contactKindValidator = v.union(
+  v.literal("lead"),
+  v.literal("guest"),
+  v.literal("supplier"),
+  v.literal("agency"),
+  v.literal("other")
+);
+
+// Origem do lead (anúncio, UTM, indicação). Gravada UMA vez (primeiro toque):
+// o ingest Meta só preenche quando ainda não existe.
+export const leadAttributionValidator = v.object({
+  source: v.string(), // "meta_ads" | "google_ads" | "instagram" | "site" | "booking" | "indicacao" | "organico" | "retorno"
+  campaignName: v.optional(v.string()),
+  campaignKey: v.optional(v.string()),
+  adId: v.optional(v.string()),
+  adHeadline: v.optional(v.string()),
+  adSourceUrl: v.optional(v.string()),
+  ctwaClid: v.optional(v.string()),
+  gclid: v.optional(v.string()),
+  utmSource: v.optional(v.string()),
+  utmMedium: v.optional(v.string()),
+  utmCampaign: v.optional(v.string()),
+  utmContent: v.optional(v.string()),
+  utmTerm: v.optional(v.string()),
+  trackingCode: v.optional(v.string()),
+  capturedAt: v.number(),
+});
+
+export const unitFields = {
+  organizationId: v.id("organizations"),
+  name: v.string(),
+  shortName: v.optional(v.string()),
+  city: v.optional(v.string()),
+  state: v.optional(v.string()),
+  kind: v.optional(v.string()), // "Pousada" | "Hotel boutique" ...
+  color: v.string(), // hex
+  status: v.union(v.literal("active"), v.literal("onboarding"), v.literal("inactive")),
+  roomsCount: v.optional(v.number()),
+  bookingUrl: v.optional(v.string()),
+  whatsappLabel: v.optional(v.string()),
+  channelConfigIds: v.optional(v.array(v.id("channelConfigs"))),
+  boardId: v.optional(v.id("boards")),
+  description: v.optional(v.string()),
+  order: v.number(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
+export const departmentFields = {
+  organizationId: v.id("organizations"),
+  name: v.string(),
+  description: v.optional(v.string()),
+  color: v.string(),
+  icon: v.optional(v.string()), // nome do ícone lucide
+  memberIds: v.array(v.id("teamMembers")),
+  unitIds: v.optional(v.array(v.id("units"))), // vazio/ausente = todas
+  isEntry: v.optional(v.boolean()), // fila de entrada
+  order: v.number(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+};
+
+export const adSpendFields = {
+  organizationId: v.id("organizations"),
+  date: v.string(), // YYYY-MM-DD
+  platform: v.union(v.literal("meta"), v.literal("google"), v.literal("other")),
+  campaignName: v.string(),
+  campaignKey: v.string(), // normalizado: minúsculo, sem acento, espaços→-
+  unitId: v.optional(v.id("units")),
+  amount: v.number(),
+  currency: v.string(),
+  impressions: v.optional(v.number()),
+  clicks: v.optional(v.number()),
+  createdAt: v.number(),
+};
+
 const applicationTables = {
   // Organizations
   organizations: defineTable({
@@ -508,6 +596,11 @@ const applicationTables = {
       // Campanhas: tetos default da org (sobrepõem a tabela segura de
       // lib/campaignPacing, nunca o teto duro). Ausente = tabela.
       campaignDefaults: v.optional(campaignPacingValidator),
+      // MVP Central — módulos opcionais (ausente = todos desligados).
+      modules: v.optional(orgModulesValidator),
+      // Org de demonstração: habilita `demoSim` e BLOQUEIA todo envio real
+      // (o dispatch do WhatsApp marca `delivered` sem chamar rede).
+      demoMode: v.optional(v.boolean()),
     }),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
@@ -767,12 +860,20 @@ const applicationTables = {
     closedType: v.optional(v.union(v.literal("won"), v.literal("lost"))),
     // Soft-delete timestamp: undefined = active, set = archived
     archivedAt: v.optional(v.number()),
+    // MVP Central — unidade (hotel/filial), tipo de contato e origem.
+    unitId: v.optional(v.id("units")),
+    contactKind: v.optional(contactKindValidator),
+    attribution: v.optional(leadAttributionValidator),
     lastActivityAt: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_board", ["organizationId", "boardId"])
+    .index("by_organization_and_unit", ["organizationId", "unitId"])
+    // Painel da Central: leads criados/fechados no período sem varrer a org.
+    .index("by_organization_and_created", ["organizationId", "createdAt"])
+    .index("by_organization_and_closed", ["organizationId", "closedAt"])
     .index("by_board", ["boardId"])
     .index("by_stage", ["stageId"])
     .index("by_assigned_to", ["assignedTo"])
@@ -954,11 +1055,26 @@ const applicationTables = {
         })
       )
     ),
+    // ── MVP Central (opcionais; só gravados com o módulo ligado) ──
+    unitId: v.optional(v.id("units")),
+    departmentId: v.optional(v.id("departments")),
+    // Responsável pela CONVERSA (setor/fila). Independe de `leads.assignedTo`.
+    assignedTo: v.optional(v.id("teamMembers")),
+    contactKind: v.optional(contactKindValidator), // ausente = "lead"
+    // Tempo de primeira resposta: carimbados uma vez, pelo ingest (inbound) e
+    // pelos pontos comuns de saída (outbound). Aditivos para toda org.
+    firstInboundAt: v.optional(v.number()),
+    firstResponseAt: v.optional(v.number()),
+    firstResponderType: v.optional(v.union(v.literal("ai"), v.literal("human"))),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
+    .index("by_organization_and_department", ["organizationId", "departmentId"])
+    .index("by_organization_and_unit", ["organizationId", "unitId"])
+    // Painel da Central: conversas criadas no período.
+    .index("by_organization_and_created", ["organizationId", "createdAt"])
     .index("by_lead", ["leadId"])
     .index("by_lead_and_channel", ["leadId", "channel"])
     .index("by_organization_and_status", ["organizationId", "status"])
@@ -1032,6 +1148,32 @@ const applicationTables = {
       searchField: "imageDescription",
       filterFields: ["organizationId", "conversationId"],
     }),
+
+  // ── MVP Central ──
+  // Unidades (hotéis/filiais) — módulo `units`.
+  units: defineTable(unitFields).index("by_organization", ["organizationId"]),
+
+  // Setores (filas de atendimento) — módulo `departments`.
+  departments: defineTable(departmentFields).index("by_organization", ["organizationId"]),
+
+  // Histórico de transferências de conversa entre setores/membros.
+  conversationTransfers: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    fromDepartmentId: v.optional(v.id("departments")),
+    toDepartmentId: v.optional(v.id("departments")),
+    fromMemberId: v.optional(v.id("teamMembers")),
+    toMemberId: v.optional(v.id("teamMembers")),
+    byMemberId: v.optional(v.id("teamMembers")),
+    byType: v.union(v.literal("human"), v.literal("ai"), v.literal("system")),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Investimento em mídia por dia/campanha — módulo `attribution`.
+  adSpend: defineTable(adSpendFields).index("by_organization_and_date", ["organizationId", "date"]),
 
   // Etiquetas de conversa (org-scoped), atribuídas via conversations.labelIds.
   conversationLabels: defineTable({
@@ -1341,7 +1483,9 @@ const applicationTables = {
     // já foi escalada. Os dois faziam `.take(100)` no índice por org — numa org
     // com mais de 100 pendentes, o repasse da sala ficava fora da varredura.
     .index("by_conversation_and_status", ["conversationId", "status"])
-    .index("by_status_and_created", ["status", "createdAt"]),
+    .index("by_status_and_created", ["status", "createdAt"])
+    // Painel da Central: repasses abertos no período.
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Activities (timeline events on leads)
   activities: defineTable({
@@ -1584,7 +1728,9 @@ const applicationTables = {
       // (humano assumiu, teto, janela do Meta fechada, número caiu). A tarefa
       // volta a ser de gente, e esta é a notificação que impede o P0.2 —
       // "tarefa da IA vence e nada acontece, em silêncio".
-      v.literal("ai_followup_needs_human")
+      v.literal("ai_followup_needs_human"),
+      // MVP Central — conversa transferida para um setor/membro.
+      v.literal("conversation_transferred")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -1718,6 +1864,8 @@ const applicationTables = {
     // não existe template de e-mail para este evento (ver `emailTemplates.ts`,
     // que é fail-closed), e `dispatchNotification` nunca é chamado com ele.
     aiFollowupNeedsHuman: v.optional(v.boolean()),
+    // MVP Central — conversa transferida para mim/meu setor (só sino).
+    conversationTransferred: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

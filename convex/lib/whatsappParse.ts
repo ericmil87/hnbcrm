@@ -42,6 +42,48 @@ export function extractPhoneNumberId(payload: unknown): string | null {
   return null;
 }
 
+/** Anúncio Click-to-WhatsApp que originou a conversa (`message.referral`). */
+export interface ParsedReferral {
+  sourceUrl?: string;
+  sourceId?: string; // id do anúncio (ou do post)
+  sourceType?: string; // "ad" | "post"
+  headline?: string;
+  body?: string;
+  mediaType?: string;
+  ctwaClid?: string;
+}
+
+const REFERRAL_FIELD_MAX = 500;
+
+function referralString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, REFERRAL_FIELD_MAX) : undefined;
+}
+
+/**
+ * Lê `message.referral` (Click-to-WhatsApp Ads). Payload NÃO confiável: só
+ * strings, com teto de tamanho, e só as chaves conhecidas — mídia/thumbnail
+ * (URLs temporárias da Meta) ficam de fora. Null quando não há referral.
+ */
+export function parseReferral(raw: unknown): ParsedReferral | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const referral: ParsedReferral = {
+    sourceUrl: referralString(r.source_url),
+    sourceId: referralString(r.source_id),
+    sourceType: referralString(r.source_type),
+    headline: referralString(r.headline),
+    body: referralString(r.body),
+    mediaType: referralString(r.media_type),
+    ctwaClid: referralString(r.ctwa_clid),
+  };
+  for (const key of Object.keys(referral) as (keyof ParsedReferral)[]) {
+    if (referral[key] === undefined) delete referral[key];
+  }
+  return Object.keys(referral).length > 0 ? referral : null;
+}
+
 function parseMessage(
   message: Record<string, any>,
   contacts: Array<Record<string, any>> | undefined
@@ -62,6 +104,8 @@ function parseMessage(
     timestamp,
   };
   const metadata: Record<string, unknown> = { whatsappType: type };
+  const referral = parseReferral(message.referral);
+  if (referral) metadata.referral = referral;
 
   switch (type) {
     case "text":

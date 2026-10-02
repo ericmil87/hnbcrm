@@ -25,6 +25,8 @@ const DEFAULTS = {
   groupDigest: true,
   // v0.60 — a IA não conseguiu fazer o follow-up que agendou (só sino).
   aiFollowupNeedsHuman: true,
+  // MVP Central — conversa transferida para mim/meu setor (só sino).
+  conversationTransferred: true,
 };
 
 // Get current member's notification preferences
@@ -66,6 +68,7 @@ export const getMyPreferences = query({
       groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
+      conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
       _id: prefs._id,
       _exists: true,
     };
@@ -96,6 +99,7 @@ export const updateMyPreferences = mutation({
     groupOpportunity: v.optional(v.boolean()),
     groupDigest: v.optional(v.boolean()),
     aiFollowupNeedsHuman: v.optional(v.boolean()),
+    conversationTransferred: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -136,6 +140,10 @@ export const updateMyPreferences = mutation({
       groupDigest: args.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
       aiFollowupNeedsHuman:
         args.aiFollowupNeedsHuman ?? existing?.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
+      conversationTransferred:
+        args.conversationTransferred ??
+        existing?.conversationTransferred ??
+        DEFAULTS.conversationTransferred,
     };
 
     if (existing) {
@@ -242,6 +250,7 @@ export const internalGetPreferences = internalQuery({
       groupOpportunity: prefs.groupOpportunity ?? DEFAULTS.groupOpportunity,
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
+      conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
       _exists: true,
     };
   },
@@ -293,6 +302,10 @@ export const internalUpsertPreferences = internalMutation({
         args.updates.aiFollowupNeedsHuman ??
         existing?.aiFollowupNeedsHuman ??
         DEFAULTS.aiFollowupNeedsHuman,
+      conversationTransferred:
+        args.updates.conversationTransferred ??
+        existing?.conversationTransferred ??
+        DEFAULTS.conversationTransferred,
     };
 
     if (existing) {

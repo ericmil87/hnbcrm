@@ -14,6 +14,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { buildAuditDescription } from "./auditDescription";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { getLeadRef } from "./leadRef";
+import { firstResponsePatch } from "./conversationTiming";
 
 export async function applyOutboundMessageSideEffects(
   ctx: MutationCtx,
@@ -32,6 +33,7 @@ export async function applyOutboundMessageSideEffects(
     lastMessageAt: now,
     messageCount: conversation.messageCount + 1,
     updatedAt: now,
+    ...firstResponsePatch(conversation, actorType, now),
   });
 
   // Conversa de GRUPO não tem lead (v0.57): o bump de atividade e a activity

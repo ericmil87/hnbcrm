@@ -505,6 +505,19 @@ export const checkChannelHealth = action({
       configId: args.configId,
     });
 
+    // Org de demonstração: nenhum probe sai para Graph/wuzapi.
+    if (
+      await ctx.runQuery(internal.orgModules.internalIsDemoOrg, {
+        organizationId: config.organizationId,
+      })
+    ) {
+      return {
+        ok: true,
+        ...(config.displayPhoneNumber ? { displayPhoneNumber: config.displayPhoneNumber } : {}),
+        verifiedName: "Demonstração",
+      };
+    }
+
     // Bridge health check: probe GET /session/status on the gateway and map the
     // connected/loggedIn flags to a pairing state + PT-BR detail.
     if (configProvider(config) === "bridge") {
