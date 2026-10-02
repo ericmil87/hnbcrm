@@ -12,7 +12,9 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { encryptSecret } from "./lib/secretCrypto";
+import { runConsultarAgenda } from "./attendantAgenda";
 import {
+  availableCategories,
   filterByCategory,
   isAllowedImageUrl,
   normalizeAgendaEvents,
@@ -345,6 +347,11 @@ describe("lib/externalAgenda (puro)", () => {
     expect(normalizeAgendaEvents({ nada: 1 })).toEqual([]);
     expect(filterByCategory(events, "LUA CHEIA").map((e) => e.slug)).toEqual(["lua-cheia"]);
     expect(filterByCategory(events, "Temazcál").map((e) => e.slug)).toEqual(["temazcal-outubro"]);
+    // Taxonomia não é fixa: palavra do TÍTULO também filtra, e nada casa → vazio
+    // (quem devolve a lista inteira nesse caso é o runtime, com filtroSemResultado).
+    expect(filterByCategory(events, "outubro").map((e) => e.slug)).toEqual(["temazcal-outubro"]);
+    expect(filterByCategory(events, "ayahuasca")).toEqual([]);
+    expect(availableCategories(events)).toEqual(["Temazcal (temazcal)", "Lua Cheia (lua_cheia)"]);
     expect(isAllowedImageUrl(FLYER_URL, events)).toBe(true);
     expect(isAllowedImageUrl("https://evil.example.com/x.jpg", events)).toBe(false);
   });

@@ -112,14 +112,42 @@ function fold(value: string): string {
     .trim();
 }
 
-/** Filtro por categoria, sem caixa nem acento, contra `category` ou `categoryLabel`. */
+/**
+ * Filtro por categoria, sem caixa nem acento, contra `category`, `categoryLabel`
+ * E `title`. Nenhuma taxonomia é fixa aqui: cada site nomeia as categorias do
+ * seu jeito (um chama "medicinas", outro "ayahuasca"), então o modelo pode
+ * filtrar com qualquer palavra que apareça no nome ou na categoria do evento —
+ * e quem decide o que existe é a resposta da agenda (`availableCategories`).
+ */
 export function filterByCategory(events: AgendaEvent[], categoria?: string | null): AgendaEvent[] {
   const wanted = typeof categoria === "string" ? fold(categoria) : "";
   if (!wanted) return events;
   return events.filter((e) => {
-    const candidates = [e.category, e.categoryLabel].filter((c): c is string => !!c).map(fold);
+    const candidates = [e.category, e.categoryLabel, e.title]
+      .filter((c): c is string => !!c)
+      .map(fold);
     return candidates.some((c) => c === wanted || c.includes(wanted));
   });
+}
+
+/**
+ * Categorias que a agenda de fato usa (rótulo e id), na ordem em que aparecem.
+ * Vai no resultado da tool para o modelo aprender a taxonomia DO SITE em vez de
+ * chutar nomes — é o que torna a tool genérica entre clientes.
+ */
+export function availableCategories(events: AgendaEvent[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const e of events) {
+    const label = e.categoryLabel ?? e.category;
+    if (!label) continue;
+    const entry = e.category && e.category !== label ? `${label} (${e.category})` : label;
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    out.push(entry);
+    if (out.length >= 30) break;
+  }
+  return out;
 }
 
 /** A IA só manda imagem que veio do campo `image` de um evento consultado (igualdade exata). */

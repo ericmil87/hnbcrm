@@ -23,6 +23,7 @@ import {
   AGENDA_IMAGE_MAX_BYTES,
   AGENDA_IMAGE_TIMEOUT_MS,
   AgendaEvent,
+  availableCategories,
   filterByCategory,
   normalizeAgendaEvents,
 } from "./lib/externalAgenda";
@@ -89,10 +90,24 @@ export async function runConsultarAgenda(
   }
 
   const all = normalizeAgendaEvents(json);
-  const eventos = filterByCategory(all, categoria);
-  // `events` (o que a IA VIU) = só o filtrado: a imagem permitida no reply é a
-  // de um evento que de fato chegou ao modelo.
-  return { result: { status: "ok", total: eventos.length, eventos }, events: eventos };
+  const filtered = filterByCategory(all, categoria);
+  // Filtro que não casou com NADA (a taxonomia do site é outra, ou o modelo
+  // chutou um nome): devolve a agenda inteira e avisa — esconder eventos por
+  // causa de um filtro errado é exatamente o "nunca invente" ao contrário.
+  const filtroSemResultado = !!categoria && filtered.length === 0 && all.length > 0;
+  const eventos = filtroSemResultado ? all : filtered;
+  // `events` (o que a IA VIU) = o que foi devolvido: a imagem permitida no
+  // reply é a de um evento que de fato chegou ao modelo.
+  return {
+    result: {
+      status: "ok",
+      total: eventos.length,
+      eventos,
+      categoriasDisponiveis: availableCategories(all),
+      ...(filtroSemResultado ? { filtroSemResultado: categoria } : {}),
+    },
+    events: eventos,
+  };
 }
 
 function fileNameFromUrl(url: string, mimeType: string): string {

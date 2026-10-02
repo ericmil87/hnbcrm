@@ -98,7 +98,7 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
         categoria: {
           type: "string",
           description:
-            "Opcional: filtra por categoria (ex.: temazcal, lua_cheia, busca_de_visao, ayahuasca, curso_xamanismo)",
+            "Opcional: uma palavra do nome ou da categoria do evento, como a casa a chama (a resposta traz em categoriasDisponiveis as categorias que existem). Na dúvida, NÃO filtre: sem filtro vêm todos os eventos abertos.",
         },
       },
       []
@@ -106,7 +106,7 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     permission: { category: "inbox", level: "view_own" },
     audience: "attendant",
     effect: "read",
-    resultFields: ["status", "eventos", "total", "erro"],
+    resultFields: ["status", "eventos", "total", "categoriasDisponiveis", "filtroSemResultado", "erro"],
   },
   {
     name: "moveThisLead",
