@@ -62,7 +62,7 @@ npx convex env list | cut -d= -f1 | grep WA_BRIDGE
 O que acontece nos bastidores (`convex/channelConfigs.ts:619` → `provisionBridgeChannel`):
 
 - gera um token exclusivo da instância e um id `org_<orgId>_<sufixo>`;
-- cria a instância no gateway (`POST /admin/users`) já inscrita em `Message,ReadReceipt,LoggedOut,TemporaryBan,ClientOutdated`, com webhook apontando para `https://tacit-chicken-195.convex.site/webhooks/bridge`;
+- cria a instância no gateway (`POST /admin/users`) já inscrita em `Message,ReadReceipt,LoggedOut,TemporaryBan,ClientOutdated`, com webhook apontando para `https://careful-anaconda-127.convex.site/webhooks/bridge`;
 - **arma a assinatura HMAC no cache vivo do gateway** (`POST /session/hmac/config`) — passo obrigatório por um bug do wuzapi; sem ele o CRM envia mas não recebe;
 - cifra o token e grava o `channelConfig`.
 

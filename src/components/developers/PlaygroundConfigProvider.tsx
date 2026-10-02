@@ -15,9 +15,15 @@ interface PlaygroundConfigContextValue {
 
 const PlaygroundConfigContext = createContext<PlaygroundConfigContextValue | null>(null);
 
+// Sugere a URL real do backend em uso (derivada do env); o usuário pode trocar.
+const DEFAULT_BASE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
+  ".convex.cloud",
+  ".convex.site"
+);
+
 export function PlaygroundConfigProvider({ children }: { children: ReactNode }) {
   const [baseUrl, setBaseUrlState] = useState<string>(
-    () => localStorage.getItem(STORAGE_KEYS.baseUrl) || ""
+    () => localStorage.getItem(STORAGE_KEYS.baseUrl) || DEFAULT_BASE_URL
   );
   const [apiKey, setApiKeyState] = useState<string>(
     () => localStorage.getItem(STORAGE_KEYS.apiKey) || ""

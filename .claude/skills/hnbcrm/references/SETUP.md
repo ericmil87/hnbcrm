@@ -13,8 +13,10 @@ You'll need two values:
 
 | Variable | Example |
 |----------|---------|
-| `HNBCRM_API_URL` | `https://your-app.convex.site` |
+| `HNBCRM_API_URL` | `https://SEU-DEPLOYMENT.convex.site` |
 | `HNBCRM_API_KEY` | `hc_abc123...` |
+
+> **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
 
 ---
 
@@ -31,7 +33,7 @@ Add to your project's `.mcp.json`:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -53,7 +55,7 @@ Add to the Claude config file:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -72,7 +74,7 @@ Add to `.cursor/mcp.json` in your project root:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -91,7 +93,7 @@ Add to `.vscode/mcp.json` in your workspace:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -104,7 +106,7 @@ Add to `.vscode/mcp.json` in your workspace:
 Set environment variables before running:
 
 ```bash
-export HNBCRM_API_URL="https://your-app.convex.site"
+export HNBCRM_API_URL="https://SEU-DEPLOYMENT.convex.site"
 export HNBCRM_API_KEY="your-api-key"
 ```
 
@@ -126,7 +128,7 @@ mcp_servers:
     command: npx
     args: ["-y", "hnbcrm-mcp"]
     env:
-      HNBCRM_API_URL: "https://your-app.convex.site"
+      HNBCRM_API_URL: "https://SEU-DEPLOYMENT.convex.site"
       HNBCRM_API_KEY: "your-api-key"
 ```
 
@@ -155,7 +157,7 @@ npm install -g hnbcrm-mcp
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -176,7 +178,7 @@ The agent will automatically detect the skill and begin the bootstrap sequence (
 If your platform doesn't support MCP, you can use the REST API directly. Set environment variables:
 
 ```bash
-export HNBCRM_API_URL="https://your-app.convex.site"
+export HNBCRM_API_URL="https://SEU-DEPLOYMENT.convex.site"
 export HNBCRM_API_KEY="your-api-key"
 ```
 
@@ -195,7 +197,7 @@ See [API Reference](API_REFERENCE.md) for all available endpoints.
 Run the included verification script:
 
 ```bash
-HNBCRM_API_URL="https://your-app.convex.site" \
+HNBCRM_API_URL="https://SEU-DEPLOYMENT.convex.site" \
 HNBCRM_API_KEY="your-api-key" \
 bash .claude/skills/hnbcrm/scripts/verify-connection.sh
 ```
@@ -203,7 +205,7 @@ bash .claude/skills/hnbcrm/scripts/verify-connection.sh
 Or test manually:
 
 ```bash
-curl -s -H "X-API-Key: YOUR_KEY" https://your-app.convex.site/api/v1/team-members | jq .
+curl -s -H "X-API-Key: YOUR_KEY" https://SEU-DEPLOYMENT.convex.site/api/v1/team-members | jq .
 ```
 
 You should see a list of team members in the response.

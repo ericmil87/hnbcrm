@@ -27,8 +27,14 @@ npm install -g hnbcrm-mcp
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `HNBCRM_API_URL` | Yes | Your Convex deployment URL (e.g. `https://your-app.convex.site`) |
+| `HNBCRM_API_URL` | Yes | Your Convex deployment URL (production example: `https://careful-anaconda-127.convex.site`) |
 | `HNBCRM_API_KEY` | Yes | API key generated from HNBCRM Settings |
+
+> **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
+
+## v0.63 note (Central de atendimento)
+
+The read tools (e.g. `crm_get_lead`, `crm_list_conversations`) return the raw documents from the REST API, so the v0.63 fields (`unitId`, `departmentId`, `assignedTo`, `contactKind`, `firstInboundAt`, `firstResponseAt`, `firstResponderType`, `attribution`) show up automatically when the organization uses the optional Central modules. No new tools were added: transfers, outcomes and ad spend have no MCP/REST write routes yet.
 
 ## Configuration
 
@@ -43,7 +49,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -62,7 +68,7 @@ Add to your project's `.mcp.json`:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -81,7 +87,7 @@ Add to `.cursor/mcp.json` in your project root:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -100,7 +106,7 @@ Add to your VS Code settings or workspace `.vscode/mcp.json`:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }
@@ -118,7 +124,7 @@ mcp_servers:
     command: npx
     args: ["-y", "hnbcrm-mcp"]
     env:
-      HNBCRM_API_URL: "https://your-app.convex.site"
+      HNBCRM_API_URL: "https://SEU-DEPLOYMENT.convex.site"
       HNBCRM_API_KEY: "your-api-key"
 ```
 
@@ -139,7 +145,7 @@ Add to your OpenClaw MCP configuration:
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://your-app.convex.site",
+        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site",
         "HNBCRM_API_KEY": "your-api-key"
       }
     }

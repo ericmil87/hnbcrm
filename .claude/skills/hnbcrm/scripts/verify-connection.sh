@@ -6,7 +6,7 @@ set -euo pipefail
 
 if [ -z "${HNBCRM_API_URL:-}" ] || [ -z "${HNBCRM_API_KEY:-}" ]; then
   echo "Error: HNBCRM_API_URL and HNBCRM_API_KEY must be set"
-  echo "Usage: HNBCRM_API_URL=https://your-app.convex.site HNBCRM_API_KEY=your-key bash $0"
+  echo "Usage: HNBCRM_API_URL=https://SEU-DEPLOYMENT.convex.site HNBCRM_API_KEY=your-key bash $0"
   exit 1
 fi
 

@@ -41,6 +41,12 @@ const sections = [
   { id: "examples", label: "Exemplos", icon: Code2 },
 ];
 
+// URL real do backend que este app usa (derivada do env em runtime).
+// Fallback didático só quando o env não existe (ex.: testes).
+const API_BASE =
+  ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(".convex.cloud", ".convex.site") ||
+  "https://SEU-DEPLOYMENT.convex.site";
+
 function ToolRow({ name, description, params }: { name: string; description: string; params: string }) {
   return (
     <tr className="border-b border-border last:border-b-0">
@@ -303,7 +309,7 @@ npm run dev`}</CodeBlock>
                 <p className="text-sm text-text-secondary">
                   Use cURL ou qualquer HTTP client:
                 </p>
-                <CodeBlock language="bash">{`curl -X GET "https://SEU-DEPLOYMENT.convex.site/api/v1/boards" \\
+                <CodeBlock language="bash">{`curl -X GET "${API_BASE}/api/v1/boards" \\
   -H "X-API-Key: sua_chave_aqui"`}</CodeBlock>
               </Card>
 
@@ -388,7 +394,7 @@ npm run dev`}</CodeBlock>
                 exportar/importar dados exige <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">settings: manage</code>).
                 A tabela completa rota → permissão está no <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">/llms-full.txt</code>.
               </p>
-              <CodeBlock language="bash">{`curl -X GET "https://SEU-DEPLOYMENT.convex.site/api/v1/leads" \\
+              <CodeBlock language="bash">{`curl -X GET "${API_BASE}/api/v1/leads" \\
   -H "X-API-Key: sua_chave_aqui"`}</CodeBlock>
             </Card>
 
@@ -447,7 +453,7 @@ npm run dev`}</CodeBlock>
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "${API_BASE}"
       }
     }
   }
@@ -468,7 +474,7 @@ npm run dev`}</CodeBlock>
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "${API_BASE}"
       }
     }
   }
@@ -489,7 +495,7 @@ npm run dev`}</CodeBlock>
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
         "HNBCRM_API_KEY": "sua_chave_aqui",
-        "HNBCRM_API_URL": "https://SEU-DEPLOYMENT.convex.site"
+        "HNBCRM_API_URL": "${API_BASE}"
       }
     }
   }
@@ -864,7 +870,7 @@ npm run dev`}</CodeBlock>
     command: npx
     args: ["-y", "hnbcrm-mcp"]
     env:
-      HNBCRM_API_URL: "https://seu-deployment.convex.site"
+      HNBCRM_API_URL: "${API_BASE}"
       HNBCRM_API_KEY: "sua_chave_aqui"`}</CodeBlock>
                 </div>
                 <div>
@@ -930,7 +936,7 @@ npm run dev`}</CodeBlock>
       "command": "npx",
       "args": ["-y", "hnbcrm-mcp"],
       "env": {
-        "HNBCRM_API_URL": "https://seu-deployment.convex.site",
+        "HNBCRM_API_URL": "${API_BASE}",
         "HNBCRM_API_KEY": "sua_chave_aqui"
       }
     }
@@ -1008,7 +1014,7 @@ npm run dev`}</CodeBlock>
                     <span className="text-brand-400 font-semibold">1.</span> Configure o servidor MCP (necessário para as tools):
                   </p>
                   <CodeBlock language="bash">{`# Defina as variaveis de ambiente
-export HNBCRM_API_URL="https://seu-deployment.convex.site"
+export HNBCRM_API_URL="${API_BASE}"
 export HNBCRM_API_KEY="sua_chave_aqui"
 
 # Teste a conexão
@@ -1070,7 +1076,19 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
               API REST
             </h2>
             <p className="text-text-secondary">
-              Base URL: <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">https://SEU-DEPLOYMENT.convex.site/api/v1</code>
+              Base URL: <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">{API_BASE}/api/v1</code>
+            </p>
+            <p className="text-xs text-text-muted">
+              A URL base é a do backend que este app usa (a mostrada acima é a da produção).
+              Integrações antigas que apontavam para outra URL precisam ser atualizadas.
+            </p>
+            <p className="text-xs text-text-muted">
+              Central (v0.63, módulos opcionais por organização): os documentos crus devolvidos
+              pelos GETs de conversas podem trazer <code>unitId</code>, <code>departmentId</code>,{" "}
+              <code>assignedTo</code>, <code>contactKind</code>, <code>firstInboundAt</code>,{" "}
+              <code>firstResponseAt</code> e <code>firstResponderType</code>; os de leads, <code>unitId</code>,{" "}
+              <code>contactKind</code> e <code>attribution</code>. Ainda não existem rotas REST para
+              unidades, setores ou transferência; isso é feito apenas pelo app.
             </p>
             <p className="text-sm text-text-secondary">
               Todos os endpoints requerem o header{" "}
@@ -1166,6 +1184,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "handoff.rejected",
                   "handoff.canceled",
                   "conversation.returned_to_ai",
+                  "conversation.transferred",
                   "task.moved",
                   "task.due_soon",
                   "task.followup_executed",
@@ -1238,6 +1257,32 @@ function verifyWebhook(body, signature, secret) {
             </Card>
 
             <Card className="p-6 space-y-4">
+              <h3 className="font-semibold text-text-primary">
+                conversation.transferred (Central, v0.63)
+              </h3>
+              <p className="text-sm text-text-secondary">
+                Disparado quando uma conversa é transferida para outro setor e/ou pessoa
+                (módulo Central, opcional por organização). O campo{" "}
+                <code className="text-brand-400 bg-surface-overlay px-1.5 py-0.5 rounded text-xs">data</code>{" "}
+                traz:
+              </p>
+              <CodeBlock language="json">{`{
+  "event": "conversation.transferred",
+  "data": {
+    "conversationId": "k57...",
+    "leadId": "jd7x...",          // omitido se a conversa não tem lead
+    "transferId": "m9c...",
+    "fromDepartmentId": "h3a...", // ou null
+    "toDepartmentId": "h4b...",   // ou null
+    "fromMemberId": "t1x...",     // ou null
+    "toMemberId": "t2y...",       // ou null
+    "byMemberId": "t3z...",
+    "note": "Cliente quer reserva em grupo" // ou null
+  }
+}`}</CodeBlock>
+            </Card>
+
+            <Card className="p-6 space-y-4">
               <h3 className="font-semibold text-text-primary">Exemplo de payload</h3>
               <CodeBlock language="json">{`{
   "event": "lead.created",
@@ -1272,7 +1317,7 @@ function verifyWebhook(body, signature, secret) {
               </p>
               <CodeBlock language="javascript">{`async function createLeadFromForm(formData) {
   const response = await fetch(
-    "https://SEU-DEPLOYMENT.convex.site/api/v1/inbound/lead",
+    "${API_BASE}/api/v1/inbound/lead",
     {
       method: "POST",
       headers: {

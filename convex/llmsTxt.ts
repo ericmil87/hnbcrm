@@ -203,6 +203,24 @@ A message thread on a lead, scoped by channel.
 | archivedAt | number? | When set, conversation is archived (hidden from the default inbox list) |
 | labelIds | Id<conversationLabels>[]? | Org-scoped labels applied to the conversation |
 
+### Central de atendimento (v0.63, opcional por organização)
+Quatro módulos opcionais em \`organizations.settings.modules\`: \`units\` (unidades), \`departments\` (setores), \`attribution\` (origem de anúncio, investimento, ROAS/CAC) e \`central\` (painel /app/central). Todos ausentes = DESLIGADOS: a organização vê o comportamento anterior (queries devolvem vazio, mutations recusam com "Módulo não habilitado").
+
+| Table | Description |
+|-------|-------------|
+| units | Unidades da organização (módulo units) |
+| departments | Setores de atendimento (módulo departments) |
+| conversationTransfers | Histórico de transferências de conversa entre setores/membros |
+| adSpend | Investimento em mídia por dia/campanha (módulo attribution) |
+
+New fields: conversations.unitId, departmentId, assignedTo, contactKind, firstInboundAt, firstResponseAt, firstResponderType (ai | human); leads.unitId, contactKind (lead | guest | supplier | agency | other; ausente = lead), attribution. The REST list/get endpoints return the raw documents, so these fields appear automatically when set (\`GET /api/v1/conversations\`, \`GET /api/v1/leads/get\`).
+
+Notification: in-app \`conversation_transferred\` (preference \`conversationTransferred\`).
+Webhook: \`conversation.transferred\` — payload: conversationId, leadId (omitted if the conversation has no lead), transferId, fromDepartmentId, toDepartmentId, fromMemberId, toMemberId, byMemberId, note (ids ausentes = null).
+\`settings.demoMode\`: when true the WhatsApp dispatch marks messages as delivered without any network call (demo organizations only).
+
+There are NO REST or MCP write routes for these modules yet (transfer, assign unit/department, outcome, ad spend are app-UI only); REST/MCP only read the fields above.
+
 ### Message
 An individual message in a conversation.
 
@@ -1271,6 +1289,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | newMessage | New inbound message on assigned lead |
 | dailyDigest | Daily summary of CRM activity |
 | aiDraftPending | In-app: an AI draft is waiting for review on your lead |
+| conversationTransferred | In-app: a conversation was transferred to you or your department (Central module) |
 
 ---
 
