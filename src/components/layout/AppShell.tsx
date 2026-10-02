@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
-import { Building2, ChevronsUpDown, Sparkles } from "lucide-react";
+import { Building2, ChevronsUpDown } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
+import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { CopilotPanel } from "@/components/copilot/CopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { api } from "../../../convex/_generated/api";
@@ -70,14 +71,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}
       {aiStatus?.active && aiStatus.copilotEnabled && (
         <>
-          <button
-            onClick={() => setCopilotOpen(true)}
-            className="fixed z-40 bottom-20 right-4 md:bottom-6 md:right-6 h-14 w-14 flex items-center justify-center rounded-full bg-brand-600 text-white shadow-elevated hover:bg-brand-700 active:bg-brand-800 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base"
-            aria-label="Abrir Copiloto IA"
-            title="Copiloto IA"
-          >
-            <Sparkles size={22} />
-          </button>
+          <CopilotFab onOpen={() => setCopilotOpen(true)} hidden={copilotOpen} />
           <CopilotPanel
             organizationId={organizationId}
             open={copilotOpen}
