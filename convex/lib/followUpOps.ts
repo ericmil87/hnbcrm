@@ -616,6 +616,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   // ── Cadeia de guardas do disparo ──
   modo_desligado: "a execução automática de follow-ups está desligada",
   lead_arquivado: "o lead foi arquivado",
+  evento_passado: "o evento alvo já aconteceu — follow-up cancelado",
   conversa_arquivada: "a conversa foi arquivada",
   tarefa_excluida: "a tarefa foi excluída",
   tarefa_concluida: "a tarefa já estava concluída",

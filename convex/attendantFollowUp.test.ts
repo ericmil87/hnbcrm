@@ -54,6 +54,7 @@ type FollowUpConfig = {
   quietStartHour?: number;
   quietEndHour?: number;
   dailyCap?: number;
+  eventDateField?: string;
 };
 
 async function seedFollowUpOrg(
@@ -2032,5 +2033,139 @@ describe("watchdog", () => {
     updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
     expect(updated!.status).toBe("needs_human");
     expect((await notificationsOf(t)).some((n) => n.type === "ai_followup_needs_human")).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("data do evento alvo (v0.64)", () => {
+  const FIELD = "data_evento";
+
+  async function setEvent(t: TestConvex<typeof schema>, seed: Seed, value: unknown) {
+    await t.run(async (ctx) => {
+      const lead = await ctx.db.get(seed.leadId);
+      await ctx.db.patch(seed.leadId, { customFields: { ...(lead?.customFields ?? {}), [FIELD]: value } });
+    });
+  }
+
+  async function armAndFire(t: TestConvex<typeof schema>, seed: Seed) {
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    return { followUp, result, fetchMock };
+  }
+
+  test("evento já passado (ISO) → canceled evento_passado, tarefa cancelada, sem fila nem LLM", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, {
+      followUps: { mode: "send", eventDateField: FIELD },
+      mode: "autopilot",
+    });
+    await armDefault(t, seed);
+    await setEvent(t, seed, "2026-09-20");
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+
+    expect(result.reason).toBe("evento_passado");
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated!.status).toBe("canceled");
+    expect(updated!.reasonCode).toBe("evento_passado");
+    expect((await tasksOf(t))[0].status).toBe("cancelled");
+    expect(await queueItems(t)).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("evento no futuro → dispara normalmente", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, {
+      followUps: { mode: "send", eventDateField: FIELD },
+      mode: "autopilot",
+    });
+    await armDefault(t, seed);
+    await setEvent(t, seed, "2026-10-10");
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result.ok).toBe(true);
+    expect((await queueItems(t)).some((i) => i.origin === "follow_up")).toBe(true);
+  });
+
+  test("data só-data no próprio dia do evento ainda dispara; timestamp passado cancela", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, {
+      followUps: { mode: "send", eventDateField: FIELD },
+      mode: "autopilot",
+    });
+    await armDefault(t, seed);
+    await setEvent(t, seed, "2026-09-22");
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result.ok).toBe(true);
+  });
+
+  test("epoch numérico no passado: compara como está", async () => {
+    const t2 = setup();
+    const seed2 = await seedFollowUpOrg(t2, {
+      followUps: { mode: "send", eventDateField: FIELD },
+      mode: "autopilot",
+    });
+    await armDefault(t2, seed2);
+    await setEvent(t2, seed2, Date.parse("2026-09-22T08:00:00Z"));
+    const f2 = await onlyFollowUp(t2);
+    await advanceToFireTime(t2, f2);
+    const r2 = await t2.mutation(internal.attendantFollowUp.fire, { followUpId: f2._id });
+    expect(r2.reason).toBe("evento_passado");
+  });
+
+  test("valor ilegível = sem guarda", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, {
+      followUps: { mode: "send", eventDateField: FIELD },
+      mode: "autopilot",
+    });
+    await armDefault(t, seed);
+    await setEvent(t, seed, "em breve");
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result.ok).toBe(true);
+  });
+
+  test("scheduleFollowUp com prazo depois do evento → erro e nada agendado", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, { followUps: { mode: "send", eventDateField: FIELD } });
+    await setEvent(t, seed, "2026-09-25");
+
+    const result = await scheduleFollowUp(t, seed, {
+      title: "Cobrar",
+      dueAtLocal: "2026-09-28T09:00",
+    });
+
+    expect(String(result.error)).toContain("não agende depois do evento (25/09/2026)");
+    expect(await followUpsOf(t)).toHaveLength(0);
+    expect(await tasksOf(t)).toHaveLength(0);
+
+    // Antes do evento passa.
+    const ok = await scheduleFollowUp(t, seed, { title: "Cobrar", dueAtLocal: "2026-09-24T09:00" });
+    expect(ok.status).toBe("agendado");
+  });
+
+  test("sem eventDateField configurado o comportamento não muda", async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, { followUps: { mode: "send" }, mode: "autopilot" });
+    await setEvent(t, seed, "2026-09-20");
+    const r = await scheduleFollowUp(t, seed, { title: "Cobrar", dueAtLocal: "2026-09-28T09:00" });
+    expect(r.status).toBe("agendado");
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result.ok).toBe(true);
   });
 });

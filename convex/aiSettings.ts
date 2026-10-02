@@ -496,6 +496,8 @@ const agentProfilePatchValidator = v.object({
         quietStartHour: v.optional(v.number()),
         quietEndHour: v.optional(v.number()),
         dailyCap: v.optional(v.number()),
+        // v0.64: chave do custom field (lead, tipo data) com a data do evento alvo.
+        eventDateField: v.optional(v.string()),
       })
     )
   ),
@@ -811,8 +813,18 @@ export const updateAgentProfile = mutation({
     // Follow-ups: faixas validadas no SERVIDOR — a UI é só a primeira barreira,
     // e um `quietStartHour` maior que o fim viraria "nunca manda" (ou, pior,
     // "manda a qualquer hora") sem ninguém entender por quê.
-    const followUps = args.patch.followUps;
+    let followUps = args.patch.followUps;
     if (followUps !== undefined && followUps !== null) {
+      // Chave do campo da data do evento: trim, vazio limpa, formato de chave.
+      const rawKey = followUps.eventDateField?.trim();
+      if (rawKey !== undefined && rawKey !== "") {
+        if (rawKey.length > 64 || !/^[a-z0-9_]+$/.test(rawKey)) {
+          throw new Error(
+            "Campo da data do evento: use a chave do campo (letras minúsculas, números e _, até 64 caracteres)"
+          );
+        }
+      }
+      followUps = { ...followUps, eventDateField: rawKey || undefined };
       const { maxChain, quietStartHour, quietEndHour, dailyCap } = followUps;
       if (
         maxChain !== undefined &&
@@ -925,25 +937,40 @@ export const updateAgentProfile = mutation({
 
 /**
  * Ops: define só o MODO dos follow-ups de um atendente (os ajustes finos ficam
- * como estão). Existe porque `updateAgentProfile` exige sessão de usuário —
- * `npx convex run aiSettings:internalSetFollowUpMode '{"agentMemberId":"…","mode":"send"}'`.
+ * como estão) e/ou o campo da data do evento. Existe porque `updateAgentProfile`
+ * exige sessão de usuário. `dryRun` é TRUE por padrão (passe `"dryRun":false`):
+ * `npx convex run --prod aiSettings:internalSetFollowUpMode '{"agentMemberId":"…","eventDateField":"data_evento","dryRun":false}'`.
  */
 export const internalSetFollowUpMode = internalMutation({
   args: {
     agentMemberId: v.id("teamMembers"),
-    mode: v.union(v.literal("off"), v.literal("draft"), v.literal("send")),
+    mode: v.optional(v.union(v.literal("off"), v.literal("draft"), v.literal("send"))),
+    // v0.64: chave do custom field com a data do evento; "" limpa.
+    eventDateField: v.optional(v.string()),
+    // Ops em prod: dryRun por padrão (só mostra o que mudaria).
+    dryRun: v.optional(v.boolean()),
   },
-  returns: v.null(),
+  returns: v.any(),
   handler: async (ctx, args) => {
     const agent = await ctx.db.get(args.agentMemberId);
     if (!agent || agent.type !== "ai" || agent.agentProfile?.kind !== "attendant") {
       throw new Error("Atendente IA não encontrado");
     }
     const now = Date.now();
-    const next = {
-      ...agent.agentProfile,
-      followUps: { ...agent.agentProfile.followUps, mode: args.mode },
+    const key = args.eventDateField?.trim();
+    if (key && (key.length > 64 || !/^[a-z0-9_]+$/.test(key))) {
+      throw new Error("eventDateField inválido: use a chave do campo ([a-z0-9_], até 64)");
+    }
+    const current = agent.agentProfile.followUps;
+    const merged = {
+      ...current,
+      mode: args.mode ?? current?.mode ?? ("draft" as const),
+      ...(args.eventDateField !== undefined ? { eventDateField: key || undefined } : {}),
     };
+    const next = { ...agent.agentProfile, followUps: merged };
+    if (args.dryRun !== false) {
+      return { dryRun: true, before: current ?? null, after: merged };
+    }
     await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
     await ctx.db.insert("auditLogs", {
       organizationId: agent.organizationId,
@@ -956,11 +983,11 @@ export const internalSetFollowUpMode = internalMutation({
         after: { followUps: next.followUps as unknown as Record<string, unknown> },
       },
       metadata: { name: agent.name, agentConfig: true, via: "ops" },
-      description: `Ops definiu os follow-ups do atendente '${agent.name}' como '${args.mode}'`,
+      description: `Ops definiu os follow-ups do atendente '${agent.name}' (modo '${merged.mode}', campo da data do evento '${merged.eventDateField ?? "-"}')`,
       severity: "medium",
       createdAt: now,
     });
-    return null;
+    return { dryRun: false, after: merged };
   },
 });
 

@@ -74,7 +74,7 @@ import {
   formatLocalShort,
 } from "./lib/agentSchedule";
 import { FOLLOW_UP_NOTE_MAX, sanitizeFollowUpNote } from "./lib/followUpNote";
-import { resolveFollowUpSettings } from "./lib/followUpSettings";
+import { parseEventEnd, resolveFollowUpSettings } from "./lib/followUpSettings";
 import {
   MAX_PENDING_FOLLOW_UPS,
   armFollowUp,
@@ -1255,6 +1255,31 @@ type FollowUpPlan = {
   aiExecutes: boolean;
 };
 
+/**
+ * Fim do evento alvo do lead da conversa (v0.64), ou null quando o atendente não
+ * configurou `followUps.eventDateField` / o lead não tem data legível.
+ */
+async function eventEndForConversation(
+  ctx: QueryCtx,
+  agent: Doc<"teamMembers">,
+  conversation: Doc<"conversations">
+): Promise<number | null> {
+  const field = resolveFollowUpSettings(agent.agentProfile, null).eventDateField;
+  if (!field) return null;
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  return parseEventEnd(lead?.customFields?.[field]);
+}
+
+/** DD/MM/AAAA do instante, para mensagens ao modelo. */
+function formatEventDate(ms: number, timezone: string): string {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: timezone,
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(ms));
+}
+
 async function planFollowUpSchedule(
   ctx: QueryCtx,
   input: {
@@ -1283,6 +1308,13 @@ async function planFollowUpSchedule(
   }
   if (due.dueAt > now + MAX_FOLLOW_UP_HORIZON_MS) {
     return { error: "O prazo máximo de um follow-up é de 30 dias" };
+  }
+  // Evento alvo: nada de cobrar depois que ele acontece.
+  const eventEnd = await eventEndForConversation(ctx, agent, conversation);
+  if (eventEnd !== null && due.dueAt > eventEnd) {
+    return {
+      error: `não agende depois do evento (${formatEventDate(eventEnd - 1, "UTC")})`,
+    };
   }
 
   // "ai" só executa de verdade com o recurso ligado; com `mode:"off"` cai no
@@ -1698,6 +1730,14 @@ export async function executeAttendantToolCore(
             return { error: "O prazo máximo de um follow-up é de 30 dias" };
           }
           const conversation = await ctx.db.get(args.conversationId);
+          const eventEnd = conversation
+            ? await eventEndForConversation(ctx, agent, conversation)
+            : null;
+          if (eventEnd !== null && due.dueAt > eventEnd) {
+            return {
+              error: `não agende depois do evento (${formatEventDate(eventEnd - 1, "UTC")})`,
+            };
+          }
           const channelConfig = conversation
             ? await resolveConversationChannelConfig(ctx, conversation)
             : null;

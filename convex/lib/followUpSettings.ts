@@ -17,6 +17,7 @@ export type FollowUpProfileConfig = {
   quietStartHour?: number;
   quietEndHour?: number;
   dailyCap?: number;
+  eventDateField?: string;
 };
 
 export type FollowUpSettings = {
@@ -29,7 +30,26 @@ export type FollowUpSettings = {
   quietEndHour: number;
   /** Teto diário por NÚMERO; 0 = sem teto. */
   dailyCap: number;
+  /** Chave do custom field (lead, tipo data) com a data do evento alvo; undefined = sem a guarda. */
+  eventDateField: string | undefined;
 };
+
+/**
+ * Fim do evento (epoch ms) a partir do valor cru do custom field, ou null se
+ * ausente/ilegível. Número = epoch como está. String só com data ("2027-02-04")
+ * vale até o FIM daquele dia (+24h sobre 00:00 UTC) — o follow-up do próprio dia
+ * do evento ainda é legítimo e não depende do fuso. String com hora é
+ * comparada como está. Puro.
+ */
+export function parseEventEnd(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (s === "") return null;
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return null;
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? t + 24 * 60 * 60 * 1000 : t;
+}
 
 /**
  * Ausente = "draft" (decisão D1): a tarefa da IA deixa de ser cosmética em toda
@@ -81,5 +101,6 @@ export function resolveFollowUpSettings(
     quietEndHour: quietStart < quietEnd ? quietEnd : DEFAULT_QUIET_END_HOUR,
     // 0 é um valor VÁLIDO (sem teto), então não pode cair no `intOr` com min 1.
     dailyCap: intOr(cfg?.dailyCap, defaultCap, 0, MAX_DAILY_CAP),
+    eventDateField: cfg?.eventDateField?.trim() || undefined,
   };
 }

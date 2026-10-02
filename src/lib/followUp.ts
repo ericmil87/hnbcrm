@@ -94,6 +94,7 @@ export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
   conversa_arquivada: "a conversa foi arquivada",
   conversa_sem_mensagens: "a conversa ainda não tem mensagens",
   lead_arquivado: "o lead foi arquivado",
+  evento_passado: "o evento alvo já aconteceu — follow-up cancelado",
   lead_excluido: "o lead foi excluído",
   humano_assumiu: "alguém do time assumiu a conversa",
   disparo_antecipado: "ainda não chegou a hora marcada",
