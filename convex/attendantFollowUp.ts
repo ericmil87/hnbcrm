@@ -35,7 +35,7 @@ import {
   formatLocalShort,
 } from "./lib/agentSchedule";
 import { resolveAgentTimezone } from "./lib/promptDateTime";
-import { resolveFollowUpSettings } from "./lib/followUpSettings";
+import { parseEventEnd, resolveFollowUpSettings } from "./lib/followUpSettings";
 import { sanitizeFollowUpNote } from "./lib/followUpNote";
 import {
   MAX_DEFERRALS,
@@ -190,6 +190,24 @@ async function fireCore(
       reason: "lead_arquivado",
     });
     return { ok: false, reason: "lead_arquivado" };
+  }
+  // Evento alvo já passou (v0.64): com `followUps.eventDateField` configurado e
+  // o lead com data legível, cobrar o cliente de um evento que já aconteceu é
+  // ruído. Data ausente/ilegível = sem guarda. Só-data vale até o fim do dia.
+  const followUpAgent = await ctx.db.get(followUp.agentMemberId);
+  const eventField = resolveFollowUpSettings(followUpAgent?.agentProfile, null).eventDateField;
+  if (eventField && lead) {
+    const eventEnd = parseEventEnd(lead.customFields?.[eventField]);
+    if (eventEnd !== null && eventEnd < now) {
+      await resolveFollowUpOutcome(ctx, followUp._id, {
+        kind: "canceled",
+        reason: "evento_passado",
+      });
+      // A tarefa existia só para a IA cobrar esse evento: sem o evento ela viraria
+      // uma tarefa-zumbi atribuída ao atendente, então é cancelada junto.
+      await ctx.db.patch(task._id, { status: "cancelled", updatedAt: now });
+      return { ok: false, reason: "evento_passado" };
+    }
   }
   const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);

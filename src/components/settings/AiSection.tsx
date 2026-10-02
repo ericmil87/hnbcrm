@@ -1024,6 +1024,7 @@ type Attendant = {
       quietStartHour?: number;
       quietEndHour?: number;
       dailyCap?: number;
+      eventDateField?: string;
     };
     autopilotEarlyAck?: { acceptedAt: number; acceptedBy: string };
     pipelineConfig?: {
@@ -1384,11 +1385,13 @@ function AttendantConfig({
   const [fuDailyCap, setFuDailyCap] = useState(
     followUpsCfg?.dailyCap !== undefined ? String(followUpsCfg.dailyCap) : ""
   );
+  const [fuEventDateField, setFuEventDateField] = useState(followUpsCfg?.eventDateField ?? "");
   const handleResetFollowUpDefaults = () => {
     setFuMaxChain("");
     setFuQuietStart("");
     setFuQuietEnd("");
     setFuDailyCap("");
+    setFuEventDateField("");
   };
 
   // Opções avançadas — regras de pipeline (P4).
@@ -1553,6 +1556,7 @@ function AttendantConfig({
             quietStartHour: followUpQuietStart.value,
             quietEndHour: followUpQuietEnd.value,
             dailyCap: followUpDailyCap.value,
+            eventDateField: fuEventDateField.trim() || undefined,
           },
           pipelineConfig: pipelineIsEmpty
             ? null
@@ -2050,6 +2054,24 @@ function AttendantConfig({
                   <p className="text-xs text-text-muted mt-1.5">
                     Em branco = automático (30/dia no WhatsApp não oficial, 100/dia no oficial). 0 =
                     sem teto.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+                    Campo com a data do evento (chave do campo personalizado, tipo data)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={64}
+                    value={fuEventDateField}
+                    onChange={(e) => setFuEventDateField(e.target.value)}
+                    placeholder="ex.: data_evento"
+                    className="w-64 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
+                  />
+                  <p className="text-xs text-text-muted mt-1.5">
+                    Opcional. Com o campo preenchido no lead, a IA não cobra evento que já
+                    aconteceu nem agenda follow-up para depois dele. Em branco = sem essa trava.
                   </p>
                 </div>
               </div>

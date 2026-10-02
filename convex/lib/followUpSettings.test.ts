@@ -13,6 +13,7 @@ import {
   DEFAULT_MAX_CHAIN,
   DEFAULT_QUIET_END_HOUR,
   DEFAULT_QUIET_START_HOUR,
+  parseEventEnd,
   resolveFollowUpSettings,
 } from "./followUpSettings";
 
@@ -96,5 +97,28 @@ describe("resolveFollowUpSettings", () => {
     expect(s.dailyCap).toBe(DEFAULT_DAILY_CAP_BRIDGE);
     expect(s.quietStartHour).toBe(DEFAULT_QUIET_START_HOUR);
     expect(s.quietEndHour).toBe(DEFAULT_QUIET_END_HOUR);
+  });
+});
+
+describe("eventDateField (v0.64)", () => {
+  test("ausente fica undefined; presente é exposto com trim", () => {
+    expect(resolveFollowUpSettings({}, "meta").eventDateField).toBeUndefined();
+    expect(
+      resolveFollowUpSettings({ followUps: { mode: "draft", eventDateField: " data_evento " } }, "meta")
+        .eventDateField
+    ).toBe("data_evento");
+    expect(
+      resolveFollowUpSettings({ followUps: { mode: "draft", eventDateField: "  " } }, "meta")
+        .eventDateField
+    ).toBeUndefined();
+  });
+
+  test("parseEventEnd: só-data vale até o fim do dia; timestamp e epoch como estão", () => {
+    expect(parseEventEnd("2027-02-04")).toBe(Date.parse("2027-02-05T00:00:00Z"));
+    expect(parseEventEnd("2027-02-04T10:00:00Z")).toBe(Date.parse("2027-02-04T10:00:00Z"));
+    expect(parseEventEnd(1234)).toBe(1234);
+    expect(parseEventEnd("lixo")).toBeNull();
+    expect(parseEventEnd(undefined)).toBeNull();
+    expect(parseEventEnd("")).toBeNull();
   });
 });
