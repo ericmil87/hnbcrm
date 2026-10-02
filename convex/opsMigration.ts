@@ -253,3 +253,30 @@ export const internalReapplyBridgeHmac = internalAction({
     return out;
   },
 });
+
+/**
+ * No deployment que virou cópia (dev): desativa TODAS as API keys para que uma
+ * integração antiga que ainda chame a URL velha falhe com 401 em vez de operar
+ * em silêncio sobre dados congelados. Reversível (`isActive`).
+ */
+export const internalDeactivateAllApiKeys = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    total: v.number(),
+    deactivated: v.number(),
+    keys: v.array(v.object({ organizationId: v.id("organizations"), name: v.string(), lastUsed: v.union(v.number(), v.null()) })),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const all = await ctx.db.query("apiKeys").collect();
+    const active = all.filter((k) => k.isActive);
+    if (!dryRun) {
+      for (const k of active) await ctx.db.patch(k._id, { isActive: false });
+    }
+    return {
+      total: all.length,
+      deactivated: dryRun ? 0 : active.length,
+      keys: active.map((k) => ({ organizationId: k.organizationId, name: k.name, lastUsed: k.lastUsed ?? null })),
+    };
+  },
+});
