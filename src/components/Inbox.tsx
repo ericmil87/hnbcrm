@@ -7,7 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -24,6 +24,7 @@ import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { FileUploadButton, type UploadedFile } from "@/components/ui/FileUploadButton";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
 import { ForwardModal } from "@/components/inbox/ForwardModal";
+import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
@@ -161,6 +162,19 @@ export function Inbox() {
   const conversationParam = searchParams.get("conversation");
   const { can, member } = usePermissions(organizationId);
   const currentMemberId = member?._id ?? null;
+  // "Nova conversa": `?nova=1` abre o modal vazio, `?nova=<contactId>` já com
+  // o contato. A URL é a fonte da verdade (fechar o modal limpa o param).
+  const novaParam = searchParams.get("nova");
+  const novaContactId =
+    novaParam && novaParam !== "1" && /^[a-z0-9]{25,40}$/.test(novaParam)
+      ? (novaParam as Id<"contacts">)
+      : null;
+  const canStartConversation = can("inbox", "reply");
+  const sendableChannels = useQuery(
+    api.startConversation.listSendableWhatsappChannels,
+    canStartConversation ? { organizationId } : "skip"
+  );
+  const showNewConversation = canStartConversation && (sendableChannels?.length ?? 0) > 0;
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
@@ -1115,6 +1129,10 @@ export function Inbox() {
           const next = new URLSearchParams(prev);
           if (conversationId) next.set("conversation", conversationId);
           else next.delete("conversation");
+          // Abrir uma conversa encerra o fluxo "Nova conversa" (`?nova=`):
+          // limpar aqui junta as duas escritas numa só (dois setSearchParams
+          // funcionais seguidos não se compõem — o segundo venceria).
+          if (conversationId) next.delete("nova");
           return next;
         },
         { replace: true }
@@ -1148,6 +1166,35 @@ export function Inbox() {
     setNewMessage(draft);
     navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
   }, [location.state, location.pathname, location.search, navigate]);
+
+  const openNewConversation = () => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("nova", "1");
+        return next;
+      },
+      { replace: true }
+    );
+  };
+  const closeNewConversation = () => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("nova");
+        return next;
+      },
+      { replace: true }
+    );
+  };
+  // Conversa iniciada/reaberta: abre no mesmo caminho do deep-link, inclusive
+  // no mobile (lista → mensagens). A aba volta para "ativas" e um filtro
+  // "Grupos" é desfeito — senão a conversa abriria sem aparecer na lista.
+  const handleNewConversationStarted = (conversationId: Id<"conversations">) => {
+    setShowArchived(false);
+    if (kindFilter === "group") setKindFilter("all");
+    handleSelectConversation(conversationId);
+  };
 
   const handleBackToList = () => {
     resetConversationState();
@@ -1400,7 +1447,23 @@ export function Inbox() {
         )}
       >
         <div className="p-4 border-b border-border space-y-2.5">
-          <h2 className="text-lg font-semibold text-text-primary">Conversas</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-text-primary">Conversas</h2>
+            {showNewConversation && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={openNewConversation}
+                className="h-11 w-11 p-0 md:h-8 md:w-auto md:px-3"
+                aria-label="Nova conversa"
+                title="Nova conversa"
+              >
+                <MessageSquarePlus size={16} />
+                <span className="hidden md:inline">Nova conversa</span>
+              </Button>
+            )}
+          </div>
           <div className="relative">
             <Search
               size={15}
@@ -2453,6 +2516,16 @@ export function Inbox() {
         }
         confirmLabel="Confirmar"
       />
+
+      {showNewConversation && (
+        <NewConversationModal
+          organizationId={organizationId}
+          open={novaParam !== null}
+          onClose={closeNewConversation}
+          initialContactId={novaContactId}
+          onStarted={handleNewConversationStarted}
+        />
+      )}
 
       {/* Painéis sobrepostos à conversa */}
       {showLeadPanel && openLeadId && (

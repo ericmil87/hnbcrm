@@ -1,0 +1,667 @@
+/**
+ * "Nova conversa" — um membro da equipe ABRE uma conversa de WhatsApp a partir
+ * do inbox (ou da ficha do contato), com um número novo ou um contato que já
+ * existe, escolhendo opcionalmente o funil/estágio do lead.
+ *
+ * Toda conversa 1:1 pendura num lead, então o lead sempre existe ao final;
+ * o que é opcional para quem usa é escolher ONDE ele nasce. Contato com lead
+ * nesta org → reaproveita o lead (o mesmo critério de `ensureLeadForContact`:
+ * o mais recente); lead com conversa de WhatsApp → reaproveita a conversa.
+ * Por isso a mutation é idempotente: chamar de novo para o mesmo número só
+ * devolve a conversa que já existe (é o que o botão "Abrir conversa" faz).
+ *
+ * A primeira mensagem segue o MESMO caminho de saída de `sendMessage`
+ * (`applyOutboundMessageSideEffects`: bump de conversa/lead, audit, activity,
+ * webhook `message.sent` e dispatch com pacing) — nada de canal paralelo.
+ */
+import { v, ConvexError } from "convex/values";
+import { query, mutation, QueryCtx, MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { Doc, Id } from "./_generated/dataModel";
+import { requireAuth, requirePermission } from "./lib/auth";
+import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { configProvider } from "./channelConfigs";
+import { getOrCreateConversation } from "./conversations";
+import { findOrCreateContactByPhone } from "./lib/inboundRouting";
+import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
+import { buildAuditDescription } from "./lib/auditDescription";
+import { buildSearchText } from "./lib/searchText";
+import { formatPhoneForDisplay } from "./lib/phone";
+import {
+  META_FREE_TEXT_ERROR,
+  OPT_OUT_ERROR_PREFIX,
+  canSendFreeTextOnStart,
+  cleanNamePart,
+  phoneLookupCandidates,
+  resolveStartPhone,
+} from "./lib/startConversation";
+
+const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
+const MAX_CONTENT_CHARS = 4096;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lookups compartilhados (prévia e mutation leem o MESMO estado)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Ctx = QueryCtx | MutationCtx;
+
+function memberPermissions(member: Doc<"teamMembers">): Permissions {
+  return resolvePermissions(member.role as Role, (member as any).permissions as Permissions | undefined);
+}
+
+async function findContactByPhone(
+  ctx: Ctx,
+  organizationId: Id<"organizations">,
+  phone: string
+): Promise<Doc<"contacts"> | null> {
+  for (const candidate of phoneLookupCandidates(phone)) {
+    const row = await ctx.db
+      .query("contacts")
+      .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", organizationId).eq("phone", candidate))
+      .first();
+    if (row) return row;
+  }
+  return null;
+}
+
+async function isOptedOut(ctx: Ctx, organizationId: Id<"organizations">, phone: string): Promise<boolean> {
+  for (const candidate of phoneLookupCandidates(phone)) {
+    const row = await ctx.db
+      .query("optOuts")
+      .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", organizationId).eq("phone", candidate))
+      .first();
+    if (row) return true;
+  }
+  return false;
+}
+
+/** O mesmo critério de `ensureLeadForContact`: o lead mais recente do contato nesta org. */
+async function findLeadForContact(
+  ctx: Ctx,
+  organizationId: Id<"organizations">,
+  contactId: Id<"contacts">
+): Promise<Doc<"leads"> | null> {
+  const leads = await ctx.db
+    .query("leads")
+    .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+    .order("desc")
+    .take(50);
+  return leads.find((l) => l.organizationId === organizationId) ?? null;
+}
+
+async function findWhatsappConversation(ctx: Ctx, leadId: Id<"leads">): Promise<Doc<"conversations"> | null> {
+  return await ctx.db
+    .query("conversations")
+    .withIndex("by_lead_and_channel", (q) => q.eq("leadId", leadId).eq("channel", "whatsapp"))
+    .first();
+}
+
+async function activeBoards(ctx: Ctx, organizationId: Id<"organizations">): Promise<Doc<"boards">[]> {
+  const boards = await ctx.db
+    .query("boards")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .collect();
+  return boards
+    .filter((b) => b.archivedAt === undefined && b.deletionStartedAt === undefined)
+    .sort((a, b) => a.order - b.order);
+}
+
+async function boardStages(ctx: Ctx, boardId: Id<"boards">): Promise<Doc<"stages">[]> {
+  return await ctx.db
+    .query("stages")
+    .withIndex("by_board_and_order", (q) => q.eq("boardId", boardId))
+    .take(100);
+}
+
+/** Telefone do contato para o envio (o dispatch lê `whatsappNumber ?? phone`). */
+function contactRawPhone(contact: Doc<"contacts">): string | undefined {
+  return contact.whatsappNumber ?? contact.phone ?? undefined;
+}
+
+function contactDisplayName(contact: Doc<"contacts">): string {
+  return [contact.firstName, contact.lastName].filter(Boolean).join(" ").trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canais que dá para usar (sem exigir settings:view)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Números de WhatsApp ativos da org, para o modal "Nova conversa". Basta ser
+ * membro: o agente não tem `settings:view` (o que `getChannelConfigs` exige) e
+ * mesmo assim precisa escolher por qual número falar. Por isso a forma devolvida
+ * é uma ALLOWLIST estrita — nenhum token, segredo, URL de gateway ou id de
+ * instância sai daqui (nem mascarado).
+ */
+export const listSendableWhatsappChannels = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(
+    v.object({
+      _id: v.id("channelConfigs"),
+      provider: v.union(v.literal("meta"), v.literal("bridge")),
+      displayName: v.string(),
+      phoneDisplay: v.union(v.string(), v.null()),
+      connected: v.boolean(),
+      sessionState: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const configs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(50);
+    return configs
+      .filter((c) => c.channel === "whatsapp" && c.status === "active")
+      .map((c) => {
+        const provider = configProvider(c);
+        const phone = c.bridgePhone
+          ? formatPhoneForDisplay(c.bridgePhone)
+          : c.displayPhoneNumber ?? null;
+        return {
+          _id: c._id,
+          provider,
+          displayName: c.displayName,
+          phoneDisplay: phone || null,
+          // Meta: `status: "active"` já é o resultado do health check da Cloud
+          // API. Bridge: só "connected" na sessão whatsmeow entrega mensagem.
+          connected: provider === "meta" ? true : c.bridgeSessionState === "connected",
+          sessionState: provider === "bridge" ? c.bridgeSessionState ?? null : null,
+        };
+      });
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prévia
+// ─────────────────────────────────────────────────────────────────────────────
+
+const previewReturns = v.object({
+  phone: v.union(v.string(), v.null()),
+  phoneDisplay: v.union(v.string(), v.null()),
+  phoneValid: v.boolean(),
+  phoneError: v.union(v.string(), v.null()),
+  contact: v.union(
+    v.null(),
+    v.object({ id: v.id("contacts"), name: v.string(), phone: v.union(v.string(), v.null()) })
+  ),
+  lead: v.union(
+    v.null(),
+    v.object({
+      id: v.id("leads"),
+      title: v.string(),
+      boardName: v.union(v.string(), v.null()),
+      stageName: v.union(v.string(), v.null()),
+      archived: v.boolean(),
+    })
+  ),
+  conversation: v.union(
+    v.null(),
+    v.object({
+      id: v.id("conversations"),
+      archived: v.boolean(),
+      channelConfigId: v.union(v.id("channelConfigs"), v.null()),
+    })
+  ),
+  optedOut: v.boolean(),
+  defaultBoard: v.union(
+    v.null(),
+    v.object({
+      id: v.id("boards"),
+      name: v.string(),
+      stages: v.array(v.object({ id: v.id("stages"), name: v.string() })),
+    })
+  ),
+  canCreateContact: v.boolean(),
+  canCreateLead: v.boolean(),
+});
+
+/**
+ * O que acontece se eu iniciar a conversa com este número/contato? Mostra no
+ * modal "este número já é o contato X / já tem o lead Y / já tem conversa".
+ * Lê exatamente o que a mutation vai ler (mesmos helpers).
+ */
+export const previewStartConversation = query({
+  args: {
+    organizationId: v.id("organizations"),
+    phone: v.optional(v.string()),
+    contactId: v.optional(v.id("contacts")),
+  },
+  returns: previewReturns,
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "inbox", "reply");
+    const perms = memberPermissions(member);
+
+    let contact: Doc<"contacts"> | null = null;
+    let phone: string | null = null;
+    let phoneError: string | null = null;
+
+    if (args.contactId) {
+      const c = await ctx.db.get(args.contactId);
+      // Prévia NÃO lança para contato inexistente/de outra org: ela roda num
+      // useQuery alimentado por deep-link (`?nova=<id>`), e um throw ali
+      // derrubaria a tela inteira. A mutation, essa sim, recusa.
+      contact = c && c.organizationId === args.organizationId ? c : null;
+      const raw = contact ? contactRawPhone(contact) ?? args.phone : undefined;
+      if (!contact) {
+        phoneError = "Contato não encontrado";
+      } else if (raw) {
+        const r = resolveStartPhone(raw);
+        if (r.ok) phone = r.phone;
+        else phoneError = r.error;
+      } else {
+        phoneError = "Este contato não tem telefone — informe um número";
+      }
+    } else {
+      const r = resolveStartPhone(args.phone);
+      if (r.ok) {
+        phone = r.phone;
+        contact = await findContactByPhone(ctx, args.organizationId, phone);
+      } else {
+        phoneError = r.error;
+      }
+    }
+
+    const lead = contact ? await findLeadForContact(ctx, args.organizationId, contact._id) : null;
+    const conversation = lead ? await findWhatsappConversation(ctx, lead._id) : null;
+
+    let leadInfo: {
+      id: Id<"leads">;
+      title: string;
+      boardName: string | null;
+      stageName: string | null;
+      archived: boolean;
+    } | null = null;
+    if (lead) {
+      const board = await ctx.db.get(lead.boardId);
+      const stage = await ctx.db.get(lead.stageId);
+      leadInfo = {
+        id: lead._id,
+        title: lead.title,
+        boardName: board?.name ?? null,
+        stageName: stage?.name ?? null,
+        archived: lead.archivedAt !== undefined,
+      };
+    }
+
+    let defaultBoard = null;
+    if (!lead) {
+      const boards = await activeBoards(ctx, args.organizationId);
+      const board = boards.find((b) => b.isDefault) ?? boards[0];
+      if (board) {
+        const stages = await boardStages(ctx, board._id);
+        defaultBoard = {
+          id: board._id,
+          name: board.name,
+          stages: stages.map((s) => ({ id: s._id, name: s.name })),
+        };
+      }
+    }
+
+    return {
+      phone,
+      phoneDisplay: phone ? formatPhoneForDisplay(phone) : null,
+      phoneValid: phone !== null,
+      phoneError,
+      contact: contact
+        ? {
+            id: contact._id,
+            name: contactDisplayName(contact),
+            phone: contactRawPhone(contact) ? formatPhoneForDisplay(contactRawPhone(contact)!) : null,
+          }
+        : null,
+      lead: leadInfo,
+      conversation: conversation
+        ? {
+            id: conversation._id,
+            archived: conversation.archivedAt !== undefined,
+            channelConfigId: conversation.channelConfigId ?? null,
+          }
+        : null,
+      optedOut: phone ? await isOptedOut(ctx, args.organizationId, phone) : false,
+      defaultBoard,
+      canCreateContact: hasPermission(perms, "contacts", "edit"),
+      canCreateLead: hasPermission(perms, "leads", "edit_own"),
+    };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mutation
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function findOrCreateTeamSource(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  now: number
+): Promise<Id<"leadSources">> {
+  const sources = await ctx.db
+    .query("leadSources")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .collect();
+  const existing = sources.find((s) => s.name === TEAM_SOURCE_NAME);
+  if (existing) return existing._id;
+  return await ctx.db.insert("leadSources", {
+    organizationId,
+    name: TEAM_SOURCE_NAME,
+    type: "phone",
+    isActive: true,
+    createdAt: now,
+  });
+}
+
+/** Board/estágio ESCOLHIDOS pelo usuário: inválido é erro, nunca fallback mudo. */
+async function resolveTargetPipeline(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  boardId: Id<"boards"> | undefined,
+  stageId: Id<"stages"> | undefined
+): Promise<{ board: Doc<"boards">; stage: Doc<"stages"> }> {
+  let board: Doc<"boards"> | null = null;
+  if (boardId) {
+    board = await ctx.db.get(boardId);
+    if (!board || board.organizationId !== organizationId) throw new ConvexError("Funil não encontrado");
+    if (board.archivedAt !== undefined || board.deletionStartedAt !== undefined) {
+      throw new ConvexError(`O funil «${board.name}» está arquivado — escolha outro`);
+    }
+  } else if (stageId) {
+    const stage = await ctx.db.get(stageId);
+    if (!stage || stage.organizationId !== organizationId) throw new ConvexError("Estágio não encontrado");
+    board = await ctx.db.get(stage.boardId);
+    if (!board || board.archivedAt !== undefined || board.deletionStartedAt !== undefined) {
+      throw new ConvexError("O funil deste estágio está arquivado — escolha outro");
+    }
+  } else {
+    const boards = await activeBoards(ctx, organizationId);
+    board = boards.find((b) => b.isDefault) ?? boards[0] ?? null;
+    if (!board) throw new ConvexError("Nenhum funil ativo — crie um funil antes de iniciar conversas");
+  }
+
+  const stages = await boardStages(ctx, board._id);
+  if (stageId) {
+    const stage = stages.find((s) => s._id === stageId);
+    if (!stage) throw new ConvexError(`O estágio escolhido não pertence ao funil «${board.name}»`);
+    return { board, stage };
+  }
+  if (!stages[0]) throw new ConvexError(`O funil «${board.name}» não tem estágios`);
+  return { board, stage: stages[0] };
+}
+
+export const startConversation = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    phone: v.optional(v.string()),
+    contactId: v.optional(v.id("contacts")),
+    firstName: v.optional(v.string()),
+    lastName: v.optional(v.string()),
+    boardId: v.optional(v.id("boards")),
+    stageId: v.optional(v.id("stages")),
+    content: v.optional(v.string()),
+    optOutAck: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    conversationId: v.id("conversations"),
+    leadId: v.id("leads"),
+    contactId: v.id("contacts"),
+    createdContact: v.boolean(),
+    createdLead: v.boolean(),
+    createdConversation: v.boolean(),
+    unarchived: v.boolean(),
+    channelSwitched: v.boolean(),
+    messageId: v.optional(v.id("messages")),
+  }),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "inbox", "reply");
+    const perms = memberPermissions(member);
+    const actorType = member.type === "ai" ? "ai" : "human";
+    const now = Date.now();
+
+    // 1. Canal
+    const channel = await ctx.db.get(args.channelConfigId);
+    if (!channel || channel.organizationId !== args.organizationId || channel.channel !== "whatsapp") {
+      throw new ConvexError("Número de WhatsApp não encontrado nesta organização");
+    }
+    if (channel.status !== "active") {
+      throw new ConvexError(`O número «${channel.displayName}» não está ativo — escolha outro ou reconecte em Configurações → Canais`);
+    }
+    const provider = configProvider(channel);
+
+    // 2. Mensagem: validada ANTES de escrever qualquer coisa (servidor não
+    //    confia na UI — Meta não aceita texto livre fora da janela de 24 h).
+    const content = (args.content ?? "").trim();
+    if (content && !canSendFreeTextOnStart(provider)) throw new ConvexError(META_FREE_TEXT_ERROR);
+    if (content.length > MAX_CONTENT_CHARS) {
+      throw new ConvexError(`Mensagem longa demais (máx. ${MAX_CONTENT_CHARS} caracteres)`);
+    }
+
+    // 3. Telefone + contato
+    let contact: Doc<"contacts"> | null = null;
+    let phone: string;
+    if (args.contactId) {
+      const c = await ctx.db.get(args.contactId);
+      if (!c || c.organizationId !== args.organizationId) throw new ConvexError("Contato não encontrado");
+      contact = c;
+      const raw = contactRawPhone(c) ?? args.phone;
+      if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
+      const r = resolveStartPhone(raw);
+      if (!r.ok) throw new ConvexError(r.error);
+      phone = r.phone;
+    } else {
+      const r = resolveStartPhone(args.phone);
+      if (!r.ok) throw new ConvexError(r.error);
+      phone = r.phone;
+      contact = await findContactByPhone(ctx, args.organizationId, phone);
+    }
+
+    // 4. Supressão: avisar, não travar — mas o aceite é explícito e auditado.
+    const optedOut = await isOptedOut(ctx, args.organizationId, phone);
+    if (optedOut && args.optOutAck !== true) {
+      throw new ConvexError(
+        `${OPT_OUT_ERROR_PREFIX} Este número pediu para não receber mensagens. Confirme que quer continuar mesmo assim.`
+      );
+    }
+
+    // 5. Contato (cria só com permissão de contatos, como `createContact`)
+    let createdContact = false;
+    if (!contact) {
+      if (!hasPermission(perms, "contacts", "edit")) {
+        throw new ConvexError("Permissão insuficiente para criar contatos");
+      }
+      const contactId = await findOrCreateContactByPhone(ctx, {
+        organizationId: args.organizationId,
+        phone,
+        firstName: cleanNamePart(args.firstName),
+        lastName: cleanNamePart(args.lastName),
+      });
+      contact = (await ctx.db.get(contactId))!;
+      createdContact = true;
+      await ctx.db.insert("auditLogs", {
+        organizationId: args.organizationId,
+        entityType: "contact",
+        entityId: contactId,
+        action: "create",
+        actorId: member._id,
+        actorType,
+        metadata: { phone, via: "start_conversation" },
+        description: buildAuditDescription({ action: "create", entityType: "contact", metadata: {} }),
+        severity: "low",
+        createdAt: now,
+      });
+    } else {
+      // Contato escolhido sem telefone (ou com telefone formatado à mão): grava
+      // o número normalizado no campo que o dispatch lê, sem mexer no resto.
+      const patch: Partial<Doc<"contacts">> = {};
+      if (!contact.phone) patch.phone = phone;
+      if (!contact.whatsappNumber) patch.whatsappNumber = phone;
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(contact._id, { ...patch, searchText: buildSearchText({ ...contact, ...patch }), updatedAt: now });
+        contact = (await ctx.db.get(contact._id))!;
+      }
+    }
+
+    // 6. Lead: reaproveita o mais recente; senão cria no funil escolhido.
+    let lead = await findLeadForContact(ctx, args.organizationId, contact._id);
+    let createdLead = false;
+    if (!lead) {
+      if (!hasPermission(perms, "leads", "edit_own")) {
+        throw new ConvexError("Permissão insuficiente para criar leads");
+      }
+      const { board, stage } = await resolveTargetPipeline(ctx, args.organizationId, args.boardId, args.stageId);
+      const org = await ctx.db.get(args.organizationId);
+      const title = contactDisplayName(contact) || formatPhoneForDisplay(phone);
+      const sourceId = await findOrCreateTeamSource(ctx, args.organizationId, now);
+      // Dono = quem iniciou, NUNCA o atendente IA — mesmo com
+      // `aiConfig.autoAssign` ligado. Quem abre a conversa de propósito é dono
+      // dela; entregar o lead à IA faria o atendente responder por cima de uma
+      // abordagem que a pessoa acabou de começar.
+      const leadId = await ctx.db.insert("leads", {
+        organizationId: args.organizationId,
+        title,
+        contactId: contact._id,
+        boardId: board._id,
+        stageId: stage._id,
+        assignedTo: member._id,
+        value: 0,
+        currency: org?.settings.currency || "USD",
+        priority: "medium",
+        temperature: "cold",
+        sourceId,
+        tags: [],
+        customFields: {},
+        conversationStatus: "new",
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+      lead = (await ctx.db.get(leadId))!;
+      createdLead = true;
+      await ctx.db.insert("auditLogs", {
+        organizationId: args.organizationId,
+        entityType: "lead",
+        entityId: leadId,
+        action: "create",
+        actorId: member._id,
+        actorType,
+        metadata: { title, contactId: contact._id, source: "start_conversation" },
+        description: buildAuditDescription({ action: "create", entityType: "lead", metadata: { title, contactId: contact._id } }),
+        severity: "medium",
+        createdAt: now,
+      });
+      await ctx.db.insert("activities", {
+        organizationId: args.organizationId,
+        leadId,
+        type: "created",
+        actorId: member._id,
+        actorType,
+        content: `Lead "${title}" criado ao iniciar conversa no WhatsApp`,
+        metadata: { contactId: contact._id, via: "start_conversation" },
+        createdAt: now,
+      });
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: args.organizationId,
+        event: "lead.created",
+        payload: { leadId, title, contactId: contact._id, boardId: board._id, stageId: stage._id },
+      });
+    }
+
+    // 7. Conversa
+    const existing = await findWhatsappConversation(ctx, lead._id);
+    const conversationId = await getOrCreateConversation(ctx, {
+      organizationId: args.organizationId,
+      leadId: lead._id,
+      channel: "whatsapp",
+      channelConfigId: args.channelConfigId,
+    });
+    const createdConversation = existing === null;
+    let conversation = (await ctx.db.get(conversationId))!;
+    const convPatch: Partial<Doc<"conversations">> = {};
+    // Igual às campanhas: a conversa passa a sair pelo número escolhido.
+    const channelSwitched = !createdConversation && conversation.channelConfigId !== args.channelConfigId;
+    if (conversation.channelConfigId !== args.channelConfigId) convPatch.channelConfigId = args.channelConfigId;
+    const unarchived = conversation.archivedAt !== undefined;
+    if (unarchived) convPatch.archivedAt = undefined;
+    if (Object.keys(convPatch).length > 0) {
+      await ctx.db.patch(conversationId, { ...convPatch, updatedAt: now });
+      conversation = (await ctx.db.get(conversationId))!;
+    }
+
+    // 8. Registro: activity no lead + audit da conversa (high com aceite de opt-out)
+    await ctx.db.insert("activities", {
+      organizationId: args.organizationId,
+      leadId: lead._id,
+      type: "note",
+      actorId: member._id,
+      actorType,
+      content: createdConversation
+        ? `Conversa iniciada pela equipe via WhatsApp (${channel.displayName})`
+        : `Conversa reaberta pela equipe via WhatsApp (${channel.displayName})`,
+      metadata: { conversationId, channelConfigId: args.channelConfigId, via: "start_conversation" },
+      createdAt: now,
+    });
+    const auditMetadata = {
+      leadId: lead._id,
+      contactId: contact._id,
+      channelConfigId: args.channelConfigId,
+      provider,
+      createdContact,
+      createdLead,
+      createdConversation,
+      channelSwitched,
+      unarchived,
+      ...(optedOut ? { optOutAcknowledged: true } : {}),
+    };
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "conversation",
+      entityId: conversationId,
+      action: createdConversation ? "create" : "update",
+      actorId: member._id,
+      actorType,
+      metadata: auditMetadata,
+      description: optedOut
+        ? `Iniciou conversa no WhatsApp com número em opt-out (aceite explícito)`
+        : createdConversation
+          ? `Iniciou conversa no WhatsApp (${channel.displayName})`
+          : `Reabriu conversa no WhatsApp (${channel.displayName})`,
+      severity: optedOut ? "high" : "low",
+      createdAt: now,
+    });
+
+    // 9. Primeira mensagem (só bridge) — mesmo caminho de saída do sendMessage.
+    let messageId: Id<"messages"> | undefined;
+    if (content) {
+      messageId = await ctx.db.insert("messages", {
+        organizationId: args.organizationId,
+        conversationId,
+        leadId: lead._id,
+        direction: "outbound",
+        senderId: member._id,
+        senderType: actorType,
+        content,
+        contentType: "text",
+        isInternal: false,
+        createdAt: now,
+      });
+      await applyOutboundMessageSideEffects(ctx, {
+        conversation,
+        member,
+        messageId,
+        now,
+        activityContent: `Message sent via ${conversation.channel}`,
+      });
+    }
+
+    return {
+      conversationId,
+      leadId: lead._id,
+      contactId: contact._id,
+      createdContact,
+      createdLead,
+      createdConversation,
+      unarchived,
+      channelSwitched,
+      ...(messageId ? { messageId } : {}),
+    };
+  },
+});

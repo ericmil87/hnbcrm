@@ -15,7 +15,8 @@ import { CustomFieldsRenderer } from "@/components/CustomFieldsRenderer";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { AvatarUpload } from "@/components/ui/AvatarUpload";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
-import { Trash2, Bot, ExternalLink, Target, BellOff, Users, MessageSquare, ShieldCheck } from "lucide-react";
+import { NewConversationModal } from "@/components/inbox/NewConversationModal";
+import { Trash2, Bot, ExternalLink, Target, BellOff, Users, MessageSquare, ShieldCheck, MessageSquarePlus } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
 
@@ -102,6 +103,15 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
   const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
 
   const contactData = useQuery(api.contacts.getContactWithLeads, { contactId });
+  // "Conversar no WhatsApp": abre o mesmo modal do inbox já com este contato.
+  const [showNewConversation, setShowNewConversation] = useState(false);
+  const { can } = usePermissions(contactData?.organizationId as Id<"organizations">);
+  const canStartConversation = !!contactData && can("inbox", "reply");
+  const sendableChannels = useQuery(
+    api.startConversation.listSendableWhatsappChannels,
+    canStartConversation ? { organizationId: contactData.organizationId } : "skip"
+  );
+  const showStartConversation = canStartConversation && (sendableChannels?.length ?? 0) > 0;
   const fieldDefs = useQuery(
     api.fieldDefinitions.getFieldDefinitions,
     contactData ? { organizationId: contactData.organizationId, entityType: "contact" as const } : "skip"
@@ -282,10 +292,21 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
             <div>
               {/* Edit toggle */}
               {!editing ? (
-                <div className="mb-4">
-                  <Button variant="primary" size="md" onClick={() => setEditing(true)} className="w-full">
+                <div className="mb-4 flex flex-col sm:flex-row gap-2">
+                  <Button variant="primary" size="md" onClick={() => setEditing(true)} className="w-full sm:flex-1 h-11 sm:h-10">
                     Editar Informações
                   </Button>
+                  {showStartConversation && (
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      onClick={() => setShowNewConversation(true)}
+                      className="w-full sm:flex-1 h-11 sm:h-10"
+                    >
+                      <MessageSquarePlus size={16} />
+                      Conversar no WhatsApp
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="flex gap-2 mb-4">
@@ -647,6 +668,20 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
         variant="danger"
       />
     </SlideOver>
+
+    {showStartConversation && (
+      <NewConversationModal
+        organizationId={contact.organizationId as Id<"organizations">}
+        open={showNewConversation}
+        onClose={() => setShowNewConversation(false)}
+        initialContactId={contactId}
+        onStarted={(conversationId) => {
+          setShowNewConversation(false);
+          onClose();
+          navigate(`${TAB_ROUTES.inbox}?conversation=${conversationId}`);
+        }}
+      />
+    )}
 
     {/* Montado depois do SlideOver do contato para ficar por cima dele. */}
     {selectedLeadId && (
