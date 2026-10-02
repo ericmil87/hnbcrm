@@ -36,6 +36,8 @@ type AiDraftMeta = {
   // v0.60 — vínculo com o follow-up que a IA mesma agendou (segue o rascunho
   // no coaching/supersede; ver convex/attendantFollowUp.ts).
   followUpId?: string;
+  // v0.64 — flyer da agenda externa, re-anexado no envio.
+  attachments?: string[];
 };
 
 // Atalhos de coaching — clicar preenche o campo, o humano ainda pode editar
@@ -248,6 +250,9 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
             <p className="mb-1.5 text-xs italic text-text-muted truncate" title={draft.instruction}>
               Instrução aplicada: "{draft.instruction}"
             </p>
+          )}
+          {draft.attachments && draft.attachments.length > 0 && (
+            <p className="mb-1.5 text-xs text-text-muted">📎 Imagem anexada (flyer da agenda) — vai junto, com o texto como legenda.</p>
           )}
           {editing ? (
             <textarea

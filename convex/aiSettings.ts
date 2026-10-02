@@ -7,8 +7,24 @@
  * O runtime (orgAiActive) só roda com enabled && lgpdAck.
  */
 import { v } from "convex/values";
-import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
+import {
+  action,
+  query,
+  mutation,
+  internalAction,
+  internalQuery,
+  internalMutation,
+  MutationCtx,
+  QueryCtx,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
+import { encryptSecret, secretLast4 } from "./lib/secretCrypto";
+import {
+  DEFAULT_AGENDA_HEADER,
+  isValidAgendaUrl,
+  isValidHeaderName,
+} from "./lib/externalAgenda";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import {
@@ -1590,5 +1606,284 @@ export const internalGetProviderConfig = internalQuery({
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
     return org?.settings.aiConfig?.providerConfig ?? null;
+  },
+});
+
+// ── Agenda externa do atendente (v0.64) ──
+// O endpoint da org (fonte de verdade de datas/valores/vagas) + a chave dele,
+// cifrada em `orgSecrets` (purpose "external-agenda-api-key"). A cifra exige
+// action (Web Crypto + env), então a escrita é action → internalMutation, no
+// mesmo desenho de `orgSecrets.createOrgSecret`.
+
+const externalAgendaApplyResult = v.object({
+  dryRun: v.boolean(),
+  agentName: v.string(),
+  enabled: v.boolean(),
+  url: v.string(), // sem query string — pode carregar segredo
+  headerName: v.string(),
+  keyAction: v.union(v.literal("kept"), v.literal("replaced"), v.literal("none")),
+});
+
+/** URL para exibir/auditar: origem + caminho, sem query string nem fragmento. */
+function redactAgendaUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return "(url inválida)";
+  }
+}
+
+function validateExternalAgendaInput(args: { url: string; headerName?: string; apiKey?: string | null }): {
+  url: string;
+  headerName: string | undefined;
+  apiKey: string | null;
+} {
+  const url = args.url.trim();
+  if (!isValidAgendaUrl(url)) throw new Error("A URL da agenda precisa começar com https://");
+  const headerName = args.headerName?.trim() || undefined;
+  if (headerName && !isValidHeaderName(headerName)) {
+    throw new Error("Nome de header inválido (use letras, números e hífen, ex.: X-API-Key)");
+  }
+  const apiKey = typeof args.apiKey === "string" ? args.apiKey.trim() : null;
+  if (apiKey !== null && apiKey.length > 0 && apiKey.length < 8) {
+    throw new Error("Chave de API muito curta");
+  }
+  return { url, headerName, apiKey: apiKey && apiKey.length > 0 ? apiKey : null };
+}
+
+/** Configura a agenda externa de um atendente (Configurações → IA). */
+export const setExternalAgenda = action({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.id("teamMembers"),
+    enabled: v.boolean(),
+    url: v.string(),
+    headerName: v.optional(v.string()),
+    // string = troca a chave; null/ausente = mantém a atual.
+    apiKey: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: externalAgendaApplyResult,
+  handler: async (ctx, args): Promise<{
+    dryRun: boolean;
+    agentName: string;
+    enabled: boolean;
+    url: string;
+    headerName: string;
+    keyAction: "kept" | "replaced" | "none";
+  }> => {
+    // Guard ANTES de cifrar qualquer coisa.
+    await ctx.runQuery(internal.channelConfigs.internalRequireSettingsManage, {
+      organizationId: args.organizationId,
+    });
+    const input = validateExternalAgendaInput(args);
+    const encryptedKey = input.apiKey ? await encryptSecret(input.apiKey) : undefined;
+    return await ctx.runMutation(internal.aiSettings.internalApplyExternalAgenda, {
+      organizationId: args.organizationId,
+      agentMemberId: args.agentMemberId,
+      enabled: args.enabled,
+      url: input.url,
+      headerName: input.headerName,
+      ...(encryptedKey && input.apiKey
+        ? { encryptedKey, last4: secretLast4(input.apiKey) }
+        : {}),
+      actor: "user",
+      dryRun: false,
+    });
+  },
+});
+
+/**
+ * Ops (sem sessão de usuário), dryRun por padrão:
+ *   npx convex run --prod aiSettings:internalSetExternalAgenda '{"organizationId":"…","agentMemberId":"…","enabled":true,"url":"https://…","apiKey":"…","dryRun":false}'
+ */
+export const internalSetExternalAgenda = internalAction({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.id("teamMembers"),
+    enabled: v.boolean(),
+    url: v.string(),
+    headerName: v.optional(v.string()),
+    apiKey: v.optional(v.union(v.string(), v.null())),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: externalAgendaApplyResult,
+  handler: async (ctx, args): Promise<{
+    dryRun: boolean;
+    agentName: string;
+    enabled: boolean;
+    url: string;
+    headerName: string;
+    keyAction: "kept" | "replaced" | "none";
+  }> => {
+    const dryRun = args.dryRun !== false;
+    const input = validateExternalAgendaInput(args);
+    const encryptedKey = input.apiKey && !dryRun ? await encryptSecret(input.apiKey) : undefined;
+    return await ctx.runMutation(internal.aiSettings.internalApplyExternalAgenda, {
+      organizationId: args.organizationId,
+      agentMemberId: args.agentMemberId,
+      enabled: args.enabled,
+      url: input.url,
+      headerName: input.headerName,
+      ...(encryptedKey && input.apiKey ? { encryptedKey, last4: secretLast4(input.apiKey) } : {}),
+      ...(dryRun && input.apiKey ? { wouldReplaceKey: true } : {}),
+      actor: "ops",
+      dryRun,
+    });
+  },
+});
+
+export const internalApplyExternalAgenda = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.id("teamMembers"),
+    enabled: v.boolean(),
+    url: v.string(),
+    headerName: v.optional(v.string()),
+    encryptedKey: v.optional(v.string()),
+    last4: v.optional(v.string()),
+    wouldReplaceKey: v.optional(v.boolean()),
+    actor: v.union(v.literal("user"), v.literal("ops")),
+    dryRun: v.boolean(),
+  },
+  returns: externalAgendaApplyResult,
+  handler: async (ctx, args) => {
+    const member =
+      args.actor === "user"
+        ? await requirePermission(ctx, args.organizationId, "settings", "manage")
+        : null;
+    const agent = await ctx.db.get(args.agentMemberId);
+    if (
+      !agent ||
+      agent.organizationId !== args.organizationId ||
+      agent.type !== "ai" ||
+      agent.agentProfile?.kind !== "attendant"
+    ) {
+      throw new Error("Atendente IA não encontrado nesta organização");
+    }
+    const previous = agent.agentProfile.externalAgenda;
+    const replacing = args.encryptedKey !== undefined || args.wouldReplaceKey === true;
+    const keyAction: "kept" | "replaced" | "none" = replacing
+      ? "replaced"
+      : previous?.apiKeyRef
+        ? "kept"
+        : "none";
+    const summary = {
+      dryRun: args.dryRun,
+      agentName: agent.name,
+      enabled: args.enabled,
+      url: redactAgendaUrl(args.url),
+      headerName: args.headerName ?? DEFAULT_AGENDA_HEADER,
+      keyAction,
+    };
+    if (args.dryRun) return summary;
+
+    const now = Date.now();
+    let apiKeyRef = previous?.apiKeyRef;
+    if (args.encryptedKey !== undefined) {
+      const secretId = await ctx.db.insert("orgSecrets", {
+        organizationId: args.organizationId,
+        name: "Agenda externa",
+        purpose: "external-agenda-api-key",
+        encryptedValue: args.encryptedKey,
+        last4: args.last4 ?? "",
+        createdBy: member?._id ?? agent._id,
+        createdAt: now,
+        updatedAt: now,
+      });
+      // A chave anterior sai junto — só se for MESMO da agenda desta org.
+      if (previous?.apiKeyRef) {
+        const old = await ctx.db.get(previous.apiKeyRef.id);
+        if (
+          old &&
+          old.organizationId === args.organizationId &&
+          old.purpose === "external-agenda-api-key"
+        ) {
+          await ctx.db.delete(old._id);
+        }
+      }
+      apiKeyRef = { kind: "orgSecret" as const, id: secretId };
+    }
+
+    const next = {
+      enabled: args.enabled,
+      url: args.url,
+      ...(args.headerName ? { headerName: args.headerName } : {}),
+      ...(apiKeyRef ? { apiKeyRef } : {}),
+    };
+    await ctx.db.patch(agent._id, {
+      agentProfile: { ...agent.agentProfile, externalAgenda: next },
+      updatedAt: now,
+    });
+
+    // Auditoria SEM a chave e sem query string da URL.
+    const auditView = (cfg: typeof previous) =>
+      cfg
+        ? {
+            enabled: cfg.enabled,
+            url: redactAgendaUrl(cfg.url),
+            headerName: cfg.headerName ?? DEFAULT_AGENDA_HEADER,
+            hasKey: cfg.apiKeyRef !== undefined,
+          }
+        : null;
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "teamMember",
+      entityId: agent._id,
+      action: "update",
+      ...(member ? { actorId: member._id } : {}),
+      actorType: member ? "human" : "system",
+      changes: {
+        before: { externalAgenda: auditView(previous) },
+        after: { externalAgenda: auditView(next) },
+      },
+      metadata: {
+        name: agent.name,
+        agentConfig: true,
+        externalAgenda: true,
+        keyAction,
+        ...(member ? {} : { via: "ops" }),
+      },
+      description: `${args.enabled ? "Ligou" : "Desligou"} a agenda externa do atendente '${agent.name}'${
+        keyAction === "replaced" ? " (chave de API trocada)" : ""
+      }`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return summary;
+  },
+});
+
+/** Estado da agenda externa para o editor do atendente — NUNCA a chave. */
+export const getExternalAgendaConfig = query({
+  args: { agentMemberId: v.id("teamMembers") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      enabled: v.boolean(),
+      url: v.string(),
+      headerName: v.string(),
+      hasKey: v.boolean(),
+      keyLast4: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentMemberId);
+    if (!agent || agent.type !== "ai") return null;
+    await requirePermission(ctx, agent.organizationId, "settings", "view");
+    const config = agent.agentProfile?.externalAgenda;
+    if (!config) return null;
+    let keyLast4: string | null = null;
+    if (config.apiKeyRef) {
+      const secret = await ctx.db.get(config.apiKeyRef.id);
+      if (secret && secret.organizationId === agent.organizationId) keyLast4 = secret.last4;
+    }
+    return {
+      enabled: config.enabled,
+      url: config.url,
+      headerName: config.headerName ?? DEFAULT_AGENDA_HEADER,
+      hasKey: keyLast4 !== null,
+      keyLast4,
+    };
   },
 });
