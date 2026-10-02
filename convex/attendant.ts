@@ -16,6 +16,7 @@
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
 import { v } from "convex/values";
+import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import {
   action,
   internalAction,
@@ -1122,6 +1123,14 @@ export const internalClaimForProcessing = internalMutation({
           priority: lead!.priority,
           qualification: lead!.qualification ?? null,
           tags: lead!.tags,
+          // v0.64: o que o formulário/funil já capturou (só as chaves de
+          // `captureFields`) e a mensagem que a pessoa escreveu no site —
+          // dado do cliente, dentro do envelope não-confiável.
+          ...leadCapturedContext(
+            lead!.customFields,
+            profile.pipelineConfig?.captureFields,
+            rawHistory
+          ),
         },
         contact: contact
           ? {
@@ -1164,6 +1173,43 @@ export const internalClaimForProcessing = internalMutation({
     };
   },
 });
+
+/**
+ * Campos capturados (subconjunto de `customFields` nas chaves de
+ * `captureFields`, ≤15 chaves, valores ≤200 chars) + a última nota interna
+ * "Formulário do site: …" do histórico já carregado (≤500 chars). Tudo
+ * opcional — lead sem nada disso não muda o prompt.
+ */
+export function leadCapturedContext(
+  customFields: Record<string, unknown> | undefined,
+  captureFields: string[] | undefined,
+  recentMessages: Array<{ isInternal: boolean; content: string }>
+): { camposCapturados?: Record<string, string>; mensagemDoFormulario?: string } {
+  const out: { camposCapturados?: Record<string, string>; mensagemDoFormulario?: string } = {};
+  if (customFields && captureFields && captureFields.length > 0) {
+    const picked: Record<string, string> = {};
+    let count = 0;
+    for (const key of captureFields) {
+      if (count >= 15) break;
+      const value = customFields[key];
+      if (value === undefined || value === null || value === "") continue;
+      const text = typeof value === "string" ? value : JSON.stringify(value);
+      if (!text) continue;
+      picked[key] = text.slice(0, 200);
+      count++;
+    }
+    if (count > 0) out.camposCapturados = picked;
+  }
+  // `recentMessages` vem em ordem DESC (mais recente primeiro).
+  const formNote = recentMessages.find(
+    (m) => m.isInternal && m.content.startsWith(FORM_NOTE_PREFIX)
+  );
+  if (formNote) {
+    const text = formNote.content.slice(FORM_NOTE_PREFIX.length).trim();
+    if (text) out.mensagemDoFormulario = text.slice(0, 500);
+  }
+  return out;
+}
 
 export const internalReleaseLock = internalMutation({
   args: { conversationId: v.id("conversations"), runId: v.string() },

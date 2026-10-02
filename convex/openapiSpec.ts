@@ -41,7 +41,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Criar lead via captura universal",
-        "description": "Cria um novo lead com contato e mensagem opcionais. Se o contato não existir, será criado automaticamente. Se uma mensagem for fornecida, uma conversa será criada. Requer permissão leads: edit_own na chave de API.",
+        "description": "Cria um novo lead com contato e mensagem opcionais. O telefone do contato é normalizado para dígitos E.164 sem o sinal de mais (padrão Brasil: +55 (11) 98765-4321 → 5511987654321) e gravado em phone e whatsappNumber; contato existente com o mesmo número ou e-mail é reaproveitado. sourceId precisa ser da organização da chave (senão 400). Regras de roteamento por tag da organização escolhem board/estágio (a primeira tag que casar vence; sem regra = board padrão ativo). Boas-vindas automáticas pelo WhatsApp (opt-in por organização): com telefone e uma das tags de consentimento configuradas, UMA mensagem sai do número configurado (nunca duas vezes para o mesmo contato, nunca para opt-out; falha de entrega abre repasse humano) e o lead ganha a tag contato:iniciado. Quando a boas-vindas se aplica ou channel = whatsapp, message vira NOTA INTERNA («Formulário do site: …») na conversa do WhatsApp — nunca é enviada ao cliente. Requer permissão leads: edit_own na chave de API.",
         "operationId": "createInboundLead",
         "requestBody": {
           "required": true,
@@ -63,14 +63,14 @@ export const OPENAPI_SPEC = `{
                       "company": { "type": "string", "description": "Empresa" }
                     }
                   },
-                  "message": { "type": "string", "description": "Mensagem inicial (cria uma conversa)" },
+                  "message": { "type": "string", "description": "Mensagem que a pessoa escreveu no formulário. Com boas-vindas aplicável ou channel=whatsapp vira nota interna; senão (legado) é registrada numa conversa do canal informado" },
                   "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal"], "default": "webchat", "description": "Canal da conversa" },
                   "value": { "type": "number", "default": 0, "description": "Valor monetário do lead" },
                   "currency": { "type": "string", "description": "Código da moeda (ex: BRL)" },
                   "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "default": "medium", "description": "Prioridade do lead" },
                   "temperature": { "type": "string", "enum": ["cold", "warm", "hot"], "default": "cold", "description": "Temperatura do lead" },
-                  "sourceId": { "type": "string", "description": "ID da fonte de captação" },
-                  "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags de categorização" },
+                  "sourceId": { "type": "string", "description": "ID da fonte de captação — precisa ser da organização da chave (senão 400)" },
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags de categorização — também acionam o roteamento por tag e a boas-vindas do WhatsApp" },
                   "customFields": { "type": "object", "additionalProperties": true, "description": "Campos personalizados" }
                 }
               }
@@ -87,7 +87,13 @@ export const OPENAPI_SPEC = `{
                   "properties": {
                     "success": { "type": "boolean", "const": true },
                     "leadId": { "type": "string", "description": "ID do lead criado" },
-                    "contactId": { "type": "string", "description": "ID do contato associado" }
+                    "contactId": { "type": "string", "description": "ID do contato associado" },
+                    "boardId": { "type": "string", "description": "Board onde o lead entrou" },
+                    "stageId": { "type": "string", "description": "Estágio onde o lead entrou" },
+                    "routedByTag": { "type": "string", "description": "Tag da regra de roteamento aplicada (ausente = board padrão)" },
+                    "conversationId": { "type": "string", "description": "Conversa criada (nota do formulário e/ou boas-vindas)" },
+                    "welcomeQueued": { "type": "boolean", "description": "true quando a boas-vindas do WhatsApp foi enfileirada para envio" },
+                    "welcomeSkippedReason": { "type": "string", "description": "Por que a boas-vindas aplicável não saiu (desligado, sem_telefone, sem_tag_exigida, opt_out, canal_inativo, canal_invalido, canal_desconectado, ja_contatado, mensagem_vazia, erro)" }
                   }
                 }
               }

@@ -45,6 +45,7 @@ import { toDataUri } from "./lib/bridgeMedia";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
 import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
 import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
+import { applyInboundWelcomeDeliveryFailure } from "./lib/inboundLeadWelcomeHooks";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import { getLeadRef } from "./lib/leadRef";
 import { isDemoOrg } from "./lib/orgModules";
@@ -996,6 +997,9 @@ export const internalMarkDispatchFailed = internalMutation({
       ok: false,
       detail: args.detail,
     });
+    // Boas-vindas do lead inbound (v0.64): falha de entrega abre UM repasse
+    // humano, sem retry (no-op fora de boas-vindas).
+    await applyInboundWelcomeDeliveryFailure(ctx, { messageId: args.messageId, detail: args.detail });
     return null;
   },
 });

@@ -5,6 +5,7 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { buildSearchText } from "./lib/searchText";
+import { normalizeCampaignPhone } from "./lib/phone";
 
 // Shared optional-field arg validators for enrichment fields
 const enrichmentArgFields = {
@@ -470,10 +471,19 @@ export const internalFindOrCreateContact = internalMutation({
     firstName: v.optional(v.string()),
     lastName: v.optional(v.string()),
     company: v.optional(v.string()),
+    // v0.64 (`POST /api/v1/inbound/lead`): normaliza o telefone para os dígitos
+    // E.164 (sem "+") que o ingest do WhatsApp usa — a resposta da pessoa cai
+    // neste MESMO contato. Telefone não normalizável segue cru (comportamento
+    // antigo). Ausente = comportamento antigo (formulários públicos).
+    normalizePhone: v.optional(v.boolean()),
   },
   returns: v.id("contacts"),
   handler: async (ctx, args) => {
     let contact = null;
+
+    const normalized =
+      args.normalizePhone && args.phone ? normalizeCampaignPhone(args.phone) : null;
+    const phone = normalized?.ok ? normalized.phone : args.phone;
 
     if (args.email) {
       contact = await ctx.db
@@ -484,7 +494,16 @@ export const internalFindOrCreateContact = internalMutation({
         .first();
     }
 
-    if (!contact && args.phone) {
+    if (!contact && phone) {
+      contact = await ctx.db
+        .query("contacts")
+        .withIndex("by_organization_and_phone", (q) =>
+          q.eq("organizationId", args.organizationId).eq("phone", phone)
+        )
+        .first();
+    }
+    // Contato legado gravado com o telefone CRU (antes da normalização).
+    if (!contact && normalized?.ok && args.phone && args.phone !== phone) {
       contact = await ctx.db
         .query("contacts")
         .withIndex("by_organization_and_phone", (q) =>
@@ -493,17 +512,31 @@ export const internalFindOrCreateContact = internalMutation({
         .first();
     }
 
-    if (contact) return contact._id;
+    if (contact) {
+      // Contato achado sem WhatsApp: carimba o número normalizado (é o que o
+      // dispatch e o ingest usam).
+      // Achado pelo e-mail e sem telefone: grava também `phone` (o ingest do
+      // WhatsApp procura o contato por `phone`).
+      if (normalized?.ok && (!contact.whatsappNumber || !contact.phone)) {
+        await ctx.db.patch(contact._id, {
+          ...(contact.whatsappNumber ? {} : { whatsappNumber: normalized.phone }),
+          ...(contact.phone ? {} : { phone: normalized.phone }),
+          updatedAt: Date.now(),
+        });
+      }
+      return contact._id;
+    }
 
     const now = Date.now();
-    const searchText = buildSearchText(args);
+    const searchText = buildSearchText({ ...args, phone });
 
     return await ctx.db.insert("contacts", {
       organizationId: args.organizationId,
       firstName: args.firstName,
       lastName: args.lastName,
       email: args.email,
-      phone: args.phone,
+      phone,
+      ...(normalized?.ok ? { whatsappNumber: normalized.phone } : {}),
       company: args.company,
       tags: [],
       searchText: searchText || undefined,

@@ -13,6 +13,8 @@ import {
   type PermissionCategory,
 } from "./lib/permissions";
 import { encodeHeaderKey } from "./lib/importKeys";
+import { normalizeCampaignPhone } from "./lib/phone";
+import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import { resend } from "./email";
 import {
   webhookVerify as whatsappWebhookVerify,
@@ -331,85 +333,130 @@ http.route({
       if (!body.title) {
         return errorResponse("Title is required", 400);
       }
+      const organizationId = apiKeyRecord.organizationId;
+      const tags: string[] = Array.isArray(body.tags)
+        ? body.tags.filter((t: unknown): t is string => typeof t === "string")
+        : [];
 
-      // Find or create contact
+      // v0.64: board/estágio (regra por tag → default ATIVO), `sourceId`
+      // validado contra a org e auto-assign só para ATENDENTE — antes de
+      // qualquer escrita, para um 400 não deixar contato órfão.
+      const target = await ctx.runQuery(internal.inboundLeadWelcome.internalResolveInboundLeadTarget, {
+        organizationId,
+        tags,
+        ...(body.sourceId != null && body.sourceId !== "" ? { sourceId: String(body.sourceId) } : {}),
+      });
+      if (!target.ok) {
+        return errorResponse(target.error, target.status);
+      }
+
+      // Find or create contact — telefone normalizado (dígitos E.164 em
+      // `phone` + `whatsappNumber`, igual ao ingest do WhatsApp).
       const contactId = await ctx.runMutation(internal.contacts.internalFindOrCreateContact, {
-        organizationId: apiKeyRecord.organizationId,
+        organizationId,
         email: body.contact?.email,
         phone: body.contact?.phone,
         firstName: body.contact?.firstName,
         lastName: body.contact?.lastName,
         company: body.contact?.company,
+        normalizePhone: true,
       });
 
-      // Get default board and stage
-      const boards = await ctx.runQuery(internal.boards.internalGetBoards, {
-        organizationId: apiKeyRecord.organizationId,
-      });
-      const defaultBoard = boards.find((b: { isDefault: boolean; _id: string }) => b.isDefault) || boards[0];
-
-      if (!defaultBoard) {
-        return errorResponse("No boards configured", 500);
-      }
-
-      const stages = await ctx.runQuery(internal.boards.internalGetStages, {
-        boardId: defaultBoard._id,
-      });
-      const firstStage = stages[0];
-
-      if (!firstStage) {
-        return errorResponse("No stages configured", 500);
-      }
-
-      // Auto-assign to AI agent if configured
-      let assignedTo = undefined;
-      const org = await ctx.runQuery(internal.organizations.internalGetOrganization, {
-        organizationId: apiKeyRecord.organizationId,
-      });
-
-      if (org?.settings.aiConfig?.autoAssign) {
-        const aiAgents = await ctx.runQuery(internal.teamMembers.internalGetTeamMembers, {
-          organizationId: apiKeyRecord.organizationId,
-        });
-        const availableAI = aiAgents.find((m: { type: string; status: string; _id: string }) => m.type === "ai" && m.status === "active");
-        assignedTo = availableAI?._id;
-      }
-
-      // Create lead
       const leadId = await ctx.runMutation(internal.leads.internalCreateLead, {
-        organizationId: apiKeyRecord.organizationId,
+        organizationId,
         title: body.title,
         contactId,
-        boardId: defaultBoard._id,
-        stageId: firstStage._id,
-        assignedTo,
+        boardId: target.boardId,
+        stageId: target.stageId,
+        assignedTo: target.assignedTo,
         value: body.value || 0,
         currency: body.currency,
         priority: body.priority || "medium",
         temperature: body.temperature || "cold",
-        sourceId: body.sourceId,
-        tags: body.tags || [],
+        sourceId: target.sourceId,
+        tags,
         customFields: body.customFields || {},
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
-      // Create conversation if message provided
-      if (body.message) {
-        const conversationId = await ctx.runMutation(internal.conversations.internalCreateConversation, {
-          organizationId: apiKeyRecord.organizationId,
-          leadId,
-          channel: body.channel || "webchat",
-        });
+      // Boas-vindas automáticas valem para ESTE lead? (interruptor + telefone +
+      // tag de consentimento + texto). O envio em si re-checa tudo.
+      const rawPhone = typeof body.contact?.phone === "string" ? body.contact.phone : "";
+      const welcome = await ctx.runQuery(internal.inboundLeadWelcome.internalWelcomeAppliesTo, {
+        organizationId,
+        hasPhone: rawPhone ? normalizeCampaignPhone(rawPhone).ok : false,
+        tags,
+      });
 
-        await ctx.runMutation(internal.conversations.internalSendMessage, {
-          conversationId,
-          content: body.message,
-          isInternal: false,
-          teamMemberId: apiKeyRecord.teamMemberId,
-        });
+      let conversationId: Id<"conversations"> | undefined;
+      if (body.message) {
+        const formMessage = String(body.message);
+        if (welcome || body.channel === "whatsapp") {
+          // A mensagem do formulário é do LEAD, não nossa: vira NOTA INTERNA na
+          // conversa do WhatsApp — nunca um outbound (que sairia para o
+          // próprio cliente com o texto que ele mesmo escreveu).
+          conversationId = await ctx.runMutation(internal.conversations.internalCreateConversation, {
+            organizationId,
+            leadId,
+            channel: "whatsapp",
+            ...(welcome ? { channelConfigId: welcome.channelConfigId } : {}),
+          });
+          await ctx.runMutation(internal.conversations.internalSendMessage, {
+            conversationId,
+            content: `${FORM_NOTE_PREFIX}${formMessage}`,
+            isInternal: true,
+            teamMemberId: apiKeyRecord.teamMemberId,
+          });
+        } else {
+          // Legado (sem boas-vindas e sem canal WhatsApp): comportamento antigo.
+          conversationId = await ctx.runMutation(internal.conversations.internalCreateConversation, {
+            organizationId,
+            leadId,
+            channel: body.channel || "webchat",
+          });
+          await ctx.runMutation(internal.conversations.internalSendMessage, {
+            conversationId,
+            content: formMessage,
+            isInternal: false,
+            teamMemberId: apiKeyRecord.teamMemberId,
+          });
+        }
       }
 
-      return jsonResponse({ success: true, leadId, contactId }, 201);
+      let welcomeQueued = false;
+      let welcomeSkippedReason: string | undefined;
+      if (welcome) {
+        try {
+          const result = await ctx.runMutation(internal.inboundLeadWelcome.internalSendInboundLeadWelcome, {
+            organizationId,
+            leadId,
+            contactId,
+            actorMemberId: apiKeyRecord.teamMemberId,
+          });
+          welcomeQueued = result.sent;
+          welcomeSkippedReason = result.reason;
+          if (result.conversationId) conversationId = result.conversationId;
+        } catch (e) {
+          // O lead já existe: falha da boas-vindas não vira 500 da captura.
+          console.error("[inbound/lead] boas-vindas falhou:", e instanceof Error ? e.message : e);
+          welcomeSkippedReason = "erro";
+        }
+      }
+
+      return jsonResponse(
+        {
+          success: true,
+          leadId,
+          contactId,
+          boardId: target.boardId,
+          stageId: target.stageId,
+          ...(target.routedByTag ? { routedByTag: target.routedByTag } : {}),
+          ...(conversationId ? { conversationId } : {}),
+          welcomeQueued,
+          ...(welcomeSkippedReason ? { welcomeSkippedReason } : {}),
+        },
+        201
+      );
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }

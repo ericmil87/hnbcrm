@@ -1463,10 +1463,18 @@ export const internalCreateConversation = internalMutation({
       v.literal("webchat"),
       v.literal("internal")
     ),
+    // v0.64 (inbound/lead): carimba o número do WhatsApp ao criar. Só aceita
+    // canal da MESMA org (senão é ignorado).
+    channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.id("conversations"),
   handler: async (ctx, args) => {
-    return await getOrCreateConversation(ctx, args);
+    let channelConfigId = args.channelConfigId;
+    if (channelConfigId) {
+      const config = await ctx.db.get(channelConfigId);
+      if (!config || config.organizationId !== args.organizationId) channelConfigId = undefined;
+    }
+    return await getOrCreateConversation(ctx, { ...args, channelConfigId });
   },
 });
 

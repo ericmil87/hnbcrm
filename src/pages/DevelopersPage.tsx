@@ -1315,6 +1315,27 @@ function verifyWebhook(body, signature, secret) {
               <p className="text-sm text-text-secondary">
                 Envie dados de um formulário de contato direto para o CRM:
               </p>
+              <ul className="text-sm text-text-secondary list-disc pl-5 space-y-1">
+                <li>
+                  O telefone é normalizado (ex.: <code>+55 (11) 98765-4321</code> →{" "}
+                  <code>5511987654321</code>) e o contato com o mesmo número ou e-mail é
+                  reaproveitado — a resposta da pessoa no WhatsApp cai no mesmo contato.
+                </li>
+                <li>
+                  <code>sourceId</code> precisa ser da sua organização (senão 400). Regras de
+                  roteamento por tag enviam o lead ao pipeline/estágio configurado.
+                </li>
+                <li>
+                  Com as boas-vindas do WhatsApp ligadas na organização, um lead com telefone e
+                  uma tag de consentimento recebe UMA mensagem automática (nunca para opt-out;
+                  falha de entrega vira repasse humano). A resposta traz{" "}
+                  <code>welcomeQueued</code>.
+                </li>
+                <li>
+                  <code>message</code> vira nota interna &quot;Formulário do site: …&quot; na
+                  conversa do WhatsApp — nunca é enviada de volta ao cliente.
+                </li>
+              </ul>
               <CodeBlock language="javascript">{`async function createLeadFromForm(formData) {
   const response = await fetch(
     "${API_BASE}/api/v1/inbound/lead",
@@ -1327,17 +1348,18 @@ function verifyWebhook(body, signature, secret) {
       body: JSON.stringify({
         title: \`Lead: \${formData.name}\`,
         contact: {
-          name: formData.name,
+          firstName: formData.name,
           email: formData.email,
-          phone: formData.phone,
+          phone: formData.phone, // "+55 (11) 98765-4321" é normalizado
         },
-        message: formData.message,
+        tags: ["optin:whatsapp"], // consentimento → boas-vindas automáticas
+        message: formData.message, // vira nota interna, nunca é enviada
       }),
     }
   );
 
   const data = await response.json();
-  console.log("Lead criado:", data.leadId);
+  console.log("Lead criado:", data.leadId, "boas-vindas:", data.welcomeQueued);
   return data;
 }`}</CodeBlock>
             </Card>
