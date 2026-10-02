@@ -99,3 +99,15 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
 3. A partir daí: `main` → prod (via Vercel/deploy); dev recebe o que estiver em desenvolvimento e guarda a org demo.
    A org demo também existe no prod após o restore (é inofensiva: `demoMode` nunca envia) — útil para demonstrar
    direto no hnbcrm.com; se não quiser, apagar lá.
+
+## 7. Executado em 02/10/2026 (registro)
+
+- 13:0x — prod `careful-anaconda-127` recebeu envs (iguais ao dev, sem `RESEND_TEST_MODE`), código (commit `e322fa8`) e componentes.
+- 13:05:41 export do dev (73,8 MB com arquivos) → 13:07:06 import no prod com `--replace-all` (19.079 documentos).
+- 13:07:08 re-apontamento do bridge **zerou** a URL das 3 instâncias (o `POST /webhook` do wuzapi lê `webhookurl`, não
+  `webhook`); corrigido e confirmado às **13:07:55** (`GET /webhook` = URL do prod). Janela sem webhook: 47 s.
+- 13:07:09 mensagens agendadas re-armadas no prod (2); worker de publicação de grupo re-armado pelo `internalWatchdog`.
+- Dev neutralizado: `RESEND_TEST_MODE=true`, 5 canais desarmados (status `disabled`, credenciais apagadas), 3 agendadas
+  canceladas. Dev mantém a org demo `grupo-terrae-demo` e o simulador (chave local renomeada para `CONVEX_DEV_ADMIN_KEY`).
+- Pendente humano: Vercel (§4), webhook da Meta e do Resend (§2.4), aviso aos clientes sobre a janela, purga das orgs
+  reais do dev (op a escrever; o dev já não envia nada).
