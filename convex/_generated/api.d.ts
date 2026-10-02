@@ -148,6 +148,7 @@ import type * as onboarding from "../onboarding.js";
 import type * as onboardingSeed from "../onboardingSeed.js";
 import type * as openapiSpec from "../openapiSpec.js";
 import type * as opsMigration from "../opsMigration.js";
+import type * as opsPurge from "../opsPurge.js";
 import type * as optOuts from "../optOuts.js";
 import type * as orgModules from "../orgModules.js";
 import type * as orgSecrets from "../orgSecrets.js";
@@ -319,6 +320,7 @@ declare const fullApi: ApiFromModules<{
   onboardingSeed: typeof onboardingSeed;
   openapiSpec: typeof openapiSpec;
   opsMigration: typeof opsMigration;
+  opsPurge: typeof opsPurge;
   optOuts: typeof optOuts;
   orgModules: typeof orgModules;
   orgSecrets: typeof orgSecrets;
