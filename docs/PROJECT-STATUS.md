@@ -1,12 +1,12 @@
 # HNBCRM — Project Status & Roadmap
 
-**Last Updated:** 2026-09-28
-**Current Version:** v0.62.0
+**Last Updated:** 2026-10-02
+**Current Version:** v0.66.0
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
 
-## Update 2026-10-02 (v0.34 → v0.65)
+## Update 2026-10-02 (v0.34 → v0.66)
 
 The numbered sections below still describe the v0.33 snapshot. What shipped since then:
 
@@ -30,6 +30,7 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.63 (2026-10-02)** — Central de atendimento (módulos opcionais por org): unidades, setores, transferência de conversa, desfecho, atribuição de anúncio, painel da Central, modo demonstração
 - **v0.64 (2026-10-02)** — Agenda externa consultável pelo atendente (+ flyer), follow-up nunca após o evento, lead do site com boas-vindas automáticas pelo WhatsApp
 - **v0.65 (2026-10-02)** — Guardrail anti-bot do atendente (ligado por padrão): para de responder a auto-resposta/boletim/outro assistente, abre repasse `bot_suspect` e etiqueta o lead; `@newsletter`/`@broadcast` descartados no parser; nome do contato editável direto no inbox
+- **v0.66 (2026-10-02)** — "Nova conversa" na Caixa de Entrada (a equipe inicia atendimento pelo WhatsApp: contato novo ou existente, lead reaproveitado ou criado no funil escolhido, opt-out com aceite); botão do Copiloto arrastável com posição salva, começando fora do caminho no celular
 
 ### Pendências atuais
 

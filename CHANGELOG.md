@@ -2,6 +2,22 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.66.0] - 2026-10-02
+
+### Nova conversa a partir da Caixa de Entrada
+
+- Botão "Nova conversa" ao lado do título da lista (ícone no celular, texto no desktop) para a equipe iniciar um atendimento pelo WhatsApp sem esperar o contato escrever; também em "Conversar no WhatsApp" no painel do contato e pelos deep-links `/app/entrada?nova=1` e `?nova=<contactId>`
+- Um campo só: nome (busca os contatos) ou telefone (normalizado para E.164, Brasil por padrão; procura também a grafia sem o 9º dígito que o ingest às vezes grava). O modal diz se o número já é contato, já tem lead ou já tem conversa — nesse caso o botão vira "Abrir conversa" e a conversa existente é reaberta (desarquivada e passada para o número escolhido)
+- O lead é a âncora de toda conversa 1 a 1, então não é opcional: o contato que já tem lead reaproveita o mais recente; sem lead, nasce um no funil/estágio escolhidos (padrão: funil default, 1º estágio), atribuído a quem iniciou — nunca ao atendente IA, mesmo com auto-atribuição ligada — com origem "Conversa iniciada pela equipe" e webhook `lead.created`
+- Primeira mensagem opcional só no gateway não oficial (bridge); no número oficial (Meta) a conversa abre e o template é enviado pelo composer, porque uma conversa nova está sempre fora da janela de 24 h
+- Número em opt-out: aviso âmbar + aceite explícito "Entendo e quero continuar", auditado com severidade alta
+- Permissões: `inbox:reply` sempre; `contacts:edit` quando cria contato e `leads:edit_own` quando cria lead (os mesmos gates de criar contato/lead pela UI)
+
+### Botão do Copiloto IA arrastável
+
+- O botão flutuante do Copiloto cobria o campo de mensagem e o botão de enviar no celular. Agora dá para arrastá-lo: ao soltar, ele gruda na borda mais próxima (esquerda/direita) e a posição fica salva no aparelho (`localStorage`, separada para celular e desktop)
+- No celular começa na borda direita a meia altura, longe do composer e da barra inferior, menor (48 px) e recolhido 25% para fora da tela quando parado; respeita a área segura do indicador de home. Toque abre, arrasto só move
+
 ## [0.65.0] - 2026-10-02
 
 ### Guardrail anti-bot do atendente IA (ligado por padrão, desativável por atendente)
