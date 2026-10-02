@@ -228,7 +228,7 @@ function CentralShortcutCard({ onClick }: { onClick: () => void }) {
       <div className="min-w-0 flex-1">
         <p className="font-semibold text-text-primary">Painel da Central</p>
         <p className="text-sm text-text-secondary">
-          Reservas, receita, conversão e ROAS por hotel, campanha e setor — em tempo real.
+          Reservas, receita, conversão e ROAS de mídia paga por unidade, campanha e setor, em tempo real.
         </p>
       </div>
       <ChevronRight size={20} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />

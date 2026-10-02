@@ -30,6 +30,7 @@ import {
   Github,
   Megaphone,
   MessagesSquare,
+  Headset,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -69,8 +70,8 @@ export function LandingPage() {
     <>
       <SEO
         title="HNBCRM — CRM com Colaboração Humano-IA"
-        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e integre agentes de IA via API REST e MCP."
-        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas"
+        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e central de atendimento no WhatsApp, e integre agentes de IA via API REST e MCP."
+        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas"
       />
       <OrganizationStructuredData />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -249,6 +250,12 @@ function FeaturesSection() {
       icon: ArrowRightLeft,
       title: "Repasses IA ↔ Humano",
       description: "Handoffs inteligentes entre agentes de IA e vendedores.",
+    },
+    {
+      icon: Headset,
+      title: "Central de Atendimento",
+      description:
+        "Setores com filas, transferência de conversas entre atendentes e várias unidades no mesmo número. Painel por unidade, setor e campanha com CAC e ROAS de mídia paga. Opcional, ligado por empresa.",
     },
     {
       icon: Bot,

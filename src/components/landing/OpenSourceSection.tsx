@@ -5,8 +5,8 @@ import { cn } from "@/lib/utils";
 import { useInView } from "@/hooks/useInView";
 
 const stats = [
-  { label: "Versão", value: "v0.22.0" },
-  { label: "MCP Tools", value: "44+" },
+  { label: "Versão", value: "v0.63.0" },
+  { label: "MCP Tools", value: "66" },
   { label: "TypeScript", value: "99%" },
 ];
 
