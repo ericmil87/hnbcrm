@@ -71,15 +71,15 @@ export const internalRepointBridgeWebhooks = internalAction({
         const set = await fetch(`${trimBase(ch.baseUrl)}/webhook`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ webhook: url, events: [...BRIDGE_WEBHOOK_EVENTS] }),
+          // O SetWebhook do wuzapi lê `webhookurl` (o AddUser do provisionamento lê
+          // `webhook`). Mandar só `webhook` aqui ZERA a URL — medido em 02/10/2026.
+          body: JSON.stringify({ webhookurl: url, webhook: url, events: [...BRIDGE_WEBHOOK_EVENTS] }),
         });
         const setBody = await set.text();
         const get = await fetch(`${trimBase(ch.baseUrl)}/webhook`, { method: "GET", headers });
         const getBody: unknown = await get.json().catch(() => ({}));
-        const current =
-          (getBody as { data?: { webhook?: string }; webhook?: string })?.data?.webhook ??
-          (getBody as { webhook?: string })?.webhook ??
-          "";
+        const g = getBody as { data?: { webhook?: string; webhookurl?: string }; webhook?: string };
+        const current = g?.data?.webhook ?? g?.data?.webhookurl ?? g?.webhook ?? "";
         const ok = set.ok && current === url;
         out.push({
           name: ch.name,
