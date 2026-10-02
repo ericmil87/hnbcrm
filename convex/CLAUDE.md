@@ -1,5 +1,10 @@
 # CLAUDE.md — Convex Backend
 
+> **Dois deployments desde 02/10/2026:** PROD `careful-anaconda-127` (hnbcrm.com, clientes reais) e DEV `tacit-chicken-195`
+> (desenvolvimento/demos, neutralizado). `npx convex dev|run|data|logs` sem flag = DEV; prod = `npm run deploy:prod` /
+> `--prod`. `convex data`/`convex logs` ignoram a deploy key — use `--prod`. Detalhes na seção "Deployments" do CLAUDE.md
+> da raiz e em `docs/OPS-SEPARAR-DEV-PROD.md`.
+
 ## File Layout
 
 | File | Purpose |
@@ -96,6 +101,7 @@
 | `llmsTxt.ts` | `/llms.txt` and `/llms-full.txt` endpoint content |
 | `onboarding.ts` / `onboardingSeed.ts` | Onboarding wizard + checklist state |
 | `seed.ts` | Dev seed data |
+| `opsMigration.ts` | Ops internas de separação dev/prod e pós-restore (re-apontar webhooks do bridge — `webhookurl`! —, reaplicar HMAC nas instâncias, desarmar canais do deployment-cópia, cancelar/re-armar agendadas, re-armar publicações de grupo, reenviar saídas travadas); todas com `dryRun` default true |
 
 ## Auth Pattern (copy this for every public function)
 

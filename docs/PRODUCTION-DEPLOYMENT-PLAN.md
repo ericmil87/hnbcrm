@@ -1,5 +1,9 @@
 # Plan: Production Deployment Setup (Dev + Prod Separation)
 
+> **EXECUTADO em 02/10/2026.** Prod = `careful-anaconda-127`, dev = `tacit-chicken-195`. O que foi feito, as pegadinhas
+> (webhook do wuzapi, HMAC, `convex data`/`logs` ignorando a deploy key, restore sem agendadas) e o registro passo a passo
+> estão em `docs/OPS-SEPARAR-DEV-PROD.md`. O texto abaixo é o plano original, mantido como referência.
+
 ## Context
 
 HNBCRM (hnbcrm.com) is already deployed on Vercel with a custom domain, but currently only has a Convex **dev** deployment (`dev:tacit-chicken-195`). No production Convex backend exists yet, and Vercel just runs `vite build` without deploying Convex functions. Need to set up proper dev/prod separation with CI.

@@ -196,11 +196,15 @@ The included `vercel.json` handles SPA routing (all paths fallback to `index.htm
 
 ### Convex Production
 
-To deploy Convex functions to production:
+Dev and prod are separate Convex deployments. Backend goes to production either automatically (Vercel runs
+`npx convex deploy --cmd 'npm run build' --cmd-url-env-var-name VITE_CONVEX_URL` on every push to `main`, with
+`CONVEX_DEPLOY_KEY` set only for the Production environment) or manually:
 
 ```bash
-npx convex deploy
+npm run deploy:prod   # reads the prod deploy key from convex-prod-key.env.local (gitignored)
 ```
+
+Local `npx convex dev` always targets the dev deployment. See `docs/OPS-SEPARAR-DEV-PROD.md` for the runbook.
 
 See [Convex Hosting & Deployment](https://docs.convex.dev/production/) for details.
 

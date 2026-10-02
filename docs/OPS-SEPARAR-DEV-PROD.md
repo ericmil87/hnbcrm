@@ -1,8 +1,8 @@
 # Ops — separar `dev` (tacit-chicken-195) de `prod` (careful-anaconda-127)
 
-> Escrito em 02/10/2026. Hoje o hnbcrm.com (Vercel) aponta para o deployment **dev**, que é a produção de fato
-> (orgs reais: eric-milfont, aos-filhos-da-terra, etc.). Objetivo: prod de verdade em `careful-anaconda-127`,
-> dev livre para desenvolvimento e demos.
+> Escrito e **EXECUTADO em 02/10/2026** (registro na §7). Antes, o hnbcrm.com apontava para o deployment **dev**, que era
+> a produção de fato. Agora: prod = `careful-anaconda-127` (hnbcrm.com, clientes reais), dev = `tacit-chicken-195`
+> (desenvolvimento e demos, neutralizado). Resumo operacional na seção "Deployments" do `CLAUDE.md` da raiz.
 
 ## 0. Fatos que mandam no plano
 
