@@ -127,3 +127,7 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
   acesso daqui) e "agentevendedor" (21/09). **Pendente humano:** trocar `CRM_INBOUND_URL` no deployment de produção do site
   Aos Filhos da Terra para `https://careful-anaconda-127.convex.site` (a `CRM_API_KEY` continua válida: existe no prod).
   `.mcp.json` local e `docs/WHATSAPP-VALIDACAO-LOCAL.md` já apontam para o prod.
+- 14:05–14:08 — **dev purgado**: `opsPurge:internalPurgeOrganizations` (65 orgs apagadas em lotes de 250, ~90 s; ficaram
+  `acme-corp-test` e `grupo-terrae-demo`) + `internalPurgeOrphanUsers` (68 usuários sem org apagados, com sessões, tokens e
+  contas; restou só `ericteste@milfont.net`). A op recusa rodar fora do deployment indicado em `confirmDeployment`
+  (compara com `CONVEX_SITE_URL`) e o dryRun valida os índices por tabela antes de qualquer delete.
