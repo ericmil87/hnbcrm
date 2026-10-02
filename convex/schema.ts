@@ -269,6 +269,27 @@ const agentProfileValidator = v.object({
       quietStartHour: v.optional(v.number()),
       quietEndHour: v.optional(v.number()),
       dailyCap: v.optional(v.number()),
+      // v0.64: chave de custom field (entity lead, tipo date) com a data do
+      // evento alvo do lead. Com ela, o `fire` cancela follow-up de evento que
+      // já passou (`evento_passado`) e `scheduleFollowUp`/`resolveFollowUp`
+      // recusam prazo posterior ao evento. Ausente = sem a guarda.
+      eventDateField: v.optional(v.string()),
+    })
+  ),
+  /**
+   * Agenda externa (v0.64): fonte de verdade de datas/valores/vagas fora do
+   * CRM (ex.: endpoint do site da org). Configurada = o atendente ganha a tool
+   * de LEITURA `consultarAgenda`, executada na action com `fetch`, e o bloco
+   * AGENDA do prompt manda consultar antes de falar de data/valor/vaga. A chave
+   * fica cifrada em `orgSecrets` (purpose "external-agenda-api-key"), nunca em
+   * env — é configuração da ORG, não do deployment.
+   */
+  externalAgenda: v.optional(
+    v.object({
+      enabled: v.boolean(),
+      url: v.string(),
+      apiKeyRef: v.optional(v.object({ kind: v.literal("orgSecret"), id: v.id("orgSecrets") })),
+      headerName: v.optional(v.string()), // default "X-API-Key"
     })
   ),
 });
@@ -601,6 +622,32 @@ const applicationTables = {
       // Org de demonstração: habilita `demoSim` e BLOQUEIA todo envio real
       // (o dispatch do WhatsApp marca `delivered` sem chamar rede).
       demoMode: v.optional(v.boolean()),
+      // v0.64: roteamento do lead que entra por `POST /api/v1/inbound/lead`
+      // (formulários do site): tag → board/estágio. Primeira regra que casa
+      // vence; sem regra = 1º estágio do board padrão (comportamento antigo).
+      inboundLeadRouting: v.optional(
+        v.object({
+          rules: v.array(
+            v.object({ tag: v.string(), boardId: v.id("boards"), stageId: v.id("stages") })
+          ),
+        })
+      ),
+      // v0.64: boas-vindas automáticas pelo WhatsApp ao lead que entra por
+      // `POST /api/v1/inbound/lead` com telefone E pelo menos uma tag de
+      // `requireAnyTag` (ex.: "optin:whatsapp" = consentimento de marketing,
+      // "contato:inscricao" = execução do pedido). `messages`: primeira entrada
+      // cuja `matchTag` está nas tags do lead vence; `"*"` = texto padrão.
+      // Variáveis: {primeiroNome}, {nome}, {titulo}, {tag:<prefixo>} (valor da
+      // tag `<prefixo>:<valor>`). UMA mensagem por lead; opt-out é respeitado;
+      // falha de entrega abre repasse humano.
+      inboundLeadWelcome: v.optional(
+        v.object({
+          enabled: v.boolean(),
+          channelConfigId: v.id("channelConfigs"),
+          requireAnyTag: v.array(v.string()),
+          messages: v.array(v.object({ matchTag: v.string(), text: v.string() })),
+        })
+      ),
     }),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
@@ -2150,6 +2197,10 @@ const applicationTables = {
 
     uploadedBy: v.optional(v.id("teamMembers")), // absent for inbound media sent by contacts
     metadata: v.optional(v.record(v.string(), v.any())),
+    // v0.64: URL de origem de um arquivo baixado pela plataforma (ex.: flyer
+    // que a IA envia a partir da agenda externa). Dedupe por org+URL: o mesmo
+    // flyer vira UM blob, reaproveitado em cada envio.
+    sourceUrl: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
@@ -2157,7 +2208,8 @@ const applicationTables = {
     .index("by_message", ["messageId"])
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
-    .index("by_storage_id", ["storageId"]),
+    .index("by_storage_id", ["storageId"])
+    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"]),
 
   /**
    * Mídia de grupo que a política NÃO baixou (v0.62) — o suficiente para baixar
@@ -2641,7 +2693,7 @@ const applicationTables = {
   orgSecrets: defineTable({
     organizationId: v.id("organizations"),
     name: v.string(), // rótulo dado pelo admin
-    purpose: v.union(v.literal("llm-api-key")),
+    purpose: v.union(v.literal("llm-api-key"), v.literal("external-agenda-api-key")),
     provider: v.optional(v.string()),
     encryptedValue: v.string(),
     last4: v.string(),
