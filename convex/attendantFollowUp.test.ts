@@ -300,7 +300,7 @@ async function armDefault(
 
 type StubResponse =
   | { kind: "text"; content: string }
-  | { kind: "tool"; name: string; args: Record<string, unknown>; truncated?: boolean }
+  | { kind: "tool"; name: string; args: Record<string, unknown>; truncated?: boolean; hitCap?: number }
   | { kind: "empty" };
 
 function stubLlmSequence(responses: StubResponse[]) {
@@ -332,7 +332,10 @@ function stubLlmSequence(responses: StubResponse[]) {
               response.kind === "tool" ? (response.truncated ? "length" : "tool_calls") : "stop",
           },
         ],
-        usage: { prompt_tokens: 50, completion_tokens: 10 },
+        usage: {
+          prompt_tokens: 50,
+          completion_tokens: response.kind === "tool" && response.hitCap ? response.hitCap : 10,
+        },
       }),
       { status: 200, headers: { "Content-Type": "application/json" } }
     );
@@ -1173,6 +1176,30 @@ describe("turno de follow-up", () => {
     );
     expect(outbound).toHaveLength(1);
     expect(outbound[0].content).toContain("comprovante 😊");
+    expect((await t.run(async (ctx) => ctx.db.get(followUp._id)))!.resultMessageId).toBe(outbound[0]._id);
+  });
+
+  // Medido em 28/09/2026 (OpenRouter): completion_tokens == teto e
+  // finish_reason "tool_calls" — o provedor FECHOU o JSON no corte e não disse
+  // "length". Bater o teto também é corte.
+  test("resposta que BATE o teto com finish_reason tool_calls também é tratada como cortada", async () => {
+    const t = setup();
+    const { followUp } = await fireReady(t, {
+      mode: "autopilot",
+      followUps: { mode: "send" },
+    });
+
+    const { fetchMock } = await runQueuedTurn(t, [
+      { kind: "tool", name: "replyToCustomer", args: { text: "Sobre o pet: a *Pousada Beta não acei" }, hitCap: 3000 },
+      { kind: "tool", name: "replyToCustomer", args: { text: "A Pousada Beta não aceita pets 🐾" } },
+    ]);
+
+    expect(fetchMock.mock.calls).toHaveLength(2);
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+    );
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].content).toContain("não aceita pets");
     expect((await t.run(async (ctx) => ctx.db.get(followUp._id)))!.resultMessageId).toBe(outbound[0]._id);
   });
 

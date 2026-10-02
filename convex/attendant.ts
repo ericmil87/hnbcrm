@@ -1216,6 +1216,21 @@ const FOLLOW_UP_MAX_TOKENS = 3000;
 const REACTIVE_MAX_TOKENS = 2000;
 
 /**
+ * Resposta CORTADA pelo teto de saída. Nem todo provedor diz `length`: medido
+ * em 28/09/2026 (OpenRouter, deepseek-v4-flash-0731) — `completionTokens` igual
+ * ao teto com `finish_reason: "tool_calls"` e o JSON do `replyToCustomer`
+ * FECHADO no ponto do corte ("…a *Pousada Beta não acei"). Bater o teto é o sinal
+ * confiável; o finish_reason sozinho deixava a mensagem truncada sair.
+ */
+export function isTruncatedResponse(
+  resp: { finishReason?: string; usage?: { completionTokens: number } | null },
+  maxTokens: number
+): boolean {
+  if (resp.finishReason === "length") return true;
+  return !!resp.usage && resp.usage.completionTokens >= maxTokens;
+}
+
+/**
  * Título do follow-up: MESMO saneamento da nota (URL, e-mail, telefone, chave
  * Pix, CPF/CNPJ viram "[removido]"), com o teto de 120 do campo. O título é
  * tão influenciado pelo cliente quanto a nota — ele vai para `tasks.title`, é
@@ -2957,7 +2972,7 @@ export const internalProcessQueueItem = internalAction({
         // nem os argumentos das outras tools (o `scheduleFollowUp` do mesmo
         // turno rodou com nota possivelmente cortada). Descarta TUDO, pede de
         // novo uma vez, e se cortar de novo falha (retry/backoff normais).
-        if (resp.finishReason === "length") {
+        if (isTruncatedResponse(resp, context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS)) {
           if (truncatedOnce) {
             throw new Error("Resposta do modelo truncada pelo limite de tokens");
           }
@@ -4192,6 +4207,7 @@ export const simulateAttendant = action({
         ];
     const actions: string[] = [];
     let reply: string | null = null;
+    let truncatedOnce = false;
 
     try {
       for (let round = 0; round < 4; round++) {
@@ -4200,8 +4216,30 @@ export const simulateAttendant = action({
           tools: simulatorTools,
           toolChoice: "auto",
           temperature: context.temperature,
-          maxTokens: 1200,
+          // MESMO teto do runtime: com 1200 o modelo de raciocínio gastava o
+          // teto pensando e o "Testar" voltava calado (reply null, sem erro)
+          // enquanto a produção respondia normalmente.
+          maxTokens: context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS,
         });
+        // Mesma regra do runtime para resposta CORTADA: descarta e refaz uma vez.
+        if (isTruncatedResponse(resp, context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS)) {
+          if (truncatedOnce) {
+            return {
+              reply: null,
+              actions,
+              error: "Resposta do modelo cortada pelo limite de tokens (a produção descartaria e tentaria de novo).",
+            };
+          }
+          truncatedOnce = true;
+          messages.push({
+            role: "user",
+            content:
+              "Sua resposta anterior foi CORTADA pelo limite de tamanho e descartada inteira. " +
+              "Refaça agora de forma direta: raciocine pouco, chame só as ferramentas necessárias " +
+              "e mantenha a mensagem ao cliente curta (até 500 caracteres).",
+          });
+          continue;
+        }
         messages.push(resp.message);
         const toolCalls = resp.message.tool_calls ?? [];
         if (toolCalls.length === 0) {
@@ -4236,6 +4274,9 @@ export const simulateAttendant = action({
       }
       // Mesma conversão do runtime: sem isto o "Testar" mostraria `**x**` onde a
       // produção manda `*x*`, e a simulação deixaria de valer como ensaio.
+      if (reply === null && actions.length === 0 && !context.followUp) {
+        return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
+      }
       return { reply: reply === null ? null : toWhatsAppText(reply), actions, error: null };
     } catch (e) {
       return {
