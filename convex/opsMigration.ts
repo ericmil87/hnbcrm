@@ -17,6 +17,8 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { internal } from "./_generated/api";
 import { decryptSecret } from "./lib/secretCrypto";
 import { BRIDGE_WEBHOOK_EVENTS } from "./lib/bridgeSession";
+import { computeNextRunAt, scheduleGroupPostTick, wakeAtFor } from "./lib/groupPostOps";
+import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 
 const trimBase = (u: string) => u.replace(/\/+$/, "");
 
@@ -159,6 +161,61 @@ export const internalRearmScheduledMessages = internalMutation({
         scheduledMessageId: m._id,
       });
       await ctx.db.patch(m._id, { scheduledFunctionId: fnId as string });
+    }
+    return out;
+  },
+});
+
+/**
+ * Após restore: o backup não leva agendadas, então toda publicação `active`
+ * perde o tick. Re-arma pelo `nextRunAt` gravado (ou recalcula).
+ */
+export const internalRearmGroupPosts = internalMutation({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.array(v.object({ id: v.id("groupPosts"), nextRunAt: v.union(v.number(), v.null()), action: v.string() })),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const now = Date.now();
+    const posts = await ctx.db.query("groupPosts").collect();
+    const out: { id: typeof posts[number]["_id"]; nextRunAt: number | null; action: string }[] = [];
+    for (const p of posts) {
+      if (p.status !== "active") continue;
+      const nextRunAt = p.nextRunAt ?? computeNextRunAt(p, now);
+      if (nextRunAt === null) {
+        out.push({ id: p._id, nextRunAt: null, action: "sem próximo slot" });
+        continue;
+      }
+      out.push({ id: p._id, nextRunAt, action: dryRun ? "dryRun" : "rearmed" });
+      if (dryRun) continue;
+      if (p.nextRunAt === undefined) await ctx.db.patch(p._id, { nextRunAt });
+      const fresh = (await ctx.db.get(p._id))!;
+      await scheduleGroupPostTick(ctx, fresh, wakeAtFor(fresh, nextRunAt), now);
+    }
+    return out;
+  },
+});
+
+/**
+ * Após restore: mensagem outbound cujo dispatch estava agendado (sem
+ * `externalId` nem `deliveryStatus`) perdeu o job. Reagenda o dispatch pelo
+ * MESMO caminho do envio normal (pacing, typing, guarda de demoMode).
+ */
+export const internalRedispatchStuckOutbound = internalMutation({
+  args: { sinceMs: v.number(), dryRun: v.optional(v.boolean()) },
+  returns: v.array(v.object({ messageId: v.id("messages"), createdAt: v.number(), action: v.string() })),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const from = Date.now() - args.sinceMs;
+    const recent = await ctx.db.query("messages").order("desc").take(500);
+    const out: { messageId: typeof recent[number]["_id"]; createdAt: number; action: string }[] = [];
+    for (const m of recent) {
+      if (m.createdAt < from) break;
+      if (m.direction !== "outbound" || m.isInternal || m.externalId || m.deliveryStatus) continue;
+      const conversation = await ctx.db.get(m.conversationId);
+      if (!conversation) continue;
+      out.push({ messageId: m._id, createdAt: m.createdAt, action: dryRun ? "dryRun" : "redispatched" });
+      if (dryRun) continue;
+      await scheduleWhatsappDispatch(ctx, conversation, m._id);
     }
     return out;
   },

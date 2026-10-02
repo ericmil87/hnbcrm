@@ -111,3 +111,8 @@ Alternativa mínima (se não quiser mexer no build): manter `vite build` e só t
   canceladas. Dev mantém a org demo `grupo-terrae-demo` e o simulador (chave local renomeada para `CONVEX_DEV_ADMIN_KEY`).
 - Pendente humano: Vercel (§4), webhook da Meta e do Resend (§2.4), aviso aos clientes sobre a janela, purga das orgs
   reais do dev (op a escrever; o dev já não envia nada).
+- **Pegadinha do CLI (1.31.2):** `npx convex data` e `npx convex logs` IGNORAM `CONVEX_DEPLOY_KEY` e caem no dev —
+  use `--prod` (ou `--deployment-name`). `env`, `deploy`, `import`, `export` e `run` honram a chave (e `run --prod` também).
+- 13:2x — Vercel apontado para o prod (bundle do hnbcrm.com carrega `careful-anaconda-127`); teste do Eric entrou no prod
+  às 13:20:40 e a IA respondeu às 13:20:53. Re-armadas 2 publicações de grupo (`internalRearmGroupPosts`) e reenviada 1
+  resposta da IA das 13:03 presa sem dispatch (`internalRedispatchStuckOutbound`).
