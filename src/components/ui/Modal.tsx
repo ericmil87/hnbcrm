@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -31,7 +32,11 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
 
   if (!open) return null;
 
-  return (
+  // Portal no <body>: aberto de dentro de um painel com stacking context próprio
+  // (header do inbox, slide-over), o z-50 do modal valia só ALI DENTRO e a
+  // folha inferior ficava atrás da tab bar do mobile (z-30) — o botão de
+  // confirmar sumia (caso real: "Excluir lead" pela conversa, 03/10/2026).
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
       {/* Overlay */}
       <div
@@ -48,8 +53,8 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
         className={cn(
           "relative z-10 w-full bg-surface-overlay border border-border",
           "max-h-[85vh] overflow-y-auto",
-          // Mobile: bottom sheet
-          "rounded-t-xl animate-slide-in-up",
+          // Mobile: bottom sheet (cobre a tab bar; respeita a safe-area)
+          "rounded-t-xl animate-slide-in-up pb-safe sm:pb-0",
           // Desktop: centered dialog
           "sm:rounded-xl sm:max-w-lg sm:mx-4 sm:animate-fade-in-up",
           className
@@ -69,6 +74,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
         )}
         <div className="p-4 md:p-6">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
