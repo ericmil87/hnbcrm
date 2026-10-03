@@ -452,3 +452,129 @@ export const OPENROUTER_ZDR_PROVIDER_BODY = {
     allow_fallbacks: true,
   },
 } as const;
+
+// Pede ao OpenRouter o CUSTO real da chamada (`usage.cost`, USD) no response.
+// Não é parâmetro de provider (não afeta `require_parameters`) e não toca a
+// trava de privacidade. Só vai na rota OpenRouter (ver `lib/llm/index.ts`).
+export const OPENROUTER_USAGE_BODY = { usage: { include: true } } as const;
+
+// ── Preço por modelo (custo de IA — v0.69, T04) ─────────────────────────────
+//
+// USD por 1M de tokens, por id CANÔNICO. Fonte: `GET https://openrouter.ai/api/v1/models/<slug>/endpoints`
+// (API pública, sem chave), coletada em 2026-10-03. Por id: o preço do
+// PROVEDOR OFICIAL quando ele aparece entre os endpoints (Moonshot p/ kimi, Z.AI
+// p/ glm — a DeepSeek não lista endpoint próprio no OpenRouter), senão a MEDIANA
+// de entrada, de saída e de cache entre todos os endpoints pagos.
+//
+// ⚠️ O `pricing` do TOPO de `/api/v1/models` NÃO é o preço da rota que usamos:
+// é o de UM endpoint, quase sempre o mais barato (Relace/InferenceNet). A rota
+// ZDR com `allow_fallbacks:true` cai em qualquer endpoint elegível — medido em
+// 03/10: `kimi-k3` topo 0,40 de entrada vs Moonshot/Fireworks/DeepInfra
+// 2,85–4,5; `glm-5.2` topo 0,06 vs Z.AI 1,40. Por isso a mediana/oficial.
+//
+// É ESTIMATIVA, não fatura: (1) a rota OpenCode Go é assinatura e não publica
+// preço por token — aplicamos esta régua; (2) quando o OpenRouter devolve
+// `usage.cost` no response, o custo do PROVEDOR vence esta tabela (ver
+// `lib/aiSpend.ts`).
+//
+// Lição do Deskcomm (4 recorrências): modelo SEM preço não pode custar 0, senão
+// o teto de gastos nunca dispara. Daí: (a) só casamento EXATO (nada de
+// `startsWith`); (b) modelo desconhecido custa o MAIOR preço da tabela, com
+// `costEstimated: true`; (c) `aiSpend.test.ts` quebra o build se algum modelo
+// do registry ficar sem linha aqui. Atualizou preço? Atualize a data abaixo.
+export interface ModelPrice {
+  inPerM: number;
+  outPerM: number;
+  /** Entrada lida do cache de prefixo. Ausente = cobra como entrada normal. */
+  cachedInPerM?: number;
+  /** true = sem preço publicado para o id exato; usa o conservador. */
+  estimated?: boolean;
+}
+
+export const MODEL_PRICES_COLLECTED_AT = "2026-10-03";
+
+// [fonte] = oficial:<provedor> | mediana(<nº de endpoints>)
+const PUBLISHED_MODEL_PRICES: Record<string, ModelPrice> = {
+  "deepseek-v4-flash": { inPerM: 0.132, outPerM: 0.28, cachedInPerM: 0.0263 }, // mediana(16)
+  "deepseek-v4-flash-0731": { inPerM: 0.14, outPerM: 0.528, cachedInPerM: 0.0238 }, // mediana(28)
+  "deepseek-v4-pro": { inPerM: 1.358, outPerM: 2.9835, cachedInPerM: 0.1375 }, // mediana(16)
+  "deepseek-v4-flash-vision-exp": { inPerM: 0.44, outPerM: 1.32, cachedInPerM: 0.021 }, // mediana(4)
+  "kimi-k2.7-code": { inPerM: 0.95, outPerM: 4, cachedInPerM: 0.19 }, // oficial:Moonshot
+  "kimi-k3": { inPerM: 3, outPerM: 15, cachedInPerM: 0.3 }, // oficial:Moonshot
+  "kimi-k2.6": { inPerM: 0.95, outPerM: 4, cachedInPerM: 0.16 }, // oficial:Moonshot
+  "kimi-k2.5": { inPerM: 0.532, outPerM: 2.85, cachedInPerM: 0.1475 }, // mediana(5)
+  "glm-5.3-flash": { inPerM: 0.15, outPerM: 0.5, cachedInPerM: 0.03 }, // oficial:Z.AI
+  "glm-5.3": { inPerM: 1.4, outPerM: 4.4, cachedInPerM: 0.26 }, // oficial:Z.AI
+  "glm-5.2": { inPerM: 1.4, outPerM: 4.4, cachedInPerM: 0.26 }, // oficial:Z.AI
+  "glm-5.1": { inPerM: 1.4, outPerM: 4.4, cachedInPerM: 0.26 }, // oficial:Z.AI
+  "glm-5": { inPerM: 1, outPerM: 3.2, cachedInPerM: 0.2 }, // oficial:Z.AI
+  "mimo-v2.5": { inPerM: 0.168, outPerM: 0.336, cachedInPerM: 0.0034 }, // mediana(5)
+  "mimo-v2.5-pro": { inPerM: 0.4575, outPerM: 0.9152, cachedInPerM: 0.0038 }, // mediana(6)
+  "qwen3.7-plus": { inPerM: 0.32, outPerM: 1.28, cachedInPerM: 0.064 }, // mediana(1) Alibaba
+  "qwen3.7-max": { inPerM: 1.475, outPerM: 4.425, cachedInPerM: 0.295 }, // mediana(1) Alibaba
+  "qwen3.6-plus": { inPerM: 0.325, outPerM: 1.95 }, // mediana(1) Alibaba
+  // O OpenRouter só publica a versão datada (`qwen/qwen3.5-plus-20260420`).
+  "qwen3.5-plus": { inPerM: 0.3, outPerM: 1.8 }, // mediana(1) Alibaba
+  "minimax-m3": { inPerM: 0.3, outPerM: 1.2, cachedInPerM: 0.06 }, // mediana(13)
+  "minimax-m2.7": { inPerM: 0.3, outPerM: 1.2, cachedInPerM: 0.06 }, // mediana(7)
+  "minimax-m2.5": { inPerM: 0.3, outPerM: 1.2, cachedInPerM: 0.045 }, // mediana(8)
+  "grok-4.5": { inPerM: 3, outPerM: 9, cachedInPerM: 0.45 }, // mediana(4) xAI
+  "grok-4.6": { inPerM: 2.2, outPerM: 6.6, cachedInPerM: 0.55 }, // mediana(6)
+  hy3: { inPerM: 0.14, outPerM: 0.58, cachedInPerM: 0.035 }, // mediana(6)
+  "hy3-preview": { inPerM: 0.18, outPerM: 0.6, cachedInPerM: 0.06 }, // mediana(1)
+  "longcat-2.0": { inPerM: 0.3, outPerM: 1.2, cachedInPerM: 0.006 }, // mediana(1)
+  "gpt-5.6-luna": { inPerM: 0.22, outPerM: 1.32, cachedInPerM: 0.022 }, // mediana(7)
+  "muse-spark-1.2-contributor": { inPerM: 0.1, outPerM: 0.2, cachedInPerM: 0.002 }, // mediana(1) Meta
+};
+
+/**
+ * Preço CONSERVADOR: o maior preço de entrada e o maior de saída da tabela
+ * publicada (podem vir de modelos diferentes — é teto, não média). É o que um
+ * modelo sem preço custa, sempre com `estimated: true`. Nunca 0.
+ */
+export const CONSERVATIVE_MODEL_PRICE: ModelPrice = (() => {
+  const all = Object.values(PUBLISHED_MODEL_PRICES);
+  const inPerM = Math.max(...all.map((p) => p.inPerM));
+  const outPerM = Math.max(...all.map((p) => p.outPerM));
+  return { inPerM, outPerM, cachedInPerM: inPerM, estimated: true };
+})();
+
+export const MODEL_PRICES: Record<string, ModelPrice> = {
+  ...PUBLISHED_MODEL_PRICES,
+  // Ids do OpenCode Go SEM preço publicado para o id EXATO no OpenRouter (lá só
+  // existem `qwen3.8-max-0902`/`-prime` e `mimo-v2.5*`) — conservador.
+  "qwen3.8-max": CONSERVATIVE_MODEL_PRICE,
+  "mimo-v2-pro": CONSERVATIVE_MODEL_PRICE,
+  "mimo-v2-omni": CONSERVATIVE_MODEL_PRICE,
+};
+
+/**
+ * Todo id de modelo que o registry pode mandar a um provider: papéis default,
+ * equivalências, catálogo do OpenCode Go, os só-OpenRouter e as cadeias de
+ * visão. É a lista que o teste de build confere contra `MODEL_PRICES`.
+ */
+export function registryModelIds(): string[] {
+  const ids = new Set<string>([
+    ...Object.values(DEFAULT_MODELS),
+    ...Object.keys(MODEL_EQUIVALENCE),
+    ...OPENCODE_GO_MODELS,
+    ...OPENROUTER_ONLY_MODELS,
+    ...Object.values(VISION_MODELS_BY_PROVIDER).flatMap((chain) => chain ?? []),
+  ]);
+  return [...ids];
+}
+
+/**
+ * Preço do modelo por casamento EXATO — aceita o id canônico ou o id de um
+ * provider (`deepseek/deepseek-v4-flash` → canônico, pela tabela de
+ * equivalência). `null` = desconhecido (quem chama aplica o conservador).
+ */
+export function modelPrice(modelId: string | undefined | null): ModelPrice | null {
+  if (!modelId) return null;
+  const direct = MODEL_PRICES[modelId];
+  if (direct) return direct;
+  for (const [canonical, perProvider] of Object.entries(MODEL_EQUIVALENCE)) {
+    if (Object.values(perProvider).includes(modelId)) return MODEL_PRICES[canonical] ?? null;
+  }
+  return null;
+}

@@ -189,7 +189,23 @@ const aiConfigValidator = v.object({
   ),
   providerConfig: v.optional(providerConfigValidator),
   // Teto amigável de uso mensal (nº de conversas atendidas). Kill-switch de custo.
+  // Estourado, o atendente 1 a 1 abre repasse `ai_budget` (v0.69) em vez de
+  // ficar mudo.
   monthlyConversationBudget: v.optional(v.number()),
+  // Teto de GASTO mensal em R$ (v0.69, T04). Ausente = `warn` sem valor (nada
+  // acontece até o admin definir `monthlyBrl`). `warn` só avisa (in-app +
+  // e-mail aos admins em `warnPct`% e a 100%, 1×/mês cada); `block` a 100%
+  // passa o atendente 1 a 1 para RASCUNHO + repasse `ai_budget` e suspende os
+  // demais produtos de IA (motivo `teto_de_gastos`) até virar o mês (UTC).
+  // Regras/faixas em lib/aiSpend.ts (`resolveSpendCap`/`validateSpendCapInput`).
+  spendCap: v.optional(
+    v.object({
+      mode: v.union(v.literal("off"), v.literal("warn"), v.literal("block")),
+      monthlyBrl: v.optional(v.number()),
+      usdBrlRate: v.optional(v.number()), // default 5,5
+      warnPct: v.optional(v.number()), // default 80
+    })
+  ),
 });
 
 export { aiConfigValidator };
@@ -1574,7 +1590,10 @@ const applicationTables = {
         v.literal("ai_keyword"),
         v.literal("ai_tool"),
         v.literal("ai_failure"),
-        v.literal("bot_suspect")
+        v.literal("bot_suspect"),
+        // v0.69 — teto de IA do mês estourado (conversas ou gasto em R$): a IA
+        // não pode atender sozinha e chamou uma pessoa. Só o core rotula.
+        v.literal("ai_budget")
       )
     ),
     status: v.union(
@@ -1847,7 +1866,11 @@ const applicationTables = {
       // MVP Central — conversa transferida para um setor/membro.
       v.literal("conversation_transferred"),
       // T02 — o número do bridge perdeu a sessão (logout/ban/desatualizado/queda persistente).
-      v.literal("channel_session_lost")
+      v.literal("channel_session_lost"),
+      // v0.69 — gasto de IA do mês cruzou o aviso (default 80%) / atingiu o
+      // teto em R$. Vão aos admins (settings:manage), 1×/mês cada.
+      v.literal("ai_spend_warning"),
+      v.literal("ai_spend_reached")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -1985,6 +2008,8 @@ const applicationTables = {
     conversationTransferred: v.optional(v.boolean()),
     // T02 — número do WhatsApp perdeu a sessão (só sino).
     channelSessionLost: v.optional(v.boolean()),
+    // v0.69 — aviso/teto de gasto de IA do mês (sino + e-mail `aiSpendAlert`).
+    aiSpendAlert: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -2359,6 +2384,9 @@ const applicationTables = {
     completionTokens: v.optional(v.number()),
     cachedPromptTokens: v.optional(v.number()),
     costUsdEstimate: v.optional(v.number()),
+    // v0.69: parte do custo saiu do preço CONSERVADOR (modelo sem preço na
+    // tabela e sem `usage.cost` do provedor) — superestimado de propósito.
+    costEstimated: v.optional(v.boolean()),
     confidence: v.optional(v.number()),
     // Erro SANITIZADO (lib/llm/sanitize) — nunca contém keys/headers.
     error: v.optional(v.string()),
@@ -2369,6 +2397,30 @@ const applicationTables = {
     .index("by_organization_and_started", ["organizationId", "startedAt"])
     .index("by_conversation", ["conversationId"])
     .index("by_organization_and_kind_and_started", ["organizationId", "kind", "startedAt"]),
+
+  // Contador MENSAL de uso de IA por org (v0.69, T04). Incrementado na MESMA
+  // transação de `agentRuns.internalFinishRun` (custo/runs/tokens, por kind) e
+  // do claim do atendente (`conversations` distintas). O gate do teto e o
+  // painel de uso leem 1 documento em vez de varrer `agentRuns` do mês.
+  // `warnedAt`/`reachedAt` garantem os avisos 1×/mês. Mês = "AAAA-MM" em UTC.
+  aiUsageMonthly: defineTable({
+    organizationId: v.id("organizations"),
+    month: v.string(),
+    costUsdMicros: v.number(),
+    runs: v.number(),
+    // Runs com custo pelo preço conservador (modelo sem preço conhecido).
+    estimatedRuns: v.optional(v.number()),
+    // Conversas DISTINTAS atendidas pelo atendente 1 a 1 no mês
+    // (`monthlyConversationBudget`).
+    conversations: v.optional(v.number()),
+    promptTokens: v.optional(v.number()),
+    completionTokens: v.optional(v.number()),
+    cachedPromptTokens: v.optional(v.number()),
+    byKind: v.record(v.string(), v.object({ runs: v.number(), costUsdMicros: v.number() })),
+    warnedAt: v.optional(v.number()),
+    reachedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_organization_and_month", ["organizationId", "month"]),
 
   // Fila de respostas do atendente. O gatilho de ingest ENFILEIRA aqui (nunca
   // runAfter(0) direto na inferência) — pacing por-org + debounce + backoff.

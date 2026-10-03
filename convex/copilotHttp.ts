@@ -39,6 +39,14 @@ import {
 } from "./lib/agentTools";
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./lib/promptEnvelope";
 import { buildCurrentDateTimeBlock } from "./lib/promptDateTime";
+// Custo por modelo + teto de gastos em R$ (v0.69, T04).
+import {
+  SPEND_CAP_BLOCKED_MESSAGE,
+  addUsage,
+  finishRunCostFields,
+  monthKeyUtc,
+  newUsageTotals,
+} from "./lib/aiSpend";
 
 const MAX_TOOL_CALLS_PER_TURN = 12;
 const WALL_CLOCK_BUDGET_MS = 8 * 60 * 1000; // aborta antes do teto de 10 min da action
@@ -181,6 +189,19 @@ export const copilotStream = httpAction(async (ctx, request) => {
     });
   }
 
+  // Teto de gastos em R$ em `block` (v0.69): copiloto suspenso até virar o mês,
+  // com o motivo na tela (403 legível — nunca silêncio).
+  const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+    organizationId,
+    month: monthKeyUtc(Date.now()),
+  });
+  if (spendGate.blocked) {
+    return new Response(JSON.stringify({ error: SPEND_CAP_BLOCKED_MESSAGE }), {
+      status: 403,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
+  }
+
   // Rotas da org: platform chain OU BYO; strictZdr filtra rotas não-ZDR.
   const canonicalModel = session.providerConfig?.models?.copilot ?? DEFAULT_MODELS.copilot;
   let routes: ResolvedRoute[];
@@ -265,9 +286,9 @@ export const copilotStream = httpAction(async (ctx, request) => {
 
       let requestCount = 0;
       const toolCallNames: string[] = [];
-      let promptTokens = 0;
-      let completionTokens = 0;
-      let cachedPromptTokens = 0;
+      // Tokens + custo (por modelo da rota que de fato respondeu). O copiloto
+      // nunca gravava custo — o painel de uso mostrava US$ 0 (v0.69).
+      const usage = newUsageTotals();
       let usedProvider: string | undefined;
 
       send({ type: "thread", threadId });
@@ -353,11 +374,7 @@ export const copilotStream = httpAction(async (ctx, request) => {
                   }
                   if (delta.toolCallDeltas) rawToolDeltas.push(...delta.toolCallDeltas);
                   if (delta.finishReason) finish = delta.finishReason;
-                  if (delta.usage) {
-                    promptTokens += delta.usage.promptTokens;
-                    completionTokens += delta.usage.completionTokens;
-                    cachedPromptTokens += delta.usage.cachedPromptTokens ?? 0;
-                  }
+                  if (delta.usage) addUsage(usage, delta.usage, route, canonicalModel);
                 }
                 break routeLoop; // stream completou nesta rota
               } catch (e) {
@@ -486,11 +503,10 @@ export const copilotStream = httpAction(async (ctx, request) => {
           runId,
           status: "done",
           provider: usedProvider,
+          model: canonicalModel,
           requestCount,
           toolCallNames,
-          promptTokens,
-          completionTokens,
-          cachedPromptTokens,
+          ...finishRunCostFields(usage),
         });
         send({ type: "done" });
       } catch (e) {
@@ -501,9 +517,7 @@ export const copilotStream = httpAction(async (ctx, request) => {
           provider: usedProvider,
           requestCount,
           toolCallNames,
-          promptTokens,
-          completionTokens,
-          cachedPromptTokens,
+          ...finishRunCostFields(usage),
           error: message,
         });
         send({ type: "error", message });

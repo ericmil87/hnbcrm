@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot, ArrowRightLeft, WifiOff } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot, ArrowRightLeft, WifiOff, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -36,6 +36,9 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   conversation_transferred: ArrowRightLeft,
   // T02 — o número do WhatsApp perdeu a sessão.
   channel_session_lost: WifiOff,
+  // v0.69 — gasto de IA do mês: aviso (80%) / teto atingido.
+  ai_spend_warning: Gauge,
+  ai_spend_reached: Gauge,
 };
 
 const PAGE_SIZE = 15;
@@ -160,6 +163,11 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
           ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}`
           : TAB_ROUTES.inbox
       );
+      return;
+    }
+    // Gasto de IA do mês: o painel de uso e o teto ficam em Configurações → IA.
+    if (n.type === "ai_spend_warning" || n.type === "ai_spend_reached") {
+      navigate(`${TAB_ROUTES.settings}?secao=ai`);
       return;
     }
     if (n.type === "ai_followup_needs_human") {

@@ -44,6 +44,16 @@ import {
   MAX_CHAIN_LIMIT,
   MAX_DAILY_CAP,
 } from "./lib/followUpSettings";
+// Custo de IA + teto em R$ (v0.69, T04).
+import { getMonthlyUsageDoc } from "./aiSpend";
+import {
+  evaluateSpend,
+  isValidMonthKey,
+  monthKeyUtc,
+  mergeSpendCap,
+  resolveSpendCap,
+  validateSpendCapInput,
+} from "./lib/aiSpend";
 
 // Normaliza o override de um produto para a UI: ausência vira o sentinela que o
 // select renderiza ("inherit" = herda a org; "" = modelo automático).
@@ -1280,51 +1290,167 @@ export const getAttendantMetrics = query({
   },
 });
 
-// Medidor amigável: conversas atendidas no mês + custo estimado. O cliente passa
-// o início do mês (query sem Date.now() — regra de reatividade do Convex).
+// Medidor amigável: conversas atendidas no mês + custo + teto em R$ (v0.69).
+// Lê UM documento (`aiUsageMonthly`) — antes varria todas as `agentRuns` do mês.
+// O mês vem do cliente (`month` "AAAA-MM", UTC) — query sem Date.now(). `monthStart`
+// é o argumento legado (início do mês em UTC), aceito por compatibilidade.
+const usageByKindValidator = v.record(
+  v.string(),
+  v.object({ runs: v.number(), costUsdMicros: v.number() })
+);
+
 export const getAiUsage = query({
-  args: { organizationId: v.id("organizations"), monthStart: v.number() },
+  args: {
+    organizationId: v.id("organizations"),
+    month: v.optional(v.string()),
+    monthStart: v.optional(v.number()),
+  },
   returns: v.object({
+    month: v.string(),
     conversationsThisMonth: v.number(),
     runsThisMonth: v.number(),
     costUsdEstimate: v.number(),
+    costUsdMicros: v.number(),
+    estimatedRuns: v.number(),
     promptTokens: v.number(),
     completionTokens: v.number(),
     cachedPromptTokens: v.number(),
+    byKind: usageByKindValidator,
     budget: v.union(v.number(), v.null()),
+    spendCap: v.object({
+      mode: v.union(v.literal("off"), v.literal("warn"), v.literal("block")),
+      monthlyBrl: v.union(v.number(), v.null()),
+      usdBrlRate: v.number(),
+      warnPct: v.number(),
+      active: v.boolean(),
+      configured: v.boolean(),
+    }),
+    costBrl: v.number(),
+    pct: v.union(v.number(), v.null()),
+    level: v.union(v.literal("none"), v.literal("ok"), v.literal("warn"), v.literal("reached")),
+    blocked: v.boolean(),
+    byo: v.boolean(),
   }),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
+    const month =
+      args.month !== undefined
+        ? args.month
+        : args.monthStart !== undefined
+          ? monthKeyUtc(args.monthStart)
+          : null;
+    if (!month || !isValidMonthKey(month)) throw new Error("Informe o mês (AAAA-MM)");
     const org = await ctx.db.get(args.organizationId);
-    const runs = await ctx.db
-      .query("agentRuns")
-      .withIndex("by_organization_and_started", (q) =>
-        q.eq("organizationId", args.organizationId).gte("startedAt", args.monthStart)
-      )
-      .collect();
-
-    const conversations = new Set(
-      runs.filter((r) => r.kind === "attendant" && r.conversationId).map((r) => r.conversationId)
-    );
-    let costUsdEstimate = 0;
-    let promptTokens = 0;
-    let completionTokens = 0;
-    let cachedPromptTokens = 0;
-    for (const run of runs) {
-      costUsdEstimate += run.costUsdEstimate ?? 0;
-      promptTokens += run.promptTokens ?? 0;
-      completionTokens += run.completionTokens ?? 0;
-      cachedPromptTokens += run.cachedPromptTokens ?? 0;
-    }
+    const usage = await getMonthlyUsageDoc(ctx, args.organizationId, month);
+    const aiConfig = org?.settings.aiConfig;
+    const cap = resolveSpendCap(aiConfig?.spendCap);
+    const costUsdMicros = usage?.costUsdMicros ?? 0;
+    const evaluation = evaluateSpend(costUsdMicros, cap);
     return {
-      conversationsThisMonth: conversations.size,
-      runsThisMonth: runs.length,
-      costUsdEstimate,
-      promptTokens,
-      completionTokens,
-      cachedPromptTokens,
-      budget: org?.settings.aiConfig?.monthlyConversationBudget ?? null,
+      month,
+      conversationsThisMonth: usage?.conversations ?? 0,
+      runsThisMonth: usage?.runs ?? 0,
+      costUsdEstimate: costUsdMicros / 1_000_000,
+      costUsdMicros,
+      estimatedRuns: usage?.estimatedRuns ?? 0,
+      promptTokens: usage?.promptTokens ?? 0,
+      completionTokens: usage?.completionTokens ?? 0,
+      cachedPromptTokens: usage?.cachedPromptTokens ?? 0,
+      byKind: usage?.byKind ?? {},
+      budget: aiConfig?.monthlyConversationBudget ?? null,
+      spendCap: {
+        mode: cap.mode,
+        monthlyBrl: cap.monthlyBrl,
+        usdBrlRate: cap.usdBrlRate,
+        warnPct: cap.warnPct,
+        active: cap.active,
+        configured: aiConfig?.spendCap !== undefined,
+      },
+      costBrl: (costUsdMicros / 1_000_000) * cap.usdBrlRate,
+      pct: evaluation.pct,
+      level: evaluation.level,
+      blocked: evaluation.blocked,
+      // Chave própria: a conta do provider é do CLIENTE — conta igual, rotula na UI.
+      byo: aiConfig?.providerConfig?.mode === "byo",
     };
+  },
+});
+
+/**
+ * Teto de GASTO mensal em R$ (v0.69). Validação no servidor (`lib/aiSpend.ts`):
+ * cotação 1–20 (default 5,5), teto ≥ 0 (0 = sem valor), aviso 50–95% (default
+ * 80). `block` só suspende quando há valor definido; `off` desliga avisos e
+ * bloqueio. Mudança auditada (`high` quando liga o bloqueio).
+ */
+export const setSpendCap = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    mode: v.union(v.literal("off"), v.literal("warn"), v.literal("block")),
+    monthlyBrl: v.optional(v.union(v.number(), v.null())),
+    usdBrlRate: v.optional(v.union(v.number(), v.null())),
+    warnPct: v.optional(v.union(v.number(), v.null())),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org?.settings.aiConfig) throw new Error("Ative a IA primeiro");
+    // MERGE com o que existe (padrão `mergeBotGuard`): campo AUSENTE mantém o
+    // valor atual, `null` limpa — `{mode:"block"}` sozinho não zera o teto.
+    const input = {
+      mode: args.mode,
+      ...(typeof args.monthlyBrl === "number" ? { monthlyBrl: args.monthlyBrl } : {}),
+      ...(typeof args.usdBrlRate === "number" ? { usdBrlRate: args.usdBrlRate } : {}),
+      ...(typeof args.warnPct === "number" ? { warnPct: args.warnPct } : {}),
+    };
+    const invalid = validateSpendCapInput(input);
+    if (invalid) throw new Error(invalid);
+    const spendCap = mergeSpendCap(org.settings.aiConfig.spendCap, {
+      mode: args.mode,
+      monthlyBrl: args.monthlyBrl,
+      usdBrlRate: args.usdBrlRate,
+      warnPct: args.warnPct,
+    });
+    const before = org.settings.aiConfig.spendCap ?? null;
+    const now = Date.now();
+    await ctx.db.patch(args.organizationId, {
+      settings: {
+        ...org.settings,
+        aiConfig: { ...org.settings.aiConfig, spendCap },
+      },
+      updatedAt: now,
+    });
+    // Teto/cotação/limiar mudou no meio do mês: os avisos voltam a valer para a
+    // régua NOVA (senão subir o teto e estourá-lo de novo passaria calado).
+    const thresholdChanged =
+      before?.monthlyBrl !== spendCap.monthlyBrl ||
+      before?.usdBrlRate !== spendCap.usdBrlRate ||
+      before?.warnPct !== spendCap.warnPct;
+    if (thresholdChanged) {
+      const usage = await getMonthlyUsageDoc(ctx, args.organizationId, monthKeyUtc(now));
+      if (usage && (usage.warnedAt !== undefined || usage.reachedAt !== undefined)) {
+        await ctx.db.patch(usage._id, { warnedAt: undefined, reachedAt: undefined, updatedAt: now });
+      }
+    }
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { spendCap: before },
+        after: { spendCap },
+      },
+      description:
+        args.mode === "block"
+          ? "Configurou o teto de gastos de IA em modo bloquear"
+          : "Atualizou o teto de gastos de IA",
+      severity: args.mode === "block" && before?.mode !== "block" ? "high" : "medium",
+      createdAt: now,
+    });
+    return null;
   },
 });
 

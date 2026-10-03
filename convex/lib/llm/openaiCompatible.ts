@@ -84,6 +84,11 @@ function parseUsage(raw: any): NormalizedUsage | undefined {
     (typeof raw.prompt_cache_hit_tokens === "number" ? raw.prompt_cache_hit_tokens : undefined);
   const usage: NormalizedUsage = { promptTokens, completionTokens };
   if (cached !== undefined) usage.cachedPromptTokens = cached;
+  // OpenRouter: custo real da chamada (USD). Só número finito e >= 0 — um
+  // `null` (BYOK sem custo calculado) cai na estimativa por tabela.
+  if (typeof raw.cost === "number" && Number.isFinite(raw.cost) && raw.cost >= 0) {
+    usage.costUsd = raw.cost;
+  }
   return usage;
 }
 

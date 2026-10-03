@@ -27,6 +27,8 @@ export const AI_STATE_REASON_CODES = [
   // claim / commit do turno
   "conversa_removida",
   "budget_mensal",
+  // teto de gastos em R$ em `block` (v0.69, convex/aiSpend.ts) — agente de grupo
+  "teto_de_gastos",
   "rascunho_ja_revisado",
   "humano_respondeu",
   "cliente_falou",

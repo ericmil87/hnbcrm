@@ -6,6 +6,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
+import { recordRunUsage } from "./aiSpend";
 
 export const internalStartRun = internalMutation({
   args: {
@@ -60,6 +61,8 @@ export const internalFinishRun = internalMutation({
     completionTokens: v.optional(v.number()),
     cachedPromptTokens: v.optional(v.number()),
     costUsdEstimate: v.optional(v.number()),
+    // v0.69: parte do custo saiu do preço conservador (modelo sem preço).
+    costEstimated: v.optional(v.boolean()),
     confidence: v.optional(v.number()),
     error: v.optional(v.string()),
     resultMessageId: v.optional(v.id("messages")),
@@ -70,12 +73,30 @@ export const internalFinishRun = internalMutation({
     const clean = Object.fromEntries(
       Object.entries(rest).filter(([, value]) => value !== undefined)
     );
+    const before = await ctx.db.get(runId);
+    const now = Date.now();
     await ctx.db.patch(runId, {
       ...clean,
       // Cinto e suspensório: sanitiza de novo mesmo que o chamador já o faça.
       ...(error !== undefined ? { error: sanitizeLlmError(error) } : {}),
-      finishedAt: Date.now(),
+      finishedAt: now,
     });
+    // Contador mensal (v0.69) na MESMA transação — é o que o teto em R$ e o
+    // painel de uso leem. Idempotente por run (só soma a diferença).
+    if (before) {
+      await recordRunUsage(
+        ctx,
+        before,
+        {
+          costUsdEstimate: args.costUsdEstimate,
+          costEstimated: args.costEstimated,
+          promptTokens: args.promptTokens,
+          completionTokens: args.completionTokens,
+          cachedPromptTokens: args.cachedPromptTokens,
+        },
+        now
+      );
+    }
     return null;
   },
 });

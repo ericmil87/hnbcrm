@@ -43,6 +43,16 @@ import { chatWithFallback } from "./lib/llm";
 import { resolveOrgRoutes } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
+// Custo por modelo + teto de gastos em R$ (v0.69, T04).
+import {
+  SPEND_CAP_BLOCKED_MESSAGE,
+  SPEND_CAP_REASON,
+  addUsage,
+  finishRunCostFields,
+  monthKeyUtc,
+  newUsageTotals,
+} from "./lib/aiSpend";
+import { spendBlockedNow } from "./aiSpend";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import { visionEnabledForOrg } from "./lib/mediaEnrichment";
@@ -90,15 +100,7 @@ const PARTICIPANTS_IN_CONTEXT = 60;
 /** Cap de grupos varridos pelo cron do digest. */
 const DIGEST_GROUP_CAP = 200;
 
-// Custo: mesmos preços do flash usados pelo atendente (estimativa, não fatura).
-const FLASH_PROMPT_USD_PER_M = 0.14;
-const FLASH_COMPLETION_USD_PER_M = 0.28;
-function estimateCostUsd(usage: { promptTokens: number; completionTokens: number }): number {
-  return (
-    (usage.promptTokens / 1_000_000) * FLASH_PROMPT_USD_PER_M +
-    (usage.completionTokens / 1_000_000) * FLASH_COMPLETION_USD_PER_M
-  );
-}
+// Custo: preço POR MODELO (ou `usage.cost` do provedor) — lib/aiSpend.ts (v0.69).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Contexto compartilhado: carrega grupo + conversa + canal + org + atendente e
@@ -425,6 +427,12 @@ export const internalClaimGroupTurn = internalMutation({
         updatedAt: now,
       });
       return { kind: "skip" as const, reason: eligibility.reason };
+    }
+    // Teto de gastos em R$ estourado em `block` (v0.69): o agente de grupo fica
+    // suspenso até virar o mês — o aviso está na UI e no sino dos admins.
+    if (await spendBlockedNow(ctx, org, now)) {
+      await ctx.db.patch(item._id, { status: "skipped", error: SPEND_CAP_REASON, updatedAt: now });
+      return { kind: "skip" as const, reason: SPEND_CAP_REASON };
     }
 
     // Espera pelo enriquecimento da mídia — mesma regra do 1:1: sem isto a IA
@@ -1048,7 +1056,7 @@ export const internalProcessGroupTurn = internalAction({
       let mentionKeys: unknown = null;
       const toolCallNames: string[] = [];
       let requestCount = 0;
-      const usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
+      const usage = newUsageTotals();
       let usedProvider: string | undefined;
       let handoffRequestedThisRun = false;
 
@@ -1062,11 +1070,7 @@ export const internalProcessGroupTurn = internalAction({
         });
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
-        if (resp.usage) {
-          usage.promptTokens += resp.usage.promptTokens;
-          usage.completionTokens += resp.usage.completionTokens;
-          usage.cachedPromptTokens += resp.usage.cachedPromptTokens ?? 0;
-        }
+        addUsage(usage, resp.usage, resp.usedRoute, context.model);
         if (resp.finishReason === "content_filter") {
           throw new Error("content_filter: resposta bloqueada pelo provider");
         }
@@ -1178,10 +1182,7 @@ export const internalProcessGroupTurn = internalAction({
         model: context.model,
         requestCount,
         toolCallNames,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        cachedPromptTokens: usage.cachedPromptTokens,
-        costUsdEstimate: estimateCostUsd(usage),
+        ...finishRunCostFields(usage),
         ...(commit.committed && commit.messageId ? { resultMessageId: commit.messageId } : {}),
       });
 
@@ -1357,6 +1358,14 @@ export const internalGenerateSummary = internalAction({
     if (setup.history.length === 0) {
       return { text: null, at: null, hours, error: "sem_mensagens_no_periodo" };
     }
+    // Teto de gastos em R$ em `block` (v0.69): resumo suspenso até virar o mês.
+    const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+      organizationId: setup.organizationId,
+      month: monthKeyUtc(Date.now()),
+    });
+    if (spendGate.blocked) {
+      return { text: null, at: null, hours, error: SPEND_CAP_BLOCKED_MESSAGE };
+    }
 
     let runId: Id<"agentRuns"> | null = null;
     try {
@@ -1416,12 +1425,7 @@ export const internalGenerateSummary = internalAction({
           provider: resp.usedRoute.providerId,
           model: setup.model,
           requestCount: 1,
-          promptTokens: resp.usage?.promptTokens ?? 0,
-          completionTokens: resp.usage?.completionTokens ?? 0,
-          costUsdEstimate: estimateCostUsd({
-            promptTokens: resp.usage?.promptTokens ?? 0,
-            completionTokens: resp.usage?.completionTokens ?? 0,
-          }),
+          ...finishRunCostFields(addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model)),
         });
       }
       return { text, at: Date.now(), hours, error: null };
@@ -1685,7 +1689,17 @@ export const internalRadar = internalAction({
       groupChatId: args.groupChatId,
       now: Date.now(),
     })) as RadarSetup | null;
-    if (!setup || setup.candidates.length === 0) {
+    // Teto de gastos em R$ em `block` (v0.69): o radar fica suspenso até virar
+    // o mês (o lote é só liberado, como num lote vazio).
+    const spendBlocked =
+      setup !== null &&
+      (
+        await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+          organizationId: setup.organizationId,
+          month: monthKeyUtc(Date.now()),
+        })
+      ).blocked;
+    if (!setup || setup.candidates.length === 0 || spendBlocked) {
       await ctx.runMutation(internal.groupAgent.internalFinishRadar, {
         groupChatId: args.groupChatId,
         ...(ranFor !== null ? { ranFor } : {}),
@@ -1749,12 +1763,7 @@ export const internalRadar = internalAction({
         provider: resp.usedRoute.providerId,
         model: setup.model,
         requestCount: 1,
-        promptTokens: resp.usage?.promptTokens ?? 0,
-        completionTokens: resp.usage?.completionTokens ?? 0,
-        costUsdEstimate: estimateCostUsd({
-          promptTokens: resp.usage?.promptTokens ?? 0,
-          completionTokens: resp.usage?.completionTokens ?? 0,
-        }),
+        ...finishRunCostFields(addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model)),
       });
     } catch (e) {
       if (runId) {

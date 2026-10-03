@@ -72,6 +72,14 @@ import {
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { ChatMessage } from "./lib/llm/types";
+// Custo por modelo + teto de gastos em R$ (v0.69, T04).
+import {
+  SPEND_CAP_BLOCKED_MESSAGE,
+  addUsage,
+  finishRunCostFields,
+  monthKeyUtc,
+  newUsageTotals,
+} from "./lib/aiSpend";
 
 // Não duplica um passe em voo (mesmo molde da transcrição).
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000;
@@ -246,6 +254,16 @@ async function runVision(
   if (message.size > MAX_IMAGE_BYTES) {
     return await fail(ctx, message.messageId, "Imagem maior que 5MB — não lida");
   }
+  // Teto de gastos em R$ em `block` (v0.69): leitura suspensa até virar o mês.
+  // Falha LEGÍVEL (não skip mudo): o inbox mostra o motivo e "Ler imagem" pode
+  // ser repetido depois.
+  const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+    organizationId: message.organizationId,
+    month: monthKeyUtc(Date.now()),
+  });
+  if (spendGate.blocked) {
+    return await fail(ctx, message.messageId, SPEND_CAP_BLOCKED_MESSAGE);
+  }
   if (!SUPPORTED_MIME.includes(message.mimeType.toLowerCase())) {
     return await fail(ctx, message.messageId, `Formato não suportado para leitura (${message.mimeType})`);
   }
@@ -308,6 +326,9 @@ async function runVision(
     : null;
 
   let requestCount = 0;
+  // Custo de TODAS as tentativas que responderam (inclusive as descartadas por
+  // leitura vazia/imagem perdida — o provedor cobrou por elas).
+  const usage = newUsageTotals();
   let lastError = "Nenhum modelo de visão respondeu";
   const attemptLog: string[] = [];
 
@@ -341,6 +362,7 @@ async function runVision(
 
       // Quem atendeu DE FATO: o OpenRouter devolve o provedor upstream no body.
       // Sem isso, a falha de 14/09 ficou sem culpado identificável.
+      addUsage(usage, resp.usage, resp.usedRoute, attempt.canonicalModel);
       const upstream = upstreamProviderOf(resp.raw);
       const parsed = parseVisionJson(resp.message.content);
       if (!parsed || !parsed.descricao.trim()) {
@@ -382,10 +404,7 @@ async function runVision(
           provider: attempt.providerId,
           model: attempt.canonicalModel,
           requestCount,
-          promptTokens: resp.usage?.promptTokens,
-          completionTokens: resp.usage?.completionTokens,
-          cachedPromptTokens: resp.usage?.cachedPromptTokens,
-          costUsdEstimate: estimateVisionCostUsd(resp.usage),
+          ...finishRunCostFields(usage),
         });
       }
 
@@ -406,6 +425,7 @@ async function runVision(
       runId,
       status: "error",
       requestCount,
+      ...finishRunCostFields(usage),
       error: lastError,
     });
   }
@@ -600,28 +620,9 @@ export function parseVisionJson(
   return { descricao, tipo, campos, ...(imagemRecebida !== undefined ? { imagemRecebida } : {}) };
 }
 
-/**
- * Custo ESTIMADO da chamada de visão — não é fatura.
- *
- * O produto não tem tabela de preço por modelo (mesma dívida do
- * `estimateCostUsd` do atendente), então aplicamos os preços do
- * `deepseek-v4-flash` (US$0,14/M in, US$0,28/M out) a qualquer elo da cadeia.
- * Conferido contra os provedores em 2026-08-27:
- *
- * - o `/v1/models` do OpenCode Go NÃO publica preço, então o do
- *   `deepseek-v4-flash-vision-exp` segue desconhecido;
- * - o OpenRouter publica: `z-ai/glm-5.3-flash` = US$0,075/M in + US$0,25/M out.
- *
- * Custo REAL medido nessa rota, com um comprovante 1080x1920: 3.060 tokens de
- * entrada + 502 de saída = **US$0,00036 por imagem**. Ou seja, esta estimativa
- * superestima ~1,6x ali — erra para o lado conservador, de propósito.
- */
-function estimateVisionCostUsd(
-  usage: { promptTokens: number; completionTokens: number } | undefined
-): number | undefined {
-  if (!usage) return undefined;
-  return (usage.promptTokens * 0.14 + usage.completionTokens * 0.28) / 1_000_000;
-}
+// Custo da visão: preço POR MODELO de cada elo que respondeu (ou o `usage.cost`
+// do OpenRouter) — `lib/aiSpend.ts` (v0.69). A estimativa antiga aplicava o
+// preço do deepseek-v4-flash a qualquer elo.
 
 // ── Queries internas ──
 

@@ -29,6 +29,8 @@ const DEFAULTS = {
   conversationTransferred: true,
   // T02 — número do WhatsApp perdeu a sessão (só sino).
   channelSessionLost: true,
+  // v0.69 — aviso/teto de gasto de IA do mês (sino + e-mail, aos admins).
+  aiSpendAlert: true,
 };
 
 // Get current member's notification preferences
@@ -72,6 +74,7 @@ export const getMyPreferences = query({
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
       channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
+      aiSpendAlert: prefs.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
       _id: prefs._id,
       _exists: true,
     };
@@ -104,6 +107,7 @@ export const updateMyPreferences = mutation({
     aiFollowupNeedsHuman: v.optional(v.boolean()),
     conversationTransferred: v.optional(v.boolean()),
     channelSessionLost: v.optional(v.boolean()),
+    aiSpendAlert: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -150,6 +154,7 @@ export const updateMyPreferences = mutation({
         DEFAULTS.conversationTransferred,
       channelSessionLost:
         args.channelSessionLost ?? existing?.channelSessionLost ?? DEFAULTS.channelSessionLost,
+      aiSpendAlert: args.aiSpendAlert ?? existing?.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
     };
 
     if (existing) {
@@ -258,6 +263,7 @@ export const internalGetPreferences = internalQuery({
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
       channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
+      aiSpendAlert: prefs.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
       _exists: true,
     };
   },
@@ -317,6 +323,8 @@ export const internalUpsertPreferences = internalMutation({
         args.updates.channelSessionLost ??
         existing?.channelSessionLost ??
         DEFAULTS.channelSessionLost,
+      aiSpendAlert:
+        args.updates.aiSpendAlert ?? existing?.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
     };
 
     if (existing) {

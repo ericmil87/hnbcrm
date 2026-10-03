@@ -21,7 +21,9 @@ export type NotificationType =
   | "group_digest"
   | "ai_followup_needs_human"
   | "conversation_transferred"
-  | "channel_session_lost";
+  | "channel_session_lost"
+  | "ai_spend_warning"
+  | "ai_spend_reached";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -48,6 +50,10 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   conversation_transferred: "conversationTransferred",
   // T02 — só sino (sem template de e-mail).
   channel_session_lost: "channelSessionLost",
+  // v0.69 — aviso/teto de gasto de IA (um flag só para os dois; também é o
+  // eventType do e-mail, com template `aiSpendAlert`).
+  ai_spend_warning: "aiSpendAlert",
+  ai_spend_reached: "aiSpendAlert",
 };
 
 /**

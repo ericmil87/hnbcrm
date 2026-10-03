@@ -8,6 +8,7 @@ import {
   resolveModelId,
   routeInfo,
   OPENROUTER_ZDR_PROVIDER_BODY,
+  OPENROUTER_USAGE_BODY,
   OPENCODE_GO_MODELS,
   DEFAULT_MODELS,
   DEFAULT_STORED_MODELS,
@@ -265,7 +266,7 @@ describe("resolvePlatformChain", () => {
     const both = resolvePlatformChain("deepseek-v4-flash", { opencodeGoKey: "sk-a", openrouterKey: "sk-b" });
     expect(both).toHaveLength(2);
     expect(both[1].providerId).toBe("openrouter");
-    expect(both[1].extraBody).toEqual({ ...OPENROUTER_ZDR_PROVIDER_BODY });
+    expect(both[1].extraBody).toEqual({ ...OPENROUTER_ZDR_PROVIDER_BODY, ...OPENROUTER_USAGE_BODY });
     expect(both[0].extraBody).toBeUndefined();
   });
 });

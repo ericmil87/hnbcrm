@@ -17,6 +17,7 @@ import {
 } from "./types";
 import {
   OPENROUTER_ONLY_MODELS,
+  OPENROUTER_USAGE_BODY,
   OPENROUTER_ZDR_PROVIDER_BODY,
   ProviderId,
   resolveModelId,
@@ -71,7 +72,7 @@ export function resolvePlatformChain(
   if (env.openrouterKey) {
     chain.push(
       makeRoute("openrouter", BASE_URLS.openrouter!, env.openrouterKey, canonicalModel, {
-        extraBody: { ...OPENROUTER_ZDR_PROVIDER_BODY },
+        extraBody: { ...OPENROUTER_ZDR_PROVIDER_BODY, ...OPENROUTER_USAGE_BODY },
       })
     );
   }
@@ -113,7 +114,9 @@ export function resolveByoRoute(
     throw new Error(`Provider BYO desconhecido: ${byo.provider}`);
   }
   const extraBody =
-    provider === "openrouter" ? { ...OPENROUTER_ZDR_PROVIDER_BODY } : undefined;
+    provider === "openrouter"
+      ? { ...OPENROUTER_ZDR_PROVIDER_BODY, ...OPENROUTER_USAGE_BODY }
+      : undefined;
   return makeRoute(provider, baseUrl, byo.apiKey, canonicalModel, { extraBody });
 }
 

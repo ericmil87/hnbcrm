@@ -40,6 +40,14 @@ import { isSessionLostState } from "./lib/channelHealthSignals";
 import { membersWithPermission } from "./lib/groupChatCore";
 import { orgAiActive } from "./lib/agentSecurity";
 import { chatWithFallback, withReasoningEffort } from "./lib/llm";
+// Custo por modelo + teto de gastos em R$ (v0.69, T04).
+import {
+  SPEND_CAP_BLOCKED_MESSAGE,
+  addUsage,
+  finishRunCostFields,
+  monthKeyUtc,
+  newUsageTotals,
+} from "./lib/aiSpend";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
@@ -1096,6 +1104,14 @@ type GenerateResult =
 
 /** Chamada de LLM da publicação: 1 request, sem tools, saída = texto puro. */
 async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<GenerateResult> {
+  // Teto de gastos em R$ em `block` (v0.69): geração suspensa até virar o mês,
+  // com o motivo legível (o caminho de erro da publicação já avisa a equipe).
+  const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+    organizationId: setup.organizationId,
+    month: monthKeyUtc(Date.now()),
+  });
+  if (spendGate.blocked) return { ok: false, error: SPEND_CAP_BLOCKED_MESSAGE };
+
   let routes;
   try {
     routes = await resolveOrgRoutes(
@@ -1146,6 +1162,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
   // OpenRouter — ver `withReasoningEffort`).
   const postRoutes = withReasoningEffort(routes, "low");
   let requestCount = 0;
+  const usage = newUsageTotals();
   try {
     let resp = null;
     let text = "";
@@ -1170,6 +1187,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
         { timeoutMs: GENERATE_TIMEOUT_MS }
       );
       lastFinishReason = resp.finishReason;
+      addUsage(usage, resp.usage, resp.usedRoute, setup.model);
       text = resp.finishReason === "length" ? "" : cleanGeneratedPost(resp.message.content, maxChars);
     }
     if (!text || !resp) {
@@ -1182,8 +1200,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
           status: "error",
           requestCount,
           error: detail,
-          promptTokens: resp?.usage?.promptTokens,
-          completionTokens: resp?.usage?.completionTokens,
+          ...finishRunCostFields(usage),
         });
       }
       return { ok: false, error: "A IA devolveu um texto vazio" };
@@ -1195,9 +1212,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
         provider: resp.usedRoute.providerId,
         model: resp.usedRoute.canonicalModel,
         requestCount,
-        promptTokens: resp.usage?.promptTokens,
-        completionTokens: resp.usage?.completionTokens,
-        cachedPromptTokens: resp.usage?.cachedPromptTokens,
+        ...finishRunCostFields(usage),
       });
     }
     return {
@@ -1213,6 +1228,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
         runId,
         status: "error",
         requestCount: Math.max(1, requestCount),
+        ...finishRunCostFields(usage),
         error,
       });
     }

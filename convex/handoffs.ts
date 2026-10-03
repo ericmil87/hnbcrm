@@ -38,10 +38,19 @@ const handoffStatusValidator = v.union(
 // De onde veio o repasse — só metadado (audit/activity/webhook), nunca regra.
 // "bot_suspect" (v0.65) = guardrail anti-bot: o outro lado parece um robô e o
 // atendente parou de responder até um humano verificar.
-export type HandoffOrigin = "human" | "ai_keyword" | "ai_tool" | "ai_failure" | "bot_suspect";
+// "ai_budget" (v0.69) = teto de IA do mês estourado (conversas ou gasto em R$):
+// a IA não pode atender sozinha e chamou uma pessoa (convex/aiSpend.ts).
+export type HandoffOrigin =
+  | "human"
+  | "ai_keyword"
+  | "ai_tool"
+  | "ai_failure"
+  | "bot_suspect"
+  | "ai_budget";
 
 // Origens que um CALLER pode declarar (REST/MCP/runtime via
-// internalRequestHandoff). `bot_suspect` fica de fora de propósito: só o
+// internalRequestHandoff). `bot_suspect` e `ai_budget` ficam de fora de
+// propósito (o segundo só `convex/aiSpend.ts` rotula). `bot_suspect`: só o
 // guardrail anti-bot (`applyBotSuspicion`, direto no core) rotula assim — e
 // rejeitar um repasse com essa origem LIMPA a suspeita de robô.
 const requestableHandoffOriginValidator = v.union(

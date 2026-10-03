@@ -872,7 +872,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Handoffs"],
         "summary": "Listar handoffs",
-        "description": "Retorna a lista de handoffs da organização com filtro opcional por status. Cada item traz origin (human, ai_keyword, ai_tool, ai_failure, bot_suspect — este último é o guardrail anti-bot v0.65: a IA parou de responder porque o outro lado parece um robô). Requer permissão inbox: view_own na chave de API.",
+        "description": "Retorna a lista de handoffs da organização com filtro opcional por status. Cada item traz origin (human, ai_keyword, ai_tool, ai_failure, bot_suspect, ai_budget). bot_suspect = guardrail anti-bot v0.65: a IA parou de responder porque o outro lado parece um robô. ai_budget = v0.69: o teto de IA do mês (conversas ou gasto em R$) estourou e a IA chamou uma pessoa. Só o core interno rotula bot_suspect e ai_budget — elas não podem ser declaradas ao criar um handoff. Requer permissão inbox: view_own na chave de API.",
         "operationId": "listHandoffs",
         "parameters": [
           { "name": "status", "in": "query", "schema": { "type": "string", "enum": ["pending", "accepted", "rejected", "canceled"] }, "description": "Filtrar por status" },

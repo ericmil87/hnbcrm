@@ -46,6 +46,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "forms", index: "by_organization" },
   { table: "webhooks", index: "by_organization" },
   { table: "agentRuns", index: "by_organization_and_started" },
+  { table: "aiUsageMonthly", index: "by_organization_and_month" },
   { table: "aiReplyQueue", index: "by_organization_and_status" },
   { table: "aiFollowUps", index: "by_organization_and_status" },
   { table: "aiPacing", index: "by_organization" },

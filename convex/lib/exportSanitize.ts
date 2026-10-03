@@ -28,6 +28,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "aiPacing",
   "channelPacing",
   "agentRuns",
+  // Contador mensal de uso/custo de IA (v0.69) — derivado de `agentRuns`.
+  "aiUsageMonthly",
   "agentEvals",
   "copilotThreads",
   "copilotMessages",

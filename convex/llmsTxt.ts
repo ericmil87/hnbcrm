@@ -256,7 +256,7 @@ An AI-to-human (or human-to-human) handoff request.
 | summary | string | Conversation summary |
 | suggestedActions | string[] | Recommended next steps |
 | status | enum | pending, accepted, rejected, canceled |
-| origin | enum? | Who raised it: human, ai_keyword (customer typed a handoff keyword), ai_tool (the attendant called requestHandoff), ai_failure (the attendant failed), bot_suspect (anti-bot guardrail, v0.65 — the other side looks like a bot). Older rows have no origin |
+| origin | enum? | Who raised it: human, ai_keyword (customer typed a handoff keyword), ai_tool (the attendant called requestHandoff), ai_failure (the attendant failed), bot_suspect (anti-bot guardrail, v0.65 — the other side looks like a bot), ai_budget (v0.69 — the month's AI cap, conversations or spend in R$, was exceeded and the AI called a person). Only the internal core sets bot_suspect and ai_budget; they cannot be passed when requesting a handoff. Older rows have no origin |
 
 ### Team Member
 A human or AI agent on the team.
@@ -396,7 +396,7 @@ An in-app notification (bell in the header), created alongside e-mail notificati
 | Field | Type | Description |
 |-------|------|-------------|
 | memberId | Id<teamMembers> | Recipient |
-| type | enum | task_assigned, task_comment_mention, task_due_soon, task_overdue |
+| type | enum | task_assigned, task_comment_mention, task_due_soon, task_overdue, among others; since v0.69 also ai_spend_warning and ai_spend_reached (admins: month AI spend near / at the R$ cap — preference \`aiSpendAlert\`) |
 | title | string | Notification title |
 | body | string | Optional body text |
 | taskId | Id<tasks> | Related task (optional) |
@@ -757,7 +757,7 @@ Inject an inbound message from a contact — for external bridges on any channel
 ### Handoff Endpoints
 
 #### GET /api/v1/handoffs
-List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved), \`title\` (the lead title, or the WhatsApp group name for a handoff raised inside a room), \`isGroup\` (true when the handoff has no lead because it came from a group) and, since v0.65, \`origin\` (see the Handoff model; \`bot_suspect\` = the anti-bot guardrail stopped the AI and wants a human to check whether the other side is a real person).
+List handoffs with cursor-based pagination. Each item includes \`conversationId\` (the source conversation; \`null\` when it cannot be resolved), \`title\` (the lead title, or the WhatsApp group name for a handoff raised inside a room), \`isGroup\` (true when the handoff has no lead because it came from a group) and, since v0.65, \`origin\` (see the Handoff model; \`bot_suspect\` = the anti-bot guardrail stopped the AI and wants a human to check whether the other side is a real person; \`ai_budget\` = the month's AI cap was exceeded and a person must answer — both set only by the internal core).
 
 **Query params:** status (pending, accepted, rejected, canceled), limit, cursor (all optional)
 
@@ -1327,6 +1327,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | aiDraftPending | In-app: an AI draft is waiting for review on your lead |
 | conversationTransferred | In-app: a conversation was transferred to you or your department (Central module) |
 | channelSessionLost | In-app: a WhatsApp number lost its connection (logged out, banned, or offline) — sent to members with settings:manage |
+| aiSpendAlert | In-app (\`ai_spend_warning\` / \`ai_spend_reached\`) + e-mail, admins only (settings:manage): the month's approximate AI spend crossed the warning % (default 80) or reached the R$ cap — once per month each (v0.69) |
 
 ---
 
@@ -1470,7 +1471,7 @@ Request a handoff for a lead.
 - **suggestedActions** (string[], optional): Recommended next steps
 
 #### crm_list_handoffs
-List handoff requests, optionally filtered by status. Each item carries \`origin\` (human, ai_keyword, ai_tool, ai_failure, bot_suspect).
+List handoff requests, optionally filtered by status. Each item carries \`origin\` (human, ai_keyword, ai_tool, ai_failure, bot_suspect, ai_budget — the last two are set only by the internal core).
 - **status** (string, optional): Filter by status (pending, accepted, rejected, canceled)
 
 #### crm_accept_handoff
@@ -1694,7 +1695,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | conversation.created | New conversation started |
 | message.sent | Message sent to a 1:1 conversation (payload includes leadId, senderType + senderId). Group rooms fire group.message.sent instead |
 | message.received | Inbound message received from a contact |
-| handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure, bot_suspect) |
+| handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure, bot_suspect, ai_budget — bot_suspect and ai_budget are set only by the internal core) |
 | handoff.accepted | Handoff accepted (payload includes conversationId) |
 | handoff.rejected | Handoff rejected |
 | handoff.canceled | Pending handoff canceled because the conversation was returned to the AI |

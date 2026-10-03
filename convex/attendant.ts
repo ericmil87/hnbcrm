@@ -103,6 +103,9 @@ import {
   resolveBotGuardSettings,
 } from "./lib/botGuard";
 import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGuardOps";
+// ── Custo de IA + tetos do mês (v0.69, T04) — a lógica mora fora daqui ──
+import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
+import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 
 export { isWithinSchedule };
 
@@ -132,24 +135,8 @@ const MAX_TEAM_NOTES = 20;
 const DEFAULT_DISCLOSURE =
   "Você está falando com um assistente virtual. Digite 'humano' a qualquer momento para falar com uma pessoa.";
 
-// Preço/1M tokens para estimativa de custo (deepseek-v4-flash; hit de cache ~98% off).
-const FLASH_PROMPT_USD_PER_M = 0.14;
-const FLASH_CACHED_USD_PER_M = 0.0028;
-const FLASH_COMPLETION_USD_PER_M = 0.28;
-
-function estimateCostUsd(usage: {
-  promptTokens: number;
-  completionTokens: number;
-  cachedPromptTokens: number;
-}): number {
-  const fresh = Math.max(0, usage.promptTokens - usage.cachedPromptTokens);
-  return (
-    (fresh * FLASH_PROMPT_USD_PER_M +
-      usage.cachedPromptTokens * FLASH_CACHED_USD_PER_M +
-      usage.completionTokens * FLASH_COMPLETION_USD_PER_M) /
-    1_000_000
-  );
-}
+// Custo por run: preço POR MODELO (ou `usage.cost` do provedor) em
+// lib/aiSpend.ts — o antigo preço fixo do flash para qualquer modelo saiu (v0.69).
 
 // ── Elegibilidade (12 condições; usada no enqueue e RE-checada no commit) ──
 // `channelProvider` vem SEMPRE de resolveConversationChannelConfig (helper
@@ -1176,32 +1163,21 @@ export const internalClaimForProcessing = internalMutation({
       }
     }
 
-    // Budget mensal (kill-switch de custo): conversas atendidas no mês.
-    const budget = org!.settings.aiConfig?.monthlyConversationBudget;
-    if (budget !== undefined && budget > 0) {
-      const monthStart = new Date(now);
-      monthStart.setUTCDate(1);
-      monthStart.setUTCHours(0, 0, 0, 0);
-      const runsThisMonth = await ctx.db
-        .query("agentRuns")
-        .withIndex("by_organization_and_kind_and_started", (q) =>
-          q
-            .eq("organizationId", item.organizationId)
-            .eq("kind", "attendant")
-            .gte("startedAt", monthStart.getTime())
-        )
-        .collect();
-      const conversationsThisMonth = new Set(
-        runsThisMonth.map((r) => r.conversationId).filter(Boolean)
-      );
-      if (
-        conversationsThisMonth.size >= budget &&
-        !conversationsThisMonth.has(conversation._id)
-      ) {
-        await ctx.db.patch(item._id, { status: "skipped", error: "budget_mensal", updatedAt: now });
-        await releaseFollowUpFromQueue(ctx, item, "budget_mensal");
-        return { kind: "skip" as const, reason: "budget_mensal" };
-      }
+    // Tetos do mês (v0.69, convex/aiSpend.ts): conversas (`budget_mensal`, que
+    // agora ABRE repasse `ai_budget` em vez de ficar mudo) e gasto em R$ (em
+    // `block`, o turno vira rascunho). Lê 1 documento do contador mensal.
+    const budgetGate = await attendantBudgetGate(ctx, {
+      item,
+      org: org!,
+      agent: agent!,
+      lead,
+      conversation,
+      now,
+    });
+    if (budgetGate.skipReason) {
+      await ctx.db.patch(item._id, { status: "skipped", error: budgetGate.skipReason, updatedAt: now });
+      await releaseFollowUpFromQueue(ctx, item, budgetGate.skipReason);
+      return { kind: "skip" as const, reason: budgetGate.skipReason };
     }
 
     // Pacing por-org (cursor OCC): reivindica o próximo slot de inferência.
@@ -1255,6 +1231,16 @@ export const internalClaimForProcessing = internalMutation({
         DEFAULT_MODELS.attendant,
       requestCount: 0,
       startedAt: now,
+    });
+    // Conversa conta no mês; teto em R$ em `block` abre o repasse `ai_budget`.
+    await onAttendantRunStarted(ctx, {
+      gate: budgetGate,
+      item,
+      org: org!,
+      agent: agent!,
+      lead: lead!,
+      conversationId: conversation._id,
+      now,
     });
 
     // Snapshot de contexto POR INJEÇÃO (nada de tools de listagem): histórico
@@ -1413,8 +1399,10 @@ export const internalClaimForProcessing = internalMutation({
         // FOLLOW-UP: só envia direto com `followUps.mode === "send"` E o perfil
         // em autopilot E a janela do canal aberta — qualquer outra combinação
         // vira rascunho no inbox (que é o default do produto, D1).
+        // Teto de gastos em R$ estourado em `block` (v0.69): rascunho até virar o mês.
         forceSuggest:
           item.origin === "coach" ||
+          budgetGate.forceSuggest ||
           (isFollowUpTurn &&
             (followUpSettings.mode !== "send" || profile.mode !== "autopilot" || followUpDegraded)),
         timezone,
@@ -3194,6 +3182,10 @@ export const internalProcessQueueItem = internalAction({
     // Coach commita SEMPRE como sugestão, mesmo com o perfil em autopilot —
     // quem instruiu quer revisar a resposta antes de sair.
     const effectiveMode = context.forceSuggest ? "suggest" : context.mode;
+    // Tokens + custo da run (por modelo que DE FATO atendeu). Fora do `try` para
+    // o caminho de falha também gravar o que já foi gasto.
+    const usage = newUsageTotals();
+    let runFinished = false;
 
     try {
       // Rotas da org: platform chain OU BYO (key própria, sem fallback);
@@ -3252,7 +3244,6 @@ export const internalProcessQueueItem = internalAction({
       const proposedActions: ProposedAction[] = [];
       const toolCallNames: string[] = [];
       let requestCount = 0;
-      const usage = { promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0 };
       let usedProvider: string | undefined;
       let handoffRequestedThisRun = false;
       // Guardrail anti-bot (v0.65): a IA chamou flagAutomatedSender neste turno.
@@ -3331,11 +3322,7 @@ export const internalProcessQueueItem = internalAction({
           });
           requestCount += 1;
           usedProvider = recovery.usedRoute.providerId;
-          if (recovery.usage) {
-            usage.promptTokens += recovery.usage.promptTokens;
-            usage.completionTokens += recovery.usage.completionTokens;
-            usage.cachedPromptTokens += recovery.usage.cachedPromptTokens ?? 0;
-          }
+          addUsage(usage, recovery.usage, recovery.usedRoute, context.model);
           const recovered = recovery.message.content?.trim();
           if (recovered) {
             replyText = recovered;
@@ -3345,11 +3332,7 @@ export const internalProcessQueueItem = internalAction({
         }
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
-        if (resp.usage) {
-          usage.promptTokens += resp.usage.promptTokens;
-          usage.completionTokens += resp.usage.completionTokens;
-          usage.cachedPromptTokens += resp.usage.cachedPromptTokens ?? 0;
-        }
+        addUsage(usage, resp.usage, resp.usedRoute, context.model);
 
         if (resp.finishReason === "content_filter") {
           throw new Error("content_filter: resposta bloqueada pelo provider");
@@ -3638,11 +3621,9 @@ export const internalProcessQueueItem = internalAction({
           model: context.model,
           requestCount,
           toolCallNames,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          cachedPromptTokens: usage.cachedPromptTokens,
-          costUsdEstimate: estimateCostUsd(usage),
+          ...finishRunCostFields(usage),
         });
+        runFinished = true;
         await ctx.runMutation(internal.attendant.internalMarkItemSkipped, {
           queueItemId: args.queueItemId,
           conversationId: context.conversationId,
@@ -3665,11 +3646,9 @@ export const internalProcessQueueItem = internalAction({
             model: context.model,
             requestCount,
             toolCallNames,
-            promptTokens: usage.promptTokens,
-            completionTokens: usage.completionTokens,
-            cachedPromptTokens: usage.cachedPromptTokens,
-            costUsdEstimate: estimateCostUsd(usage),
+            ...finishRunCostFields(usage),
           });
+          runFinished = true;
           await ctx.runMutation(internal.attendantFollowUp.internalFinishSilentTurn, {
             queueItemId: args.queueItemId,
             conversationId: context.conversationId,
@@ -3746,12 +3725,10 @@ export const internalProcessQueueItem = internalAction({
         model: context.model,
         requestCount,
         toolCallNames,
-        promptTokens: usage.promptTokens,
-        completionTokens: usage.completionTokens,
-        cachedPromptTokens: usage.cachedPromptTokens,
-        costUsdEstimate: estimateCostUsd(usage),
+        ...finishRunCostFields(usage),
         ...(commit.committed ? { resultMessageId: commit.messageId } : {}),
       });
+      runFinished = true;
 
       if (!commit.committed) {
         // A linha do flyer preparada ficou sem mensagem — não deixa órfã.
@@ -3776,6 +3753,15 @@ export const internalProcessQueueItem = internalAction({
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado no atendente";
+      // O que já foi gasto antes da falha entra no medidor (idempotente por run).
+      if (!runFinished && usage.promptTokens + usage.completionTokens > 0) {
+        await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+          runId: context.agentRunId,
+          status: "error",
+          ...finishRunCostFields(usage),
+          error: message,
+        });
+      }
       const retry = await ctx.runMutation(internal.attendant.internalRecordQueueFailure, {
         queueItemId: args.queueItemId,
         conversationId: context.conversationId,

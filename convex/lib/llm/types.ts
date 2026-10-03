@@ -85,6 +85,12 @@ export interface NormalizedUsage {
   promptTokens: number;
   completionTokens: number;
   cachedPromptTokens?: number;
+  /**
+   * Custo REAL da chamada em USD, quando o provedor devolve (`usage.cost` do
+   * OpenRouter, pedido com `usage:{include:true}`). Ausente = estimar pela
+   * tabela `MODEL_PRICES` (lib/aiSpend.ts).
+   */
+  costUsd?: number;
 }
 
 export type FinishReason = "stop" | "tool_calls" | "length" | "content_filter" | "unknown";

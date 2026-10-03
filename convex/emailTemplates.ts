@@ -534,6 +534,8 @@ export function buildTemplate(
       return buildGroupPostPendingTemplate(data as any);
     case "groupPostFailed":
       return buildGroupPostFailedTemplate(data as any);
+    case "aiSpendAlert":
+      return buildAiSpendAlertTemplate(data as any);
     default:
       // Fail-closed: um typo de eventType virava um e-mail vazio ("Evento: x")
       // entregue ao cliente. `dispatchNotification` captura e loga.
@@ -603,6 +605,55 @@ export function buildGroupPostFailedTemplate(data: {
           ${infoRow("Motivo", escapeHtml(data.reason))}
         `)}
         ${ctaButton("Abrir publicação", postUrl)}
+      `,
+    }),
+  };
+}
+
+// ── Gasto de IA do mês (v0.69, T04) ──
+//
+// Vai aos admins (settings:manage), 1×/mês por limiar. SEM PII: só números do
+// mês e o nome da organização (escapado). Valores em R$ são APROXIMADOS (custo
+// estimado em USD × cotação configurada) — o texto diz isso.
+
+export function buildAiSpendAlertTemplate(data: {
+  level: "warn" | "reached";
+  orgName: string;
+  month: string; // "AAAA-MM"
+  costBrl: string; // já formatado, ex. "R$ 82,10"
+  capBrl: string;
+  pct: number;
+  mode: "warn" | "block";
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || resolveAppUrl();
+  const settingsUrl = `${appUrl}/app/configuracoes?secao=ai`;
+  const pct = Math.round(data.pct);
+  const reached = data.level === "reached";
+  const consequence = !reached
+    ? "Nada muda por enquanto — é só um aviso para você acompanhar."
+    : data.mode === "block"
+      ? "O teto está no modo <strong>bloquear</strong>: o atendente passa a deixar respostas como RASCUNHO para a equipe revisar (e abre um repasse), e os demais recursos de IA ficam suspensos até o próximo mês."
+      : "O teto está no modo <strong>avisar</strong>: a IA continua funcionando normalmente. Se quiser que ela pare ao atingir o teto, mude o modo para bloquear.";
+  const title = reached ? "Teto de gastos de IA atingido" : "Gasto de IA perto do teto";
+  return {
+    subject: reached
+      ? `Teto de gastos de IA atingido (${data.month})`
+      : `Gasto de IA em ${pct}% do teto (${data.month})`,
+    html: baseTemplate({
+      preheader: `${escapeHtml(data.orgName)}: ${pct}% do teto mensal de IA em ${data.month}.`,
+      appUrl,
+      content: `
+        ${heading(title)}
+        ${paragraph(`O gasto aproximado com IA de <strong style="color: ${TEXT_PRIMARY};">${escapeHtml(data.orgName)}</strong> chegou a ${pct}% do teto definido para o mês.`)}
+        ${infoTable(`
+          ${infoRow("Mês", escapeHtml(data.month))}
+          ${infoRow("Gasto aproximado", escapeHtml(data.costBrl))}
+          ${infoRow("Teto mensal", escapeHtml(data.capBrl))}
+        `)}
+        ${paragraph(consequence)}
+        ${paragraph(`<em style="color: ${TEXT_SECONDARY};">Valores aproximados: custo estimado em dólar convertido pela cotação configurada.</em>`)}
+        ${ctaButton("Ver uso e teto", settingsUrl)}
       `,
     }),
   };
