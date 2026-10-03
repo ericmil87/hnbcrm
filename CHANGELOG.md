@@ -2,6 +2,19 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.66.1] - 2026-10-03
+
+### Nova conversa: verifica o número no WhatsApp antes de criar qualquer coisa
+
+- Caso real: o número digitado com o 9º dígito (`81 98139-2929`) não existe no WhatsApp — a conta está registrada sem o 9 — e o CRM criou contato, lead e conversa para um número inalcançável (`no LID found` no gateway). Agora, em número bridge, o modal pergunta ao gateway (`POST /user/check`, nas duas grafias) 500 ms depois de parar de digitar e adota o número que o WhatsApp devolve: "Tem WhatsApp — registrado como +55 (81) 8139-2929 (sem o 9)"; "não tem WhatsApp" desabilita o envio; gateway fora do ar avisa e segue sem confirmar. O servidor repete a checagem e recusa antes de qualquer escrita
+- Contato escolhido com a grafia errada é corrigido para a canônica (auditado com o número anterior); se já existe um contato com a grafia canônica, ele é usado em vez de duplicar o telefone
+- Número oficial (Meta) não tem como verificar — o modal avisa
+- `startConversation` virou action (a verificação precisa de rede); os campos devolvidos ganharam `verified`, `canonicalPhone`, `phoneChanged`
+
+### Excluir lead permanentemente pela tela da conversa
+
+- O menu "⋮" da conversa ganhou "Excluir lead permanentemente…" (só com `leads:full`, nunca em grupo), com o mesmo diálogo de impacto do painel do lead: conversas e mensagens que vão junto, aviso de irreversível e a escolha "Excluir só o lead" ou "Excluir lead e contato" (a segunda só quando o contato não tem outros leads). Ao confirmar, volta para a lista
+
 ## [0.66.0] - 2026-10-02
 
 ### Nova conversa a partir da Caixa de Entrada

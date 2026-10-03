@@ -1,7 +1,7 @@
 # HNBCRM — Project Status & Roadmap
 
 **Last Updated:** 2026-10-02
-**Current Version:** v0.66.0
+**Current Version:** v0.66.1
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
@@ -31,6 +31,7 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.64 (2026-10-02)** — Agenda externa consultável pelo atendente (+ flyer), follow-up nunca após o evento, lead do site com boas-vindas automáticas pelo WhatsApp
 - **v0.65 (2026-10-02)** — Guardrail anti-bot do atendente (ligado por padrão): para de responder a auto-resposta/boletim/outro assistente, abre repasse `bot_suspect` e etiqueta o lead; `@newsletter`/`@broadcast` descartados no parser; nome do contato editável direto no inbox
 - **v0.66 (2026-10-02)** — "Nova conversa" na Caixa de Entrada (a equipe inicia atendimento pelo WhatsApp: contato novo ou existente, lead reaproveitado ou criado no funil escolhido, opt-out com aceite); botão do Copiloto arrastável com posição salva, começando fora do caminho no celular
+- **v0.66.1 (2026-10-03)** — Nova conversa verifica o número no gateway antes de criar (`/user/check`, adota o JID canônico — caso do 9º dígito BR); "Excluir lead permanentemente" no menu da conversa
 
 ### Pendências atuais
 
