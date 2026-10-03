@@ -1,7 +1,7 @@
 # HNBCRM — Project Status & Roadmap
 
 **Last Updated:** 2026-10-02
-**Current Version:** v0.67.1
+**Current Version:** v0.68.0
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
@@ -35,6 +35,7 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.66.2 (2026-10-03)** — `/user/check` devolve LID (`@lid`), não telefone: só JID `@s.whatsapp.net` vira número; grafia confirmada decide, contato existente desempata; Modal em portal (botões atrás da tab bar no celular)
 - **v0.67 (2026-10-03)** — Telefones internacionais: `+`/`00` sempre vencem, regras por país (BR, NANP, genérico com tabela ITU) e "País padrão dos telefones" por org (Configurações e onboarding; ausente = +55) aplicado a toda entrada de telefone
 - **v0.67.1 (2026-10-03)** — Grafia real do número pelo `GET /user/lid/{telefone}` (o `/user/check` colapsa as duas grafias BR num só LID); `checked` no resultado da checagem e sonda ops `internalProbeGatewayNumber`
+- **v0.68 (2026-10-03)** — Iniciar conversa por REST (`GET /conversations/channels`, `POST /conversations/start`) e MCP (`crm_list_whatsapp_channels`, `crm_start_conversation`, servidor 0.3.0); docs do portal/llms.txt/OpenAPI/skill fechadas para v0.66–0.67
 
 ### Pendências atuais
 

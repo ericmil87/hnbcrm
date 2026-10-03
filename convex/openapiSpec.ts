@@ -41,7 +41,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Criar lead via captura universal",
-        "description": "Cria um novo lead com contato e mensagem opcionais. O telefone do contato é normalizado para dígitos E.164 sem o sinal de mais (padrão Brasil: +55 (11) 98765-4321 → 5511987654321) e gravado em phone e whatsappNumber; contato existente com o mesmo número ou e-mail é reaproveitado. sourceId precisa ser da organização da chave (senão 400). Regras de roteamento por tag da organização escolhem board/estágio (a primeira tag que casar vence; sem regra = board padrão ativo). Boas-vindas automáticas pelo WhatsApp (opt-in por organização): com telefone e uma das tags de consentimento configuradas, UMA mensagem sai do número configurado (nunca duas vezes para o mesmo contato, nunca para opt-out; falha de entrega abre repasse humano) e o lead ganha a tag contato:iniciado. Quando a boas-vindas se aplica ou channel = whatsapp, message vira NOTA INTERNA («Formulário do site: …») na conversa do WhatsApp — nunca é enviada ao cliente. Requer permissão leads: edit_own na chave de API.",
+        "description": "Cria um novo lead com contato e mensagem opcionais. O telefone do contato é normalizado para dígitos E.164 sem o sinal de mais (números sem código do país recebem o DDI padrão da organização — Brasil +55 se não configurado; + ou 00 sempre vencem: +55 (11) 98765-4321 → 5511987654321) e gravado em phone e whatsappNumber; contato existente com o mesmo número ou e-mail é reaproveitado. sourceId precisa ser da organização da chave (senão 400). Regras de roteamento por tag da organização escolhem board/estágio (a primeira tag que casar vence; sem regra = board padrão ativo). Boas-vindas automáticas pelo WhatsApp (opt-in por organização): com telefone e uma das tags de consentimento configuradas, UMA mensagem sai do número configurado (nunca duas vezes para o mesmo contato, nunca para opt-out; falha de entrega abre repasse humano) e o lead ganha a tag contato:iniciado. Quando a boas-vindas se aplica ou channel = whatsapp, message vira NOTA INTERNA («Formulário do site: …») na conversa do WhatsApp — nunca é enviada ao cliente. Requer permissão leads: edit_own na chave de API.",
         "operationId": "createInboundLead",
         "requestBody": {
           "required": true,
@@ -657,6 +657,122 @@ export const OPENAPI_SPEC = `{
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/conversations/channels": {
+      "get": {
+        "tags": ["Conversas"],
+        "summary": "Listar números de WhatsApp para iniciar conversa",
+        "description": "Retorna os números de WhatsApp ativos da organização que podem iniciar conversas. Nunca expõe tokens nem URLs de gateway. Requer permissão inbox: view_own na chave de API.",
+        "operationId": "listConversationChannels",
+        "responses": {
+          "200": {
+            "description": "Números disponíveis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string", "description": "ID da configuração de canal (channelConfigId)" },
+                          "provider": { "type": "string", "enum": ["meta", "bridge"], "description": "Provedor do número" },
+                          "displayName": { "type": "string", "description": "Nome de exibição" },
+                          "phoneDisplay": { "type": "string", "description": "Telefone formatado" },
+                          "connected": { "type": "boolean", "description": "Número conectado" },
+                          "sessionState": { "type": "string", "description": "Estado da sessão (bridge)" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/conversations/start": {
+      "post": {
+        "tags": ["Conversas"],
+        "summary": "Iniciar conversa pelo WhatsApp",
+        "description": "Inicia uma conversa 1 a 1 pelo lado da equipe. Requer inbox: reply, mais contacts: edit quando cria contato e leads: edit_own quando cria lead. O telefone é normalizado com o país padrão da organização, a menos que venha com + ou 00. Em canal bridge o número é verificado no gateway (/user/check + /user/lid): sem WhatsApp → 400 «Este número não tem WhatsApp — confira os dígitos»; a grafia canônica do WhatsApp é adotada (phoneChanged) e verified=false indica gateway inalcançável (a conversa ainda é criada). Toda conversa 1 a 1 pende de um lead: reaproveita o lead mais recente do contato (e sua conversa de WhatsApp, desarquivada) ou cria um em boardId/stageId (padrão: board padrão, 1º estágio), atribuído ao membro da chave de API (nunca ao atendente IA), origem «Conversa iniciada pela equipe». Conversa existente é passada para o número escolhido (channelSwitched). content só vale em bridge; em Meta a conversa nova está fora da janela de 24 h e a 1ª mensagem deve ser um template via /conversations/send-template. Número em opt-out → 409 até reenviar com optOutAck=true (aceite humano explícito, auditado com severidade alta).",
+        "operationId": "startConversation",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["channelConfigId"],
+                "properties": {
+                  "channelConfigId": { "type": "string", "description": "ID do número (de GET /conversations/channels)" },
+                  "phone": { "type": "string", "description": "Telefone (use + e código do país quando fora do país padrão da organização). Informe phone ou contactId" },
+                  "contactId": { "type": "string", "description": "Contato existente (alternativa a phone)" },
+                  "firstName": { "type": "string", "description": "Nome, ao criar contato" },
+                  "lastName": { "type": "string", "description": "Sobrenome, ao criar contato" },
+                  "boardId": { "type": "string", "description": "Board do lead criado" },
+                  "stageId": { "type": "string", "description": "Estágio do lead criado" },
+                  "content": { "type": "string", "description": "Primeira mensagem (somente bridge)" },
+                  "optOutAck": { "type": "boolean", "description": "Aceite humano explícito para contatar número em opt-out" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Conversa iniciada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "const": true },
+                    "conversationId": { "type": "string" },
+                    "leadId": { "type": "string" },
+                    "contactId": { "type": "string" },
+                    "createdContact": { "type": "boolean" },
+                    "createdLead": { "type": "boolean" },
+                    "createdConversation": { "type": "boolean" },
+                    "unarchived": { "type": "boolean" },
+                    "channelSwitched": { "type": "boolean" },
+                    "messageId": { "type": "string", "description": "Presente quando content foi enviado" },
+                    "verified": { "type": "boolean", "description": "false quando o gateway não pôde ser consultado" },
+                    "canonicalPhone": { "type": "string", "description": "Telefone E.164 sem +, na grafia do WhatsApp" },
+                    "phoneChanged": { "type": "boolean", "description": "true quando difere do enviado" },
+                    "verifyReason": { "type": "string", "enum": ["meta", "bridge_offline", "gateway_error"], "description": "Só quando verified é false: por que o número não pôde ser verificado" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": {
+            "description": "Número em opt-out — reenvie com optOutAck=true após confirmação humana",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": { "type": "integer", "const": 409 },
+                    "optOut": { "type": "boolean", "const": true }
+                  }
+                }
+              }
+            }
+          },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }

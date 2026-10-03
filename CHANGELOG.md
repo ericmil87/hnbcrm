@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.68.0] - 2026-10-03
+
+### Iniciar conversa pela API REST e pelo MCP
+
+- `GET /api/v1/conversations/channels` lista os números de WhatsApp ativos que podem iniciar conversa (sem token, URL ou id de instância); `POST /api/v1/conversations/start` inicia a conversa com telefone ou contato existente, com o MESMO núcleo da UI: telefone normalizado pelo país padrão da org (`+`/`00` vencem), checagem no gateway em número bridge (`/user/check` + `/user/lid`, grafia canônica adotada, "não tem WhatsApp" = 400), contato/lead/conversa reaproveitados ou criados (lead do membro da API key, nunca da IA), primeira mensagem só no bridge, opt-out = 409 até `optOutAck: true`
+- Tools MCP `crm_list_whatsapp_channels` e `crm_start_conversation` (servidor MCP 0.3.0, 68 tools)
+- Docs: llms.txt, OpenAPI, skill do agente, README do MCP e Developers Portal atualizados (rotas novas, normalização de telefone por país padrão, Nova conversa e exclusão de lead pela conversa)
+
 ## [0.67.1] - 2026-10-03
 
 ### Nova conversa: a grafia real do número vem do `/user/lid`

@@ -53,7 +53,7 @@ If `crm_*` tools are available in your environment, use them directly. They hand
 
 **Contact tools**: `crm_list_contacts`, `crm_get_contact`, `crm_create_contact`, `crm_update_contact`, `crm_enrich_contact`, `crm_get_contact_gaps`, `crm_search_contacts`
 
-**Conversation tools**: `crm_list_conversations`, `crm_get_messages`, `crm_send_message`
+**Conversation tools**: `crm_list_conversations`, `crm_get_messages`, `crm_send_message`, `crm_list_whatsapp_channels`, `crm_start_conversation`
 
 **Handoff tools**: `crm_request_handoff`, `crm_list_handoffs`, `crm_accept_handoff`, `crm_reject_handoff`
 
@@ -140,6 +140,17 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 - **Internal notes**: Use `isInternal: true` for AI reasoning, observations, or team coordination — the contact won't see these
 - **Don't over-respond**: If a human team member is already handling the conversation, don't jump in unless explicitly asked
 
+### 6b. Start a WhatsApp Conversation (v0.66)
+
+Use this to reach out first (a human asked you to contact someone) instead of waiting for the contact to write.
+
+1. `crm_list_whatsapp_channels` — pick a `connected` number; note its `id` and `provider`.
+2. `crm_start_conversation` with `channelConfigId` plus `phone` (or `contactId`). Send phones with `+` and the country code when the contact is outside the organization's default country; without a country code the organization's default applies. Optionally `firstName`/`lastName` (new contact) and `boardId`/`stageId` (new lead).
+3. Read the result: `phoneChanged`/`canonicalPhone` tell you the number WhatsApp actually uses; `verified: false` means the gateway could not confirm it. A number without WhatsApp is refused (400) — do not retry with guessed digits.
+4. Send the first message: on **bridge** pass `content` in step 2 (or use `crm_send_message` with the returned `conversationId`). On **meta** the new conversation is outside the 24h window, so `content` is not accepted — send an approved template with `POST /api/v1/conversations/send-template`.
+
+**Opt-out rule:** if the call fails with 409 `optOut: true`, the number asked not to be contacted. Never set `optOutAck: true` on your own — only after a human explicitly confirmed it. The acknowledgement is audited with high severity.
+
 ### 7. Email Notifications
 
 - **Email Notifications:** The system automatically sends email notifications on key CRM events (handoff requests, task assignments, lead assignments, overdue tasks). AI agents can check/update their notification preferences via `crm_get_notification_preferences` and `crm_update_notification_preferences` MCP tools.
@@ -161,6 +172,7 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 5. **Prefer handoff over guessing** — when in doubt about how to handle a situation, hand off to a human with a good summary rather than making a potentially wrong decision
 6. **Respect assignment** — don't work on leads assigned to other team members unless asked
 7. **Keep lead data current** — update priority, temperature, and tags as you learn more about the lead
+8. **Send phones with `+` and the country code** when the contact is outside the organization's default country (phones without a country code get the organization's default, Brazil +55 when unset; `+`/`00` always win)
 
 ## Quick Reference
 
@@ -168,7 +180,7 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 |----------|-----------|
 | Leads | `crm_create_lead`, `crm_list_leads`, `crm_get_lead`, `crm_update_lead`, `crm_delete_lead`, `crm_move_lead`, `crm_assign_lead` |
 | Contacts | `crm_list_contacts`, `crm_get_contact`, `crm_create_contact`, `crm_update_contact`, `crm_enrich_contact`, `crm_get_contact_gaps`, `crm_search_contacts` |
-| Conversations | `crm_list_conversations`, `crm_get_messages`, `crm_send_message` |
+| Conversations | `crm_list_conversations`, `crm_get_messages`, `crm_send_message`, `crm_list_whatsapp_channels`, `crm_start_conversation` |
 | Handoffs | `crm_request_handoff`, `crm_list_handoffs`, `crm_accept_handoff`, `crm_reject_handoff` |
 | Pipeline | `crm_list_boards`, `crm_list_team`, `crm_get_dashboard` |
 | Activities | `crm_get_activities`, `crm_create_activity` |

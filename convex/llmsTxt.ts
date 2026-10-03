@@ -14,7 +14,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (66 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (68 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
@@ -95,8 +95,8 @@ Paths below omit the \`/api/v1\` prefix:
 | \`campaigns: full\` | POST /campaigns/launch, POST /campaigns/cancel, POST /campaigns/delete, DELETE /opt-outs, POST /group-posts/activate |
 | \`contacts: edit\` | POST /contacts/create, POST /contacts/enrich |
 | \`contacts: view\` | GET /contacts, GET /contacts/get, POST /contacts/update, GET /contacts/gaps, GET /contacts/search |
-| \`inbox: reply\` | POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
-| \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending, GET /groups, GET /groups/get, GET /groups/messages, POST /groups/send |
+| \`inbox: reply\` | POST /conversations/start (+ \`contacts: edit\` when it creates a contact, \`leads: edit_own\` when it creates a lead), POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
+| \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/channels, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending, GET /groups, GET /groups/get, GET /groups/messages, POST /groups/send |
 | \`leads: edit_own\` | POST /inbound/lead, POST /files/upload-url, POST /files, DELETE /files/:id |
 | \`leads: full\` | POST /leads/delete |
 | \`leads: view_own\` | GET /leads, GET /leads/get, POST /leads/update, POST /leads/move-stage, POST /leads/assign, GET /files/:id/url, GET /boards, GET /field-definitions, GET /lead-sources, GET /activities, POST /activities |
@@ -590,7 +590,7 @@ Universal lead capture. Creates lead + optional contact + optional conversation.
 | channel | string | no | Channel for message (default: webchat) |
 
 **Behavior:**
-- **Phone normalization:** \`contact.phone\` is normalized to E.164 digits without "+" (Brazil default: \`+55 (11) 98765-4321\` → \`5511987654321\`) and stored in the contact's \`phone\` and \`whatsappNumber\` — the same format the WhatsApp ingest uses, so the person's reply lands on the same contact. An existing contact with the same number (or email) is reused. Non-normalizable phones are stored as sent.
+- **Phone normalization:** \`contact.phone\` is normalized to E.164 digits without "+" (numbers typed without a country code get the organization's default dialing code — Brazil +55 unless \`settings.defaultCountryCode\` says otherwise; \`+\`/\`00\` always win — e.g. \`+55 (11) 98765-4321\` → \`5511987654321\`; see "Phone numbers") and stored in the contact's \`phone\` and \`whatsappNumber\` — the same format the WhatsApp ingest uses, so the person's reply lands on the same contact. An existing contact with the same number (or email) is reused. Non-normalizable phones are stored as sent.
 - **Routing by tag:** the organization may configure rules \`{ tag → board/stage }\`; the first rule whose tag is in \`tags\` wins. No match (or a rule pointing to an archived board) → default active board, first stage. Archived boards are never picked.
 - **Auto-assign** (when enabled in AI settings) only picks an active AI **attendant**.
 - **WhatsApp welcome (opt-in per organization):** when enabled and the lead has a phone and at least one of the configured consent tags, ONE welcome message is sent from the configured WhatsApp number (template with \`{primeiroNome}\`, \`{nome}\`, \`{titulo}\`, \`{tag:<prefix>}\`). Never sent twice to the same contact, never to numbers in the opt-out list; delivery failure opens a human handoff. The lead gets the tag \`contato:iniciado\`.
@@ -720,6 +720,25 @@ Send a message to a conversation. Supports file attachments and replying to (quo
 **Body:** conversationId (required), content (required unless attachments given), contentType (default: text), isInternal (default: false), mentionedUserIds (optional), attachments (optional file ids), replyToMessageId (optional)
 
 **Response:** \`{ success: true, messageId }\`
+
+#### GET /api/v1/conversations/channels
+List the organization's active WhatsApp numbers that can start conversations (v0.66). Never exposes tokens or gateway URLs. Requires \`inbox: view_own\`.
+
+**Response:** \`{ channels: [{ id, provider: "meta" | "bridge", displayName, phoneDisplay, connected, sessionState? }] }\`
+
+#### POST /api/v1/conversations/start
+Start a 1:1 WhatsApp conversation from the team side, without waiting for the contact to write (v0.66/v0.67). Requires \`inbox: reply\`, plus \`contacts: edit\` when a contact is created and \`leads: edit_own\` when a lead is created.
+
+**Body:** channelConfigId (required, from \`GET /conversations/channels\`), phone or contactId (one required), firstName/lastName (used when a contact is created), boardId/stageId (used when a lead is created), content (optional first message — bridge only), optOutAck (optional boolean)
+
+**Behavior:**
+- \`phone\` is normalized with the organization's default country unless typed with \`+\`/\`00\` (see "Phone numbers").
+- On **bridge** channels the number is verified with the gateway first (\`/user/check\` + \`/user/lid\`). A number that is not on WhatsApp → 400 "Este número não tem WhatsApp — confira os dígitos". The canonical spelling WhatsApp uses is adopted (e.g. Brazilian numbers registered without the 9th digit): \`phoneChanged: true\` when it differs from what was sent. \`verified: false\` means the gateway could not be reached — the conversation is still created.
+- Every 1:1 conversation hangs off a lead: the contact's most recent lead (and its WhatsApp conversation, unarchived) is reused; otherwise a lead is created on \`boardId\`/\`stageId\` (default: default board, first stage), assigned to the API key's team member (never to the AI attendant), source "Conversa iniciada pela equipe". An existing conversation is switched to the chosen number (\`channelSwitched\`).
+- \`content\` is accepted only on bridge. On Meta a new conversation is outside the 24h window, so the conversation opens empty and the first message must be a template via \`POST /conversations/send-template\`.
+- Opted-out number → **409** \`{ error, code: 409, optOut: true }\` until the caller resends with \`optOutAck: true\` (explicit human acknowledgement; audited, high severity).
+
+**Response (201):** \`{ success: true, conversationId, leadId, contactId, createdContact, createdLead, createdConversation, unarchived, channelSwitched, messageId?, verified, canonicalPhone, phoneChanged, verifyReason? }\`. **Errors:** 400 validation (PT-BR message), 403 permission, 409 opt-out.
 
 #### POST /api/v1/conversations/receive
 Inject an inbound message from a contact — for external bridges on any channel. Creates the contact and lead if they don't exist; idempotent per externalId.
@@ -1323,7 +1342,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 66 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 68 tools for AI agents:
 
 ### Lead Management
 
@@ -1407,6 +1426,19 @@ Search contacts by name, email, company, or other text fields.
 #### crm_list_conversations
 List conversations, optionally filtered by lead.
 - **leadId** (string, optional): Filter by lead
+
+#### crm_list_whatsapp_channels
+List the organization's active WhatsApp numbers that can start conversations (id, provider meta|bridge, displayName, phoneDisplay, connected, sessionState). Same as \`GET /api/v1/conversations/channels\`.
+
+#### crm_start_conversation
+Start a 1:1 WhatsApp conversation (same semantics as \`POST /api/v1/conversations/start\`). Reuses the contact's latest lead or creates one; verifies the number on bridge channels.
+- **channelConfigId** (string, required): From \`crm_list_whatsapp_channels\`
+- **phone** (string, optional): With \`+\`/country code when outside the organization's default country
+- **contactId** (string, optional): Existing contact (alternative to phone)
+- **firstName**, **lastName** (string, optional): For a newly created contact
+- **boardId**, **stageId** (string, optional): For a newly created lead
+- **content** (string, optional): First message — bridge only; on Meta send a template afterwards
+- **optOutAck** (boolean, optional): Set ONLY after a human confirmed contacting an opted-out number
 
 #### crm_get_messages
 Get messages for a conversation. Also works for a WhatsApp group room's conversation (its id is \`group.conversationId\` from \`crm_get_group\`); on a group, \`metadata.mediaDeferred\`/\`metadata.mediaPurged\` mark an attachment the media policy skipped or later purged (v0.62) — \`crm_list_groups\`/\`crm_get_group\` do not expose this, it only shows up here (full message document) or in the app.
@@ -1697,6 +1729,17 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | group.post.ended | A scheduled group post ended (payload: groupPostId, name, reason, stats) |
 
 Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
+
+---
+
+## Phone numbers
+
+Phone numbers are normalized per organization (v0.67) to E.164 digits **without** "+", stored in \`phone\` / \`whatsappNumber\`:
+- Numbers typed or imported WITHOUT a country code get the organization's default dialing code (\`settings.defaultCountryCode\`, set in Settings → Organization profile and in onboarding; absent = 55, Brazil).
+- A leading \`+\` or \`00\` always wins and the typed country's rules apply: Brazil (DDD + 9th digit), US/Canada (10 digits, area code 2–9), others (trunk 0 removed, 6–12 national digits).
+- Numbers that already carry a country code (12+ digits) are never altered.
+- Applies to: \`POST /conversations/start\`, \`POST /inbound/lead\`, contacts (\`normalizePhone\`), campaign recipients (manual list, CSV, segment, group members), opt-outs and follow-ups. What WhatsApp delivers already in E.164 is stored as is.
+- Integrations: send phones with \`+\` and the country code whenever the contact is outside the organization's default country.
 
 ---
 

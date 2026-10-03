@@ -510,7 +510,7 @@ npm run dev`}</CodeBlock>
               Tools MCP — Referência
             </h2>
             <p className="text-text-secondary">
-              O servidor MCP expõe 66 ferramentas organizadas por categoria. Cada
+              O servidor MCP expõe 68 ferramentas organizadas por categoria. Cada
               ferramenta corresponde a uma ação no CRM.
             </p>
 
@@ -595,6 +595,8 @@ npm run dev`}</CodeBlock>
                     <ToolRow name="crm_list_conversations" description="Lista conversas de um lead" params="leadId?" />
                     <ToolRow name="crm_get_messages" description="Retorna mensagens de uma conversa" params="conversationId" />
                     <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa" params="conversationId, content" />
+                    <ToolRow name="crm_list_whatsapp_channels" description="Lista os números de WhatsApp ativos que podem iniciar conversa" params="—" />
+                    <ToolRow name="crm_start_conversation" description="Inicia conversa 1 a 1 pelo WhatsApp (verifica o número no bridge; reaproveita ou cria o lead)" params="channelConfigId, phone | contactId, content?, optOutAck?" />
                   </tbody>
                 </table>
               </div>
@@ -1319,8 +1321,10 @@ function verifyWebhook(body, signature, secret) {
               </p>
               <ul className="text-sm text-text-secondary list-disc pl-5 space-y-1">
                 <li>
-                  O telefone é normalizado (ex.: <code>+55 (11) 98765-4321</code> →{" "}
-                  <code>5511987654321</code>) e o contato com o mesmo número ou e-mail é
+                  O telefone é normalizado para E.164 sem “+” (ex.: <code>+55 (11) 98765-4321</code> →{" "}
+                  <code>5511987654321</code>). Sem código do país, vale o país padrão da
+                  organização (Brasil se não configurado); com <code>+</code> ou <code>00</code> vale o
+                  país digitado. O contato com o mesmo número ou e-mail é
                   reaproveitado — a resposta da pessoa no WhatsApp cai no mesmo contato.
                 </li>
                 <li>

@@ -42,6 +42,8 @@ The last column shows whether the **default** permissions of the `ai` and `agent
 | `GET /api/v1/conversations` | `inbox: view_own` | sim |
 | `GET /api/v1/conversations/messages` | `inbox: view_own` | sim |
 | `POST /api/v1/conversations/send` | `inbox: view_own` | sim |
+| `GET /api/v1/conversations/channels` | `inbox: view_own` | sim |
+| `POST /api/v1/conversations/start` | `inbox: reply` (+ `contacts: edit` when it creates a contact, `leads: edit_own` when it creates a lead) | sim |
 | `POST /api/v1/conversations/send-template` | `inbox: reply` | sim |
 | `POST /api/v1/conversations/receive` | `inbox: reply` | sim |
 | `GET /api/v1/handoffs` | `inbox: view_own` | sim |
@@ -407,6 +409,48 @@ Send a message or internal note in a conversation.
 **REST:** `POST /api/v1/conversations/send` — Same body as MCP params
 
 **Response:** `{ success: true, messageId }`
+
+---
+
+### crm_list_whatsapp_channels
+
+List the organization's active WhatsApp numbers that can start conversations. Never exposes tokens or gateway URLs.
+
+**MCP Parameters:** none
+
+**REST:** `GET /api/v1/conversations/channels` (permission `inbox: view_own`)
+
+**Response:** `{ channels: [{ id, provider: "meta"|"bridge", displayName, phoneDisplay, connected, sessionState? }] }`
+
+---
+
+### crm_start_conversation
+
+Start a 1:1 WhatsApp conversation from the team side (v0.66/v0.67).
+
+**MCP Parameters:**
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| channelConfigId | string | yes | Number to use (`id` from `crm_list_whatsapp_channels`) |
+| phone | string | one of phone/contactId | Normalized with the organization's default country unless typed with `+`/`00` |
+| contactId | string | one of phone/contactId | Existing contact |
+| firstName / lastName | string | no | Used when a contact is created |
+| boardId / stageId | string | no | Used when a lead is created (default: default board, first stage) |
+| content | string | no | First message — **bridge only** |
+| optOutAck | boolean | no | Set only after a human confirmed contacting an opted-out number |
+
+**REST:** `POST /api/v1/conversations/start` — Same body as MCP params. Permission `inbox: reply`, plus `contacts: edit` when a contact is created and `leads: edit_own` when a lead is created.
+
+**Behavior:**
+- Phone normalized with the organization's default country (`settings.defaultCountryCode`, Brazil +55 when unset) unless typed with `+`/`00`; the typed country's rules then apply.
+- On **bridge** channels the number is verified with the gateway first (`/user/check` + `/user/lid`). Not on WhatsApp → 400 "Este número não tem WhatsApp — confira os dígitos". The canonical spelling WhatsApp uses is adopted (e.g. Brazilian numbers registered without the 9th digit): `phoneChanged: true` when it differs from what was sent; `verified: false` when the gateway could not be reached (the conversation is still created).
+- Every 1:1 conversation hangs off a lead: the contact's most recent lead (and its WhatsApp conversation, unarchived) is reused; otherwise a lead is created, assigned to the API key's team member (never the AI attendant), source "Conversa iniciada pela equipe". An existing conversation is switched to the chosen number (`channelSwitched`).
+- `content` is accepted only on bridge. On Meta a new conversation is outside the 24h window: it opens empty and the first message must be a template via `POST /api/v1/conversations/send-template`.
+- Opted-out number → **409** `{ error, code: 409, optOut: true }` until resent with `optOutAck: true` (explicit human acknowledgement; audited, high severity).
+
+**Response (201):** `{ success: true, conversationId, leadId, contactId, createdContact, createdLead, createdConversation, unarchived, channelSwitched, messageId?, verified, canonicalPhone, phoneChanged, verifyReason? }`
+
+**Errors:** 400 validation (PT-BR message), 403 permission, 409 opt-out.
 
 ---
 
