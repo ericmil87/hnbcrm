@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.66.2] - 2026-10-03
+
+### Nova conversa: LID não é telefone
+
+- Segundo teste real: o gateway respondeu ao `/user/check` com `180002129735765@lid` — a identidade interna que o WhatsApp usa em vez do telefone — e o CRM tomou os dígitos como número ("+180002129735765"); a mensagem saiu (o gateway aceita LID como destino) mas a resposta do cliente caiu em outro contato. Agora só JID `@s.whatsapp.net` vale como telefone; sem ele, vale a grafia que o gateway confirmou. Quando o WhatsApp confirma as duas grafias BR (com e sem o 9), desempata a que já é contato na organização e, sem nenhuma, fica a digitada — o modal avisa que as duas foram aceitas
+- Verificação roda 0,9 s depois de parar de digitar (antes parecia validar a cada dígito)
+- Modal em portal no `body` com safe-area: aberto de dentro do header da conversa, os botões de confirmar ficavam atrás da barra de abas do celular (caso do "Excluir lead")
+
 ## [0.66.1] - 2026-10-03
 
 ### Nova conversa: verifica o número no WhatsApp antes de criar qualquer coisa
