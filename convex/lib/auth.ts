@@ -109,3 +109,30 @@ export async function requirePermission(
   }
   return member;
 }
+
+/**
+ * Conta com e-mail. O login anônimo foi removido (v0.68.1), mas sessões
+ * anônimas antigas continuam válidas até expirar — esta guarda é o que fecha
+ * de fato as portas que criam recurso sem org ou gastam recurso da plataforma.
+ * Conta do provider Password sempre tem `email`; o usuário anônimo do Convex
+ * Auth não tem. Aceita só `{ email?: string }` para ser testável sem banco.
+ */
+export function hasAccountEmail(user: { email?: string | null } | null | undefined): boolean {
+  return typeof user?.email === "string" && user.email.trim().length > 0;
+}
+
+export async function requireAccountWithEmail(
+  ctx: QueryCtx | MutationCtx,
+  userId?: Id<"users">,
+) {
+  const id = userId ?? (await getAuthUserId(ctx));
+  if (!id) throw new Error("Not authenticated");
+  const user = await ctx.db.get(id);
+  if (!user) throw new Error("User not found");
+  if (!hasAccountEmail(user)) {
+    throw new ConvexError(
+      "Esta ação exige uma conta com e-mail. Entre com e-mail e senha (o acesso anônimo foi desativado).",
+    );
+  }
+  return user;
+}

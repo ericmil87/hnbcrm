@@ -89,7 +89,7 @@ async function seed(t: TestConvex<typeof schema>) {
       createdAt: now,
       updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "adminUserId@test.hnbcrm.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId,
       userId: adminUserId,
@@ -101,7 +101,7 @@ async function seed(t: TestConvex<typeof schema>) {
       updatedAt: now,
     });
     // Agente: tem inbox:reply mas NÃO tem settings:manage (default do papel).
-    const agentUserId = await ctx.db.insert("users", {});
+    const agentUserId = await ctx.db.insert("users", { email: "agentUserId@test.hnbcrm.com" });
     await ctx.db.insert("teamMembers", {
       organizationId,
       userId: agentUserId,
@@ -120,7 +120,7 @@ async function seed(t: TestConvex<typeof schema>) {
       createdAt: now,
       updatedAt: now,
     });
-    const otherUserId = await ctx.db.insert("users", {});
+    const otherUserId = await ctx.db.insert("users", { email: "otherUserId@test.hnbcrm.com" });
     await ctx.db.insert("teamMembers", {
       organizationId: otherOrgId,
       userId: otherUserId,

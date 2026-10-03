@@ -10,7 +10,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
@@ -892,6 +892,9 @@ export const internalRequireSettingsManage = internalQuery({
   returns: v.null(),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "manage");
+    // Porta de recurso da plataforma (gateway gerenciado, chaves de IA, grupos):
+    // sessão anônima legada não passa, mesmo sendo admin da própria org.
+    await requireAccountWithEmail(ctx);
     return null;
   },
 });

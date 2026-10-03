@@ -35,7 +35,7 @@ async function seedOrg(
 ) {
   return await t.run(async (ctx) => {
     const now = Date.now();
-    const userId = await ctx.db.insert("users", {});
+    const userId = await ctx.db.insert("users", { email: "userId@test.hnbcrm.com" });
     const organizationId = await ctx.db.insert("organizations", {
       name: "Org V42",
       slug: "org-v42",

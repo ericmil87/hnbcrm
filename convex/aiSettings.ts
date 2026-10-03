@@ -25,7 +25,7 @@ import {
   isValidAgendaUrl,
   isValidHeaderName,
 } from "./lib/externalAgenda";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import {
   DEFAULT_MODELS,
@@ -245,6 +245,7 @@ export const setBridgeAiAck = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx); // sessão anônima legada não liga IA
     const org = await ctx.db.get(args.organizationId);
     if (!org?.settings.aiConfig) throw new Error("Ative a IA primeiro");
     const current = org.settings.aiConfig;
@@ -319,6 +320,7 @@ export const setGroupAutopilotAck = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx); // sessão anônima legada não liga IA
     const org = await ctx.db.get(args.organizationId);
     if (!org?.settings.aiConfig) throw new Error("Ative a IA primeiro");
     const current = org.settings.aiConfig;
@@ -380,6 +382,7 @@ export const setAiEnabled = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx); // sessão anônima legada não liga IA
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new Error("Organização não encontrada");
 
@@ -677,6 +680,7 @@ export const activateOneFlow = mutation({
   }),
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx); // sessão anônima legada não liga IA
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new Error("Organização não encontrada");
     const current = org.settings.aiConfig ?? {

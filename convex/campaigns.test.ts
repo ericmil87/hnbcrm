@@ -40,9 +40,9 @@ export async function seedCampaignOrg(t: TestConvex<typeof schema>, opts: { chan
       settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
       createdAt: now, updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
-    const managerUserId = await ctx.db.insert("users", {});
-    const agentUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "adminUserId@test.hnbcrm.com" });
+    const managerUserId = await ctx.db.insert("users", { email: "managerUserId@test.hnbcrm.com" });
+    const agentUserId = await ctx.db.insert("users", { email: "agentUserId@test.hnbcrm.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId, userId: adminUserId, name: "Admin", role: "admin", type: "human", status: "active", createdAt: now, updatedAt: now,
     });

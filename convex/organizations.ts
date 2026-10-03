@@ -2,7 +2,7 @@ import { v, ConvexError } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
-import { requireAuth, getActiveMembership, isMembershipRevoked } from "./lib/auth";
+import { requireAuth, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator } from "./schema";
 
@@ -50,8 +50,8 @@ export const createOrganization = mutation({
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new Error("Not authenticated");
 
-    const user = await ctx.db.get(userId);
-    if (!user) throw new Error("User not found");
+    // Sessão anônima legada (login anônimo removido na v0.68.1) não cria org.
+    const user = await requireAccountWithEmail(ctx, userId);
 
     // Check if slug is available
     const existing = await ctx.db

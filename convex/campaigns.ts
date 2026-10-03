@@ -20,7 +20,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requirePermission } from "./lib/auth";
+import { requirePermission, requireAccountWithEmail } from "./lib/auth";
 import { authorizeCampaigns, viaMeta, type InternalActorArgs } from "./lib/campaignAuth";
 import { configProvider } from "./channelConfigs";
 import {
@@ -2127,7 +2127,12 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
 export const launchCampaign = mutation({
   args: launchCampaignArgs,
   returns: v.object({ status: v.string(), warnings: v.array(v.string()), estimatedCostUsd: v.number() }),
-  handler: launchCampaignHandler,
+  // A guarda mora no wrapper público: o handler é compartilhado com o REST
+  // (`actorMemberId`, sem `ctx.auth`).
+  handler: async (ctx, args) => {
+    await requireAccountWithEmail(ctx);
+    return launchCampaignHandler(ctx, args);
+  },
 });
 
 /**

@@ -10,7 +10,7 @@
 | File | Purpose |
 |------|---------|
 | `schema.ts` | All table definitions, indexes, validators |
-| `auth.ts` / `auth.config.ts` | Auth providers (Password + Anonymous) |
+| `auth.ts` / `auth.config.ts` | Auth providers (só Password; `Anonymous` removido na v0.68.1) |
 | `convex.config.ts` | Convex component registration (Resend email) |
 | `crons.ts` | Scheduled jobs (overdue reminders, recurring tasks, daily digest, group posts watchdog, group daily digests, export cleanup, AI follow-ups watchdog — v0.60, hourly) |
 | `http.ts` | Wires HTTP routes from `router.ts` |

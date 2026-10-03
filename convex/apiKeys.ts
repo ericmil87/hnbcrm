@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { requirePermission, getActiveMembership, isMembershipRevoked } from "./lib/auth";
+import { requirePermission, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { batchGet } from "./lib/batchGet";
 
@@ -171,6 +171,8 @@ export const verifyAdmin = internalQuery({
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
+    // Sessão anônima legada não gera API key (ela sobreviveria à sessão).
+    await requireAccountWithEmail(ctx, userId);
 
     const userMember = await getActiveMembership(ctx, args.organizationId, userId);
 

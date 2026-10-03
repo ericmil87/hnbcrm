@@ -41,11 +41,11 @@ async function seed(t: TestConvex<typeof schema>) {
     const organizationId = await ctx.db.insert("organizations", {
       name: "Org Copiloto", slug: "org-copiloto", settings: { timezone: "America/Sao_Paulo", currency: "BRL" }, createdAt: now, updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "adminUserId@test.hnbcrm.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId, userId: adminUserId, name: "Admin", role: "admin", type: "human", status: "active", createdAt: now, updatedAt: now,
     });
-    const managerUserId = await ctx.db.insert("users", {});
+    const managerUserId = await ctx.db.insert("users", { email: "managerUserId@test.hnbcrm.com" });
     const managerId = await ctx.db.insert("teamMembers", {
       organizationId, userId: managerUserId, name: "Gerente", role: "manager", type: "human", status: "active", createdAt: now, updatedAt: now,
     });

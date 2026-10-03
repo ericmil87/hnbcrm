@@ -5,7 +5,6 @@ import {
   type GenericActionCtxWithAuthConfig,
 } from "@convex-dev/auth/server";
 import { Password } from "@convex-dev/auth/providers/Password";
-import { Anonymous } from "@convex-dev/auth/providers/Anonymous";
 import { query } from "./_generated/server";
 import { passwordResetProvider } from "./passwordReset";
 import { internal } from "./_generated/api";
@@ -59,7 +58,7 @@ export function withCanonicalEmail<P>(provider: P): P {
 // convite (`nodeActions.inviteHumanMember`); pendente legado é adotado quando
 // o admin convida de novo.
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
-  providers: [withCanonicalEmail(Password({ reset: passwordResetProvider })), Anonymous],
+  providers: [withCanonicalEmail(Password({ reset: passwordResetProvider }))],
 });
 
 export const loggedInUser = query({

@@ -9,6 +9,7 @@ import {
   requirePermission,
   getActiveMembership,
   isMembershipRevoked,
+  requireAccountWithEmail,
 } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { permissionsValidator } from "./schema";
@@ -582,6 +583,8 @@ export const internalPrepareInvite = internalQuery({
   returns: v.object({ callerMemberId: v.id("teamMembers") }),
   handler: async (ctx, args) => {
     const caller = await requirePermission(ctx, args.organizationId, "team", "manage");
+    // Sessão anônima legada não manda e-mail de convite do nosso domínio.
+    await requireAccountWithEmail(ctx);
     assertCanGrant(caller, args.role, args.permissions);
 
     const rows = await membersByEmailInOrg(ctx, args.organizationId, args.email);

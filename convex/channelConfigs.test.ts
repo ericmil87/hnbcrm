@@ -32,7 +32,7 @@ async function seedOrgWithMembers(t: TestConvex<typeof schema>) {
       createdAt: now,
       updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "adminUserId@test.hnbcrm.com" });
     await ctx.db.insert("teamMembers", {
       organizationId,
       userId: adminUserId,
@@ -43,7 +43,7 @@ async function seedOrgWithMembers(t: TestConvex<typeof schema>) {
       createdAt: now,
       updatedAt: now,
     });
-    const agentUserId = await ctx.db.insert("users", {});
+    const agentUserId = await ctx.db.insert("users", { email: "agentUserId@test.hnbcrm.com" });
     await ctx.db.insert("teamMembers", {
       organizationId,
       userId: agentUserId,

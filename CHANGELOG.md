@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.68.1] - 2026-10-03
+
+### Segurança: login anônimo removido
+
+- O botão "Entrar anonimamente" e o provider `Anonymous` (herdados do template inicial) foram removidos: qualquer visitante conseguia criar uma organização própria como admin, provisionar o gateway gerenciado de WhatsApp, ligar a IA com as chaves da plataforma, gerar API keys permanentes e lançar campanhas sem nenhuma identidade
+- Guarda no servidor para sessões anônimas que ainda existam (expiram em até 30 dias): criar organização, provisionar número gerenciado, aceites de IA/LGPD, ligar a IA, convidar membro, gerar API key e lançar campanha agora exigem conta com e-mail (mensagem em PT-BR). O lançamento de campanha pela API REST não muda
+- Teste de build impede o provider ou o botão de voltarem; op interna de leitura `opsAnonymous:internalListAnonymousUsers` lista as contas sem e-mail e as organizações, canais, campanhas e API keys ligadas a elas
+
 ## [0.68.0] - 2026-10-03
 
 ### Iniciar conversa pela API REST e pelo MCP

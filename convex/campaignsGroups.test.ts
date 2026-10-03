@@ -45,8 +45,8 @@ async function seed(t: TestConvex<typeof schema>) {
       settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
       createdAt: now, updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
-    const agentUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "adminUserId@test.hnbcrm.com" });
+    const agentUserId = await ctx.db.insert("users", { email: "agentUserId@test.hnbcrm.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId, userId: adminUserId, name: "Admin", role: "admin", type: "human", status: "active", createdAt: now, updatedAt: now,
     });
@@ -382,7 +382,7 @@ describe("prévia do público", () => {
     // Manager: campaigns:manage (vê a prévia) mas inbox só das conversas dele.
     const managerUserId = await t.run(async (ctx) => {
       const now = Date.now();
-      const userId = await ctx.db.insert("users", {});
+      const userId = await ctx.db.insert("users", { email: "userId@test.hnbcrm.com" });
       await ctx.db.insert("teamMembers", {
         organizationId: s.organizationId, userId, name: "Gerente", role: "manager",
         type: "human", status: "active",
