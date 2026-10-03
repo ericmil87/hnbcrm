@@ -49,27 +49,9 @@ import {
 } from "@/components/inbox/central/InboxQueueBar";
 import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
+import { aiStateReasonLabel } from "@/lib/aiStateReasons";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
-
-// v4.2: motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip de
-// estado da IA no header da conversa.
-const AI_STATE_REASON_LABELS: Record<string, string> = {
-  fora_do_horario: "fora do horário de atendimento",
-  lead_de_humano: "lead atribuído a um humano",
-  ia_pausada: "IA pausada nesta conversa",
-  handoff_pendente: "aguardando atendimento humano (repasse)",
-  opt_out: "contato optou por não falar com IA",
-  teto_hora: "limite de respostas por hora atingido",
-  teto_conversa: "limite de respostas da conversa atingido",
-  janela_24h: "janela de 24h fechada",
-  bridge_sem_aceite: "canal não-oficial sem aceite de risco",
-  atendente_desativado: "atendente desativado",
-  ia_desativada: "IA desativada",
-  sem_atendente: "sem atendente configurado",
-  budget_mensal: "limite mensal de conversas atingido",
-  suspeita_de_bot: "suspeita de robô/mensagem automática — aguardando verificação",
-};
 
 // Guardrail anti-bot (v0.65): `conversations.botSuspicion` sem `clearedAt` =
 // a IA parou de responder porque o outro lado parece um robô. "Devolver para
@@ -108,7 +90,7 @@ function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing
     return { label: "IA preparando resposta…", tone: "processing" };
   }
   if ((state.status === "skipped" || state.status === "failed") && state.afterLastInbound) {
-    const reasonLabel = state.reason ? AI_STATE_REASON_LABELS[state.reason] ?? state.reason : "motivo desconhecido";
+    const reasonLabel = state.reason ? aiStateReasonLabel(state.reason) : "motivo desconhecido";
     return { label: `IA em espera: ${reasonLabel}`, tone: "waiting" };
   }
   return null;

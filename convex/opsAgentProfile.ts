@@ -12,6 +12,7 @@
  */
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { auditTextSnapshot } from "./lib/auditText";
 
 const TEXT_FIELDS = ["systemPrompt", "knowledge", "disclosure"] as const;
 
@@ -72,10 +73,18 @@ export const internalSetAgentProfileText = internalMutation({
       action: "update",
       actorType: "system",
       changes: {
-        before: { [args.field]: `(${current.length} caracteres)` },
-        after: { [args.field]: `(${args.text.length} caracteres)` },
+        // Texto (não só tamanho) para dar para reverter; acima do teto vai
+        // truncado com o hash do completo (lib/auditText.ts).
+        before: { [args.field]: await auditTextSnapshot(current) },
+        after: { [args.field]: await auditTextSnapshot(args.text) },
       },
-      metadata: { op: "internalSetAgentProfileText", field: args.field, version: args.version },
+      metadata: {
+        op: "internalSetAgentProfileText",
+        field: args.field,
+        version: args.version,
+        beforeLength: current.length,
+        afterLength: args.text.length,
+      },
       description: `Perfil do agente "${member.name}": ${args.field} atualizado por ops${args.version ? ` (${args.version})` : ""}`,
       severity: "medium",
       createdAt: now,

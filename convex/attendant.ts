@@ -15,6 +15,7 @@
  * Modo sugestão (default): a IA gera mas NÃO envia — vira rascunho interno na
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
+import { matchesHandoffKeyword } from "./lib/handoffKeywords";
 import { v } from "convex/values";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import {
@@ -116,7 +117,6 @@ const HISTORY_FOR_LLM = 30;
 const DEFAULT_MAX_REPLIES_PER_CONVERSATION = 20;
 const DEFAULT_MAX_REPLIES_PER_HOUR = 10;
 const DEFAULT_MAX_TOOL_CALLS = 6;
-const DEFAULT_HANDOFF_KEYWORDS = ["humano", "atendente", "pessoa de verdade", "falar com alguém"];
 // Holds que um item INICIADO POR HUMANO (coach/return_to_ai) pode atravessar.
 // NUNCA inclua opt_out (LGPD), janela_24h, tetos ou bridge_sem_aceite aqui.
 const HUMAN_HOLD_REASONS = ["ia_pausada", "lead_de_humano", "handoff_pendente"];
@@ -433,15 +433,6 @@ export function describeAttendantAction(
     default:
       return `${name}(${argsJson})`;
   }
-}
-
-function matchesHandoffKeyword(content: string, keywords: string[] | undefined): boolean {
-  const text = content.toLowerCase();
-  for (const keyword of keywords && keywords.length > 0 ? keywords : DEFAULT_HANDOFF_KEYWORDS) {
-    const k = keyword.toLowerCase().trim();
-    if (k.length > 0 && text.includes(k)) return true;
-  }
-  return false;
 }
 
 // ── Guardrail anti-bot (v0.65) ──

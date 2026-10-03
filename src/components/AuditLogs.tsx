@@ -671,10 +671,10 @@ export function AuditLogs() {
                                               <div className="px-3 py-2 text-xs text-text-secondary font-medium">
                                                 {label}
                                               </div>
-                                              <div className="px-3 py-2 text-xs text-text-muted">
+                                              <div className="px-3 py-2 text-xs text-text-muted max-h-48 overflow-auto whitespace-pre-wrap break-words">
                                                 {formatDiffValue(before)}
                                               </div>
-                                              <div className="px-3 py-2 text-xs text-text-primary">
+                                              <div className="px-3 py-2 text-xs text-text-primary max-h-48 overflow-auto whitespace-pre-wrap break-words">
                                                 {formatDiffValue(after)}
                                               </div>
                                             </div>
