@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.67.1] - 2026-10-03
+
+### Nova conversa: a grafia real do número vem do `/user/lid`
+
+- Terceiro teste real (E2E em prod): o `/user/check` do gateway devolve UM usuário só, com LID, para as duas grafias brasileiras do mesmo número — não dá para saber qual é a registrada, e o modal oferecia criar o contato com o 9. Agora, quando a checagem volta sem JID de telefone, o CRM consulta `GET /user/lid/{telefone}` para cada grafia: só a real responde o JID `@s.whatsapp.net` (a errada dá 404), e esse é o número canônico. Com isso `81981392929` cai no contato existente registrado como `558181392929`
+- O resultado da checagem passou a trazer `checked` (o que o gateway respondeu para cada grafia) para diagnóstico; op interna `startConversation:internalProbeGatewayNumber` devolve as respostas cruas de `/user/check`, `/user/info` e `/user/lid` para um número
+
 ## [0.67.0] - 2026-10-03
 
 ### Telefones internacionais + país padrão por organização
