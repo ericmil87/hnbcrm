@@ -621,6 +621,10 @@ const applicationTables = {
     settings: v.object({
       timezone: v.string(),
       currency: v.string(),
+      // v0.67: DDI (código de discagem, só dígitos — "55", "1", "61") assumido
+      // quando um telefone é digitado/importado SEM código de país. Ausente =
+      // "55" (Brasil). Fonte única de resolução: `lib/orgPhone.ts`.
+      defaultCountryCode: v.optional(v.string()),
       aiConfig: v.optional(aiConfigValidator),
       // Campanhas: palavras-chave inbound que colocam o remetente na lista de
       // supressão (optOuts). Ausente = ["SAIR","PARAR","STOP","CANCELAR"].

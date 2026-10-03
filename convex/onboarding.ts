@@ -334,6 +334,11 @@ export const completeWizard = mutation({
         ...(existingOrg?.settings ?? {}),
         timezone: wizardData?.timezone ?? "America/Sao_Paulo",
         currency: wizardData?.currency ?? "BRL",
+        // DDI padrão dos telefones (v0.67): só dígitos, 1–3; fora disso é
+        // ignorado e fica o que a org já tinha (ausente = 55, ver lib/orgPhone).
+        ...(typeof wizardData?.defaultCountryCode === "string" && /^\d{1,3}$/.test(wizardData.defaultCountryCode)
+          ? { defaultCountryCode: wizardData.defaultCountryCode }
+          : {}),
       },
       updatedAt: now,
     });

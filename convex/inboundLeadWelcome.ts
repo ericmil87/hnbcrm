@@ -20,6 +20,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
 import { isPhoneSuppressed } from "./lib/campaignAudience";
 import { getOrCreateConversation } from "./conversations";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
@@ -161,14 +162,16 @@ export const internalResolveInboundLeadTarget = internalQuery({
 export const internalWelcomeAppliesTo = internalQuery({
   args: {
     organizationId: v.id("organizations"),
-    hasPhone: v.boolean(),
+    /** Telefone CRU do formulário — normalizado aqui com o DDI padrão da org. */
+    phone: v.optional(v.string()),
     tags: v.array(v.string()),
   },
   returns: v.union(v.null(), v.object({ channelConfigId: v.id("channelConfigs") })),
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
     const welcome = org?.settings.inboundLeadWelcome;
-    if (!welcome || !shouldSendWelcome(welcome, { hasPhone: args.hasPhone, tags: args.tags })) {
+    const hasPhone = args.phone ? normalizeCampaignPhone(args.phone, resolveDefaultCountry(org?.settings)).ok : false;
+    if (!welcome || !shouldSendWelcome(welcome, { hasPhone, tags: args.tags })) {
       return null;
     }
     return { channelConfigId: welcome.channelConfigId };
@@ -277,7 +280,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
     if (config.status !== "active") return skip("canal_inativo");
 
     const rawPhone = contact.whatsappNumber ?? contact.phone;
-    const phone = rawPhone ? normalizeCampaignPhone(rawPhone) : null;
+    const phone = rawPhone ? normalizeCampaignPhone(rawPhone, resolveDefaultCountry(org.settings)) : null;
     if (!phone?.ok) return skip("sem_telefone");
 
     if (!shouldSendWelcome(welcome, { hasPhone: true, tags: lead.tags })) {

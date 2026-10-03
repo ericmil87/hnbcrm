@@ -11,6 +11,7 @@
 import { QueryCtx, MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { normalizeCampaignPhone } from "./phone";
+import { resolveDefaultCountry } from "./orgPhone";
 
 export const MAX_SCAN = 5000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -121,6 +122,8 @@ export async function resolveSegmentAudience(
   }
 ): Promise<AudienceResult> {
   const { organizationId, filters, now } = args;
+  const org = await ctx.db.get(organizationId);
+  const defaultCountry = resolveDefaultCountry(org?.settings);
   const excluded: Record<ExclusionReason, number> = {
     no_contact: 0,
     no_phone: 0,
@@ -212,7 +215,7 @@ export async function resolveSegmentAudience(
       excluded.no_phone++;
       continue;
     }
-    const normalized = normalizeCampaignPhone(raw);
+    const normalized = normalizeCampaignPhone(raw, defaultCountry);
     if (!normalized.ok) {
       excluded.invalid_phone++;
       continue;
@@ -484,6 +487,11 @@ export function unknownSelfMessage(groups: GroupAudienceGroup[]): string {
  */
 export function buildGroupMembersAudience(args: {
   groups: GroupAudienceGroup[];
+  /**
+   * DDI padrão da org (`resolveDefaultCountry`) para telefone sem código de
+   * país. O que o WhatsApp devolve já vem com DDI e passa intacto.
+   */
+  defaultCountry?: string;
   filters?: MemberAudienceFilters;
   /** Telefones (normalizados) que JÁ são contato na org. */
   existingContactPhones?: Set<string>;
@@ -574,7 +582,7 @@ export function buildGroupMembersAudience(args: {
         pushRow(group, p, key, undefined, knownContact, "no_phone");
         continue;
       }
-      const normalized = normalizeCampaignPhone(p.phone);
+      const normalized = normalizeCampaignPhone(p.phone, args.defaultCountry);
       if (!normalized.ok) {
         excluded.invalid_phone++;
         pushRow(group, p, key, p.phone, knownContact, "invalid_phone");

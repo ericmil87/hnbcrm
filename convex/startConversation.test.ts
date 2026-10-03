@@ -598,3 +598,63 @@ describe("startConversation", () => {
     expect(bridge).toMatchObject({ connected: true, phoneDisplay: "+55 (85) 91111-2222" });
   });
 });
+
+describe("startConversation — DDI padrão da org (v0.67)", () => {
+  test("org com DDI 1: '(212) 555-1234' vira o contato 12125551234", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(s.organizationId))!;
+      await ctx.db.patch(s.organizationId, { settings: { ...org.settings, defaultCountryCode: "1" } });
+    });
+    const mock = wuzapiCheck(["12125551234"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const preview = await asAgent.query(api.startConversation.previewStartConversation, {
+      organizationId: s.organizationId, phone: "(212) 555-1234",
+    });
+    expect(preview).toMatchObject({ phone: "12125551234", phoneDisplay: "+1 (212) 555-1234", phoneValid: true, phoneError: null });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "(212) 555-1234", content: "Hi",
+    });
+    expect(res).toMatchObject({ createdContact: true, verified: true, canonicalPhone: "12125551234" });
+    expect(mock.calls[0].body.Phone).toEqual(["12125551234"]);
+    await t.run(async (ctx) => {
+      const contact = (await ctx.db.get(res.contactId))!;
+      expect(contact).toMatchObject({ phone: "12125551234", whatsappNumber: "12125551234" });
+    });
+  });
+
+  test("org com DDI 1: número curto ganha a dica de NANP, não a de DDD", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(s.organizationId))!;
+      await ctx.db.patch(s.organizationId, { settings: { ...org.settings, defaultCountryCode: "1" } });
+    });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    await expect(
+      asAgent.action(api.startConversation.startConversation, {
+        organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "555 1234",
+      })
+    ).rejects.toThrow(/10 dígitos.*código do país/);
+  });
+
+  test("org BR: '+1 212 555 1234' fica 12125551234 (o + não é jogado fora)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const mock = wuzapiCheck(["12125551234"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "+1 212 555 1234",
+    });
+    expect(res).toMatchObject({ createdContact: true, canonicalPhone: "12125551234" });
+    expect(mock.calls[0].body.Phone).toEqual(["12125551234"]);
+  });
+
+  test("resolveStartPhone: mensagens por país padrão", () => {
+    expect(resolveStartPhone("1234567", "55")).toMatchObject({ ok: false, error: expect.stringMatching(/DDD.*\+ e o código do país/) });
+    expect(resolveStartPhone("1234567", "1")).toMatchObject({ ok: false, error: expect.stringMatching(/10 dígitos/) });
+    expect(resolveStartPhone("12345", "44")).toMatchObject({ ok: false, error: expect.stringMatching(/código de área/) });
+    expect(resolveStartPhone("(212) 555-1234", "1")).toEqual({ ok: true, phone: "12125551234" });
+  });
+});

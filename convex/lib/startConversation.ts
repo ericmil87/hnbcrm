@@ -2,7 +2,7 @@
  * "Nova conversa" (inbox): regras PURAS compartilhadas entre a query de prévia,
  * a mutation e os testes. Nada aqui toca o banco.
  */
-import { normalizeCampaignPhone } from "./phone";
+import { DEFAULT_COUNTRY_CODE, normalizeCampaignPhone } from "./phone";
 import { phoneFromJid } from "./bridgeSession";
 
 export type StartConversationProvider = "meta" | "bridge";
@@ -26,19 +26,34 @@ export type ResolvedStartPhone =
   | { ok: true; phone: string }
   | { ok: false; error: string };
 
-/** Normaliza o telefone digitado (E.164 sem "+", Brasil por padrão). */
-export function resolveStartPhone(raw: string | undefined | null): ResolvedStartPhone {
-  const n = normalizeCampaignPhone(String(raw ?? ""));
+const OTHER_COUNTRY_HINT = "para outro país, digite com + e o código do país";
+
+/**
+ * Normaliza o telefone digitado (E.164 sem "+"). `defaultCountry` = DDI padrão
+ * da org (`resolveDefaultCountry(org.settings)`, Brasil por padrão); as
+ * mensagens de erro falam a língua do país padrão (DDD só no Brasil).
+ */
+export function resolveStartPhone(
+  raw: string | undefined | null,
+  defaultCountry: string = DEFAULT_COUNTRY_CODE
+): ResolvedStartPhone {
+  const n = normalizeCampaignPhone(String(raw ?? ""), defaultCountry);
   if (n.ok) return { ok: true, phone: n.phone };
+  const br = defaultCountry === DEFAULT_COUNTRY_CODE;
+  const nanp = defaultCountry === "1";
   switch (n.reason) {
     case "empty":
       return { ok: false, error: "Informe o telefone do contato" };
     case "too_short":
-      return { ok: false, error: "Telefone curto demais — inclua o DDD (ex.: 85 99999-9999)" };
+      if (br) return { ok: false, error: `Telefone curto demais — inclua o DDD (ex.: 85 99999-9999); ${OTHER_COUNTRY_HINT}` };
+      if (nanp) return { ok: false, error: `Telefone curto demais — use 10 dígitos (código de área + número); ${OTHER_COUNTRY_HINT}` };
+      return { ok: false, error: `Telefone curto demais — inclua o código de área; ${OTHER_COUNTRY_HINT}` };
     case "too_long":
       return { ok: false, error: "Telefone longo demais — confira os dígitos" };
     default:
-      return { ok: false, error: "Telefone inválido — confira o DDD e o número" };
+      if (br) return { ok: false, error: `Telefone inválido — confira o DDD e o número; ${OTHER_COUNTRY_HINT}` };
+      if (nanp) return { ok: false, error: `Telefone inválido — use 10 dígitos (código de área + número); ${OTHER_COUNTRY_HINT}` };
+      return { ok: false, error: `Telefone inválido — confira o código de área e o número; ${OTHER_COUNTRY_HINT}` };
   }
 }
 

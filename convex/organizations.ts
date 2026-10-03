@@ -206,6 +206,8 @@ export const updateOrganization = mutation({
     settings: v.optional(v.object({
       timezone: v.string(),
       currency: v.string(),
+      // DDI padrão dos telefones (só dígitos, 1–3). Ver schema.
+      defaultCountryCode: v.optional(v.string()),
       aiConfig: v.optional(aiConfigValidator),
     })),
   },
@@ -213,6 +215,9 @@ export const updateOrganization = mutation({
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new Error("Organization not found");
+    if (args.settings?.defaultCountryCode !== undefined && !/^\d{1,3}$/.test(args.settings.defaultCountryCode)) {
+      throw new Error("Código de país inválido — use só os dígitos do DDI (ex.: 55, 1, 61)");
+    }
 
     const userMember = await requireAuth(ctx, args.organizationId);
     if (userMember.role !== "admin") throw new Error("Not authorized");

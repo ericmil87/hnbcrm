@@ -6,6 +6,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { buildSearchText } from "./lib/searchText";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
 
 // Shared optional-field arg validators for enrichment fields
 const enrichmentArgFields = {
@@ -482,7 +483,12 @@ export const internalFindOrCreateContact = internalMutation({
     let contact = null;
 
     const normalized =
-      args.normalizePhone && args.phone ? normalizeCampaignPhone(args.phone) : null;
+      args.normalizePhone && args.phone
+        ? normalizeCampaignPhone(
+            args.phone,
+            resolveDefaultCountry((await ctx.db.get(args.organizationId))?.settings)
+          )
+        : null;
     const phone = normalized?.ok ? normalized.phone : args.phone;
 
     if (args.email) {

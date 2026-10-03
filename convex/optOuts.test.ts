@@ -62,3 +62,23 @@ describe("lista de supressão", () => {
     expect(logs.some((l) => l.entityType === "optOut" && l.action === "delete" && l.severity === "high")).toBe(true);
   });
 });
+
+describe("supressão com DDI padrão da org (v0.67)", () => {
+  test("org DDI 44: número digitado ganha 44; E.164 gravado pelo WhatsApp não é corrompido", async () => {
+    const t = setup();
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(s.organizationId))!;
+      await ctx.db.patch(s.organizationId, { settings: { ...org.settings, defaultCountryCode: "44" } });
+    });
+    // contato com o E.164 BR que o ingest gravou (12+ dígitos com DDI)
+    await asUser(t, s.agentUserId).mutation(api.optOuts.addOptOut, { organizationId: s.organizationId, contactId: s.contactId });
+    await asUser(t, s.agentUserId).mutation(api.optOuts.addOptOut, { organizationId: s.organizationId, phone: "07911 123456" });
+    const rows = await t.run((ctx) => ctx.db.query("optOuts").collect());
+    expect(rows.map((r) => r.phone).sort()).toEqual(["447911123456", "5511999990001"]);
+    const isOut = await asUser(t, s.adminUserId).query(api.optOuts.isContactOptedOut, { contactId: s.contactId });
+    expect(isOut).not.toBeNull();
+    const byPlus = await asUser(t, s.adminUserId).query(api.optOuts.isPhoneOptedOut, { organizationId: s.organizationId, phone: "+44 7911 123456" });
+    expect(byPlus).not.toBeNull();
+  });
+});

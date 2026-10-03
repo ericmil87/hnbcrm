@@ -17,6 +17,13 @@ import {
   type InternalActorArgs,
 } from "./lib/campaignAuth";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
+
+/** DDI padrão da org (telefone digitado/gravado sem código de país). */
+async function orgDefaultCountry(ctx: QueryCtx | MutationCtx, organizationId: Id<"organizations">): Promise<string> {
+  const org = await ctx.db.get(organizationId);
+  return resolveDefaultCountry(org?.settings);
+}
 
 export const listOptOutsArgs = {
     organizationId: v.id("organizations"),
@@ -55,7 +62,7 @@ export const isPhoneOptedOut = query({
   ),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "campaigns", "view");
-    const n = normalizeCampaignPhone(args.phone);
+    const n = normalizeCampaignPhone(args.phone, await orgDefaultCountry(ctx, args.organizationId));
     if (!n.ok) return null;
     const row = await ctx.db
       .query("optOuts")
@@ -75,7 +82,7 @@ export const isContactOptedOut = query({
     await requirePermission(ctx, contact.organizationId, "contacts", "view");
     const raw = contact.whatsappNumber ?? contact.phone;
     if (!raw) return null;
-    const n = normalizeCampaignPhone(raw);
+    const n = normalizeCampaignPhone(raw, await orgDefaultCountry(ctx, contact.organizationId));
     if (!n.ok) return null;
     const row = await ctx.db
       .query("optOuts")
@@ -106,7 +113,7 @@ export async function addOptOutHandler(ctx: MutationCtx, args: AddOptOutArgs) {
       phoneRaw = phoneRaw ?? contact.whatsappNumber ?? contact.phone;
     }
     if (!phoneRaw) throw new Error("Informe o telefone ou um contato com telefone");
-    const n = normalizeCampaignPhone(phoneRaw);
+    const n = normalizeCampaignPhone(phoneRaw, await orgDefaultCountry(ctx, args.organizationId));
     if (!n.ok) throw new Error("Telefone inválido");
     const existing = await ctx.db
       .query("optOuts")

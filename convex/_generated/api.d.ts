@@ -133,6 +133,7 @@ import type * as lib_llm_types from "../lib/llm/types.js";
 import type * as lib_mediaEnrichment from "../lib/mediaEnrichment.js";
 import type * as lib_notify from "../lib/notify.js";
 import type * as lib_orgModules from "../lib/orgModules.js";
+import type * as lib_orgPhone from "../lib/orgPhone.js";
 import type * as lib_outboundSideEffects from "../lib/outboundSideEffects.js";
 import type * as lib_passwordResetConfig from "../lib/passwordResetConfig.js";
 import type * as lib_permissions from "../lib/permissions.js";
@@ -315,6 +316,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mediaEnrichment": typeof lib_mediaEnrichment;
   "lib/notify": typeof lib_notify;
   "lib/orgModules": typeof lib_orgModules;
+  "lib/orgPhone": typeof lib_orgPhone;
   "lib/outboundSideEffects": typeof lib_outboundSideEffects;
   "lib/passwordResetConfig": typeof lib_passwordResetConfig;
   "lib/permissions": typeof lib_permissions;

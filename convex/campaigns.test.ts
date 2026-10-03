@@ -213,6 +213,44 @@ describe("CRUD e RBAC", () => {
   });
 });
 
+describe("DDI padrão da org (v0.67)", () => {
+  async function setDefaultCountry(t: TestConvex<typeof schema>, organizationId: Id<"organizations">, code: string) {
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(organizationId))!;
+      await ctx.db.patch(organizationId, { settings: { ...org.settings, defaultCountryCode: code } });
+    });
+  }
+
+  test("manual numa org DDI 1: '(212) 555-1234' vira 12125551234; +55 explícito segue BR", async () => {
+    const t = setup();
+    const seed = await seedCampaignOrg(t);
+    await setDefaultCountry(t, seed.organizationId, "1");
+    const id = await createDraft(t, seed);
+    const res = await asUser(t, seed.adminUserId).mutation(api.campaigns.addManualRecipients, {
+      campaignId: id,
+      entries: [{ phone: "(212) 555-1234" }, { phone: "1 212 555 1234" }, { phone: "+55 11 99999-0001" }, { phone: "112 555 1234" }],
+    });
+    expect(res.added).toBe(2);
+    expect(res.duplicates).toBe(1);
+    expect(res.invalid).toEqual([{ phone: "112 555 1234", reason: "invalid" }]);
+    const rows = await t.run((ctx) => ctx.db.query("campaignRecipients").withIndex("by_campaign", (q) => q.eq("campaignId", id)).collect());
+    expect(rows.map((r) => r.phone).sort()).toEqual(["12125551234", "5511999990001"]);
+  });
+
+  test("CSV numa org DDI 44 tira o 0 de tronco", async () => {
+    const t = setup();
+    const seed = await seedCampaignOrg(t);
+    await setDefaultCountry(t, seed.organizationId, "44");
+    const id = await createDraft(t, seed);
+    const csv = "Nome,Telefone\nAna,07911 123456\nBia,+351 912 345 678\n";
+    await asUser(t, seed.adminUserId).action(api.campaigns.importRecipientsCsv, {
+      campaignId: id, csvText: csv, dryRun: false, mapping: { phone: "Telefone", name: "Nome" },
+    });
+    const rows = await t.run((ctx) => ctx.db.query("campaignRecipients").withIndex("by_campaign", (q) => q.eq("campaignId", id)).collect());
+    expect(rows.map((r) => r.phone).sort()).toEqual(["351912345678", "447911123456"]);
+  });
+});
+
 describe("lançamento — aceites e validações", () => {
   async function draftWithRecipients(t: TestConvex<typeof schema>, seed: Awaited<ReturnType<typeof seedCampaignOrg>>, n = 3, content = twoVariants) {
     const id = await createDraft(t, seed, { content });

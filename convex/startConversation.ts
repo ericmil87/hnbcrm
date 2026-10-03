@@ -45,6 +45,7 @@ import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { formatPhoneForDisplay } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
 import { decryptSecret } from "./lib/secretCrypto";
 import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse } from "./lib/bridgeSession";
 import {
@@ -87,6 +88,12 @@ async function findContactByPhone(
     if (row) return row;
   }
   return null;
+}
+
+/** DDI padrão da org (telefone digitado sem código de país). */
+async function orgDefaultCountry(ctx: Ctx, organizationId: Id<"organizations">): Promise<string> {
+  const org = await ctx.db.get(organizationId);
+  return resolveDefaultCountry(org?.settings);
 }
 
 async function isOptedOut(ctx: Ctx, organizationId: Id<"organizations">, phone: string): Promise<boolean> {
@@ -245,6 +252,7 @@ export const internalStartContext = internalQuery({
     if (channel.status !== "active") {
       throw new ConvexError(`O número «${channel.displayName}» não está ativo — escolha outro ou reconecte em Configurações → Canais`);
     }
+    const defaultCountry = await orgDefaultCountry(ctx, args.organizationId);
     let raw: string | undefined = args.phone;
     if (args.contactId) {
       const c = await ctx.db.get(args.contactId);
@@ -252,7 +260,7 @@ export const internalStartContext = internalQuery({
       raw = contactRawPhone(c) ?? args.phone;
       if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
     }
-    const r = resolveStartPhone(raw);
+    const r = resolveStartPhone(raw, defaultCountry);
     if (!r.ok) throw new ConvexError(r.error);
     const provider = configProvider(channel);
     const knownPhones: string[] = [];
@@ -449,6 +457,7 @@ export const previewStartConversation = query({
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "inbox", "reply");
     const perms = memberPermissions(member);
+    const defaultCountry = await orgDefaultCountry(ctx, args.organizationId);
 
     let contact: Doc<"contacts"> | null = null;
     let phone: string | null = null;
@@ -464,7 +473,7 @@ export const previewStartConversation = query({
       if (!contact) {
         phoneError = "Contato não encontrado";
       } else if (raw) {
-        const r = resolveStartPhone(raw);
+        const r = resolveStartPhone(raw, defaultCountry);
         if (r.ok) phone = r.phone;
         else phoneError = r.error;
       } else {
@@ -474,7 +483,7 @@ export const previewStartConversation = query({
       phone = args.phone;
       contact = await findContactByPhone(ctx, args.organizationId, phone);
     } else {
-      const r = resolveStartPhone(args.phone);
+      const r = resolveStartPhone(args.phone, defaultCountry);
       if (r.ok) {
         phone = r.phone;
         contact = await findContactByPhone(ctx, args.organizationId, phone);
@@ -688,7 +697,8 @@ export const internalStartConversation = internalMutation({
 
     // 3. Telefone + contato
     const canonical = args.phoneIsCanonical === true;
-    if (canonical && !isCanonicalPhone(args.phone)) throw new ConvexError("Telefone inválido — confira o DDD e o número");
+    if (canonical && !isCanonicalPhone(args.phone)) throw new ConvexError("Telefone inválido — confira os dígitos");
+    const defaultCountry = await orgDefaultCountry(ctx, args.organizationId);
     let contact: Doc<"contacts"> | null = null;
     let switchedFromContactId: Id<"contacts"> | undefined;
     let phone: string;
@@ -713,7 +723,7 @@ export const internalStartConversation = internalMutation({
       } else {
         const raw = contactRawPhone(c) ?? args.phone;
         if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
-        const r = resolveStartPhone(raw);
+        const r = resolveStartPhone(raw, defaultCountry);
         if (!r.ok) throw new ConvexError(r.error);
         phone = r.phone;
       }
@@ -721,7 +731,7 @@ export const internalStartConversation = internalMutation({
       phone = args.phone!;
       contact = await findContactByPhone(ctx, args.organizationId, phone);
     } else {
-      const r = resolveStartPhone(args.phone);
+      const r = resolveStartPhone(args.phone, defaultCountry);
       if (!r.ok) throw new ConvexError(r.error);
       phone = r.phone;
       contact = await findContactByPhone(ctx, args.organizationId, phone);

@@ -69,6 +69,7 @@ import {
 } from "./lib/campaignAudience";
 import { groupsActorHas } from "./lib/groupAuth";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
 import { parseCsv } from "./lib/csv";
 import { estimateCampaignCost, loadPricing } from "./lib/whatsappPricing";
 import {
@@ -429,6 +430,7 @@ async function resolveGroupMembersAudience(
 ) {
   const filters = args.filters ?? {};
   const limit = Math.min(args.limit ?? GROUP_MEMBERS_SNAPSHOT_MAX, GROUP_MEMBERS_SNAPSHOT_MAX);
+  const defaultCountry = resolveDefaultCountry((await ctx.db.get(args.organizationId))?.settings);
 
   // Identidade própria desconhecida = RECUSA, não "manda para nós mesmos".
   // Vale para o snapshot do lançamento, a REST e o copiloto; a prévia faz a
@@ -448,7 +450,7 @@ async function resolveGroupMembersAudience(
       groupChatIds: filters.excludeGroupChatIds,
       requireMonitored: false,
     });
-    const built = buildGroupMembersAudience({ groups: excludedGroups });
+    const built = buildGroupMembersAudience({ groups: excludedGroups, defaultCountry });
     excludedGroupPhones = new Set(built.recipients.map((r) => r.phone));
   }
 
@@ -458,6 +460,7 @@ async function resolveGroupMembersAudience(
   // chamada final do builder, depois de todas as leituras).
   const raw = buildGroupMembersAudience({
     groups: args.groups,
+    defaultCountry,
     filters,
     activeKeys,
     excludedGroupPhones,
@@ -502,6 +505,7 @@ async function resolveGroupMembersAudience(
 
   return buildGroupMembersAudience({
     groups: args.groups,
+    defaultCountry,
     filters,
     optOuts,
     existingContactPhones,
@@ -1534,8 +1538,10 @@ export async function addManualRecipientsHandler(ctx: MutationCtx, args: AddManu
     const rows: RecipientRow[] = [];
     const seen = new Set<string>();
     let dupInBatch = 0;
+    const org = await ctx.db.get(campaign.organizationId);
+    const defaultCountry = resolveDefaultCountry(org?.settings);
     for (const entry of args.entries) {
-      const n = normalizeCampaignPhone(entry.phone);
+      const n = normalizeCampaignPhone(entry.phone, defaultCountry);
       if (!n.ok) {
         invalid.push({ phone: entry.phone, reason: n.reason });
         continue;
@@ -1700,7 +1706,7 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
     let duplicates = 0;
     parsed.rows.forEach((row, i) => {
       const raw = row[mapping.phone] ?? "";
-      const n = normalizeCampaignPhone(raw);
+      const n = normalizeCampaignPhone(raw, context.defaultCountry);
       if (!n.ok) {
         invalid.push({ row: i + 2, phone: raw, reason: n.reason });
         return;
@@ -1781,7 +1787,12 @@ export const importRecipientsCsv = action({
 
 export const internalImportContext = internalQuery({
   args: { campaignId: v.id("campaigns"), fileId: v.optional(v.id("files")), actorMemberId: v.optional(v.id("teamMembers")) },
-  returns: v.object({ organizationId: v.id("organizations"), storageId: v.union(v.string(), v.null()) }),
+  returns: v.object({
+    organizationId: v.id("organizations"),
+    storageId: v.union(v.string(), v.null()),
+    /** DDI padrão da org para telefones do CSV sem código de país. */
+    defaultCountry: v.string(),
+  }),
   handler: async (ctx, args) => {
     const campaign = await getCampaignInOrg(ctx, args.campaignId);
     await authorize(ctx, campaign.organizationId, "manage", args.actorMemberId);
@@ -1793,7 +1804,8 @@ export const internalImportContext = internalQuery({
       if (file.fileType !== "import_file") throw new ConvexError("Envie o arquivo como import_file");
       storageId = file.storageId;
     }
-    return { organizationId: campaign.organizationId, storageId };
+    const org = await ctx.db.get(campaign.organizationId);
+    return { organizationId: campaign.organizationId, storageId, defaultCountry: resolveDefaultCountry(org?.settings) };
   },
 });
 

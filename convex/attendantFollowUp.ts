@@ -28,6 +28,7 @@ import { resolveConversationChannelConfig, providerOf } from "./lib/channelResol
 import { evaluateEligibility, findAttendantForConversation } from "./attendant";
 import { getLeadRef } from "./lib/leadRef";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
 import {
   followUpWindow,
   isWithinSchedule,
@@ -236,7 +237,9 @@ async function fireCore(
   // "SAIR" pediu exatamente para não receber isto. O atendente só olhava
   // `contact.aiOptOut`, que é outra coisa (e não cobre quem digitou a palavra
   // no meio de uma campanha).
-  const phone = contact?.phone ? normalizeCampaignPhone(contact.phone) : null;
+  const phone = contact?.phone
+    ? normalizeCampaignPhone(contact.phone, resolveDefaultCountry(org?.settings))
+    : null;
   if (phone?.ok) {
     const optOut = await ctx.db
       .query("optOuts")

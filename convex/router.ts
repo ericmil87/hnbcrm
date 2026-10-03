@@ -13,7 +13,6 @@ import {
   type PermissionCategory,
 } from "./lib/permissions";
 import { encodeHeaderKey } from "./lib/importKeys";
-import { normalizeCampaignPhone } from "./lib/phone";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import { resend } from "./email";
 import {
@@ -384,7 +383,7 @@ http.route({
       const rawPhone = typeof body.contact?.phone === "string" ? body.contact.phone : "";
       const welcome = await ctx.runQuery(internal.inboundLeadWelcome.internalWelcomeAppliesTo, {
         organizationId,
-        hasPhone: rawPhone ? normalizeCampaignPhone(rawPhone).ok : false,
+        ...(rawPhone ? { phone: rawPhone } : {}),
         tags,
       });
 

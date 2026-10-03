@@ -521,6 +521,40 @@ describe("assistente de onboarding", () => {
   });
 });
 
+describe("assistente de onboarding — DDI padrão (v0.67)", () => {
+  test("completeWizard copia defaultCountryCode válido sem apagar o resto de settings", async () => {
+    const { adminUser, orgA } = await setup();
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(orgA))!;
+      await ctx.db.patch(orgA, { settings: { ...org.settings, optOutKeywords: ["SAIR"] } });
+    });
+    await as(adminUser).mutation(api.onboarding.initOnboardingProgress, { organizationId: orgA });
+    await as(adminUser).mutation(api.onboarding.updateWizardStep, {
+      organizationId: orgA, step: 2, wizardData: { timezone: "America/New_York", currency: "USD", defaultCountryCode: "1" },
+    });
+    await as(adminUser).mutation(api.onboarding.completeWizard, { organizationId: orgA });
+    const org = await t.run((ctx) => ctx.db.get(orgA));
+    expect(org?.settings).toMatchObject({
+      timezone: "America/New_York", currency: "USD", defaultCountryCode: "1", optOutKeywords: ["SAIR"],
+    });
+  });
+
+  test("código inválido é ignorado e o que a org tinha fica", async () => {
+    const { adminUser, orgA } = await setup();
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(orgA))!;
+      await ctx.db.patch(orgA, { settings: { ...org.settings, defaultCountryCode: "351" } });
+    });
+    await as(adminUser).mutation(api.onboarding.initOnboardingProgress, { organizationId: orgA });
+    await as(adminUser).mutation(api.onboarding.updateWizardStep, {
+      organizationId: orgA, step: 2, wizardData: { defaultCountryCode: "+44" },
+    });
+    await as(adminUser).mutation(api.onboarding.completeWizard, { organizationId: orgA });
+    const org = await t.run((ctx) => ctx.db.get(orgA));
+    expect(org?.settings.defaultCountryCode).toBe("351");
+  });
+});
+
 describe("deep-link de outra org", () => {
   test("queries de detalhe devolvem null (não lançam) para quem não é membro", async () => {
     const { adminUser, orgA, adminA } = await setup();
