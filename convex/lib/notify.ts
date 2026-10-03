@@ -20,7 +20,8 @@ export type NotificationType =
   | "group_opportunity"
   | "group_digest"
   | "ai_followup_needs_human"
-  | "conversation_transferred";
+  | "conversation_transferred"
+  | "channel_session_lost";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -45,6 +46,8 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   ai_followup_needs_human: "aiFollowupNeedsHuman",
   // MVP Central — só sino (sem template de e-mail).
   conversation_transferred: "conversationTransferred",
+  // T02 — só sino (sem template de e-mail).
+  channel_session_lost: "channelSessionLost",
 };
 
 /**

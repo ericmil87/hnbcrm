@@ -38,17 +38,22 @@ const bridgeSessionStateValidator = v.union(
   v.literal("connecting"),
   v.literal("qr"),
   v.literal("disconnected"),
-  v.literal("banned")
+  v.literal("banned"),
+  v.literal("logged_out"),
+  v.literal("temporarily_banned"),
+  v.literal("outdated")
 );
 
 // Fire one wuzapi REST request (built by the pure adapter) and parse the JSON.
-async function bridgeFetchJson(
-  req: BridgeHttpRequest
+export async function bridgeFetchJson(
+  req: BridgeHttpRequest,
+  opts?: { timeoutMs?: number }
 ): Promise<{ httpOk: boolean; status: number; body: unknown }> {
   const res = await fetch(req.url, {
     method: req.method,
     headers: req.headers,
     ...(req.body !== undefined ? { body: req.body } : {}),
+    ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
   });
   const body = await res.json().catch(() => ({}));
   return { httpOk: res.ok, status: res.status, body };
@@ -1259,15 +1264,7 @@ export const internalRecordHealthCheck = internalMutation({
     bridgePhone: v.optional(v.string()),
     healthDetail: v.string(),
     // Bridge-only: persist the whatsmeow pairing state for the card badge.
-    bridgeSessionState: v.optional(
-      v.union(
-        v.literal("connected"),
-        v.literal("connecting"),
-        v.literal("qr"),
-        v.literal("disconnected"),
-        v.literal("banned")
-      )
-    ),
+    bridgeSessionState: v.optional(bridgeSessionStateValidator),
   },
   // Nomes das contas que perderam este número para esta conexão (vazio é o
   // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
@@ -1297,6 +1294,16 @@ export const internalRecordHealthCheck = internalMutation({
       // Campanhas: idade do número = 1ª vez que a sessão ficou "connected"
       ...(args.bridgeSessionState === "connected" && config.bridgeConnectedAt === undefined
         ? { bridgeConnectedAt: now }
+        : {}),
+      // T02: conectou de novo → zera o marcador de queda e o dedupe do alerta,
+      // para a PRÓXIMA queda voltar a notificar.
+      ...(args.bridgeSessionState === "connected"
+        ? {
+            bridgeUnhealthySince: undefined,
+            bridgeSessionAlertedAt: undefined,
+            bridgeSessionDetail: undefined,
+            bridgeSessionExpiresAt: undefined,
+          }
         : {}),
       lastHealthCheckAt: now,
       updatedAt: now,

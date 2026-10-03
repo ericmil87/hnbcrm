@@ -36,4 +36,9 @@ crons.daily(
   {}
 );
 
+// Saúde dos canais bridge (T02): sonda GET /session/status de cada número e
+// notifica na transição (connected → fora do ar, só se persistir entre duas
+// execuções). Teto de 50 canais por execução, o resto segue por cursor.
+crons.interval("channel health", { minutes: 15 }, internal.channelHealth.internalChannelHealthTick, {});
+
 export default crons;

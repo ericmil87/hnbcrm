@@ -13,6 +13,18 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
+// Mutations de sucesso agendam webhooks/e-mails (runAfter 0); sem cancelar, o job dispara
+// depois do teste terminar e vira "Write outside of transaction" (erro não tratado do vitest).
+async function cancelPendingJobs(t: ReturnType<typeof convexTest>) {
+  await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    for (const job of jobs) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
+
 describe("build: login anônimo não volta", () => {
   test("convex/auth.ts não importa nem registra o provider Anonymous", () => {
     const src = readFileSync("convex/auth.ts", "utf8");
@@ -48,13 +60,7 @@ describe("guarda de e-mail", () => {
       .mutation(api.organizations.createOrganization, { name: "Real", slug: "real" });
     expect(orgId).toBeTruthy();
     // cancela o e-mail de boas-vindas agendado (o componente Resend não é registrado aqui)
-    await t.run(async (ctx) => {
-      const jobs = await ctx.db.system.query("_scheduled_functions").collect();
-      for (const job of jobs) {
-        if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
-      }
-    });
-    await t.finishInProgressScheduledFunctions();
+    await cancelPendingJobs(t);
   });
 
   test("internalRequireSettingsManage barra admin anônimo legado", async () => {
@@ -139,7 +145,7 @@ describe("outras portas (revisão de segurança)", () => {
   });
 
   test("aiSettings: setAiEnabled, activateOneFlow, setBridgeAiAck e setGroupAutopilotAck barram anônimo", async () => {
-    const { s, as } = await seedPair();
+    const { t, s, as } = await seedPair();
     const a = as(s.anonUserId);
     const organizationId = s.organizationId;
     await expect(a.mutation(api.aiSettings.setAiEnabled, { organizationId, enabled: true, lgpdAck: true })).rejects.toThrow(NOEMAIL);
@@ -148,6 +154,7 @@ describe("outras portas (revisão de segurança)", () => {
     await expect(a.mutation(api.aiSettings.setGroupAutopilotAck, { organizationId, accept: true, riskAck: true })).rejects.toThrow(NOEMAIL);
     // com e-mail a guarda não barra (setAiEnabled liga a IA)
     await as(s.realUserId).mutation(api.aiSettings.setAiEnabled, { organizationId, enabled: true, lgpdAck: true });
+    await cancelPendingJobs(t);
   });
 
   test("campaigns.launchCampaign: wrapper público barra anônimo; caminho interno (REST) com membro segue", async () => {
@@ -170,6 +177,7 @@ describe("outras portas (revisão de segurança)", () => {
     }
     expect(msg).not.toMatch(NOEMAIL);
     expect(msg).not.toBe("");
+    await cancelPendingJobs(t);
   });
 
   test("internalListAnonymousUsers: apiKeys e activeApiKeys por org", async () => {

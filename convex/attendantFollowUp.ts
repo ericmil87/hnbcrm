@@ -23,6 +23,7 @@ import { internalMutation, mutation, query, MutationCtx } from "./_generated/ser
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
+import { isSessionLostState } from "./lib/channelHealthSignals";
 import { orgAiActive } from "./lib/agentSecurity";
 import { resolveConversationChannelConfig, providerOf } from "./lib/channelResolve";
 import { evaluateEligibility, findAttendantForConversation } from "./attendant";
@@ -257,7 +258,7 @@ async function fireCore(
   // número costuma voltar sozinho).
   if (
     provider === "bridge" &&
-    (channelConfig?.bridgeSessionState === "banned" ||
+    (isSessionLostState(channelConfig?.bridgeSessionState) ||
       channelConfig?.bridgeSessionState === "disconnected")
   ) {
     return await deferOrEscalate(ctx, followUp, now, {

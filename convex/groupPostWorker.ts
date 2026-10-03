@@ -36,6 +36,7 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { createNotification } from "./lib/notify";
+import { isSessionLostState } from "./lib/channelHealthSignals";
 import { membersWithPermission } from "./lib/groupChatCore";
 import { orgAiActive } from "./lib/agentSecurity";
 import { chatWithFallback, withReasoningEffort } from "./lib/llm";
@@ -515,12 +516,14 @@ export const tick = internalMutation({
       await failAndPause(ctx, post, now, "Os grupos foram desligados neste número");
       return null;
     }
-    if (config.bridgeSessionState === "banned") {
+    if (isSessionLostState(config.bridgeSessionState)) {
       await failAndPause(
         ctx,
         post,
         now,
-        "Sessão do WhatsApp BANIDA — reconecte o número em Configurações → Canais"
+        config.bridgeSessionState === "banned"
+          ? "Sessão do WhatsApp BANIDA — reconecte o número em Configurações → Canais"
+          : "Sessão do WhatsApp perdida (deslogada, banimento temporário ou gateway desatualizado) — veja Configurações → Canais"
       );
       return null;
     }

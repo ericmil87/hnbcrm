@@ -1,0 +1,6 @@
+{
+  "_fixture": "SINTÉTICA — montada das structs types/events.LoggedOut{OnConnect, Reason}, TemporaryBan{Code, Expire (time.Duration em ns)} e ClientOutdated{} do whatsmeow. Ainda NÃO capturada do gateway real; revalidar quando ocorrer um evento verdadeiro (envelope {type, event} CONFIRMADO no wmiau.go do wuzapi; os campos internos seguem pela struct do whatsmeow).",
+  "loggedOut": { "type": "LoggedOut", "event": { "OnConnect": false, "Reason": 401 } },
+  "temporaryBan": { "type": "TemporaryBan", "event": { "Code": 104, "Expire": 86400000000000 } },
+  "clientOutdated": { "type": "ClientOutdated", "event": {} }
+}

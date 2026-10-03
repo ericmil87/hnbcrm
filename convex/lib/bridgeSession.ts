@@ -33,7 +33,12 @@ export type BridgeSessionState =
   | "connecting" // paired but the socket is temporarily down (reconnecting)
   | "qr" // not paired — a QR is available to scan
   | "disconnected" // not paired and no QR (logged out / never paired / banned)
-  | "banned"; // gateway explicitly reported the number as banned/removed
+  | "banned" // gateway explicitly reported the number as banned/removed
+  // Sinais graves vindos do webhook (T02): o aparelho desvinculou o número,
+  // banimento temporário do WhatsApp, versão do cliente whatsmeow vencida.
+  | "logged_out"
+  | "temporarily_banned"
+  | "outdated";
 
 function trimBase(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");

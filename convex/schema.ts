@@ -981,9 +981,20 @@ const applicationTables = {
         v.literal("connecting"),
         v.literal("qr"),
         v.literal("disconnected"),
-        v.literal("banned")
+        v.literal("banned"),
+        // T02 — sinais graves do webhook do bridge.
+        v.literal("logged_out"),
+        v.literal("temporarily_banned"),
+        v.literal("outdated")
       )
     ),
+    // T02: texto curto do último sinal grave + quando o banimento temporário expira.
+    bridgeSessionDetail: v.optional(v.string()),
+    bridgeSessionExpiresAt: v.optional(v.number()),
+    // T02 (cron de saúde): 1ª vez que o canal foi visto fora do ar (limpo ao
+    // reconectar) e quando o alerta de perda de sessão já foi emitido (dedupe).
+    bridgeUnhealthySince: v.optional(v.number()),
+    bridgeSessionAlertedAt: v.optional(v.number()),
     status: v.union(v.literal("active"), v.literal("disabled"), v.literal("error")),
     lastHealthCheckAt: v.optional(v.number()),
     healthDetail: v.optional(v.string()),
@@ -1820,7 +1831,9 @@ const applicationTables = {
       // "tarefa da IA vence e nada acontece, em silêncio".
       v.literal("ai_followup_needs_human"),
       // MVP Central — conversa transferida para um setor/membro.
-      v.literal("conversation_transferred")
+      v.literal("conversation_transferred"),
+      // T02 — o número do bridge perdeu a sessão (logout/ban/desatualizado/queda persistente).
+      v.literal("channel_session_lost")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -1956,6 +1969,8 @@ const applicationTables = {
     aiFollowupNeedsHuman: v.optional(v.boolean()),
     // MVP Central — conversa transferida para mim/meu setor (só sino).
     conversationTransferred: v.optional(v.boolean()),
+    // T02 — número do WhatsApp perdeu a sessão (só sino).
+    channelSessionLost: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

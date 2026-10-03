@@ -147,7 +147,27 @@ export type ParsedBridgeEvent =
   | { kind: "group_info"; info: ParsedBridgeGroupInfoEvent }
   | { kind: "joined_group"; joined: ParsedBridgeJoinedGroup }
   | { kind: "group_presence"; presence: ParsedBridgeGroupPresence }
+  | { kind: "session_event"; session: ParsedBridgeSessionEvent }
   | { kind: "ignored"; reason: string };
+
+/**
+ * Sinal GRAVE de sessão (T02). `Disconnected`/`Connected` ficam de fora de
+ * propósito: o socket cai e volta o tempo todo, quem decide se persistiu é o
+ * cron de saúde dos canais.
+ *
+ * `expiresInMs` (e não `expiresAt`) porque o parser é puro e não tem relógio:
+ * o `TemporaryBan.Expire` do whatsmeow é uma duração.
+ */
+export type ParsedBridgeSessionEvent = {
+  event: "LoggedOut" | "TemporaryBan" | "ClientOutdated";
+  /** Código numérico do whatsmeow (ConnectFailureReason / TempBanReason). */
+  code?: number;
+  expiresInMs?: number;
+};
+
+function numOrUndef(x: unknown): number | undefined {
+  return typeof x === "number" && Number.isFinite(x) ? x : undefined;
+}
 
 /** First defined value among the given keys (tolerates casing differences). */
 function pick(obj: Record<string, any> | null | undefined, ...keys: string[]): any {
@@ -839,6 +859,26 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   if (t === "chatpresence" || t === "chat_presence") return parseChatPresence(event);
   if (t === "groupinfo" || t === "group_info") return parseGroupInfoEvent(event);
   if (t === "joinedgroup" || t === "joined_group") return parseJoinedGroupEvent(event);
+  if (t === "loggedout" || t === "logged_out") {
+    const code = numOrUndef(pick(event, "Reason", "reason"));
+    return { kind: "session_event", session: { event: "LoggedOut", ...(code !== undefined ? { code } : {}) } };
+  }
+  if (t === "temporaryban" || t === "temporary_ban") {
+    const code = numOrUndef(pick(event, "Code", "code"));
+    // `Expire` é time.Duration: o JSON do Go entrega NANOSSEGUNDOS.
+    const expireNs = numOrUndef(pick(event, "Expire", "expire"));
+    return {
+      kind: "session_event",
+      session: {
+        event: "TemporaryBan",
+        ...(code !== undefined ? { code } : {}),
+        ...(expireNs !== undefined && expireNs > 0 ? { expiresInMs: Math.round(expireNs / 1e6) } : {}),
+      },
+    };
+  }
+  if (t === "clientoutdated" || t === "client_outdated") {
+    return { kind: "session_event", session: { event: "ClientOutdated" } };
+  }
   if (
     t === "message" ||
     pick(event, "Info", "info") !== undefined ||

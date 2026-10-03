@@ -235,6 +235,15 @@ export const webhookReceive = httpAction(async (ctx, request) => {
       jid: parsed.presence.chatJid,
       state: parsed.presence.state,
     });
+  } else if (parsed.kind === "session_event") {
+    // T02 — logout/ban/cliente desatualizado: grava o estado, pausa o que roda
+    // no canal e avisa quem administra (dedupe dentro da mutation).
+    await ctx.runMutation(internal.channelHealth.internalRecordSessionEvent, {
+      configId: config._id,
+      event: parsed.session.event,
+      code: parsed.session.code,
+      expiresInMs: parsed.session.expiresInMs,
+    });
   } else if (parsed.kind === "reaction") {
     // Contact reacted to a message — patch the target's metadata.reactions inline.
     // Unknown target is a no-op (returns null); never a message of its own.

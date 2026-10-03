@@ -27,6 +27,9 @@ const SESSION_LABELS: Record<string, { label: string; variant: "success" | "warn
   qr: { label: "Aguardando QR", variant: "warning" },
   disconnected: { label: "Desconectado", variant: "error" },
   banned: { label: "Banido", variant: "error" },
+  logged_out: { label: "Deslogado", variant: "error" },
+  temporarily_banned: { label: "Banimento temporário", variant: "error" },
+  outdated: { label: "Gateway desatualizado", variant: "error" },
 };
 
 export function StepChannel({ organizationId, draft, setDraft, locked, now }: StepChannelProps) {

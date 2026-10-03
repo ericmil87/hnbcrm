@@ -1213,6 +1213,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "campaign.canceled",
                   "campaign.recipient_replied",
                   "contact.opted_out",
+                  "channel.session_lost",
                   "group.joined",
                   "group.left",
                   "group.updated",

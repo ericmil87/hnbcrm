@@ -27,6 +27,8 @@ const DEFAULTS = {
   aiFollowupNeedsHuman: true,
   // MVP Central — conversa transferida para mim/meu setor (só sino).
   conversationTransferred: true,
+  // T02 — número do WhatsApp perdeu a sessão (só sino).
+  channelSessionLost: true,
 };
 
 // Get current member's notification preferences
@@ -69,6 +71,7 @@ export const getMyPreferences = query({
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
+      channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
       _id: prefs._id,
       _exists: true,
     };
@@ -100,6 +103,7 @@ export const updateMyPreferences = mutation({
     groupDigest: v.optional(v.boolean()),
     aiFollowupNeedsHuman: v.optional(v.boolean()),
     conversationTransferred: v.optional(v.boolean()),
+    channelSessionLost: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -144,6 +148,8 @@ export const updateMyPreferences = mutation({
         args.conversationTransferred ??
         existing?.conversationTransferred ??
         DEFAULTS.conversationTransferred,
+      channelSessionLost:
+        args.channelSessionLost ?? existing?.channelSessionLost ?? DEFAULTS.channelSessionLost,
     };
 
     if (existing) {
@@ -251,6 +257,7 @@ export const internalGetPreferences = internalQuery({
       groupDigest: prefs.groupDigest ?? DEFAULTS.groupDigest,
       aiFollowupNeedsHuman: prefs.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
       conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
+      channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
       _exists: true,
     };
   },
@@ -306,6 +313,10 @@ export const internalUpsertPreferences = internalMutation({
         args.updates.conversationTransferred ??
         existing?.conversationTransferred ??
         DEFAULTS.conversationTransferred,
+      channelSessionLost:
+        args.updates.channelSessionLost ??
+        existing?.channelSessionLost ??
+        DEFAULTS.channelSessionLost,
     };
 
     if (existing) {

@@ -155,7 +155,7 @@ export const tick = internalMutation({
     const provider = configProvider(config);
     if (provider === "bridge" && config.bridgeSessionState && config.bridgeSessionState !== "connected") {
       await pauseCampaignCore(ctx, campaign, {
-        reason: `Sessão do bridge ${config.bridgeSessionState === "banned" ? "BANIDA" : "desconectada"} — reconecte em Configurações → Canais`,
+        reason: `Sessão do bridge ${config.bridgeSessionState === "banned" ? "BANIDA" : config.bridgeSessionState === "temporarily_banned" ? "com banimento temporário" : config.bridgeSessionState === "disconnected" ? "desconectada" : "perdida"} — reconecte em Configurações → Canais`,
         automatic: true,
         now,
       });

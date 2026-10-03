@@ -1319,6 +1319,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | dailyDigest | Daily summary of CRM activity |
 | aiDraftPending | In-app: an AI draft is waiting for review on your lead |
 | conversationTransferred | In-app: a conversation was transferred to you or your department (Central module) |
+| channelSessionLost | In-app: a WhatsApp number lost its connection (logged out, banned, or offline) — sent to members with settings:manage |
 
 ---
 
@@ -1716,6 +1717,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | campaign.canceled | Campaign canceled (payload: campaignId, name, stats) |
 | campaign.recipient_replied | A campaign recipient replied within 7 days (payload: campaignId, recipientId, conversationId, leadId, phone) |
 | contact.opted_out | A phone entered the suppression list (payload: phone, source, campaignId?, contactId?) |
+| channel.session_lost | A bridge WhatsApp number lost its session — logged out on the phone, temporary ban, outdated gateway, or offline across two 15-min health checks; campaigns and group posts on the channel are paused (payload: channelConfigId, provider, state [logged_out\|temporarily_banned\|outdated\|disconnected], detail, phoneDisplay [masked, empty on self-hosted]) |
 | group.joined | The connected number joined (or was added to) a WhatsApp group — registered with monitoring OFF (payload: groupChatId, jid, subject, channelConfigId, participantsCount, reason) |
 | group.left | The connected number left the group, or was removed (payload: groupChatId, jid, subject) |
 | group.updated | Group name/topic/admins/participants changed (payload: groupChatId, jid, subject, join, leave, promote, demote) |

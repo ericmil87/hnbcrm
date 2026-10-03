@@ -45,7 +45,15 @@ const WEBHOOK_CALLBACK_URL = `${CONVEX_SITE}/webhooks/whatsapp`;
 const BRIDGE_WEBHOOK_URL = `${CONVEX_SITE}/webhooks/bridge`;
 
 type Provider = "meta" | "bridge";
-type BridgeSessionState = "connected" | "connecting" | "qr" | "disconnected" | "banned";
+type BridgeSessionState =
+  | "connected"
+  | "connecting"
+  | "qr"
+  | "disconnected"
+  | "banned"
+  | "logged_out"
+  | "temporarily_banned"
+  | "outdated";
 
 // Masked shape returned by getChannelConfigs — Meta fields are null on bridge
 // configs and bridge fields are null on Meta configs (defensive rendering below).
@@ -108,6 +116,12 @@ function bridgeStateBadge(state: BridgeSessionState): {
       return { variant: "info", label: "Aguardando QR" };
     case "banned":
       return { variant: "error", label: "Banido" };
+    case "temporarily_banned":
+      return { variant: "error", label: "Banimento temporário" };
+    case "outdated":
+      return { variant: "error", label: "Gateway desatualizado" };
+    case "logged_out":
+      return { variant: "error", label: "Deslogado" };
     case "disconnected":
     default:
       return { variant: "error", label: "Deslogado" };

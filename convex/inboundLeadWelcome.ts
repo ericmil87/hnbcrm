@@ -22,6 +22,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { isPhoneSuppressed } from "./lib/campaignAudience";
+import { isSessionLostState } from "./lib/channelHealthSignals";
 import { getOrCreateConversation } from "./conversations";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
@@ -294,7 +295,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
 
     if (
       configProvider(config) === "bridge" &&
-      (config.bridgeSessionState === "banned" || config.bridgeSessionState === "disconnected")
+      (isSessionLostState(config.bridgeSessionState) || config.bridgeSessionState === "disconnected")
     ) {
       await noteOnLead(ctx, lead, "Boas-vindas automáticas não enviadas: o número de WhatsApp está desconectado.");
       return skip("canal_desconectado");
