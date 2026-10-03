@@ -1,12 +1,12 @@
 # HNBCRM — Project Status & Roadmap
 
 **Last Updated:** 2026-10-02
-**Current Version:** v0.66.2
+**Current Version:** v0.67.0
 **Based on:** PRD v2.0 (2025-02-11)
 
 ---
 
-## Update 2026-10-02 (v0.34 → v0.66)
+## Update 2026-10-03 (v0.34 → v0.67)
 
 The numbered sections below still describe the v0.33 snapshot. What shipped since then:
 
@@ -33,6 +33,7 @@ The numbered sections below still describe the v0.33 snapshot. What shipped sinc
 - **v0.66 (2026-10-02)** — "Nova conversa" na Caixa de Entrada (a equipe inicia atendimento pelo WhatsApp: contato novo ou existente, lead reaproveitado ou criado no funil escolhido, opt-out com aceite); botão do Copiloto arrastável com posição salva, começando fora do caminho no celular
 - **v0.66.1 (2026-10-03)** — Nova conversa verifica o número no gateway antes de criar (`/user/check`, adota o JID canônico — caso do 9º dígito BR); "Excluir lead permanentemente" no menu da conversa
 - **v0.66.2 (2026-10-03)** — `/user/check` devolve LID (`@lid`), não telefone: só JID `@s.whatsapp.net` vira número; grafia confirmada decide, contato existente desempata; Modal em portal (botões atrás da tab bar no celular)
+- **v0.67 (2026-10-03)** — Telefones internacionais: `+`/`00` sempre vencem, regras por país (BR, NANP, genérico com tabela ITU) e "País padrão dos telefones" por org (Configurações e onboarding; ausente = +55) aplicado a toda entrada de telefone
 
 ### Pendências atuais
 

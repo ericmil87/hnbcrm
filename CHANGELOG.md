@@ -2,6 +2,16 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.67.0] - 2026-10-03
+
+### Telefones internacionais + país padrão por organização
+
+- Nova configuração "País padrão dos telefones" em Configurações → Perfil da Organização e no passo 1 do assistente de onboarding (a moeda sugere o país: USD/CAD → +1, AUD → +61, GBP → +44, MXN → +52, ARS → +54, CLP → +56, COP → +57; EUR não sugere). Ausente = Brasil (+55), então nada muda para as organizações atuais
+- Telefone digitado ou importado SEM código do país recebe o DDI da organização; com `+` (ou `00`) o número vale como digitado e as regras do país digitado se aplicam — um `+1 212 555 1234` numa org brasileira deixa de passar pela regra de DDD. Tratamento por país: Brasil (9º dígito, DDD), EUA/Canadá (10 dígitos, código de área 2–9), demais (zero de tronco removido, parte nacional 6–12 dígitos), com tabela de códigos ITU de 1, 2 e 3 dígitos
+- Vale em toda porta de entrada de telefone: Nova conversa, campanhas (lista manual, CSV, membros de grupo e segmento), opt-outs, lead do site (`/api/v1/inbound/lead`), contatos pela API e follow-ups. O que o WhatsApp entrega já em E.164 nunca é alterado
+- Exibição: `+1 (212) 555-1234` para EUA/Canadá e `+44 791 112 3456` para os demais; Brasil como antes
+- A dica do modal "Nova conversa" diz qual país está sendo assumido e como digitar outro
+
 ## [0.66.2] - 2026-10-03
 
 ### Nova conversa: LID não é telefone
