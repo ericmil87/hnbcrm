@@ -2,6 +2,20 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.69.0] - 2026-10-03
+
+### Onda 0 do estudo competitivo: funil, canais, entrada e IA mais confiáveis
+
+- **Funil registra ganho e perda por qualquer caminho.** Leads fechados pela IA, pela API/MCP, pelo Copiloto, em lote ou pela Central agora entram em Ganho/Perdido com data de fechamento, e a Central e os relatórios passam a contar essa receita. Novos webhooks `lead.won` e `lead.lost`; `lead.stage_changed` informa se fechou ou reabriu e quem moveu (humano, IA, API). A IA precisa informar o motivo ao marcar um lead como perdido (também no modo sugestão). No painel do lead, mover para Ganho/Perdido pede motivo e valor final, como no Kanban; mover para outro funil pelo painel leva o lead junto. Op `leads:internalBackfillClosedAt` para carimbar fechamentos antigos
+- **Custo de IA de verdade e teto de gastos em R$.** O painel "Uso do mês" em Configurações → IA mostra o gasto aproximado em reais (e dólares) com o preço de cada modelo; antes todo modelo era cobrado como o mais barato e o Copiloto aparecia com custo zero. Agora dá para definir um teto mensal em R$: os administradores recebem aviso (sino e e-mail) ao chegar em 80% (ajustável) e ao atingir o teto. No modo "Bloquear", ao atingir o teto o atendente passa a deixar as respostas como rascunho com repasse para a equipe, e os demais recursos de IA pausam até o próximo mês. O limite de conversas por mês também deixou de deixar o cliente sem resposta: ao estourar, abre um repasse
+- **Número de WhatsApp banido ou deslogado deixa de passar despercebido.** O CRM reconhece logout, banimento temporário e cliente desatualizado do gateway, pausa campanhas e publicações daquele número, avisa quem administra (sino) e dispara o webhook `channel.session_lost`. Um verificador roda a cada 15 minutos e alerta quando a queda persiste. Após esta versão, números já fora do ar há dias geram um alerta único
+- **Contato não duplica mais pelo 9º dígito.** A primeira mensagem de alguém gravado com a outra grafia do celular brasileiro cai no mesmo contato, nos canais, na Nova conversa e nos grupos; a grafia do WhatsApp só é corrigida quando o próprio canal a confirma. Op de relato `contacts:internalReportPhoneDuplicates` para os duplicados que já existem
+- **Atribuição de mídia do site.** `/api/v1/inbound/lead` e o formulário público gravam UTM, gclid e fbclid no lead (primeiro toque), com origem e campanha casando com o investimento em mídia da Central (ROAS). URLs são guardadas sem query string
+- **Repasse por palavra-chave mais preciso.** "o atendente foi ótimo" ou "desumano" não abrem mais repasse: a palavra-chave precisa aparecer inteira, e os padrões prontos viraram frases de intenção ("falar com atendente", "quero um humano"…). Quem configurou palavras-chave próprias: elas agora casam o termo inteiro ("humano" deixa de casar "humanos")
+- Chip "IA em espera" mostra todos os motivos em português; a troca de persona por operação guarda o texto anterior na auditoria
+- Segurança: cabeçalhos HTTP (nosniff, Referrer-Policy, Permissions-Policy, proteção contra iframes fora do formulário público) e Content-Security-Policy em modo de observação; CI no GitHub roda typecheck, testes e build a cada push
+- Correção: a especificação OpenAPI servida em `/api/v1/openapi.json` estava inválida desde a v0.65 (aspas sem escape) e voltou a ser lida por clientes OpenAPI
+
 ## [0.68.1] - 2026-10-03
 
 ### Segurança: login anônimo removido
