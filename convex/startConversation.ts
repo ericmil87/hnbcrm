@@ -33,6 +33,7 @@ import {
   ActionCtx,
   QueryCtx,
   MutationCtx,
+  internalAction,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -60,6 +61,8 @@ import {
   pickCanonicalFromCheck,
   resolveStartPhone,
 } from "./lib/startConversation";
+import type { CheckedWhatsappUser } from "./lib/startConversation";
+import { parseUserLidPhone } from "./lib/startConversation";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -289,9 +292,13 @@ export const internalStartContext = internalQuery({
 });
 
 type NumberCheck =
-  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string }
-  | { status: "not_on_whatsapp"; phone: string }
+  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string; checked?: CheckedWhatsappUser[] }
+  | { status: "not_on_whatsapp"; phone: string; checked?: CheckedWhatsappUser[] }
   | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
+
+const checkedUsersValidator = v.array(
+  v.object({ phone: v.string(), onWhatsapp: v.boolean(), jid: v.optional(v.string()) })
+);
 
 const numberCheckReturns = v.union(
   v.object({
@@ -301,8 +308,10 @@ const numberCheckReturns = v.union(
     changed: v.boolean(),
     ambiguous: v.optional(v.boolean()),
     lid: v.optional(v.string()),
+    // Diagnóstico: o que o gateway respondeu para cada grafia perguntada.
+    checked: v.optional(checkedUsersValidator),
   }),
-  v.object({ status: v.literal("not_on_whatsapp"), phone: v.string() }),
+  v.object({ status: v.literal("not_on_whatsapp"), phone: v.string(), checked: v.optional(checkedUsersValidator) }),
   v.object({
     status: v.literal("unverified"),
     reason: v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error")),
@@ -316,6 +325,10 @@ const numberCheckReturns = v.union(
  * lança por problema do gateway: indisponível = `unverified` e quem chama
  * decide (o início segue sem confirmação; só o "não tem WhatsApp" barra).
  */
+function trimBase(u: string): string {
+  return u.replace(/\/+$/, "");
+}
+
 async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck> {
   const phone = context.phoneToCheck;
   if (context.provider !== "bridge") return { status: "unverified", reason: "meta", phone };
@@ -336,14 +349,41 @@ async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck>
     if (parsed.users.length === 0) {
       return { status: "unverified", reason: "gateway_error", phone, detail: "Resposta sem usuários" };
     }
-    const pick = pickCanonicalFromCheck(parsed.users, candidates, context.knownPhones);
-    if (!pick.onWhatsapp) return { status: "not_on_whatsapp", phone };
+    let pick = pickCanonicalFromCheck(parsed.users, candidates, context.knownPhones);
+    const checked = parsed.users.map((u) => ({ phone: u.phone, onWhatsapp: u.onWhatsapp, ...(u.jid ? { jid: u.jid } : {}) }));
+    if (!pick.onWhatsapp) return { status: "not_on_whatsapp", phone, checked };
+    // 2ª etapa (medido em prod, 03/10/2026): o /user/check responde UM usuário
+    // só, com LID, para as duas grafias BR — não dá para saber qual é a
+    // registrada. `GET /user/lid/{p}` devolve o JID de TELEFONE só para a
+    // grafia real (404 para a errada). Só roda quando não veio JID de telefone
+    // e há mais de uma grafia possível; qualquer falha mantém a 1ª etapa.
+    if (!pick.jid && candidates.length > 1) {
+      const confirmedByLid: string[] = [];
+      for (const p of candidates) {
+        try {
+          const res = await fetch(`${trimBase(bridge.baseUrl)}/user/lid/${p}`, { method: "GET", headers: { token }, signal: controller.signal });
+          const body = await res.json().catch(() => ({}));
+          const real = parseUserLidPhone(res.ok, body);
+          if (real) confirmedByLid.push(real);
+        } catch {
+          /* mantém a 1ª etapa */
+        }
+      }
+      const unique = Array.from(new Set(confirmedByLid));
+      if (unique.length === 1) {
+        pick = { ...pick, canonicalPhone: unique[0], ambiguous: undefined };
+      } else if (unique.length > 1) {
+        const known = unique.find((u) => context.knownPhones.includes(u));
+        pick = { ...pick, canonicalPhone: known ?? unique[0], ambiguous: true };
+      }
+    }
     const canonicalPhone = pick.canonicalPhone ?? phone;
     return {
       status: "on_whatsapp",
       canonicalPhone,
       phoneDisplay: formatPhoneForDisplay(canonicalPhone),
       changed: canonicalPhone !== phone,
+      checked,
       ...(pick.ambiguous ? { ambiguous: true } : {}),
       ...(pick.lid ? { lid: pick.lid } : {}),
     };
@@ -1000,5 +1040,56 @@ export const startConversation = action({
       verified: check.status === "on_whatsapp",
       ...(check.status === "unverified" ? { verifyReason: check.reason } : {}),
     };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ops: sonda crua do gateway para um telefone (diagnóstico de grafia/LID)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Devolve as respostas CRUAS do wuzapi para um telefone: `POST /user/check`
+ * (uma chamada por grafia e uma com as duas), `POST /user/info` e
+ * `GET /user/lid/{phone}`. Só ops (`npx convex run --prod …`), nunca UI —
+ * serve para medir o que o gateway sabe de um número antes de mexer na regra
+ * de canonicalização. Não escreve nada.
+ */
+export const internalProbeGatewayNumber = internalAction({
+  args: { channelConfigId: v.id("channelConfigs"), phone: v.string() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const ch = await ctx.runQuery(internal.startConversation.internalProbeChannel, { channelConfigId: args.channelConfigId });
+    if (!ch) return { error: "canal sem bridge" };
+    const token = await decryptSecret(ch.tokenEncrypted);
+    const base = ch.baseUrl.replace(/\/+$/, "");
+    const headers = { "Content-Type": "application/json", token };
+    const call = async (method: string, path: string, body?: unknown) => {
+      try {
+        const res = await fetch(`${base}${path}`, { method, headers, ...(body ? { body: JSON.stringify(body) } : {}) });
+        const text = await res.text();
+        let json: unknown = text;
+        try { json = JSON.parse(text); } catch { /* texto cru */ }
+        return { status: res.status, body: json };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    };
+    const variants = phoneSpellingVariants(args.phone);
+    const out: Record<string, unknown> = { variants };
+    for (const p of variants) out[`check:${p}`] = await call("POST", "/user/check", { Phone: [p] });
+    out["check:both"] = await call("POST", "/user/check", { Phone: variants });
+    for (const p of variants) out[`info:${p}`] = await call("POST", "/user/info", { Phone: [p] });
+    for (const p of variants) out[`lid:${p}`] = await call("GET", `/user/lid/${p}`);
+    return out;
+  },
+});
+
+export const internalProbeChannel = internalQuery({
+  args: { channelConfigId: v.id("channelConfigs") },
+  returns: v.union(v.null(), v.object({ baseUrl: v.string(), tokenEncrypted: v.string() })),
+  handler: async (ctx, args) => {
+    const c = await ctx.db.get(args.channelConfigId);
+    if (!c?.bridgeBaseUrl || !c.bridgeTokenEncrypted) return null;
+    return { baseUrl: c.bridgeBaseUrl, tokenEncrypted: c.bridgeTokenEncrypted };
   },
 });

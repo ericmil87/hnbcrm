@@ -37,6 +37,20 @@ function wuzapiCheck(registered?: string[], opts: { jid?: "phone" | "lid"; lid?:
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, body });
+    // GET /user/lid/{p}: só a grafia REGISTRADA (exata) responde o JID de telefone.
+    const lidMatch = /\/user\/lid\/(\d+)$/.exec(url);
+    if (lidMatch) {
+      const p = lidMatch[1];
+      const isReal = registered === undefined ? true : registered.includes(p);
+      return new Response(
+        JSON.stringify(
+          isReal
+            ? { code: 200, success: true, data: { jid: `${p}@s.whatsapp.net`, lid: `${opts.lid ?? "180002129735765"}@lid` } }
+            : { code: 404, success: false, error: "LID not found for this number" }
+        ),
+        { status: isReal ? 200 : 404, headers: { "Content-Type": "application/json" } }
+      );
+    }
     const users = (body?.Phone as string[]).map((q) => {
       // Sem `exact`, imita o servidor do WhatsApp normalizando o 9º dígito BR
       // (a grafia irmã também responde "sim").
@@ -291,7 +305,7 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
     const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
     });
-    expect(check).toEqual({ status: "on_whatsapp", canonicalPhone: "558181392929", phoneDisplay: "+55 (81) 8139-2929", changed: true });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", phoneDisplay: "+55 (81) 8139-2929", changed: true });
 
     const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
@@ -337,13 +351,15 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
     const ericId = await t.run((ctx) =>
       ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Eric", phone: "558181392929", whatsappNumber: "558181392929", tags: [], createdAt: NOW, updatedAt: NOW })
     );
-    // As duas grafias "existem" e o JID é um LID.
-    wuzapiCheck(["558181392929", "5581981392929"], { jid: "lid" });
+    // O /user/check diz "sim" para as duas grafias com o MESMO LID; só o
+    // /user/lid conhece a grafia real (558181392929).
+    wuzapiCheck(["558181392929"], { jid: "lid" });
     const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
     const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
     });
-    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", changed: true, ambiguous: true, lid: "180002129735765@lid" });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", changed: true, lid: "180002129735765@lid" });
+    expect((check as any).ambiguous).toBeUndefined();
     const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
     });
@@ -352,6 +368,25 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
       const phones = (await ctx.db.query("contacts").collect()).map((c) => c.phone);
       expect(phones).not.toContain("180002129735765");
       expect(phones.filter((p) => p === "558181392929")).toHaveLength(1);
+    });
+  });
+
+  test("E2E 03/10: sem contato prévio, /user/check colapsa as grafias e o /user/lid resolve 558181392929", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    wuzapiCheck(["558181392929"], { jid: "lid" });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
+    });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", phoneDisplay: "+55 (81) 8139-2929", changed: true });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
+    });
+    await t.run(async (ctx) => {
+      const c = (await ctx.db.get(res.contactId))!;
+      expect(c.phone).toBe("558181392929");
+      expect(c.whatsappNumber).toBe("558181392929");
     });
   });
 

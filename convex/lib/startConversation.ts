@@ -153,6 +153,24 @@ export function pickCanonicalFromCheck(
   return { onWhatsapp: true, canonicalPhone: (known ?? confirmed[0]).phone, ambiguous: true, ...extra };
 }
 
+/**
+ * `GET /user/lid/{telefone}` → `{data:{jid:"558181392929@s.whatsapp.net", lid:"…@lid"}}`
+ * para a grafia REAL e 404 "LID not found" para a errada (medido em prod,
+ * 03/10/2026). É o único endpoint do wuzapi que devolve o JID de TELEFONE —
+ * o `/user/check` colapsa as duas grafias BR num único usuário com LID.
+ * Devolve os dígitos do telefone do `jid`, ou null.
+ */
+export function parseUserLidPhone(httpOk: boolean, body: unknown): string | null {
+  if (!httpOk) return null;
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, any>;
+  if (b.success === false) return null;
+  const data = (b.data ?? b.Data ?? b) as Record<string, any>;
+  const jid = data?.jid ?? data?.JID ?? data?.Jid;
+  if (typeof jid !== "string" || !isPhoneJid(jid)) return null;
+  const digits = phoneFromJid(jid);
+  return digits && CANONICAL_PHONE_RE.test(digits) ? digits : null;
+}
+
 /** Telefone já canônico (veio do gateway): só dígitos, 8–15 — nunca re-normalizar. */
 export function isCanonicalPhone(phone: string | undefined | null): phone is string {
   return typeof phone === "string" && CANONICAL_PHONE_RE.test(phone);
