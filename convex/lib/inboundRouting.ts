@@ -4,7 +4,8 @@
  * Used by the WhatsApp webhook ingress and the /api/v1/conversations/receive
  * endpoint (same logic as the /api/v1/inbound/lead flow).
  */
-import { MutationCtx } from "../_generated/server";
+import { MutationCtx, QueryCtx } from "../_generated/server";
+import { phoneLookupCandidates } from "./phone";
 import { Doc, Id } from "../_generated/dataModel";
 import { buildSearchText } from "./searchText";
 import { leadCreationStagePatch } from "./leadStageMove";
@@ -50,6 +51,39 @@ export async function findAttendantForChannel(
   return null;
 }
 
+/**
+ * Contatos da org cujo `phone`/`whatsappNumber` bate com QUALQUER grafia do
+ * número (9º dígito BR, só quando o país resolvido da org é 55). Lookups
+ * indexados; devolve únicos, do mais antigo para o mais novo.
+ */
+export async function findContactsByPhoneCandidates(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  phone: string
+): Promise<Doc<"contacts">[]> {
+  // A variante é dirigida pelo NÚMERO (12/13 dígitos começando com 55), não pela org.
+  const candidates = phoneLookupCandidates(phone);
+  const found = new Map<string, Doc<"contacts">>();
+  for (const candidate of candidates) {
+    const byPhone = await ctx.db
+      .query("contacts")
+      .withIndex("by_organization_and_phone", (q) =>
+        q.eq("organizationId", organizationId).eq("phone", candidate)
+      )
+      .take(5);
+    const byWa = await ctx.db
+      .query("contacts")
+      .withIndex("by_organization_and_whatsapp_number", (q) =>
+        q.eq("organizationId", organizationId).eq("whatsappNumber", candidate)
+      )
+      .take(5);
+    for (const c of [...byPhone, ...byWa]) found.set(c._id, c);
+  }
+  return [...found.values()].sort(
+    (x, y) => x._creationTime - y._creationTime || (x._id < y._id ? -1 : 1)
+  );
+}
+
 export async function findOrCreateContactByPhone(
   ctx: MutationCtx,
   args: {
@@ -57,22 +91,84 @@ export async function findOrCreateContactByPhone(
     phone: string;
     firstName?: string;
     lastName?: string;
+    /**
+     * `phone` é o JID REAL do canal (ingest Meta/bridge, membro de grupo) — só
+     * então `whatsappNumber` de contato existente é atualizado. Chamadores com
+     * número só normalizado (campanha, nova conversa) NÃO passam: a grafia
+     * normalizada pode estar errada e `whatsappNumber` é o que o dispatch lê.
+     */
+    phoneIsChannelJid?: boolean;
   }
 ): Promise<Id<"contacts">> {
-  const existing = await ctx.db
-    .query("contacts")
-    .withIndex("by_organization_and_phone", (q) =>
-      q.eq("organizationId", args.organizationId).eq("phone", args.phone)
-    )
-    .first();
+  const matches = await findContactsByPhoneCandidates(ctx, args.organizationId, args.phone);
+  let existing = matches[0];
 
   if (existing) {
+    const now = Date.now();
+    const patch: Partial<Doc<"contacts">> = {};
     // Backfill the name from the channel profile if we don't have one yet
-    if (!existing.firstName && args.firstName) {
+    if (!existing.firstName && args.firstName) patch.firstName = args.firstName;
+    // O JID do WhatsApp é a verdade para envio: `whatsappNumber` acompanha a
+    // grafia real. `phone` NÃO é reescrito. Só troca quando vazio ou quando é
+    // outra grafia do MESMO número (nunca sobrescreve um número distinto).
+    const waDigits = (existing.whatsappNumber ?? "").replace(/\D+/g, "");
+    if (args.phoneIsChannelJid && waDigits !== args.phone) {
+      const sameNumber = !waDigits || phoneLookupCandidates(args.phone).includes(waDigits);
+      if (sameNumber) {
+        patch.whatsappNumber = args.phone;
+        if (waDigits) {
+          await ctx.db.insert("auditLogs", {
+            organizationId: args.organizationId,
+            entityType: "contact",
+            entityId: existing._id,
+            action: "update",
+            actorType: "system",
+            metadata: {
+              via: "phone_dedupe",
+              previousWhatsappNumber: waDigits,
+              whatsappNumber: args.phone,
+            },
+            description: "Número de WhatsApp do contato atualizado para a grafia confirmada pelo canal",
+            severity: "low",
+            createdAt: now,
+          });
+        }
+      }
+    }
+    // Colisão: audita quando há patch OU na 1ª vez (sem repetir a cada inbound).
+    if (matches.length > 1) {
+      const prior = await ctx.db
+        .query("auditLogs")
+        .withIndex("by_entity", (q) => q.eq("entityType", "contact").eq("entityId", existing!._id))
+        .order("desc")
+        .take(20);
+      const already = prior.some((a) => a.metadata?.via === "phone_dedupe" && a.metadata?.collidingContactIds);
+      if (Object.keys(patch).length > 0 || !already) {
+        await ctx.db.insert("auditLogs", {
+          organizationId: args.organizationId,
+          entityType: "contact",
+          entityId: existing._id,
+          action: "update",
+          actorType: "system",
+          metadata: {
+            via: "phone_dedupe",
+            phone: args.phone,
+            chosenContactId: existing._id,
+            collidingContactIds: matches.map((m) => m._id),
+          },
+          description: "Mais de um contato com o mesmo número (grafias do 9º dígito); usado o mais antigo, sem mesclar",
+          severity: "low",
+          createdAt: now,
+        });
+      }
+    }
+    // Nota: este patch não dispara `contact.updated` (webhook) de propósito.
+    if (Object.keys(patch).length > 0) {
+      existing = { ...existing, ...patch };
       await ctx.db.patch(existing._id, {
-        firstName: args.firstName,
-        searchText: buildSearchText({ ...existing, firstName: args.firstName }),
-        updatedAt: Date.now(),
+        ...patch,
+        searchText: buildSearchText(existing),
+        updatedAt: now,
       });
     }
     return existing._id;

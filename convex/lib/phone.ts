@@ -290,3 +290,21 @@ export function formatPhoneForDisplay(phone: string): string {
   }
   return d ? `+${d}` : "";
 }
+
+/**
+ * Grafias sob as quais o MESMO número pode já estar gravado. O ingest grava o
+ * que o WhatsApp devolve, e para celulares antigos o WhatsApp às vezes devolve
+ * o número BR SEM o 9º dígito (558588887777) — a normalização daqui sempre
+ * acrescenta o 9 (5585988887777). Procurar as duas evita duplicar o contato.
+ * Vale nos dois sentidos: o número canônico do gateway (sem o 9) também acha o
+ * contato gravado COM o 9. A forma recebida vem primeiro (é a preferida).
+ */
+export function phoneLookupCandidates(phone: string): string[] {
+  const out = [phone];
+  if (/^55\d{2}9\d{8}$/.test(phone)) {
+    out.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
+  } else if (/^55\d{2}[6-9]\d{7}$/.test(phone)) {
+    out.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
+  }
+  return out;
+}

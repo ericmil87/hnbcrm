@@ -7,6 +7,8 @@ import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib
 import { buildSearchText } from "./lib/searchText";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
+import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
+import type { Id } from "./_generated/dataModel";
 
 // Shared optional-field arg validators for enrichment fields
 const enrichmentArgFields = {
@@ -854,5 +856,83 @@ export const internalSearchContacts = internalQuery({
         q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
       )
       .take(args.limit ?? 20);
+  },
+});
+
+
+// Ops (T08): REPORTA contatos da mesma org cujo telefone/whatsappNumber se
+// cruzam em qualquer grafia do 9º dígito (números BR de 12/13 dígitos). Só
+// leitura — nada de merge (decisão humana). `dryRun` existe só pela convenção.
+//   npx convex run contacts:internalReportPhoneDuplicates '{}'
+// repetindo com `cursor` enquanto `isDone` for false. O mesmo grupo pode
+// reaparecer em outra página: deduplique por `key`.
+export const internalReportPhoneDuplicates = internalQuery({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    scanned: v.number(),
+    groups: v.array(
+      v.object({
+        organizationId: v.id("organizations"),
+        phones: v.array(v.string()),
+        contactIds: v.array(v.id("contacts")),
+        // ids ordenados e unidos por "|": o consumidor deduplica entre páginas.
+        key: v.string(),
+      })
+    ),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const numItems = Math.max(1, Math.min(args.pageSize ?? 200, 200));
+    const paginationOpts = { numItems, cursor: args.cursor ?? null };
+    const orgId = args.organizationId;
+    const page = orgId
+      ? await ctx.db
+          .query("contacts")
+          .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
+          .paginate(paginationOpts)
+      : await ctx.db.query("contacts").paginate(paginationOpts);
+
+    const seen = new Set<string>();
+    const groups: {
+      organizationId: Id<"organizations">;
+      phones: string[];
+      contactIds: Id<"contacts">[];
+      key: string;
+    }[] = [];
+    for (const contact of page.page) {
+      const digits = new Set<string>();
+      for (const raw of [contact.phone, contact.whatsappNumber]) {
+        const d = (raw ?? "").replace(/\D+/g, "");
+        if (d) digits.add(d);
+      }
+      for (const d of digits) {
+        const matches = await findContactsByPhoneCandidates(ctx, contact.organizationId, d);
+        if (matches.length < 2) continue;
+        const ids = matches.map((m) => m._id);
+        const key = [...ids].sort().join("|");
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const phones = new Set<string>();
+        for (const m of matches) {
+          for (const raw of [m.phone, m.whatsappNumber]) {
+            const x = (raw ?? "").replace(/\D+/g, "");
+            if (x) phones.add(x);
+          }
+        }
+        groups.push({ organizationId: contact.organizationId, phones: [...phones], contactIds: ids, key });
+      }
+    }
+    return {
+      scanned: page.page.length,
+      groups,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
   },
 });

@@ -269,6 +269,7 @@ export const internalRouteInbound = internalMutation({
       organizationId: config.organizationId,
       phone: args.waId,
       firstName: args.profileName,
+      phoneIsChannelJid: true,
     });
     // v4.1 P4: se o canal tem um atendente IA com pipelineConfig, o lead novo
     // nasce no board/estágio configurados (resolvido ANTES do lead — o filtro

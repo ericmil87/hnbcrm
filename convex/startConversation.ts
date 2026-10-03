@@ -42,7 +42,7 @@ import { permissionsValidator } from "./schema";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { configProvider } from "./channelConfigs";
 import { getOrCreateConversation } from "./conversations";
-import { findOrCreateContactByPhone } from "./lib/inboundRouting";
+import { findOrCreateContactByPhone, findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
@@ -125,14 +125,8 @@ async function findContactByPhone(
   organizationId: Id<"organizations">,
   phone: string
 ): Promise<Doc<"contacts"> | null> {
-  for (const candidate of phoneLookupCandidates(phone)) {
-    const row = await ctx.db
-      .query("contacts")
-      .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", organizationId).eq("phone", candidate))
-      .first();
-    if (row) return row;
-  }
-  return null;
+  // Mesma escolha determinística do ingest (o contato mais antigo).
+  return (await findContactsByPhoneCandidates(ctx, organizationId, phone))[0] ?? null;
 }
 
 /** DDI padrão da org (telefone digitado sem código de país). */
@@ -369,11 +363,10 @@ async function startContextCore(ctx: QueryCtx, args: StartContextArgs): Promise<
     const provider = configProvider(channel);
     const knownPhones: string[] = [];
     for (const candidate of phoneLookupCandidates(r.phone)) {
-      const row = await ctx.db
-        .query("contacts")
-        .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", args.organizationId).eq("phone", candidate))
-        .first();
-      if (row) knownPhones.push(candidate);
+      const rows = await findContactsByPhoneCandidates(ctx, args.organizationId, candidate);
+      if (rows.some((row) => [row.phone, row.whatsappNumber].some((x) => (x ?? "").replace(/\D+/g, "") === candidate))) {
+        knownPhones.push(candidate);
+      }
     }
     return {
       provider,

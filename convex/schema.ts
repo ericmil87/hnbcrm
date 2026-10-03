@@ -875,6 +875,7 @@ const applicationTables = {
     .index("by_phone", ["phone"])
     .index("by_organization_and_email", ["organizationId", "email"])
     .index("by_organization_and_phone", ["organizationId", "phone"])
+    .index("by_organization_and_whatsapp_number", ["organizationId", "whatsappNumber"])
     .index("by_organization_and_company", ["organizationId", "company"])
     .index("by_organization_and_city", ["organizationId", "city"])
     .searchIndex("search_contacts", { searchField: "searchText", filterFields: ["organizationId"] }),

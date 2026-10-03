@@ -18,6 +18,7 @@ import {
   ensureLeadForContact,
   findAttendantForChannel,
   findOrCreateContactByPhone,
+  findContactsByPhoneCandidates,
 } from "./inboundRouting";
 
 export interface GroupMemberLeadResult {
@@ -51,17 +52,13 @@ export async function createLeadFromGroupMemberCore(
     throw new Error("Este membro não expõe o telefone — não dá para criar o lead");
   }
 
-  const existingContact = await ctx.db
-    .query("contacts")
-    .withIndex("by_organization_and_phone", (q) =>
-      q.eq("organizationId", group.organizationId).eq("phone", phone)
-    )
-    .first();
+  const existingContact = (await findContactsByPhoneCandidates(ctx, group.organizationId, phone))[0] ?? null;
 
   const contactId = await findOrCreateContactByPhone(ctx, {
     organizationId: group.organizationId,
     phone,
     firstName: participant.name,
+    phoneIsChannelJid: true,
   });
   const config = await ctx.db.get(group.channelConfigId);
   const org = await ctx.db.get(group.organizationId);
