@@ -1344,6 +1344,18 @@ function verifyWebhook(body, signature, secret) {
                   <code>message</code> vira nota interna &quot;Formulário do site: …&quot; na
                   conversa do WhatsApp — nunca é enviada de volta ao cliente.
                 </li>
+                <li>
+                  Origem do anúncio: envie <code>utm_source</code>, <code>utm_medium</code>,{" "}
+                  <code>utm_campaign</code>, <code>utm_term</code>, <code>utm_content</code>,{" "}
+                  <code>gclid</code>, <code>fbclid</code>, <code>fbc</code>,{" "}
+                  <code>trackingCode</code>, <code>landingUrl</code> e <code>referrer</code> (textos
+                  até 200 caracteres, URLs até 2048; também aceitos num objeto{" "}
+                  <code>attribution</code> em camelCase). São gravados no lead como primeiro toque
+                  — só preenchem o que está vazio — e o <code>utm_campaign</code> casa com o
+                  investimento em mídia da Central. <code>fbclid</code>/<code>fbc</code> marcam a origem como
+                  Meta (mesmo com <code>utm_source=instagram</code>); <code>landingUrl</code> e{" "}
+                  <code>referrer</code> são guardados só como origem + caminho, sem query.
+                </li>
               </ul>
               <CodeBlock language="javascript">{`async function createLeadFromForm(formData) {
   const response = await fetch(

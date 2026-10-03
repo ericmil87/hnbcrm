@@ -7,6 +7,7 @@ import { requireAuth } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { applyFirstTouchToLead, buildAttributionFromInput, sanitizeAttributionInput } from "./lib/leadAttribution";
 
 // ── Phase 6: Server-side validation helper ──
 
@@ -148,6 +149,9 @@ export const internalProcessSubmission = internalMutation({
     utmCampaign: v.optional(v.string()),
     utmContent: v.optional(v.string()),
     utmTerm: v.optional(v.string()),
+    gclid: v.optional(v.string()),
+    fbclid: v.optional(v.string()),
+    landingUrl: v.optional(v.string()),
     honeypotTriggered: v.boolean(),
     sessionId: v.optional(v.string()),
     experimentId: v.optional(v.id("formExperiments")),
@@ -378,6 +382,26 @@ export const internalProcessSubmission = internalMutation({
       sourceId: form.settings.sourceId,
       teamMemberId: form.createdBy,
     });
+
+    // T07: UTM/click ids capturados → leads.attribution (primeiro toque).
+    await applyFirstTouchToLead(
+      ctx,
+      leadId,
+      buildAttributionFromInput(
+        sanitizeAttributionInput({
+          utmSource: args.utmSource,
+          utmMedium: args.utmMedium,
+          utmCampaign: args.utmCampaign,
+          utmContent: args.utmContent,
+          utmTerm: args.utmTerm,
+          gclid: args.gclid,
+          fbclid: args.fbclid,
+          landingUrl: args.landingUrl,
+          referrer: args.referrer,
+        }).input,
+        now
+      )
+    );
 
     // Store form submission
     const submissionId = await ctx.db.insert("formSubmissions", {

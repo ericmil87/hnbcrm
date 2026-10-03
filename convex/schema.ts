@@ -562,6 +562,10 @@ export const leadAttributionValidator = v.object({
   utmContent: v.optional(v.string()),
   utmTerm: v.optional(v.string()),
   trackingCode: v.optional(v.string()),
+  fbclid: v.optional(v.string()),
+  fbc: v.optional(v.string()),
+  landingUrl: v.optional(v.string()),
+  referrer: v.optional(v.string()),
   capturedAt: v.number(),
 });
 

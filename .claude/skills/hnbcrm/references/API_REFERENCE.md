@@ -138,6 +138,8 @@ Create a new lead with optional contact and initial message.
 
 **REST:** `POST /api/v1/inbound/lead` — Same body as MCP params
 
+**REST-only attribution params (optional, first touch → `leads.attribution`):** `utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `gclid`, `fbclid`, `fbc`, `trackingCode` (≤ 200 chars), `landingUrl`, `referrer` (≤ 2048), or an `attribution` object with the same keys in camelCase. Response adds `attributionSaved` (+ `attributionTruncated`).
+
 **Response:** `{ success: true, leadId, contactId }`
 
 ---

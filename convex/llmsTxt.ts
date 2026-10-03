@@ -590,15 +590,20 @@ Universal lead capture. Creates lead + optional contact + optional conversation.
 | customFields | object | no | Custom field values |
 | message | string | no | Message the person typed in the form |
 | channel | string | no | Channel for message (default: webchat) |
+| utm_source, utm_medium, utm_campaign, utm_term, utm_content | string | no | UTM parameters of the landing page (≤ 200 chars each) |
+| gclid, fbclid, fbc, trackingCode | string | no | Click ids / tracking code (≤ 200 chars each) |
+| landingUrl, referrer | string | no | Landing page URL and referrer (≤ 2048 chars) |
+| attribution | object | no | Same keys in camelCase (\`utmSource\`, \`gclid\`, …); flat keys win over this object |
 
 **Behavior:**
+- **Attribution (first touch):** the keys above are saved in \`leads.attribution\` (\`source\` is derived: gclid → \`google_ads\`; fbclid/fbc → \`meta_ads\` (wins over utm_source=instagram); otherwise a paid \`utm_medium\` (cpc, ppc, paid*, ads, display) maps utm_source aliases google/adwords → \`google_ads\` and facebook/fb/meta/ig/instagram → \`meta_ads\`; else \`utm_source\` lowercased, or \`site\`; \`campaignKey\` is \`utm_campaign\` normalized exactly like ad spend, so it matches the Central dashboard). Values are trimmed, empty ones dropped, longer ones cut (response lists them in \`attributionTruncated\`). Only fields still empty are filled — an existing attribution is never overwritten. \`landingUrl\`/\`referrer\` are stored as origin + path only (query/hash dropped; invalid URLs discarded) and alone do not create an attribution.
 - **Phone normalization:** \`contact.phone\` is normalized to E.164 digits without "+" (numbers typed without a country code get the organization's default dialing code — Brazil +55 unless \`settings.defaultCountryCode\` says otherwise; \`+\`/\`00\` always win — e.g. \`+55 (11) 98765-4321\` → \`5511987654321\`; see "Phone numbers") and stored in the contact's \`phone\` and \`whatsappNumber\` — the same format the WhatsApp ingest uses, so the person's reply lands on the same contact. An existing contact with the same number (or email) is reused. Non-normalizable phones are stored as sent.
 - **Routing by tag:** the organization may configure rules \`{ tag → board/stage }\`; the first rule whose tag is in \`tags\` wins. No match (or a rule pointing to an archived board) → default active board, first stage. Archived boards are never picked.
 - **Auto-assign** (when enabled in AI settings) only picks an active AI **attendant**.
 - **WhatsApp welcome (opt-in per organization):** when enabled and the lead has a phone and at least one of the configured consent tags, ONE welcome message is sent from the configured WhatsApp number (template with \`{primeiroNome}\`, \`{nome}\`, \`{titulo}\`, \`{tag:<prefix>}\`). Never sent twice to the same contact, never to numbers in the opt-out list; delivery failure opens a human handoff. The lead gets the tag \`contato:iniciado\`.
 - **\`message\`:** when the welcome applies to the lead or \`channel\` is \`whatsapp\`, the form message is stored as an **internal note** ("Formulário do site: …") on the WhatsApp conversation — it is never sent to the customer. Otherwise (legacy) it is recorded as a message on a \`channel\` conversation (default webchat).
 
-**Response (201):** \`{ success: true, leadId, contactId, boardId, stageId, routedByTag?, conversationId?, welcomeQueued, welcomeSkippedReason? }\` — \`welcomeSkippedReason\` is one of \`desligado\`, \`sem_telefone\`, \`sem_tag_exigida\`, \`opt_out\`, \`canal_inativo\`, \`canal_invalido\`, \`canal_desconectado\`, \`ja_contatado\`, \`mensagem_vazia\`, \`erro\` (only present when the welcome was enabled for this lead but did not go out).
+**Response (201):** \`{ success: true, leadId, contactId, boardId, stageId, routedByTag?, conversationId?, attributionSaved, attributionTruncated?, welcomeQueued, welcomeSkippedReason? }\` — \`welcomeSkippedReason\` is one of \`desligado\`, \`sem_telefone\`, \`sem_tag_exigida\`, \`opt_out\`, \`canal_inativo\`, \`canal_invalido\`, \`canal_desconectado\`, \`ja_contatado\`, \`mensagem_vazia\`, \`erro\` (only present when the welcome was enabled for this lead but did not go out).
 
 #### GET /api/v1/leads
 List leads for the organization with cursor-based pagination.

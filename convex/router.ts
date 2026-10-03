@@ -16,6 +16,7 @@ import {
 import { encodeHeaderKey } from "./lib/importKeys";
 import { OPT_OUT_ERROR_PREFIX } from "./lib/startConversation";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
+import { buildAttributionFromInput, sanitizeAttributionInput } from "./lib/leadAttribution";
 import { resend } from "./email";
 import {
   webhookVerify as whatsappWebhookVerify,
@@ -382,6 +383,29 @@ http.route({
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
+      // T07: origem do site (utm_*, gclid, fbclid…) → leads.attribution,
+      // primeiro toque. Falha aqui nunca derruba a captura do lead.
+      let attributionSaved = false;
+      const { input: attributionInput, truncated: attributionTruncated } =
+        sanitizeAttributionInput(body);
+      if (attributionTruncated.length > 0) {
+        console.warn(
+          "[inbound/lead] campos de atribuição cortados:",
+          attributionTruncated.join(",")
+        );
+      }
+      const incomingAttribution = buildAttributionFromInput(attributionInput, Date.now());
+      if (incomingAttribution) {
+        try {
+          attributionSaved = await ctx.runMutation(
+            internal.inboundLeadWelcome.internalApplyLeadAttribution,
+            { organizationId, leadId, attribution: incomingAttribution }
+          );
+        } catch (e) {
+          console.error("[inbound/lead] atribuição falhou:", e instanceof Error ? e.message : e);
+        }
+      }
+
       // Boas-vindas automáticas valem para ESTE lead? (interruptor + telefone +
       // tag de consentimento + texto). O envio em si re-checa tudo.
       const rawPhone = typeof body.contact?.phone === "string" ? body.contact.phone : "";
@@ -455,6 +479,8 @@ http.route({
           stageId: target.stageId,
           ...(target.routedByTag ? { routedByTag: target.routedByTag } : {}),
           ...(conversationId ? { conversationId } : {}),
+          attributionSaved,
+          ...(attributionTruncated.length > 0 ? { attributionTruncated } : {}),
           welcomeQueued,
           ...(welcomeSkippedReason ? { welcomeSkippedReason } : {}),
         },
@@ -2299,7 +2325,9 @@ http.route({
       // Extract metadata from request
       const ipAddress = request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined;
       const userAgent = request.headers.get("user-agent") || undefined;
-      const referrer = request.headers.get("referer") || undefined;
+      const referrer =
+        (typeof body.referrer === "string" && body.referrer.trim() ? body.referrer.trim().slice(0, 2048) : undefined) ||
+        request.headers.get("referer") || undefined;
 
       // Extract UTM params from referrer as fallback
       let utmSource: string | undefined;
@@ -2323,6 +2351,10 @@ http.route({
       utmCampaign = body.utmCampaign || utmCampaign;
       const utmContent: string | undefined = body.utmContent || undefined;
       const utmTerm: string | undefined = body.utmTerm || undefined;
+      const gclid: string | undefined = typeof body.gclid === "string" && body.gclid ? body.gclid : undefined;
+      const fbclid: string | undefined = typeof body.fbclid === "string" && body.fbclid ? body.fbclid : undefined;
+      const landingUrl: string | undefined =
+        typeof body.landingUrl === "string" && body.landingUrl ? body.landingUrl : undefined;
 
       const honeypotTriggered = !!_honeypot;
 
@@ -2337,6 +2369,9 @@ http.route({
         utmCampaign,
         utmContent,
         utmTerm,
+        gclid,
+        fbclid,
+        landingUrl,
         honeypotTriggered,
         sessionId: sessionId || undefined,
         experimentId: body.experimentId || undefined,

@@ -26,6 +26,9 @@ import { isSessionLostState } from "./lib/channelHealthSignals";
 import { getOrCreateConversation } from "./conversations";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
+import { leadAttributionValidator } from "./schema";
+// (internalApplyLeadAttribution — T07 — fica no fim do arquivo)
+import { applyFirstTouchToLead } from "./lib/leadAttribution";
 import {
   pickWelcomeMessage,
   renderWelcomeTemplate,
@@ -465,5 +468,23 @@ export const internalSetInboundLeadSettings = internalMutation({
       createdAt: now,
     });
     return { dryRun: false, before, after, warnings };
+  },
+});
+
+/**
+ * T07: grava a origem (UTM/gclid/fbclid) vinda do site num lead, como PRIMEIRO
+ * TOQUE (só preenche campos vazios). Chamada pelo `POST /api/v1/inbound/lead`.
+ */
+export const internalApplyLeadAttribution = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    leadId: v.id("leads"),
+    attribution: leadAttributionValidator,
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const lead = await ctx.db.get(args.leadId);
+    if (!lead || lead.organizationId !== args.organizationId) return false;
+    return await applyFirstTouchToLead(ctx, args.leadId, args.attribution);
   },
 });

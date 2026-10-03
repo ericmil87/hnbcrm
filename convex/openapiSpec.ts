@@ -71,7 +71,19 @@ export const OPENAPI_SPEC = `{
                   "temperature": { "type": "string", "enum": ["cold", "warm", "hot"], "default": "cold", "description": "Temperatura do lead" },
                   "sourceId": { "type": "string", "description": "ID da fonte de captação — precisa ser da organização da chave (senão 400)" },
                   "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags de categorização — também acionam o roteamento por tag e a boas-vindas do WhatsApp" },
-                  "customFields": { "type": "object", "additionalProperties": true, "description": "Campos personalizados" }
+                  "customFields": { "type": "object", "additionalProperties": true, "description": "Campos personalizados" },
+                  "utm_source": { "type": "string", "maxLength": 200, "description": "UTM source da landing page. Gravado em leads.attribution (primeiro toque)" },
+                  "utm_medium": { "type": "string", "maxLength": 200, "description": "UTM medium" },
+                  "utm_campaign": { "type": "string", "maxLength": 200, "description": "UTM campaign — também vira campaignKey normalizado (mesma regra do investimento em mídia)" },
+                  "utm_term": { "type": "string", "maxLength": 200, "description": "UTM term" },
+                  "utm_content": { "type": "string", "maxLength": 200, "description": "UTM content" },
+                  "gclid": { "type": "string", "maxLength": 200, "description": "Google Click ID" },
+                  "fbclid": { "type": "string", "maxLength": 200, "description": "Facebook/Meta Click ID" },
+                  "fbc": { "type": "string", "maxLength": 200, "description": "Cookie _fbc da Meta" },
+                  "trackingCode": { "type": "string", "maxLength": 200, "description": "Código de rastreio livre" },
+                  "landingUrl": { "type": "string", "maxLength": 2048, "description": "URL da página de entrada (guardada só como origem + caminho, sem query/hash)" },
+                  "referrer": { "type": "string", "maxLength": 2048, "description": "Referrer da página de entrada (guardado só como origem + caminho)" },
+                  "attribution": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Alternativa: as mesmas chaves em camelCase (utmSource, gclid, landingUrl…). Chaves planas vencem" }
                 }
               }
             }
@@ -79,7 +91,7 @@ export const OPENAPI_SPEC = `{
         },
         "responses": {
           "201": {
-            "description": "Lead criado com sucesso",
+            "description": "Lead criado com sucesso. Campos de atribuição são gravados como primeiro toque (só preenche vazios); textos > 200 caracteres são cortados e listados em attributionTruncated; a resposta traz attributionSaved",
             "content": {
               "application/json": {
                 "schema": {
@@ -92,6 +104,8 @@ export const OPENAPI_SPEC = `{
                     "stageId": { "type": "string", "description": "Estágio onde o lead entrou" },
                     "routedByTag": { "type": "string", "description": "Tag da regra de roteamento aplicada (ausente = board padrão)" },
                     "conversationId": { "type": "string", "description": "Conversa criada (nota do formulário e/ou boas-vindas)" },
+                    "attributionSaved": { "type": "boolean", "description": "true quando UTM/click ids foram gravados em leads.attribution" },
+                    "attributionTruncated": { "type": "array", "items": { "type": "string" }, "description": "Campos de atribuição cortados por tamanho (ausente = nenhum)" },
                     "welcomeQueued": { "type": "boolean", "description": "true quando a boas-vindas do WhatsApp foi enfileirada para envio" },
                     "welcomeSkippedReason": { "type": "string", "description": "Por que a boas-vindas aplicável não saiu (desligado, sem_telefone, sem_tag_exigida, opt_out, canal_inativo, canal_invalido, canal_desconectado, ja_contatado, mensagem_vazia, erro)" }
                   }
