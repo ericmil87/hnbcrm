@@ -1,3 +1,5 @@
+import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../convex/lib/orgPhone";
+import { countryLabel } from "@/lib/defaultCountry";
 import { useEffect, useRef, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
@@ -121,6 +123,7 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [currency, setCurrency] = useState("");
+  const [countryCode, setCountryCode] = useState("55");
   const [saving, setSaving] = useState(false);
 
   // Sincroniza o formulário com a org carregada — e de novo se a org mudar.
@@ -132,6 +135,7 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
     setName(org.name || "");
     setTimezone(org.settings?.timezone || "UTC");
     setCurrency(org.settings?.currency || "USD");
+    setCountryCode(resolveDefaultCountry(org.settings));
     // Só na chegada da org/troca de id: re-sincronizar a cada update reativo
     // apagaria o que a pessoa está digitando.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,7 +150,7 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
         // Só o que esta tela edita: o servidor faz merge no resto de
         // `settings` (aiConfig, opt-out, campanhas) — reenviar uma cópia
         // lida antes sobrescreveria mudanças feitas em outra aba.
-        settings: { timezone, currency },
+        settings: { timezone, currency, defaultCountryCode: countryCode },
       });
       toast.success("Organização atualizada com sucesso");
     } catch (error) {
@@ -203,6 +207,27 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
             <option value="CAD">CAD</option>
             <option value="AUD">AUD</option>
           </select>
+        </div>
+
+        <div>
+          <label htmlFor="org-default-country" className="block text-[13px] font-medium text-text-secondary mb-1.5">
+            País padrão dos telefones
+          </label>
+          <select
+            id="org-default-country"
+            value={countryCode}
+            onChange={(e) => setCountryCode(e.target.value)}
+            className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
+          >
+            {SUPPORTED_DEFAULT_COUNTRIES.map((c) => (
+              <option key={c.dialCode + c.iso2} value={c.dialCode}>
+                {countryLabel(c)}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-xs text-text-muted">
+            Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados.
+          </p>
         </div>
 
         <Button onClick={handleSave} disabled={saving}>

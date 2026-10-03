@@ -1,3 +1,5 @@
+import { SUPPORTED_DEFAULT_COUNTRIES } from "../../../convex/lib/orgPhone";
+import { countryLabel } from "@/lib/defaultCountry";
 import {
   Building2,
   ShoppingCart,
@@ -26,6 +28,8 @@ interface WizardStep1WelcomeProps {
   mainGoal: string;
   currency: string;
   timezone: string;
+  defaultCountryCode: string;
+  onDefaultCountryChange: (code: string) => void;
   onIndustryChange: (industry: string) => void;
   onCompanySizeChange: (size: string) => void;
   onMainGoalChange: (goal: string) => void;
@@ -75,6 +79,8 @@ export function WizardStep1Welcome({
   mainGoal,
   currency,
   timezone,
+  defaultCountryCode,
+  onDefaultCountryChange,
   onIndustryChange,
   onCompanySizeChange,
   onMainGoalChange,
@@ -271,6 +277,33 @@ export function WizardStep1Welcome({
             </option>
           ))}
         </select>
+      </div>
+
+      {/* Section 6: País padrão dos telefones */}
+      <div className="space-y-3">
+        <label htmlFor="wizard-default-country" className="block text-sm font-semibold text-text-primary">
+          País padrão dos telefones
+        </label>
+        <select
+          id="wizard-default-country"
+          value={defaultCountryCode}
+          onChange={(e) => onDefaultCountryChange(e.target.value)}
+          className={cn(
+            "w-full min-h-[44px] px-3 py-2 rounded-lg text-base md:text-sm",
+            "bg-surface-raised border border-border text-text-primary",
+            "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500",
+            "transition-colors duration-150"
+          )}
+        >
+          {SUPPORTED_DEFAULT_COUNTRIES.map((c) => (
+            <option key={c.dialCode + c.iso2} value={c.dialCode}>
+              {countryLabel(c)}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-text-muted">
+          Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados.
+        </p>
       </div>
     </div>
   );

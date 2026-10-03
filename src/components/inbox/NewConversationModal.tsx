@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
 import { Avatar } from "@/components/ui/Avatar";
+import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../../convex/lib/orgPhone";
 import { formatPhoneForDisplay, looksLikePhone } from "../../../convex/lib/phone";
 import { NOT_ON_WHATSAPP_ERROR, OPT_OUT_ERROR_PREFIX } from "../../../convex/lib/startConversation";
 
@@ -121,6 +122,11 @@ export function NewConversationModal({
     setSubmitting(false);
     setNumberCheck(null);
   }, [open, initialContactId]);
+
+  const orgs = useQuery(api.organizations.getUserOrganizations, open ? {} : "skip") as any[] | undefined;
+  const orgSettings = orgs?.find((o) => o?._id === organizationId)?.settings;
+  const defaultDial = resolveDefaultCountry(orgSettings);
+  const defaultCountryName = SUPPORTED_DEFAULT_COUNTRIES.find((c) => c.dialCode === defaultDial)?.namePt;
 
   const debouncedTerm = useDebounced(term.trim(), 250);
   const phoneMode = !contactId && isPhoneInput(debouncedTerm);
@@ -365,6 +371,10 @@ export function NewConversationModal({
                   </button>
                 )}
               </div>
+              <p className="mt-1.5 text-xs text-text-muted">
+                Sem código do país, assumimos +{defaultDial}
+                {defaultCountryName ? ` (${defaultCountryName})` : ""}. Para outro país, digite com +, ex.: +1 212 555 1234.
+              </p>
 
               {searchMode && (
                 <div className="mt-2 max-h-56 overflow-y-auto -mx-1 px-1">

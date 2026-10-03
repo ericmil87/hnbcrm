@@ -1,3 +1,4 @@
+import { proposeCountryForCurrency } from "@/lib/defaultCountry";
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { Building2, ChevronLeft, ChevronsUpDown, LogOut } from "lucide-react";
@@ -71,6 +72,8 @@ export function OnboardingWizard({
   const [mainGoal, setMainGoal] = useState("");
   const [currency, setCurrency] = useState("BRL");
   const [timezone, setTimezone] = useState("America/Sao_Paulo");
+  const [defaultCountryCode, setDefaultCountryCode] = useState("55");
+  const [countryPicked, setCountryPicked] = useState(false);
   const [stages, setStages] = useState<StageConfig[]>([]);
   const [boardName, setBoardName] = useState("");
   const [sampleDataEnabled, setSampleDataEnabled] = useState(false);
@@ -112,6 +115,10 @@ export function OnboardingWizard({
       if (data.mainGoal) setMainGoal(data.mainGoal);
       if (data.currency) setCurrency(data.currency);
       if (data.timezone) setTimezone(data.timezone);
+      if (typeof data.defaultCountryCode === "string" && /^\d{1,3}$/.test(data.defaultCountryCode)) {
+        setDefaultCountryCode(data.defaultCountryCode);
+        setCountryPicked(data.defaultCountryCode !== "55");
+      }
       if (Array.isArray(data.stages) && data.stages.length > 0) setStages(data.stages);
       if (data.boardName) setBoardName(data.boardName);
       if (typeof data.sampleDataEnabled === "boolean") setSampleDataEnabled(data.sampleDataEnabled);
@@ -147,6 +154,12 @@ export function OnboardingWizard({
       EUR: "Europe/Paris",
     };
     setTimezone(defaults[c] ?? timezone);
+    setDefaultCountryCode(proposeCountryForCurrency(c, defaultCountryCode, countryPicked));
+  };
+
+  const handleCountryChange = (code: string) => {
+    setDefaultCountryCode(code);
+    setCountryPicked(true);
   };
 
   // Persist wizard state
@@ -158,6 +171,7 @@ export function OnboardingWizard({
       mainGoal,
       currency,
       timezone,
+      defaultCountryCode,
       stages,
       boardName,
       sampleDataEnabled,
@@ -344,6 +358,8 @@ export function OnboardingWizard({
 
   const handleComplete = async () => {
     try {
+      // O servidor grava fuso, moeda E o país padrão dos telefones a partir do
+      // wizardData salvo (`completeWizard` faz merge em `settings`).
       await completeWizard({ organizationId });
       onComplete();
     } catch (error) {
@@ -432,6 +448,8 @@ export function OnboardingWizard({
                 mainGoal={mainGoal}
                 currency={currency}
                 timezone={timezone}
+                defaultCountryCode={defaultCountryCode}
+                onDefaultCountryChange={handleCountryChange}
                 onIndustryChange={setIndustry}
                 onCompanySizeChange={setCompanySize}
                 onMainGoalChange={setMainGoal}
