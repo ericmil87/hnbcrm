@@ -1980,6 +1980,12 @@ export function Inbox() {
                       if (archived && !showArchived) handleBackToList();
                     }}
                     renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
+                    leadId={
+                      !isGroupConversation && currentConversation.leadId
+                        ? (currentConversation.leadId as Id<"leads">)
+                        : undefined
+                    }
+                    onLeadDeleted={handleBackToList}
                   />
                 )}
               </div>
@@ -2085,6 +2091,12 @@ export function Inbox() {
                       if (archived && !showArchived) handleBackToList();
                     }}
                     renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
+                    leadId={
+                      !isGroupConversation && currentConversation.leadId
+                        ? (currentConversation.leadId as Id<"leads">)
+                        : undefined
+                    }
+                    onLeadDeleted={handleBackToList}
                   />
                 )}
               </div>

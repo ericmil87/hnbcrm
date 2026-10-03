@@ -5,6 +5,8 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { MoreVertical, Archive, ArchiveRestore, Check, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { usePermissions } from "@/hooks/usePermissions";
+import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
 
 // Menu "..." do header da conversa: arquivar/desarquivar + etiquetas (toggle,
 // criar, excluir). Paleta fixa — a cor vive no doc da etiqueta.
@@ -33,6 +35,10 @@ interface ConversationActionsMenuProps {
    * renderiza o item é quem sabe se a ação abre um diálogo antes de agir.
    */
   renderExtraItems?: (close: () => void) => React.ReactNode;
+  /** Lead da conversa (ausente em grupo). Habilita "Excluir lead permanentemente…" com `leads:full`. */
+  leadId?: Id<"leads">;
+  /** Chamado após o lead ser excluído (ex.: fechar a conversa). */
+  onLeadDeleted?: () => void;
 }
 
 export function ConversationActionsMenu({
@@ -42,8 +48,13 @@ export function ConversationActionsMenu({
   labelIds,
   onArchivedChange,
   renderExtraItems,
+  leadId,
+  onLeadDeleted,
 }: ConversationActionsMenuProps) {
   const [open, setOpen] = useState(false);
+  const [confirmDeleteLead, setConfirmDeleteLead] = useState(false);
+  const { can } = usePermissions(organizationId);
+  const canDeleteLead = !!leadId && can("leads", "full");
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
@@ -228,7 +239,31 @@ export function ConversationActionsMenu({
               Nova etiqueta
             </button>
           )}
+
+          {canDeleteLead && (
+            <div className="border-t border-border mt-1 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setConfirmDeleteLead(true);
+                }}
+                className="w-full min-h-[44px] md:min-h-0 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
+              >
+                <Trash2 size={15} />
+                Excluir lead permanentemente…
+              </button>
+            </div>
+          )}
         </div>
+      )}
+
+      {confirmDeleteLead && leadId && (
+        <DeleteLeadDialog
+          leadId={leadId}
+          onClose={() => setConfirmDeleteLead(false)}
+          onDeleted={() => onLeadDeleted?.()}
+        />
       )}
     </div>
   );

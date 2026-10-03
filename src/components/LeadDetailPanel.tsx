@@ -7,7 +7,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { LeadCampaignsSection } from "@/components/campaigns/LeadCampaignsSection";
-import { Modal } from "@/components/ui/Modal";
+import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -41,7 +41,6 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
-  AlertTriangle,
 } from "lucide-react";
 import { MentionTextarea } from "@/components/ui/MentionTextarea";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
@@ -265,125 +264,6 @@ function LeadActionsMenu({
         />
       )}
     </div>
-  );
-}
-
-/* Diálogo próprio (e não o ConfirmDialog) porque a confirmação carrega o
-   impacto da exclusão e o checkbox de excluir o contato junto. */
-function DeleteLeadDialog({
-  leadId,
-  onClose,
-  onDeleted,
-}: {
-  leadId: Id<"leads">;
-  onClose: () => void;
-  onDeleted: () => void;
-}) {
-  const impact = useQuery(api.leads.getLeadDeletionImpact, { leadId });
-  const deleteLead = useMutation(api.leads.deleteLead);
-  const [deleteContact, setDeleteContact] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-
-  const contactName = impact?.contactName ?? null;
-  const contactIsExclusive = !!contactName && impact?.contactHasOtherLeads === false;
-
-  const handleConfirm = async () => {
-    if (deleting) return;
-    setDeleting(true);
-    try {
-      await deleteLead({
-        leadId,
-        deleteContact: contactIsExclusive && deleteContact ? true : undefined,
-      });
-      toast.success("Lead excluído permanentemente");
-      onClose();
-      onDeleted();
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao excluir o lead"));
-      setDeleting(false);
-    }
-  };
-
-  return (
-    <Modal
-      open={true}
-      onClose={() => {
-        if (!deleting) onClose();
-      }}
-      title="Excluir lead permanentemente"
-    >
-      <div className="space-y-4">
-        <div className="flex gap-3">
-          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-semantic-error/10 flex items-center justify-center">
-            <AlertTriangle size={20} className="text-semantic-error" />
-          </div>
-          <div className="flex-1 min-w-0 space-y-2 text-sm text-text-secondary leading-relaxed">
-            <p>Esta ação não pode ser desfeita.</p>
-            {impact === undefined ? (
-              <div className="flex justify-center py-2">
-                <Spinner size="sm" />
-              </div>
-            ) : (
-              <ul className="list-disc pl-5 space-y-1">
-                <li>
-                  <span className="tabular-nums text-text-primary font-medium">
-                    {impact.conversationCount}
-                  </span>{" "}
-                  conversa(s) e todas as mensagens serão excluídas
-                </li>
-                <li>
-                  <span className="tabular-nums text-text-primary font-medium">
-                    {impact.documentCount}
-                  </span>{" "}
-                  documento(s) serão excluídos
-                </li>
-                <li>
-                  <span className="tabular-nums text-text-primary font-medium">
-                    {impact.taskCount}
-                  </span>{" "}
-                  tarefa(s) vinculada(s) serão desvinculadas (não excluídas)
-                </li>
-              </ul>
-            )}
-            <p>Os dados excluídos permanecem no log de auditoria.</p>
-          </div>
-        </div>
-
-        {contactIsExclusive && (
-          <Checkbox
-            checked={deleteContact}
-            onChange={(e) => setDeleteContact(e.target.checked)}
-            containerClassName="rounded-lg border border-border bg-surface-sunken p-3"
-            label={
-              <span className="text-sm text-text-primary">
-                Excluir também o contato {contactName}
-              </span>
-            }
-            description="Este contato não tem outros leads."
-          />
-        )}
-
-        {contactName && impact?.contactHasOtherLeads && (
-          <p className="text-xs text-text-muted">
-            O contato {contactName} tem outros leads e será mantido.
-          </p>
-        )}
-
-        <div className="flex gap-2 pt-2">
-          <Button variant="secondary" onClick={onClose} disabled={deleting} className="flex-1">
-            Cancelar
-          </Button>
-          <Button
-            variant="danger"
-            onClick={handleConfirm}
-            disabled={deleting || impact === undefined}
-            className="flex-1"
-          >
-            {deleting ? "Excluindo…" : "Excluir permanentemente"}
-          </Button>
-        </div>
-      </div>
-    </Modal>
   );
 }
 
