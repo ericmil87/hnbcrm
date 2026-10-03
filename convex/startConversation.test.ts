@@ -7,20 +7,57 @@ import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api } from "./_generated/api";
 import schema from "./schema";
-import { canSendFreeTextOnStart, phoneLookupCandidates, resolveStartPhone } from "./lib/startConversation";
+import {
+  canSendFreeTextOnStart,
+  phoneLookupCandidates,
+  phoneSpellingVariants,
+  pickCanonicalFromCheck,
+  resolveStartPhone,
+} from "./lib/startConversation";
+import { encryptSecret } from "./lib/secretCrypto";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const NOW = Date.UTC(2026, 9, 2, 15, 0);
+const TEST_KEY = btoa("A".repeat(32));
+
+/**
+ * wuzapi fake: `POST /user/check`. `registered` = números como o WhatsApp os
+ * conhece (o JID); uma consulta em qualquer grafia BR do número acha a conta e
+ * devolve o JID registrado — igual ao gateway real. Sem `registered`, todo
+ * número consultado existe com o próprio JID.
+ */
+function wuzapiCheck(registered?: string[]) {
+  const calls: Array<{ url: string; body: any }> = [];
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ url, body });
+    const users = (body?.Phone as string[]).map((q) => {
+      const hit = registered === undefined ? q : registered.find((r) => phoneLookupCandidates(q).includes(r));
+      return hit ? { Query: q, IsInWhatsapp: true, JID: `${hit}@s.whatsapp.net` } : { Query: q, IsInWhatsapp: false, JID: "" };
+    });
+    return new Response(JSON.stringify({ code: 200, success: true, data: { Users: users } }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  });
+  vi.stubGlobal("fetch", fn);
+  return { fn, calls };
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
+  vi.stubEnv("CHANNEL_ENCRYPTION_KEY", TEST_KEY);
+  wuzapiCheck();
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 async function seed(t: TestConvex<typeof schema>) {
+  const bridgeToken = await encryptSecret("fake-bridge-token");
   return await t.run(async (ctx) => {
     const now = Date.now();
     const org = (name: string, slug: string) =>
@@ -78,7 +115,7 @@ async function seed(t: TestConvex<typeof schema>) {
         displayName,
         status: "active",
         ...(provider === "bridge"
-          ? { bridgeBaseUrl: "https://wuzapi.example.com", bridgeInstanceId: `inst_${displayName}`, bridgeTokenEncrypted: "enc:secret", bridgeTokenLast4: "cret", bridgeSessionState: "connected" as const, bridgePhone: "5585911112222" }
+          ? { bridgeBaseUrl: "https://wuzapi.example.com", bridgeInstanceId: `inst_${displayName}`, bridgeTokenEncrypted: bridgeToken, bridgeTokenLast4: "cret", bridgeSessionState: "connected" as const, bridgePhone: "5585911112222" }
           : { phoneNumberId: "pn_1", accessTokenEncrypted: "enc:tok", accessTokenLast4: "1234", appSecretEncrypted: "enc:app", verifyToken: "vt", displayPhoneNumber: "+55 85 3333-4444" }),
         createdAt: now,
         updatedAt: now,
@@ -107,12 +144,217 @@ describe("lib/startConversation", () => {
   });
 });
 
+describe("lib/startConversation — checagem no WhatsApp", () => {
+  test("grafias nos dois sentidos (com e sem o 9º dígito)", () => {
+    expect(phoneSpellingVariants("5581981392929")).toEqual(["5581981392929", "558181392929"]);
+    expect(phoneLookupCandidates("558181392929")).toEqual(["558181392929", "5581981392929"]);
+    // fixo e internacional: uma grafia só
+    expect(phoneLookupCandidates("558533334444")).toEqual(["558533334444"]);
+    expect(phoneLookupCandidates("15550000001")).toEqual(["15550000001"]);
+  });
+  test("pickCanonicalFromCheck: JID manda; sem JID usa a grafia confirmada; ninguém = fora", () => {
+    const cands = ["5581981392929", "558181392929"];
+    expect(
+      pickCanonicalFromCheck(
+        [
+          { phone: "5581981392929", onWhatsapp: true, jid: "558181392929@s.whatsapp.net" },
+          { phone: "558181392929", onWhatsapp: true, jid: "558181392929@s.whatsapp.net" },
+        ],
+        cands
+      )
+    ).toEqual({ onWhatsapp: true, canonicalPhone: "558181392929", jid: "558181392929@s.whatsapp.net" });
+    // a grafia antiga é a única no WhatsApp
+    expect(
+      pickCanonicalFromCheck(
+        [
+          { phone: "5581981392929", onWhatsapp: false },
+          { phone: "558181392929", onWhatsapp: true, jid: "558181392929:12@s.whatsapp.net" },
+        ],
+        cands
+      )
+    ).toMatchObject({ onWhatsapp: true, canonicalPhone: "558181392929" });
+    // JID implausível → cai na grafia confirmada
+    expect(pickCanonicalFromCheck([{ phone: "558181392929", onWhatsapp: true, jid: "abc@s.whatsapp.net" }], cands)).toEqual({
+      onWhatsapp: true,
+      canonicalPhone: "558181392929",
+    });
+    expect(pickCanonicalFromCheck([{ phone: "5581981392929", onWhatsapp: false }, { phone: "558181392929", onWhatsapp: false }], cands)).toEqual({
+      onWhatsapp: false,
+    });
+  });
+});
+
+describe("startConversation — número conferido no WhatsApp (bridge)", () => {
+  test("celular registrado SEM o 9: cria o contato com o número canônico (bug de 02/10)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const mock = wuzapiCheck(["558181392929"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929", content: "Oi",
+    });
+    expect(res).toMatchObject({ createdContact: true, verified: true, canonicalPhone: "558181392929", phoneChanged: false });
+    expect(mock.calls).toHaveLength(1);
+    expect(mock.calls[0].url).toBe("https://wuzapi.example.com/user/check");
+    expect(mock.calls[0].body.Phone).toEqual(["5581981392929", "558181392929"]);
+    await t.run(async (ctx) => {
+      const contact = (await ctx.db.get(res.contactId))!;
+      expect(contact).toMatchObject({ phone: "558181392929", whatsappNumber: "558181392929" });
+      expect(await ctx.db.query("contacts").collect()).toHaveLength(1);
+    });
+  });
+
+  test("contato já gravado como o WhatsApp o conhece é reaproveitado (sem duplicar)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contactId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Eric", phone: "558181392929", whatsappNumber: "558181392929", tags: [], createdAt: NOW, updatedAt: NOW })
+    );
+    wuzapiCheck(["558181392929"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "(81) 98139-2929",
+    });
+    expect(res).toMatchObject({ contactId, createdContact: false, verified: true, phoneChanged: false });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("contacts").collect()).toHaveLength(1);
+    });
+  });
+
+  test("número fora do WhatsApp: erro ANTES de qualquer escrita", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    wuzapiCheck([]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    await expect(
+      asAgent.action(api.startConversation.startConversation, {
+        organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-7777", content: "Oi",
+      })
+    ).rejects.toThrow(/não tem WhatsApp/);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("contacts").collect()).toHaveLength(0);
+      expect(await ctx.db.query("leads").collect()).toHaveLength(0);
+      expect(await ctx.db.query("conversations").collect()).toHaveLength(0);
+    });
+  });
+
+  test("gateway com erro: segue com o número normalizado e devolve verified:false", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "boom" }), { status: 500 })));
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-8888",
+    });
+    expect(res).toMatchObject({ verified: false, verifyReason: "gateway_error", canonicalPhone: "5585999998888", createdContact: true });
+    await t.run(async (ctx) => {
+      expect((await ctx.db.get(res.contactId))!.phone).toBe("5585999998888");
+    });
+  });
+
+  test("Meta: nenhuma chamada ao gateway e verified:false", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const mock = wuzapiCheck();
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.metaId, phone: "85999993333",
+    });
+    expect(res).toMatchObject({ verified: false, verifyReason: "meta", canonicalPhone: "5585999993333" });
+    expect(mock.fn).not.toHaveBeenCalled();
+  });
+
+  test("contato escolhido com a grafia errada é corrigido para o número canônico (audit com previousPhone)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contactId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Eric", phone: "5581981392929", whatsappNumber: "5581981392929", tags: [], createdAt: NOW, updatedAt: NOW })
+    );
+    wuzapiCheck(["558181392929"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+
+    const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
+    });
+    expect(check).toEqual({ status: "on_whatsapp", canonicalPhone: "558181392929", phoneDisplay: "+55 (81) 8139-2929", changed: true });
+
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
+    });
+    expect(res).toMatchObject({ contactId, verified: true, canonicalPhone: "558181392929", phoneChanged: true });
+    await t.run(async (ctx) => {
+      const contact = (await ctx.db.get(contactId))!;
+      expect(contact).toMatchObject({ phone: "558181392929", whatsappNumber: "558181392929" });
+      expect(contact.searchText).toContain("558181392929");
+      const audit = (await ctx.db.query("auditLogs").collect()).find((a) => a.entityType === "conversation")!;
+      expect(audit.metadata?.previousPhone).toBe("5581981392929");
+    });
+  });
+
+  test("contato escolhido com a grafia errada quando JÁ existe o contato canônico: usa o canônico, não duplica telefone", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const bogusId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, phone: "5581981392929", whatsappNumber: "5581981392929", tags: [], createdAt: NOW, updatedAt: NOW })
+    );
+    const canonicalId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Eric", phone: "558181392929", whatsappNumber: "558181392929", tags: [], createdAt: NOW + 1, updatedAt: NOW + 1 })
+    );
+    wuzapiCheck(["558181392929"]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId: bogusId,
+    });
+    expect(res).toMatchObject({ contactId: canonicalId, verified: true, canonicalPhone: "558181392929" });
+    await t.run(async (ctx) => {
+      // O contato errado NÃO foi reescrito — segue com a grafia antiga, para a equipe excluir.
+      expect((await ctx.db.get(bogusId))!.phone).toBe("5581981392929");
+      const owners = (await ctx.db.query("contacts").collect()).filter((c) => c.phone === "558181392929");
+      expect(owners).toHaveLength(1);
+      const audit = (await ctx.db.query("auditLogs").collect()).find((a) => a.entityType === "conversation")!;
+      expect(audit.metadata?.switchedFromContactId).toBe(bogusId);
+    });
+  });
+
+  test("checkWhatsappNumber: bridge desconectado não chama o gateway; Meta = unverified; telefone inválido lança", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const mock = wuzapiCheck();
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    expect(
+      await asAgent.action(api.startConversation.checkWhatsappNumber, { organizationId: s.organizationId, channelConfigId: s.metaId, phone: "85999993333" })
+    ).toEqual({ status: "unverified", reason: "meta", phone: "5585999993333" });
+    await t.run((ctx) => ctx.db.patch(s.bridgeId, { bridgeSessionState: "disconnected" } as any));
+    expect(
+      await asAgent.action(api.startConversation.checkWhatsappNumber, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85999993333" })
+    ).toEqual({ status: "unverified", reason: "bridge_offline", phone: "5585999993333" });
+    expect(mock.fn).not.toHaveBeenCalled();
+    await expect(
+      asAgent.action(api.startConversation.checkWhatsappNumber, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "123" })
+    ).rejects.toThrow(/Telefone/);
+  });
+
+  test("prévia com phoneIsCanonical não re-acrescenta o 9", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const p = await asAgent.query(api.startConversation.previewStartConversation, {
+      organizationId: s.organizationId, phone: "558181392929", phoneIsCanonical: true,
+    });
+    expect(p).toMatchObject({ phone: "558181392929", phoneDisplay: "+55 (81) 8139-2929", phoneValid: true });
+    const p2 = await asAgent.query(api.startConversation.previewStartConversation, {
+      organizationId: s.organizationId, phone: "558181392929",
+    });
+    expect(p2.phone).toBe("5581981392929");
+  });
+});
+
 describe("startConversation", () => {
   test("número novo cria contato + lead (dono = quem iniciou, funil escolhido) + conversa + mensagem", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
-    const res = await asAgent.mutation(api.startConversation.startConversation, {
+    const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId,
       channelConfigId: s.bridgeId,
       phone: "85 99999-1111",
@@ -166,6 +408,7 @@ describe("startConversation", () => {
       return { contactId, leadId, conversationId };
     });
     const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    wuzapiCheck(["558588887777"]);
 
     // telefone digitado COM o 9º dígito acha o contato gravado sem ele
     const preview = await asAgent.query(api.startConversation.previewStartConversation, {
@@ -176,10 +419,10 @@ describe("startConversation", () => {
     expect(preview.conversation).toMatchObject({ id: conversationId, archived: true });
     expect(preview.defaultBoard).toBeNull();
 
-    const res = await asAgent.mutation(api.startConversation.startConversation, {
+    const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "(85) 98888-7777",
     });
-    expect(res).toMatchObject({ contactId, leadId, conversationId, createdContact: false, createdLead: false, createdConversation: false, channelSwitched: true, unarchived: true });
+    expect(res).toMatchObject({ contactId, leadId, conversationId, createdContact: false, createdLead: false, createdConversation: false, channelSwitched: true, unarchived: true, verified: true, canonicalPhone: "558588887777", phoneChanged: false });
     expect(res.messageId).toBeUndefined();
     await t.run(async (ctx) => {
       const conv = (await ctx.db.get(conversationId))!;
@@ -190,7 +433,7 @@ describe("startConversation", () => {
     });
 
     // idempotente: de novo não cria nada
-    const again = await asAgent.mutation(api.startConversation.startConversation, {
+    const again = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
     });
     expect(again).toMatchObject({ conversationId, createdConversation: false, channelSwitched: false, unarchived: false });
@@ -201,14 +444,14 @@ describe("startConversation", () => {
     const s = await seed(t);
     const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, {
+      asAgent.action(api.startConversation.startConversation, {
         organizationId: s.organizationId, channelConfigId: s.metaId, phone: "85999993333", content: "Oi",
       })
     ).rejects.toThrow(/template/);
     await t.run(async (ctx) => {
       expect(await ctx.db.query("contacts").collect()).toHaveLength(0);
     });
-    const res = await asAgent.mutation(api.startConversation.startConversation, {
+    const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.metaId, phone: "85999993333",
     });
     expect(res.createdConversation).toBe(true);
@@ -226,11 +469,11 @@ describe("startConversation", () => {
     });
     expect(preview.optedOut).toBe(true);
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, {
+      asAgent.action(api.startConversation.startConversation, {
         organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-4444", content: "Oi",
       })
     ).rejects.toThrow(/^OPT_OUT:/);
-    const res = await asAgent.mutation(api.startConversation.startConversation, {
+    const res = await asAgent.action(api.startConversation.startConversation, {
       organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-4444", content: "Oi", optOutAck: true,
     });
     await t.run(async (ctx) => {
@@ -245,16 +488,16 @@ describe("startConversation", () => {
     const s = await seed(t);
     const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "123" })
+      asAgent.action(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "123" })
     ).rejects.toThrow(/Telefone/);
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.otherChannelId, phone: "85999995555" })
+      asAgent.action(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.otherChannelId, phone: "85999995555" })
     ).rejects.toThrow(/não encontrado/);
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.disabledId, phone: "85999995555" })
+      asAgent.action(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.disabledId, phone: "85999995555" })
     ).rejects.toThrow(/não está ativo/);
     await expect(
-      asAgent.mutation(api.startConversation.startConversation, {
+      asAgent.action(api.startConversation.startConversation, {
         organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85999995555", boardId: s.vendas.boardId, stageId: s.eventos.stageIds[0],
       })
     ).rejects.toThrow(/não pertence/);
@@ -265,7 +508,7 @@ describe("startConversation", () => {
     const s = await seed(t);
     const asViewer = t.withIdentity({ subject: `${s.viewer.userId}|s1` });
     await expect(
-      asViewer.mutation(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85999996666" })
+      asViewer.action(api.startConversation.startConversation, { organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85999996666" })
     ).rejects.toThrow(/Permissão insuficiente/);
     await expect(
       asViewer.query(api.startConversation.previewStartConversation, { organizationId: s.organizationId, phone: "85999996666" })
@@ -280,7 +523,7 @@ describe("startConversation", () => {
     expect(list.map((c) => c.displayName).sort()).toEqual(["Bridge", "Oficial"]);
     for (const c of list) {
       expect(Object.keys(c).sort()).toEqual(["_id", "connected", "displayName", "phoneDisplay", "provider", "sessionState"]);
-      expect(JSON.stringify(c)).not.toMatch(/enc:|wuzapi|inst_|pn_1|vt|1234|cret/);
+      expect(JSON.stringify(c)).not.toMatch(/enc:|v1:|wuzapi|inst_|pn_1|vt|1234|cret/);
     }
     const bridge = list.find((c) => c.provider === "bridge")!;
     expect(bridge).toMatchObject({ connected: true, phoneDisplay: "+55 (85) 91111-2222" });

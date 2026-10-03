@@ -10,12 +10,30 @@
  * Por isso a mutation é idempotente: chamar de novo para o mesmo número só
  * devolve a conversa que já existe (é o que o botão "Abrir conversa" faz).
  *
+ * Bridge: ANTES de escrever qualquer coisa, pergunta ao WhatsApp (wuzapi
+ * `POST /user/check`, as duas grafias BR numa chamada) se o número existe e
+ * adota o JID devolvido como telefone canônico — o mesmo que as campanhas fazem
+ * em `checkNumberAndSend`. Sem isso, um celular registrado SEM o 9º dígito
+ * virava contato/lead/conversa num número inexistente (bug real de 02/10/2026:
+ * "no LID found for 5581981392929@s.whatsapp.net") e a resposta do celular
+ * criava um segundo contato. Meta não tem endpoint de checagem: segue o número
+ * normalizado. Por isso `startConversation` é uma ACTION (fetch) que delega a
+ * escrita à `internalStartConversation`.
+ *
  * A primeira mensagem segue o MESMO caminho de saída de `sendMessage`
  * (`applyOutboundMessageSideEffects`: bump de conversa/lead, audit, activity,
  * webhook `message.sent` e dispatch com pacing) — nada de canal paralelo.
  */
 import { v, ConvexError } from "convex/values";
-import { query, mutation, QueryCtx, MutationCtx } from "./_generated/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  query,
+  ActionCtx,
+  QueryCtx,
+  MutationCtx,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
@@ -27,17 +45,24 @@ import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { formatPhoneForDisplay } from "./lib/phone";
+import { decryptSecret } from "./lib/secretCrypto";
+import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse } from "./lib/bridgeSession";
 import {
   META_FREE_TEXT_ERROR,
+  NOT_ON_WHATSAPP_ERROR,
   OPT_OUT_ERROR_PREFIX,
   canSendFreeTextOnStart,
   cleanNamePart,
+  isCanonicalPhone,
   phoneLookupCandidates,
+  phoneSpellingVariants,
+  pickCanonicalFromCheck,
   resolveStartPhone,
 } from "./lib/startConversation";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
+const CHECK_TIMEOUT_MS = 8000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lookups compartilhados (prévia e mutation leem o MESMO estado)
@@ -173,6 +198,180 @@ export const listSendableWhatsappChannels = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Checagem do número no WhatsApp (bridge)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const startContextReturns = v.object({
+  provider: v.union(v.literal("meta"), v.literal("bridge")),
+  phoneToCheck: v.string(),
+  bridge: v.optional(
+    v.object({
+      baseUrl: v.optional(v.string()),
+      tokenEncrypted: v.optional(v.string()),
+      sessionState: v.optional(v.string()),
+    })
+  ),
+});
+
+type StartContext = {
+  provider: "meta" | "bridge";
+  phoneToCheck: string;
+  bridge?: { baseUrl?: string; tokenEncrypted?: string; sessionState?: string };
+};
+
+/**
+ * Canal + telefone a checar. INTERNA: devolve o token cifrado do gateway — só
+ * a action o lê, nunca um cliente. Lança os mesmos erros PT-BR da mutation
+ * (canal de outra org/inativo, telefone inválido, contato sem telefone).
+ */
+export const internalStartContext = internalQuery({
+  args: {
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    phone: v.optional(v.string()),
+    contactId: v.optional(v.id("contacts")),
+  },
+  returns: startContextReturns,
+  handler: async (ctx, args): Promise<StartContext> => {
+    await requirePermission(ctx, args.organizationId, "inbox", "reply");
+    const channel = await ctx.db.get(args.channelConfigId);
+    if (!channel || channel.organizationId !== args.organizationId || channel.channel !== "whatsapp") {
+      throw new ConvexError("Número de WhatsApp não encontrado nesta organização");
+    }
+    if (channel.status !== "active") {
+      throw new ConvexError(`O número «${channel.displayName}» não está ativo — escolha outro ou reconecte em Configurações → Canais`);
+    }
+    let raw: string | undefined = args.phone;
+    if (args.contactId) {
+      const c = await ctx.db.get(args.contactId);
+      if (!c || c.organizationId !== args.organizationId) throw new ConvexError("Contato não encontrado");
+      raw = contactRawPhone(c) ?? args.phone;
+      if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
+    }
+    const r = resolveStartPhone(raw);
+    if (!r.ok) throw new ConvexError(r.error);
+    const provider = configProvider(channel);
+    return {
+      provider,
+      phoneToCheck: r.phone,
+      ...(provider === "bridge"
+        ? {
+            bridge: {
+              ...(channel.bridgeBaseUrl ? { baseUrl: channel.bridgeBaseUrl } : {}),
+              ...(channel.bridgeTokenEncrypted ? { tokenEncrypted: channel.bridgeTokenEncrypted } : {}),
+              ...(channel.bridgeSessionState ? { sessionState: channel.bridgeSessionState } : {}),
+            },
+          }
+        : {}),
+    };
+  },
+});
+
+type NumberCheck =
+  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean }
+  | { status: "not_on_whatsapp"; phone: string }
+  | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
+
+const numberCheckReturns = v.union(
+  v.object({
+    status: v.literal("on_whatsapp"),
+    canonicalPhone: v.string(),
+    phoneDisplay: v.string(),
+    changed: v.boolean(),
+  }),
+  v.object({ status: v.literal("not_on_whatsapp"), phone: v.string() }),
+  v.object({
+    status: v.literal("unverified"),
+    reason: v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error")),
+    phone: v.string(),
+    detail: v.optional(v.string()),
+  })
+);
+
+/**
+ * Pergunta ao gateway (POST /user/check) pelas duas grafias do número. Nunca
+ * lança por problema do gateway: indisponível = `unverified` e quem chama
+ * decide (o início segue sem confirmação; só o "não tem WhatsApp" barra).
+ */
+async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck> {
+  const phone = context.phoneToCheck;
+  if (context.provider !== "bridge") return { status: "unverified", reason: "meta", phone };
+  const bridge = context.bridge;
+  if (!bridge?.baseUrl || !bridge.tokenEncrypted || bridge.sessionState !== "connected") {
+    return { status: "unverified", reason: "bridge_offline", phone };
+  }
+  const candidates = phoneSpellingVariants(phone);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
+  try {
+    const token = await decryptSecret(bridge.tokenEncrypted);
+    const req = buildBridgeCheckUserRequest({ baseUrl: bridge.baseUrl, token, phones: candidates });
+    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body, signal: controller.signal });
+    const body = await res.json().catch(() => ({}));
+    const parsed = parseBridgeCheckUserResponse(res.ok, res.status, body);
+    if (!parsed.ok) return { status: "unverified", reason: "gateway_error", phone, detail: parsed.error.slice(0, 200) };
+    if (parsed.users.length === 0) {
+      return { status: "unverified", reason: "gateway_error", phone, detail: "Resposta sem usuários" };
+    }
+    const pick = pickCanonicalFromCheck(parsed.users, candidates);
+    if (!pick.onWhatsapp) return { status: "not_on_whatsapp", phone };
+    const canonicalPhone = pick.canonicalPhone ?? phone;
+    return {
+      status: "on_whatsapp",
+      canonicalPhone,
+      phoneDisplay: formatPhoneForDisplay(canonicalPhone),
+      changed: canonicalPhone !== phone,
+    };
+  } catch (e) {
+    const aborted = e instanceof Error && e.name === "AbortError";
+    return {
+      status: "unverified",
+      reason: "gateway_error",
+      phone,
+      detail: aborted ? "Tempo esgotado" : e instanceof Error ? e.message.slice(0, 200) : "Erro de rede",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadStartContext(
+  ctx: ActionCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    channelConfigId: Id<"channelConfigs">;
+    phone?: string;
+    contactId?: Id<"contacts">;
+  }
+): Promise<StartContext> {
+  return await ctx.runQuery(internal.startConversation.internalStartContext, {
+    organizationId: args.organizationId,
+    channelConfigId: args.channelConfigId,
+    ...(args.phone !== undefined ? { phone: args.phone } : {}),
+    ...(args.contactId ? { contactId: args.contactId } : {}),
+  });
+}
+
+/**
+ * O número (digitado ou do contato) tem WhatsApp? No bridge pergunta ao
+ * gateway e devolve o telefone CANÔNICO (para celular BR antigo, sem o 9).
+ * Meta não tem como checar → `unverified/meta`.
+ */
+export const checkWhatsappNumber = action({
+  args: {
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    phone: v.optional(v.string()),
+    contactId: v.optional(v.id("contacts")),
+  },
+  returns: numberCheckReturns,
+  handler: async (ctx, args): Promise<NumberCheck> => {
+    const context = await loadStartContext(ctx, args);
+    return await runBridgeNumberCheck(context);
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Prévia
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -226,6 +425,8 @@ export const previewStartConversation = query({
     organizationId: v.id("organizations"),
     phone: v.optional(v.string()),
     contactId: v.optional(v.id("contacts")),
+    /** `phone` já veio do gateway (checkWhatsappNumber): não re-normalizar (re-poria o 9). */
+    phoneIsCanonical: v.optional(v.boolean()),
   },
   returns: previewReturns,
   handler: async (ctx, args) => {
@@ -252,6 +453,9 @@ export const previewStartConversation = query({
       } else {
         phoneError = "Este contato não tem telefone — informe um número";
       }
+    } else if (args.phoneIsCanonical && isCanonicalPhone(args.phone)) {
+      phone = args.phone;
+      contact = await findContactByPhone(ctx, args.organizationId, phone);
     } else {
       const r = resolveStartPhone(args.phone);
       if (r.ok) {
@@ -387,31 +591,61 @@ async function resolveTargetPipeline(
   return { board, stage: stages[0] };
 }
 
-export const startConversation = mutation({
-  args: {
-    organizationId: v.id("organizations"),
-    channelConfigId: v.id("channelConfigs"),
-    phone: v.optional(v.string()),
-    contactId: v.optional(v.id("contacts")),
-    firstName: v.optional(v.string()),
-    lastName: v.optional(v.string()),
-    boardId: v.optional(v.id("boards")),
-    stageId: v.optional(v.id("stages")),
-    content: v.optional(v.string()),
-    optOutAck: v.optional(v.boolean()),
-  },
-  returns: v.object({
-    conversationId: v.id("conversations"),
-    leadId: v.id("leads"),
-    contactId: v.id("contacts"),
-    createdContact: v.boolean(),
-    createdLead: v.boolean(),
-    createdConversation: v.boolean(),
-    unarchived: v.boolean(),
-    channelSwitched: v.boolean(),
-    messageId: v.optional(v.id("messages")),
-  }),
-  handler: async (ctx, args) => {
+const startArgs = {
+  organizationId: v.id("organizations"),
+  channelConfigId: v.id("channelConfigs"),
+  phone: v.optional(v.string()),
+  contactId: v.optional(v.id("contacts")),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
+  boardId: v.optional(v.id("boards")),
+  stageId: v.optional(v.id("stages")),
+  content: v.optional(v.string()),
+  optOutAck: v.optional(v.boolean()),
+};
+
+const internalStartReturns = {
+  conversationId: v.id("conversations"),
+  leadId: v.id("leads"),
+  contactId: v.id("contacts"),
+  createdContact: v.boolean(),
+  createdLead: v.boolean(),
+  createdConversation: v.boolean(),
+  unarchived: v.boolean(),
+  channelSwitched: v.boolean(),
+  messageId: v.optional(v.id("messages")),
+  canonicalPhone: v.string(),
+  phoneChanged: v.boolean(),
+};
+
+type InternalStartResult = {
+  conversationId: Id<"conversations">;
+  leadId: Id<"leads">;
+  contactId: Id<"contacts">;
+  createdContact: boolean;
+  createdLead: boolean;
+  createdConversation: boolean;
+  unarchived: boolean;
+  channelSwitched: boolean;
+  messageId?: Id<"messages">;
+  canonicalPhone: string;
+  phoneChanged: boolean;
+};
+
+/**
+ * A escrita (contato → lead → conversa → 1ª mensagem). Chamada pela action
+ * `startConversation` depois da checagem no gateway; a identidade do usuário
+ * propaga pelo `ctx.runMutation`, então o RBAC continua valendo aqui.
+ *
+ * `phoneIsCanonical: true` = `phone` é o número que o WHATSAPP confirmou (JID):
+ * só valida dígitos e NÃO re-normaliza (re-normalizar re-poria o 9 — o bug).
+ * Nesse caso o contato escolhido/encontrado cujo número gravado diverge é
+ * corrigido para o canônico (o gravado era inalcançável).
+ */
+export const internalStartConversation = internalMutation({
+  args: { ...startArgs, phoneIsCanonical: v.optional(v.boolean()) },
+  returns: v.object(internalStartReturns),
+  handler: async (ctx, args): Promise<InternalStartResult> => {
     const member = await requirePermission(ctx, args.organizationId, "inbox", "reply");
     const perms = memberPermissions(member);
     const actorType = member.type === "ai" ? "ai" : "human";
@@ -436,17 +670,39 @@ export const startConversation = mutation({
     }
 
     // 3. Telefone + contato
+    const canonical = args.phoneIsCanonical === true;
+    if (canonical && !isCanonicalPhone(args.phone)) throw new ConvexError("Telefone inválido — confira o DDD e o número");
     let contact: Doc<"contacts"> | null = null;
+    let switchedFromContactId: Id<"contacts"> | undefined;
     let phone: string;
     if (args.contactId) {
       const c = await ctx.db.get(args.contactId);
       if (!c || c.organizationId !== args.organizationId) throw new ConvexError("Contato não encontrado");
       contact = c;
-      const raw = contactRawPhone(c) ?? args.phone;
-      if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
-      const r = resolveStartPhone(raw);
-      if (!r.ok) throw new ConvexError(r.error);
-      phone = r.phone;
+      if (canonical) {
+        phone = args.phone!;
+        // O WhatsApp confirmou outra grafia e JÁ existe um contato com ela
+        // (caso real de 02/10: o bug criou 5581981392929 e o ingest criou
+        // 558181392929). Usar o contato canônico evita dois contatos com o
+        // mesmo telefone; o escolhido fica como está, para a equipe excluir.
+        const canonicalOwner = await ctx.db
+          .query("contacts")
+          .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", args.organizationId).eq("phone", phone))
+          .first();
+        if (canonicalOwner && canonicalOwner._id !== c._id) {
+          switchedFromContactId = c._id;
+          contact = canonicalOwner;
+        }
+      } else {
+        const raw = contactRawPhone(c) ?? args.phone;
+        if (!raw) throw new ConvexError("Este contato não tem telefone — informe um número");
+        const r = resolveStartPhone(raw);
+        if (!r.ok) throw new ConvexError(r.error);
+        phone = r.phone;
+      }
+    } else if (canonical) {
+      phone = args.phone!;
+      contact = await findContactByPhone(ctx, args.organizationId, phone);
     } else {
       const r = resolveStartPhone(args.phone);
       if (!r.ok) throw new ConvexError(r.error);
@@ -464,6 +720,7 @@ export const startConversation = mutation({
 
     // 5. Contato (cria só com permissão de contatos, como `createContact`)
     let createdContact = false;
+    let previousPhone: string | undefined;
     if (!contact) {
       if (!hasPermission(perms, "contacts", "edit")) {
         throw new ConvexError("Permissão insuficiente para criar contatos");
@@ -492,8 +749,23 @@ export const startConversation = mutation({
       // Contato escolhido sem telefone (ou com telefone formatado à mão): grava
       // o número normalizado no campo que o dispatch lê, sem mexer no resto.
       const patch: Partial<Doc<"contacts">> = {};
-      if (!contact.phone) patch.phone = phone;
-      if (!contact.whatsappNumber) patch.whatsappNumber = phone;
+      if (canonical) {
+        // O WhatsApp confirmou OUTRA grafia: o número gravado era inalcançável.
+        // `whatsappNumber` é o que o dispatch lê; `phone` só é trocado quando é
+        // o MESMO número noutra grafia (não apaga um fixo cadastrado à parte).
+        const digits = (raw: string | undefined) => (raw ?? "").replace(/\D+/g, "");
+        const spellings = phoneLookupCandidates(phone);
+        const dispatchDigits = digits(contactRawPhone(contact));
+        if (dispatchDigits && dispatchDigits !== phone) previousPhone = dispatchDigits;
+        if (digits(contact.whatsappNumber) !== phone) patch.whatsappNumber = phone;
+        const phoneDigits = digits(contact.phone);
+        if (!phoneDigits || (phoneDigits !== phone && (spellings.includes(phoneDigits) || phoneDigits === dispatchDigits))) {
+          patch.phone = phone;
+        }
+      } else {
+        if (!contact.phone) patch.phone = phone;
+        if (!contact.whatsappNumber) patch.whatsappNumber = phone;
+      }
       if (Object.keys(patch).length > 0) {
         await ctx.db.patch(contact._id, { ...patch, searchText: buildSearchText({ ...contact, ...patch }), updatedAt: now });
         contact = (await ctx.db.get(contact._id))!;
@@ -610,6 +882,8 @@ export const startConversation = mutation({
       channelSwitched,
       unarchived,
       ...(optedOut ? { optOutAcknowledged: true } : {}),
+      ...(previousPhone ? { previousPhone, phone } : {}),
+      ...(switchedFromContactId ? { switchedFromContactId } : {}),
     };
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
@@ -662,6 +936,42 @@ export const startConversation = mutation({
       unarchived,
       channelSwitched,
       ...(messageId ? { messageId } : {}),
+      canonicalPhone: phone,
+      phoneChanged: previousPhone !== undefined,
+    };
+  },
+});
+
+/**
+ * Inicia (ou reabre) a conversa. No bridge, checa o número no WhatsApp ANTES de
+ * qualquer escrita: "não tem WhatsApp" em todas as grafias → erro sem gravar
+ * nada; no WhatsApp → grava o número canônico (JID); checagem indisponível →
+ * segue com o número normalizado e devolve `verified: false`.
+ */
+export const startConversation = action({
+  args: startArgs,
+  returns: v.object({
+    ...internalStartReturns,
+    verified: v.boolean(),
+    verifyReason: v.optional(v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error"))),
+  }),
+  handler: async (
+    ctx,
+    args
+  ): Promise<InternalStartResult & { verified: boolean; verifyReason?: "meta" | "bridge_offline" | "gateway_error" }> => {
+    const context = await loadStartContext(ctx, args);
+    const check = await runBridgeNumberCheck(context);
+    if (check.status === "not_on_whatsapp") throw new ConvexError(NOT_ON_WHATSAPP_ERROR);
+    const result: InternalStartResult = await ctx.runMutation(internal.startConversation.internalStartConversation, {
+      ...args,
+      // Verificado: o número do WhatsApp manda. Sem verificação: o caminho de
+      // sempre (normaliza o digitado / usa o do contato), sem tocar no contato.
+      ...(check.status === "on_whatsapp" ? { phone: check.canonicalPhone, phoneIsCanonical: true } : {}),
+    });
+    return {
+      ...result,
+      verified: check.status === "on_whatsapp",
+      ...(check.status === "unverified" ? { verifyReason: check.reason } : {}),
     };
   },
 });

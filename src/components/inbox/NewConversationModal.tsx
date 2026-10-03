@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   Loader2,
   MessageSquarePlus,
@@ -23,7 +24,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
 import { Avatar } from "@/components/ui/Avatar";
 import { formatPhoneForDisplay, looksLikePhone } from "../../../convex/lib/phone";
-import { OPT_OUT_ERROR_PREFIX } from "../../../convex/lib/startConversation";
+import { NOT_ON_WHATSAPP_ERROR, OPT_OUT_ERROR_PREFIX } from "../../../convex/lib/startConversation";
 
 interface NewConversationModalProps {
   organizationId: Id<"organizations">;
@@ -58,6 +59,20 @@ type ChannelOption = {
   sessionState: string | null;
 };
 
+/** Resposta de `checkWhatsappNumber` (o número existe no WhatsApp?). */
+type NumberCheckResult =
+  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean }
+  | { status: "not_on_whatsapp"; phone: string }
+  | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
+
+/** Estado da checagem, sempre amarrado à chave (canal + destino) que a gerou. */
+type NumberCheckState = { key: string; result: NumberCheckResult | null; loading: boolean };
+
+/** Celular BR que o WhatsApp conhece sem o 9º dígito (55 + DDD + 8). */
+function isBrWithoutNinth(phone: string): boolean {
+  return /^55\d{2}[6-9]\d{7}$/.test(phone);
+}
+
 const fieldClass =
   "w-full h-11 px-3 text-base md:text-sm bg-surface-sunken border border-border-strong text-text-primary rounded-lg placeholder:text-text-muted focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20";
 
@@ -83,7 +98,10 @@ export function NewConversationModal({
   const [forceOptOut, setForceOptOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const startConversation = useMutation(api.startConversation.startConversation);
+  const [numberCheck, setNumberCheck] = useState<NumberCheckState | null>(null);
+  const checkSeq = useRef(0);
+  const startConversation = useAction(api.startConversation.startConversation);
+  const checkWhatsappNumber = useAction(api.startConversation.checkWhatsappNumber);
 
   // Cada abertura começa do zero (ou do contato pedido).
   useEffect(() => {
@@ -101,6 +119,7 @@ export function NewConversationModal({
     setForceOptOut(false);
     setError(null);
     setSubmitting(false);
+    setNumberCheck(null);
   }, [open, initialContactId]);
 
   const debouncedTerm = useDebounced(term.trim(), 250);
@@ -112,14 +131,57 @@ export function NewConversationModal({
     open ? { organizationId } : "skip"
   ) as ChannelOption[] | undefined;
 
+  const channel = channels?.find((c) => c._id === channelId) ?? null;
+  const isMeta = channel?.provider === "meta";
+
+  // Checagem no WhatsApp (bridge): espera a digitação parar (~500 ms) e roda de
+  // novo se o canal mudar. A chave amarra o resultado ao destino que o gerou —
+  // resposta atrasada de um número antigo nunca vale para o novo.
+  const checkTerm = useDebounced(term.trim(), 500);
+  const checkPhoneMode = !contactId && isPhoneInput(checkTerm);
+  const checkKey =
+    open && channel && channel.provider === "bridge" && (contactId || checkPhoneMode)
+      ? `${channel._id}|${contactId ? `c:${contactId}` : `p:${checkTerm}`}`
+      : null;
+  const currentCheck = numberCheck && checkKey && numberCheck.key === checkKey ? numberCheck : null;
+  const checkResult = currentCheck?.result ?? null;
+  const canonicalPhone = checkResult?.status === "on_whatsapp" ? checkResult.canonicalPhone : null;
+
+  // Só vale para o número digitado AGORA (a prévia usa o debounce mais curto).
+  const canonicalForPreview = !contactId && checkTerm === debouncedTerm ? canonicalPhone : null;
   const preview = useQuery(
     api.startConversation.previewStartConversation,
     open && (contactId || phoneMode)
       ? contactId
         ? { organizationId, contactId }
-        : { organizationId, phone: debouncedTerm }
+        : canonicalForPreview
+          ? { organizationId, phone: canonicalForPreview, phoneIsCanonical: true }
+          : { organizationId, phone: debouncedTerm }
       : "skip"
   );
+  const previewPhoneValid = !!preview?.phoneValid;
+
+  useEffect(() => {
+    if (!checkKey || !channel) return;
+    if (numberCheck?.key === checkKey) return; // já checado (ou em curso) para este destino
+    if (!previewPhoneValid) return; // formato inválido: a prévia já mostra o erro
+    const seq = ++checkSeq.current;
+    setNumberCheck({ key: checkKey, result: null, loading: true });
+    checkWhatsappNumber({
+      organizationId,
+      channelConfigId: channel._id,
+      ...(contactId ? { contactId } : { phone: checkTerm }),
+    })
+      .then((result) => {
+        if (seq !== checkSeq.current) return;
+        setNumberCheck({ key: checkKey, result: result as NumberCheckResult, loading: false });
+      })
+      .catch(() => {
+        // Erro de formato/permissão: a prévia e o envio mostram a mensagem.
+        if (seq !== checkSeq.current) return;
+        setNumberCheck({ key: checkKey, result: null, loading: false });
+      });
+  }, [checkKey, channel, contactId, checkTerm, organizationId, previewPhoneValid, numberCheck?.key, checkWhatsappNumber]);
 
   const searchResults = useQuery(
     api.contacts.searchContacts,
@@ -153,8 +215,6 @@ export function NewConversationModal({
     setError(null);
   }, [contactId, debouncedTerm]);
 
-  const channel = channels?.find((c) => c._id === channelId) ?? null;
-  const isMeta = channel?.provider === "meta";
   const optedOut = !!preview?.optedOut || forceOptOut;
   const existingConversation = preview?.conversation ?? null;
 
@@ -178,10 +238,12 @@ export function NewConversationModal({
   if (needsPipeline && !preview?.canCreateLead) blockers.push("Você não tem permissão para criar leads");
   if (needsPipeline && preview && !preview.defaultBoard) blockers.push("Nenhum funil ativo — crie um funil antes");
 
+  const notOnWhatsapp = checkResult?.status === "not_on_whatsapp";
   const canSubmit =
     !!preview &&
     preview.phoneValid &&
     !!channel &&
+    !notOnWhatsapp &&
     blockers.length === 0 &&
     (!optedOut || optOutAck) &&
     !submitting;
@@ -202,7 +264,8 @@ export function NewConversationModal({
       const res = await startConversation({
         organizationId,
         channelConfigId: channel._id,
-        ...(contactId ? { contactId } : { phone: preview.phone ?? debouncedTerm }),
+        // O número digitado: a action confere no WhatsApp e grava o canônico.
+        ...(contactId ? { contactId } : { phone: debouncedTerm }),
         ...(!preview.contact && firstName.trim() ? { firstName: firstName.trim() } : {}),
         ...(!preview.contact && lastName.trim() ? { lastName: lastName.trim() } : {}),
         ...(needsPipeline && effectiveBoardId ? { boardId: effectiveBoardId } : {}),
@@ -211,13 +274,18 @@ export function NewConversationModal({
         ...(optedOut && optOutAck ? { optOutAck: true } : {}),
       });
       toast.success(
-        res.createdConversation ? "Conversa iniciada" : res.messageId ? "Mensagem enviada" : "Conversa aberta"
+        res.createdConversation ? "Conversa iniciada" : res.messageId ? "Mensagem enviada" : "Conversa aberta",
+        res.phoneChanged ? { description: `Número do contato atualizado para ${formatPhoneForDisplay(res.canonicalPhone)}` } : undefined
       );
       onStarted(res.conversationId);
     } catch (e) {
       const msg = mutationErrorMessage(e, "Não foi possível iniciar a conversa");
       if (msg.startsWith(OPT_OUT_ERROR_PREFIX)) {
         setForceOptOut(true);
+        setError(null);
+      } else if (msg === NOT_ON_WHATSAPP_ERROR && checkKey) {
+        // O servidor checou e o número não existe: vira a linha vermelha inline.
+        setNumberCheck({ key: checkKey, result: { status: "not_on_whatsapp", phone: debouncedTerm }, loading: false });
         setError(null);
       } else {
         setError(msg);
@@ -386,6 +454,16 @@ export function NewConversationModal({
                 </div>
               )}
             </>
+          )}
+          {checkKey && previewPhoneValid && (
+            <NumberCheckLine
+              loading={!!currentCheck?.loading || (!currentCheck && checkKey !== null)}
+              result={checkResult}
+              forContact={!!contactId}
+            />
+          )}
+          {isMeta && previewPhoneValid && (
+            <p className="mt-1.5 text-xs text-text-muted">Número oficial: não dá para verificar antes de enviar.</p>
           )}
         </div>
 
@@ -607,5 +685,59 @@ export function NewConversationModal({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Linha de status da checagem do número no WhatsApp (bridge). */
+function NumberCheckLine({
+  loading,
+  result,
+  forContact,
+}: {
+  loading: boolean;
+  result: NumberCheckResult | null;
+  forContact: boolean;
+}) {
+  if (loading) {
+    return (
+      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-text-muted" role="status">
+        <Loader2 size={12} className="animate-spin" /> Verificando no WhatsApp…
+      </p>
+    );
+  }
+  if (!result) return null;
+  if (result.status === "on_whatsapp") {
+    return (
+      <p className="mt-1.5 flex items-start gap-1.5 text-xs text-semantic-success" role="status">
+        <CheckCircle2 size={13} className="mt-px shrink-0" />
+        <span>
+          Tem WhatsApp
+          {result.changed && (
+            <>
+              {forContact ? " — número atualizado para " : " — registrado como "}
+              <strong className="font-semibold">{result.phoneDisplay}</strong>
+              {isBrWithoutNinth(result.canonicalPhone) ? " (sem o 9)" : ""}
+            </>
+          )}
+        </span>
+      </p>
+    );
+  }
+  if (result.status === "not_on_whatsapp") {
+    return (
+      <p className="mt-1.5 flex items-start gap-1.5 text-xs text-semantic-error" role="alert">
+        <X size={13} className="mt-px shrink-0" />
+        {NOT_ON_WHATSAPP_ERROR}
+      </p>
+    );
+  }
+  if (result.reason === "meta") {
+    return <p className="mt-1.5 text-xs text-text-muted">Número oficial: não dá para verificar antes de enviar.</p>;
+  }
+  return (
+    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-semantic-warning" role="status">
+      <AlertTriangle size={13} className="mt-px shrink-0" />
+      Não foi possível verificar agora — a conversa será criada sem confirmação
+    </p>
   );
 }
