@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **66 tools across 11 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns, WhatsApp groups and notification preferences via AI agents.
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **68 tools across 11 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns, WhatsApp groups and notification preferences via AI agents.
 
 ## Prerequisites
 
@@ -31,6 +31,10 @@ npm install -g hnbcrm-mcp
 | `HNBCRM_API_KEY` | Yes | API key generated from HNBCRM Settings |
 
 > **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
+
+## v0.67 note (start a conversation, international phones)
+
+Two new tools: `crm_list_whatsapp_channels` and `crm_start_conversation` (MCP server 0.3.0, 68 tools). List the channels, then start with `channelConfigId` + `phone` (or `contactId`). On a **bridge** number the phone is verified with the gateway and the canonical WhatsApp spelling is adopted (`phoneChanged`); a number without WhatsApp is refused. `content` (first message) works only on bridge — on an official (Meta) number the new conversation is outside the 24h window, so open it and send a template. An opted-out number returns 409 `optOut: true`: set `optOutAck: true` **only after a human confirmed** contacting that person. Needs `inbox: reply` (plus `contacts: edit` / `leads: edit_own` when a contact/lead is created). Phones without a country code get the **organization's default country** (Settings → Organization profile; Brazil +55 when unset); send `+` and the country code for contacts outside it.
 
 ## v0.65 note (anti-bot guardrail)
 
@@ -189,13 +193,15 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | `crm_get_contact_gaps` | Get which fields are missing on a contact |
 | `crm_search_contacts` | Search contacts by name, email, or company |
 
-### Conversations (3 tools)
+### Conversations (5 tools)
 
 | Tool | Description |
 |------|-------------|
 | `crm_list_conversations` | List conversations, optionally filtered by lead |
 | `crm_get_messages` | Get all messages in a conversation thread |
 | `crm_send_message` | Send a message or internal note in a conversation |
+| `crm_list_whatsapp_channels` | List the organization's active WhatsApp numbers that can start conversations |
+| `crm_start_conversation` | Start a 1:1 WhatsApp conversation (verifies the number on bridge, reuses or creates the lead) |
 
 ### Handoffs (4 tools)
 

@@ -19,7 +19,7 @@ import { registerResources } from "./resources.js";
 function createServer(apiUrl: string, apiKey: string) {
   const server = new McpServer({
     name: "hnbcrm",
-    version: "0.1.0",
+    version: "0.3.0",
   });
 
   const client = new HnbCrmClient(apiUrl, apiKey);

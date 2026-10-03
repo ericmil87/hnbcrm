@@ -1,3 +1,15 @@
+/**
+ * Error from the HNBCRM REST API. `status` is the HTTP status and `body` the
+ * parsed JSON error body (e.g. `{ error, code: 409, optOut: true }`), so tools
+ * can react to specific answers instead of only reading the message.
+ */
+export class HnbCrmApiError extends Error {
+  constructor(message: string, public status: number, public body: Record<string, any>) {
+    super(message);
+    this.name = "HnbCrmApiError";
+  }
+}
+
 export class HnbCrmClient {
   private baseUrl: string;
   private apiKey: string;
@@ -22,7 +34,7 @@ export class HnbCrmClient {
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${res.status}`);
+      throw new HnbCrmApiError(body.error || `HTTP ${res.status}`, res.status, body);
     }
     return res.json();
   }
@@ -38,7 +50,7 @@ export class HnbCrmClient {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new HnbCrmApiError(data.error || `HTTP ${res.status}`, res.status, data);
     }
     return res.json();
   }
@@ -54,7 +66,7 @@ export class HnbCrmClient {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || `HTTP ${res.status}`);
+      throw new HnbCrmApiError(data.error || `HTTP ${res.status}`, res.status, data);
     }
     return res.json();
   }
