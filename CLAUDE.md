@@ -17,6 +17,8 @@ npm run deploy:prod      # Publica backend no PROD (lê a chave de convex-prod-k
 
 Tests: `npm run test` (vitest + convex-test; `*.test.ts` em `convex/`). Seed data is available via `convex/seed.ts`.
 
+**CI (GitHub Actions, `.github/workflows/ci.yml`, v0.69):** roda em push/PR para `main` e em push de `ci/**`: `npm ci` → 3× `tsc` (convex, app, node) → `npm run test` (inclui `secretScan.test.ts`) → `npx vite build`, ~1,5 min, Node do `.nvmrc` (22). **Sem** `convex dev --once` de propósito — não há deployment nem chave no CI, por isso `npm run lint` NÃO serve de CI. A suíte não depende de `.env.local` (o build lê `VITE_CONVEX_URL` com fallback vazio). Único teste sensível a carga com `{ retry: 2 }` pontual: `groupMediaPolicy.test.ts` ("fetch do sob demanda tem timeout menor que a trava") — não mudar o tempo. O `visualizer` do `vite.config.ts` só abre o `stats.html` fora do CI (`open: !process.env.CI`).
+
 ## Deployments: dev × prod (separados desde 02/10/2026)
 
 | | **Prod** | **Dev** |
@@ -122,6 +124,8 @@ Multi-tenant CRM with human-AI team collaboration. Convex backend, React + Tailw
 **Build optimizations:** Vite configured with manual chunking (react-vendor, convex-vendor, utils-vendor, icons-vendor), lazy loading for authenticated routes via React.lazy(), gzip/brotli compression, and bundle visualization (rollup-plugin-visualizer). Initial bundle: ~157 KB brotli (77% reduction from 1 MB baseline).
 
 **SEO:** react-helmet-async for dynamic meta tags, Open Graph + Twitter Cards, JSON-LD structured data, sitemap.xml, robots.txt. Reusable `<SEO />` component in `src/components/SEO.tsx`.
+
+**Cabeçalhos de segurança (`vercel.json`, v0.69):** bloco `headers` com `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (microfone só `self`, para a gravação de voz do inbox; câmera/geolocalização/pagamento fechados) e CSP em **`Content-Security-Policy-Report-Only`** (fase 1; fase 2 = trocar a chave para `Content-Security-Policy` e acrescentar `upgrade-insecure-requests`, que é ignorado em Report-Only). Origens permitidas: `'self'`, `https://*.convex.cloud` (storage, upload, queries), `wss://*.convex.cloud`, `https://*.convex.site` (SSE do copiloto, formulários públicos, `sendBeacon` do partial) e `data:`/`blob:` em img/media; `frame-src 'none'`, `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`. `style-src` leva `'unsafe-inline'` (atributos `style=` do React e o `<style>` do Sonner); `script-src 'self'` basta (o `dist/index.html` não tem script inline; JSON-LD do Helmet é dado, não executa). **Embed de formulário:** o iframe é a rota SPA `/f/:slug` em hnbcrm.com e o `embed.js` sai do Convex (`GET /api/v1/embed.js`), não do `dist` — por isso `X-Frame-Options: DENY` + `frame-ancestors 'none'` valem só para `/((?!f/).*)` e `/f/(.*)` recebe uma regra SEM eles (headers do Vercel usam a mesma gramática path-to-regexp dos `rewrites` e casam com o caminho ANTES do rewrite; não usar parâmetro nomeado `:slug` no `source`, o Vercel interpolaria). **Ao adicionar origem externa nova** (fonte, analytics, CDN, iframe), atualizar as DUAS regras. Pegadinhas da validação no Preview: a Vercel Toolbar injeta `vercel.live` (violações que não são do app — não liberar em prod); `index.html` tem um `modulepreload` de `/src/main.tsx` legado que dá erro de MIME sem relação com o CSP; o playground de `/desenvolvedores` faz fetch para URL digitada e sob enforce só `*.convex.site`/self passam.
 
 ## Convex Rules (mandatory)
 
