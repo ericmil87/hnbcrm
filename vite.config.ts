@@ -37,7 +37,7 @@ window.addEventListener('message', async (message) => {
       : null,
     // End of code for taking screenshots on chef.convex.dev.
     mode === 'production' && visualizer({
-      open: true,
+      open: !process.env.CI,
       filename: 'dist/stats.html',
       gzipSize: true,
       brotliSize: true,

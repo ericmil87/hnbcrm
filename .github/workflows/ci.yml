@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "ci/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      # Sem `convex dev --once` de propósito: não há deployment nem chave no CI.
+      - name: Typecheck (convex)
+        run: npx tsc -p convex -noEmit --pretty false
+      - name: Typecheck (app)
+        run: npx tsc -p tsconfig.app.json -noEmit --pretty false
+      - name: Typecheck (node)
+        run: npx tsc -p tsconfig.node.json -noEmit --pretty false
+      - name: Testes (inclui secretScan)
+        run: npm run test
+      - name: Build do frontend
+        run: npx vite build

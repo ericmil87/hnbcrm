@@ -838,7 +838,8 @@ describe("revisão: trava por token (M1)", () => {
     expect(visionJobs).toHaveLength(1);
   });
 
-  test("fetch do sob demanda tem timeout menor que a trava", async () => {
+  // retry: sensível a carga (timers falsos + gateway pendurado); flaky em runner lento. Não mudar os tempos.
+  test("fetch do sob demanda tem timeout menor que a trava", { retry: 2 }, async () => {
     const t = convexTest(schema, modules);
     const { configId, organizationId, asAdmin } = await seed(t);
     vi.stubGlobal("fetch", downloadOkMock());

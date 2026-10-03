@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ericmil87/hnbcrm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ericmil87/hnbcrm/actions/workflows/ci.yml/badge.svg" /></a>
   <img alt="Version" src="https://img.shields.io/badge/version-0.68.0-brand" />
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.7-blue" />
