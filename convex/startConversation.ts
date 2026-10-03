@@ -204,6 +204,9 @@ export const listSendableWhatsappChannels = query({
 const startContextReturns = v.object({
   provider: v.union(v.literal("meta"), v.literal("bridge")),
   phoneToCheck: v.string(),
+  // Grafias do número que JÁ são contato na org — desempate quando o gateway
+  // confirma as duas e só devolve LID (ver `pickCanonicalFromCheck`).
+  knownPhones: v.array(v.string()),
   bridge: v.optional(
     v.object({
       baseUrl: v.optional(v.string()),
@@ -216,6 +219,7 @@ const startContextReturns = v.object({
 type StartContext = {
   provider: "meta" | "bridge";
   phoneToCheck: string;
+  knownPhones: string[];
   bridge?: { baseUrl?: string; tokenEncrypted?: string; sessionState?: string };
 };
 
@@ -251,9 +255,18 @@ export const internalStartContext = internalQuery({
     const r = resolveStartPhone(raw);
     if (!r.ok) throw new ConvexError(r.error);
     const provider = configProvider(channel);
+    const knownPhones: string[] = [];
+    for (const candidate of phoneLookupCandidates(r.phone)) {
+      const row = await ctx.db
+        .query("contacts")
+        .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", args.organizationId).eq("phone", candidate))
+        .first();
+      if (row) knownPhones.push(candidate);
+    }
     return {
       provider,
       phoneToCheck: r.phone,
+      knownPhones,
       ...(provider === "bridge"
         ? {
             bridge: {
@@ -268,7 +281,7 @@ export const internalStartContext = internalQuery({
 });
 
 type NumberCheck =
-  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean }
+  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string }
   | { status: "not_on_whatsapp"; phone: string }
   | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
 
@@ -278,6 +291,8 @@ const numberCheckReturns = v.union(
     canonicalPhone: v.string(),
     phoneDisplay: v.string(),
     changed: v.boolean(),
+    ambiguous: v.optional(v.boolean()),
+    lid: v.optional(v.string()),
   }),
   v.object({ status: v.literal("not_on_whatsapp"), phone: v.string() }),
   v.object({
@@ -313,7 +328,7 @@ async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck>
     if (parsed.users.length === 0) {
       return { status: "unverified", reason: "gateway_error", phone, detail: "Resposta sem usuários" };
     }
-    const pick = pickCanonicalFromCheck(parsed.users, candidates);
+    const pick = pickCanonicalFromCheck(parsed.users, candidates, context.knownPhones);
     if (!pick.onWhatsapp) return { status: "not_on_whatsapp", phone };
     const canonicalPhone = pick.canonicalPhone ?? phone;
     return {
@@ -321,6 +336,8 @@ async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck>
       canonicalPhone,
       phoneDisplay: formatPhoneForDisplay(canonicalPhone),
       changed: canonicalPhone !== phone,
+      ...(pick.ambiguous ? { ambiguous: true } : {}),
+      ...(pick.lid ? { lid: pick.lid } : {}),
     };
   } catch (e) {
     const aborted = e instanceof Error && e.name === "AbortError";

@@ -26,14 +26,29 @@ const TEST_KEY = btoa("A".repeat(32));
  * devolve o JID registrado — igual ao gateway real. Sem `registered`, todo
  * número consultado existe com o próprio JID.
  */
-function wuzapiCheck(registered?: string[]) {
+/**
+ * Stub do wuzapi `POST /user/check`. `registered` = grafias com conta; por
+ * padrão o JID é de telefone. `jid: "lid"` imita o gateway real de 03/10/2026,
+ * que devolve `…@lid` (identidade interna, não é telefone) e diz "sim" para as
+ * duas grafias BR (o servidor normaliza o 9º dígito).
+ */
+function wuzapiCheck(registered?: string[], opts: { jid?: "phone" | "lid"; lid?: string; exact?: boolean } = {}) {
   const calls: Array<{ url: string; body: any }> = [];
   const fn = vi.fn(async (url: string, init?: RequestInit) => {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, body });
     const users = (body?.Phone as string[]).map((q) => {
-      const hit = registered === undefined ? q : registered.find((r) => phoneLookupCandidates(q).includes(r));
-      return hit ? { Query: q, IsInWhatsapp: true, JID: `${hit}@s.whatsapp.net` } : { Query: q, IsInWhatsapp: false, JID: "" };
+      // Sem `exact`, imita o servidor do WhatsApp normalizando o 9º dígito BR
+      // (a grafia irmã também responde "sim").
+      const hit =
+        registered === undefined
+          ? q
+          : opts.exact
+            ? registered.find((r) => r === q)
+            : registered.find((r) => phoneLookupCandidates(q).includes(r));
+      if (!hit) return { Query: q, IsInWhatsapp: false, JID: "" };
+      const jid = opts.jid === "lid" ? `${opts.lid ?? "180002129735765"}@lid` : `${hit}@s.whatsapp.net`;
+      return { Query: q, IsInWhatsapp: true, JID: jid };
     });
     return new Response(JSON.stringify({ code: 200, success: true, data: { Users: users } }), {
       status: 200,
@@ -313,6 +328,60 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
       expect(owners).toHaveLength(1);
       const audit = (await ctx.db.query("auditLogs").collect()).find((a) => a.entityType === "conversation")!;
       expect(audit.metadata?.switchedFromContactId).toBe(bogusId);
+    });
+  });
+
+  test("LID não é telefone (caso real 03/10): gateway devolve @lid e confirma as duas grafias → vence a que já é contato", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ericId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Eric", phone: "558181392929", whatsappNumber: "558181392929", tags: [], createdAt: NOW, updatedAt: NOW })
+    );
+    // As duas grafias "existem" e o JID é um LID.
+    wuzapiCheck(["558181392929", "5581981392929"], { jid: "lid" });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
+    });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", changed: true, ambiguous: true, lid: "180002129735765@lid" });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
+    });
+    expect(res).toMatchObject({ contactId: ericId, createdContact: false, canonicalPhone: "558181392929", verified: true });
+    await t.run(async (ctx) => {
+      const phones = (await ctx.db.query("contacts").collect()).map((c) => c.phone);
+      expect(phones).not.toContain("180002129735765");
+      expect(phones.filter((p) => p === "558181392929")).toHaveLength(1);
+    });
+  });
+
+  test("LID + só a grafia sem o 9 confirmada → canônico é a sem o 9, sem ambiguidade", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    wuzapiCheck(["558181392929"], { jid: "lid", exact: true });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "81981392929",
+    });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "558181392929", changed: true });
+    expect((check as any).ambiguous).toBeUndefined();
+  });
+
+  test("LID + duas grafias confirmadas + nenhum contato → fica a digitada (normalizada), marcada ambígua", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    wuzapiCheck(["558599998888", "5585999998888"], { jid: "lid", lid: "123456789012345" });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    const check = await asAgent.action(api.startConversation.checkWhatsappNumber, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-8888",
+    });
+    expect(check).toMatchObject({ status: "on_whatsapp", canonicalPhone: "5585999998888", changed: false, ambiguous: true });
+    const res = await asAgent.action(api.startConversation.startConversation, {
+      organizationId: s.organizationId, channelConfigId: s.bridgeId, phone: "85 99999-8888",
+    });
+    await t.run(async (ctx) => {
+      const c = (await ctx.db.get(res.contactId))!;
+      expect(c.phone).toBe("5585999998888");
     });
   });
 

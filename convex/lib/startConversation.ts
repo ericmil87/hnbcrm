@@ -71,32 +71,71 @@ export function phoneSpellingVariants(phone: string): string[] {
 
 export type CheckedWhatsappUser = { phone: string; onWhatsapp: boolean; jid?: string };
 
-export type CanonicalPick = { onWhatsapp: boolean; canonicalPhone?: string; jid?: string };
+export type CanonicalPick = {
+  onWhatsapp: boolean;
+  canonicalPhone?: string;
+  /** JID de TELEFONE (`@s.whatsapp.net`) — só ele prova qual grafia é a real. */
+  jid?: string;
+  /** LID (`@lid`) devolvido pelo gateway: identidade interna, NÃO é telefone. */
+  lid?: string;
+  /** O gateway confirmou mais de uma grafia e nenhum JID de telefone desempatou. */
+  ambiguous?: boolean;
+};
 
 const CANONICAL_PHONE_RE = /^\d{8,15}$/;
 
 /**
- * Resultado do `/user/check` → número canônico. Prefere um usuário que está no
- * WhatsApp E tem JID com telefone plausível (8–15 dígitos), na ordem das
- * grafias perguntadas; sem JID, cai na grafia que o próprio gateway confirmou.
+ * JID cujo usuário é o TELEFONE. Caso real (03/10/2026): o wuzapi devolveu
+ * `180002129735765@lid` para o número do Eric — um LID, a identidade interna
+ * que o WhatsApp usa em vez do telefone por privacidade — e os dígitos viraram
+ * "+180002129735765" no CRM. Só `@s.whatsapp.net`/`@c.us` (ou um JID sem
+ * servidor cujos dígitos sejam exatamente uma das grafias) valem como telefone.
+ */
+export function isPhoneJid(jid: string | undefined, candidates: string[] = []): boolean {
+  if (!jid) return false;
+  const at = jid.indexOf("@");
+  if (at < 0) return candidates.includes(jid.replace(/\D+/g, ""));
+  const server = jid.slice(at + 1).toLowerCase();
+  return server === "s.whatsapp.net" || server === "c.us";
+}
+
+export function isLidJid(jid: string | undefined): boolean {
+  return !!jid && /@lid$/i.test(jid);
+}
+
+/**
+ * Resultado do `/user/check` → número canônico, nesta ordem:
+ * 1. usuário no WhatsApp com JID de TELEFONE plausível (8–15 dígitos) — prova;
+ * 2. sem JID de telefone (hoje o gateway costuma devolver LID): a grafia que o
+ *    gateway confirmou. Se confirmou MAIS de uma (o servidor do WhatsApp
+ *    normaliza o 9º dígito BR e diz "sim" para as duas), desempata pela grafia
+ *    que JÁ é contato na org (`knownPhones`) e, sem isso, pela primeira
+ *    pedida (a normalizada) — marcando `ambiguous`.
  * Nenhuma grafia no WhatsApp → `onWhatsapp: false`.
  */
-export function pickCanonicalFromCheck(users: CheckedWhatsappUser[], candidates: string[]): CanonicalPick {
+export function pickCanonicalFromCheck(
+  users: CheckedWhatsappUser[],
+  candidates: string[],
+  knownPhones: string[] = []
+): CanonicalPick {
   const rank = (u: CheckedWhatsappUser) => {
     const i = candidates.indexOf(u.phone);
     return i < 0 ? candidates.length : i;
   };
   const onWa = users.filter((u) => u.onWhatsapp).sort((a, b) => rank(a) - rank(b));
+  const lid = onWa.map((u) => u.jid).find((j) => isLidJid(j));
+  const extra = lid ? { lid } : {};
   for (const u of onWa) {
     const fromJid = phoneFromJid(u.jid);
-    if (u.jid && fromJid && CANONICAL_PHONE_RE.test(fromJid)) {
-      return { onWhatsapp: true, canonicalPhone: fromJid, jid: u.jid };
+    if (u.jid && isPhoneJid(u.jid, candidates) && fromJid && CANONICAL_PHONE_RE.test(fromJid)) {
+      return { onWhatsapp: true, canonicalPhone: fromJid, jid: u.jid, ...extra };
     }
   }
-  for (const u of onWa) {
-    if (CANONICAL_PHONE_RE.test(u.phone)) return { onWhatsapp: true, canonicalPhone: u.phone };
-  }
-  return { onWhatsapp: onWa.length > 0 };
+  const confirmed = onWa.filter((u) => CANONICAL_PHONE_RE.test(u.phone));
+  if (confirmed.length === 0) return { onWhatsapp: onWa.length > 0, ...extra };
+  if (confirmed.length === 1) return { onWhatsapp: true, canonicalPhone: confirmed[0].phone, ...extra };
+  const known = confirmed.find((u) => knownPhones.includes(u.phone));
+  return { onWhatsapp: true, canonicalPhone: (known ?? confirmed[0]).phone, ambiguous: true, ...extra };
 }
 
 /** Telefone já canônico (veio do gateway): só dígitos, 8–15 — nunca re-normalizar. */

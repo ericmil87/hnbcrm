@@ -61,7 +61,7 @@ type ChannelOption = {
 
 /** Resposta de `checkWhatsappNumber` (o número existe no WhatsApp?). */
 type NumberCheckResult =
-  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean }
+  | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string }
   | { status: "not_on_whatsapp"; phone: string }
   | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
 
@@ -134,10 +134,10 @@ export function NewConversationModal({
   const channel = channels?.find((c) => c._id === channelId) ?? null;
   const isMeta = channel?.provider === "meta";
 
-  // Checagem no WhatsApp (bridge): espera a digitação parar (~500 ms) e roda de
+  // Checagem no WhatsApp (bridge): espera a digitação parar (~900 ms) e roda de
   // novo se o canal mudar. A chave amarra o resultado ao destino que o gerou —
   // resposta atrasada de um número antigo nunca vale para o novo.
-  const checkTerm = useDebounced(term.trim(), 500);
+  const checkTerm = useDebounced(term.trim(), 900);
   const checkPhoneMode = !contactId && isPhoneInput(checkTerm);
   const checkKey =
     open && channel && channel.provider === "bridge" && (contactId || checkPhoneMode)
@@ -718,6 +718,13 @@ function NumberCheckLine({
               <strong className="font-semibold">{result.phoneDisplay}</strong>
               {isBrWithoutNinth(result.canonicalPhone) ? " (sem o 9)" : ""}
             </>
+          )}
+          {result.ambiguous && (
+            <span className="text-text-muted">
+              {" "}
+              — o WhatsApp aceitou as duas grafias (com e sem o 9); usando{" "}
+              {result.changed ? "a que já é contato aqui" : "a digitada"}
+            </span>
           )}
         </span>
       </p>
