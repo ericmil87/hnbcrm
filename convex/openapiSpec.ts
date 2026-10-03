@@ -947,7 +947,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Handoffs"],
         "summary": "Rejeitar handoff",
-        "description": "Rejeita uma solicitação de handoff pendente. Num handoff de origem bot_suspect, rejeitar = \"é uma pessoa de verdade\": a suspeita de robô é limpa, a etiqueta sai do lead e a conversa volta para o atendente IA. Requer permissão inbox: reply na chave de API.",
+        "description": "Rejeita uma solicitação de handoff pendente. Num handoff de origem bot_suspect, rejeitar = 'é uma pessoa de verdade': a suspeita de robô é limpa, a etiqueta sai do lead e a conversa volta para o atendente IA. Requer permissão inbox: reply na chave de API.",
         "operationId": "rejectHandoff",
         "requestBody": {
           "required": true,
