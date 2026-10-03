@@ -1176,6 +1176,8 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "lead.updated",
                   "lead.deleted",
                   "lead.stage_changed",
+                  "lead.won",
+                  "lead.lost",
                   "lead.assigned",
                   "contact.created",
                   "contact.updated",

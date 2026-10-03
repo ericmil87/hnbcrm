@@ -598,6 +598,8 @@ export function AuditLogs() {
                                 <span className="text-xs text-text-muted">
                                   {log.actorType === "ai"
                                     ? "IA"
+                                    : log.actorType === "api"
+                                    ? "API"
                                     : log.actorType === "system"
                                     ? "Sistema"
                                     : "Humano"}

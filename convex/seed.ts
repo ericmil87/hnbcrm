@@ -192,6 +192,10 @@ export const seedMockData = mutation({
         customFields: {},
         qualification: l.qualification,
         conversationStatus: l.convStatus,
+        stageEnteredAt: l.created,
+        ...(l.stage === "Closed Won" || l.stage === "Closed Lost"
+          ? { closedAt: l.created, closedType: l.stage === "Closed Won" ? ("won" as const) : ("lost" as const) }
+          : {}),
         lastActivityAt: l.created + 3 * 60 * 60 * 1000, // a few hours after creation
         createdAt: l.created,
         updatedAt: l.created + 2 * 60 * 60 * 1000,

@@ -147,6 +147,14 @@ export function registerLeadTools(server: McpServer, client: HnbCrmClient) {
     {
       leadId: z.string().describe("ID of the lead to move"),
       stageId: z.string().describe("Target stage ID"),
+      closedReason: z
+        .string()
+        .optional()
+        .describe("Short reason when the target is a won/lost stage (strongly recommended for lost — feeds the loss report)"),
+      finalValue: z
+        .number()
+        .optional()
+        .describe("Final deal value when closing as won/lost (overwrites the lead value)"),
     },
     async (args) => {
       const result = await client.post("/api/v1/leads/move-stage", args);

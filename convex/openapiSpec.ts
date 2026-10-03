@@ -241,7 +241,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Leads"],
         "summary": "Mover lead de estágio",
-        "description": "Move um lead para um estágio diferente no pipeline. Requer permissão leads: view_own na chave de API.",
+        "description": "Move um lead para um estágio diferente do MESMO funil. Entrar num estágio de ganho/perda fecha o lead (closedAt/closedType) e dispara o webhook lead.won/lead.lost uma única vez; voltar a um estágio aberto reabre (limpa os campos de fechamento). O lead.stage_changed traz closedType, reopened e actorType (api nesta rota). Requer permissão leads: view_own na chave de API.",
         "operationId": "moveLeadStage",
         "requestBody": {
           "required": true,
@@ -252,7 +252,9 @@ export const OPENAPI_SPEC = `{
                 "required": ["leadId", "stageId"],
                 "properties": {
                   "leadId": { "type": "string", "description": "ID do lead" },
-                  "stageId": { "type": "string", "description": "ID do estágio de destino" }
+                  "stageId": { "type": "string", "description": "ID do estágio de destino" },
+                  "closedReason": { "type": "string", "maxLength": 200, "description": "Motivo do fechamento (recomendado em perda). Saneado: URL, telefone e documentos são removidos." },
+                  "finalValue": { "type": "number", "minimum": 0, "description": "Valor final ao fechar (sobrescreve o valor do lead)" }
                 }
               }
             }

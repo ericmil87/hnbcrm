@@ -474,6 +474,7 @@ export const generateSampleData = internalMutation({
         conversationStatus: l.conversationStatus,
         closedAt: l.closedAt,
         closedType: l.closedType,
+        stageEnteredAt: l.closedAt ?? createdAt,
         lastActivityAt: createdAt + 3 * 60 * 60 * 1000,
         createdAt,
         updatedAt: createdAt + 2 * 60 * 60 * 1000,

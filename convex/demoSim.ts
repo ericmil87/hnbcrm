@@ -27,7 +27,7 @@ import { contactKindValidator, leadAttributionValidator } from "./schema";
 import { normalizeCampaignKey } from "./lib/orgModules";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { transferConversationCore } from "./lib/conversationTransfer";
-import { moveLeadToStageCore } from "./lib/leadStageMove";
+import { leadCreationStagePatch, moveLeadToStageCore } from "./lib/leadStageMove";
 import { createHandoffCore, acceptHandoffCore } from "./handoffs";
 import { upsertRow } from "./adSpend";
 import { buildSearchText } from "./lib/searchText";
@@ -827,6 +827,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         ...(unit ? { unitId: unit._id } : {}),
         ...(op.contactKind ? { contactKind: op.contactKind } : {}),
         ...(op.attribution ? { attribution: completeAttribution(op.attribution, at) } : {}),
+        ...leadCreationStagePatch(stage, at),
         lastActivityAt: at,
         createdAt: at,
         updatedAt: at,
@@ -964,9 +965,10 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
               lead: (await ctx.db.get(lead._id))!,
               newStage: stage,
               newStageId: stage._id,
-              actor,
+              actor: { type: "automation", memberId: actor._id },
+              metadata: { via: "demoSim" },
               now: at,
-              ...(boardId !== lead.boardId ? { extraPatch: { boardId } } : {}),
+              targetBoardId: boardId,
             });
           }
         }
@@ -1073,7 +1075,8 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         lead,
         newStage: target,
         newStageId: target._id,
-        actor,
+        actor: { type: "automation", memberId: actor._id },
+        metadata: { via: "demoSim" },
         closedReason: op.reason?.trim() || undefined,
         finalValue: op.value,
         extraPatch: { customFields },

@@ -32,6 +32,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { batchGet } from "./lib/batchGet";
 import { hardDeleteLead, scheduleLeadCascade } from "./lib/leadCascade";
+import { leadCreationStagePatch, moveLeadToStageCore, sanitizeCloseReason } from "./lib/leadStageMove";
 import {
   listCampaignsHandler,
   getCampaignReportHandler,
@@ -1132,6 +1133,7 @@ async function runWriteTool(
           : [],
         customFields: {},
         conversationStatus: "new",
+        ...leadCreationStagePatch(stage, now),
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,
@@ -1222,47 +1224,24 @@ async function runWriteTool(
         return { status: "ja_estava", leadId: lead._id, stageName: target.name };
       }
 
-      const oldStage = stages.find((s) => s._id === lead.stageId);
-      const patch: Record<string, unknown> = {
-        stageId: target._id,
-        lastActivityAt: now,
-        updatedAt: now,
-      };
-      if (target.isClosedWon) {
-        patch.closedAt = now;
-        patch.closedType = "won";
-      } else if (target.isClosedLost) {
-        patch.closedAt = now;
-        patch.closedType = "lost";
-      } else {
-        patch.closedAt = undefined;
-        patch.closedReason = undefined;
-        patch.closedType = undefined;
+      const reason = sanitizeCloseReason(toolArgs.reason);
+      if (target.isClosedLost && !reason) {
+        return {
+          error: `Para mover para "${target.name}" (estágio de perda) informe reason — o motivo curto da perda. Pergunte ao usuário se ele não disse.`,
+        };
       }
-      await ctx.db.patch(lead._id, patch);
-      await audit({
-        entityType: "lead",
-        entityId: lead._id,
-        action: "move",
-        changes: { before: { stageId: lead.stageId }, after: { stageId: target._id } },
-        metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: target.name },
-        description: `Moveu o lead '${lead.title}' de '${oldStage?.name}' para '${target.name}'`,
-        severity: "medium",
-      });
-      await ctx.db.insert("activities", {
-        organizationId,
-        leadId: lead._id,
-        type: "stage_change",
-        actorId: member._id,
-        actorType: "human",
-        content: `Movido de "${oldStage?.name ?? "?"}" para "${target.name}" via Copiloto`,
-        metadata: { oldStageId: lead.stageId, newStageId: target._id, via: "copilot" },
-        createdAt: now,
-      });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-        organizationId,
-        event: "lead.stage_changed",
-        payload: { leadId: lead._id, oldStageId: lead.stageId, newStageId: target._id },
+      const oldStage = stages.find((s) => s._id === lead.stageId);
+      // Porta única (T03): ator humano (o copiloto age COMO o usuário), marca via:"copilot".
+      await moveLeadToStageCore(ctx, {
+        lead,
+        newStage: target,
+        newStageId: target._id,
+        actor: { type: "human", memberId: member._id },
+        closedReason: reason || undefined,
+        metadata: { via: "copilot" },
+        auditDescription: `Moveu o lead '${lead.title}' de '${oldStage?.name}' para '${target.name}' (via Copiloto)`,
+        activityContent: `Movido de "${oldStage?.name ?? "?"}" para "${target.name}" via Copiloto`,
+        now,
       });
       return { status: "movido", leadId: lead._id, stageName: target.name };
     }

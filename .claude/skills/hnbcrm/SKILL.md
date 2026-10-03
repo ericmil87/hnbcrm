@@ -103,7 +103,7 @@ Move leads through stages using `crm_move_lead`. Before advancing:
 - Update the lead's temperature if it has changed
 - Log the reason for the stage change as an activity
 
-Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close deals.
+Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close deals. When closing, pass `closedReason` (always for lost — the loss report depends on it) and `finalValue` if the deal value changed.
 
 ### 4. Contact Enrichment
 

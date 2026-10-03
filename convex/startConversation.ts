@@ -48,6 +48,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { formatPhoneForDisplay } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
+import { leadCreationStagePatch } from "./lib/leadStageMove";
 import { decryptSecret } from "./lib/secretCrypto";
 import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse } from "./lib/bridgeSession";
 import {
@@ -1017,6 +1018,7 @@ async function startConversationCore(
         tags: [],
         customFields: {},
         conversationStatus: "new",
+        ...leadCreationStagePatch(stage, now),
         lastActivityAt: now,
         createdAt: now,
         updatedAt: now,

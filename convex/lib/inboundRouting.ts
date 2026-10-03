@@ -7,6 +7,7 @@
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { buildSearchText } from "./searchText";
+import { leadCreationStagePatch } from "./leadStageMove";
 import { orgAiActive } from "./agentSecurity";
 import { configProvider } from "../channelConfigs";
 
@@ -188,6 +189,7 @@ export async function ensureLeadForContact(
     tags: [],
     customFields: {},
     conversationStatus: "new",
+    ...leadCreationStagePatch(firstStage, now),
     lastActivityAt: now,
     createdAt: now,
     updatedAt: now,

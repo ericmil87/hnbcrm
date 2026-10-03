@@ -920,6 +920,15 @@ const applicationTables = {
     closedAt: v.optional(v.number()),
     closedReason: v.optional(v.string()),
     closedType: v.optional(v.union(v.literal("won"), v.literal("lost"))),
+    // T03 (porta única de etapa): instante em que o lead ENTROU na etapa
+    // atual — gravado na criação e em toda mudança por
+    // lib/leadStageMove.moveLeadToStageCore. Ausente = legado (backfill em
+    // leads:internalBackfillClosedAt).
+    stageEnteredAt: v.optional(v.number()),
+    // Espaço tipado para a T16 (motivos de perda estruturados): gravados pelo
+    // núcleo SÓ quando vêm no fechamento como perdido; limpos ao reabrir/ganhar.
+    lossReasonKey: v.optional(v.string()),
+    lostFromStageId: v.optional(v.id("stages")),
     // Soft-delete timestamp: undefined = active, set = archived
     archivedAt: v.optional(v.number()),
     // MVP Central — unidade (hotel/filial), tipo de contato e origem.
@@ -1602,7 +1611,7 @@ const applicationTables = {
       v.literal("event_created"), v.literal("event_completed")
     ),
     actorId: v.optional(v.id("teamMembers")),
-    actorType: v.union(v.literal("human"), v.literal("ai"), v.literal("system")),
+    actorType: v.union(v.literal("human"), v.literal("ai"), v.literal("system"), v.literal("api")),
     content: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
     createdAt: v.number(),
@@ -1626,7 +1635,7 @@ const applicationTables = {
       v.literal("handoff")
     ),
     actorId: v.optional(v.id("teamMembers")),
-    actorType: v.union(v.literal("human"), v.literal("ai"), v.literal("system")),
+    actorType: v.union(v.literal("human"), v.literal("ai"), v.literal("system"), v.literal("api")),
     changes: v.optional(v.object({
       before: v.optional(v.record(v.string(), v.any())),
       after: v.optional(v.record(v.string(), v.any())),

@@ -135,8 +135,10 @@ The core sales entity tracked through a pipeline.
 | qualification | object | BANT scoring: budget, authority, need, timeline (booleans) + score (number) |
 | conversationStatus | enum | new, active, waiting, closed |
 | handoffState | object | Current handoff status if any |
-| closedAt | number | Timestamp if closed |
+| closedAt | number | Timestamp if closed (set when the lead enters a won/lost stage by ANY path — UI, bulk, API, AI; cleared when it is reopened) |
 | closedType | enum | won, lost |
+| closedReason | string | Reason given when closing (required by the UI and by the AI attendant for lost) |
+| stageEnteredAt | number | When the lead entered its current stage (set on creation and on every stage change) |
 
 ### Contact
 A person or company associated with leads.
@@ -627,9 +629,9 @@ Delete a lead.
 **Response:** \`{ success: true }\`
 
 #### POST /api/v1/leads/move-stage
-Move lead to a different pipeline stage.
+Move lead to a different pipeline stage (the stage must belong to the lead's board). Moving into a won/lost stage closes the lead (\`closedAt\`/\`closedType\`) and fires \`lead.won\`/\`lead.lost\` once; moving back to an open stage reopens it (close fields cleared). Recorded with actorType \`api\`.
 
-**Body:** leadId (required), stageId (required)
+**Body:** leadId (required), stageId (required), closedReason (optional — recommended for lost; sanitized, max 200 chars), finalValue (optional number — overwrites the lead value when closing)
 
 **Response:** \`{ success: true }\`
 
@@ -1678,7 +1680,9 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | lead.created | New lead created |
 | lead.updated | Lead fields updated |
 | lead.deleted | Lead deleted |
-| lead.stage_changed | Lead moved to different stage |
+| lead.stage_changed | Lead moved to different stage (payload: leadId, boardId, oldStageId, newStageId, oldStageName, newStageName, closedType \`won\`/\`lost\`/null, reopened, actorType \`human\`/\`ai\`/\`api\`/\`automation\`) |
+| lead.won | Lead closed as won — fired ONCE per closing, by every path (UI, bulk, API/MCP, AI attendant, Copilot). Payload: leadId, value, currency, reason, stageId, stageName, boardId, actorType, actorId, closedAt. Moving between two won stages does not fire it again |
+| lead.lost | Lead closed as lost — same rules and payload as lead.won (reason is the loss reason) |
 | lead.assigned | Lead assigned or unassigned |
 | contact.created | New contact created |
 | contact.updated | Contact fields updated |

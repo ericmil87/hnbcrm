@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -18,7 +18,13 @@ import {
 } from "./lib/leadCascade";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { cancelFollowUpsOfLead } from "./lib/followUpOps";
-import { moveLeadToStageCore, stageClosePatch } from "./lib/leadStageMove";
+import {
+  moveLeadToStageCore,
+  actorFromMember,
+  sanitizeCloseReason,
+  leadCreationStagePatch,
+  backfillPatchForLead,
+} from "./lib/leadStageMove";
 
 // Get leads for organization
 export const getLeads = query({
@@ -136,6 +142,16 @@ export const createLead = mutation({
       stageId = stages[0]?._id;
       if (!stageId) throw new Error("No stages found for board");
     }
+    // A etapa tem de ser do funil informado (e portanto da org) — antes uma
+    // etapa de outro funil/org entrava gravada no lead.
+    const initialStage = await ctx.db.get(stageId);
+    if (
+      !initialStage ||
+      initialStage.boardId !== args.boardId ||
+      initialStage.organizationId !== args.organizationId
+    ) {
+      throw new Error("Estágio não pertence ao funil informado");
+    }
 
     if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
 
@@ -157,6 +173,7 @@ export const createLead = mutation({
       tags: args.tags || [],
       customFields: args.customFields || {},
       conversationStatus: "new",
+      ...leadCreationStagePatch(initialStage, now),
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,
@@ -521,15 +538,24 @@ export const moveLeadToStage = mutation({
 
     const userMember = await requireAuth(ctx, lead.organizationId);
     const newStage = await ctx.db.get(args.stageId);
+    if (!newStage || newStage.organizationId !== lead.organizationId) {
+      throw new Error("Estágio não encontrado");
+    }
+    if (args.finalValue !== undefined && (!Number.isFinite(args.finalValue) || args.finalValue < 0)) {
+      throw new ConvexError("Valor final inválido");
+    }
 
-    // Regra de fechamento + audit/activity/webhook: núcleo único em
-    // lib/leadStageMove (também usado pelo desfecho de conversa da Central).
+    // Regra de fechamento + audit/activity/webhook: PORTA ÚNICA em
+    // lib/leadStageMove. O painel do lead permite escolher etapa de OUTRO
+    // funil — antes só o stageId mudava e o lead ficava com boardId velho
+    // (sumia do Kanban); agora o funil acompanha.
     await moveLeadToStageCore(ctx, {
       lead,
       newStage,
       newStageId: args.stageId,
-      actor: userMember,
-      closedReason: args.closedReason,
+      targetBoardId: newStage.boardId,
+      actor: actorFromMember(userMember),
+      closedReason: args.closedReason?.trim() || undefined,
       finalValue: args.finalValue,
     });
 
@@ -1013,6 +1039,16 @@ export const internalCreateLead = internalMutation({
       stageId = stages[0]?._id;
       if (!stageId) throw new Error("No stages found for board");
     }
+    // A etapa tem de ser do funil informado (e portanto da org) — antes uma
+    // etapa de outro funil/org entrava gravada no lead.
+    const initialStage = await ctx.db.get(stageId);
+    if (
+      !initialStage ||
+      initialStage.boardId !== args.boardId ||
+      initialStage.organizationId !== args.organizationId
+    ) {
+      throw new Error("Estágio não pertence ao funil informado");
+    }
 
     if (args.assignedTo) await assertAssignableMember(ctx, args.organizationId, args.assignedTo);
 
@@ -1034,6 +1070,7 @@ export const internalCreateLead = internalMutation({
       tags: args.tags || [],
       customFields: args.customFields || {},
       conversationStatus: "new",
+      ...leadCreationStagePatch(initialStage, now),
       lastActivityAt: now,
       createdAt: now,
       updatedAt: now,
@@ -1203,12 +1240,16 @@ export const internalDeleteLead = internalMutation({
   },
 });
 
-// Internal: Move lead to stage (accepts teamMemberId instead of auth)
+// Internal: Move lead to stage (accepts teamMemberId instead of auth).
+// Porta da REST `POST /api/v1/leads/move-stage` e do MCP `crm_move_lead`:
+// ator "api" no audit/activity/webhook.
 export const internalMoveLeadToStage = internalMutation({
   args: {
     leadId: v.id("leads"),
     stageId: v.id("stages"),
     teamMemberId: v.id("teamMembers"),
+    closedReason: v.optional(v.string()),
+    finalValue: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1220,61 +1261,17 @@ export const internalMoveLeadToStage = internalMutation({
     // Camada 1 (assertAgentCan): RBAC do ator + org do ator == org do lead.
     // Vale para qualquer chamador desta internal (REST, runtime de IA).
     await assertAgentCan(ctx, args.teamMemberId, "leads", "edit_own", lead);
-    const targetStage = await ctx.db.get(args.stageId);
-    if (!targetStage || targetStage.organizationId !== lead.organizationId) {
-      throw new Error("Estágio não pertence à organização do lead");
+    if (args.finalValue !== undefined && (!Number.isFinite(args.finalValue) || args.finalValue < 0)) {
+      throw new Error("finalValue inválido");
     }
 
-    const oldStageId = lead.stageId;
-    const now = Date.now();
-
-    // Get stage names for activity log
-    const [oldStage, newStage] = await Promise.all([
-      ctx.db.get(oldStageId),
-      ctx.db.get(args.stageId),
-    ]);
-
-    await ctx.db.patch(args.leadId, {
-      stageId: args.stageId,
-      lastActivityAt: now,
-      updatedAt: now,
-    });
-
-    // Log audit entry
-    await ctx.db.insert("auditLogs", {
-      organizationId: lead.organizationId,
-      entityType: "lead",
-      entityId: args.leadId,
-      action: "move",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      changes: {
-        before: { stageId: oldStageId },
-        after: { stageId: args.stageId },
-      },
-      metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name },
-      description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage?.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
-      severity: "medium",
-      createdAt: now,
-    });
-
-    // Log activity
-    await ctx.db.insert("activities", {
-      organizationId: lead.organizationId,
-      leadId: args.leadId,
-      type: "stage_change",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      content: `Moved from "${oldStage?.name || "Unknown"}" to "${newStage?.name || "Unknown"}"`,
-      metadata: { oldStageId, newStageId: args.stageId },
-      createdAt: now,
-    });
-
-    // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-      organizationId: lead.organizationId,
-      event: "lead.stage_changed",
-      payload: { leadId: args.leadId, oldStageId, newStageId: args.stageId, oldStageName: oldStage?.name, newStageName: newStage?.name },
+    await moveLeadToStageCore(ctx, {
+      lead,
+      newStageId: args.stageId,
+      actor: { type: "api", memberId: teamMember._id },
+      closedReason: sanitizeCloseReason(args.closedReason) || undefined,
+      finalValue: args.finalValue,
+      metadata: { via: "api" },
     });
 
     return null;
@@ -1405,56 +1402,17 @@ export const bulkMoveLeads = mutation({
       if (lead.boardId !== newStage.boardId) continue;
       if (lead.stageId === args.stageId) continue;
 
-      const oldStageId = lead.stageId;
-      const oldStage = await ctx.db.get(oldStageId);
-
-      const patch: Record<string, any> = {
-        stageId: args.stageId,
-        lastActivityAt: now,
-        updatedAt: now,
-      };
-
-      // Mesma regra de fechamento do moveLeadToStage (sem motivo/valor)
-      Object.assign(patch, stageClosePatch(newStage, now));
-
-      await ctx.db.patch(leadId, patch);
-
-      // Audit log
-      await ctx.db.insert("auditLogs", {
-        organizationId: lead.organizationId,
-        entityType: "lead",
-        entityId: leadId,
-        action: "move",
-        actorId: userMember._id,
-        actorType: userMember.type === "ai" ? "ai" : "human",
-        changes: {
-          before: { stageId: oldStageId },
-          after: { stageId: args.stageId },
-        },
-        metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage.name },
-        description: buildAuditDescription({ action: "move", entityType: "lead", metadata: { title: lead.title, fromStageName: oldStage?.name, toStageName: newStage.name }, changes: { before: { stageId: oldStageId }, after: { stageId: args.stageId } } }),
-        severity: "medium",
-        createdAt: now,
+      // Porta única: um audit + uma activity + um webhook POR LEAD (e
+      // lead.won/lead.lost uma vez por fechamento), sem motivo/valor.
+      const result = await moveLeadToStageCore(ctx, {
+        lead,
+        newStage,
+        newStageId: args.stageId,
+        actor: actorFromMember(userMember),
+        metadata: { bulk: true },
+        now,
       });
-
-      // Activity log
-      await ctx.db.insert("activities", {
-        organizationId: lead.organizationId,
-        leadId,
-        type: "stage_change",
-        actorId: userMember._id,
-        actorType: userMember.type === "ai" ? "ai" : "human",
-        content: `Moved from "${oldStage?.name || "Unknown"}" to "${newStage.name}"`,
-        metadata: { oldStageId, newStageId: args.stageId },
-        createdAt: now,
-      });
-
-      // Trigger webhooks
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-        organizationId: lead.organizationId,
-        event: "lead.stage_changed",
-        payload: { leadId, oldStageId, newStageId: args.stageId, oldStageName: oldStage?.name, newStageName: newStage.name },
-      });
+      if (!result.moved) continue;
 
       moved += 1;
     }
@@ -1730,5 +1688,91 @@ export const bulkArchiveLeads = mutation({
     }
 
     return { updated };
+  },
+});
+
+// ===== Ops: backfill de fechamento/etapa (T03) =====
+
+const BACKFILL_PAGE_SIZE = 200;
+
+/**
+ * Ops (sem UI): leads em etapa de ganho/perda sem `closedAt` ganham
+ * `closedAt = updatedAt ?? _creationTime` + `closedType` pela flag da etapa,
+ * e todo lead sem `stageEnteredAt` ganha `updatedAt ?? _creationTime` (no
+ * mesmo passe). `dryRun` (default TRUE) lê UMA página e não escreve nada —
+ * repita com o `cursor` devolvido para ver o resto; o real se reagenda sozinho
+ * até o fim. Sem side effects por lead (é correção de dado, não mudança de
+ * etapa: nenhum audit/webhook won/lost retroativo).
+ *
+ *   npx convex run leads:internalBackfillClosedAt '{"dryRun":true}'
+ *   npx convex run leads:internalBackfillClosedAt '{"dryRun":false}'
+ */
+export const internalBackfillClosedAt = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    organizationId: v.optional(v.id("organizations")),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    closedFixed: v.number(),
+    stageEnteredFixed: v.number(),
+    openWithCloseFields: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const paginationOpts = { numItems: BACKFILL_PAGE_SIZE, cursor: args.cursor ?? null };
+    const page = args.organizationId
+      ? await ctx.db
+          .query("leads")
+          .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId!))
+          .paginate(paginationOpts)
+      : await ctx.db.query("leads").paginate(paginationOpts);
+
+    const stageCache = new Map<string, { isClosedWon?: boolean; isClosedLost?: boolean } | null>();
+    let closedFixed = 0;
+    let stageEnteredFixed = 0;
+    let openWithCloseFields = 0;
+    for (const lead of page.page) {
+      let stage = stageCache.get(lead.stageId);
+      if (stage === undefined) {
+        const doc = await ctx.db.get(lead.stageId);
+        stage = doc ? { isClosedWon: doc.isClosedWon, isClosedLost: doc.isClosedLost } : null;
+        stageCache.set(lead.stageId, stage);
+      }
+      const plan = backfillPatchForLead(lead, stage);
+      if (plan.fixedClosed) closedFixed++;
+      if (plan.fixedStageEntered) stageEnteredFixed++;
+      if (plan.openWithCloseFields) openWithCloseFields++;
+      if (!dryRun && Object.keys(plan.patch).length > 0) {
+        await ctx.db.patch(lead._id, plan.patch);
+      }
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.leads.internalBackfillClosedAt, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+      });
+      scheduledNext = true;
+    }
+
+    return {
+      dryRun,
+      scanned: page.page.length,
+      closedFixed,
+      stageEnteredFixed,
+      openWithCloseFields,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
   },
 });

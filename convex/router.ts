@@ -592,10 +592,22 @@ http.route({
       const body = await request.json();
       if (!body.leadId || !body.stageId) return errorResponse("leadId and stageId required", 400);
 
+      if (body.closedReason !== undefined && typeof body.closedReason !== "string") {
+        return errorResponse("closedReason must be a string", 400);
+      }
+      if (
+        body.finalValue !== undefined &&
+        (typeof body.finalValue !== "number" || !Number.isFinite(body.finalValue) || body.finalValue < 0)
+      ) {
+        return errorResponse("finalValue must be a finite number >= 0", 400);
+      }
+
       await ctx.runMutation(internal.leads.internalMoveLeadToStage, {
         leadId: body.leadId as Id<"leads">,
         stageId: body.stageId as Id<"stages">,
         teamMemberId: apiKeyRecord.teamMemberId,
+        ...(typeof body.closedReason === "string" ? { closedReason: body.closedReason } : {}),
+        ...(typeof body.finalValue === "number" ? { finalValue: body.finalValue } : {}),
       });
 
       return jsonResponse({ success: true });

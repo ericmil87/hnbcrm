@@ -47,6 +47,7 @@ import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { extractMentionIds } from "@/lib/mentions";
 import { CreateTaskModal } from "./CreateTaskModal";
+import { CloseReasonModal } from "./CloseReasonModal";
 import { LeadDocuments } from "./LeadDocuments";
 import { FileUploadButton, UploadedFile } from "@/components/ui/FileUploadButton";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
@@ -1159,6 +1160,8 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
   const [showStagePicker, setShowStagePicker] = useState(false);
   const boards = useQuery(api.boards.getBoards, { organizationId });
   const [selectedBoardId, setSelectedBoardId] = useState<Id<"boards"> | null>(null);
+  // Mover para Ganho/Perdido pede motivo/valor no MESMO modal do Kanban.
+  const [pendingClose, setPendingClose] = useState<{ stageId: Id<"stages">; isWon: boolean } | null>(null);
   const stages = useQuery(
     api.boards.getStages,
     selectedBoardId ? { boardId: selectedBoardId } : "skip"
@@ -1278,6 +1281,13 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
 
   // Stage handlers
   const handleMoveToStage = async (stageId: Id<"stages">) => {
+    const target = stages?.find((s) => s._id === stageId);
+    if (target && target._id !== lead?.stageId && (target.isClosedWon || target.isClosedLost)) {
+      setShowStagePicker(false);
+      setSelectedBoardId(null);
+      setPendingClose({ stageId, isWon: !!target.isClosedWon });
+      return;
+    }
     try {
       await moveLeadToStageMutation({ leadId, stageId });
       setShowStagePicker(false);
@@ -1782,6 +1792,17 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
 
       {/* Documents */}
       <LeadDocuments leadId={leadId} organizationId={organizationId} />
+
+      {pendingClose && (
+        <CloseReasonModal
+          open
+          onClose={() => setPendingClose(null)}
+          leadId={leadId}
+          stageId={pendingClose.stageId}
+          isWon={pendingClose.isWon}
+          currentValue={lead.value}
+        />
+      )}
     </div>
   );
 }

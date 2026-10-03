@@ -113,6 +113,7 @@ export function rowLimitMessage(rows: number): string {
 // compartilhado com o frontend e as rotas REST (todos codificam igual).
 export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importKeys";
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
+import { leadCreationStagePatch } from "./lib/leadStageMove";
 
 /** Cabeçalho legível a partir da chave (só para mensagens de erro). */
 function headerLabel(key: string): string {
@@ -1205,6 +1206,9 @@ export const internalProcessBatch = internalMutation({
           tags: (value.tags as string[]) ?? [],
           customFields: (value.customFields as Record<string, any>) ?? {},
           conversationStatus: "new",
+          // Lead importado direto numa etapa fechada já nasce fechado
+          // (closedAt/closedType), sem stage_changed nem won/lost.
+          ...leadCreationStagePatch(stage, now),
           lastActivityAt: now,
           createdAt: now,
           updatedAt: now,

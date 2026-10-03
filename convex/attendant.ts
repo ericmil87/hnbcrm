@@ -76,6 +76,12 @@ import {
   formatLocalShort,
 } from "./lib/agentSchedule";
 import { FOLLOW_UP_NOTE_MAX, sanitizeFollowUpNote } from "./lib/followUpNote";
+import {
+  missingLossReasonError,
+  moveLeadToStageCore,
+  moveThisLeadProposalError,
+  sanitizeCloseReason,
+} from "./lib/leadStageMove";
 import { parseEventEnd, resolveFollowUpSettings } from "./lib/followUpSettings";
 import {
   MAX_PENDING_FOLLOW_UPS,
@@ -371,8 +377,12 @@ export function describeAttendantAction(
     // rótulo genérico abaixo
   }
   switch (name) {
-    case "moveThisLead":
-      return `Mover o lead para "${typeof a.stageName === "string" ? a.stageName : "?"}"`;
+    case "moveThisLead": {
+      const motivo = sanitizeCloseReason(a.reason);
+      return `Mover o lead para "${typeof a.stageName === "string" ? a.stageName : "?"}"${
+        motivo ? ` — motivo: ${motivo}` : ""
+      }`;
+    }
     case "scheduleFollowUp": {
       // O rótulo precisa dizer QUANDO: no modo sugestão o follow-up só nasce se
       // o humano aprovar esta ação no card, e aprovar "agendar follow-up" sem
@@ -1736,44 +1746,23 @@ export async function executeAttendantToolCore(
         if (target._id === lead.stageId) {
           return projectToolResult(spec, { status: "ja_estava", stageName: target.name });
         }
+        // T03: perda exige motivo (sem ele o relatório de perdas fica cego) —
+        // erro INSTRUTIVO ao modelo, não exceção.
+        const reason = sanitizeCloseReason(parsed.reason);
+        if (target.isClosedLost && !reason) {
+          return { error: missingLossReasonError(target.name) };
+        }
         const oldStage = stages.find((s) => s._id === lead.stageId);
-        await ctx.db.patch(lead._id, {
-          stageId: target._id,
-          lastActivityAt: now,
-          updatedAt: now,
-        });
-        await ctx.db.insert("auditLogs", {
-          organizationId: lead.organizationId,
-          entityType: "lead",
-          entityId: lead._id,
-          action: "move",
-          actorId: agent._id,
-          actorType: "ai",
-          changes: { before: { stageId: lead.stageId }, after: { stageId: target._id } },
-          metadata: {
-            title: lead.title,
-            fromStageName: oldStage?.name,
-            toStageName: target.name,
-            via: "attendant",
-          },
-          description: `Moveu o lead '${lead.title}' de '${oldStage?.name}' para '${target.name}' (atendente IA)`,
-          severity: "medium",
-          createdAt: now,
-        });
-        await ctx.db.insert("activities", {
-          organizationId: lead.organizationId,
-          leadId: lead._id,
-          type: "stage_change",
-          actorId: agent._id,
-          actorType: "ai",
-          content: `Movido de "${oldStage?.name ?? "?"}" para "${target.name}" pelo atendente IA`,
-          metadata: { oldStageId: lead.stageId, newStageId: target._id },
-          createdAt: now,
-        });
-        await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-          organizationId: lead.organizationId,
-          event: "lead.stage_changed",
-          payload: { leadId: lead._id, oldStageId: lead.stageId, newStageId: target._id },
+        await moveLeadToStageCore(ctx, {
+          lead,
+          newStage: target,
+          newStageId: target._id,
+          actor: { type: "ai", memberId: agent._id },
+          closedReason: reason || undefined,
+          metadata: { via: "attendant" },
+          auditDescription: `Moveu o lead '${lead.title}' de '${oldStage?.name}' para '${target.name}' (atendente IA)`,
+          activityContent: `Movido de "${oldStage?.name ?? "?"}" para "${target.name}" pelo atendente IA`,
+          now,
         });
         return projectToolResult(spec, { status: "movido", stageName: target.name });
       }
@@ -2099,45 +2088,15 @@ export async function executeAttendantToolCore(
               .withIndex("by_board_and_order", (q) => q.eq("boardId", lead.boardId))
               .collect();
             const oldStage = stages.find((s) => s._id === lead.stageId);
-            await ctx.db.patch(lead._id, {
-              stageId: target._id,
-              lastActivityAt: now,
-              updatedAt: now,
-            });
-            await ctx.db.insert("auditLogs", {
-              organizationId: lead.organizationId,
-              entityType: "lead",
-              entityId: lead._id,
-              action: "move",
-              actorId: agent._id,
-              actorType: "ai",
-              changes: { before: { stageId: lead.stageId }, after: { stageId: target._id } },
-              metadata: {
-                title: lead.title,
-                fromStageName: oldStage?.name,
-                toStageName: target.name,
-                via: "attendant_qualification_rule",
-                score,
-                threshold,
-              },
-              description: `Moveu o lead '${lead.title}' para '${target.name}' por regra de qualificação (BANT ${score}/4 ≥ ${threshold})`,
-              severity: "medium",
-              createdAt: now,
-            });
-            await ctx.db.insert("activities", {
-              organizationId: lead.organizationId,
-              leadId: lead._id,
-              type: "stage_change",
-              actorId: agent._id,
-              actorType: "ai",
-              content: `Movido para "${target.name}" por regra de qualificação (BANT ${score}/4)`,
-              metadata: { oldStageId: lead.stageId, newStageId: target._id, rule: "qualification" },
-              createdAt: now,
-            });
-            await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
-              organizationId: lead.organizationId,
-              event: "lead.stage_changed",
-              payload: { leadId: lead._id, oldStageId: lead.stageId, newStageId: target._id },
+            await moveLeadToStageCore(ctx, {
+              lead,
+              newStage: target,
+              newStageId: target._id,
+              actor: { type: "ai", memberId: agent._id },
+              metadata: { via: "attendant_qualification_rule", rule: "qualification", score, threshold },
+              auditDescription: `Moveu o lead '${lead.title}' para '${target.name}' por regra de qualificação (BANT ${score}/4 ≥ ${threshold})`,
+              activityContent: `Movido para "${target.name}" por regra de qualificação (BANT ${score}/4)`,
+              now,
             });
             movedTo = target.name;
           }
@@ -3617,7 +3576,15 @@ export const internalProcessQueueItem = internalAction({
                 }
               );
             }
-            if (typeof preview.error === "string") {
+            // Perda sem motivo também não vira proposta (T03): o humano não
+            // teria onde informar o motivo ao aprovar o card.
+            const lossError =
+              name === "moveThisLead"
+                ? moveThisLeadProposalError(tc.function.arguments, context.stages)
+                : null;
+            if (lossError) {
+              result = { error: lossError };
+            } else if (typeof preview.error === "string") {
               // Data impossível: não vira proposta nenhuma — o modelo corrige.
               result = { error: preview.error };
             } else {

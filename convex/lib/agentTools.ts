@@ -111,9 +111,16 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
   {
     name: "moveThisLead",
     description:
-      "Move o lead deste atendimento para outro estágio do funil (use o nome exato de um estágio listado no contexto).",
+      "Move o lead deste atendimento para outro estágio do funil (use o nome exato de um estágio listado no contexto). Para um estágio de PERDA (lead perdido) o campo reason é obrigatório.",
     parameters: schema(
-      { stageName: { type: "string", description: "Nome exato do estágio de destino" } },
+      {
+        stageName: { type: "string", description: "Nome exato do estágio de destino" },
+        reason: {
+          type: "string",
+          description:
+            "Motivo curto do fechamento (até 200 caracteres). OBRIGATÓRIO ao mover para um estágio de perda (ex.: 'achou caro', 'comprou com outro'); opcional nos demais. Nunca inclua telefone, link ou documento.",
+        },
+      },
       ["stageName"]
     ),
     permission: { category: "leads", level: "edit_own" },
@@ -664,9 +671,14 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
   },
   {
     name: "moveLead",
-    description: "Move um lead para outro estágio.",
+    description:
+      "Move um lead para outro estágio. Para um estágio de PERDA o campo reason é obrigatório (pergunte ao usuário o motivo se ele não disse).",
     parameters: schema(
-      { leadId: { type: "string" }, stageName: { type: "string" } },
+      {
+        leadId: { type: "string" },
+        stageName: { type: "string" },
+        reason: { type: "string", description: "Motivo curto do ganho/perda (obrigatório em estágio de perda)" },
+      },
       ["leadId", "stageName"]
     ),
     permission: { category: "leads", level: "edit_own" },

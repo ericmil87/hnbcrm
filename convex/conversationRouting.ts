@@ -307,7 +307,7 @@ export const markConversationOutcome = mutation({
       lead,
       newStage: target,
       newStageId: target._id,
-      actor,
+      actor: { type: "human", memberId: actor._id },
       closedReason: args.reason?.trim() || undefined,
       finalValue: args.value,
       ...(touchedCustom ? { extraPatch: { customFields } } : {}),

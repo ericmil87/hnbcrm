@@ -2170,3 +2170,79 @@ describe("data do evento alvo (v0.64)", () => {
     expect(result.ok).toBe(true);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// T03 — moveThisLead em modo sugestão: perda sem motivo NÃO vira card (o
+// humano aprovaria e receberia um erro escrito para o modelo); com motivo, o
+// rótulo do card mostra o motivo.
+describe("modo sugestão: moveThisLead para etapa de perda", () => {
+  async function runSuggestTurn(t: TestConvex<typeof schema>, responses: StubResponse[]) {
+    const seed = await seedFollowUpOrg(t, { followUps: { mode: "draft" } });
+    await t.run(async (ctx) =>
+      ctx.db.insert("stages", {
+        organizationId: seed.organizationId,
+        boardId: seed.boardId,
+        name: "Perdido",
+        color: "#ef4444",
+        order: 9,
+        isClosedWon: false,
+        isClosedLost: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    );
+    const messageId = await t.run(async (ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: seed.organizationId,
+        conversationId: seed.conversationId,
+        leadId: seed.leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "achei caro, vou fechar com outro",
+        contentType: "text",
+        isInternal: false,
+        createdAt: Date.now(),
+      })
+    );
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
+    const item = (await queueItems(t))[0];
+    vi.setSystemTime(Date.now() + 10_000);
+    stubLlmSequence(responses);
+    const fetchMock = vi.mocked(globalThis.fetch);
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item._id });
+    const secondBody = JSON.parse((fetchMock.mock.calls[1]?.[1] as { body?: string })?.body ?? "{}");
+    const toolResult = (secondBody.messages ?? []).find((m: { role: string }) => m.role === "tool");
+    const draft = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).find((m) => m.isInternal && m.metadata?.aiDraft)
+    );
+    const actions =
+      ((draft?.metadata?.aiDraft as { proposedActions?: { name: string; label: string }[] } | undefined)
+        ?.proposedActions ?? []);
+    const lead = await t.run(async (ctx) => ctx.db.get(seed.leadId));
+    return { seed, toolResult, actions, lead };
+  }
+
+  test("sem reason: erro instrutivo volta ao modelo e nenhuma ação é proposta", async () => {
+    const t = setup();
+    const { seed, toolResult, actions, lead } = await runSuggestTurn(t, [
+      { kind: "tool", name: "moveThisLead", args: { stageName: "Perdido" } },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Entendo, obrigado pelo retorno!" } },
+    ]);
+    expect(toolResult?.content).toContain("reason");
+    expect(actions.filter((a) => a.name === "moveThisLead")).toHaveLength(0);
+    expect(lead!.stageId).toBe(seed.stageId);
+  });
+
+  test("com reason: vira proposta e o rótulo do card mostra o motivo", async () => {
+    const t = setup();
+    const { seed, toolResult, actions, lead } = await runSuggestTurn(t, [
+      { kind: "tool", name: "moveThisLead", args: { stageName: "Perdido", reason: "achou caro" } },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Entendo, obrigado pelo retorno!" } },
+    ]);
+    expect(toolResult?.content).toContain("proposto_para_aprovacao_humana");
+    const move = actions.find((a) => a.name === "moveThisLead");
+    expect(move?.label).toBe('Mover o lead para "Perdido" — motivo: achou caro');
+    // Proposta não move nada: quem move é a aprovação humana.
+    expect(lead!.stageId).toBe(seed.stageId);
+  });
+});

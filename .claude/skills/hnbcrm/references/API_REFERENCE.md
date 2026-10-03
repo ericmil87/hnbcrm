@@ -220,9 +220,13 @@ Move a lead to a different pipeline stage.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | leadId | string | yes | The lead ID |
-| stageId | string | yes | Target stage ID |
+| stageId | string | yes | Target stage ID (must belong to the lead's board) |
+| closedReason | string | no | Short reason when closing (recommended for lost; sanitized, max 200 chars) |
+| finalValue | number | no | Final deal value when closing (overwrites the lead value) |
 
-**REST:** `POST /api/v1/leads/move-stage` — Body: `{ leadId, stageId }`
+**REST:** `POST /api/v1/leads/move-stage` — Body: `{ leadId, stageId, closedReason?, finalValue? }`
+
+Moving into a won/lost stage closes the lead (`closedAt`/`closedType`) and fires the `lead.won`/`lead.lost` webhook once; moving back to an open stage reopens it.
 
 **Response:** `{ success: true }`
 
