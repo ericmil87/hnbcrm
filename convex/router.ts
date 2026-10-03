@@ -1,4 +1,5 @@
 import { httpRouter } from "convex/server";
+import { ConvexError } from "convex/values";
 import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -13,6 +14,7 @@ import {
   type PermissionCategory,
 } from "./lib/permissions";
 import { encodeHeaderKey } from "./lib/importKeys";
+import { OPT_OUT_ERROR_PREFIX } from "./lib/startConversation";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import { resend } from "./email";
 import {
@@ -164,6 +166,8 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "POST /api/v1/conversations/send": { category: "inbox", level: "view_own" }, // conversations.sendMessage (requireAuth)
   "POST /api/v1/conversations/send-template": { category: "inbox", level: "reply" }, // só internalMutation → nível de escrita
   "POST /api/v1/conversations/receive": { category: "inbox", level: "reply" }, // ingestão externa, sem equivalente público
+  "GET /api/v1/conversations/channels": { category: "inbox", level: "view_own" }, // startConversation.listSendableWhatsappChannels (requireAuth)
+  "POST /api/v1/conversations/start": { category: "inbox", level: "reply" }, // startConversation.startConversation (requirePermission inbox:reply; contacts:edit/leads:edit_own no núcleo quando cria)
 
   // Repasses — convex/handoffs.ts
   "GET /api/v1/handoffs": { category: "inbox", level: "view_own" }, // handoffs.getHandoffs
@@ -966,6 +970,165 @@ http.route({
       return jsonResponse({ success: true, messageId }, 201);
     } catch (error) {
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
+    }
+  }),
+});
+
+// ---- Nova conversa (v0.68): iniciar conversa de WhatsApp pela API ----
+//
+// Mesmo núcleo da UI ("Nova conversa" no inbox): `startConversation.ts`. O
+// ator é o membro dono da API key, e as permissões da CHAVE funcionam como teto
+// (o membro E a chave precisam ter cada nível).
+
+/**
+ * Erro das rotas de nova conversa: validação/regra (ConvexError PT-BR) → 400;
+ * número em opt-out → 409 com `optOut: true` (repetir com `optOutAck: true`
+ * só depois de um humano confirmar); falta de permissão → 403.
+ */
+function startConversationError(error: unknown): Response {
+  const raw = plainErrorMessage(error);
+  if (raw === "API key required" || raw === "Invalid API key") return errorResponse(raw, 401);
+  if (raw.includes("Rate limit exceeded")) return errorResponse(raw, 429);
+  const optOutAt = raw.indexOf(OPT_OUT_ERROR_PREFIX);
+  if (optOutAt !== -1) {
+    const message = raw.slice(optOutAt + OPT_OUT_ERROR_PREFIX.length).trim();
+    return new Response(JSON.stringify({ error: message, code: 409, optOut: true }), {
+      status: 409,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
+  }
+  if (raw.includes(PERMISSION_DENIED_MESSAGE)) {
+    // Mensagem do núcleo ("Permissão insuficiente para criar contatos") sem o prefixo do runtime.
+    const at = raw.indexOf(PERMISSION_DENIED_MESSAGE);
+    return errorResponse(raw.slice(at).split("\n")[0].trim(), 403);
+  }
+  if (error instanceof ConvexError || /Validator|ArgumentValidationError|Membro não encontrado/.test(raw)) {
+    return errorResponse(raw, 400);
+  }
+  return errorResponse(raw, 500);
+}
+
+/**
+ * Texto legível de um erro que atravessou `ctx.runAction`/`runMutation`: o
+ * `ConvexError` pode chegar com a classe (data = string) ou só como `Error`
+ * cuja mensagem é o data serializado em JSON (com aspas), às vezes com prefixo
+ * "Uncaught ConvexError:" e o stack nas linhas seguintes.
+ */
+function plainErrorMessage(error: unknown): string {
+  let msg =
+    error instanceof ConvexError && typeof error.data === "string"
+      ? error.data
+      : error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Erro interno";
+  // Erro do núcleo que atravessa mutation → action → http chega serializado
+  // mais de uma vez; desembrulha até estabilizar (com teto).
+  for (let i = 0; i < 4; i++) {
+    const before = msg;
+    msg = msg.split("\n")[0].replace(/^(Uncaught )?(ConvexError|Error):\s*/, "").trim();
+    if (msg.startsWith('"')) {
+      try {
+        const parsed = JSON.parse(msg);
+        if (typeof parsed === "string") msg = parsed;
+      } catch {
+        /* não era JSON */
+      }
+    }
+    if (msg === before) break;
+  }
+  return msg;
+}
+
+// List WhatsApp numbers the API key's member can start a conversation from
+http.route({
+  path: "/api/v1/conversations/channels",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/conversations/channels");
+      if (denied) return denied;
+      const rows = await ctx.runQuery(internal.startConversation.internalListSendableChannelsForMember, {
+        organizationId: apiKeyRecord.organizationId,
+        actorMemberId: apiKeyRecord.teamMemberId,
+      });
+      // Allowlist: nenhum token, URL de gateway ou id de instância sai daqui.
+      const channels = rows.map((c: {
+        _id: string;
+        provider: "meta" | "bridge";
+        displayName: string;
+        phoneDisplay: string | null;
+        connected: boolean;
+        sessionState: string | null;
+      }) => ({
+        id: c._id,
+        provider: c.provider,
+        displayName: c.displayName,
+        phoneDisplay: c.phoneDisplay,
+        connected: c.connected,
+        ...(c.sessionState !== null ? { sessionState: c.sessionState } : {}),
+      }));
+      return jsonResponse({ channels });
+    } catch (error) {
+      return startConversationError(error);
+    }
+  }),
+});
+
+// Start (or reopen) a WhatsApp conversation with a phone number or existing contact
+http.route({
+  path: "/api/v1/conversations/start",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/conversations/start");
+      if (denied) return denied;
+      let body: Record<string, unknown>;
+      try {
+        body = (await request.json()) as Record<string, unknown>;
+      } catch {
+        return errorResponse("Corpo JSON inválido", 400);
+      }
+      if (!body || typeof body !== "object") return errorResponse("Corpo JSON inválido", 400);
+      if (typeof body.channelConfigId !== "string" || !body.channelConfigId) {
+        return errorResponse("channelConfigId é obrigatório (veja GET /api/v1/conversations/channels)", 400);
+      }
+      const str = (k: string): string | undefined => {
+        const val = body[k];
+        return typeof val === "string" && val.trim() !== "" ? val : undefined;
+      };
+      const phone = str("phone");
+      const contactId = str("contactId");
+      if (!phone && !contactId) return errorResponse("Informe phone ou contactId", 400);
+      for (const k of ["phone", "contactId", "firstName", "lastName", "boardId", "stageId", "content"]) {
+        if (body[k] !== undefined && body[k] !== null && typeof body[k] !== "string") {
+          return errorResponse(`${k} deve ser texto`, 400);
+        }
+      }
+      if (body.optOutAck !== undefined && typeof body.optOutAck !== "boolean") {
+        return errorResponse("optOutAck deve ser booleano", 400);
+      }
+      const opt = (k: string) => (str(k) !== undefined ? { [k]: str(k) } : {});
+      const result = await ctx.runAction(internal.startConversation.internalStartConversationAsMember, {
+        organizationId: apiKeyRecord.organizationId,
+        channelConfigId: body.channelConfigId as Id<"channelConfigs">,
+        ...opt("phone"),
+        ...opt("contactId"),
+        ...opt("firstName"),
+        ...opt("lastName"),
+        ...opt("boardId"),
+        ...opt("stageId"),
+        ...opt("content"),
+        ...(body.optOutAck === true ? { optOutAck: true } : {}),
+        actorMemberId: apiKeyRecord.teamMemberId,
+        keyPermissions: apiKeyRecord.permissions,
+      } as any);
+      return jsonResponse({ success: true, ...result }, 201);
+    } catch (error) {
+      return startConversationError(error);
     }
   }),
 });
@@ -4009,6 +4172,8 @@ http.route({ path: "/api/v1/conversations/messages", method: "OPTIONS", handler:
 http.route({ path: "/api/v1/conversations/send", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/receive", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/conversations/send-template", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/channels", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/conversations/start", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/pending", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/handoffs/accept", method: "OPTIONS", handler: optionsHandler });

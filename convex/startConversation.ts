@@ -24,7 +24,7 @@
  * (`applyOutboundMessageSideEffects`: bump de conversa/lead, audit, activity,
  * webhook `message.sent` e dispatch com pacing) — nada de canal paralelo.
  */
-import { v, ConvexError } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import {
   action,
   internalMutation,
@@ -37,7 +37,8 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { isMembershipRevoked, requireAuth, requirePermission } from "./lib/auth";
+import { permissionsValidator } from "./schema";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { configProvider } from "./channelConfigs";
 import { getOrCreateConversation } from "./conversations";
@@ -77,6 +78,46 @@ type Ctx = QueryCtx | MutationCtx;
 function memberPermissions(member: Doc<"teamMembers">): Permissions {
   return resolvePermissions(member.role as Role, (member as any).permissions as Permissions | undefined);
 }
+
+/**
+ * Quem está iniciando a conversa. Na UI vem da sessão (`ctx.auth`); na REST/MCP
+ * vem do membro dono da API key (`actorMemberId`), com as permissões da chave
+ * (`keyPermissions`) somadas como TETO: o membro E a chave precisam ter o nível
+ * (fail-closed — uma chave restrita não ganha o que o membro tem).
+ */
+type StartActorArgs = { actorMemberId: Id<"teamMembers">; keyPermissions?: Infer<typeof permissionsValidator> };
+type StartActor = {
+  member: Doc<"teamMembers">;
+  can: (category: keyof Permissions, level: string) => boolean;
+};
+
+async function resolveStartActor(
+  ctx: Ctx,
+  organizationId: Id<"organizations">,
+  actor?: StartActorArgs
+): Promise<StartActor> {
+  if (!actor) {
+    const member = await requirePermission(ctx, organizationId, "inbox", "reply");
+    const perms = memberPermissions(member);
+    return { member, can: (c, l) => hasPermission(perms, c, l) };
+  }
+  const member = await ctx.db.get(actor.actorMemberId);
+  if (!member || member.organizationId !== organizationId || isMembershipRevoked(member)) {
+    throw new Error("Membro não encontrado nesta organização");
+  }
+  const perms = memberPermissions(member);
+  // Chave antiga pode não ter `campaigns`: hasPermission trata ausente como "none".
+  const keyPerms = actor.keyPermissions as Permissions | undefined;
+  const can = (c: keyof Permissions, l: string) =>
+    hasPermission(perms, c, l) && (keyPerms === undefined || hasPermission(keyPerms, c, l));
+  if (!can("inbox", "reply")) throw new Error("Permissão insuficiente");
+  return { member, can };
+}
+
+const actorArgs = {
+  actorMemberId: v.id("teamMembers"),
+  keyPermissions: v.optional(permissionsValidator),
+};
 
 async function findContactByPhone(
   ctx: Ctx,
@@ -182,6 +223,39 @@ export const listSendableWhatsappChannels = query({
   ),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
+    return await listSendableChannelsCore(ctx, args.organizationId);
+  },
+});
+
+const sendableChannelValidator = v.object({
+  _id: v.id("channelConfigs"),
+  provider: v.union(v.literal("meta"), v.literal("bridge")),
+  displayName: v.string(),
+  phoneDisplay: v.union(v.string(), v.null()),
+  connected: v.boolean(),
+  sessionState: v.union(v.string(), v.null()),
+});
+
+/**
+ * Mesma lista para a REST (`GET /api/v1/conversations/channels`): o ator é o
+ * membro dono da API key; basta ser membro ativo da org (a rota já exigiu
+ * `inbox:view_own` da chave).
+ */
+export const internalListSendableChannelsForMember = internalQuery({
+  args: { organizationId: v.id("organizations"), actorMemberId: v.id("teamMembers") },
+  returns: v.array(sendableChannelValidator),
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.actorMemberId);
+    if (!member || member.organizationId !== args.organizationId || isMembershipRevoked(member)) {
+      throw new Error("Membro não encontrado nesta organização");
+    }
+    return await listSendableChannelsCore(ctx, args.organizationId);
+  },
+});
+
+async function listSendableChannelsCore(ctx: QueryCtx, organizationId: Id<"organizations">) {
+  {
+    const args = { organizationId }; // mantém o corpo original (que lia args.organizationId)
     const configs = await ctx.db
       .query("channelConfigs")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -204,8 +278,8 @@ export const listSendableWhatsappChannels = query({
           sessionState: provider === "bridge" ? c.bridgeSessionState ?? null : null,
         };
       });
-  },
-});
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Checagem do número no WhatsApp (bridge)
@@ -238,16 +312,42 @@ type StartContext = {
  * a action o lê, nunca um cliente. Lança os mesmos erros PT-BR da mutation
  * (canal de outra org/inativo, telefone inválido, contato sem telefone).
  */
+const startContextArgs = {
+  organizationId: v.id("organizations"),
+  channelConfigId: v.id("channelConfigs"),
+  phone: v.optional(v.string()),
+  contactId: v.optional(v.id("contacts")),
+};
+
+type StartContextArgs = {
+  organizationId: Id<"organizations">;
+  channelConfigId: Id<"channelConfigs">;
+  phone?: string;
+  contactId?: Id<"contacts">;
+};
+
 export const internalStartContext = internalQuery({
-  args: {
-    organizationId: v.id("organizations"),
-    channelConfigId: v.id("channelConfigs"),
-    phone: v.optional(v.string()),
-    contactId: v.optional(v.id("contacts")),
-  },
+  args: startContextArgs,
   returns: startContextReturns,
   handler: async (ctx, args): Promise<StartContext> => {
-    await requirePermission(ctx, args.organizationId, "inbox", "reply");
+    await resolveStartActor(ctx, args.organizationId);
+    return await startContextCore(ctx, args);
+  },
+});
+
+/** Variante da REST/MCP: o ator é o membro da API key. */
+export const internalStartContextForMember = internalQuery({
+  args: { ...startContextArgs, ...actorArgs },
+  returns: startContextReturns,
+  handler: async (ctx, args): Promise<StartContext> => {
+    const { actorMemberId, keyPermissions, ...rest } = args;
+    await resolveStartActor(ctx, args.organizationId, { actorMemberId, keyPermissions });
+    return await startContextCore(ctx, rest);
+  },
+});
+
+async function startContextCore(ctx: QueryCtx, args: StartContextArgs): Promise<StartContext> {
+  {
     const channel = await ctx.db.get(args.channelConfigId);
     if (!channel || channel.organizationId !== args.organizationId || channel.channel !== "whatsapp") {
       throw new ConvexError("Número de WhatsApp não encontrado nesta organização");
@@ -288,8 +388,8 @@ export const internalStartContext = internalQuery({
           }
         : {}),
     };
-  },
-});
+  }
+}
 
 type NumberCheck =
   | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string; checked?: CheckedWhatsappUser[] }
@@ -407,14 +507,23 @@ async function loadStartContext(
     channelConfigId: Id<"channelConfigs">;
     phone?: string;
     contactId?: Id<"contacts">;
-  }
+  },
+  actor?: StartActorArgs
 ): Promise<StartContext> {
-  return await ctx.runQuery(internal.startConversation.internalStartContext, {
+  const base = {
     organizationId: args.organizationId,
     channelConfigId: args.channelConfigId,
     ...(args.phone !== undefined ? { phone: args.phone } : {}),
     ...(args.contactId ? { contactId: args.contactId } : {}),
-  });
+  };
+  if (actor) {
+    return await ctx.runQuery(internal.startConversation.internalStartContextForMember, {
+      ...base,
+      actorMemberId: actor.actorMemberId,
+      ...(actor.keyPermissions ? { keyPermissions: actor.keyPermissions } : {}),
+    });
+  }
+  return await ctx.runQuery(internal.startConversation.internalStartContext, base);
 }
 
 /**
@@ -712,8 +821,47 @@ export const internalStartConversation = internalMutation({
   args: { ...startArgs, phoneIsCanonical: v.optional(v.boolean()) },
   returns: v.object(internalStartReturns),
   handler: async (ctx, args): Promise<InternalStartResult> => {
-    const member = await requirePermission(ctx, args.organizationId, "inbox", "reply");
-    const perms = memberPermissions(member);
+    const actor = await resolveStartActor(ctx, args.organizationId);
+    return await startConversationCore(ctx, args, actor);
+  },
+});
+
+/**
+ * Variante da REST/MCP: o ator é o membro da API key (`actorMemberId`). Mesma
+ * escrita, mesmas regras — inclusive `contacts:edit` para criar contato e
+ * `leads:edit_own` para criar lead (o lead nasce com esse membro de dono).
+ */
+export const internalStartConversationForMember = internalMutation({
+  args: { ...startArgs, phoneIsCanonical: v.optional(v.boolean()), ...actorArgs },
+  returns: v.object(internalStartReturns),
+  handler: async (ctx, args): Promise<InternalStartResult> => {
+    const { actorMemberId, keyPermissions, ...rest } = args;
+    const actor = await resolveStartActor(ctx, args.organizationId, { actorMemberId, keyPermissions });
+    return await startConversationCore(ctx, rest, actor);
+  },
+});
+
+type StartWriteArgs = {
+  organizationId: Id<"organizations">;
+  channelConfigId: Id<"channelConfigs">;
+  phone?: string;
+  contactId?: Id<"contacts">;
+  firstName?: string;
+  lastName?: string;
+  boardId?: Id<"boards">;
+  stageId?: Id<"stages">;
+  content?: string;
+  optOutAck?: boolean;
+  phoneIsCanonical?: boolean;
+};
+
+async function startConversationCore(
+  ctx: MutationCtx,
+  args: StartWriteArgs,
+  actor: StartActor
+): Promise<InternalStartResult> {
+  {
+    const member = actor.member;
     const actorType = member.type === "ai" ? "ai" : "human";
     const now = Date.now();
 
@@ -789,7 +937,7 @@ export const internalStartConversation = internalMutation({
     let createdContact = false;
     let previousPhone: string | undefined;
     if (!contact) {
-      if (!hasPermission(perms, "contacts", "edit")) {
+      if (!actor.can("contacts", "edit")) {
         throw new ConvexError("Permissão insuficiente para criar contatos");
       }
       const contactId = await findOrCreateContactByPhone(ctx, {
@@ -843,7 +991,7 @@ export const internalStartConversation = internalMutation({
     let lead = await findLeadForContact(ctx, args.organizationId, contact._id);
     let createdLead = false;
     if (!lead) {
-      if (!hasPermission(perms, "leads", "edit_own")) {
+      if (!actor.can("leads", "edit_own")) {
         throw new ConvexError("Permissão insuficiente para criar leads");
       }
       const { board, stage } = await resolveTargetPipeline(ctx, args.organizationId, args.boardId, args.stageId);
@@ -1006,8 +1154,8 @@ export const internalStartConversation = internalMutation({
       canonicalPhone: phone,
       phoneChanged: previousPhone !== undefined,
     };
-  },
-});
+  }
+}
 
 /**
  * Inicia (ou reabre) a conversa. No bridge, checa o número no WhatsApp ANTES de
@@ -1015,33 +1163,64 @@ export const internalStartConversation = internalMutation({
  * nada; no WhatsApp → grava o número canônico (JID); checagem indisponível →
  * segue com o número normalizado e devolve `verified: false`.
  */
+const startResultValidator = v.object({
+  ...internalStartReturns,
+  verified: v.boolean(),
+  verifyReason: v.optional(v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error"))),
+});
+
 export const startConversation = action({
   args: startArgs,
-  returns: v.object({
-    ...internalStartReturns,
-    verified: v.boolean(),
-    verifyReason: v.optional(v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error"))),
-  }),
-  handler: async (
-    ctx,
-    args
-  ): Promise<InternalStartResult & { verified: boolean; verifyReason?: "meta" | "bridge_offline" | "gateway_error" }> => {
-    const context = await loadStartContext(ctx, args);
-    const check = await runBridgeNumberCheck(context);
-    if (check.status === "not_on_whatsapp") throw new ConvexError(NOT_ON_WHATSAPP_ERROR);
-    const result: InternalStartResult = await ctx.runMutation(internal.startConversation.internalStartConversation, {
-      ...args,
-      // Verificado: o número do WhatsApp manda. Sem verificação: o caminho de
-      // sempre (normaliza o digitado / usa o do contato), sem tocar no contato.
-      ...(check.status === "on_whatsapp" ? { phone: check.canonicalPhone, phoneIsCanonical: true } : {}),
-    });
-    return {
-      ...result,
-      verified: check.status === "on_whatsapp",
-      ...(check.status === "unverified" ? { verifyReason: check.reason } : {}),
-    };
+  returns: startResultValidator,
+  handler: async (ctx, args): Promise<StartResult> => {
+    return await runStartConversation(ctx, args);
   },
 });
+
+/**
+ * Variante da REST (`POST /api/v1/conversations/start`) e do MCP
+ * (`crm_start_conversation`): o MESMO caminho da action da UI — checagem no
+ * gateway (`/user/check` + `/user/lid`), telefone canônico e a escrita —, com
+ * o ator vindo da API key.
+ */
+export const internalStartConversationAsMember = internalAction({
+  args: { ...startArgs, ...actorArgs },
+  returns: startResultValidator,
+  handler: async (ctx, args): Promise<StartResult> => {
+    const { actorMemberId, keyPermissions, ...rest } = args;
+    return await runStartConversation(ctx, rest, { actorMemberId, keyPermissions });
+  },
+});
+
+type StartResult = InternalStartResult & { verified: boolean; verifyReason?: "meta" | "bridge_offline" | "gateway_error" };
+
+async function runStartConversation(
+  ctx: ActionCtx,
+  args: Omit<StartWriteArgs, "phoneIsCanonical">,
+  actor?: StartActorArgs
+): Promise<StartResult> {
+  const context = await loadStartContext(ctx, args, actor);
+  const check = await runBridgeNumberCheck(context);
+  if (check.status === "not_on_whatsapp") throw new ConvexError(NOT_ON_WHATSAPP_ERROR);
+  const writeArgs = {
+    ...args,
+    // Verificado: o número do WhatsApp manda. Sem verificação: o caminho de
+    // sempre (normaliza o digitado / usa o do contato), sem tocar no contato.
+    ...(check.status === "on_whatsapp" ? { phone: check.canonicalPhone, phoneIsCanonical: true } : {}),
+  };
+  const result: InternalStartResult = actor
+    ? await ctx.runMutation(internal.startConversation.internalStartConversationForMember, {
+        ...writeArgs,
+        actorMemberId: actor.actorMemberId,
+        ...(actor.keyPermissions ? { keyPermissions: actor.keyPermissions } : {}),
+      })
+    : await ctx.runMutation(internal.startConversation.internalStartConversation, writeArgs);
+  return {
+    ...result,
+    verified: check.status === "on_whatsapp",
+    ...(check.status === "unverified" ? { verifyReason: check.reason } : {}),
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Ops: sonda crua do gateway para um telefone (diagnóstico de grafia/LID)
