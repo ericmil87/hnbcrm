@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { buildAuditDescription } from "./lib/auditDescription";
 
@@ -8,7 +8,10 @@ function daysAgo(days: number, hours = 0): number {
   return Date.now() - (days * 24 + hours) * 60 * 60 * 1000;
 }
 
-export const seedMockData = mutation({
+// SÓ interna (v0.69.1): era `mutation` pública sem auth — qualquer cliente com um organizationId
+// conseguia injetar membros, leads, conversas e auditLogs falsos na org de outro cliente.
+// Rodar: `npx convex run seed:seedMockData '{"organizationId":"..."}'` (DEV).
+export const seedMockData = internalMutation({
   args: {
     organizationId: v.id("organizations"),
   },

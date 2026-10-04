@@ -72,7 +72,7 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). The app starts with an anonymous sign-in option for quick exploration.
 
-To populate the database with sample data, run the `seedMockData` mutation from the [Convex dashboard](https://dashboard.convex.dev) or trigger it programmatically.
+To populate the DEV database with sample data, run the internal mutation from the CLI: `npx convex run seed:seedMockData '{"organizationId":"<id>"}'`. It is an `internalMutation` on purpose and can never be called from a client.
 
 ## Development
 
