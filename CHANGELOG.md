@@ -2,6 +2,15 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.69.1] - 2026-10-04
+
+### Alertas por e-mail e fechamentos de segurança
+
+- **Repasse para a equipe agora chega por e-mail também quando não há destinatário definido** (o caso comum, quando a IA pede ajuda): todos que podem responder no inbox recebem, com origem legível, link direto para o repasse e sem dados da conversa. Para não virar enxurrada numa falha em cadeia, no máximo um e-mail de repasse coletivo a cada 15 minutos por empresa (o sino continua registrando todos). Preferência "Repasse solicitado", ligada por padrão
+- **WhatsApp desconectado avisa por e-mail:** quando um número é deslogado, banido temporariamente, fica desatualizado ou cai por tempo demais, os administradores recebem e-mail além do sino, com o que foi pausado e o link para Canais. Preferência "WhatsApp desconectado", ligada por padrão
+- Segurança: a função de dados de exemplo (`seedMockData`) deixou de ser pública; só roda por linha de comando
+- Operação interna para remover as organizações criadas por contas anônimas (com simulação antes e lista de alvos conferida)
+
 ## [0.69.0] - 2026-10-03
 
 ### Onda 0 do estudo competitivo: funil, canais, entrada e IA mais confiáveis
