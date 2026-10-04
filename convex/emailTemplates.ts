@@ -134,30 +134,59 @@ export function buildInviteTemplate(data: {
   };
 }
 
+const HANDOFF_ORIGIN_LABELS: Record<string, string> = {
+  human: "Pedido de um colega",
+  ai_keyword: "O cliente pediu para falar com uma pessoa",
+  ai_tool: "A IA pediu ajuda da equipe",
+  ai_failure: "Falha da IA",
+  bot_suspect: "Suspeita de robô do outro lado",
+  ai_budget: "Teto de gastos de IA atingido",
+};
+
+/** Oculta sequências longas de dígitos (telefone no título do lead) — LGPD. */
+export function maskDigitRuns(text: string): string {
+  return text.replace(/\d[\d\s().+-]{6,}\d/g, (m) => {
+    const digits = m.replace(/\D/g, "");
+    return digits.length >= 8 ? `••••${digits.slice(-4)}` : m;
+  });
+}
+
 export function buildHandoffRequestedTemplate(data: {
+  orgName?: string;
   leadTitle: string;
-  reason: string;
-  suggestedActions?: string[];
+  origin?: string;
+  reason?: string;
+  /** O repasse foi pedido por uma PESSOA (membro de origem humano). */
+  fromIsHuman?: boolean;
+  /** "3" ou "20+" quando há mais de um repasse pendente na org. */
+  pendingLabel?: string;
   fromMemberName: string;
   leadUrl: string;
 }): TemplateResult {
   const appUrl = data.leadUrl.replace(/\/app\/.*$/, "");
-  const actionsList = data.suggestedActions?.length
-    ? `<ul style="margin: 8px 0 0; padding-left: 20px; color: ${TEXT_SECONDARY}; font-size: 13px; line-height: 1.6;">${data.suggestedActions.map(a => `<li>${a}</li>`).join("")}</ul>`
-    : "";
+  const title = escapeHtml(maskDigitRuns(data.leadTitle));
+  const originLabel = HANDOFF_ORIGIN_LABELS[data.origin ?? "human"] ?? HANDOFF_ORIGIN_LABELS.human;
+  // O motivo em texto livre só vai quando uma PESSOA o escreveu (membro de origem humano): o da IA pode
+  // citar a conversa do cliente, e e-mail não é lugar de conteúdo de mensagem.
+  const showReason = !!data.reason && data.fromIsHuman === true;
+  const orgLine = data.orgName ? infoRow("Empresa", escapeHtml(data.orgName)) : "";
   return {
-    subject: `Repasse solicitado: ${data.leadTitle}`,
+    subject: data.pendingLabel
+      ? `Novo repasse — ${data.pendingLabel} pendentes`
+      : `Repasse solicitado: ${maskDigitRuns(data.leadTitle)}`,
     html: baseTemplate({
-      preheader: `${data.fromMemberName} solicitou um repasse para o lead "${data.leadTitle}".`,
+      preheader: `${data.orgName ? escapeHtml(data.orgName) + ": " : ""}repasse pendente para o lead "${title}".`,
       appUrl,
       content: `
         ${heading("Repasse Solicitado")}
-        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${data.fromMemberName}</strong> solicitou um repasse para voce.`)}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${escapeHtml(data.fromMemberName)}</strong> solicitou um repasse e a conversa precisa de uma pessoa.`)}
         ${infoTable(`
-          ${infoRow("Lead", data.leadTitle)}
-          ${infoRow("Motivo", data.reason)}
+          ${orgLine}
+          ${infoRow("Lead", title)}
+          ${infoRow("Origem", escapeHtml(originLabel))}
+          ${showReason ? infoRow("Motivo", escapeHtml(data.reason!.slice(0, 300))) : ""}
         `)}
-        ${actionsList ? `<div style="margin-top: 12px;">${paragraph("<strong style='color: " + TEXT_PRIMARY + ";'>Acoes sugeridas:</strong>")}${actionsList}</div>` : ""}
+        ${paragraph("Abra o repasse no CRM para ver a conversa e assumir.")}
         ${ctaButton("Ver Repasse", data.leadUrl)}
       `,
     }),
@@ -536,6 +565,8 @@ export function buildTemplate(
       return buildGroupPostFailedTemplate(data as any);
     case "aiSpendAlert":
       return buildAiSpendAlertTemplate(data as any);
+    case "channelSessionLost":
+      return buildChannelSessionLostTemplate(data as any);
     default:
       // Fail-closed: um typo de eventType virava um e-mail vazio ("Evento: x")
       // entregue ao cliente. `dispatchNotification` captura e loga.
@@ -654,6 +685,57 @@ export function buildAiSpendAlertTemplate(data: {
         ${paragraph(consequence)}
         ${paragraph(`<em style="color: ${TEXT_SECONDARY};">Valores aproximados: custo estimado em dólar convertido pela cotação configurada.</em>`)}
         ${ctaButton("Ver uso e teto", settingsUrl)}
+      `,
+    }),
+  };
+}
+
+const SESSION_STATE_LABELS: Record<string, string> = {
+  logged_out: "Deslogado (o número foi desconectado no aparelho)",
+  temporarily_banned: "Banimento temporário do WhatsApp",
+  banned: "Número banido pelo WhatsApp",
+  outdated: "Gateway desatualizado (o WhatsApp recusou a conexão)",
+  disconnected: "Fora do ar",
+};
+
+export function buildChannelSessionLostTemplate(data: {
+  orgName: string;
+  channelName: string;
+  phoneDisplay?: string; // já mascarado
+  state: string;
+  detail?: string;
+  expiresAt?: number;
+  pausedCampaigns?: number;
+  pausedGroupPosts?: number;
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || resolveAppUrl();
+  const url = `${appUrl}/app/configuracoes?secao=channels`;
+  const label = data.phoneDisplay ? `${data.channelName} (${data.phoneDisplay})` : data.channelName;
+  const stateLabel = SESSION_STATE_LABELS[data.state] ?? "Sem conexão";
+  const paused: string[] = [];
+  if (data.pausedCampaigns) paused.push(`${data.pausedCampaigns} campanha(s)`);
+  if (data.pausedGroupPosts) paused.push(`${data.pausedGroupPosts} publicação(ões) em grupo`);
+  const expires = data.expiresAt
+    ? new Date(data.expiresAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })
+    : "";
+  return {
+    subject: `WhatsApp ${maskDigitRuns(label)} perdeu a conexão`,
+    html: baseTemplate({
+      preheader: `${escapeHtml(data.orgName)}: o WhatsApp "${escapeHtml(maskDigitRuns(data.channelName))}" perdeu a conexão.`,
+      appUrl,
+      content: `
+        ${heading("WhatsApp desconectado")}
+        ${paragraph(`O número de WhatsApp <strong style="color: ${TEXT_PRIMARY};">${escapeHtml(maskDigitRuns(label))}</strong> de ${escapeHtml(data.orgName)} não está enviando nem recebendo mensagens.`)}
+        ${infoTable(`
+          ${infoRow("Empresa", escapeHtml(data.orgName))}
+          ${infoRow("Canal", escapeHtml(maskDigitRuns(label)))}
+          ${infoRow("Situação", escapeHtml(stateLabel))}
+          ${expires ? infoRow("Libera em", escapeHtml(expires)) : ""}
+          ${paused.length ? infoRow("Pausado", escapeHtml(paused.join(" e "))) : ""}
+        `)}
+        ${data.detail ? paragraph(escapeHtml(data.detail)) : ""}
+        ${ctaButton("Ver canais", url)}
       `,
     }),
   };

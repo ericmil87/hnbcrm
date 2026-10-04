@@ -90,6 +90,16 @@ describe("puros", () => {
   });
 });
 
+async function cancelPendingJobs(t: TestConvex<typeof schema>) {
+  await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    for (const job of jobs) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
+
 async function seed(t: TestConvex<typeof schema>, opts?: { demo?: boolean }) {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -223,6 +233,7 @@ describe("webhook session_event", () => {
     expect(r2.emitted).toBe(false);
     expect(await notifications(t)).toHaveLength(1);
     expect(await sessionLostWebhooks(t)).toHaveLength(1);
+    await cancelPendingJobs(t);
   });
 
   test("TemporaryBan grava expiresAt; mudar de estado volta a notificar", async () => {
@@ -241,6 +252,7 @@ describe("webhook session_event", () => {
 
     await t.mutation(internal.channelHealth.internalRecordSessionEvent, { configId, event: "LoggedOut" });
     expect(await notifications(t)).toHaveLength(2);
+    await cancelPendingJobs(t);
   });
 
   test("publicação de grupo ativa do canal é pausada com o motivo", async () => {
@@ -266,6 +278,7 @@ describe("webhook session_event", () => {
     const post = await t.run(async (ctx) => ctx.db.get(postId));
     expect(post?.status).toBe("paused");
     expect(post?.pausedReason).toContain("desatualizado");
+    await cancelPendingJobs(t);
   });
 
   test("reconectar limpa os marcadores e a próxima queda notifica de novo", async () => {
@@ -283,6 +296,7 @@ describe("webhook session_event", () => {
     expect(cfg?.bridgeSessionState).toBe("connected");
     await t.mutation(internal.channelHealth.internalRecordSessionEvent, { configId, event: "LoggedOut" });
     expect(await notifications(t)).toHaveLength(2);
+    await cancelPendingJobs(t);
   });
 
   test("respeita a preferência de opt-out do membro", async () => {
@@ -308,6 +322,7 @@ describe("webhook session_event", () => {
     });
     await t.mutation(internal.channelHealth.internalRecordSessionEvent, { configId, event: "LoggedOut" });
     expect(await notifications(t)).toHaveLength(0);
+    await cancelPendingJobs(t);
   });
 });
 
@@ -338,6 +353,7 @@ describe("cron: observação fora do ar", () => {
     expect((await obs()).action).toBe("none");
     expect(await notifications(t)).toHaveLength(1);
     expect(await sessionLostWebhooks(t)).toHaveLength(1);
+    await cancelPendingJobs(t);
   });
 
   test("conectar no meio limpa a marca (queda transitória não alerta)", async () => {
@@ -357,6 +373,7 @@ describe("cron: observação fora do ar", () => {
     });
     expect(r.action).toBe("mark"); // recomeça a contagem
     expect(await notifications(t)).toHaveLength(0);
+    await cancelPendingJobs(t);
   });
 
   test("não rebaixa um estado grave já gravado pelo webhook", async () => {
@@ -368,6 +385,7 @@ describe("cron: observação fora do ar", () => {
     const cfg = await t.run(async (ctx) => ctx.db.get(configId));
     expect(cfg?.bridgeSessionState).toBe("temporarily_banned");
     expect(await notifications(t)).toHaveLength(1);
+    await cancelPendingJobs(t);
   });
 });
 
@@ -385,6 +403,7 @@ describe("cenário B e isolamento", () => {
     const cfg = await t.run(async (ctx) => ctx.db.get(configId));
     expect(cfg?.bridgeSessionState).toBe("logged_out");
     expect(await notifications(t)).toHaveLength(2); // o estado mudou
+    await cancelPendingJobs(t);
   });
 
   test("sonda dizendo banned grava banned", async () => {
@@ -400,6 +419,7 @@ describe("cenário B e isolamento", () => {
     vi.advanceTimersByTime(15 * 60_000);
     await obs();
     expect((await t.run(async (ctx) => ctx.db.get(configId)))?.bridgeSessionState).toBe("banned");
+    await cancelPendingJobs(t);
   });
 
   test("admin de OUTRA org não é notificado; admin 'busy' é", async () => {
@@ -431,6 +451,7 @@ describe("cenário B e isolamento", () => {
     const notifs = await notifications(t);
     expect(notifs.map((n) => n.memberId)).toEqual([adminId]);
     expect(notifs.some((n) => n.memberId === otherAdmin)).toBe(false);
+    await cancelPendingJobs(t);
   });
 });
 
@@ -478,5 +499,6 @@ describe("cron: listagem de canais", () => {
       numItems: 50,
     });
     expect(demoPage.ids).toHaveLength(0);
+    await cancelPendingJobs(t);
   });
 });

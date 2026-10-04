@@ -1317,7 +1317,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | Event | Description |
 |-------|-------------|
 | invite | Team member invited to organization |
-| handoffRequested | AI-to-human handoff requested |
+| handoffRequested | AI-to-human handoff requested — in-app + e-mail (to the named recipient, or to every member who can reply in the inbox when none) |
 | handoffResolved | Handoff accepted or rejected |
 | taskOverdue | Assigned task is overdue |
 | taskAssigned | Task assigned to member |
@@ -1326,7 +1326,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | dailyDigest | Daily summary of CRM activity |
 | aiDraftPending | In-app: an AI draft is waiting for review on your lead |
 | conversationTransferred | In-app: a conversation was transferred to you or your department (Central module) |
-| channelSessionLost | In-app: a WhatsApp number lost its connection (logged out, banned, or offline) — sent to members with settings:manage |
+| channelSessionLost | In-app + e-mail (v0.69.1): a WhatsApp number lost its connection (logged out, banned, or offline) — sent to members with settings:manage |
 | aiSpendAlert | In-app (\`ai_spend_warning\` / \`ai_spend_reached\`) + e-mail, admins only (settings:manage): the month's approximate AI spend crossed the warning % (default 80) or reached the R$ cap — once per month each (v0.69) |
 
 ---

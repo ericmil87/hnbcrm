@@ -234,6 +234,7 @@ export async function emitChannelSessionLost(
   });
 
   const members = await channelAdmins(ctx, config.organizationId);
+  const org = members.length > 0 ? await ctx.db.get(config.organizationId) : null;
   for (const m of members) {
     await createNotification(ctx, {
       organizationId: config.organizationId,
@@ -242,6 +243,24 @@ export async function emitChannelSessionLost(
       title: `WhatsApp "${config.displayName}" perdeu a conexão`,
       body: args.detail,
       data: { channelConfigId: config._id, state: args.state },
+    });
+    // E-mail pelo MESMO gatilho do sino (o dedupe por `bridgeSessionAlertedAt`
+    // acima vale para os dois). A preferência `channelSessionLost` é checada no
+    // `dispatchNotification`. Sem token/URL/instância no payload.
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: config.organizationId,
+      recipientMemberId: m._id,
+      eventType: "channelSessionLost",
+      templateData: {
+        orgName: org?.name ?? "",
+        channelName: config.displayName,
+        phoneDisplay,
+        state: args.state,
+        detail: args.detail,
+        expiresAt: args.expiresAt,
+        pausedCampaigns,
+        pausedGroupPosts: pausedPosts,
+      },
     });
   }
 

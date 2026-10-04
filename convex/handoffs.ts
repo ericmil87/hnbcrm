@@ -17,6 +17,9 @@ import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
 const APP_URL = () => resolveAppUrl();
 
+/** Janela do throttle de e-mail de repasse em broadcast, por org. */
+const HANDOFF_EMAIL_THROTTLE_MS = 15 * 60 * 1000;
+
 /**
  * Quanto tempo a IA de um GRUPO fica em silêncio depois que alguém aceita o
  * repasse daquela sala (review de correção nº 6).
@@ -275,24 +278,54 @@ export async function createHandoffCore(
     },
   });
 
-  // Email notification — só faz sentido com destinatário definido
-  if (args.toMemberId) {
-    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-      organizationId,
-      recipientMemberId: args.toMemberId,
-      eventType: "handoffRequested",
-      templateData: {
-        leadTitle: subject,
-        reason: args.reason,
-        suggestedActions: args.suggestedActions,
-        fromMemberName: fromMember.name,
-        leadUrl: `${APP_URL()}/app/repasses`,
-      },
-    });
+  // Destinatários: definido → só ele; sem destinatário (a IA escalou) → quem
+  // pode responder no inbox (cap 25). UMA consulta serve ao e-mail e ao sino.
+  const broadcast = args.toMemberId ? null : await inboxRepliers(ctx, organizationId);
+
+  // E-mail. O próprio ator não recebe aviso da própria ação; a preferência
+  // `handoffRequested` (default ON) é checada pelo `dispatchNotification`. Sem
+  // conteúdo de mensagem do cliente (ver o template).
+  // Throttle POR ORG só no broadcast: numa queda de provider ou teto estourado
+  // cada lead novo abriria um repasse e cada um mandaria até 25 e-mails. Se
+  // outro repasse em broadcast foi criado há < 15 min, só o sino avisa.
+  let sendEmail = true;
+  let pendingLabel: string | undefined;
+  if (broadcast) {
+    const pending = await ctx.db
+      .query("handoffs")
+      .withIndex("by_organization_and_status", (q) =>
+        q.eq("organizationId", organizationId).eq("status", "pending")
+      )
+      .order("desc")
+      .take(20);
+    const previous = pending.find((h) => h._id !== handoffId && !h.toMemberId);
+    if (previous && now - previous.createdAt < HANDOFF_EMAIL_THROTTLE_MS) sendEmail = false;
+    if (pending.length > 1) pendingLabel = pending.length >= 20 ? "20+" : String(pending.length);
   }
-  // Notificação in-app: destinatário definido → só ele; sem destinatário (caso
-  // típico: a IA escalou) → broadcast para quem pode responder no inbox.
-  // createNotification já pula membros IA, o próprio ator e quem fez opt-out.
+  if (sendEmail) {
+    const emailRecipients = broadcast ? broadcast.map((m) => m._id) : [args.toMemberId!];
+    const org = emailRecipients.length > 0 ? await ctx.db.get(organizationId) : null;
+    for (const recipientId of emailRecipients) {
+      if (recipientId === args.fromMemberId) continue;
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId,
+        recipientMemberId: recipientId,
+        eventType: "handoffRequested",
+        templateData: {
+          orgName: org?.name,
+          leadTitle: subject,
+          origin: args.origin,
+          reason: args.reason,
+          fromIsHuman: fromMember.type === "human",
+          pendingLabel,
+          fromMemberName: fromMember.name,
+          leadUrl: `${APP_URL()}/app/repasses?handoff=${handoffId}`,
+        },
+      });
+    }
+  }
+  // Notificação in-app (sempre, sem throttle). createNotification já pula
+  // membros IA, o próprio ator e quem fez opt-out.
   const notification = {
     organizationId,
     type: "handoff_requested" as const,
@@ -302,12 +335,12 @@ export async function createHandoffCore(
     conversationId,
     actorId: args.fromMemberId,
   };
-  if (args.toMemberId) {
-    await createNotification(ctx, { ...notification, memberId: args.toMemberId });
-  } else {
-    for (const replier of await inboxRepliers(ctx, organizationId)) {
+  if (broadcast) {
+    for (const replier of broadcast) {
       await createNotification(ctx, { ...notification, memberId: replier._id });
     }
+  } else {
+    await createNotification(ctx, { ...notification, memberId: args.toMemberId! });
   }
 
   return handoffId;

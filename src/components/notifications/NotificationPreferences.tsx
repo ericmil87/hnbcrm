@@ -11,7 +11,7 @@ import { Bell } from "lucide-react";
 
 const NOTIFICATION_EVENTS = [
   { key: "invite", label: "Convites de equipe", desc: "Quando você é convidado para uma organização", alwaysOn: true },
-  { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um agente IA solicita repasse para você" },
+  { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um repasse é solicitado para você ou para a equipe (no sino e por e-mail)" },
   { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
   { key: "aiDraftPending", label: "Rascunho da IA aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
   { key: "campaignCompleted", label: "Campanha concluída", desc: "Quando uma campanha de WhatsApp termina de enviar" },
@@ -23,7 +23,7 @@ const NOTIFICATION_EVENTS = [
   { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead é atribuído a você" },
   { key: "aiFollowupNeedsHuman", label: "Follow-up da IA precisa de você", desc: "Quando a IA não consegue executar sozinha um follow-up que ela mesma agendou" },
   { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu setor" },
-  { key: "channelSessionLost", label: "WhatsApp desconectado", desc: "Quando um número perde a sessão (deslogado, banido ou fora do ar por tempo demais)" },
+  { key: "channelSessionLost", label: "WhatsApp desconectado", desc: "Quando um número perde a sessão (deslogado, banido ou fora do ar por tempo demais), no sino e por e-mail" },
   { key: "aiSpendAlert", label: "Gasto de IA do mês", desc: "Para administradores: quando o gasto de IA chega perto do teto mensal em R$ ou o atinge (no sino e por e-mail, uma vez por mês)" },
   { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
   { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },

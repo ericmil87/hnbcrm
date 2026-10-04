@@ -48,7 +48,7 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   ai_followup_needs_human: "aiFollowupNeedsHuman",
   // MVP Central — só sino (sem template de e-mail).
   conversation_transferred: "conversationTransferred",
-  // T02 — só sino (sem template de e-mail).
+  // T02 + v0.69.1 — sino e e-mail (template `channelSessionLost`).
   channel_session_lost: "channelSessionLost",
   // v0.69 — aviso/teto de gasto de IA (um flag só para os dois; também é o
   // eventType do e-mail, com template `aiSpendAlert`).
@@ -57,7 +57,7 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
 };
 
 /**
- * Humanos ATIVOS com direito de responder no inbox — o público de um aviso sem
+ * Humanos não removidos (inclui `busy`: alerta de repasse é crítico) com direito de responder no inbox — o público de um aviso sem
  * destinatário definido (repasse da IA, follow-up que precisou de gente). Cap
  * de 25 para proteger a transação em orgs grandes.
  *
@@ -79,7 +79,9 @@ export async function inboxRepliers(
   return members
     .filter(
       (m) =>
-        m.status === "active" &&
+        !isMembershipRevoked(m) &&
+        // Pendente (sem conta) não abre o link nem ocupa vaga do cap.
+        !!m.userId &&
         hasPermission(
           resolvePermissions(m.role as Role, m.permissions ?? undefined),
           "inbox",
