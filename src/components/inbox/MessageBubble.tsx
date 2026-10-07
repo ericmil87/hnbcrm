@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { FormattedMessageText } from "./FormattedMessageText";
@@ -17,6 +17,8 @@ import { QuotedBlock } from "./QuotedBlock";
 import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
 import { DeferredMedia } from "./DeferredMedia";
+import { SpecialMessageCard } from "./SpecialMessageCard";
+import { describeSpecialMessage, isEdited, isRevoked, isViewOnce } from "@/lib/bridgeSpecialMessage";
 import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatMessageTimestamp } from "@/lib/messageTime";
 import {
@@ -202,6 +204,10 @@ export function MessageBubble({
   // sido lida antes, e o texto (transcrição/descrição) continua valendo.
   const mediaPurged = mediaState.state === "purged";
 
+  const revoked = isRevoked(message.metadata) && !message.isInternal;
+  const edited = isEdited(message.metadata) && !revoked;
+  const viewOnce = isViewOnce(message.metadata) && !revoked;
+  const special = message.isInternal || revoked ? null : describeSpecialMessage(message.metadata, message.content);
   const quoted = getQuoted(message);
   const reactions = getReactions(message);
   const transcription = getTranscription(message);
@@ -240,7 +246,8 @@ export function MessageBubble({
     isMediaPlaceholder(message.content) &&
     (hasAttachments || voiceNote || mediaProblem || deferredMedia !== null);
   const visibleText =
-    !message.isInternal && message.content && !suppressPlaceholder
+    !message.isInternal && !revoked && message.content && !suppressPlaceholder
+      && !(special && special.kind !== "interactive_reply")
       ? message.content
       : null;
 
@@ -357,6 +364,18 @@ export function MessageBubble({
   const readCount = message.readBy?.length ?? 0;
   const footer = (
     <div className={cn("flex items-center justify-end gap-1 mt-1", style.footerText)}>
+      {edited && (
+        <span
+          className="text-[10px] italic"
+          title={
+            typeof message.metadata?.previousContent === "string"
+              ? `Texto anterior: ${message.metadata.previousContent.slice(0, 500)}`
+              : "Mensagem editada"
+          }
+        >
+          editada
+        </span>
+      )}
       <span className="text-[10px] tabular-nums">{timestamp}</span>
       {showDeliveryTick && (
         <span
@@ -468,7 +487,7 @@ export function MessageBubble({
             />
           )}
 
-          {mediaProblem && (
+          {!revoked && mediaProblem && (
             <div
               className={cn(
                 "flex items-center gap-1.5 text-xs italic",
@@ -480,7 +499,7 @@ export function MessageBubble({
             </div>
           )}
 
-          {deferredMedia && !hasAttachments && (
+          {!revoked && deferredMedia && !hasAttachments && (
             <DeferredMedia
               media={deferredMedia}
               variant={style.variant}
@@ -489,7 +508,7 @@ export function MessageBubble({
             />
           )}
 
-          {hasAttachments && (
+          {!revoked && hasAttachments && (
             <MessageAttachments
               files={attachments}
               variant={style.variant}
@@ -498,7 +517,7 @@ export function MessageBubble({
             />
           )}
 
-          {voiceNote && (!deferredMedia || (mediaPurged && transcription?.status === "done")) && (
+          {!revoked && voiceNote && (!deferredMedia || (mediaPurged && transcription?.status === "done")) && (
             <VoiceTranscription
               transcription={transcription}
               variant={style.variant}
@@ -508,6 +527,7 @@ export function MessageBubble({
           )}
 
           {imageMessage &&
+            !revoked &&
             !message.isInternal &&
             (!deferredMedia || (mediaPurged && vision?.status === "done")) && (
             <ImageDescription
@@ -517,6 +537,41 @@ export function MessageBubble({
               canDescribe={canDescribeImage}
               onDescribe={() => onDescribeImage(message)}
             />
+          )}
+
+          {viewOnce && hasAttachments && (
+            <span
+              className={cn(
+                "inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                style.variant === "outbound" ? "bg-white/15 text-white/90" : "bg-surface-sunken text-text-secondary"
+              )}
+            >
+              <Eye size={10} aria-hidden /> Visualização única
+            </span>
+          )}
+
+          {revoked && (
+            <div
+              className={cn(
+                "flex items-center gap-1.5 text-sm italic",
+                style.variant === "outbound" ? "text-white/80" : "text-text-muted"
+              )}
+            >
+              <Ban size={14} className="shrink-0" aria-hidden />
+              Mensagem apagada
+            </div>
+          )}
+
+          {special && special.kind !== "interactive_reply" && (
+            <SpecialMessageCard info={special} variant={style.variant} />
+          )}
+
+          {special?.kind === "interactive_reply" && (
+            <span
+              className={cn("text-[10px] font-medium uppercase tracking-wide", style.variant === "outbound" ? "text-white/70" : "text-text-muted")}
+            >
+              resposta de botão
+            </span>
           )}
 
           {message.isInternal ? (

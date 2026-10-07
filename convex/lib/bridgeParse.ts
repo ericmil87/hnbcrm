@@ -148,7 +148,80 @@ export type ParsedBridgeEvent =
   | { kind: "joined_group"; joined: ParsedBridgeJoinedGroup }
   | { kind: "group_presence"; presence: ParsedBridgeGroupPresence }
   | { kind: "session_event"; session: ParsedBridgeSessionEvent }
+  | { kind: "message_revoke"; revoke: ParsedBridgeRevoke }
+  | { kind: "message_edit"; edit: ParsedBridgeEdit }
   | { kind: "ignored"; reason: string };
+
+/**
+ * "Apagar para todos" (`protocolMessage` tipo REVOKE). Vale para 1 a 1 e grupo:
+ * o ingest só marca a mensagem alvo como apagada (nunca apaga a linha) e só
+ * depois de conferir que quem apagou PODE apagar aquela mensagem.
+ */
+export interface ParsedBridgeRevoke {
+  targetExternalId: string;
+  isGroup: boolean;
+  fromMe: boolean;
+  /** 1 a 1: telefone do CONTATO (a outra ponta), mesma regra do `from`. */
+  chatPhone?: string;
+  /** Grupo: JID da sala + quem apagou. */
+  groupJid?: string;
+  senderLid?: string;
+  senderPhone?: string;
+  timestamp: number;
+}
+
+/** Edição (`protocolMessage` tipo MESSAGE_EDIT) — só o autor pode editar. */
+export interface ParsedBridgeEdit extends ParsedBridgeRevoke {
+  newContent: string;
+}
+
+/**
+ * `metadata.bridgeType` das mensagens que o bridge grava. Os tipos a partir de
+ * `album` foram acrescentados em 07/10/2026 (13% das mensagens do bridge caíam
+ * em "[mensagem não suportada]"); o front e o histórico da IA leem este
+ * contrato junto com `metadata.bridgeExtra` (ver `BridgeExtraByType`).
+ */
+export type BridgeMessageType =
+  | "text"
+  | "extendedText"
+  | "image"
+  | "sticker"
+  | "audio"
+  | "video"
+  | "document"
+  | "reaction"
+  | "album"
+  | "poll"
+  | "location"
+  | "live_location"
+  | "contact"
+  | "event"
+  | "group_invite"
+  | "call_log"
+  | "interactive_reply"
+  | "unknown";
+
+/** Forma de `metadata.bridgeExtra` por `bridgeType`. Tudo é dado de terceiro. */
+export interface BridgeExtraByType {
+  album: { imageCount: number; videoCount: number };
+  poll: { question: string; options: string[]; selectableCount?: number };
+  location: BridgeLocationExtra;
+  live_location: BridgeLocationExtra;
+  contact: { names: string[]; phones: string[] };
+  event: { name: string; description?: string; startAt?: number; location?: string; joinLink?: string };
+  group_invite: { groupName: string };
+  call_log: { isVideo?: boolean; outcome?: string };
+  interactive_reply: { selected: string };
+  unknown: { type: string };
+}
+
+export interface BridgeLocationExtra {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  url?: string;
+}
 
 /**
  * Sinal GRAVE de sessão (T02). `Disconnected`/`Connected` ficam de fora de
@@ -268,7 +341,7 @@ function mediaFrom(kind: string, node: Record<string, any>): ParsedBridgeMedia {
   };
 }
 
-interface ExtractedContent {
+export interface ExtractedContent {
   contentType: "text" | "image" | "file" | "audio";
   content: string;
   media?: ParsedBridgeMedia;
@@ -305,18 +378,13 @@ function quotedFrom(node: Record<string, any> | undefined): ParsedBridgeQuoted |
 }
 
 /**
- * O nó ContextInfo da mensagem, venha ele do texto estendido ou de uma mídia.
- * É onde moram menções (`mentionedJid`), quote (`stanzaId`/`participant`) e o
- * `expiration` das mensagens temporárias.
+ * O nó ContextInfo da mensagem, venha ele do texto estendido, de uma mídia ou
+ * de qualquer tipo novo (enquete, localização, contato…). É onde moram menções
+ * (`mentionedJid`), quote (`stanzaId`/`participant`) e o `expiration` das
+ * mensagens temporárias. Recebe a mensagem JÁ desembrulhada.
  */
 function contextInfoOf(waMsg: Record<string, any>): Record<string, any> | undefined {
-  const node =
-    pick(waMsg, "extendedTextMessage", "ExtendedTextMessage") ??
-    pick(waMsg, "imageMessage", "ImageMessage") ??
-    pick(waMsg, "stickerMessage", "StickerMessage") ??
-    pick(waMsg, "audioMessage", "AudioMessage") ??
-    pick(waMsg, "videoMessage", "VideoMessage") ??
-    pick(waMsg, "documentMessage", "DocumentMessage");
+  const node = contentNodeOf(waMsg);
   const ci = pick(node, "contextInfo", "ContextInfo");
   return ci && typeof ci === "object" ? (ci as Record<string, any>) : undefined;
 }
@@ -328,7 +396,376 @@ function mentionsFrom(ci: Record<string, any> | undefined): string[] {
   return raw.filter((j): j is string => typeof j === "string" && j.length > 0);
 }
 
-/** Map a decrypted whatsmeow waE2E.Message to our content shape. */
+// ── Desembrulhar, classificar e extrair (07/10/2026) ──
+//
+// Medido em produção: 13% das mensagens do bridge viravam "[mensagem não
+// suportada]", e 3/4 delas nem eram mensagem — eram distribuição de chave de
+// grupo do Signal (`senderKeyDistributionMessage`), que o WhatsApp não mostra.
+// Gravadas, viravam bolha em nome de quem re-keyou o grupo, contavam como não
+// lidas e, no 1 a 1, podiam acordar o atendente IA para responder a nada.
+
+/** Primeira letra minúscula: compara `ImageMessage` e `imageMessage` como iguais. */
+function normKey(k: string): string {
+  return k.length > 0 ? k.charAt(0).toLowerCase() + k.slice(1) : k;
+}
+
+/** Chaves que acompanham conteúdo real mas NÃO são conteúdo. */
+const COMPANION_KEYS = new Set(["messageContextInfo", "senderKeyDistributionMessage"]);
+
+/**
+ * Chaves que, sozinhas, são só ruído de protocolo: o WhatsApp não mostra nada
+ * (voto de enquete cifrado, reação cifrada, "manter no chat", fixar, status
+ * que menciona o grupo, resposta de operação entre aparelhos…).
+ */
+const NOISE_KEYS = new Set([
+  "pollUpdateMessage",
+  "encReactionMessage",
+  "encEventResponseMessage",
+  "keepInChatMessage",
+  "pinInChatMessage",
+  "groupStatusMentionMessage",
+  "statusMentionMessage",
+  "peerDataOperationRequestResponseMessage",
+  "peerDataOperationRequestMessage",
+  "placeholderMessage",
+  "stickerSyncRmrMessage",
+  "messageHistoryBundle",
+  "messageHistoryNotice",
+  "appStateSyncKeyShareMessage",
+  "appStateSyncKeyRequestMessage",
+  "initialSecurityNotificationSettingSync",
+  "appStateFatalExceptionNotification",
+]);
+
+/** Wrappers `{ message: {...} }` que o parser abre antes de extrair. */
+const WRAPPER_KEYS = [
+  "ephemeralMessage",
+  "viewOnceMessage",
+  "viewOnceMessageV2",
+  "viewOnceMessageV2Extension",
+  "documentWithCaptionMessage",
+  "deviceSentMessage",
+  "associatedChildMessage",
+  "editedMessage",
+  "groupMentionedMessage",
+  "botInvokeMessage",
+  "lottieStickerMessage",
+];
+const VIEW_ONCE_WRAPPERS = new Set(["viewOnceMessage", "viewOnceMessageV2", "viewOnceMessageV2Extension"]);
+const MAX_UNWRAP_DEPTH = 4;
+
+/** Valor de uma chave aceitando qualquer grafia da primeira letra. */
+function pickNorm(obj: Record<string, any> | null | undefined, key: string): any {
+  if (!obj || typeof obj !== "object") return undefined;
+  const pascal = key.charAt(0).toUpperCase() + key.slice(1);
+  return pick(obj, key, pascal);
+}
+
+/** Chaves de CONTEÚDO presentes (sem companheiras, sem valor nulo), normalizadas. */
+function contentKeysOf(waMsg: Record<string, any>): string[] {
+  if (!waMsg || typeof waMsg !== "object") return [];
+  return Object.keys(waMsg)
+    .filter((k) => waMsg[k] !== undefined && waMsg[k] !== null)
+    .map(normKey)
+    .filter((k) => !COMPANION_KEYS.has(k));
+}
+
+/** O nó (objeto) do primeiro conteúdo — portador do ContextInfo/quote. */
+function contentNodeOf(waMsg: Record<string, any>): Record<string, any> | undefined {
+  if (!waMsg || typeof waMsg !== "object") return undefined;
+  for (const k of Object.keys(waMsg)) {
+    if (COMPANION_KEYS.has(normKey(k))) continue;
+    const v = waMsg[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, any>;
+  }
+  return undefined;
+}
+
+export interface UnwrappedBridgeMessage {
+  message: Record<string, any>;
+  viewOnce: boolean;
+}
+
+/**
+ * Abre os wrappers (`ephemeralMessage{message}`, view-once, documento com
+ * legenda, `deviceSentMessage`, filho de álbum, `editedMessage`…), até 4 níveis.
+ * Só abre quando o wrapper traz um `message` objeto; senão devolve como veio.
+ */
+export function unwrapBridgeMessage(waMsg: unknown): UnwrappedBridgeMessage {
+  let current: Record<string, any> =
+    waMsg && typeof waMsg === "object" ? (waMsg as Record<string, any>) : {};
+  let viewOnce = false;
+  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
+    let opened = false;
+    for (const key of WRAPPER_KEYS) {
+      const wrapper = pickNorm(current, key);
+      if (!wrapper || typeof wrapper !== "object") continue;
+      const inner = pick(wrapper, "message", "Message");
+      if (!inner || typeof inner !== "object") continue;
+      if (VIEW_ONCE_WRAPPERS.has(key)) viewOnce = true;
+      current = inner as Record<string, any>;
+      opened = true;
+      break;
+    }
+    if (!opened) break;
+  }
+  return { message: current, viewOnce };
+}
+
+/** Resultado da classificação de um `waE2E.Message` (puro, reusado pela op de reprocessamento). */
+export type ClassifiedBridgeContent =
+  | { kind: "content"; extracted: ExtractedContent }
+  | { kind: "noise"; reason: string }
+  | { kind: "revoke"; targetExternalId: string }
+  | { kind: "edit"; targetExternalId: string; newContent: ExtractedContent };
+
+// ProtocolMessage.Type do whatsmeow. O Go serializa o enum como NÚMERO e o
+// protojson como NOME — aceitamos os dois.
+const PROTOCOL_REVOKE = 0;
+const PROTOCOL_MESSAGE_EDIT = 14;
+function protocolTypeOf(node: Record<string, any>): "revoke" | "edit" | "other" {
+  const t = pick(node, "type", "Type");
+  if (t === PROTOCOL_REVOKE || t === "REVOKE") return "revoke";
+  if (t === PROTOCOL_MESSAGE_EDIT || t === "MESSAGE_EDIT") return "edit";
+  return "other";
+}
+
+/**
+ * Classifica uma mensagem (crua, com wrappers ou não): ruído a descartar,
+ * apagar-para-todos, edição ou conteúdo a gravar. Reação NÃO passa por aqui —
+ * os parsers tratam antes, como evento próprio.
+ */
+export function classifyBridgeMessage(waMsg: unknown, depth = 0): ClassifiedBridgeContent {
+  const { message, viewOnce } = unwrapBridgeMessage(waMsg);
+
+  const protocol = pickNorm(message, "protocolMessage");
+  if (protocol && typeof protocol === "object") {
+    const type = protocolTypeOf(protocol);
+    const key = pick(protocol, "key", "Key");
+    const targetExternalId = strUndef(pick(key, "ID", "Id", "id"));
+    if (type === "revoke") {
+      return targetExternalId
+        ? { kind: "revoke", targetExternalId }
+        : { kind: "noise", reason: "revoke without target id" };
+    }
+    if (type === "edit") {
+      const edited = pick(protocol, "editedMessage", "EditedMessage");
+      if (!targetExternalId || !edited || typeof edited !== "object" || depth > 0) {
+        return { kind: "noise", reason: "edit without target/content" };
+      }
+      const inner = classifyBridgeMessage(edited, depth + 1);
+      if (inner.kind !== "content" || inner.extracted.content.trim().length === 0) {
+        return { kind: "noise", reason: "edit without textual content" };
+      }
+      return { kind: "edit", targetExternalId, newContent: inner.extracted };
+    }
+    return { kind: "noise", reason: "protocol message" };
+  }
+
+  const keys = contentKeysOf(message);
+  if (keys.length === 0) return { kind: "noise", reason: "sender key distribution / empty" };
+  if (keys.every((k) => NOISE_KEYS.has(k))) return { kind: "noise", reason: `protocol noise ${keys[0]}` };
+
+  const extracted = extractContent(message);
+  if (viewOnce) extracted.metadataExtra.viewOnce = true;
+  return { kind: "content", extracted };
+}
+
+// ── Helpers de saneamento (tudo aqui é dado de terceiro) ──
+
+function clip(value: unknown, max: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const t = value.trim();
+  if (t.length === 0) return undefined;
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+function finiteNum(value: unknown): number | undefined {
+  const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+}
+
+function httpUrl(value: unknown): string | undefined {
+  const s = clip(value, 2048);
+  if (!s) return undefined;
+  return /^https?:\/\//i.test(s) ? s : undefined;
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/** Junta nomes: "A", "A e B", "A, B e mais 2". */
+function namesSummary(names: string[], total: number): string {
+  if (names.length === 0) return total > 1 ? `${total} contatos` : "sem nome";
+  if (total <= 1) return names[0];
+  if (total === 2 && names.length >= 2) return `${names[0]} e ${names[1]}`;
+  const shown = names.slice(0, 2);
+  const rest = total - shown.length;
+  return rest > 0 ? `${shown.join(", ")} e mais ${rest}` : shown.join(", ");
+}
+
+const CONTACT_CAP = 10;
+const CONTACT_PHONE_CAP = 20;
+
+/** Nome (FN) e telefones (TEL, preferindo `waid=`) de um vCard. Não guarda o vCard. */
+function parseVcard(vcard: unknown): { name?: string; phones: string[] } {
+  if (typeof vcard !== "string") return { phones: [] };
+  let name: string | undefined;
+  const phones: string[] = [];
+  for (const rawLine of vcard.slice(0, 8192).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const upper = line.toUpperCase();
+    if (!name && upper.startsWith("FN")) {
+      const idx = line.indexOf(":");
+      if (idx >= 0) name = clip(line.slice(idx + 1), 120);
+    } else if (upper.startsWith("TEL") || upper.includes(".TEL")) {
+      const waid = /waid=(\d{6,15})/i.exec(line);
+      const idx = line.lastIndexOf(":");
+      const digits = waid ? waid[1] : idx >= 0 ? line.slice(idx + 1).replace(/\D/g, "") : "";
+      if (digits.length >= 6 && digits.length <= 15) phones.push(digits);
+    }
+  }
+  return { name, phones };
+}
+
+function contactsFrom(nodes: Record<string, any>[], total: number): ExtractedContent {
+  const names: string[] = [];
+  const phones: string[] = [];
+  for (const node of nodes.slice(0, CONTACT_CAP)) {
+    const parsed = parseVcard(pick(node, "vcard", "Vcard", "VCard"));
+    const name = clip(pick(node, "displayName", "DisplayName"), 120) ?? parsed.name;
+    if (name) names.push(name);
+    for (const p of parsed.phones) {
+      if (phones.length >= CONTACT_PHONE_CAP) break;
+      if (!phones.includes(p)) phones.push(p);
+    }
+  }
+  const label = total > 1 ? "contatos" : "contato";
+  return {
+    contentType: "text",
+    content: `[${label}: ${namesSummary(names, total)}]`,
+    metadataExtra: { bridgeType: "contact", bridgeExtra: { names, phones } },
+  };
+}
+
+function locationExtra(node: Record<string, any>): BridgeLocationExtra | null {
+  const latitude = finiteNum(pick(node, "degreesLatitude", "DegreesLatitude"));
+  const longitude = finiteNum(pick(node, "degreesLongitude", "DegreesLongitude"));
+  if (latitude === undefined || longitude === undefined) return null;
+  const name = clip(pick(node, "name", "Name"), 200);
+  const address = clip(pick(node, "address", "Address"), 300);
+  const url = httpUrl(pick(node, "URL", "url", "Url"));
+  return {
+    latitude,
+    longitude,
+    ...(name ? { name } : {}),
+    ...(address ? { address } : {}),
+    ...(url ? { url } : {}),
+  };
+}
+
+const CALL_OUTCOMES: Record<number, string> = {
+  0: "connected",
+  1: "missed",
+  2: "failed",
+  3: "rejected",
+  4: "accepted_elsewhere",
+  5: "ongoing",
+  6: "silenced_by_dnd",
+  7: "silenced_unknown_caller",
+};
+
+/** Texto de um template/interativo RECEBIDO (mensagem de empresa). */
+function interactiveText(waMsg: Record<string, any>): string | undefined {
+  const template = pickNorm(waMsg, "templateMessage");
+  if (template) {
+    const hydrated =
+      pick(template, "hydratedTemplate", "HydratedTemplate") ??
+      pick(template, "hydratedFourRowTemplate", "HydratedFourRowTemplate") ??
+      pick(template, "fourRowTemplate", "FourRowTemplate");
+    const title = clip(pick(hydrated, "hydratedTitleText", "HydratedTitleText"), 500);
+    const body = clip(pick(hydrated, "hydratedContentText", "HydratedContentText"), 4000);
+    return [title, body].filter(Boolean).join("\n") || undefined;
+  }
+  const interactive = pickNorm(waMsg, "interactiveMessage");
+  if (interactive) {
+    const header = clip(pick(pick(interactive, "header", "Header"), "title", "Title"), 500);
+    const body = clip(pick(pick(interactive, "body", "Body"), "text", "Text"), 4000);
+    return [header, body].filter(Boolean).join("\n") || undefined;
+  }
+  const buttons = pickNorm(waMsg, "buttonsMessage");
+  if (buttons) return clip(pick(buttons, "contentText", "ContentText"), 4000);
+  const list = pickNorm(waMsg, "listMessage");
+  if (list) {
+    const title = clip(pick(list, "title", "Title"), 500);
+    const desc = clip(pick(list, "description", "Description"), 4000);
+    return [title, desc].filter(Boolean).join("\n") || undefined;
+  }
+  return undefined;
+}
+
+/** Texto escolhido numa resposta de botão/lista/template/fluxo nativo. */
+function selectedReplyText(waMsg: Record<string, any>): string | undefined | null {
+  const buttons = pickNorm(waMsg, "buttonsResponseMessage");
+  if (buttons) return clip(pick(buttons, "selectedDisplayText", "SelectedDisplayText"), 1000) ?? null;
+  const list = pickNorm(waMsg, "listResponseMessage");
+  if (list) return clip(pick(list, "title", "Title"), 1000) ?? null;
+  const tbr = pickNorm(waMsg, "templateButtonReplyMessage");
+  if (tbr) return clip(pick(tbr, "selectedDisplayText", "SelectedDisplayText"), 1000) ?? null;
+  const ir = pickNorm(waMsg, "interactiveResponseMessage");
+  if (ir) {
+    return (
+      clip(pick(pick(ir, "body", "Body"), "text", "Text"), 1000) ??
+      clip(pick(pick(ir, "nativeFlowResponseMessage", "NativeFlowResponseMessage"), "name", "Name"), 200) ??
+      null
+    );
+  }
+  return undefined; // não é resposta interativa
+}
+
+/** Teto do `metadata.raw` de tipo desconhecido (JSON serializado). */
+export const BRIDGE_RAW_MAX_CHARS = 4096;
+
+/**
+ * Cópia limitada do nó cru, para diagnóstico. Strings longas (miniaturas em
+ * base64…) e listas são cortadas e a profundidade é limitada; se ainda assim
+ * passar do teto, sobra só a lista de chaves. `_truncated` marca o corte.
+ */
+export function boundRawForStorage(value: unknown): Record<string, unknown> {
+  const obj = value && typeof value === "object" && !Array.isArray(value) ? value : { value };
+  for (const strCap of [300, 80]) {
+    let cut = false;
+    const walk = (v: unknown, depth: number): unknown => {
+      if (typeof v === "string") {
+        if (v.length > strCap) {
+          cut = true;
+          return `${v.slice(0, strCap)}…`;
+        }
+        return v;
+      }
+      if (v === null || typeof v !== "object") return v;
+      if (depth >= 6) {
+        cut = true;
+        return "[…]";
+      }
+      if (Array.isArray(v)) {
+        if (v.length > 10) cut = true;
+        return v.slice(0, 10).map((x) => walk(x, depth + 1));
+      }
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x, depth + 1);
+      return out;
+    };
+    const bounded = walk(obj, 0) as Record<string, unknown>;
+    if (JSON.stringify(bounded).length <= BRIDGE_RAW_MAX_CHARS) {
+      return cut ? { ...bounded, _truncated: true } : bounded;
+    }
+  }
+  return { _truncated: true, keys: Object.keys(obj as Record<string, unknown>).slice(0, 30) };
+}
+
+/** Map a decrypted (and unwrapped) whatsmeow waE2E.Message to our content shape. */
 function extractContent(waMsg: Record<string, any>): ExtractedContent {
   const conversation = pick(waMsg, "conversation", "Conversation");
   const extended = pick(waMsg, "extendedTextMessage", "ExtendedTextMessage");
@@ -336,11 +773,13 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
   const sticker = pick(waMsg, "stickerMessage", "StickerMessage");
   const audio = pick(waMsg, "audioMessage", "AudioMessage");
   const video = pick(waMsg, "videoMessage", "VideoMessage");
+  // Vídeo-nota redondo: mesma mídia do `videoMessage`.
+  const ptv = pick(waMsg, "ptvMessage", "PtvMessage", "PTVMessage");
   const doc = pick(waMsg, "documentMessage", "DocumentMessage");
   const reaction = pick(waMsg, "reactionMessage", "ReactionMessage");
 
   // The node bearing the ContextInfo (quote) for this message, if any.
-  const quoted = quotedFrom(extended ?? image ?? sticker ?? audio ?? video ?? doc);
+  const quoted = quotedFrom(contentNodeOf(waMsg));
   const quoteMeta = quoted ? { quoted } : {};
 
   if (typeof conversation === "string" && conversation.length > 0) {
@@ -379,11 +818,12 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       metadataExtra: { bridgeType: "audio", ...quoteMeta },
     };
   }
-  if (video) {
+  if (video || ptv) {
+    const node = (video ?? ptv) as Record<string, any>;
     return {
       contentType: "file",
-      content: strOr(pick(video, "caption", "Caption"), "[vídeo]"),
-      media: mediaFrom("video", video),
+      content: strOr(pick(node, "caption", "Caption"), "[vídeo]"),
+      media: mediaFrom("video", node),
       metadataExtra: { bridgeType: "video", ...quoteMeta },
     };
   }
@@ -408,12 +848,182 @@ function extractContent(waMsg: Record<string, any>): ExtractedContent {
       metadataExtra: { bridgeType: "reaction", reactionTo: targetId },
     };
   }
-  // Unrecognized content — keep a readable placeholder + raw for debugging
+
+  // ── Álbum: só o contêiner; as fotos chegam como mensagens separadas ──
+  const album = pickNorm(waMsg, "albumMessage");
+  if (album && typeof album === "object") {
+    const imageCount = Math.max(0, Math.floor(finiteNum(pick(album, "expectedImageCount", "ExpectedImageCount")) ?? 0));
+    const videoCount = Math.max(0, Math.floor(finiteNum(pick(album, "expectedVideoCount", "ExpectedVideoCount")) ?? 0));
+    const parts = [
+      imageCount > 0 ? plural(imageCount, "foto", "fotos") : null,
+      videoCount > 0 ? plural(videoCount, "vídeo", "vídeos") : null,
+    ].filter(Boolean);
+    return {
+      contentType: "text",
+      content: parts.length > 0 ? `[álbum: ${parts.join(" e ")}]` : "[álbum]",
+      metadataExtra: { bridgeType: "album", bridgeExtra: { imageCount, videoCount }, ...quoteMeta },
+    };
+  }
+
+  // ── Enquete (o VOTO é cifrado e cai em NOISE_KEYS) ──
+  const poll =
+    pickNorm(waMsg, "pollCreationMessage") ??
+    pickNorm(waMsg, "pollCreationMessageV2") ??
+    pickNorm(waMsg, "pollCreationMessageV3") ??
+    pickNorm(waMsg, "pollCreationMessageV4") ??
+    pickNorm(waMsg, "pollCreationMessageV5");
+  if (poll && typeof poll === "object") {
+    const question = clip(pick(poll, "name", "Name"), 300) ?? "";
+    const rawOptions = pick(poll, "options", "Options");
+    const options = Array.isArray(rawOptions)
+      ? rawOptions
+          .map((o) => clip(pick(o, "optionName", "OptionName"), 200))
+          .filter((o): o is string => !!o)
+          .slice(0, 12)
+      : [];
+    const selectable = finiteNum(pick(poll, "selectableOptionsCount", "SelectableOptionsCount"));
+    return {
+      contentType: "text",
+      content: `[enquete: ${question || "sem título"}]`,
+      metadataExtra: {
+        bridgeType: "poll",
+        bridgeExtra: { question, options, ...(selectable !== undefined ? { selectableCount: selectable } : {}) },
+        ...quoteMeta,
+      },
+    };
+  }
+
+  // ── Localização (fixa ou ao vivo) ──
+  const location = pickNorm(waMsg, "locationMessage");
+  if (location && typeof location === "object") {
+    const extra = locationExtra(location);
+    if (extra) {
+      const label =
+        extra.name ?? extra.address ?? `${extra.latitude.toFixed(6)}, ${extra.longitude.toFixed(6)}`;
+      return {
+        contentType: "text",
+        content: `[localização: ${label}]`,
+        metadataExtra: { bridgeType: "location", bridgeExtra: extra, ...quoteMeta },
+      };
+    }
+  }
+  const live = pickNorm(waMsg, "liveLocationMessage");
+  if (live && typeof live === "object") {
+    const extra = locationExtra(live);
+    if (extra) {
+      return {
+        contentType: "text",
+        content: "[localização ao vivo]",
+        metadataExtra: { bridgeType: "live_location", bridgeExtra: extra, ...quoteMeta },
+      };
+    }
+  }
+
+  // ── Contato(s): nomes e telefones, nunca o vCard inteiro ──
+  const contact = pickNorm(waMsg, "contactMessage");
+  if (contact && typeof contact === "object") {
+    return withQuote(contactsFrom([contact], 1), quoteMeta);
+  }
+  const contactsArray = pickNorm(waMsg, "contactsArrayMessage");
+  if (contactsArray && typeof contactsArray === "object") {
+    const list = pick(contactsArray, "contacts", "Contacts");
+    const nodes = Array.isArray(list) ? list.filter((c) => c && typeof c === "object") : [];
+    return withQuote(contactsFrom(nodes, Math.max(nodes.length, 1)), quoteMeta);
+  }
+
+  // ── Evento de grupo ──
+  const event = pickNorm(waMsg, "eventMessage");
+  if (event && typeof event === "object") {
+    const name = clip(pick(event, "name", "Name"), 300) ?? "";
+    const description = clip(pick(event, "description", "Description"), 1000);
+    const startSec = finiteNum(pick(event, "startTime", "StartTime"));
+    const loc = pick(event, "location", "Location");
+    const locLabel = loc && typeof loc === "object"
+      ? clip(pick(loc, "name", "Name"), 200) ?? clip(pick(loc, "address", "Address"), 300)
+      : undefined;
+    const joinLink = httpUrl(pick(event, "joinLink", "JoinLink"));
+    return {
+      contentType: "text",
+      content: `[evento: ${name || "sem título"}]`,
+      metadataExtra: {
+        bridgeType: "event",
+        bridgeExtra: {
+          name,
+          ...(description ? { description } : {}),
+          ...(startSec !== undefined && startSec > 0 ? { startAt: startSec > 1e12 ? startSec : startSec * 1000 } : {}),
+          ...(locLabel ? { location: locLabel } : {}),
+          ...(joinLink ? { joinLink } : {}),
+        },
+        ...quoteMeta,
+      },
+    };
+  }
+
+  // ── Convite de grupo: o `inviteCode` NUNCA é gravado (é a chave da sala) ──
+  const invite = pickNorm(waMsg, "groupInviteMessage");
+  if (invite && typeof invite === "object") {
+    const groupName = clip(pick(invite, "groupName", "GroupName"), 200) ?? "sem nome";
+    return {
+      contentType: "text",
+      content: `[convite para o grupo ${groupName}]`,
+      metadataExtra: { bridgeType: "group_invite", bridgeExtra: { groupName }, ...quoteMeta },
+    };
+  }
+
+  // ── Registro de chamada (o proto tem o typo "Messsage") ──
+  const callLog = pickNorm(waMsg, "callLogMesssage") ?? pickNorm(waMsg, "callLogMessage");
+  if (callLog && typeof callLog === "object") {
+    const isVideoRaw = pick(callLog, "isVideo", "IsVideo");
+    const isVideo = typeof isVideoRaw === "boolean" ? isVideoRaw : undefined;
+    const outcomeRaw = pick(callLog, "callOutcome", "CallOutcome");
+    const outcome =
+      typeof outcomeRaw === "number"
+        ? CALL_OUTCOMES[outcomeRaw]
+        : typeof outcomeRaw === "string"
+          ? clip(outcomeRaw.toLowerCase(), 40)
+          : undefined;
+    return {
+      contentType: "text",
+      content: isVideo ? "[chamada de vídeo]" : "[chamada de voz]",
+      metadataExtra: {
+        bridgeType: "call_log",
+        bridgeExtra: { ...(isVideo !== undefined ? { isVideo } : {}), ...(outcome ? { outcome } : {}) },
+      },
+    };
+  }
+
+  // ── Resposta de botão/lista/template: o texto escolhido é a mensagem ──
+  const selected = selectedReplyText(waMsg);
+  if (typeof selected === "string") {
+    return {
+      contentType: "text",
+      content: selected,
+      metadataExtra: { bridgeType: "interactive_reply", bridgeExtra: { selected }, ...quoteMeta },
+    };
+  }
+
+  // ── Template/interativo RECEBIDO: vale o texto ──
+  const interactive = interactiveText(waMsg);
+  if (interactive) {
+    return { contentType: "text", content: interactive, metadataExtra: { bridgeType: "text", ...quoteMeta } };
+  }
+
+  // Unrecognized content — readable placeholder + bounded raw for debugging.
+  const type =
+    Object.keys(waMsg ?? {}).find((k) => !COMPANION_KEYS.has(normKey(k)) && waMsg[k] != null) ?? "empty";
   return {
     contentType: "text",
     content: "[mensagem não suportada]",
-    metadataExtra: { bridgeType: "unknown", raw: waMsg },
+    metadataExtra: {
+      bridgeType: "unknown",
+      bridgeExtra: { type: type.slice(0, 80) },
+      raw: boundRawForStorage(waMsg),
+    },
   };
+}
+
+function withQuote(extracted: ExtractedContent, quoteMeta: Record<string, unknown>): ExtractedContent {
+  return { ...extracted, metadataExtra: { ...extracted.metadataExtra, ...quoteMeta } };
 }
 
 /** Pull the reaction target id + emoji from a whatsmeow reactionMessage node. */
@@ -491,7 +1101,8 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
 
   // A reaction from the contact is NOT a message — surface it as its own event so
   // the ingest can patch the target message instead of creating a standalone note.
-  const reactionNode = pick(waMsg, "reactionMessage", "ReactionMessage");
+  const unwrapped = unwrapBridgeMessage(waMsg).message;
+  const reactionNode = pick(unwrapped, "reactionMessage", "ReactionMessage");
   if (reactionNode) {
     // A NOSSA reação (do inbox ou do aparelho) continua fora: o ingest grava
     // reação sempre com `sender: "contact"`, então deixar passar atribuiria ao
@@ -511,7 +1122,21 @@ function parseMessage(event: Record<string, any>): ParsedBridgeEvent {
     };
   }
 
-  const extracted = extractContent(waMsg);
+  const classified = classifyBridgeMessage(waMsg);
+  if (classified.kind === "noise") return { kind: "ignored", reason: classified.reason };
+  if (classified.kind === "revoke" || classified.kind === "edit") {
+    const base = {
+      targetExternalId: classified.targetExternalId,
+      isGroup: false,
+      fromMe,
+      chatPhone: from,
+      timestamp,
+    };
+    return classified.kind === "revoke"
+      ? { kind: "message_revoke", revoke: base }
+      : { kind: "message_edit", edit: { ...base, newContent: classified.newContent.content } };
+  }
+  const extracted = classified.extracted;
 
   return {
     kind: "message",
@@ -565,7 +1190,8 @@ function parseGroupMessage(
   const timestamp = parseTimestamp(pick(info, "Timestamp", "timestamp"));
 
   // Reação: não é mensagem — o ingest usa para patchar a mensagem alvo.
-  const reactionNode = pick(waMsg, "reactionMessage", "ReactionMessage");
+  const unwrapped = unwrapBridgeMessage(waMsg).message;
+  const reactionNode = pick(unwrapped, "reactionMessage", "ReactionMessage");
   if (reactionNode) {
     // A NOSSA reação fica fora: o ingest grava reação com autoria de membro, e
     // deixar passar atribuiria a um participante um emoji que fomos nós que pusemos.
@@ -586,8 +1212,24 @@ function parseGroupMessage(
     };
   }
 
-  const extracted = extractContent(waMsg);
-  const ci = contextInfoOf(waMsg);
+  const classified = classifyBridgeMessage(waMsg);
+  if (classified.kind === "noise") return { kind: "ignored", reason: classified.reason };
+  if (classified.kind === "revoke" || classified.kind === "edit") {
+    const base = {
+      targetExternalId: classified.targetExternalId,
+      isGroup: true,
+      fromMe,
+      groupJid: chatJid,
+      ...(senderLid ? { senderLid } : {}),
+      ...(senderPhone ? { senderPhone } : {}),
+      timestamp,
+    };
+    return classified.kind === "revoke"
+      ? { kind: "message_revoke", revoke: base }
+      : { kind: "message_edit", edit: { ...base, newContent: classified.newContent.content } };
+  }
+  const extracted = classified.extracted;
+  const ci = contextInfoOf(unwrapped);
   const mentions = mentionsFrom(ci);
   const stanzaId = strUndef(pick(ci, "stanzaId", "stanzaID", "StanzaID", "StanzaId"));
   // Em grupo o quote SÓ renderiza com o JID do autor da mensagem citada.

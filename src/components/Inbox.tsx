@@ -7,7 +7,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus, BarChart3, MapPin, UserRound, Calendar, Link2, Phone, HelpCircle, Images, MousePointerClick } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -51,6 +51,7 @@ import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/ce
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
 import { aiStateReasonLabel } from "@/lib/aiStateReasons";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
+import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
 
 // Guardrail anti-bot (v0.65): `conversations.botSuspicion` sem `clearedAt` =
@@ -1355,6 +1356,18 @@ export function Inbox() {
     if (contentType === "image" || bridgeType === "sticker" || bridgeType === "image") return ImageIcon;
     if (bridgeType === "video") return Video;
     if (contentType === "file") return FileText;
+    switch (bridgeType) {
+      case "album": return Images;
+      case "poll": return BarChart3;
+      case "location":
+      case "live_location": return MapPin;
+      case "contact": return UserRound;
+      case "event": return Calendar;
+      case "group_invite": return Link2;
+      case "call_log": return Phone;
+      case "interactive_reply": return MousePointerClick;
+      case "unknown": return HelpCircle;
+    }
     return null;
   };
 
@@ -1827,7 +1840,11 @@ export function Inbox() {
                       })()}
                       <span className="truncate">
                         {conversation.lastMessageDirection === "outbound" ? "Você: " : ""}
-                        {conversation.lastMessagePreview}
+                        {conversationPreviewText(
+                          conversation.lastMessagePreview,
+                          conversation.lastMessageBridgeType ?? null,
+                          conversation.lastMessageRevoked === true
+                        )}
                       </span>
                     </span>
                   ) : (

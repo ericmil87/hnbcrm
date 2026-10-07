@@ -1,0 +1,111 @@
+{
+  "_synthetic": "SINTÉTICA — montada em 07/10/2026 a partir do proto waE2E do whatsmeow (WAWebProtobufsE2E.proto) e das chaves medidas nas ~3400 mensagens de produção. Nenhum dado real; revalidar nomes de campo contra o gateway vivo.",
+  "senderKeyOnly": {
+    "messageContextInfo": { "deviceListMetadataVersion": 2 },
+    "senderKeyDistributionMessage": { "groupID": "120363000000000000@g.us", "axolotlSenderKeyDistributionMessage": "AAAA" }
+  },
+  "album": {
+    "messageContextInfo": { "messageSecret": "AAAA" },
+    "albumMessage": { "expectedImageCount": 20, "contextInfo": {} }
+  },
+  "albumMixed": { "albumMessage": { "expectedImageCount": 3, "expectedVideoCount": 1 } },
+  "albumChild": {
+    "associatedChildMessage": {
+      "message": { "imageMessage": { "mimetype": "image/jpeg", "caption": "foto 1 do álbum" } }
+    }
+  },
+  "revoke": {
+    "protocolMessage": {
+      "key": { "remoteJID": "15550000001@s.whatsapp.net", "fromMe": false, "ID": "3EB0TARGET01" },
+      "type": 0
+    }
+  },
+  "edit": {
+    "editedMessage": {
+      "message": {
+        "protocolMessage": {
+          "key": { "remoteJID": "15550000001@s.whatsapp.net", "fromMe": false, "ID": "3EB0TARGET01" },
+          "type": 14,
+          "editedMessage": { "conversation": "texto corrigido" },
+          "timestampMS": 1791380000000
+        }
+      }
+    }
+  },
+  "ephemeralSetting": { "protocolMessage": { "type": 3, "ephemeralExpiration": 604800 } },
+  "contact": {
+    "contactMessage": {
+      "displayName": "Joana Teste",
+      "vcard": "BEGIN:VCARD\nVERSION:3.0\nN:;Joana Teste;;;\nFN:Joana Teste\nitem1.TEL;waid=15550000099:+1 555-000-0099\nitem1.X-ABLabel:Celular\nEND:VCARD"
+    }
+  },
+  "contactsArray": {
+    "contactsArrayMessage": {
+      "displayName": "4 contatos",
+      "contacts": [
+        { "displayName": "Ana", "vcard": "BEGIN:VCARD\nFN:Ana\nTEL;type=CELL:+1 555 000 0001\nEND:VCARD" },
+        { "displayName": "Bruno", "vcard": "BEGIN:VCARD\nFN:Bruno\nTEL;waid=15550000002:+1 555 000 0002\nEND:VCARD" },
+        { "displayName": "Carla", "vcard": "BEGIN:VCARD\nFN:Carla\nEND:VCARD" },
+        { "displayName": "Davi", "vcard": "BEGIN:VCARD\nFN:Davi\nEND:VCARD" }
+      ]
+    }
+  },
+  "poll": {
+    "pollCreationMessageV3": {
+      "name": "Qual dia é melhor?",
+      "options": [{ "optionName": "Sábado" }, { "optionName": "Domingo" }],
+      "selectableOptionsCount": 1
+    }
+  },
+  "location": {
+    "locationMessage": {
+      "degreesLatitude": -8.0476,
+      "degreesLongitude": -34.877,
+      "name": "Marco Zero",
+      "address": "Recife Antigo",
+      "URL": "https://maps.example.test/marco-zero"
+    }
+  },
+  "liveLocation": { "liveLocationMessage": { "degreesLatitude": -8.05, "degreesLongitude": -34.9, "sequenceNumber": 3 } },
+  "event": {
+    "eventMessage": {
+      "name": "Roda de conversa",
+      "description": "Encontro mensal",
+      "startTime": 1791380000,
+      "location": { "name": "Sede", "degreesLatitude": 0, "degreesLongitude": 0 },
+      "joinLink": "https://call.example.test/abc"
+    }
+  },
+  "groupInvite": {
+    "groupInviteMessage": {
+      "groupJID": "120363000000000001@g.us",
+      "inviteCode": "SEGREDO-DA-SALA",
+      "groupName": "Turma do Sábado",
+      "caption": "entra aí"
+    }
+  },
+  "callLog": { "callLogMesssage": { "isVideo": true, "callOutcome": 1, "durationSecs": 0 } },
+  "buttonsResponse": { "buttonsResponseMessage": { "selectedButtonID": "b1", "selectedDisplayText": "Quero saber mais" } },
+  "listResponse": { "listResponseMessage": { "title": "Plano Anual", "singleSelectReply": { "selectedRowID": "r2" } } },
+  "templateReceived": {
+    "templateMessage": {
+      "hydratedTemplate": { "hydratedTitleText": "Pedido confirmado", "hydratedContentText": "Seu pedido #123 saiu para entrega." }
+    }
+  },
+  "interactiveReceived": {
+    "interactiveMessage": { "header": { "title": "Promoção" }, "body": { "text": "Só hoje: 20% off." }, "nativeFlowMessage": {} }
+  },
+  "ptv": { "ptvMessage": { "mimetype": "video/mp4", "seconds": 12 } },
+  "viewOnceNested": {
+    "ephemeralMessage": {
+      "message": {
+        "viewOnceMessageV2": {
+          "message": { "imageMessage": { "mimetype": "image/jpeg", "caption": "só uma vez" } }
+        }
+      }
+    }
+  },
+  "statusMention": { "groupStatusMentionMessage": { "message": {} } },
+  "pollVote": { "pollUpdateMessage": { "pollCreationMessageKey": { "ID": "X" }, "vote": { "encPayload": "AAAA" } } },
+  "unknownType": { "messageContextInfo": {}, "requestPaymentMessage": { "currencyCodeIso4217": "BRL", "amount1000": 50000 } }
+}

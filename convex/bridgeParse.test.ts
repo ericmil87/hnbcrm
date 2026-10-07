@@ -248,11 +248,13 @@ describe("parseBridgeEvent — defensive", () => {
   });
 
   test("unrecognized message content falls back to a placeholder", () => {
-    const res = parseBridgeEvent(messageEnvelope({ pollCreationMessage: { name: "?" } }));
+    // Enquete passou a ser reconhecida em 07/10/2026; pedido de pagamento segue sem suporte.
+    const res = parseBridgeEvent(messageEnvelope({ requestPaymentMessage: { amount1000: 1 } }));
     expect(res.kind).toBe("message");
     if (res.kind !== "message") return;
     expect(res.message.content).toBe("[mensagem não suportada]");
     expect(res.message.metadata.bridgeType).toBe("unknown");
+    expect(res.message.metadata.bridgeExtra).toEqual({ type: "requestPaymentMessage" });
   });
 });
 

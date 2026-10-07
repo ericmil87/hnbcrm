@@ -269,7 +269,11 @@ export function formatFileSize(bytes: number): string {
 // A short bracketed token like "[imagem]" / "[mensagem de voz]" is a
 // server-side placeholder for media whose real content lives in the
 // attachment. We suppress it as bubble text when an attachment is present.
-const PLACEHOLDER_RE = /^\[[^\]]{1,40}\]$/;
+// Os placeholders de tipos especiais ("[enquete: pergunta longa]") levam texto
+// do usuário e passam de 40 chars; por isso o teto é maior e não aceita "]"
+// no meio. Quem quer mostrar o card decide por `metadata.bridgeType`, não por
+// esta regex.
+const PLACEHOLDER_RE = /^\[[^\]]{1,200}\]$/;
 
 export function isMediaPlaceholder(content: string | undefined | null): boolean {
   if (!content) return false;

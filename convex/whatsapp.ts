@@ -377,10 +377,23 @@ const MEDIA_PLACEHOLDERS = new Set([
   "[documento]",
   "[mensagem não suportada]",
 ]);
-function captionFor(content: string | undefined): string | undefined {
+// Placeholders com conteúdo variável que o parser do bridge grava para tipos
+// sem mídia própria (álbum, enquete, localização, contato, evento, convite,
+// chamada) — também nunca viram legenda num encaminhamento.
+const PLACEHOLDER_PREFIXES = [
+  "[álbum",
+  "[enquete:",
+  "[localização",
+  "[contato",
+  "[evento:",
+  "[convite para o grupo",
+  "[chamada de",
+];
+export function captionFor(content: string | undefined): string | undefined {
   if (!content) return undefined;
   const trimmed = content.trim();
   if (trimmed.length === 0 || MEDIA_PLACEHOLDERS.has(trimmed)) return undefined;
+  if (trimmed.endsWith("]") && PLACEHOLDER_PREFIXES.some((p) => trimmed.startsWith(p))) return undefined;
   return content;
 }
 

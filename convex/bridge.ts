@@ -255,6 +255,30 @@ export const webhookReceive = httpAction(async (ctx, request) => {
       senderName: parsed.reaction.senderName,
       at: parsed.reaction.timestamp,
     });
+  } else if (parsed.kind === "message_revoke" || parsed.kind === "message_edit") {
+    // Apagar para todos / edição: patch inline na mensagem alvo, depois de
+    // conferir autoria (lib/bridgeMessageMutations). Não é mensagem nova.
+    const ev = parsed.kind === "message_revoke" ? parsed.revoke : parsed.edit;
+    const common = {
+      organizationId: config.organizationId,
+      channelConfigId: config._id,
+      targetExternalId: ev.targetExternalId,
+      isGroup: ev.isGroup,
+      fromMe: ev.fromMe,
+      ...(ev.chatPhone ? { chatPhone: ev.chatPhone } : {}),
+      ...(ev.groupJid ? { groupJid: ev.groupJid } : {}),
+      ...(ev.senderLid ? { senderLid: ev.senderLid } : {}),
+      ...(ev.senderPhone ? { senderPhone: ev.senderPhone } : {}),
+      at: ev.timestamp,
+    };
+    if (parsed.kind === "message_revoke") {
+      await ctx.runMutation(internal.conversations.internalApplyMessageRevoke, common);
+    } else {
+      await ctx.runMutation(internal.conversations.internalApplyMessageEdit, {
+        ...common,
+        newContent: parsed.edit.newContent,
+      });
+    }
   } else if (parsed.kind === "chat_presence") {
     // Contato digitando/parou — patch barato na conversa, some via TTL no cliente.
     await ctx.runMutation(internal.conversations.internalSetContactPresence, {

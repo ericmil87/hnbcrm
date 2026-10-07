@@ -29,6 +29,7 @@ import { getLeadRef } from "./lib/leadRef";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
+import { applyBridgeEdit, applyBridgeRevoke } from "./lib/bridgeMessageMutations";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -118,6 +119,10 @@ type LastMessageFields = {
   lastMessageContentType: "text" | "image" | "file" | "audio" | null;
   lastMessageDirection: "inbound" | "outbound" | "internal" | null;
   lastMessageBridgeType: string | null;
+  // "Apagar para todos" (metadata.revoked) e o `bridgeExtra` da última
+  // mensagem — a prévia da lista diz "Mensagem apagada" / usa a enquete/álbum.
+  lastMessageRevoked: boolean;
+  lastMessageBridgeExtra: Record<string, unknown> | null;
 };
 
 function lastMessageFields(message: Doc<"messages"> | null): LastMessageFields {
@@ -127,6 +132,8 @@ function lastMessageFields(message: Doc<"messages"> | null): LastMessageFields {
       lastMessageContentType: null,
       lastMessageDirection: null,
       lastMessageBridgeType: null,
+      lastMessageRevoked: false,
+      lastMessageBridgeExtra: null,
     };
   }
   const bridgeType =
@@ -146,6 +153,13 @@ function lastMessageFields(message: Doc<"messages"> | null): LastMessageFields {
     lastMessageContentType: message.contentType,
     lastMessageDirection: message.direction,
     lastMessageBridgeType: bridgeType,
+    lastMessageRevoked: message.metadata?.revoked === true,
+    lastMessageBridgeExtra:
+      message.metadata?.bridgeExtra &&
+      typeof message.metadata.bridgeExtra === "object" &&
+      !Array.isArray(message.metadata.bridgeExtra)
+        ? (message.metadata.bridgeExtra as Record<string, unknown>)
+        : null,
   };
 }
 
@@ -2519,6 +2533,36 @@ export const internalApplyReaction = internalMutation({
     });
     return message._id;
   },
+});
+
+const bridgeMessageMutationArgs = {
+  organizationId: v.id("organizations"),
+  channelConfigId: v.optional(v.id("channelConfigs")),
+  targetExternalId: v.string(),
+  isGroup: v.boolean(),
+  fromMe: v.boolean(),
+  chatPhone: v.optional(v.string()),
+  groupJid: v.optional(v.string()),
+  senderLid: v.optional(v.string()),
+  senderPhone: v.optional(v.string()),
+  at: v.number(),
+};
+
+// "Apagar para todos" vindo do bridge: marca `metadata.revoked` (nunca apaga a
+// linha nem o conteúdo — o front esconde). Só o autor (ou admin do grupo)
+// apaga; alvo desconhecido ou pedido de quem não pode é ignorado em silêncio.
+export const internalApplyMessageRevoke = internalMutation({
+  args: bridgeMessageMutationArgs,
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => await applyBridgeRevoke(ctx, args),
+});
+
+// Edição vinda do bridge: troca `content`, guarda o PRIMEIRO original em
+// `metadata.previousContent` (cap 2000). Não re-enfileira IA nem transcrição.
+export const internalApplyMessageEdit = internalMutation({
+  args: { ...bridgeMessageMutationArgs, newContent: v.string() },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => await applyBridgeEdit(ctx, args),
 });
 
 // ── Reactions / read receipts / typing (public, permission-gated) ──

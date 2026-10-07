@@ -14,7 +14,8 @@ interface QuotedBlockProps {
 export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBlockProps) {
   const outbound = variant === "outbound";
   const author = quoted.fromMe ? "Você" : contactName || "Contato";
-  const preview = quoted.preview?.trim() || "Mídia";
+  const rawPreview = quoted.preview?.trim() || "Mídia";
+  const preview = rawPreview === "[mensagem não suportada]" ? "Mensagem de tipo não suportado" : rawPreview;
 
   const content = (
     <div
