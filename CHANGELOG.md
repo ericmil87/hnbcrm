@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.70.0] - 2026-10-07
+
+### Guardrail de saída da IA, mensagens do WhatsApp que o inbox não exibia e agenda nas publicações
+
+- **Nenhum texto técnico do modelo sai para o cliente ou para um grupo.** Em 07/10 uma publicação programada mandou para dois grupos a "chamada de ferramenta" crua do modelo (`<｜DSML｜invoke name="consultarAgenda">`) em vez do texto: a persona do atendente manda consultar a agenda, mas a geração de publicação não tem ferramentas. Agora toda saída de IA que vira mensagem (atendente 1 a 1, follow-up, agente de grupo, publicação programada, prévia e simulador) passa por um detector genérico de marcação vazada (tags de ferramenta de qualquer família de modelo, tokens especiais, JSON de função, resto de raciocínio): a resposta é descartada inteira, o modelo refaz uma vez com aviso e, se repetir, o turno falha e a equipe é avisada — nunca sai nem como rascunho
+- **Publicação programada por IA consulta a agenda externa** (quando a empresa configurou a agenda do atendente): os eventos abertos entram no prompt como "AGENDA ATUAL", eventos encerrados saem, e agenda indisponível vira um aviso para o modelo não citar datas nem valores. O prompt da publicação deixa claro que ali não há ferramenta a chamar
+- **Inbox deixa de mostrar "[mensagem não suportada]" para o que o WhatsApp nem exibe:** distribuição de chave de criptografia de grupo, votos de enquete, menções em status e outros eventos de protocolo são descartados na entrada (e não acordam mais o atendente IA). Álbum de fotos, enquete, localização, contato compartilhado, evento de grupo, convite para grupo, chamada e resposta de botão viram cards legíveis, com prévia curta na lista de conversas; mensagens efêmeras e de visualização única são desembrulhadas; "apagar para todos" mostra "Mensagem apagada" (o conteúdo fica guardado) e edição troca o texto com selo "editada" — só o autor (ou admin da sala) consegue apagar/editar. Operação interna `opsBridgeReparse:internalReparseUnknownBridgeMessages` reprocessa o histórico (simulação por padrão)
+
 ## [0.69.1] - 2026-10-04
 
 ### Alertas por e-mail e fechamentos de segurança
