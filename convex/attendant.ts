@@ -60,6 +60,11 @@ import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
 import { getLeadRef } from "./lib/leadRef";
 import { toWhatsAppText } from "./lib/whatsappText";
 import {
+  describeLeakedModelMarkup,
+  detectLeakedModelMarkup,
+  type LeakedModelMarkup,
+} from "./lib/llmOutputGuard";
+import {
   buildCurrentDateTimeBlock,
   resolveAgentTimezone,
   shouldIncludeCurrentDateTime,
@@ -806,6 +811,87 @@ export function historyTextOf(
   },
   opts?: { visionEnabled?: boolean }
 ): string {
+  // Mensagem APAGADA pelo remetente vence qualquer conteúdo: o texto antigo
+  // não pode continuar valendo como se o cliente ainda o afirmasse.
+  if (m.metadata?.revoked === true) return "[mensagem apagada pelo remetente]";
+  const base = historyTextBase(m, opts);
+  return m.metadata?.edited === true ? `${base} (editada)` : base;
+}
+
+/** Texto curto e seguro de um campo de `bridgeExtra` (dado de terceiro). */
+function extraText(value: unknown, max = 120): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+/**
+ * Tipos de mensagem do bridge sem conteúdo de texto próprio (`metadata.bridgeType`
+ * + `metadata.bridgeExtra`, gravados pelo parser). Devolve `null` para os tipos
+ * comuns, que seguem o caminho normal. Tudo aqui é dado de terceiro e entra no
+ * envelope não-confiável como o resto do histórico. Contato compartilhado
+ * NUNCA leva telefone ao modelo — só os nomes.
+ */
+function bridgeTypeHistoryText(metadata: Record<string, unknown> | undefined): string | null {
+  const type = metadata?.bridgeType;
+  if (typeof type !== "string") return null;
+  const extra =
+    metadata?.bridgeExtra && typeof metadata.bridgeExtra === "object"
+      ? (metadata.bridgeExtra as Record<string, unknown>)
+      : {};
+  const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
+  switch (type) {
+    case "album": {
+      const images = count(extra.imageCount);
+      const videos = count(extra.videoCount);
+      const parts = [
+        images ? `${images} foto${images === 1 ? "" : "s"}` : "",
+        videos ? `${videos} vídeo${videos === 1 ? "" : "s"}` : "",
+      ].filter(Boolean);
+      return parts.length ? `[álbum recebido: ${parts.join(" e ")}]` : "[álbum recebido]";
+    }
+    case "poll": {
+      const question = extraText(extra.question, 200);
+      const options = Array.isArray(extra.options)
+        ? extra.options.map((o) => extraText(o, 60)).filter(Boolean).slice(0, 12)
+        : [];
+      const head = question ? `[enquete recebida: ${question}` : "[enquete recebida";
+      return options.length ? `${head} — opções: ${options.join(", ")}]` : `${head}]`;
+    }
+    case "location":
+    case "live_location": {
+      const name = extraText(extra.name) || extraText(extra.address, 200);
+      const lat = typeof extra.latitude === "number" ? extra.latitude : typeof extra.lat === "number" ? extra.lat : null;
+      const lng = typeof extra.longitude === "number" ? extra.longitude : typeof extra.lng === "number" ? extra.lng : null;
+      const where = name || (lat !== null && lng !== null ? `${lat},${lng}` : "");
+      return where ? `[localização recebida: ${where}]` : "[localização recebida]";
+    }
+    case "contact": {
+      const names = Array.isArray(extra.names)
+        ? extra.names.map((n) => extraText(n, 60)).filter(Boolean).slice(0, 10)
+        : [];
+      return names.length ? `[contato compartilhado: ${names.join(", ")}]` : "[contato compartilhado]";
+    }
+    case "event": {
+      const name = extraText(extra.name, 200);
+      return name ? `[evento recebido: ${name}]` : "[evento recebido]";
+    }
+    case "group_invite":
+      return "[convite para grupo recebido]";
+    case "call_log":
+      return "[registro de chamada]";
+    case "unknown":
+      return "[mensagem de tipo não suportado]";
+    default:
+      return null;
+  }
+}
+
+function historyTextBase(
+  m: Parameters<typeof historyTextOf>[0],
+  opts?: { visionEnabled?: boolean }
+): string {
+  const special = bridgeTypeHistoryText(m.metadata);
+  if (special !== null) return special;
+
   // Mídia de GRUPO que a política não baixou (v0.62): nada foi transcrito nem
   // descrito, e o placeholder do parser ("[imagem]", "[áudio]") faria a IA
   // achar que a mídia chegou e só não deu para ler. Dizer que NÃO foi baixada
@@ -1517,6 +1603,49 @@ export function isTruncatedResponse(
 ): boolean {
   if (resp.finishReason === "length") return true;
   return !!resp.usage && resp.usage.completionTokens >= maxTokens;
+}
+
+/**
+ * Guardrail de SAÍDA (incidente de 07/10/2026): pedido de refação quando o
+ * texto que IA ia mandar ao cliente trazia marcação técnica de ferramenta
+ * (DSML, `<tool_call>`, `<|…|>`, JSON de função) em vez de texto. Genérico.
+ */
+export const LEAKED_MARKUP_NUDGE =
+  "Sua resposta anterior continha marcação técnica de ferramenta em vez de texto e foi descartada inteira. " +
+  "Use as ferramentas pela interface de tool-calls e escreva só texto para o cliente.";
+
+/**
+ * O texto que ESTA rodada mandaria ao cliente (ou gravaria como rascunho), e o
+ * vazamento nele, se houver. Só olha o que de fato sai: o `text` do
+ * `replyToCustomer`/`replyToGroup` que não vai ser descartado, ou o texto puro
+ * quando o fallback "texto puro vira mensagem" está ligado. O `content` que
+ * acompanha tool calls e não é enviado não interessa.
+ */
+export function leakInOutgoingRound(
+  message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
+  opts: { textFallback: boolean; replyToolNames?: string[]; skipReply?: boolean }
+): LeakedModelMarkup | null {
+  const toolCalls = message.tool_calls ?? [];
+  if (toolCalls.length === 0) {
+    return opts.textFallback && typeof message.content === "string"
+      ? detectLeakedModelMarkup(message.content)
+      : null;
+  }
+  if (opts.skipReply) return null;
+  const replyNames = opts.replyToolNames ?? ["replyToCustomer"];
+  for (const tc of toolCalls) {
+    if (!replyNames.includes(tc.function.name)) continue;
+    let text: unknown = null;
+    try {
+      text = (JSON.parse(tc.function.arguments || "{}") as { text?: unknown }).text;
+    } catch {
+      // Argumentos que não parseiam: o JSON cru é o que poderia vazar.
+      text = tc.function.arguments;
+    }
+    const leak = typeof text === "string" ? detectLeakedModelMarkup(text) : null;
+    if (leak) return leak;
+  }
+  return null;
 }
 
 /**
@@ -3260,6 +3389,10 @@ export const internalProcessQueueItem = internalAction({
       let followUpNudged = false;
       let nextToolChoice: "auto" | "required" = "auto";
       let truncatedOnce = false;
+      // Guardrail de saída (07/10/2026): marcação técnica vazada no texto ao
+      // cliente — mesma política da resposta cortada (descarta a rodada
+      // inteira, pede de novo UMA vez, depois falha com retry).
+      let leakedOnce = false;
       // Agenda externa (v0.64): eventos que a IA de fato VIU neste turno — a
       // única fonte aceita para `replyToCustomer.imageUrl`.
       const agendaEventsSeen: AgendaEvent[] = [];
@@ -3309,25 +3442,42 @@ export const internalProcessQueueItem = internalAction({
           // Achata parts→texto: se o histórico trouxer content parts (passe de
           // visão), a checagem antiga por `typeof === "string"` viraria "".
           const originalUser = flattenContent(messages[1]?.content);
-          const recovery = await chatWithFallback(routes, {
-            messages: [
-              messages[0],
-              {
-                role: "user",
-                content: `${originalUser}\n\n${executedSummary}\nResponda ao cliente agora em TEXTO PURO, sem usar nenhuma ferramenta.`,
-              },
-            ],
-            temperature: context.temperature,
-            maxTokens: 1200,
-          });
-          requestCount += 1;
-          usedProvider = recovery.usedRoute.providerId;
-          addUsage(usage, recovery.usage, recovery.usedRoute, context.model);
-          const recovered = recovery.message.content?.trim();
-          if (recovered) {
-            replyText = recovered;
-            break;
+          // Guardrail de saída: aqui NÃO há tools, e o modelo pode escrever a
+          // chamada de ferramenta como texto. Uma refação com o aviso; repetiu,
+          // falha (retry normal da fila) — nunca vira mensagem.
+          let recoveryLeak: LeakedModelMarkup | null = null;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const recovery = await chatWithFallback(routes, {
+              messages: [
+                messages[0],
+                {
+                  role: "user",
+                  content:
+                    `${originalUser}\n\n${executedSummary}\nResponda ao cliente agora em TEXTO PURO, sem usar nenhuma ferramenta.` +
+                    (recoveryLeak
+                      ? "\nNesta resposta você não tem ferramentas: não escreva chamada de ferramenta nem marcação técnica, só o texto ao cliente."
+                      : ""),
+                },
+              ],
+              temperature: context.temperature,
+              maxTokens: 1200,
+            });
+            requestCount += 1;
+            usedProvider = recovery.usedRoute.providerId;
+            addUsage(usage, recovery.usage, recovery.usedRoute, context.model);
+            const recovered = recovery.message.content?.trim();
+            if (!recovered) break;
+            recoveryLeak = detectLeakedModelMarkup(recovered);
+            if (!recoveryLeak) {
+              replyText = recovered;
+              break;
+            }
+            console.warn(
+              JSON.stringify({ event: "attendantLeakedMarkup", path: "recovery", kind: recoveryLeak.kind, sample: recoveryLeak.sample })
+            );
           }
+          if (replyText !== null) break;
+          if (recoveryLeak) throw new Error(describeLeakedModelMarkup(recoveryLeak));
           throw e;
         }
         requestCount += 1;
@@ -3358,6 +3508,32 @@ export const internalProcessQueueItem = internalAction({
               "e mantenha a mensagem ao cliente curta (até 500 caracteres).",
           });
           continue;
+        }
+
+        // GUARDRAIL DE SAÍDA (incidente de 07/10/2026): o texto que esta
+        // rodada mandaria ao cliente traz marcação técnica de ferramenta
+        // (DSML/`<tool_call>`/`<|…|>`/JSON de função) em vez de texto. Mesma
+        // política da resposta cortada: nada desta rodada é confiável — texto
+        // e tools são descartados SEM executar, pede de novo uma vez, e se
+        // repetir o turno falha (retry/`ai_failure`). Nunca sai, nem como
+        // rascunho. A run só recebe kind + amostra, nunca o texto inteiro.
+        {
+          const roundToolCalls = resp.message.tool_calls ?? [];
+          const leak = leakInOutgoingRound(resp.message, {
+            textFallback: !replyText && !context.followUp,
+            skipReply:
+              roundHasReadAndReply(roundToolCalls) ||
+              roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+          });
+          if (leak) {
+            console.warn(
+              JSON.stringify({ event: "attendantLeakedMarkup", round, kind: leak.kind, sample: leak.sample })
+            );
+            if (leakedOnce) throw new Error(describeLeakedModelMarkup(leak));
+            leakedOnce = true;
+            messages.push({ role: "user", content: LEAKED_MARKUP_NUDGE });
+            continue;
+          }
         }
 
         messages.push(resp.message);
@@ -3667,6 +3843,10 @@ export const internalProcessQueueItem = internalAction({
       // markdown do modelo viraria asterisco cru na tela do cliente.
       // A divulgação LGPD é prependada dentro do commit e NÃO passa por aqui —
       // é texto escrito por humano na configuração.
+      // Trava final do guardrail de saída (defesa em profundidade): qualquer
+      // caminho que tenha chegado aqui com marcação técnica falha o turno.
+      const finalLeak = detectLeakedModelMarkup(replyText);
+      if (finalLeak) throw new Error(describeLeakedModelMarkup(finalLeak));
       replyText = toWhatsAppText(replyText);
 
       // Flyer (v0.64): só URL que veio do campo `image` de um evento que a IA
@@ -4774,6 +4954,7 @@ export const simulateAttendant = action({
     let botFlagged = false;
     const agendaEventsSeen: AgendaEvent[] = [];
     let truncatedOnce = false;
+    let leakedOnce = false;
 
     try {
       for (let round = 0; round < 4; round++) {
@@ -4805,6 +4986,30 @@ export const simulateAttendant = action({
               "e mantenha a mensagem ao cliente curta (até 500 caracteres).",
           });
           continue;
+        }
+        // Mesmo guardrail de saída do runtime: marcação técnica vazada no
+        // texto ao cliente descarta a rodada e pede de novo uma vez.
+        {
+          const roundToolCalls = resp.message.tool_calls ?? [];
+          const leak = leakInOutgoingRound(resp.message, {
+            textFallback: !reply && !context.followUp,
+            replyToolNames: ["replyToCustomer", "replyToGroup"],
+            skipReply:
+              (!args.group && roundHasReadAndReply(roundToolCalls)) ||
+              roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+          });
+          if (leak) {
+            if (leakedOnce) {
+              return {
+                reply: null,
+                actions,
+                error: `${describeLeakedModelMarkup(leak)} — a produção descartaria e o turno falharia.`,
+              };
+            }
+            leakedOnce = true;
+            messages.push({ role: "user", content: LEAKED_MARKUP_NUDGE });
+            continue;
+          }
         }
         messages.push(resp.message);
         const toolCalls = resp.message.tool_calls ?? [];

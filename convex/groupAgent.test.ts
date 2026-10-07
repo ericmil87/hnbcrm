@@ -714,6 +714,47 @@ describe("turno: prompt, tools e commit", () => {
     // Nada de transcrição/PII: o texto da resposta não está na run.
     expect(JSON.stringify(runs[0])).not.toContain("Sábado");
   });
+  test("replyToGroup com marcação de ferramenta vazada (DSML): 2ª tentativa com aviso; repetiu, nada é publicado e a run guarda o motivo", async () => {
+    const leaked =
+      '<\uFF5CDSML\uFF5Ctool_calls>\n<\uFF5CDSML\uFF5Cinvoke name="consultarAgenda">\n' +
+      '<\uFF5CDSML\uFF5Cparameter name="consulta" string="true">eventos futuros</\uFF5CDSML\uFF5Cparameter>\n' +
+      "</\uFF5CDSML\uFF5Cinvoke>\n</\uFF5CDSML\uFF5Ctool_calls>";
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    const item = await runTurn(t, seed);
+    const fetchMock = stubLlm([
+      { toolCalls: [{ name: "replyToGroup", args: { text: leaked } }] },
+      { toolCalls: [{ name: "replyToGroup", args: { text: leaked } }] },
+    ]);
+    await t.action(internal.groupAgent.internalProcessGroupTurn, { queueItemId: item._id });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(bodyOf(fetchMock, 1).messages)).toContain("marcação técnica de ferramenta");
+    const msgs = await messagesOf(t, seed);
+    expect(msgs.filter((m) => m.senderType === "ai")).toHaveLength(0);
+    expect(msgs.some((m) => m.content.includes("DSML"))).toBe(false);
+    const runs = await t.run(async (ctx) => ctx.db.query("agentRuns").collect());
+    expect(runs[0].error).toContain("tool_call_markup");
+    expect(runs[0].error).not.toContain("eventos futuros");
+    const updated = await t.run(async (ctx) => ctx.db.get(item._id));
+    expect(updated!.status).toBe("skipped");
+  });
+
+  test("replyToGroup vazado e depois limpo: publica só o limpo, sem erro na run", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    const item = await runTurn(t, seed);
+    stubLlm([
+      { toolCalls: [{ name: "replyToGroup", args: { text: '<tool_call>{"name":"x","arguments":{}}</tool_call>' } }] },
+      { toolCalls: [{ name: "replyToGroup", args: { text: "Sábado das 9h às 13h!" } }] },
+    ]);
+    await t.action(internal.groupAgent.internalProcessGroupTurn, { queueItemId: item._id });
+    const ai = (await messagesOf(t, seed)).filter((m) => m.senderType === "ai");
+    expect(ai).toHaveLength(1);
+    expect(ai[0].content).toBe("Sábado das 9h às 13h!");
+    const runs = await t.run(async (ctx) => ctx.db.query("agentRuns").collect());
+    expect(runs[0].error).toBeUndefined();
+  });
 });
 
 describe("tools do grupo", () => {

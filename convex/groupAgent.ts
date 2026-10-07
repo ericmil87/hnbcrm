@@ -57,7 +57,12 @@ import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import { visionEnabledForOrg } from "./lib/mediaEnrichment";
 import { appendTimeline, membersWithPermission } from "./lib/groupChatCore";
-import { historyTextOf, isWithinSchedule, hasMediaAwaitingEnrichment } from "./attendant";
+import {
+  historyTextOf,
+  isWithinSchedule,
+  hasMediaAwaitingEnrichment,
+  LEAKED_MARKUP_NUDGE,
+} from "./attendant";
 import {
   DEFAULT_GROUP_MAX_PER_DAY,
   DEFAULT_GROUP_MAX_PER_HOUR,
@@ -80,6 +85,7 @@ import {
   shouldTriggerGroupAgent,
   suggestedDmFor,
 } from "./lib/groupAgentCore";
+import { describeLeakedModelMarkup, detectLeakedModelMarkup } from "./lib/llmOutputGuard";
 import {
   buildCurrentDateTimeBlock,
   resolveAgentTimezone,
@@ -1059,6 +1065,11 @@ export const internalProcessGroupTurn = internalAction({
       const usage = newUsageTotals();
       let usedProvider: string | undefined;
       let handoffRequestedThisRun = false;
+      // Guardrail de saída (07/10/2026): `replyToGroup` com marcação técnica de
+      // ferramenta vazada. A resposta NÃO é publicada (como o texto puro sem
+      // tool) e o motivo (kind + amostra, nunca o texto) vai para a run.
+      let leakDetail: string | null = null;
+      let leakCount = 0;
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const resp = await chatWithFallback(routes, {
@@ -1094,9 +1105,22 @@ export const internalProcessGroupTurn = internalAction({
           }
 
           if (name === "replyToGroup") {
-            replyText = sanitizeGroupReply(
-              typeof parsed.text === "string" ? parsed.text : null
-            );
+            const rawText = typeof parsed.text === "string" ? parsed.text : null;
+            const leak = detectLeakedModelMarkup(rawText);
+            if (leak) {
+              leakCount += 1;
+              leakDetail = describeLeakedModelMarkup(leak);
+              console.warn(
+                JSON.stringify({ event: "groupAgentLeakedMarkup", kind: leak.kind, sample: leak.sample })
+              );
+              // Mesmo aviso do atendente 1 a 1: uma refação; repetiu, silêncio.
+              result = { error: LEAKED_MARKUP_NUDGE };
+              messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+              continue;
+            }
+            replyText = sanitizeGroupReply(rawText);
+            // Refação limpa: o vazamento anterior não é mais o desfecho.
+            if (replyText) leakDetail = null;
             mentionKeys = parsed.mentionKeys ?? null;
             result = replyText
               ? { status: context.replyMode === "suggest" ? "rascunho_registrado" : "publicada" }
@@ -1141,10 +1165,16 @@ export const internalProcessGroupTurn = internalAction({
           });
         }
         if (replyText !== null) break;
+        // Vazamento repetido: o turno termina sem publicar (no grupo, silêncio
+        // é um desfecho legítimo).
+        if (leakCount >= 2) break;
       }
 
       let commit: { committed: boolean; messageId?: Id<"messages">; reason?: string } = {
         committed: false,
+        // Vazamento também sai como `sem_resposta` no item da fila: um código
+        // novo exigiria rótulo no front (paridade em `lib/aiStateReasons.ts`);
+        // o motivo real (kind + amostra) fica na run.
         reason: "sem_resposta",
       };
       if (replyText) {
@@ -1184,6 +1214,7 @@ export const internalProcessGroupTurn = internalAction({
         toolCallNames,
         ...finishRunCostFields(usage),
         ...(commit.committed && commit.messageId ? { resultMessageId: commit.messageId } : {}),
+        ...(leakDetail ? { error: leakDetail } : {}),
       });
 
       if (!commit.committed) {

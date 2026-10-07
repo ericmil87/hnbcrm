@@ -1068,3 +1068,173 @@ describe("markdown do modelo → formatação do WhatsApp", () => {
     expect(drafts[0].content).not.toContain("__");
   });
 });
+
+describe("guardrail de saída: marcação de ferramenta vazada (incidente 07/10/2026)", () => {
+  // Amostra REAL (barras U+FF5C).
+  const LEAKED_DSML = [
+    "<｜DSML｜tool_calls>",
+    '<｜DSML｜invoke name="consultarAgenda">',
+    '<｜DSML｜parameter name="consulta" string="true">eventos futuros</｜DSML｜parameter>',
+    "</｜DSML｜invoke>",
+    "</｜DSML｜tool_calls>",
+  ].join("\n");
+
+  const textResponse = (content: string) =>
+    new Response(
+      JSON.stringify({
+        choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 100, completion_tokens: 234 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  const replyResponse = (text: string) =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [
+                {
+                  id: "call_r1",
+                  type: "function",
+                  function: { name: "replyToCustomer", arguments: JSON.stringify({ text }) },
+                },
+              ],
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 30 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+
+  async function runTurn(
+    t: TestConvex<typeof schema>,
+    seed: Awaited<ReturnType<typeof seedAttendantOrg>>,
+    responses: (() => Response)[]
+  ) {
+    vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
+    const messageId = await insertInbound(t, seed, "Quais os próximos eventos?");
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
+    const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(item._id, { nextAttemptAt: Date.now() - 1_000 });
+    });
+    let call = 0;
+    const fetchMock = vi.fn(async () => responses[Math.min(call++, responses.length - 1)]());
+    vi.stubGlobal("fetch", fetchMock);
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item._id });
+    const state = await t.run(async (ctx) => ({
+      item: await ctx.db.get(item._id),
+      messages: await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", seed.conversationId))
+        .collect(),
+      run: (await ctx.db.query("agentRuns").collect()).find((r) => r.kind === "attendant"),
+    }));
+    return { fetchMock, ...state };
+  }
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test("texto puro com DSML duas vezes: nada sai, 2ª chamada leva o aviso, turno falha com o motivo", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t, { mode: "autopilot" });
+    const { fetchMock, item, messages, run } = await runTurn(t, seed, [
+      () => textResponse(LEAKED_DSML),
+      () => textResponse(LEAKED_DSML),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = JSON.parse(String((fetchMock.mock.calls[1] as unknown as [string, RequestInit])[1].body));
+    const last = second.messages[second.messages.length - 1];
+    expect(last.role).toBe("user");
+    expect(last.content).toContain("marcação técnica de ferramenta");
+    // A rodada vazada foi descartada: não está no histórico reenviado.
+    expect(JSON.stringify(second.messages)).not.toContain("DSML");
+
+    expect(messages.filter((m) => m.direction === "outbound")).toHaveLength(0);
+    expect(messages.filter((m) => m.isInternal && m.metadata?.aiDraft)).toHaveLength(0);
+    expect(item!.status).not.toBe("done");
+    expect(item!.error).toContain("tool_call_markup");
+    expect(run!.status).toBe("error");
+    expect(run!.error).toContain("tool_call_markup");
+    expect(run!.error).not.toContain("eventos futuros");
+  });
+
+  test("replyToCustomer com DSML no texto e depois texto limpo: sai só o limpo", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t, { mode: "autopilot" });
+    const { fetchMock, messages, run } = await runTurn(t, seed, [
+      () => replyResponse(LEAKED_DSML),
+      () => replyResponse("O próximo evento é no sábado, às 9h."),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const outbound = messages.filter((m) => m.direction === "outbound");
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].content).toContain("O próximo evento é no sábado");
+    expect(outbound[0].content).not.toContain("DSML");
+    expect(run!.status).toBe("done");
+  });
+
+  test("modo sugestão: DSML nunca vira rascunho", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t); // suggest
+    const { messages } = await runTurn(t, seed, [
+      () => replyResponse(LEAKED_DSML),
+      () => textResponse('<tool_call>{"name": "consultarAgenda", "arguments": {}}</tool_call>'),
+    ]);
+    expect(messages.filter((m) => m.isInternal && m.metadata?.aiDraft)).toHaveLength(0);
+    expect(messages.filter((m) => m.direction === "outbound")).toHaveLength(0);
+  });
+});
+
+describe("historyTextOf: tipos novos do bridge", () => {
+  const base = { direction: "inbound" as const, contentType: "text" as const, content: "" };
+  test.each([
+    [{ bridgeType: "album", bridgeExtra: { imageCount: 3 } }, "[álbum recebido: 3 fotos]"],
+    [
+      { bridgeType: "album", bridgeExtra: { imageCount: 1, videoCount: 2 } },
+      "[álbum recebido: 1 foto e 2 vídeos]",
+    ],
+    [
+      { bridgeType: "poll", bridgeExtra: { question: "Qual dia?", options: ["sábado", "domingo"] } },
+      "[enquete recebida: Qual dia? — opções: sábado, domingo]",
+    ],
+    [{ bridgeType: "location", bridgeExtra: { name: "Praça Central" } }, "[localização recebida: Praça Central]"],
+    [
+      { bridgeType: "live_location", bridgeExtra: { latitude: -3.7, longitude: -38.5 } },
+      "[localização recebida: -3.7,-38.5]",
+    ],
+    [
+      { bridgeType: "contact", bridgeExtra: { names: ["Maria"], phones: ["5585999990000"] } },
+      "[contato compartilhado: Maria]",
+    ],
+    [{ bridgeType: "event", bridgeExtra: { name: "Roda de sábado" } }, "[evento recebido: Roda de sábado]"],
+    [{ bridgeType: "group_invite" }, "[convite para grupo recebido]"],
+    [{ bridgeType: "call_log" }, "[registro de chamada]"],
+    [{ bridgeType: "unknown" }, "[mensagem de tipo não suportado]"],
+  ])("%j", async (metadata, expected) => {
+    const { historyTextOf } = await import("./attendant");
+    const out = historyTextOf({ ...base, content: "[x]", metadata });
+    expect(out).toBe(expected);
+    expect(out).not.toContain("5585999990000");
+  });
+
+  test("apagada vence o conteúdo; editada ganha o sufixo", async () => {
+    const { historyTextOf } = await import("./attendant");
+    expect(
+      historyTextOf({ ...base, content: "meu pix é 123", metadata: { revoked: true, edited: true } })
+    ).toBe("[mensagem apagada pelo remetente]");
+    expect(historyTextOf({ ...base, content: "chego às 10h", metadata: { edited: true } })).toBe(
+      "chego às 10h (editada)"
+    );
+    expect(historyTextOf({ ...base, content: "oi" })).toBe("oi");
+  });
+});

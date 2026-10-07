@@ -21,6 +21,7 @@
 
 import { ENVELOPE_SYSTEM_NOTICE } from "./promptEnvelope";
 import { toWhatsAppText } from "./whatsappText";
+import { detectLeakedModelMarkup } from "./llmOutputGuard";
 
 // ── Constantes de produto ───────────────────────────────────────────────────
 
@@ -302,6 +303,10 @@ export function buildGroupSystemPrompt(ctx: GroupPromptContext): string {
  * caracteres a mais do que o `*x*` que o WhatsApp vai mostrar).
  */
 export function sanitizeGroupReply(raw: string | null | undefined): string | null {
+  // Guardrail de saída (07/10/2026): marcação técnica de ferramenta vazada no
+  // texto NUNCA vai para a sala — vira "sem resposta". O motivo é registrado
+  // por quem chama (`groupAgent.ts`), que vê o texto cru.
+  if (detectLeakedModelMarkup(raw)) return null;
   const text = toWhatsAppText((raw ?? "").trim());
   if (!text) return null;
   return text.length > MAX_GROUP_REPLY_CHARS ? `${text.slice(0, MAX_GROUP_REPLY_CHARS - 1)}…` : text;

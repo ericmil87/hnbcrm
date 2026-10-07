@@ -208,6 +208,12 @@ describe("histórico e menções", () => {
     expect(sanitizeGroupReply("x".repeat(5000))!.length).toBe(1200);
   });
 
+  test("marcação de ferramenta vazada nunca vai para a sala (guardrail de saída)", () => {
+    expect(sanitizeGroupReply("<\uFF5CDSML\uFF5Ctool_calls>\n<\uFF5CDSML\uFF5Cinvoke name=\"x\">")).toBeNull();
+    expect(sanitizeGroupReply("<|im_start|>assistant")).toBeNull();
+    expect(sanitizeGroupReply("Te amo <3 | R$ 50 | 3x")).toBe("Te amo <3 | R$ 50 | 3x");
+  });
+
   test("markdown do modelo é convertido antes de ir para a sala", () => {
     expect(sanitizeGroupReply("Aula de **sábado** cancelada")).toBe(
       "Aula de *sábado* cancelada"
