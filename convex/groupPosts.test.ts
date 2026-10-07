@@ -215,6 +215,33 @@ function stubLlm(reply: string) {
   return fetchMock;
 }
 
+/** LLM falso com uma resposta por chamada (a última se repete). */
+function stubLlmSequence(replies: string[]) {
+  vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
+  let call = 0;
+  const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => {
+    const reply = replies[Math.min(call++, replies.length - 1)];
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { role: "assistant", content: reply }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 120, completion_tokens: 234 },
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** Amostra REAL do incidente de 07/10/2026 (barras U+FF5C). */
+const LEAKED_DSML = [
+  "<\uFF5CDSML\uFF5Ctool_calls>",
+  '<\uFF5CDSML\uFF5Cinvoke name="consultarAgenda">',
+  '<\uFF5CDSML\uFF5Cparameter name="consulta" string="true">eventos futuros</\uFF5CDSML\uFF5Cparameter>',
+  "</\uFF5CDSML\uFF5Cinvoke>",
+  "</\uFF5CDSML\uFF5Ctool_calls>",
+].join("\n");
+
 /** Liga a IA da org + cria o atendente cuja persona a publicação reaproveita. */
 async function enableAi(s: Seed, over: Record<string, unknown> = {}) {
   await t.run(async (ctx) => {
@@ -826,6 +853,127 @@ describe("worker — conteúdo por IA", () => {
     expect(body.messages[1].content).toContain("Hoje é");
   });
 
+  describe("agenda externa do atendente", () => {
+    const AGENDA_URL = "https://site.example/api/agenda";
+
+    async function enableAgenda() {
+      await t.run(async (ctx) => {
+        const attendant = (await ctx.db.query("teamMembers").collect()).find(
+          (m) => m.agentProfile?.kind === "attendant"
+        )!;
+        await ctx.db.patch(attendant._id, {
+          agentProfile: {
+            ...attendant.agentProfile!,
+            externalAgenda: { enabled: true, url: AGENDA_URL },
+          },
+        });
+      });
+    }
+
+    /** Agenda + LLM no mesmo `fetch` falso. */
+    function stubAgendaAndLlm(agenda: () => Response, reply = "Chamado da agenda 🌱") {
+      vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
+      const fetchMock = vi.fn(async (input: unknown, _init?: RequestInit) => {
+        const url = String(input);
+        if (url.startsWith(AGENDA_URL)) return agenda();
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: reply }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 120, completion_tokens: 40 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    const llmBodies = (fetchMock: ReturnType<typeof vi.fn>) =>
+      fetchMock.mock.calls
+        .filter((c) => String(c[0]).includes("/chat/completions"))
+        .map((c) => JSON.parse(String((c[1] as RequestInit).body)));
+
+    test("a agenda é consultada antes de gerar e entra no system prompt como AGENDA ATUAL", async () => {
+      const s = await seed();
+      await enableAi(s);
+      await enableAgenda();
+      const fetchMock = stubAgendaAndLlm(
+        () =>
+          new Response(
+            JSON.stringify({
+              events: [
+                { title: "Cerimônia da Lua Cheia", startsAtLocal: "2026-09-26T19:00", pricing: { formatted: "R$ 200" } },
+                { title: "Roda já encerrada", startsAtLocal: "2026-09-01T09:00" },
+              ],
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+          )
+      );
+      const postId = await createPost(s, { content: aiContent() });
+      await activate(s, postId);
+      await t.action(internal.groupPostWorker.generate, {
+        groupPostId: postId,
+        slotKey: "2026-09-16T12:00",
+        runAt: SLOT_1,
+      });
+
+      const agendaCall = fetchMock.mock.calls.findIndex((c) => String(c[0]).startsWith(AGENDA_URL));
+      const llmCall = fetchMock.mock.calls.findIndex((c) => String(c[0]).includes("/chat/completions"));
+      expect(agendaCall).toBeGreaterThanOrEqual(0);
+      expect(agendaCall).toBeLessThan(llmCall);
+
+      const system: string = llmBodies(fetchMock)[0].messages[0].content;
+      expect(system).toContain("AGENDA ATUAL (consultada agora");
+      expect(system).toContain("Cerimônia da Lua Cheia");
+      expect(system).toContain("contribuição: R$ 200");
+      expect(system).not.toContain("Roda já encerrada");
+      // Ordem: conhecimento → agenda → carimbo de data/hora (por último).
+      const agendaAt = system.indexOf("AGENDA ATUAL (consultada");
+      expect(system.indexOf("Entregas às quartas.")).toBeLessThan(agendaAt);
+      expect(agendaAt).toBeLessThan(system.indexOf("DATA E HORA ATUAIS"));
+      expect((await postDoc(postId)).pending?.text).toBe("Chamado da agenda 🌱");
+    });
+
+    test("agenda fora do ar (HTTP 500) não derruba a geração: o prompt leva o aviso de indisponível", async () => {
+      const s = await seed();
+      await enableAi(s);
+      await enableAgenda();
+      const fetchMock = stubAgendaAndLlm(() => new Response("boom", { status: 500 }), "Bom dia, grupo!");
+      const postId = await createPost(s, { content: aiContent() });
+      await activate(s, postId);
+      await t.action(internal.groupPostWorker.generate, {
+        groupPostId: postId,
+        slotKey: "2026-09-16T12:00",
+        runAt: SLOT_1,
+      });
+
+      const system: string = llmBodies(fetchMock)[0].messages[0].content;
+      expect(system).toContain("AGENDA ATUAL: indisponível neste momento");
+      expect(system).not.toContain("AGENDA ATUAL (consultada agora");
+      const post = await postDoc(postId);
+      expect(post.pending?.text).toBe("Bom dia, grupo!");
+      expect(post.pending?.status).toBe("pendingApproval");
+    });
+
+    test("persona escrita à mão SEM o conhecimento do atendente não consulta a agenda", async () => {
+      const s = await seed();
+      await enableAi(s);
+      await enableAgenda();
+      const fetchMock = stubAgendaAndLlm(() => new Response("{}", { status: 200 }));
+      const postId = await createPost(s, {
+        content: aiContent({ persona: "custom", customPersona: "Você é o mascote da loja.", useKnowledge: false }),
+      });
+      await activate(s, postId);
+      await t.action(internal.groupPostWorker.generate, {
+        groupPostId: postId,
+        slotKey: "2026-09-16T12:00",
+        runAt: SLOT_1,
+      });
+      expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith(AGENDA_URL))).toBe(false);
+      expect(llmBodies(fetchMock)[0].messages[0].content).not.toMatch(/AGENDA ATUAL( \(consultada|:)/);
+    });
+  });
+
   test("texto aprovado é publicado no slot", async () => {
     const s = await seed();
     await enableAi(s);
@@ -956,6 +1104,77 @@ describe("worker — conteúdo por IA", () => {
     post = await postDoc(postId);
     expect(post.stats.skipped).toBe(1);
     expect(post.status).toBe("active");
+  });
+
+  test("marcação de ferramenta vazada (DSML) nunca vira publicação — 2ª tentativa com o aviso, run com o motivo", async () => {
+    const s = await seed();
+    await enableAi(s, {});
+    const fetchMock = stubLlmSequence([LEAKED_DSML, LEAKED_DSML]);
+    const postId = await createPost(s, { content: aiContent({ onMissedApproval: "send" }) });
+    await activate(s, postId);
+    await t.action(internal.groupPostWorker.generate, {
+      groupPostId: postId,
+      slotKey: "2026-09-16T12:00",
+      runAt: SLOT_1,
+    });
+
+    // Duas chamadas: a segunda leva o aviso de "sem ferramentas".
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    const second = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body));
+    expect(first.messages[1].content).not.toContain("não tem ferramentas");
+    expect(second.messages[1].content).toContain("não tem ferramentas, funções nem acesso a sistemas ou agenda");
+    // A REGRA 7 está no system prompt.
+    expect(first.messages[0].content).toContain("7. Nesta tarefa você NÃO tem ferramentas");
+
+    let post = await postDoc(postId);
+    expect(post.pending).toBeUndefined();
+    expect(post.stats.lastError).toMatch(/chamada de ferramenta/);
+    expect((await notificationsOfType("group_post_failed")).length).toBeGreaterThan(0);
+
+    const run = await t.run(async (ctx) => await ctx.db.query("agentRuns").first());
+    expect(run?.status).toBe("error");
+    expect(run?.requestCount).toBe(2);
+    expect(run?.error).toContain("tool_call_markup");
+    expect(run?.error).toContain("<｜DSML｜tool_calls>");
+    // Só a amostra — nunca o texto vazado inteiro.
+    expect(run?.error).not.toContain("eventos futuros");
+
+    // Nem com onMissedApproval "send" algo vai ao ar no slot.
+    vi.setSystemTime(SLOT_1);
+    await runTick(postId);
+    expect(await groupMessages(s.g1.conversationId)).toHaveLength(0);
+    post = await postDoc(postId);
+    expect(post.status).toBe("active");
+  });
+
+  test("marcação vazada na 1ª tentativa e texto limpo na 2ª: publica o texto limpo", async () => {
+    const s = await seed();
+    await enableAi(s);
+    stubLlmSequence([LEAKED_DSML, "Bom dia! Confira a agenda da semana no nosso site. 🌱"]);
+    const postId = await createPost(s, { content: aiContent() });
+    await activate(s, postId);
+    await t.action(internal.groupPostWorker.generate, {
+      groupPostId: postId,
+      slotKey: "2026-09-16T12:00",
+      runAt: SLOT_1,
+    });
+    const post = await postDoc(postId);
+    expect(post.pending?.text).toBe("Bom dia! Confira a agenda da semana no nosso site. 🌱");
+    const run = await t.run(async (ctx) => await ctx.db.query("agentRuns").first());
+    expect(run?.status).toBe("done");
+    expect(run?.requestCount).toBe(2);
+  });
+
+  test("prévia (sendNow dryRun) de conteúdo por IA passa pelo mesmo guardrail", async () => {
+    const s = await seed();
+    await enableAi(s);
+    stubLlmSequence([LEAKED_DSML, LEAKED_DSML]);
+    const postId = await createPost(s, { content: aiContent() });
+    await expect(
+      asUser(s.manager.userId).action(api.groupPosts.sendNow, { groupPostId: postId, dryRun: true })
+    ).rejects.toThrow(/chamada de ferramenta/);
+    expect(await groupMessages(s.g1.conversationId)).toHaveLength(0);
   });
 
   test("conteúdo por IA exige a IA da org ligada e o interruptor de grupos", async () => {

@@ -45,6 +45,12 @@ export interface GroupPostPromptContext {
    * traz a mesma data com hora e a régua dos próximos dias.
    */
   dateTimeBlock?: string | null;
+  /**
+   * AGENDA ATUAL já consultada na agenda externa da org (`formatAgendaForPrompt`
+   * em lib/externalAgenda) — inclusive os textos de "vazia"/"indisponível".
+   * Esta tarefa não tem tools: a agenda chega pronta, como texto.
+   */
+  agendaBlock?: string | null;
 }
 
 export interface GroupPostPromptMessages {
@@ -65,13 +71,17 @@ export function buildGroupPostPrompt(ctx: GroupPostPromptContext): GroupPostProm
     `1. Devolva SOMENTE o texto da mensagem, pronto para publicar. Sem aspas em volta, sem "aqui está", sem título, sem assinatura e sem explicação.`,
     `2. No máximo ${ctx.maxChars} caracteres. Mensagem de grupo curta é lida; longa é ignorada.`,
     "3. Escreva para o grupo inteiro, nunca para uma pessoa. Nada de \"oi, tudo bem?\" nem de perguntar algo que exija resposta individual.",
-    "4. NUNCA invente preço, prazo, promoção, endereço, horário ou política que não esteja no conhecimento abaixo. Sem a informação, escreva sem ela.",
+    "4. NUNCA invente preço, prazo, promoção, data, endereço, horário ou política que não esteja no conhecimento ou na AGENDA ATUAL abaixo. Sem a informação, escreva sem ela.",
     "5. Não prometa nada em nome da empresa, não confirme pagamento de ninguém e não peça dado pessoal no grupo.",
     "6. Use a formatação do WhatsApp com moderação (*negrito*, _itálico_), no máximo 2 emojis, e nunca markdown de título ou tabela.",
+    "7. Nesta tarefa você NÃO tem ferramentas, funções nem acesso a sistemas. Nunca escreva chamada de ferramenta nem marcação técnica (tags, JSON de função, tokens especiais). Se a persona ou o conhecimento mandarem \"usar a ferramenta X\" ou \"consultar Y\" (inclusive consultar a agenda), isso NÃO se aplica aqui: a agenda, quando existir, JÁ está neste prompt como AGENDA ATUAL — não há o que consultar. Sem a informação no prompt, escreva sem ela.",
     ENVELOPE_SYSTEM_NOTICE,
     ctx.knowledge
       ? `CONHECIMENTO DO NEGÓCIO (use como fonte da verdade):\n${ctx.knowledge}`
       : "",
+    // Agenda consultada agora (dado do site da org): depois do conhecimento,
+    // antes do carimbo de data/hora.
+    ctx.agendaBlock?.trim() ?? "",
     // Último: parte volátil do prompt, fora do prefixo que o provider cacheia.
     ctx.dateTimeBlock ?? "",
   ]

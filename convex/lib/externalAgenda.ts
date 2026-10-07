@@ -173,3 +173,130 @@ export function isValidHeaderName(name: string): boolean {
 /** Teto do download do flyer. */
 export const AGENDA_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const AGENDA_IMAGE_TIMEOUT_MS = 10_000;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agenda como TEXTO de prompt (publicação programada por IA, 07/10/2026)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Teto do bloco de agenda no prompt da publicação (chars). */
+export const AGENDA_PROMPT_MAX_CHARS = 4000;
+
+export const AGENDA_PROMPT_HEADER =
+  "AGENDA ATUAL (consultada agora na agenda externa da empresa — fonte de verdade para nome, data, horário, local, contribuição/valor e inscrição dos eventos; eventos já encerrados foram removidos):";
+export const AGENDA_PROMPT_EMPTY =
+  "AGENDA ATUAL: nenhum evento futuro aberto no momento — não cite datas, horários, locais ou valores de eventos.";
+export const AGENDA_PROMPT_UNAVAILABLE =
+  "AGENDA ATUAL: indisponível neste momento (não foi possível consultar) — não cite datas, horários, locais ou valores de eventos; se a instrução pedir um chamado da agenda, escolha outro formato previsto na instrução.";
+
+const ISO_LIKE =
+  /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+
+/** "AAAA-MM-DDTHH:mm" de um instante no fuso dado (fuso inválido = UTC). */
+function localStamp(at: number, timezone: string): string {
+  let fmt: Intl.DateTimeFormat;
+  try {
+    fmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+  } catch {
+    return new Date(at).toISOString().slice(0, 16);
+  }
+  const p: Record<string, string> = {};
+  for (const part of fmt.formatToParts(new Date(at))) p[part.type] = part.value;
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+/**
+ * O evento já acabou? `endsAtLocal ?? startsAtLocal`, como veio da API:
+ *  - com fuso explícito (`Z`/`-03:00`) → instante absoluto contra `now`;
+ *  - sem fuso → hora LOCAL da org, comparada com o "agora" no `timezone`
+ *    (o nome do campo diz que é local; converter por UTC erraria 3 h no Brasil);
+ *  - só data → vale até o fim daquele dia;
+ *  - qualquer outro formato → não dá para saber, o evento FICA (esconder um
+ *    evento aberto é tão ruim quanto citar um encerrado, e o prompt manda não
+ *    inventar).
+ */
+export function isAgendaEventPast(event: AgendaEvent, now: number, timezone: string): boolean {
+  const raw = (event.endsAtLocal ?? event.startsAtLocal)?.trim();
+  if (!raw) return false;
+  const m = raw.match(ISO_LIKE);
+  if (!m) return false;
+  const [, y, mo, d, hh, mm, , zone] = m;
+  if (zone && hh !== undefined) {
+    const at = Date.parse(raw.replace(" ", "T"));
+    return Number.isFinite(at) ? at < now : false;
+  }
+  const nowLocal = localStamp(now, timezone);
+  if (hh === undefined) return `${y}-${mo}-${d}` < nowLocal.slice(0, 10);
+  return `${y}-${mo}-${d}T${hh}:${mm}` < nowLocal;
+}
+
+/** Uma linha por evento: dado de terceiro — sem quebra de linha, com teto. */
+function oneLine(value: string | null | undefined, cap = 300): string | null {
+  if (!value) return null;
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat ? flat.slice(0, cap) : null;
+}
+
+function agendaEventLine(e: AgendaEvent): string {
+  const parts: string[] = [];
+  parts.push(oneLine(e.title, 200) ?? "(evento sem título)");
+  const category = oneLine(e.categoryLabel ?? e.category, 120);
+  if (category) parts.push(`categoria: ${category}`);
+  const starts = oneLine(e.startsAtLocal, 60);
+  const ends = oneLine(e.endsAtLocal, 60);
+  if (starts || ends) parts.push(`quando: ${[starts, ends].filter(Boolean).join(" – ")}`);
+  const location = oneLine(e.locationLabel, 200);
+  if (location) parts.push(`local: ${location}`);
+  const leaders = e.leaders.map((l) => oneLine(l, 100)).filter(Boolean);
+  if (leaders.length > 0) parts.push(`condução: ${leaders.join(", ")}`);
+  const price = oneLine(e.pricing?.formatted, 200);
+  const priceNote = oneLine(e.pricing?.note, 200);
+  if (price || priceNote) {
+    parts.push(`contribuição: ${[price, priceNote ? `(${priceNote})` : null].filter(Boolean).join(" ")}`);
+  }
+  if (e.spotsLeft !== null) parts.push(`vagas restantes: ${e.spotsLeft}`);
+  if (e.validationRequired === true) parts.push("participação passa por conversa prévia");
+  const page = oneLine(e.pageUrl, 500);
+  if (page) parts.push(`página: ${page}`);
+  const signup = oneLine(e.signupUrl, 500);
+  if (signup && signup !== page) parts.push(`inscrição: ${signup}`);
+  return `- ${parts.join(" | ")}`;
+}
+
+/**
+ * Agenda → bloco de TEXTO para o system prompt da publicação programada (que
+ * não tem tools). Ordem da API preservada; eventos encerrados saem; teto de
+ * `maxEvents` (20) e ~`AGENDA_PROMPT_MAX_CHARS`, com o que sobrou contado.
+ */
+export function formatAgendaForPrompt(
+  events: AgendaEvent[],
+  opts: { now: number; timezone: string; maxEvents?: number }
+): string {
+  const maxEvents = Math.max(1, Math.min(opts.maxEvents ?? MAX_AGENDA_EVENTS, MAX_AGENDA_EVENTS));
+  const open = events.filter((e) => !isAgendaEventPast(e, opts.now, opts.timezone));
+  if (open.length === 0) return AGENDA_PROMPT_EMPTY;
+
+  const lines: string[] = [AGENDA_PROMPT_HEADER];
+  let size = AGENDA_PROMPT_HEADER.length;
+  let shown = 0;
+  for (const e of open) {
+    if (shown >= maxEvents) break;
+    const line = agendaEventLine(e);
+    // Reserva ~60 chars para a linha de "omitidos".
+    if (shown > 0 && size + 1 + line.length > AGENDA_PROMPT_MAX_CHARS - 60) break;
+    const kept = line.slice(0, AGENDA_PROMPT_MAX_CHARS - 60 - size - 1);
+    lines.push(kept);
+    size += 1 + kept.length;
+    shown++;
+  }
+  const omitted = open.length - shown;
+  if (omitted > 0) lines.push(`(+${omitted} evento(s) não listado(s) por falta de espaço)`);
+  return lines.join("\n");
+}

@@ -53,6 +53,17 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { buildGroupPostPrompt, cleanGeneratedPost } from "./lib/groupPostPrompt";
 import {
+  AGENDA_PROMPT_UNAVAILABLE,
+  DEFAULT_AGENDA_HEADER,
+  formatAgendaForPrompt,
+} from "./lib/externalAgenda";
+import { ExternalAgendaFetchConfig, runConsultarAgenda } from "./attendantAgenda";
+import {
+  describeLeakedModelMarkup,
+  detectLeakedModelMarkup,
+  type LeakedModelMarkup,
+} from "./lib/llmOutputGuard";
+import {
   buildCurrentDateTimeBlock,
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
@@ -106,6 +117,17 @@ const GENERATE_MAX_TOKENS = 3000;
 /** Anexada ao user message na segunda tentativa, depois de corte ou vazio. */
 const GENERATE_RETRY_NUDGE =
   "ATENÇÃO: a tentativa anterior não produziu texto. Raciocine pouco e responda DIRETO com a mensagem final.";
+/**
+ * Anexada na segunda tentativa quando a primeira devolveu MARCAÇÃO DE
+ * FERRAMENTA em vez de texto (incidente de 07/10/2026: a persona do atendente
+ * manda "usar a tool X", a geração não tem tools, e o modelo escreveu a
+ * chamada no formato nativo dele como texto). Genérico de propósito.
+ */
+const GENERATE_NO_TOOLS_NUDGE =
+  "ATENÇÃO: nesta tarefa você não tem ferramentas, funções nem acesso a sistemas ou agenda " +
+  "(a agenda, quando existe, já está no prompt como AGENDA ATUAL). " +
+  "Não escreva chamadas de ferramenta nem marcação técnica. Devolva só o texto da mensagem, " +
+  "usando apenas o que está no conhecimento e na AGENDA ATUAL.";
 const DEFAULT_MAX_CHARS = 600;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -808,6 +830,20 @@ const generateContextValidator = v.object({
    * aprovando um texto produzido pela configuração ANTIGA, sem saber.
    */
   contentFingerprint: v.string(),
+  /**
+   * Agenda externa do atendente (v0.64) a consultar ANTES de gerar — a
+   * publicação não tem tools, então a agenda entra pronta no prompt. Só quando
+   * a publicação fala com a voz/conhecimento do atendente (é a persona dele que
+   * diz "a agenda vem da consultarAgenda"); senão `null`.
+   */
+  externalAgenda: v.union(
+    v.object({
+      url: v.string(),
+      headerName: v.string(),
+      apiKeyRef: v.union(v.id("orgSecrets"), v.null()),
+    }),
+    v.null()
+  ),
 });
 
 /** Retrato estável do conteúdo de IA (ordem das chaves fixa). */
@@ -857,6 +893,19 @@ export const internalGetGenerateContext = internalQuery({
       ? ai.customPersona!.trim()
       : attendant?.agentProfile?.systemPrompt ?? null;
     const knowledge = ai.useKnowledge ? attendant?.agentProfile?.knowledge ?? null : null;
+    // Mesma regra de `externalAgendaForRun` (attendant.ts), restrita a quando a
+    // publicação usa a voz OU o conhecimento do atendente.
+    const agendaConfig = attendant?.agentProfile?.externalAgenda;
+    const externalAgenda =
+      agendaConfig?.enabled === true &&
+      !!agendaConfig.url &&
+      (ai.persona !== "custom" || ai.useKnowledge)
+        ? {
+            url: agendaConfig.url,
+            headerName: agendaConfig.headerName?.trim() || DEFAULT_AGENDA_HEADER,
+            apiKeyRef: agendaConfig.apiKeyRef?.id ?? null,
+          }
+        : null;
 
     const groupNames: string[] = [];
     for (const t of post.targets) {
@@ -893,6 +942,7 @@ export const internalGetGenerateContext = internalQuery({
       providerConfig: aiConfig?.providerConfig ?? null,
       runMemberId: attendant?._id ?? post.createdBy,
       contentFingerprint: aiContentFingerprint(post.content),
+      externalAgenda,
     };
   },
 });
@@ -1096,11 +1146,42 @@ type GenerateSetup = {
   model: string;
   providerConfig: OrgProviderConfig | null;
   runMemberId: Id<"teamMembers"> | null;
+  externalAgenda?: ExternalAgendaFetchConfig | null;
 };
 
 type GenerateResult =
   | { ok: true; text: string; model?: string; provider?: string }
   | { ok: false; error: string };
+
+/**
+ * Consulta a agenda externa e devolve o bloco AGENDA ATUAL do prompt. Nunca
+ * lança: `runConsultarAgenda` já converte rede/HTTP/parse em erro, e qualquer
+ * imprevisto aqui vira o texto de "indisponível" — a agenda nunca derruba a
+ * geração. Log sem URL, chave nem conteúdo dos eventos.
+ */
+async function loadAgendaBlock(
+  ctx: ActionCtx,
+  organizationId: Id<"organizations">,
+  config: ExternalAgendaFetchConfig,
+  now: number,
+  timezone: string
+): Promise<string> {
+  try {
+    const { result, events } = await runConsultarAgenda(ctx, organizationId, config, undefined);
+    if (result.status !== "ok") {
+      console.log(JSON.stringify({ event: "groupPostAgenda", ok: false, erro: result.erro ?? "?" }));
+      return AGENDA_PROMPT_UNAVAILABLE;
+    }
+    const block = formatAgendaForPrompt(events, { now, timezone });
+    console.log(JSON.stringify({ event: "groupPostAgenda", ok: true, eventos: events.length }));
+    return block;
+  } catch (e) {
+    console.log(
+      JSON.stringify({ event: "groupPostAgenda", ok: false, erro: e instanceof Error ? e.name : "erro" })
+    );
+    return AGENDA_PROMPT_UNAVAILABLE;
+  }
+}
 
 /** Chamada de LLM da publicação: 1 request, sem tools, saída = texto puro. */
 async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<GenerateResult> {
@@ -1130,6 +1211,9 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
 
   const now = Date.now();
   const vars = buildPostVars({ groupName: "", at: now, timezone: setup.timezone });
+  const agendaBlock = setup.externalAgenda
+    ? await loadAgendaBlock(ctx, setup.organizationId, setup.externalAgenda, now, setup.timezone)
+    : null;
   const maxChars = Math.max(50, Math.min(MAX_POST_TEXT_CHARS, setup.maxChars));
   const prompt = buildGroupPostPrompt({
     agentName: setup.agentName,
@@ -1147,6 +1231,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
     dateTimeBlock: setup.includeCurrentDateTime
       ? buildCurrentDateTimeBlock(now, setup.timezone)
       : null,
+    agendaBlock,
   });
 
   const runId = setup.runMemberId
@@ -1167,10 +1252,17 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
     let resp = null;
     let text = "";
     let lastFinishReason: string | undefined;
+    // Vazamento de marcação técnica (tool-call/token especial) na ÚLTIMA
+    // tentativa; a anterior só decide o nudge.
+    let leak: LeakedModelMarkup | null = null;
     // Resposta CORTADA pelo teto é descartada inteira, mesmo que traga texto:
-    // meia mensagem publicada num grupo é pior que nenhuma.
+    // meia mensagem publicada num grupo é pior que nenhuma. Resposta com
+    // marcação de ferramenta vazada idem (guardrail de saída, 07/10/2026) — e
+    // aqui ela vale também para a prévia (`sendNow` dryRun) e para o modo com
+    // aprovação, que passam todos por esta função.
     for (let attempt = 0; attempt < 2 && !text; attempt++) {
       requestCount++;
+      const nudge = attempt === 0 ? null : leak ? GENERATE_NO_TOOLS_NUDGE : GENERATE_RETRY_NUDGE;
       resp = await chatWithFallback(
         postRoutes,
         {
@@ -1178,7 +1270,7 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
             { role: "system", content: prompt.system },
             {
               role: "user",
-              content: attempt === 0 ? prompt.user : `${prompt.user}\n\n${GENERATE_RETRY_NUDGE}`,
+              content: nudge ? `${prompt.user}\n\n${nudge}` : prompt.user,
             },
           ],
           temperature: 0.7,
@@ -1189,6 +1281,35 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
       lastFinishReason = resp.finishReason;
       addUsage(usage, resp.usage, resp.usedRoute, setup.model);
       text = resp.finishReason === "length" ? "" : cleanGeneratedPost(resp.message.content, maxChars);
+      // Checa o bruto (sem o bloco <think> completo, que a limpeza já tira) E
+      // o limpo: o corte por tamanho do limpo poderia esconder uma tag tardia.
+      const raw =
+        typeof resp.message.content === "string"
+          ? resp.message.content.replace(/<think>[\s\S]*?<\/think>/gi, "")
+          : null;
+      leak =
+        resp.finishReason === "length"
+          ? null
+          : detectLeakedModelMarkup(raw) ?? detectLeakedModelMarkup(text);
+      if (leak) {
+        console.warn(
+          JSON.stringify({ event: "groupPostLeakedMarkup", attempt, kind: leak.kind, sample: leak.sample })
+        );
+        text = "";
+      }
+    }
+    if (leak && resp) {
+      const detail = `${describeLeakedModelMarkup(leak)} (${requestCount} tentativa(s))`;
+      if (runId) {
+        await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+          runId,
+          status: "error",
+          requestCount,
+          error: detail,
+          ...finishRunCostFields(usage),
+        });
+      }
+      return { ok: false, error: "A IA devolveu uma chamada de ferramenta em vez do texto da publicação" };
     }
     if (!text || !resp) {
       // O motivo vai para a run: "texto vazio" sozinho não distingue modelo que
