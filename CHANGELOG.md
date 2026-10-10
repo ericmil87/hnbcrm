@@ -2,6 +2,12 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.70.1] - 2026-10-10
+
+### Campanha: checagem de número não confunde LID com telefone
+
+- **O worker de campanha passou a usar a mesma checagem de número em duas etapas da "Nova conversa"** (`lib/bridgeNumberCheck.ts`, núcleo único). O gateway de hoje responde ao `/user/check` com um JID `@lid` para qualquer grafia, e o worker tomava os dígitos do LID como "telefone canônico" do destinatário — em campanha de lista manual ou CSV isso criaria um contato "+161495166009388" e o envio falharia. Agora só JID de telefone vale; sem ele, `GET /user/lid/{número}` diz qual grafia (com ou sem o 9º dígito) está registrada, e a checagem respeita um limite de 8 s. Nada muda para quem já era contato: o envio sempre usou o número gravado no contato
+
 ## [0.70.0] - 2026-10-07
 
 ### Guardrail de saída da IA, mensagens do WhatsApp que o inbox não exibia e agenda nas publicações

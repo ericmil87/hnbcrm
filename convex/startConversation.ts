@@ -50,7 +50,6 @@ import { formatPhoneForDisplay } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
 import { decryptSecret } from "./lib/secretCrypto";
-import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse } from "./lib/bridgeSession";
 import {
   META_FREE_TEXT_ERROR,
   NOT_ON_WHATSAPP_ERROR,
@@ -64,7 +63,7 @@ import {
   resolveStartPhone,
 } from "./lib/startConversation";
 import type { CheckedWhatsappUser } from "./lib/startConversation";
-import { parseUserLidPhone } from "./lib/startConversation";
+import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -419,10 +418,6 @@ const numberCheckReturns = v.union(
  * lança por problema do gateway: indisponível = `unverified` e quem chama
  * decide (o início segue sem confirmação; só o "não tem WhatsApp" barra).
  */
-function trimBase(u: string): string {
-  return u.replace(/\/+$/, "");
-}
-
 async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck> {
   const phone = context.phoneToCheck;
   if (context.provider !== "bridge") return { status: "unverified", reason: "meta", phone };
@@ -430,64 +425,36 @@ async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck>
   if (!bridge?.baseUrl || !bridge.tokenEncrypted || bridge.sessionState !== "connected") {
     return { status: "unverified", reason: "bridge_offline", phone };
   }
-  const candidates = phoneSpellingVariants(phone);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
   try {
     const token = await decryptSecret(bridge.tokenEncrypted);
-    const req = buildBridgeCheckUserRequest({ baseUrl: bridge.baseUrl, token, phones: candidates });
-    const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body, signal: controller.signal });
-    const body = await res.json().catch(() => ({}));
-    const parsed = parseBridgeCheckUserResponse(res.ok, res.status, body);
-    if (!parsed.ok) return { status: "unverified", reason: "gateway_error", phone, detail: parsed.error.slice(0, 200) };
-    if (parsed.users.length === 0) {
-      return { status: "unverified", reason: "gateway_error", phone, detail: "Resposta sem usuários" };
-    }
-    let pick = pickCanonicalFromCheck(parsed.users, candidates, context.knownPhones);
-    const checked = parsed.users.map((u) => ({ phone: u.phone, onWhatsapp: u.onWhatsapp, ...(u.jid ? { jid: u.jid } : {}) }));
-    if (!pick.onWhatsapp) return { status: "not_on_whatsapp", phone, checked };
-    // 2ª etapa (medido em prod, 03/10/2026): o /user/check responde UM usuário
-    // só, com LID, para as duas grafias BR — não dá para saber qual é a
-    // registrada. `GET /user/lid/{p}` devolve o JID de TELEFONE só para a
-    // grafia real (404 para a errada). Só roda quando não veio JID de telefone
-    // e há mais de uma grafia possível; qualquer falha mantém a 1ª etapa.
-    if (!pick.jid && candidates.length > 1) {
-      const confirmedByLid: string[] = [];
-      for (const p of candidates) {
-        try {
-          const res = await fetch(`${trimBase(bridge.baseUrl)}/user/lid/${p}`, { method: "GET", headers: { token }, signal: controller.signal });
-          const body = await res.json().catch(() => ({}));
-          const real = parseUserLidPhone(res.ok, body);
-          if (real) confirmedByLid.push(real);
-        } catch {
-          /* mantém a 1ª etapa */
-        }
-      }
-      const unique = Array.from(new Set(confirmedByLid));
-      if (unique.length === 1) {
-        pick = { ...pick, canonicalPhone: unique[0], ambiguous: undefined };
-      } else if (unique.length > 1) {
-        const known = unique.find((u) => context.knownPhones.includes(u));
-        pick = { ...pick, canonicalPhone: known ?? unique[0], ambiguous: true };
-      }
-    }
-    const canonicalPhone = pick.canonicalPhone ?? phone;
+    // Núcleo compartilhado com o worker de campanha (lib/bridgeNumberCheck):
+    // /user/check nas duas grafias + /user/lid quando só veio LID.
+    const res = await checkBridgeNumber({
+      baseUrl: bridge.baseUrl,
+      token,
+      phone,
+      knownPhones: context.knownPhones,
+      signal: controller.signal,
+    });
+    if (!res.ok) return { status: "unverified", reason: "gateway_error", phone, detail: res.error };
+    if (!res.onWhatsapp) return { status: "not_on_whatsapp", phone, checked: res.checked };
     return {
       status: "on_whatsapp",
-      canonicalPhone,
-      phoneDisplay: formatPhoneForDisplay(canonicalPhone),
-      changed: canonicalPhone !== phone,
-      checked,
-      ...(pick.ambiguous ? { ambiguous: true } : {}),
-      ...(pick.lid ? { lid: pick.lid } : {}),
+      canonicalPhone: res.canonicalPhone,
+      phoneDisplay: formatPhoneForDisplay(res.canonicalPhone),
+      changed: res.canonicalPhone !== phone,
+      checked: res.checked,
+      ...(res.ambiguous ? { ambiguous: true } : {}),
+      ...(res.lid ? { lid: res.lid } : {}),
     };
   } catch (e) {
-    const aborted = e instanceof Error && e.name === "AbortError";
     return {
       status: "unverified",
       reason: "gateway_error",
       phone,
-      detail: aborted ? "Tempo esgotado" : e instanceof Error ? e.message.slice(0, 200) : "Erro de rede",
+      detail: e instanceof Error ? e.message.slice(0, 200) : "Erro de rede",
     };
   } finally {
     clearTimeout(timer);

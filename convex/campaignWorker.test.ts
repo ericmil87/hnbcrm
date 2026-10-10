@@ -89,7 +89,14 @@ function bridgeFetchMock(opts: { notOnWhatsapp?: string[] } = {}) {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, body });
     if (url.endsWith("/user/check")) {
-      const users = (body.Phone as string[]).map((p) => ({ Query: p, IsInWhatsapp: !(opts.notOnWhatsapp ?? []).includes(p), JID: `${p}@s.whatsapp.net` }));
+      // A checagem pergunta as DUAS grafias BR; um número que não existe não
+      // existe em nenhuma delas (compara sem o 9º dígito).
+      const key = (x: string) => x.replace(/^(55\d\d)9(\d{8})$/, "$1$2");
+      const users = (body.Phone as string[]).map((p) => ({
+        Query: p,
+        IsInWhatsapp: !(opts.notOnWhatsapp ?? []).some((n) => key(n) === key(p)),
+        JID: `${p}@s.whatsapp.net`,
+      }));
       return new Response(JSON.stringify({ code: 200, success: true, data: { Users: users } }), { status: 200, headers: { "Content-Type": "application/json" } });
     }
     if (url.includes("/chat/send/")) {
@@ -443,5 +450,83 @@ describe("Meta template", () => {
       components: [{ type: "body", parameters: [{ type: "text", text: "Carla" }, { type: "text", text: "10%" }] }],
     });
     expect(send?.body.to).toBe("5511999990009");
+  });
+});
+
+/**
+ * Gateway real (medido em prod, 03 e 10/10/2026): `POST /user/check` responde
+ * UM usuário com JID `@lid` para as duas grafias BR, e só `GET /user/lid/{p}`
+ * devolve o JID de telefone — para a grafia registrada. Antes, os dígitos do
+ * LID viravam o "telefone canônico" do destinatário e nasceria um contato
+ * "+161495166009388".
+ */
+function lidOnlyFetchMock(opts: { realSpelling?: string; lid?: string } = {}) {
+  const lid = opts.lid ?? "161495166009388@lid";
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const fn = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    calls.push({ url, body });
+    const json = (status: number, data: unknown) =>
+      new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+    if (url.endsWith("/user/check")) {
+      const first = (body.Phone as string[])[0];
+      return json(200, { code: 200, success: true, data: { Users: [{ Query: first, IsInWhatsapp: true, JID: lid, VerifiedName: "" }] } });
+    }
+    const m = url.match(/\/user\/lid\/(\d+)$/);
+    if (m) {
+      if (opts.realSpelling && m[1] === opts.realSpelling) {
+        return json(200, { code: 200, success: true, data: { jid: `${opts.realSpelling}@s.whatsapp.net`, lid } });
+      }
+      return json(404, { code: 404, success: false, error: "LID not found for this number" });
+    }
+    if (url.includes("/chat/send/")) {
+      return json(200, { code: 200, success: true, data: { Id: `3EB0${calls.length}`, Details: "Sent" } });
+    }
+    return json(200, { code: 200, success: true, data: {} });
+  });
+  return { fn, calls };
+}
+
+describe("checagem de número com gateway que só devolve LID (10/10/2026)", () => {
+  test("a grafia real sai do /user/lid: destinatário e contato ficam com 558179036621, nunca com os dígitos do LID", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    const mock = lidOnlyFetchMock({ realSpelling: "558179036621" });
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "81 97903-6621", name: "Jr Freitas" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const rows = await recipients(t, id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ status: "sent", phone: "558179036621" });
+    expect(rows[0].vars?.telefone_informado).toBe("5581979036621");
+
+    const check = mock.calls.find((c) => c.url.endsWith("/user/check"))!;
+    expect((check.body as any).Phone).toEqual(["5581979036621", "558179036621"]);
+    const send = mock.calls.find((c) => c.url.includes("/chat/send/"))!;
+    expect((send.body as any).Phone).toBe("558179036621");
+
+    await t.run(async (ctx) => {
+      const contacts = await ctx.db.query("contacts").collect();
+      expect(contacts.map((c) => c.phone)).toEqual(["558179036621"]);
+      expect(contacts.some((c) => (c.phone ?? "").includes("161495166009388"))).toBe(false);
+    });
+  });
+
+  test("/user/lid não resolve nenhuma grafia: envia com o número normalizado, sem contato falso", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    const mock = lidOnlyFetchMock();
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "81 97903-6621" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const rows = await recipients(t, id);
+    expect(rows[0]).toMatchObject({ status: "sent", phone: "5581979036621" });
+    expect(rows[0].vars?.telefone_informado).toBeUndefined();
+    await t.run(async (ctx) => {
+      const contacts = await ctx.db.query("contacts").collect();
+      expect(contacts.map((c) => c.phone)).toEqual(["5581979036621"]);
+    });
   });
 });
