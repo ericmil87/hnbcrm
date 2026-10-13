@@ -13,6 +13,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { auditTextSnapshot } from "./lib/auditText";
+import { resolveDisclosureMode } from "./lib/disclosure";
 
 const TEXT_FIELDS = ["systemPrompt", "knowledge", "disclosure"] as const;
 
@@ -172,5 +173,60 @@ export const internalUpsertFieldDefinitions = internalMutation({
       });
     }
     return { applied: !dryRun, created, existing };
+  },
+});
+
+/**
+ * v0.71: troca o modo de divulgação do atendente (`first_reply` | `on_demand`,
+ * ver lib/disclosure.ts) sem sessão de usuário. dryRun DEFAULT TRUE.
+ *
+ * Uso: npx convex run --prod opsAgentProfile:internalSetDisclosureMode '{"organizationId":"…","agentMemberId":"…","mode":"on_demand","dryRun":true}'
+ */
+export const internalSetDisclosureMode = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.id("teamMembers"),
+    mode: v.union(v.literal("first_reply"), v.literal("on_demand")),
+    version: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    applied: v.boolean(),
+    before: v.string(),
+    after: v.string(),
+    changed: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const member = await ctx.db.get(args.agentMemberId);
+    if (!member || member.organizationId !== args.organizationId) {
+      throw new Error("Membro não pertence à organização");
+    }
+    if (member.type !== "ai" || !member.agentProfile) {
+      throw new Error("Membro não é um agente de IA com perfil");
+    }
+    const before = resolveDisclosureMode(member.agentProfile);
+    const changed = before !== args.mode;
+    if (dryRun || !changed) {
+      return { applied: false, before, after: args.mode, changed };
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.agentMemberId, {
+      agentProfile: { ...member.agentProfile, disclosureMode: args.mode },
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "teamMember",
+      entityId: args.agentMemberId,
+      action: "update",
+      actorType: "system",
+      changes: { before: { disclosureMode: before }, after: { disclosureMode: args.mode } },
+      metadata: { op: "internalSetDisclosureMode", version: args.version },
+      description: `Perfil do agente "${member.name}": divulgação ${args.mode === "on_demand" ? "sob demanda" : "na 1ª resposta"} (ops)${args.version ? ` (${args.version})` : ""}`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return { applied: true, before, after: args.mode, changed };
   },
 });

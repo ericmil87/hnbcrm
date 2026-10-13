@@ -89,3 +89,60 @@ describe("internalSetAgentProfileText — audit com o texto anterior", () => {
     expect(log.changes.after.systemPrompt).toBe("curto");
   });
 });
+
+describe("internalSetDisclosureMode", () => {
+  test("dryRun é o default: relata e não grava", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seed(t, "p");
+    const r = await t.mutation(internal.opsAgentProfile.internalSetDisclosureMode, {
+      organizationId,
+      agentMemberId,
+      mode: "on_demand",
+    });
+    expect(r).toEqual({ applied: false, before: "first_reply", after: "on_demand", changed: true });
+    const member = await t.run(async (ctx) => ctx.db.get(agentMemberId));
+    expect(member!.agentProfile!.disclosureMode).toBeUndefined();
+  });
+
+  test("aplica, preserva o resto do perfil e audita", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seed(t, "persona");
+    const r = await t.mutation(internal.opsAgentProfile.internalSetDisclosureMode, {
+      organizationId,
+      agentMemberId,
+      mode: "on_demand",
+      version: "v-teste",
+      dryRun: false,
+    });
+    expect(r.applied).toBe(true);
+    const member = await t.run(async (ctx) => ctx.db.get(agentMemberId));
+    expect(member!.agentProfile!.disclosureMode).toBe("on_demand");
+    expect(member!.agentProfile!.systemPrompt).toBe("persona");
+    const log = await lastAudit(t);
+    expect(log.metadata.op).toBe("internalSetDisclosureMode");
+    expect(log.changes.before).toEqual({ disclosureMode: "first_reply" });
+    expect(log.changes.after).toEqual({ disclosureMode: "on_demand" });
+  });
+
+  test("recusa agente de outra organização", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seed(t, "a");
+    const otherOrg = await t.run(async (ctx) =>
+      ctx.db.insert("organizations", {
+        name: "Outra",
+        slug: "outra",
+        settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    );
+    await expect(
+      t.mutation(internal.opsAgentProfile.internalSetDisclosureMode, {
+        organizationId: otherOrg,
+        agentMemberId: a.agentMemberId,
+        mode: "on_demand",
+        dryRun: false,
+      })
+    ).rejects.toThrow("Membro não pertence à organização");
+  });
+});

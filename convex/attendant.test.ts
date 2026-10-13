@@ -397,6 +397,50 @@ describe("commit transacional (TOCTOU)", () => {
     return { item, context: claim.context };
   }
 
+  test("divulgação: first_reply (default) prepende; on_demand não prepende e regra vai pro prompt", async () => {
+    for (const mode of [undefined, "on_demand"] as const) {
+      const t = setup();
+      const seed = await seedAttendantOrg(t, { mode: "autopilot" });
+      await t.run(async (ctx) => {
+        const agent = await ctx.db.get(seed.agentId);
+        await ctx.db.patch(seed.agentId, {
+          agentProfile: {
+            ...agent!.agentProfile!,
+            disclosure: "Sou o assistente digital da casa.",
+            ...(mode ? { disclosureMode: mode } : {}),
+          },
+        });
+      });
+      const { item, context } = await claimForRun(t, seed, `run-disc-${mode ?? "default"}`);
+      const ctxDisc = context as { needsDisclosure: boolean; disclosureOnDemand?: boolean };
+      expect(ctxDisc.needsDisclosure).toBe(mode !== "on_demand");
+      expect(ctxDisc.disclosureOnDemand === true).toBe(mode === "on_demand");
+
+      const commit = await t.mutation(internal.attendant.internalCommitAiReply, {
+        queueItemId: item._id,
+        conversationId: seed.conversationId,
+        agentMemberId: seed.agentId,
+        runId: `run-disc-${mode ?? "default"}`,
+        agentRunId: context.agentRunId,
+        runStartedAt: context.runStartedAt,
+        text: "Aho! Que bom que você chegou.",
+        needsDisclosure: ctxDisc.needsDisclosure,
+        disclosure: "Sou o assistente digital da casa.",
+        allowPendingHandoff: false,
+      });
+      expect(commit.committed).toBe(true);
+      const outbound = await t.run(async (ctx) =>
+        (await ctx.db.query("messages").collect()).filter((m) => m.direction === "outbound")
+      );
+      expect(outbound).toHaveLength(1);
+      if (mode === "on_demand") {
+        expect(outbound[0].content).toBe("Aho! Que bom que você chegou.");
+      } else {
+        expect(outbound[0].content.startsWith("Sou o assistente digital da casa.")).toBe(true);
+      }
+    }
+  });
+
   test("autopilot: commit envia quando nada mudou", async () => {
     const t = setup();
     const seed = await seedAttendantOrg(t, { mode: "autopilot" });
