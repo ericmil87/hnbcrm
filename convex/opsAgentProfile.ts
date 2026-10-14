@@ -230,3 +230,95 @@ export const internalSetDisclosureMode = internalMutation({
     return { applied: true, before, after: args.mode, changed };
   },
 });
+
+/**
+ * v0.71: ajusta as REGRAS DO FUNIL (`pipelineConfig.advanceRules`) e/ou a lista de
+ * campos capturáveis (`pipelineConfig.captureFields`) do atendente sem sessão de
+ * usuário. Os demais campos de `pipelineConfig` (board, estágios, threshold…) são
+ * preservados. `captureFields` é validada contra `fieldDefinitions` da org: chave
+ * desconhecida recusa a operação. dryRun DEFAULT TRUE.
+ *
+ * Uso: npx convex run --prod opsAgentProfile:internalSetPipelineRules '{"organizationId":"…","agentMemberId":"…","advanceRules":"…","captureFields":["…"],"version":"…","dryRun":true}'
+ */
+export const internalSetPipelineRules = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    agentMemberId: v.id("teamMembers"),
+    advanceRules: v.optional(v.string()),
+    captureFields: v.optional(v.array(v.string())),
+    version: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    applied: v.boolean(),
+    changed: v.boolean(),
+    advanceRules: v.object({ beforeLength: v.number(), afterLength: v.number(), changed: v.boolean() }),
+    captureFields: v.object({ before: v.array(v.string()), after: v.array(v.string()), changed: v.boolean() }),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    if (args.advanceRules === undefined && args.captureFields === undefined) {
+      throw new Error("Informe advanceRules e/ou captureFields");
+    }
+    const member = await ctx.db.get(args.agentMemberId);
+    if (!member || member.organizationId !== args.organizationId) {
+      throw new Error("Membro não pertence à organização");
+    }
+    if (member.type !== "ai" || !member.agentProfile) {
+      throw new Error("Membro não é um agente de IA com perfil");
+    }
+    const current = member.agentProfile.pipelineConfig ?? {};
+    const beforeRules = current.advanceRules ?? "";
+    const afterRules = args.advanceRules ?? beforeRules;
+    const beforeFields = current.captureFields ?? [];
+    const afterFields = args.captureFields ?? beforeFields;
+
+    if (args.captureFields !== undefined) {
+      const defs = await ctx.db
+        .query("fieldDefinitions")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .collect();
+      const known = new Set(defs.map((d) => d.key));
+      const unknown = afterFields.filter((k) => !known.has(k));
+      if (unknown.length > 0) {
+        throw new Error(`captureFields desconhecidos em fieldDefinitions: ${unknown.join(", ")}`);
+      }
+    }
+
+    const rulesChanged = afterRules !== beforeRules;
+    const fieldsChanged = JSON.stringify(afterFields) !== JSON.stringify(beforeFields);
+    const changed = rulesChanged || fieldsChanged;
+    const report = {
+      changed,
+      advanceRules: { beforeLength: beforeRules.length, afterLength: afterRules.length, changed: rulesChanged },
+      captureFields: { before: beforeFields, after: afterFields, changed: fieldsChanged },
+    };
+    if (dryRun || !changed) {
+      return { applied: false, ...report };
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.agentMemberId, {
+      agentProfile: {
+        ...member.agentProfile,
+        pipelineConfig: { ...current, advanceRules: afterRules, captureFields: afterFields },
+      },
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "teamMember",
+      entityId: args.agentMemberId,
+      action: "update",
+      actorType: "system",
+      changes: {
+        before: { advanceRules: await auditTextSnapshot(beforeRules), captureFields: beforeFields },
+        after: { advanceRules: await auditTextSnapshot(afterRules), captureFields: afterFields },
+      },
+      metadata: { op: "internalSetPipelineRules", version: args.version },
+      description: `Perfil do agente "${member.name}": regras do funil/campos capturáveis (ops)${args.version ? ` (${args.version})` : ""}`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return { applied: true, ...report };
+  },
+});

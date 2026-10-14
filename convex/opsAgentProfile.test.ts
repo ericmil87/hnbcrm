@@ -146,3 +146,83 @@ describe("internalSetDisclosureMode", () => {
     ).rejects.toThrow("Membro não pertence à organização");
   });
 });
+
+describe("internalSetPipelineRules", () => {
+  async function seedPipeline(t: ReturnType<typeof convexTest>) {
+    const { organizationId, agentMemberId } = await seed(t, "p");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("fieldDefinitions", {
+        organizationId,
+        name: "Canal",
+        key: "canal",
+        type: "text",
+        entityType: "lead",
+        isRequired: false,
+        order: 0,
+        createdAt: now,
+      });
+      const m = await ctx.db.get(agentMemberId);
+      await ctx.db.patch(agentMemberId, {
+        agentProfile: {
+          ...m!.agentProfile!,
+          pipelineConfig: { qualifyThreshold: 2, advanceRules: "antigas", captureFields: [] },
+        },
+      });
+    });
+    return { organizationId, agentMemberId };
+  }
+
+  test("dryRun é o default: relata e não grava", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seedPipeline(t);
+    const r = await t.mutation(internal.opsAgentProfile.internalSetPipelineRules, {
+      organizationId,
+      agentMemberId,
+      advanceRules: "novas regras",
+      captureFields: ["canal"],
+    });
+    expect(r.applied).toBe(false);
+    expect(r.changed).toBe(true);
+    expect(r.advanceRules).toEqual({ beforeLength: 7, afterLength: 12, changed: true });
+    const member = await t.run(async (ctx) => ctx.db.get(agentMemberId));
+    expect(member!.agentProfile!.pipelineConfig!.advanceRules).toBe("antigas");
+  });
+
+  test("aplica, preserva o resto do pipelineConfig e audita", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seedPipeline(t);
+    const r = await t.mutation(internal.opsAgentProfile.internalSetPipelineRules, {
+      organizationId,
+      agentMemberId,
+      advanceRules: "novas regras",
+      captureFields: ["canal"],
+      version: "v-teste",
+      dryRun: false,
+    });
+    expect(r.applied).toBe(true);
+    const member = await t.run(async (ctx) => ctx.db.get(agentMemberId));
+    expect(member!.agentProfile!.pipelineConfig).toEqual({
+      qualifyThreshold: 2,
+      advanceRules: "novas regras",
+      captureFields: ["canal"],
+    });
+    expect(member!.agentProfile!.systemPrompt).toBe("p");
+    const log = await lastAudit(t);
+    expect(log.metadata.op).toBe("internalSetPipelineRules");
+    expect(log.changes.after.captureFields).toEqual(["canal"]);
+  });
+
+  test("recusa captureFields fora de fieldDefinitions", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seedPipeline(t);
+    await expect(
+      t.mutation(internal.opsAgentProfile.internalSetPipelineRules, {
+        organizationId,
+        agentMemberId,
+        captureFields: ["canal", "inexistente"],
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/inexistente/);
+  });
+});
