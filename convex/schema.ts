@@ -255,6 +255,9 @@ const agentProfileValidator = v.object({
   model: v.optional(v.string()), // override do id canônico da org
   temperature: v.optional(v.number()),
   disclosure: v.optional(v.string()), // divulgação LGPD na 1ª resposta ao cliente
+  // v0.71: "first_reply" (default/ausente) prepende a divulgação na 1ª resposta;
+  // "on_demand" só se identifica quando perguntarem ou ao abrir repasse (lib/disclosure.ts).
+  disclosureMode: v.optional(v.union(v.literal("first_reply"), v.literal("on_demand"))),
   // Regras de pipeline do atendente (P4 v4.1). Tudo opcional = comportamento atual.
   pipelineConfig: v.optional(
     v.object({

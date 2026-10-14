@@ -58,6 +58,7 @@ import { campaignContextForConversation } from "./lib/campaignContext";
 import { buildGroupSystemPrompt, groupSpeakerLabel } from "./lib/groupAgentCore";
 import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
 import { getLeadRef } from "./lib/leadRef";
+import { buildDisclosurePromptLine, resolveDisclosurePolicy } from "./lib/disclosure";
 import { toWhatsAppText } from "./lib/whatsappText";
 import {
   describeLeakedModelMarkup,
@@ -1359,6 +1360,7 @@ export const internalClaimForProcessing = internalMutation({
     );
 
     const profile = agent!.agentProfile!;
+    const disclosurePolicy = resolveDisclosurePolicy(profile, hasPriorAiOutbound);
     const providerConfig = org!.settings.aiConfig?.providerConfig;
     const timezone = resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone);
     const followUpSettings = resolveFollowUpSettings(profile, providerOf(channelConfig));
@@ -1434,7 +1436,10 @@ export const internalClaimForProcessing = internalMutation({
           profile.pipelineConfig?.captureFields
         ),
         disclosure: profile.disclosure ?? DEFAULT_DISCLOSURE,
-        needsDisclosure: !hasPriorAiOutbound,
+        // v0.71: `disclosureMode:"on_demand"` não prepende nem exige a divulgação
+        // na abertura — o prompt ganha a regra de identificação sob demanda.
+        needsDisclosure: disclosurePolicy.needsDisclosure,
+        disclosureOnDemand: disclosurePolicy.onDemand,
         orgName: org!.name,
         currency: org!.settings.currency,
         stages: stages.map((s) => ({ name: s.name, isClosedWon: s.isClosedWon, isClosedLost: s.isClosedLost })),
@@ -3063,6 +3068,8 @@ type RunContext = {
   captureFields: CaptureFieldDef[];
   disclosure: string;
   needsDisclosure: boolean;
+  /** `agentProfile.disclosureMode === "on_demand"` — identificação só quando perguntarem. */
+  disclosureOnDemand?: boolean;
   orgName: string;
   currency: string;
   stages: { name: string; isClosedWon: boolean; isClosedLost: boolean }[];
@@ -3121,6 +3128,7 @@ type PromptContext = Pick<
   | "stages"
   | "needsDisclosure"
   | "disclosure"
+  | "disclosureOnDemand"
   | "teamNotes"
   | "dateTimeBlock"
   | "humanInstruction"
@@ -3244,9 +3252,7 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
           .map((s) => s.name)
           .join(", ")}.`
       : "",
-    context.needsDisclosure
-      ? `Esta é a primeira resposta da IA neste atendimento: comece a resposta com exatamente: "${context.disclosure}"`
-      : "",
+    buildDisclosurePromptLine(context),
     // Instrução do atendente humano: conteúdo CONFIÁVEL (vem de um membro
     // autenticado com inbox:reply) — deliberadamente FORA do envelope de dado
     // não-confiável. Precisa vencer explicitamente as regras de PERSONA do tipo
@@ -5134,6 +5140,8 @@ export const internalGetSimulatorSetup = internalQuery({
     const profile = agent.agentProfile;
     if (profile?.kind !== "attendant") return null;
     const providerConfig = org.settings.aiConfig?.providerConfig;
+    // Simulação = conversa nova: mesma política do runtime sem fala prévia da IA.
+    const disclosurePolicy = resolveDisclosurePolicy(profile, false);
 
     // Board default p/ listar estágios plausíveis na simulação.
     const boards = (
@@ -5175,7 +5183,8 @@ export const internalGetSimulatorSetup = internalQuery({
         profile.pipelineConfig?.captureFields
       ),
       disclosure: profile.disclosure ?? DEFAULT_DISCLOSURE,
-      needsDisclosure: true,
+      needsDisclosure: disclosurePolicy.needsDisclosure,
+      disclosureOnDemand: disclosurePolicy.onDemand,
       orgName: org.name,
       currency: org.settings.currency,
       stages: stages.map((s) => ({

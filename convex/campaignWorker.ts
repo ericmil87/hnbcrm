@@ -19,6 +19,7 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { configProvider } from "./channelConfigs";
 import { decryptSecret } from "./lib/secretCrypto";
+import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
 import { findOrCreateContactByPhone, ensureLeadForContact } from "./lib/inboundRouting";
 import { getOrCreateConversation } from "./conversations";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
@@ -51,7 +52,6 @@ import {
   addTimeline,
 } from "./lib/campaignHooks";
 import { isPhoneSuppressed } from "./lib/campaignAudience";
-import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse, phoneFromJid } from "./lib/bridgeSession";
 import { buildSearchText } from "./lib/searchText";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
@@ -329,6 +329,8 @@ async function recipientIsNewContact(
 }
 
 /** Bridge: POST /user/check antes de enviar. Falha de rede → envia mesmo assim. */
+const CHECK_TIMEOUT_MS = 8000;
+
 export const checkNumberAndSend = internalAction({
   args: { campaignId: v.id("campaigns"), recipientId: v.id("campaignRecipients"), tickToken: v.string() },
   returns: v.null(),
@@ -345,24 +347,29 @@ export const checkNumberAndSend = internalAction({
     // gente gravar o contato com o número normalizado e a resposta chegar pelo
     // JID, viram dois contatos. Quem manda é o JID.
     let canonicalPhone: string | undefined;
+    // Núcleo compartilhado com "Nova conversa" (lib/bridgeNumberCheck): só JID
+    // de TELEFONE vale como canônico — o /user/check de hoje devolve `@lid`, e
+    // os dígitos do LID viravam o "telefone" do destinatário (bug de 10/10/2026).
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
     try {
       const token = await decryptSecret(context.bridgeTokenEncrypted);
-      const req = buildBridgeCheckUserRequest({ baseUrl: context.bridgeBaseUrl, token, phones: [context.phone] });
-      const res = await fetch(req.url, { method: req.method, headers: req.headers, body: req.body });
-      const body = await res.json().catch(() => ({}));
-      const parsed = parseBridgeCheckUserResponse(res.ok, res.status, body);
-      if (parsed.ok) {
-        const match = parsed.users.find((u) => u.phone === context.phone) ?? parsed.users[0];
-        if (match) {
-          onWhatsapp = match.onWhatsapp;
-          const jidPhone = match.jid ? phoneFromJid(match.jid) : undefined;
-          if (onWhatsapp && jidPhone && jidPhone !== context.phone) canonicalPhone = jidPhone;
-        }
+      const res = await checkBridgeNumber({
+        baseUrl: context.bridgeBaseUrl,
+        token,
+        phone: context.phone,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        note = `checagem indisponível (${res.error}) — enviado sem confirmar`;
       } else {
-        note = `checagem indisponível (${parsed.error}) — enviado sem confirmar`;
+        onWhatsapp = res.onWhatsapp;
+        if (res.onWhatsapp && res.canonicalPhone !== context.phone) canonicalPhone = res.canonicalPhone;
       }
     } catch (e) {
       note = `checagem indisponível (${e instanceof Error ? e.message : "erro de rede"}) — enviado sem confirmar`;
+    } finally {
+      clearTimeout(timer);
     }
     await ctx.runMutation(internal.campaignWorker.sendToRecipient, {
       campaignId: args.campaignId,

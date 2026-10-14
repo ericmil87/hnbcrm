@@ -549,6 +549,7 @@ const agentProfilePatchValidator = v.object({
   model: v.optional(v.string()),
   temperature: v.optional(v.number()),
   disclosure: v.optional(v.string()),
+  disclosureMode: v.optional(v.union(v.literal("first_reply"), v.literal("on_demand"))),
   // P4: regras de pipeline. v.null() limpa a config inteira (volta ao default).
   pipelineConfig: v.optional(
     v.union(
