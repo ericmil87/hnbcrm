@@ -33,6 +33,10 @@ export interface AgendaEvent {
   signupUrl: string | null;
   videoUrl: string | null;
   image: string | null;
+  /** v0.71: orientações de preparo do evento (opcionais na API do site). */
+  preparationUrl: string | null;
+  /** Texto pronto para o cliente (já formatado para WhatsApp); teto 2.000 chars. */
+  preparationMessage: string | null;
 }
 
 function str(value: unknown, cap: number): string | null {
@@ -84,6 +88,8 @@ function normalizeEvent(raw: unknown): AgendaEvent | null {
     signupUrl: str(e.signupUrl, 500),
     videoUrl: str(e.videoUrl, 500),
     image: str(e.image, 500),
+    preparationUrl: str(e.preparationUrl, 500),
+    preparationMessage: str(e.preparationMessage, 2000),
   };
 }
 
@@ -262,7 +268,7 @@ function agendaEventLine(e: AgendaEvent): string {
     parts.push(`contribuição: ${[price, priceNote ? `(${priceNote})` : null].filter(Boolean).join(" ")}`);
   }
   if (e.spotsLeft !== null) parts.push(`vagas restantes: ${e.spotsLeft}`);
-  if (e.validationRequired === true) parts.push("participação passa por conversa prévia");
+  if (e.validationRequired === true) parts.push("inscrição validada pela casa; orientações de preparo após a inscrição");
   const page = oneLine(e.pageUrl, 500);
   if (page) parts.push(`página: ${page}`);
   const signup = oneLine(e.signupUrl, 500);

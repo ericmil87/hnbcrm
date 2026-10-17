@@ -10,8 +10,7 @@ import {
   AGENDA_PROMPT_MAX_CHARS,
   AgendaEvent,
   formatAgendaForPrompt,
-  isAgendaEventPast,
-} from "./externalAgenda";
+  isAgendaEventPast, normalizeAgendaEvents } from "./externalAgenda";
 
 const TZ = "America/Sao_Paulo";
 /** 07/10/2026 14:00 em São Paulo (17:00 UTC). */
@@ -34,6 +33,8 @@ function ev(over: Partial<AgendaEvent> = {}): AgendaEvent {
     signupUrl: "https://site.example/inscricao/roda",
     videoUrl: null,
     image: null,
+    preparationUrl: null,
+    preparationMessage: null,
     ...over,
   };
 }
@@ -84,7 +85,7 @@ describe("formatAgendaForPrompt", () => {
     expect(lines[2]).toContain("condução: Ana, Beto");
     expect(lines[2]).toContain("contribuição: R$ 150 (PIX antecipado)");
     expect(lines[2]).toContain("vagas restantes: 4");
-    expect(lines[2]).toContain("participação passa por conversa prévia");
+    expect(lines[2]).toContain("inscrição validada pela casa");
     expect(lines[2]).toContain("página: https://site.example/eventos/roda");
     expect(lines[2]).toContain("inscrição: https://site.example/inscricao/roda");
   });
@@ -124,5 +125,20 @@ describe("formatAgendaForPrompt", () => {
     const text = formatAgendaForPrompt(long, { now: NOW, timezone: TZ });
     expect(text.length).toBeLessThanOrEqual(AGENDA_PROMPT_MAX_CHARS);
     expect(text).toMatch(/\(\+\d+ evento\(s\) não listado\(s\)/);
+  });
+});
+
+describe("preparationUrl / preparationMessage (v0.71)", () => {
+  test("passam pela whitelist, com teto, e ausentes viram null", () => {
+    const [a, b] = normalizeAgendaEvents([
+      { slug: "x", preparationUrl: "https://site.example/orientacoes/x", preparationMessage: "*O que levar:*\n- água" },
+      { slug: "y" },
+    ]);
+    expect(a.preparationUrl).toBe("https://site.example/orientacoes/x");
+    expect(a.preparationMessage).toBe("*O que levar:*\n- água");
+    expect(b.preparationUrl).toBeNull();
+    expect(b.preparationMessage).toBeNull();
+    const [c] = normalizeAgendaEvents([{ slug: "z", preparationMessage: "a".repeat(2500) }]);
+    expect(c.preparationMessage!.length).toBe(2000);
   });
 });
