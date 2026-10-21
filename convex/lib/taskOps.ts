@@ -96,6 +96,25 @@ export async function schedulePreDueReminder(
   });
 }
 
+/**
+ * Lembrete NO PRAZO de uma task `type:"reminder"` ativa: agenda
+ * `triggerReminder` para `dueDate`. É o caminho principal — o cron
+ * `processOverdueReminders` (1 h) é só resgate. Agendar a mais é inofensivo:
+ * `triggerReminder` é idempotente e ignora job de prazo antigo.
+ */
+export async function scheduleDueReminder(
+  ctx: MutationCtx,
+  task: { _id: Id<"tasks">; type: Doc<"tasks">["type"]; status: Doc<"tasks">["status"] },
+  dueDate: number | undefined,
+  now: number
+): Promise<void> {
+  if (task.type !== "reminder" || !dueDate) return;
+  if (task.status !== "pending" && task.status !== "in_progress") return;
+  await ctx.scheduler.runAfter(Math.max(0, dueDate - now), internal.tasks.triggerReminder, {
+    taskId: task._id,
+  });
+}
+
 // ── Recorrência (núcleo ÚNICO) ──
 
 export type RecurrenceOutcome =
@@ -207,6 +226,12 @@ export async function generateNextRecurrence(
 
   // Lembrete antecipado da nova instância (preDueReminderSentAt nasce limpo)
   await schedulePreDueReminder(ctx, nextTaskId, nextDueDate, task.reminderMinutesBefore);
+  await scheduleDueReminder(
+    ctx,
+    { _id: nextTaskId, type: task.type, status: "pending" },
+    nextDueDate,
+    now
+  );
 
   await ctx.db.patch(task._id, {
     recurrence: { ...recurrence, lastGeneratedAt: now },
@@ -222,7 +247,8 @@ export async function generateNextRecurrence(
 export async function generateNextRecurrenceSafely(
   ctx: MutationCtx,
   task: Doc<"tasks">,
-  now: number
+  now: number,
+  opts?: { stampOnFailure?: boolean }
 ): Promise<void> {
   if (!task.recurrence) return;
   try {
@@ -232,9 +258,15 @@ export async function generateNextRecurrenceSafely(
       JSON.stringify({
         event: "taskRecurrenceFailed",
         taskId: task._id,
+        stamped: opts?.stampOnFailure === true,
         error: error instanceof Error ? error.message : String(error),
       })
     );
+    // No cron de resgate: carimba para uma task que lança TODA vez não ocupar
+    // a vaga do padrão para sempre (o erro fica no log para investigação).
+    if (opts?.stampOnFailure) {
+      await ctx.db.patch(task._id, { recurrence: { ...task.recurrence, lastGeneratedAt: now } });
+    }
   }
 }
 

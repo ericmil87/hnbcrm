@@ -19,6 +19,7 @@ import {
   generateNextRecurrenceSafely,
   nextOrderInColumn,
   readTaskAssignees as readAssignees,
+  scheduleDueReminder,
   schedulePreDueReminder,
 } from "./lib/taskOps";
 import {
@@ -1211,6 +1212,17 @@ export const updateTask = mutation({
       );
     }
 
+    // Prazo novo de lembrete ativo: agenda o disparo no prazo novo (o cron de
+    // resgate roda só de hora em hora).
+    if ("dueDate" in changes) {
+      await scheduleDueReminder(
+        ctx,
+        { _id: args.taskId, type: task.type, status: changes.status ?? task.status },
+        changes.dueDate,
+        now
+      );
+    }
+
     // Concluir pelo status também gera a próxima recorrência na hora (mesmo
     // núcleo de applyCompletion; o cron é só resgate).
     if (changes.status === "completed" && task.status !== "completed") {
@@ -2246,6 +2258,7 @@ export const internalUpdateTask = internalMutation({
 
     if ("dueDate" in changes) {
       await schedulePreDueReminder(ctx, args.taskId, changes.dueDate, task.reminderMinutesBefore);
+      await scheduleDueReminder(ctx, task, changes.dueDate, now);
     }
 
     await ctx.db.insert("auditLogs", {
@@ -2549,6 +2562,9 @@ export const internalBulkUpdate = internalMutation({
   },
 });
 
+// Tolerância do disparo: o scheduler pode acordar alguns ms antes do prazo.
+const REMINDER_EARLY_TOLERANCE_MS = 60_000;
+
 // Internal: Trigger reminder (idempotent)
 export const triggerReminder = internalMutation({
   args: { taskId: v.id("tasks") },
@@ -2564,6 +2580,10 @@ export const triggerReminder = internalMutation({
     // Check snooze
     const now = Date.now();
     if (task.snoozedUntil && task.snoozedUntil > now) return null;
+
+    // Job de um prazo ANTIGO (o prazo foi adiado depois do agendamento): o job
+    // do prazo novo dispara na hora certa — sem isto, este dispararia antes.
+    if (task.dueDate != null && task.dueDate > now + REMINDER_EARLY_TOLERANCE_MS) return null;
 
     await ctx.db.patch(args.taskId, {
       reminderTriggered: true,
@@ -2667,19 +2687,36 @@ export const triggerPreDueReminder = internalMutation({
 });
 
 // Tamanho de cada um dos 4 ranges do cron de lembretes (status × reminderTriggered).
-const OVERDUE_REMINDER_BATCH = 100;
+// Os ranges `false` são maiores porque carregam também os adiados (ver abaixo).
+const OVERDUE_REMINDER_BATCH = { unset: 100, snoozedOrReset: 200 } as const;
+
+export type OverdueReminderRange = {
+  status: "pending" | "in_progress";
+  triggered: false | undefined;
+  docs: Doc<"tasks">[];
+};
 
 /**
  * Lembretes vencidos e não disparados, pelo índice
- * `by_type_and_status_and_reminder_and_due`. `reminderTriggered` nasce
- * AUSENTE na criação e vira `false` no snooze, então são dois valores por
- * status ativo. `.gt("dueDate", undefined)` exclui task sem prazo (no índice,
- * `undefined` ordena antes de qualquer número e cairia no `.lte`).
+ * `by_type_and_status_and_reminder_and_due`, um range por status ativo ×
+ * `reminderTriggered` (nasce AUSENTE na criação e vira `false` no snooze).
+ * `.gt("dueDate", undefined)` exclui task sem prazo (no índice, `undefined`
+ * ordena antes de qualquer número e cairia no `.lte`). Compartilhado pelo cron
+ * e pelas ops de backlog (`internalCountCronBacklog`/`internalStampLegacyCronBacklog`).
  */
-async function findOverdueReminders(ctx: MutationCtx, now: number): Promise<Doc<"tasks">[]> {
-  const ranges = (["pending", "in_progress"] as const).flatMap((status) =>
-    [undefined, false].map((triggered) =>
-      ctx.db
+export async function overdueReminderRanges(
+  ctx: QueryCtx | MutationCtx,
+  now: number,
+  limit?: number
+): Promise<OverdueReminderRange[]> {
+  const combos = (["pending", "in_progress"] as const).flatMap((status) =>
+    ([undefined, false] as const).map((triggered) => ({ status, triggered }))
+  );
+  return await Promise.all(
+    combos.map(async ({ status, triggered }) => ({
+      status,
+      triggered,
+      docs: await ctx.db
         .query("tasks")
         .withIndex("by_type_and_status_and_reminder_and_due", (q) =>
           q
@@ -2689,10 +2726,14 @@ async function findOverdueReminders(ctx: MutationCtx, now: number): Promise<Doc<
             .gt("dueDate", undefined)
             .lte("dueDate", now)
         )
-        .take(OVERDUE_REMINDER_BATCH)
-    )
+        .take(
+          limit ??
+            (triggered === false
+              ? OVERDUE_REMINDER_BATCH.snoozedOrReset
+              : OVERDUE_REMINDER_BATCH.unset)
+        ),
+    }))
   );
-  return (await Promise.all(ranges)).flat();
 }
 
 // Internal: Process overdue reminders (cron de RESGATE — o lembrete de cada
@@ -2700,6 +2741,12 @@ async function findOverdueReminders(ctx: MutationCtx, now: number): Promise<Doc<
 // vencido e ainda não disparou, por índice e no deployment inteiro: a antiga
 // `take(500)` sem range lia 500 tasks a cada tick e deixava orgs do fim do
 // índice sem lembrete.
+//
+// Limite conhecido: lembrete ADIADO (reminderTriggered:false, dueDate vencido,
+// snoozedUntil futuro) é pulado em JS mas ocupa vaga no range `false`. Com mais
+// de 200 adiados por status no deployment, vencidos reais ordenados depois
+// deles esperam a rodada seguinte (o job por task, agendado no snooze, segue
+// valendo — o atraso é só do resgate).
 export const processOverdueReminders = internalMutation({
   args: {},
   returns: v.null(),
@@ -2707,7 +2754,7 @@ export const processOverdueReminders = internalMutation({
     if (cronsDisabled()) return null;
     const now = Date.now();
 
-    const overdueTasks = await findOverdueReminders(ctx, now);
+    const overdueTasks = (await overdueReminderRanges(ctx, now)).flatMap((r) => r.docs);
 
     for (const task of overdueTasks) {
       // Snoozada (reminderTriggered:false) fica no range até o snooze vencer,
@@ -2757,14 +2804,46 @@ export const processOverdueReminders = internalMutation({
 const RECURRING_RESCUE_BATCH = 50;
 const RECURRENCE_PATTERNS = ["daily", "weekly", "biweekly", "monthly"] as const;
 
+export type UngeneratedRecurrenceRange = {
+  pattern: (typeof RECURRENCE_PATTERNS)[number];
+  docs: Doc<"tasks">[];
+};
+
+/**
+ * Concluídas recorrentes que NUNCA geraram sucessor, um range por padrão, pelo
+ * índice `by_status_and_recurrence_pattern_and_generated`. Compartilhado pelo
+ * cron e pelas ops de backlog.
+ */
+export async function ungeneratedRecurrenceRanges(
+  ctx: QueryCtx | MutationCtx,
+  limit: number = RECURRING_RESCUE_BATCH
+): Promise<UngeneratedRecurrenceRange[]> {
+  return await Promise.all(
+    RECURRENCE_PATTERNS.map(async (pattern) => ({
+      pattern,
+      docs: await ctx.db
+        .query("tasks")
+        .withIndex("by_status_and_recurrence_pattern_and_generated", (q) =>
+          q
+            .eq("status", "completed")
+            .eq("recurrence.pattern", pattern)
+            .eq("recurrence.lastGeneratedAt", undefined)
+        )
+        .take(limit),
+    }))
+  );
+}
+
 // Internal: Process recurring tasks — REDE DE SEGURANÇA. A próxima instância
 // nasce na própria conclusão (`generateNextRecurrence` em lib/taskOps.ts);
 // aqui só se resgata, por índice, a concluída recorrente que NUNCA gerou
 // (`recurrence.lastGeneratedAt` ausente): tarefa legada, ou conclusão cuja
 // geração falhou. O núcleo grava `lastGeneratedAt` também quando pula (fim da
-// recorrência / sucessor existente), então ninguém fica no range para sempre.
-// "Reabrir e concluir de novo" (lastGeneratedAt < completedAt) é coberto só
-// pelo caminho de conclusão.
+// recorrência / sucessor existente) e, aqui, quando a geração LANÇA (log
+// `taskRecurrenceFailed`), então ninguém fica no range para sempre.
+// Limite conhecido: o resgate NÃO cobre "reabrir e concluir de novo" — a task
+// já tem `lastGeneratedAt` (< completedAt) e está fora do range; esse caso é
+// só do caminho de conclusão (`applyTaskCompletion` / `updateTask`).
 export const processRecurringTasks = internalMutation({
   args: {},
   returns: v.null(),
@@ -2772,23 +2851,11 @@ export const processRecurringTasks = internalMutation({
     if (cronsDisabled()) return null;
     const now = Date.now();
 
-    const pages = await Promise.all(
-      RECURRENCE_PATTERNS.map((pattern) =>
-        ctx.db
-          .query("tasks")
-          .withIndex("by_status_and_recurrence_pattern_and_generated", (q) =>
-            q
-              .eq("status", "completed")
-              .eq("recurrence.pattern", pattern)
-              .eq("recurrence.lastGeneratedAt", undefined)
-          )
-          .take(RECURRING_RESCUE_BATCH)
-      )
-    );
+    const pages = await ungeneratedRecurrenceRanges(ctx);
 
-    // Uma task com dado ruim não trava o lote (o erro é logado).
-    for (const task of pages.flat()) {
-      await generateNextRecurrenceSafely(ctx, task, now);
+    // Uma task com dado ruim não trava o lote: erro logado e carimbado.
+    for (const task of pages.flatMap((p) => p.docs)) {
+      await generateNextRecurrenceSafely(ctx, task, now, { stampOnFailure: true });
     }
 
     return null;

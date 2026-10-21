@@ -3,8 +3,9 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
-// Lembrete de cada task é agendado por `runAfter` (create/snooze); o cron é só
-// resgate de um agendamento perdido, por índice — 1 h basta.
+// Lembrete de cada task é agendado por `runAfter` (create, snooze, mudança de
+// prazo em updateTask/internalUpdateTask e instância nova da recorrência); o
+// cron é só resgate de um agendamento perdido, por índice — 1 h basta.
 crons.interval("process overdue reminders", { hours: 1 }, internal.tasks.processOverdueReminders);
 crons.interval("process recurring tasks", { hours: 1 }, internal.tasks.processRecurringTasks);
 
