@@ -21,7 +21,7 @@ Chamadas conhecidas (dashboard, out/2026): `/webhooks/bridge` 29K prod; `channel
 
 ## Fase 1 — crons que rodam sem usuário
 
-Branch: `perf/convex-io-fase1`. Status: implementada e revisada em 21/10/2026; aguardando deploy (quem publica é o Eric).
+Branch: `perf/convex-io-fase1` → PR #5, mergeado em `main` (9aae88b) e PUBLICADO em prod pelo Vercel em 21/10/2026 ~21:17 UTC; dev recebeu as funções via `convex dev --once` no mesmo dia e tem `CRONS_DISABLED=1`. `opsTasks:internalCountCronBacklog` em prod logo após o deploy: **0** lembretes vencidos pendentes e **0** recorrências sem sucessor em todos os ranges — nenhum carimbo foi necessário, sem burst.
 
 ### Mudanças
 
@@ -88,7 +88,7 @@ Com `CRONS_DISABLED=1` no dev, o I/O de cron do dev vai a zero. A conta depende 
 
 ## Fase 2 — frontend: queries reativas caras
 
-_não iniciada_
+Branch: `perf/convex-io-fase2`. Status: _em andamento (21/10/2026)_.
 
 ## Fase 3 — writes que invalidam o Inbox
 
