@@ -2942,7 +2942,8 @@ const applicationTables = {
   exportJobs: defineTable({
     organizationId: v.id("organizations"),
     requestedBy: v.id("teamMembers"),
-    status: v.union(v.literal("queued"), v.literal("running"), v.literal("completed"), v.literal("failed")),
+    // "expired" = completed cujo blob o cron já apagou (sai do range do cron).
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("completed"), v.literal("failed"), v.literal("expired")),
     format: v.union(v.literal("csv"), v.literal("json")),
     scope: v.union(v.literal("entity"), v.literal("full_backup")),
     entity: v.optional(v.union(v.literal("contacts"), v.literal("leads"), v.literal("tasks"))), // obrigatório quando scope=entity

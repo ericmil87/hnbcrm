@@ -35,6 +35,7 @@ import {
   type ExportLookups,
 } from "./lib/exportColumns";
 import { sanitizeDocument, EXCLUDED_BACKUP_TABLES } from "./lib/exportSanitize";
+import { cronsDisabled } from "./lib/cronGuard";
 
 // ===== Constantes =====
 
@@ -700,12 +701,17 @@ export const internalFinishJob = internalMutation({
 
 /**
  * Cron horário: apaga o blob dos exports concluídos que passaram da validade
- * (7 dias). O doc do job fica no histórico, só sem `resultStorageId`.
+ * (7 dias). O doc do job fica no histórico, sem `resultStorageId` e com
+ * status `expired` — é o que o tira do range do cron. Antes ele continuava
+ * `completed`, e os MESMOS 100 jobs eram relidos toda hora para sempre (os
+ * vencidos depois deles nunca eram limpos). `deleted` = blobs apagados;
+ * `expired` = jobs que mudaram de status (inclui os já sem blob).
  */
 export const internalCleanupExpired = internalMutation({
   args: {},
-  returns: v.object({ deleted: v.number() }),
+  returns: v.object({ deleted: v.number(), expired: v.number() }),
   handler: async (ctx) => {
+    if (cronsDisabled()) return { deleted: 0, expired: 0 };
     const now = Date.now();
     const expired = await ctx.db
       .query("exportJobs")
@@ -716,17 +722,18 @@ export const internalCleanupExpired = internalMutation({
 
     let deleted = 0;
     for (const job of expired) {
-      if (!job.resultStorageId) continue;
-      try {
-        await ctx.storage.delete(job.resultStorageId);
-      } catch {
-        // Blob já removido: segue e limpa o ponteiro do job.
+      if (job.resultStorageId) {
+        try {
+          await ctx.storage.delete(job.resultStorageId);
+        } catch {
+          // Blob já removido: segue e limpa o ponteiro do job.
+        }
+        deleted++;
       }
-      await ctx.db.patch(job._id, { resultStorageId: undefined });
-      deleted++;
+      await ctx.db.patch(job._id, { resultStorageId: undefined, status: "expired" });
     }
 
-    return { deleted };
+    return { deleted, expired: expired.length };
   },
 });
 

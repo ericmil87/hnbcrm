@@ -461,7 +461,7 @@ An asynchronous data export (CSV per entity or full JSON backup). The generated 
 | Field | Type | Description |
 |-------|------|-------------|
 | requestedBy | Id<teamMembers> | Who asked for the export |
-| status | enum | queued, running, completed, failed |
+| status | enum | queued, running, completed, failed, expired (completed past its 7-day validity; file removed) |
 | format | enum | csv, json |
 | scope | enum | entity (single table, CSV), full_backup (whole org, JSON) |
 | entity | enum | contacts, leads, tasks (required when scope=entity) |
@@ -1221,7 +1221,7 @@ List the last 20 export jobs, newest first.
 **Response:** \`{ jobs: [...] }\`
 
 #### GET /api/v1/exports/get?id=<jobId>
-Poll a single export job. Watch \`status\` (\`queued\` → \`running\` → \`completed\` | \`failed\`) and \`progress.processed\`.
+Poll a single export job. Watch \`status\` (\`queued\` → \`running\` → \`completed\` | \`failed\`; a \`completed\` job becomes \`expired\` once its file is removed after 7 days) and \`progress.processed\`.
 
 **Response:** \`{ job: { status, format, scope, entity, progress, resultFileName, resultSize, rowCount, error, expiresAt, ... } }\` — 404 when the job does not exist in this organization.
 
@@ -1883,7 +1883,7 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 \`contract\` | \`proposal\` | \`invoice\` | \`other\`
 
 ### Export Job Status
-\`queued\` | \`running\` | \`completed\` | \`failed\`
+\`queued\` | \`running\` | \`completed\` | \`failed\` | \`expired\`
 
 ### Export Scope
 \`entity\` | \`full_backup\`
