@@ -569,6 +569,30 @@ describe("mensagem de membro num grupo acompanhado", () => {
     expect(conversation!.lastInboundAt).toBeUndefined();
   });
 
+  test("dois fromMe de grupo no mesmo minuto: o 2º não altera o doc da sala", async () => {
+    const t = setup();
+    const { organizationId, configId, groupChatId } = await monitoredGroup(t);
+    const base = Date.now() - 10 * 60 * 1000;
+    const send = (externalId: string, sentAt: number) =>
+      t.mutation(internal.conversations.internalReceiveGroupDeviceMessage, {
+        organizationId,
+        groupChatId,
+        channelConfigId: configId,
+        externalId,
+        content: "oi",
+        sentAt,
+      });
+
+    await send("2A38DEVMIN01", base);
+    const before = await t.run(async (ctx) => ctx.db.get(groupChatId));
+    expect(before!.lastMessageAt).toBe(base);
+    await send("2A38DEVMIN02", base + 20_000);
+    expect(await t.run(async (ctx) => ctx.db.get(groupChatId))).toStrictEqual(before);
+    // Passado 1 min, a atividade avança.
+    await send("2A38DEVMIN03", base + 61_000);
+    expect((await t.run(async (ctx) => ctx.db.get(groupChatId)))!.lastMessageAt).toBe(base + 61_000);
+  });
+
   test("NÃO enfileira o atendente IA (o agente de grupo é produto próprio)", async () => {
     const t = setup();
     const { organizationId, configId } = await monitoredGroup(t);

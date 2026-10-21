@@ -16,6 +16,7 @@ import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
 import {
   appendReadBy,
+  GROUP_ACTIVITY_GRANULARITY_MS,
   membersWithPermission,
   mentionsUs,
   recordParticipantFromMessage,
@@ -2236,10 +2237,15 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
     });
-    await ctx.db.patch(group._id, {
-      lastMessageAt: Math.max(group.lastMessageAt ?? 0, sentAt),
-      updatedAt: now,
-    });
+    // Mesma granularidade de 1 min do ingest inbound (perf Convex I/O, fase 3):
+    // "ativo há X" não precisa de mais, e cada patch reexecuta quem leu a sala.
+    const groupLastMessageAt = Math.max(group.lastMessageAt ?? 0, sentAt);
+    if (groupLastMessageAt - (group.lastMessageAt ?? 0) >= GROUP_ACTIVITY_GRANULARITY_MS) {
+      await ctx.db.patch(group._id, {
+        lastMessageAt: groupLastMessageAt,
+        updatedAt: now,
+      });
+    }
 
     return messageId;
   },
