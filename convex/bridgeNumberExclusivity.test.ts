@@ -312,3 +312,96 @@ describe("excluir canal encerra a sessão no gateway", () => {
     expect((jobs[0].args[0] as any).instanceId).toBe("inst_saindo");
   });
 });
+
+// Perf Convex I/O, fase 3: o cron de saúde chama `internalRecordHealthCheck` a
+// cada 15 min com o canal conectado. Todo patch no canal reexecuta o Inbox em
+// todas as abas — então tick sem novidade não escreve nada.
+describe("health check só grava mudança observável", () => {
+  const record = (
+    t: TestConvex<typeof schema>,
+    configId: Id<"channelConfigs">,
+    extra: { healthDetail?: string; forceStamp?: boolean } = {}
+  ) =>
+    t.mutation(internal.channelConfigs.internalRecordHealthCheck, {
+      configId,
+      ok: true,
+      displayPhoneNumber: `+${PHONE}`,
+      bridgePhone: PHONE,
+      healthDetail: extra.healthDetail ?? `Conectado como +${PHONE}`,
+      bridgeSessionState: "connected",
+      ...(extra.forceStamp ? { forceStamp: true } : {}),
+    });
+
+  test("tick repetido com nada mudado não altera o doc", async () => {
+    const t = convexTest(schema, modules);
+    const so = await seedOrgWithConfig(t, { slug: "unica", name: "Conta Única" });
+    await connect(t, so.configId, PHONE);
+    const before = await configOf(t, so.configId);
+    vi.advanceTimersByTime(15 * 60 * 1000);
+    await connect(t, so.configId, PHONE);
+    expect(await configOf(t, so.configId)).toStrictEqual(before);
+  });
+
+  test("healthDetail diferente grava (com carimbo e updatedAt)", async () => {
+    const t = convexTest(schema, modules);
+    const so = await seedOrgWithConfig(t, { slug: "unica", name: "Conta Única" });
+    await connect(t, so.configId, PHONE);
+    vi.advanceTimersByTime(15 * 60 * 1000);
+    await record(t, so.configId, { healthDetail: "Conectado (detalhe novo)" });
+    const after = await configOf(t, so.configId);
+    expect(after!.healthDetail).toBe("Conectado (detalhe novo)");
+    expect(after!.lastHealthCheckAt).toBe(Date.now());
+    expect(after!.updatedAt).toBe(Date.now());
+  });
+
+  test("passadas 6 h sem mudança, só lastHealthCheckAt é re-carimbado", async () => {
+    const t = convexTest(schema, modules);
+    const so = await seedOrgWithConfig(t, { slug: "unica", name: "Conta Única" });
+    await connect(t, so.configId, PHONE);
+    const before = await configOf(t, so.configId);
+    vi.advanceTimersByTime(6 * 60 * 60 * 1000);
+    await connect(t, so.configId, PHONE);
+    expect(await configOf(t, so.configId)).toStrictEqual({ ...before, lastHealthCheckAt: Date.now() });
+  });
+
+  test("'Testar conexão' (forceStamp) carimba mesmo sem mudança", async () => {
+    const t = convexTest(schema, modules);
+    const so = await seedOrgWithConfig(t, { slug: "unica", name: "Conta Única" });
+    await connect(t, so.configId, PHONE);
+    const before = await configOf(t, so.configId);
+    vi.advanceTimersByTime(60 * 1000);
+    await record(t, so.configId, { forceStamp: true });
+    expect(await configOf(t, so.configId)).toStrictEqual({ ...before, lastHealthCheckAt: Date.now() });
+  });
+
+  test("mesmo número já conectado não re-reivindica: rival que surge depois não é desativado pelo tick", async () => {
+    const t = convexTest(schema, modules);
+    const nossa = await seedOrgWithConfig(t, { slug: "nossa", name: "Conta Nossa" });
+    // 1º tick: conecta e reivindica (sem rival ainda).
+    await connect(t, nossa.configId, PHONE);
+    // Rival aparece depois com o mesmo número: é a conexão DELE que nos
+    // desativaria — não o nosso tick de rotina.
+    const rival = await seedOrgWithConfig(t, { slug: "rival", name: "Conta Rival", bridgePhone: PHONE });
+    vi.advanceTimersByTime(15 * 60 * 1000);
+    const displaced = await connect(t, nossa.configId, PHONE);
+    expect(displaced).toEqual([]);
+    expect((await configOf(t, rival.configId))?.status).toBe("active");
+    expect(await scheduledLogouts(t)).toHaveLength(0);
+  });
+
+  test("ao reconectar (estava fora), reivindica de novo", async () => {
+    const t = convexTest(schema, modules);
+    const nossa = await seedOrgWithConfig(t, { slug: "nossa", name: "Conta Nossa" });
+    await connect(t, nossa.configId, PHONE);
+    await t.mutation(internal.channelConfigs.internalRecordHealthCheck, {
+      configId: nossa.configId,
+      ok: false,
+      healthDetail: "caiu",
+      bridgeSessionState: "disconnected",
+    });
+    const rival = await seedOrgWithConfig(t, { slug: "rival", name: "Conta Rival", bridgePhone: PHONE });
+    const displaced = await connect(t, nossa.configId, PHONE);
+    expect(displaced).toEqual(["Conta Rival"]);
+    expect((await configOf(t, rival.configId))?.status).toBe("disabled");
+  });
+});
