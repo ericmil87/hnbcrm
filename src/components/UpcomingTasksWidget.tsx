@@ -107,7 +107,7 @@ export function UpcomingTasksWidget({
   const queryNow = useRoundedNow();
 
   // Queries
-  const tasks = useQuery(api.tasks.getUpcomingTasks, { organizationId });
+  const tasks = useQuery(api.tasks.getUpcomingTasks, { organizationId, now: queryNow });
   const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, { organizationId });
   const completeTask = useMutation(api.tasks.completeTask);
@@ -219,6 +219,15 @@ export function UpcomingTasksWidget({
       } else {
         groups[4].tasks.push(task);
       }
+    }
+
+    // O servidor já devolve por prazo ASC (sem prazo por último), mas junta
+    // pending e in_progress — ordenar aqui garante que cada balde fique por
+    // prazo independentemente do status (estável: empate mantém a ordem dele).
+    // O balde "Sem Data" fica na ordem do servidor (mais recentes primeiro).
+    for (const group of groups) {
+      if (group.key === "noDate") continue;
+      group.tasks.sort((a, b) => (a.dueDate ?? 0) - (b.dueDate ?? 0));
     }
 
     return groups.filter((g) => g.tasks.length > 0);
