@@ -9,6 +9,7 @@
  * um deles chega a baixar — nunca dois arquivos para a mesma mensagem.
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -273,6 +274,7 @@ export const internalExpireDeferredMedia = internalMutation({
   args: {},
   returns: v.number(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return 0;
     const now = Date.now();
     const rows = await ctx.db
       .query("deferredGroupMedia")

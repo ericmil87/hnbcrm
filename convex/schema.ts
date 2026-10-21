@@ -1441,7 +1441,10 @@ const applicationTables = {
     .index("by_channel_config", ["channelConfigId"])
     .index("by_channel_config_and_jid", ["channelConfigId", "jid"])
     .index("by_organization_and_monitored", ["organizationId", "monitored"])
-    .index("by_conversation", ["conversationId"]),
+    .index("by_conversation", ["conversationId"])
+    // Cron horário do digest: só salas acompanhadas COM horário de digest
+    // (perf Convex I/O, fase 1 — antes lia toda a tabela sem índice).
+    .index("by_monitored_and_digest_at", ["monitored", "ai.dailyDigestAt"]),
 
   /**
    * Publicações programadas em grupos (v0.57, F3 — D7/D8 do plano).
@@ -1780,6 +1783,9 @@ const applicationTables = {
     .index("by_column", ["columnId"])
     .index("by_column_and_order", ["columnId", "order"])
     .index("by_project_and_status", ["projectId", "status"])
+    // Digest diário (email.sendDailyDigest): atrasadas e concluídas por range.
+    .index("by_organization_and_status_and_due_date", ["organizationId", "status", "dueDate"])
+    .index("by_organization_and_completed_at", ["organizationId", "completedAt"])
     .searchIndex("search_tasks", { searchField: "searchText", filterFields: ["organizationId"] }),
 
   // Task Comments
@@ -2940,7 +2946,8 @@ const applicationTables = {
   exportJobs: defineTable({
     organizationId: v.id("organizations"),
     requestedBy: v.id("teamMembers"),
-    status: v.union(v.literal("queued"), v.literal("running"), v.literal("completed"), v.literal("failed")),
+    // "expired" = completed cujo blob o cron já apagou (sai do range do cron).
+    status: v.union(v.literal("queued"), v.literal("running"), v.literal("completed"), v.literal("failed"), v.literal("expired")),
     format: v.union(v.literal("csv"), v.literal("json")),
     scope: v.union(v.literal("entity"), v.literal("full_backup")),
     entity: v.optional(v.union(v.literal("contacts"), v.literal("leads"), v.literal("tasks"))), // obrigatório quando scope=entity

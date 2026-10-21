@@ -41,7 +41,8 @@ import {
 
 // ===== Tipos do lado de exportação =====
 
-type ExportStatus = "queued" | "running" | "completed" | "failed";
+// "expired" = concluída cujo arquivo o cron já removeu (7 dias): sem download.
+type ExportStatus = "queued" | "running" | "completed" | "failed" | "expired";
 type ExportEntity = "contacts" | "leads" | "tasks";
 
 interface ExportJobDoc {
@@ -79,6 +80,8 @@ function exportStatusMeta(status: ExportStatus): {
       return { label: "Processando", variant: "brand" };
     case "completed":
       return { label: "Concluída", variant: "success" };
+    case "expired":
+      return { label: "Expirado", variant: "default" };
     case "failed":
     default:
       return { label: "Falhou", variant: "error" };
@@ -378,6 +381,12 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
                             {job.resultSize ? ` · ${formatFileSize(job.resultSize)}` : ""}
                             {" · "}
                             {expiryLabel(job.expiresAt, now)}
+                          </>
+                        )}
+                        {job.status === "expired" && (
+                          <>
+                            {" · "}
+                            {formatCount(job.rowCount ?? 0)} registro(s) · arquivo removido
                           </>
                         )}
                       </p>

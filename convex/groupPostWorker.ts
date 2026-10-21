@@ -25,6 +25,7 @@
  *     que para.
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import {
   internalAction,
   internalMutation,
@@ -1545,6 +1546,7 @@ export const internalWatchdog = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
     const stale = await ctx.db
       .query("groupPosts")

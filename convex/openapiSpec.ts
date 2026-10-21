@@ -2641,7 +2641,7 @@ export const OPENAPI_SPEC = `{
           "_creationTime": { "type": "number", "description": "Timestamp de criação" },
           "organizationId": { "type": "string", "description": "ID da organização" },
           "requestedBy": { "type": "string", "description": "Membro que solicitou" },
-          "status": { "type": "string", "enum": ["queued", "running", "completed", "failed"], "description": "Estado do job" },
+          "status": { "type": "string", "enum": ["queued", "running", "completed", "failed", "expired"], "description": "Estado do job (expired = concluído cujo arquivo já foi removido após 7 dias)" },
           "format": { "type": "string", "enum": ["csv", "json"], "description": "Formato do arquivo" },
           "scope": { "type": "string", "enum": ["entity", "full_backup"], "description": "Escopo da exportação" },
           "entity": { "type": "string", "enum": ["contacts", "leads", "tasks"], "description": "Entidade exportada (scope=entity)" },
