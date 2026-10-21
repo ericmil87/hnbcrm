@@ -1441,7 +1441,10 @@ const applicationTables = {
     .index("by_channel_config", ["channelConfigId"])
     .index("by_channel_config_and_jid", ["channelConfigId", "jid"])
     .index("by_organization_and_monitored", ["organizationId", "monitored"])
-    .index("by_conversation", ["conversationId"]),
+    .index("by_conversation", ["conversationId"])
+    // Cron horário do digest: só salas acompanhadas COM horário de digest
+    // (perf Convex I/O, fase 1 — antes lia toda a tabela sem índice).
+    .index("by_monitored_and_digest_at", ["monitored", "ai.dailyDigestAt"]),
 
   /**
    * Publicações programadas em grupos (v0.57, F3 — D7/D8 do plano).
