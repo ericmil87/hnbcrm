@@ -2689,64 +2689,85 @@ export const triggerPreDueReminder = internalMutation({
   },
 });
 
-// Internal: Process overdue reminders (cron sweep)
+// Tamanho de cada um dos 4 ranges do cron de lembretes (status × reminderTriggered).
+const OVERDUE_REMINDER_BATCH = 100;
+
+/**
+ * Lembretes vencidos e não disparados, pelo índice
+ * `by_type_and_status_and_reminder_and_due`. `reminderTriggered` nasce
+ * AUSENTE na criação e vira `false` no snooze, então são dois valores por
+ * status ativo. `.gt("dueDate", undefined)` exclui task sem prazo (no índice,
+ * `undefined` ordena antes de qualquer número e cairia no `.lte`).
+ */
+async function findOverdueReminders(ctx: MutationCtx, now: number): Promise<Doc<"tasks">[]> {
+  const ranges = (["pending", "in_progress"] as const).flatMap((status) =>
+    [undefined, false].map((triggered) =>
+      ctx.db
+        .query("tasks")
+        .withIndex("by_type_and_status_and_reminder_and_due", (q) =>
+          q
+            .eq("type", "reminder")
+            .eq("status", status)
+            .eq("reminderTriggered", triggered)
+            .gt("dueDate", undefined)
+            .lte("dueDate", now)
+        )
+        .take(OVERDUE_REMINDER_BATCH)
+    )
+  );
+  return (await Promise.all(ranges)).flat();
+}
+
+// Internal: Process overdue reminders (cron de RESGATE — o lembrete de cada
+// task já é agendado por `runAfter` no create/snooze). Lê só o que está
+// vencido e ainda não disparou, por índice e no deployment inteiro: a antiga
+// `take(500)` sem range lia 500 tasks a cada tick e deixava orgs do fim do
+// índice sem lembrete.
 export const processOverdueReminders = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
     const now = Date.now();
 
-    // Find reminders that are overdue and not yet triggered
-    const overdueTasks = await ctx.db
-      .query("tasks")
-      .withIndex("by_organization_and_type")
-      .order("asc")
-      .take(500);
+    const overdueTasks = await findOverdueReminders(ctx, now);
 
     for (const task of overdueTasks) {
-      if (
-        task.type === "reminder" &&
-        (task.status === "pending" || task.status === "in_progress") &&
-        task.dueDate != null &&
-        task.dueDate <= now &&
-        !task.reminderTriggered
-      ) {
-        // Check snooze
-        if (task.snoozedUntil && task.snoozedUntil > now) continue;
+      // Snoozada (reminderTriggered:false) fica no range até o snooze vencer,
+      // quando o job da própria task dispara e grava `true`.
+      if (task.snoozedUntil && task.snoozedUntil > now) continue;
 
-        await ctx.db.patch(task._id, {
-          reminderTriggered: true,
-          updatedAt: now,
-        });
+      await ctx.db.patch(task._id, {
+        reminderTriggered: true,
+        updatedAt: now,
+      });
 
-        await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        organizationId: task.organizationId,
+        event: "task.reminder_triggered",
+        payload: { taskId: task._id, title: task.title, dueDate: task.dueDate, assignedTo: task.assignedTo },
+      });
+
+      // Notificação in-app + e-mail para todos os responsáveis
+      for (const memberId of readAssignees(task)) {
+        await createNotification(ctx, {
           organizationId: task.organizationId,
-          event: "task.reminder_triggered",
-          payload: { taskId: task._id, title: task.title, dueDate: task.dueDate, assignedTo: task.assignedTo },
+          memberId,
+          type: "task_overdue",
+          title: "Tarefa atrasada",
+          body: task.title,
+          taskId: task._id,
         });
 
-        // Notificação in-app + e-mail para todos os responsáveis
-        for (const memberId of readAssignees(task)) {
-          await createNotification(ctx, {
-            organizationId: task.organizationId,
-            memberId,
-            type: "task_overdue",
-            title: "Tarefa atrasada",
-            body: task.title,
-            taskId: task._id,
-          });
-
-          await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-            organizationId: task.organizationId,
-            recipientMemberId: memberId,
-            eventType: "taskOverdue",
-            templateData: {
-              taskTitle: task.title,
-              dueDate: formatDate(task.dueDate) ?? "N/A",
-              taskUrl: taskDeepLink(task._id),
-            },
-          });
-        }
+        await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+          organizationId: task.organizationId,
+          recipientMemberId: memberId,
+          eventType: "taskOverdue",
+          templateData: {
+            taskTitle: task.title,
+            dueDate: formatDate(task.dueDate) ?? "N/A",
+            taskUrl: taskDeepLink(task._id),
+          },
+        });
       }
     }
 

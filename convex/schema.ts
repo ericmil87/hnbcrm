@@ -1766,6 +1766,8 @@ const applicationTables = {
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
     .index("by_organization_and_due_date", ["organizationId", "dueDate"])
     .index("by_organization_and_type", ["organizationId", "type"])
+    // Cron de resgate de lembretes (deployment-wide): só vencidos e não disparados.
+    .index("by_type_and_status_and_reminder_and_due", ["type", "status", "reminderTriggered", "dueDate"])
     .index("by_organization_and_assigned_and_status", ["organizationId", "assignedTo", "status"])
     .index("by_lead", ["leadId"])
     .index("by_contact", ["contactId"])
