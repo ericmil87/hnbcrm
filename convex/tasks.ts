@@ -609,36 +609,63 @@ export const getTasks = query({
   },
 });
 
-// Widget "Próximas tarefas" do painel: só tarefas ABERTAS, as de prazo mais
-// próximo primeiro (inclui as atrasadas mais antigas) + as sem prazo. Antes o
-// widget lia `getTasks` sem filtro (600 docs, as mais recentes por criação,
-// concluídas inclusive). Aqui são no máximo 4 × limit leituras de `tasks`.
+// Widget "Próximas tarefas" do painel: só tarefas ABERTAS, em três faixas por
+// status (pending, in_progress), todas pelo índice
+// `by_organization_and_status_and_due_date`:
+//   - futuras/de hoje: `dueDate >= now`, as mais próximas primeiro;
+//   - atrasadas: `dueDate < now`, as MAIS RECENTES primeiro — numa org com
+//     dezenas de atrasadas esquecidas (comum com follow-ups) as antigas nunca
+//     expulsam as que vencem hoje/amanhã/na semana (era o defeito da 1ª versão,
+//     uma faixa única `dueDate >= 0` ASC);
+//   - sem prazo (campo ausente).
+// Nada é cortado depois: até 3 × limit por status (default 50 → ≤ 300 docs,
+// contra 600 do `getTasks` que o widget lia antes). O resultado sai ordenado
+// por `dueDate` ASC com as sem prazo por último; o widget só filtra e agrupa.
+// `now` vem do cliente ARREDONDADO (useRoundedNow, 15 min) — `Date.now()` em
+// query quebra a reatividade, e um `now` vivo criaria uma assinatura por minuto.
 export const UPCOMING_TASKS_DEFAULT_LIMIT = 50;
 const UPCOMING_TASKS_MAX_LIMIT = 200;
+
+/** Inteiro em [1, max]; ausente/NaN/Infinity = fallback. */
+function clampLimit(limit: number | undefined, fallback: number, max: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return fallback;
+  return Math.min(max, Math.max(1, Math.floor(limit)));
+}
 
 export const getUpcomingTasks = query({
   args: {
     organizationId: v.id("organizations"),
+    now: v.number(),
     limit: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
-    const limit = Math.max(
-      1,
-      Math.min(Math.floor(args.limit ?? UPCOMING_TASKS_DEFAULT_LIMIT), UPCOMING_TASKS_MAX_LIMIT)
-    );
+    const limit = clampLimit(args.limit, UPCOMING_TASKS_DEFAULT_LIMIT, UPCOMING_TASKS_MAX_LIMIT);
+    const now = Number.isFinite(args.now) ? args.now : 0;
 
     const statuses = ["pending", "in_progress"] as const;
     const batches = await Promise.all(
       statuses.flatMap((status) => [
-        // Com prazo, do mais antigo (atrasadas) para o mais distante.
+        // Futuras e as de agora em diante, da mais próxima para a mais distante.
         ctx.db
           .query("tasks")
           .withIndex("by_organization_and_status_and_due_date", (q) =>
-            q.eq("organizationId", args.organizationId).eq("status", status).gte("dueDate", 0)
+            q.eq("organizationId", args.organizationId).eq("status", status).gte("dueDate", now)
           )
           .order("asc")
+          .take(limit),
+        // Atrasadas (com prazo, antes de `now`), da mais recente para a mais antiga.
+        ctx.db
+          .query("tasks")
+          .withIndex("by_organization_and_status_and_due_date", (q) =>
+            q
+              .eq("organizationId", args.organizationId)
+              .eq("status", status)
+              .gt("dueDate", undefined)
+              .lt("dueDate", now)
+          )
+          .order("desc")
           .take(limit),
         // Sem prazo (campo ausente), as mais recentes primeiro.
         ctx.db
@@ -651,7 +678,14 @@ export const getUpcomingTasks = query({
       ])
     );
 
-    return await enrichTasks(ctx, batches.flat());
+    const tasks = batches.flat();
+    tasks.sort((a, b) => {
+      if (a.dueDate === undefined && b.dueDate === undefined) return b._creationTime - a._creationTime;
+      if (a.dueDate === undefined) return 1;
+      if (b.dueDate === undefined) return -1;
+      return a.dueDate - b.dueDate || a._creationTime - b._creationTime;
+    });
+    return await enrichTasks(ctx, tasks);
   },
 });
 
