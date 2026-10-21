@@ -31,6 +31,7 @@ import { leadCreationStagePatch, moveLeadToStageCore } from "./lib/leadStageMove
 import { createHandoffCore, acceptHandoffCore } from "./handoffs";
 import { upsertRow } from "./adSpend";
 import { buildSearchText } from "./lib/searchText";
+import { clearRuntimeField, upsertRuntime } from "./lib/conversationRuntime";
 import {
   cascadeLeadChildren,
   deleteConversationCascade,
@@ -894,7 +895,6 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         Object.assign(patch, {
           lastInboundAt: Math.max(conversation.lastInboundAt ?? 0, at),
           unreadCount: (conversation.unreadCount ?? 0) + 1,
-          contactPresence: undefined,
           ...firstInboundPatch(conversation, at),
         });
       } else if (op.direction === "outbound") {
@@ -903,6 +903,8 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         if (op.senderType === "human") Object.assign(patch, { unreadCount: 0, lastReadAt: at });
       }
       await ctx.db.patch(conversation._id, patch);
+      // Mensagem do contato chegou = ele parou de digitar (presença no runtime, fase 4b).
+      if (inbound) await clearRuntimeField(ctx, conversation._id, "contactPresence");
       if (conversation.leadId && op.direction !== "internal") {
         await ctx.db.patch(conversation.leadId, {
           lastActivityAt: at,
@@ -915,9 +917,11 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
 
     case "setTyping": {
       const conversation = await loadConversation(ctx, state, op.conversationId);
-      await ctx.db.patch(conversation._id, {
-        contactPresence: { state: op.state, at: nowOr(op.at, realNow) },
-      });
+      await upsertRuntime(
+        ctx,
+        { organizationId: conversation.organizationId, conversationId: conversation._id },
+        { contactPresence: { state: op.state, at: nowOr(op.at, realNow) } }
+      );
       return { type: op.type, conversationId: conversation._id };
     }
 
@@ -1091,9 +1095,9 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
       await ctx.db.patch(conversation._id, {
         archivedAt: at,
         unreadCount: 0,
-        contactPresence: undefined,
         updatedAt: at,
       });
+      await clearRuntimeField(ctx, conversation._id, "contactPresence");
       if (op.archiveLead && conversation.leadId) {
         await ctx.db.patch(conversation.leadId, { archivedAt: at, updatedAt: at });
       }

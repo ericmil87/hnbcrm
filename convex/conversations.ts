@@ -27,6 +27,7 @@ import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/gro
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
+import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
@@ -536,6 +537,33 @@ export const getConversationById = query({
   },
 });
 
+/**
+ * Presença do contato ("digitando…") de UMA conversa — fase 4b.
+ *
+ * Lê só a linha de `conversationRuntime` (e a membership): não lê o doc da
+ * conversa, então só reexecuta quando a presença muda, e a mudança de presença
+ * não reexecuta mais a lista/thread. Isolamento pelo `organizationId` da
+ * própria linha; não-membro recebe null. Sem `Date.now()`: o TTL de 12 s é
+ * aplicado no cliente.
+ */
+export const getConversationPresence = query({
+  args: { conversationId: v.id("conversations") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      state: v.union(v.literal("composing"), v.literal("paused")),
+      at: v.number(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const runtime = await getRuntime(ctx, args.conversationId);
+    if (!runtime?.contactPresence) return null;
+    if (!(await isActiveMemberOf(ctx, runtime.organizationId))) return null;
+    const { state, at } = runtime.contactPresence;
+    return { state, at };
+  },
+});
+
 // Get messages for conversation — as `limit` mais RECENTES (default 50, teto
 // 500), devolvidas em ordem ASC (mais antiga primeiro), como sempre. Antes era
 // `take(500)` ASC, que numa conversa com mais de 500 mensagens trazia as 500
@@ -950,9 +978,13 @@ export const internalSetContactPresence = internalMutation({
       .first();
     if (!conversation) return null;
 
-    await ctx.db.patch(conversation._id, {
-      contactPresence: { state: args.state, at: Date.now() },
-    });
+    // Fase 4b: presença vive em `conversationRuntime` — patch na conversa
+    // reexecutaria a lista do inbox, o thread aberto e afins a cada "digitando".
+    await upsertRuntime(
+      ctx,
+      { organizationId: conversation.organizationId, conversationId: conversation._id },
+      { contactPresence: { state: args.state, at: Date.now() } }
+    );
     return null;
   },
 });
@@ -2353,9 +2385,13 @@ export const internalSetGroupPresence = internalMutation({
     if (!group || !group.monitored || !group.conversationId) return null;
     const conversation = await ctx.db.get(group.conversationId);
     if (!conversation) return null;
-    await ctx.db.patch(conversation._id, {
-      contactPresence: { state: args.state, at: Date.now() },
-    });
+    // Fase 4b: presença vive em `conversationRuntime` — patch na conversa
+    // reexecutaria a lista do inbox, o thread aberto e afins a cada "digitando".
+    await upsertRuntime(
+      ctx,
+      { organizationId: conversation.organizationId, conversationId: conversation._id },
+      { contactPresence: { state: args.state, at: Date.now() } }
+    );
     return null;
   },
 });

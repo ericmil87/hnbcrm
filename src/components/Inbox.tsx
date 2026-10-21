@@ -933,9 +933,15 @@ export function Inbox() {
   const aiChip = aiStateChipInfo(aiConvState);
 
   // "digitando..." do contato — TTL de 12s no cliente (o "paused" pode se perder).
-  const contactPresence = currentConversation?.contactPresence as
-    | { state: "composing" | "paused"; at: number }
-    | undefined;
+  // Fase 4b: a presença saiu do doc da conversa (cada "digitando" reexecutava a
+  // lista e o thread); só a conversa ABERTA assina a query leve de presença.
+  const contactPresence =
+    useQuery(
+      api.conversations.getConversationPresence,
+      currentConversation?._id
+        ? { conversationId: currentConversation._id as Id<"conversations"> }
+        : "skip"
+    ) ?? undefined;
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   useEffect(() => {
     if (contactPresence?.state !== "composing") return;
