@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import { query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
@@ -125,6 +126,7 @@ export const internalMarkAbandoned = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
     const fifteenMinutesAgo = now - 15 * 60 * 1000;
 
@@ -134,7 +136,8 @@ export const internalMarkAbandoned = internalMutation({
       .withIndex("by_status_and_activity", (q) =>
         q.eq("status", "in_progress").lt("lastActivityAt", fifteenMinutesAgo)
       )
-      .collect();
+      // Teto por rodada (cron de 10 min): a sobra fica para a próxima.
+      .take(200);
 
     for (const partial of inProgressPartials) {
       await ctx.db.patch(partial._id, {

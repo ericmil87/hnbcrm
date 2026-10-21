@@ -25,6 +25,7 @@
  * carregue o doc de `channelConfigs` (onde mora o token do gateway).
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import {
   internalAction,
   internalMutation,
@@ -1554,6 +1555,7 @@ export const internalRunGroupDigests = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
+    if (cronsDisabled()) return null;
     const due = (await ctx.runQuery(internal.groupAgent.internalListDigestDue, {
       now: Date.now(),
     })) as { groupChatId: Id<"groupChats"> }[];
