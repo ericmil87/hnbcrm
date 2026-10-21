@@ -9,6 +9,7 @@ import { createNotification, filterMembersOfOrg } from "./lib/notify";
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { cronsDisabled } from "./lib/cronGuard";
 // Núcleo compartilhado (lib/ para não criar ciclo com o follow-up da IA).
 import {
   ORDER_STEP,
@@ -2703,6 +2704,7 @@ export const processOverdueReminders = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
 
     const overdueTasks = await findOverdueReminders(ctx, now);
@@ -2767,6 +2769,7 @@ export const processRecurringTasks = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
 
     const pages = await Promise.all(
