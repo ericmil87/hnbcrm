@@ -977,7 +977,9 @@ const applicationTables = {
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
     .index("by_organization_and_archived", ["organizationId", "archivedAt"])
     .index("by_handoff_status", ["handoffState.status"])
-    .index("by_last_activity", ["lastActivityAt"]),
+    .index("by_last_activity", ["lastActivityAt"])
+    // Contagem de leads ATIVOS por board (seletor do Kanban) sem ler arquivados.
+    .index("by_organization_and_board_and_archived", ["organizationId", "boardId", "archivedAt"]),
 
   // Channel configurations (per-org connections to external messaging providers)
   channelConfigs: defineTable({

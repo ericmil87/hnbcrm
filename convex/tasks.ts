@@ -609,6 +609,52 @@ export const getTasks = query({
   },
 });
 
+// Widget "Próximas tarefas" do painel: só tarefas ABERTAS, as de prazo mais
+// próximo primeiro (inclui as atrasadas mais antigas) + as sem prazo. Antes o
+// widget lia `getTasks` sem filtro (600 docs, as mais recentes por criação,
+// concluídas inclusive). Aqui são no máximo 4 × limit leituras de `tasks`.
+export const UPCOMING_TASKS_DEFAULT_LIMIT = 50;
+const UPCOMING_TASKS_MAX_LIMIT = 200;
+
+export const getUpcomingTasks = query({
+  args: {
+    organizationId: v.id("organizations"),
+    limit: v.optional(v.number()),
+  },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const limit = Math.max(
+      1,
+      Math.min(Math.floor(args.limit ?? UPCOMING_TASKS_DEFAULT_LIMIT), UPCOMING_TASKS_MAX_LIMIT)
+    );
+
+    const statuses = ["pending", "in_progress"] as const;
+    const batches = await Promise.all(
+      statuses.flatMap((status) => [
+        // Com prazo, do mais antigo (atrasadas) para o mais distante.
+        ctx.db
+          .query("tasks")
+          .withIndex("by_organization_and_status_and_due_date", (q) =>
+            q.eq("organizationId", args.organizationId).eq("status", status).gte("dueDate", 0)
+          )
+          .order("asc")
+          .take(limit),
+        // Sem prazo (campo ausente), as mais recentes primeiro.
+        ctx.db
+          .query("tasks")
+          .withIndex("by_organization_and_status_and_due_date", (q) =>
+            q.eq("organizationId", args.organizationId).eq("status", status).eq("dueDate", undefined)
+          )
+          .order("desc")
+          .take(limit),
+      ])
+    );
+
+    return await enrichTasks(ctx, batches.flat());
+  },
+});
+
 // Get single task by ID
 export const getTask = query({
   args: { taskId: v.id("tasks") },

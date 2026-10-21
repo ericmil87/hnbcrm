@@ -72,6 +72,41 @@ export const getBoards = query({
   },
 });
 
+// Teto da contagem por board no seletor do Kanban: além disso a UI mostra "500+".
+export const LEAD_COUNT_CAP = 500;
+
+// Contagem de leads ativos (não arquivados) por board ativo — substitui o uso do
+// getDashboardStats no Kanban, que lia ~5.000 docs só para este contador.
+export const getLeadCountsByBoard = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(
+    v.object({ boardId: v.id("boards"), count: v.number(), capped: v.boolean() })
+  ),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const boards = (await loadOrgBoards(ctx, args.organizationId)).filter(isActiveBoard);
+    return await Promise.all(
+      boards.map(async (board) => {
+        const leads = await ctx.db
+          .query("leads")
+          .withIndex("by_organization_and_board_and_archived", (q) =>
+            q
+              .eq("organizationId", args.organizationId)
+              .eq("boardId", board._id)
+              .eq("archivedAt", undefined)
+          )
+          .take(LEAD_COUNT_CAP + 1);
+        const capped = leads.length > LEAD_COUNT_CAP;
+        return {
+          boardId: board._id,
+          count: capped ? LEAD_COUNT_CAP : leads.length,
+          capped,
+        };
+      })
+    );
+  },
+});
+
 // Get stages for board
 export const getStages = query({
   args: { boardId: v.id("boards") },

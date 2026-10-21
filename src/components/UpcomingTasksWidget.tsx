@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -96,16 +97,18 @@ export function UpcomingTasksWidget({
   // Collapsed groups
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
 
-  // Time for date computations (updated every minute)
+  // Relógio LOCAL para agrupar/destacar na tela (atualiza a cada minuto, sem
+  // custo no backend). Em args de query vai só o `queryNow` arredondado.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
+  const queryNow = useRoundedNow();
 
   // Queries
-  const tasks = useQuery(api.tasks.getTasks, { organizationId });
-  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+  const tasks = useQuery(api.tasks.getUpcomingTasks, { organizationId });
+  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, { organizationId });
   const completeTask = useMutation(api.tasks.completeTask);
 
