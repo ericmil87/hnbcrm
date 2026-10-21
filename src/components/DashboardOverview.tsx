@@ -14,6 +14,7 @@ import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { RecentActivityWidget } from "@/components/RecentActivityWidget";
 import { UpcomingTasksWidget } from "@/components/UpcomingTasksWidget";
 import { UpcomingEventsWidget } from "@/components/UpcomingEventsWidget";
@@ -254,9 +255,12 @@ function MyTasksWidget({
   organizationId: Id<"organizations">;
   onTabChange: (tab: Tab) => void;
 }) {
-  const [now] = useState(() => Date.now());
+  const [now] = useState(() => Date.now()); // só para exibição
+  // Mesmo `now` arredondado do UpcomingTasksWidget: args idênticos = UMA
+  // assinatura de getTaskCounts no painel (o cliente do Convex deduplica).
+  const queryNow = useRoundedNow();
   const myTasks = useQuery(api.tasks.getMyTasks, { organizationId });
-  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
   const completeTask = useMutation(api.tasks.completeTask);
 
   const handleComplete = async (taskId: Id<"tasks">) => {

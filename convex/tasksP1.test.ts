@@ -1205,3 +1205,43 @@ describe("preferências de notificação", () => {
     expect((await notificationsOf(t, s.ana.memberId)).length).toBe(1);
   });
 });
+
+// ===== Widget de próximas tarefas =====
+
+describe("getUpcomingTasks", () => {
+  test("só abertas, prazo mais próximo primeiro + sem prazo, respeitando o limit", async () => {
+    const s = await seedOrg(t);
+    const day = 24 * 60 * 60 * 1000;
+    const base0 = Date.now();
+    await t.run(async (ctx) => {
+      const base = {
+        organizationId: s.organizationId,
+        type: "task" as const,
+        priority: "medium" as const,
+        createdBy: s.admin.memberId,
+        assigneeIds: [],
+        createdAt: base0,
+        updatedAt: base0,
+      };
+      await ctx.db.insert("tasks", { ...base, title: "Atrasada antiga", status: "pending", dueDate: base0 - 10 * day });
+      await ctx.db.insert("tasks", { ...base, title: "Hoje", status: "in_progress", dueDate: base0 });
+      await ctx.db.insert("tasks", { ...base, title: "Distante", status: "pending", dueDate: base0 + 30 * day });
+      await ctx.db.insert("tasks", { ...base, title: "Sem prazo", status: "pending" });
+      await ctx.db.insert("tasks", { ...base, title: "Concluída", status: "completed", dueDate: base0 });
+      await ctx.db.insert("tasks", { ...base, title: "Cancelada", status: "cancelled" });
+    });
+    const asAna = t.withIdentity({ subject: `${s.ana.userId}|s1` });
+
+    const all = await asAna.query(api.tasks.getUpcomingTasks, { organizationId: s.organizationId });
+    expect(all.map((x: any) => x.title).sort()).toEqual(
+      ["Atrasada antiga", "Distante", "Hoje", "Sem prazo"].sort()
+    );
+
+    // limit = 1 por faixa (status × com/sem prazo): a distante sai, a atrasada fica.
+    const small = await asAna.query(api.tasks.getUpcomingTasks, {
+      organizationId: s.organizationId,
+      limit: 1,
+    });
+    expect(small.map((x: any) => x.title).sort()).toEqual(["Atrasada antiga", "Hoje", "Sem prazo"].sort());
+  });
+});
