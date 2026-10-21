@@ -141,7 +141,7 @@ Branch: `perf/convex-io-fase2` → PR #6, mergeado em `main` (79fd1ba) e PUBLICA
 
 ## Fase 3 — writes que invalidam o Inbox
 
-Branch: `perf/convex-io-fase3`. Status: implementada em 21/10/2026; em revisão.
+Branch: `perf/convex-io-fase3` → PR #7, mergeado em `main` (7232003) e PUBLICADO em prod pelo Vercel em 21/10/2026 23:11 UTC; dev via `convex dev --once`. Revisão independente: 1 achado médio (claim do número no "Testar conexão") + baixos, corrigidos antes do merge.
 
 ### Mudanças
 
@@ -180,4 +180,12 @@ Sem mudança de schema. Fora de escopo (documentado): `configSnapshot` do `/webh
 
 ## Fase 4 — estrutural
 
-_não iniciada (requer aprovação explícita)_
+_não iniciada (requer aprovação explícita do Eric)_. Escopo previsto: mover `contactPresence`/`aiTurnLock`/`nextDispatchAt` para tabela própria; `groupChats.participants`/`timeline` em `groupParticipants`/`groupTimeline`; desnormalizar `contactName`/`lastMessagePreview`/`groupSubject`/`groupParticipantsCount` em `conversations`; cron diário de retenção (notifications lidas > 90 d, `aiReplyQueue`/`agentRuns` terminais > 90 d, `formPartials` > 30 d, `auditLogs` baixa severidade > 180 d). Exige migração paginada com feature flag e rollback.
+
+## Follow-ups menores (fora das fases)
+
+- Índice `[organizationId, departmentId|unitId, archivedAt, lastMessageAt]` para os ramos da Central em `getConversations` (hoje `max(limit, 200)`).
+- Remover `conversations.by_organization_and_unread` (sem uso desde a Fase 2).
+- `configSnapshot` do `/webhooks/bridge` (config lida 3× por mensagem, ~45 MB/mês).
+- `getTaskCounts` calcula "hoje" com `setHours` no fuso do servidor.
+- Caminhos de arquivamento em `groupChats.ts` não zeram `unreadCount` (não afeta mais o badge).
