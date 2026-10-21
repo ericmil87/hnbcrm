@@ -1300,10 +1300,13 @@ export const internalRecordHealthCheck = internalMutation({
     // com o mesmo número não varre `by_bridge_phone` de novo (perf Convex I/O,
     // fase 3). Consequência aceita: se um rival conectar o MESMO número DEPOIS,
     // é a reivindicação DELE (na conexão dele) que desativa este canal.
+    // `forceStamp` ("Testar conexão" e a op `internalResolveBridgePhone`)
+    // reivindica SEMPRE: é a porta para limpar dois canais ativos com o mesmo
+    // número que nasceram sem claim (legado pré-v0.56, `internalBackfillBridgePhone`).
     const displaced =
       connected &&
       args.bridgePhone &&
-      (args.bridgePhone !== config.bridgePhone || !wasConnected)
+      (args.bridgePhone !== config.bridgePhone || !wasConnected || args.forceStamp === true)
         ? await claimBridgePhone(ctx, { config, phone: args.bridgePhone, now })
         : [];
 
@@ -1556,6 +1559,8 @@ export const internalResolveBridgePhone = internalAction({
       internal.channelConfigs.internalRecordHealthCheck,
       {
         configId: args.configId,
+        // Op deliberada: reivindica o número mesmo com o canal já conectado.
+        forceStamp: true,
         ok: true,
         displayPhoneNumber: `+${phone}`,
         bridgePhone: phone,

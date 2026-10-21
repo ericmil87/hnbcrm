@@ -389,6 +389,19 @@ describe("health check só grava mudança observável", () => {
     expect(await scheduledLogouts(t)).toHaveLength(0);
   });
 
+  test("Testar conexão (forceStamp) com o mesmo número já conectado desativa o rival", async () => {
+    const t = convexTest(schema, modules);
+    const nossa = await seedOrgWithConfig(t, { slug: "nossa", name: "Conta Nossa" });
+    await connect(t, nossa.configId, PHONE);
+    // Rival legado (backfill sem claim) com o mesmo número, ativo.
+    const rival = await seedOrgWithConfig(t, { slug: "rival", name: "Conta Rival", bridgePhone: PHONE });
+    vi.advanceTimersByTime(15 * 60 * 1000);
+    const displaced = await record(t, nossa.configId, { forceStamp: true });
+    expect(displaced).toEqual(["Conta Rival"]);
+    expect((await configOf(t, rival.configId))?.status).toBe("disabled");
+    expect(await scheduledLogouts(t)).toHaveLength(1);
+  });
+
   test("ao reconectar (estava fora), reivindica de novo", async () => {
     const t = convexTest(schema, modules);
     const nossa = await seedOrgWithConfig(t, { slug: "nossa", name: "Conta Nossa" });
