@@ -1779,6 +1779,9 @@ const applicationTables = {
     .index("by_column", ["columnId"])
     .index("by_column_and_order", ["columnId", "order"])
     .index("by_project_and_status", ["projectId", "status"])
+    // Digest diário (email.sendDailyDigest): atrasadas e concluídas por range.
+    .index("by_organization_and_status_and_due_date", ["organizationId", "status", "dueDate"])
+    .index("by_organization_and_completed_at", ["organizationId", "completedAt"])
     .searchIndex("search_tasks", { searchField: "searchText", filterFields: ["organizationId"] }),
 
   // Task Comments
