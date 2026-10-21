@@ -1012,6 +1012,53 @@ describe("fio do ingest até a fila (o ponto de extensão da F4)", () => {
     expect(await queueItems(t)).toHaveLength(0);
   });
 
+  // Perf Convex I/O, fase 3: o ingest só agenda o enqueue quando a sala tem a
+  // IA ligada (`ai.mode === "mention"`) — antes era SEMPRE, e o job relia
+  // mensagem, conversa, org e sala só para sair no-op.
+  async function enqueueJobs(t: TestConvex<typeof schema>) {
+    return await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) =>
+        j.name.includes("internalEnqueueFromGroup")
+      )
+    );
+  }
+
+  test("sala com a IA desligada (mode off) nem agenda o enqueue", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t, { aiMode: "off" });
+    await t.mutation(internal.conversations.internalReceiveGroupMessage, {
+      organizationId: seed.organizationId,
+      groupChatId: seed.groupChatId,
+      channelConfigId: seed.configId,
+      externalId: "WA_MSG_OFF",
+      content: "@Cláudio tem aula amanhã?",
+      mentions: [OUR_LID],
+      senderLid: MEMBER_LID,
+      senderPhone: MEMBER_PHONE,
+      senderName: "Eric",
+    });
+    expect(await enqueueJobs(t)).toHaveLength(0);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await queueItems(t)).toHaveLength(0);
+  });
+
+  test("sala com mode mention agenda o enqueue", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    await t.mutation(internal.conversations.internalReceiveGroupMessage, {
+      organizationId: seed.organizationId,
+      groupChatId: seed.groupChatId,
+      channelConfigId: seed.configId,
+      externalId: "WA_MSG_ON",
+      content: "bom dia pessoal",
+      senderLid: MEMBER_LID,
+      senderPhone: MEMBER_PHONE,
+      senderName: "Eric",
+    });
+    expect(await enqueueJobs(t)).toHaveLength(1);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
   test("palavra de ALERTA notifica o time sem usar IA nenhuma", async () => {
     const t = setup();
     const seed = await seedGroupOrg(t);

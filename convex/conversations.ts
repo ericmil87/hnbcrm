@@ -2105,8 +2105,11 @@ export const internalReceiveGroupMessage = internalMutation({
     // próxima vez que abrir o inbox. Sem LLM — é comparação de JID.
     // A F4 acrescentou o alerta por PALAVRA (`ai.alertKeywords`), que reusa o
     // mesmo tipo de notificação: também é "olhe esta sala agora", também sem LLM.
-    const config = await ctx.db.get(args.channelConfigId);
+    // O canal só é lido quando há menção a comparar (perf Convex I/O, fase 3):
+    // sem `mentions`, `mentionsUs` é falso de qualquer jeito.
     const alertKeyword = matchesKeyword(args.content, group.ai?.alertKeywords);
+    const config =
+      args.mentions && args.mentions.length > 0 ? await ctx.db.get(args.channelConfigId) : null;
     if (mentionsUs(args.mentions, config?.bridgeLid, config?.bridgePhone) || alertKeyword) {
       const recipients = await membersWithPermission(
         ctx,
@@ -2135,10 +2138,14 @@ export const internalReceiveGroupMessage = internalMutation({
     // conversa que não tem lead. Quem decide se a IA foi CHAMADA (menção,
     // citação, nosso número, palavra-chave) e se ela PODE responder é o próprio
     // `groupAgent` — aqui só agendamos, e a mutation sai no-op barato quando a
-    // org não tem IA ou o grupo está com a IA desligada.
-    await ctx.scheduler.runAfter(0, internal.groupAgent.internalEnqueueFromGroup, {
-      messageId,
-    });
+    // org não tem IA. Grupo com a IA desligada (`ai.mode !== "mention"`) nem
+    // agenda (perf Convex I/O, fase 3): a 1ª coisa que `internalEnqueueFromGroup`
+    // faria seria reler mensagem, conversa, org e sala só para sair no-op.
+    if (group.ai?.mode === "mention") {
+      await ctx.scheduler.runAfter(0, internal.groupAgent.internalEnqueueFromGroup, {
+        messageId,
+      });
+    }
     // Radar de oportunidade (§9.3): opt-in por grupo, em LOTE de 15 min. A
     // mutation faz o coalescing — mensagem nova não agenda um lote novo.
     if (group.ai?.opportunityRadar === true && args.content.trim().length >= RADAR_MIN_CHARS) {
