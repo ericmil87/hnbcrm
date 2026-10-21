@@ -25,6 +25,7 @@
  * carregue o doc de `channelConfigs` (onde mora o token do gateway).
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import {
   internalAction,
   internalMutation,
@@ -1480,13 +1481,26 @@ export const internalListDigestDue = internalQuery({
   args: { now: v.number() },
   returns: v.any(),
   handler: async (ctx, args) => {
-    const groups = await ctx.db.query("groupChats").take(DIGEST_GROUP_CAP);
+    // Só salas acompanhadas COM horário de digest (`.gt(undefined)` = tem o
+    // campo). Antes era um `take` sem índice que lia todos os grupos —
+    // inclusive os não acompanhados — a cada hora (perf Convex I/O, fase 1).
+    const groups = await ctx.db
+      .query("groupChats")
+      .withIndex("by_monitored_and_digest_at", (q) =>
+        q.eq("monitored", true).gt("ai.dailyDigestAt", undefined)
+      )
+      .take(DIGEST_GROUP_CAP);
     const due: { groupChatId: Id<"groupChats">; organizationId: Id<"organizations"> }[] = [];
+    const orgCache = new Map<Id<"organizations">, Doc<"organizations"> | null>();
     for (const group of groups) {
       if (!group.monitored || !group.conversationId) continue;
       if (group.leftAt !== undefined || group.removedAt !== undefined) continue;
       if (!group.ai?.dailyDigestAt) continue;
-      const org = await ctx.db.get(group.organizationId);
+      let org = orgCache.get(group.organizationId);
+      if (org === undefined) {
+        org = await ctx.db.get(group.organizationId);
+        orgCache.set(group.organizationId, org);
+      }
       if (!orgAiActive(org)) continue;
       if (org!.settings.aiConfig?.groupAgentEnabled !== true) continue;
       if (!digestDueNow(group.ai.dailyDigestAt, org!.settings.timezone, args.now)) continue;
@@ -1541,6 +1555,7 @@ export const internalRunGroupDigests = internalAction({
   args: {},
   returns: v.null(),
   handler: async (ctx): Promise<null> => {
+    if (cronsDisabled()) return null;
     const due = (await ctx.runQuery(internal.groupAgent.internalListDigestDue, {
       now: Date.now(),
     })) as { groupChatId: Id<"groupChats"> }[];

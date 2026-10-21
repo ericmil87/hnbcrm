@@ -6,6 +6,7 @@
  * reclamava. Toda emissão passa por `lib/channelHealthSignals.ts`.
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -172,6 +173,7 @@ export const internalChannelHealthTick = internalAction({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({ checked: v.number(), probeErrors: v.number() }),
   handler: async (ctx, args) => {
+    if (cronsDisabled()) return { checked: 0, probeErrors: 0 };
     const page = await ctx.runQuery(internal.channelHealth.internalListBridgeChannelsPage, {
       cursor: args.cursor ?? null,
       numItems: CHANNEL_HEALTH_PAGE_SIZE,

@@ -57,6 +57,219 @@ export async function nextOrderInColumn(
   return (last?.order ?? 0) + ORDER_STEP;
 }
 
+/** Coluna default de um projeto: a de menor `order` que não seja done column. */
+export async function defaultColumnForProject(
+  ctx: QueryCtx | MutationCtx,
+  projectId: Id<"taskProjects">
+) {
+  const columns = await columnsOfProject(ctx, projectId);
+  return columns.find((c) => !c.isDoneColumn) ?? columns[0] ?? null;
+}
+
+// ── Responsáveis e lembretes ──
+
+/** `assigneeIds` é a fonte de verdade; `assignedTo` é o espelho legado (= assigneeIds[0]). */
+export function readTaskAssignees(task: {
+  assigneeIds?: Id<"teamMembers">[];
+  assignedTo?: Id<"teamMembers">;
+}): Id<"teamMembers">[] {
+  if (task.assigneeIds && task.assigneeIds.length > 0) return task.assigneeIds;
+  return task.assignedTo ? [task.assignedTo] : [];
+}
+
+/** Lembrete antecipado: agenda o disparo para dueDate - minutos. */
+export async function schedulePreDueReminder(
+  ctx: MutationCtx,
+  taskId: Id<"tasks">,
+  dueDate?: number,
+  reminderMinutesBefore?: number
+): Promise<void> {
+  if (!dueDate || !reminderMinutesBefore || reminderMinutesBefore <= 0) return;
+  const fireAt = dueDate - reminderMinutesBefore * 60_000;
+  const delay = Math.max(0, fireAt - Date.now());
+  // `expectedMinutes` viaja junto para o trigger detectar agendamento obsoleto
+  // (usuário desligou o lembrete ou trocou a antecedência depois de agendado).
+  await ctx.scheduler.runAfter(delay, internal.tasks.triggerPreDueReminder, {
+    taskId,
+    expectedDueDate: dueDate,
+    expectedMinutes: reminderMinutesBefore,
+  });
+}
+
+/**
+ * Lembrete NO PRAZO de uma task `type:"reminder"` ativa: agenda
+ * `triggerReminder` para `dueDate`. É o caminho principal — o cron
+ * `processOverdueReminders` (1 h) é só resgate. Agendar a mais é inofensivo:
+ * `triggerReminder` é idempotente e ignora job de prazo antigo.
+ */
+export async function scheduleDueReminder(
+  ctx: MutationCtx,
+  task: { _id: Id<"tasks">; type: Doc<"tasks">["type"]; status: Doc<"tasks">["status"] },
+  dueDate: number | undefined,
+  now: number
+): Promise<void> {
+  if (task.type !== "reminder" || !dueDate) return;
+  if (task.status !== "pending" && task.status !== "in_progress") return;
+  await ctx.scheduler.runAfter(Math.max(0, dueDate - now), internal.tasks.triggerReminder, {
+    taskId: task._id,
+  });
+}
+
+// ── Recorrência (núcleo ÚNICO) ──
+
+export type RecurrenceOutcome =
+  | "generated"
+  | "not_recurring"
+  | "already_generated"
+  | "ended"
+  | "has_successor";
+
+/** Próximo prazo de uma recorrência (sem prazo na origem → sem prazo na próxima). */
+export function nextRecurrenceDueDate(
+  dueDate: number | undefined,
+  pattern: NonNullable<Doc<"tasks">["recurrence"]>["pattern"]
+): number | undefined {
+  if (!dueDate) return undefined;
+  const d = new Date(dueDate);
+  switch (pattern) {
+    case "daily": d.setDate(d.getDate() + 1); break;
+    case "weekly": d.setDate(d.getDate() + 7); break;
+    case "biweekly": d.setDate(d.getDate() + 14); break;
+    case "monthly": d.setMonth(d.getMonth() + 1); break;
+  }
+  return d.getTime();
+}
+
+/**
+ * Gera a próxima instância de uma tarefa recorrente CONCLUÍDA. Chamado na
+ * própria conclusão (`applyTaskCompletion`, `updateTask` com status) e pelo
+ * cron `processRecurringTasks`, que virou só rede de segurança indexada.
+ *
+ * Idempotente: pula se já gerou depois desta conclusão (`lastGeneratedAt >=
+ * completedAt`) ou se a linhagem já tem sucessor vivo (reabrir e concluir de
+ * novo não duplica). Nos pulos por `endDate` vencido ou sucessor existente,
+ * grava `recurrence.lastGeneratedAt` mesmo assim — sem efeito visível, mas tira
+ * a origem do range do índice do cron, que só lê quem nunca gerou.
+ */
+export async function generateNextRecurrence(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  now: number
+): Promise<RecurrenceOutcome> {
+  const recurrence = task.recurrence;
+  if (task.status !== "completed" || !recurrence) return "not_recurring";
+
+  if (recurrence.lastGeneratedAt && recurrence.lastGeneratedAt >= (task.completedAt || 0)) {
+    return "already_generated";
+  }
+
+  const markGenerated = async () => {
+    await ctx.db.patch(task._id, { recurrence: { ...recurrence, lastGeneratedAt: now } });
+  };
+
+  if (recurrence.endDate && now > recurrence.endDate) {
+    await markGenerated();
+    return "ended";
+  }
+
+  const successors = await ctx.db
+    .query("tasks")
+    .withIndex("by_recurrence_source", (q) => q.eq("recurrenceSourceId", task._id))
+    .take(10);
+  if (successors.some((s) => s.status !== "cancelled")) {
+    await markGenerated();
+    return "has_successor";
+  }
+
+  const nextDueDate = nextRecurrenceDueDate(task.dueDate, recurrence.pattern);
+
+  // A nova instância entra na coluna default (não-done) do projeto
+  let columnId = task.columnId;
+  let order = task.order;
+  if (task.projectId) {
+    const column = await defaultColumnForProject(ctx, task.projectId);
+    columnId = column?._id;
+    order = columnId ? await nextOrderInColumn(ctx, columnId) : undefined;
+  }
+
+  // Nova instância — linhagem via recurrenceSourceId (parentTaskId é hierarquia
+  // de subtarefa). `lastGeneratedAt` NÃO é copiado: a instância nova nunca gerou
+  // nada, e é isso que a deixa visível ao índice do cron quando for concluída.
+  const nextTaskId = await ctx.db.insert("tasks", {
+    organizationId: task.organizationId,
+    title: task.title,
+    description: task.description,
+    type: task.type,
+    status: "pending",
+    priority: task.priority,
+    activityType: task.activityType,
+    dueDate: nextDueDate,
+    leadId: task.leadId,
+    contactId: task.contactId,
+    assignedTo: task.assignedTo,
+    assigneeIds: readTaskAssignees(task),
+    createdBy: task.createdBy,
+    recurrence: { pattern: recurrence.pattern, endDate: recurrence.endDate },
+    recurrenceSourceId: task._id,
+    parentTaskId: task.parentTaskId,
+    projectId: task.projectId,
+    columnId,
+    order,
+    labelIds: task.labelIds,
+    reminderMinutesBefore: task.reminderMinutesBefore,
+    checklist: task.checklist?.map((item) => ({ ...item, completed: false })),
+    tags: task.tags,
+    searchText: task.searchText,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Lembrete antecipado da nova instância (preDueReminderSentAt nasce limpo)
+  await schedulePreDueReminder(ctx, nextTaskId, nextDueDate, task.reminderMinutesBefore);
+  await scheduleDueReminder(
+    ctx,
+    { _id: nextTaskId, type: task.type, status: "pending" },
+    nextDueDate,
+    now
+  );
+
+  await ctx.db.patch(task._id, {
+    recurrence: { ...recurrence, lastGeneratedAt: now },
+    updatedAt: now,
+  });
+  return "generated";
+}
+
+/**
+ * Wrapper da conclusão: a recorrência nunca derruba a conclusão da tarefa.
+ * Falha por dado inesperado é logada e o cron de resgate tenta de novo.
+ */
+export async function generateNextRecurrenceSafely(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  now: number,
+  opts?: { stampOnFailure?: boolean }
+): Promise<void> {
+  if (!task.recurrence) return;
+  try {
+    await generateNextRecurrence(ctx, task, now);
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "taskRecurrenceFailed",
+        taskId: task._id,
+        stamped: opts?.stampOnFailure === true,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+    // No cron de resgate: carimba para uma task que lança TODA vez não ocupar
+    // a vaga do padrão para sempre (o erro fica no log para investigação).
+    if (opts?.stampOnFailure) {
+      await ctx.db.patch(task._id, { recurrence: { ...task.recurrence, lastGeneratedAt: now } });
+    }
+  }
+}
+
 // ── Conclusão (fluxo ÚNICO) ──
 
 /**
@@ -86,9 +299,10 @@ export async function applyTaskCompletion(
 
   await ctx.db.patch(task._id, patch);
 
-  // Recorrência: gera a próxima instância
+  // Recorrência: a próxima instância nasce NA MESMA transação da conclusão
+  // (antes agendava a varredura inteira do cron a cada conclusão).
   if (task.recurrence) {
-    await ctx.scheduler.runAfter(0, internal.tasks.processRecurringTasks);
+    await generateNextRecurrenceSafely(ctx, { ...task, ...patch } as Doc<"tasks">, now);
   }
 
   await ctx.db.insert("auditLogs", {

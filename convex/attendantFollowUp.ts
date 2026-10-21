@@ -19,6 +19,7 @@
  * O ciclo de vida compartilhado mora em `lib/followUpOps.ts`.
  */
 import { v } from "convex/values";
+import { cronsDisabled } from "./lib/cronGuard";
 import { internalMutation, mutation, query, MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -524,6 +525,7 @@ export const internalWatchdog = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
 
     const late = await ctx.db

@@ -6,6 +6,7 @@ import { buildTemplate } from "./emailTemplates";
 import { appUrl } from "./lib/appUrl";
 import { isDeliverableEmail, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import { isMembershipRevoked } from "./lib/auth";
+import { cronsDisabled } from "./lib/cronGuard";
 
 // O default do componente é `testMode: true`, e nesse modo ele LANÇA para todo
 // destinatário que não seja `@resend.dev`. Este arquivo passou meses sem desligar
@@ -198,10 +199,13 @@ export const sendConfirmationEmail = internalMutation({
 });
 
 // ── Daily digest cron handler ──
+const DIGEST_COUNT_CAP = 500;
+
 export const sendDailyDigest = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
+    if (cronsDisabled()) return null;
     const now = Date.now();
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const digestAppUrl = appUrl();
@@ -230,30 +234,41 @@ export const sendDailyDigest = internalMutation({
       const recipients = members.filter((m) => m.userId && m.email && !isMembershipRevoked(m));
       if (recipients.length === 0) continue;
 
-      // Gather yesterday's stats
+      // Contagens por RANGE de índice (perf Convex I/O, fase 1): antes lia os
+      // 500 leads e as 500 tarefas mais recentes da org só para contar. Teto
+      // de 500 por contagem, o mesmo de antes.
       const recentLeads = await ctx.db
         .query("leads")
-        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
-        .order("desc")
-        .take(500);
-      const newLeadsCount = recentLeads.filter(
-        (l) => l.createdAt >= oneDayAgo && l.archivedAt === undefined
-      ).length;
+        .withIndex("by_organization_and_created", (q) =>
+          q.eq("organizationId", org._id).gte("createdAt", oneDayAgo)
+        )
+        .take(DIGEST_COUNT_CAP);
+      const newLeadsCount = recentLeads.filter((l) => l.archivedAt === undefined).length;
 
-      const recentTasks = await ctx.db
+      // `completedAt` é limpo ao reabrir, mas o status é conferido de novo.
+      const completedTasks = await ctx.db
         .query("tasks")
-        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
-        .order("desc")
-        .take(500);
-      const completedTasksCount = recentTasks.filter(
-        (t) => t.status === "completed" && t.completedAt && t.completedAt >= oneDayAgo
-      ).length;
-      const overdueTasksCount = recentTasks.filter(
-        (t) =>
-          (t.status === "pending" || t.status === "in_progress") &&
-          t.dueDate != null &&
-          t.dueDate < now
-      ).length;
+        .withIndex("by_organization_and_completed_at", (q) =>
+          q.eq("organizationId", org._id).gte("completedAt", oneDayAgo)
+        )
+        .take(DIGEST_COUNT_CAP);
+      const completedTasksCount = completedTasks.filter((t) => t.status === "completed").length;
+
+      // `.gt(undefined)` exclui tarefa sem prazo (undefined ordena antes de tudo).
+      let overdueTasksCount = 0;
+      for (const status of ["pending", "in_progress"] as const) {
+        const overdue = await ctx.db
+          .query("tasks")
+          .withIndex("by_organization_and_status_and_due_date", (q) =>
+            q
+              .eq("organizationId", org._id)
+              .eq("status", status)
+              .gt("dueDate", undefined)
+              .lt("dueDate", now)
+          )
+          .take(DIGEST_COUNT_CAP);
+        overdueTasksCount += overdue.length;
+      }
 
       const pendingHandoffs = await ctx.db
         .query("handoffs")

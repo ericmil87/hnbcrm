@@ -7,7 +7,7 @@
  * afterEach e, se rodasse, viraria no-op porque `internalStartJob` só aceita
  * job `queued`).
  */
-import { expect, test, describe, beforeEach, afterEach } from "vitest";
+import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -826,18 +826,30 @@ describe("regras do job de export", () => {
     expect(storageId).toBeDefined();
 
     // Nada a limpar enquanto está dentro da validade.
-    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({ deleted: 0 });
+    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+      deleted: 0,
+      expired: 0,
+    });
 
     await t.run(async (ctx) => {
       await ctx.db.patch(jobId, { expiresAt: Date.now() - 1000 });
     });
 
-    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({ deleted: 1 });
+    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+      deleted: 1,
+      expired: 1,
+    });
 
     const after = await t.run(async (ctx) => await ctx.db.get(jobId));
-    expect(after?.status).toBe("completed");
+    expect(after?.status).toBe("expired");
     expect(after?.resultStorageId).toBeUndefined();
     expect(after?.resultFileName).toBeTruthy();
+
+    // Job já limpo saiu do range do cron: a rodada seguinte não o relê.
+    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+      deleted: 0,
+      expired: 0,
+    });
 
     expect(
       await admin.query(api.exports.getExportDownloadUrl, {
@@ -845,6 +857,73 @@ describe("regras do job de export", () => {
         jobId,
       })
     ).toBeNull();
+  });
+
+  test("o cron alcança job vencido além dos 100 primeiros (inclusive sem blob)", async () => {
+    const s = await seedOrg(t);
+    const now = Date.now();
+    const ids = await t.run(async (ctx) => {
+      const out: Id<"exportJobs">[] = [];
+      for (let i = 0; i < 101; i++) {
+        out.push(
+          await ctx.db.insert("exportJobs", {
+            organizationId: s.organizationId,
+            requestedBy: s.admin.memberId,
+            status: "completed",
+            format: "csv",
+            scope: "entity",
+            entity: "contacts",
+            progress: { processed: 0 },
+            // Ordem crescente de validade: o último é o 101º do range.
+            expiresAt: now - 10_000 + i,
+            createdAt: now - 20_000,
+          })
+        );
+      }
+      return out;
+    });
+
+    // Sem blob: nada apagado, mas os 100 primeiros mudam de status.
+    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+      deleted: 0,
+      expired: 100,
+    });
+    const last = ids[ids.length - 1];
+    expect((await t.run(async (ctx) => await ctx.db.get(last)))?.status).toBe("completed");
+
+    // Antes da correção a 2ª rodada relia os MESMOS 100; agora chega no 101º.
+    expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+      deleted: 0,
+      expired: 1,
+    });
+    expect((await t.run(async (ctx) => await ctx.db.get(last)))?.status).toBe("expired");
+  });
+
+  test("com CRONS_DISABLED=1 o cron de limpeza não faz nada", async () => {
+    const s = await seedOrg(t);
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("exportJobs", {
+        organizationId: s.organizationId,
+        requestedBy: s.admin.memberId,
+        status: "completed",
+        format: "csv",
+        scope: "entity",
+        entity: "contacts",
+        progress: { processed: 0 },
+        expiresAt: Date.now() - 1000,
+        createdAt: Date.now() - 2000,
+      })
+    );
+    vi.stubEnv("CRONS_DISABLED", "1");
+    try {
+      expect(await t.mutation(internal.exports.internalCleanupExpired, {})).toEqual({
+        deleted: 0,
+        expired: 0,
+      });
+      expect((await t.run(async (ctx) => await ctx.db.get(jobId)))?.status).toBe("completed");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   // Nenhum webhook é cadastrado de propósito: o disparo real faria `fetch` de
