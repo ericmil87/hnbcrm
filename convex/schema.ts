@@ -1694,7 +1694,9 @@ const applicationTables = {
     .index("by_organization_and_entity_type_and_created", ["organizationId", "entityType", "createdAt"])
     .index("by_organization_and_action_and_created", ["organizationId", "action", "createdAt"])
     .index("by_organization_and_severity_and_created", ["organizationId", "severity", "createdAt"])
-    .index("by_organization_and_actor_and_created", ["organizationId", "actorId", "createdAt"]),
+    .index("by_organization_and_actor_and_created", ["organizationId", "actorId", "createdAt"])
+    // Retenção (fase 4a): severidade baixa por ação (a retenção pula "delete").
+    .index("by_severity_and_action_and_created", ["severity", "action", "createdAt"]),
 
   // Tasks & Reminders
   tasks: defineTable({
@@ -1913,7 +1915,9 @@ const applicationTables = {
   })
     .index("by_member_and_created", ["memberId", "createdAt"])
     .index("by_member_and_read", ["memberId", "readAt"])
-    .index("by_organization", ["organizationId"]),
+    .index("by_organization", ["organizationId"])
+    // Retenção (perf Convex I/O, fase 4a): lidas há mais de N dias, deployment-wide.
+    .index("by_read_at", ["readAt"]),
 
   // Calendar Events
   calendarEvents: defineTable({
@@ -2417,7 +2421,9 @@ const applicationTables = {
   })
     .index("by_organization_and_started", ["organizationId", "startedAt"])
     .index("by_conversation", ["conversationId"])
-    .index("by_organization_and_kind_and_started", ["organizationId", "kind", "startedAt"]),
+    .index("by_organization_and_kind_and_started", ["organizationId", "kind", "startedAt"])
+    // Retenção (fase 4a): runs terminais antigas, deployment-wide.
+    .index("by_status_and_started", ["status", "startedAt"]),
 
   // Contador MENSAL de uso de IA por org (v0.69, T04). Incrementado na MESMA
   // transação de `agentRuns.internalFinishRun` (custo/runs/tokens, por kind) e
@@ -2501,7 +2507,9 @@ const applicationTables = {
   })
     .index("by_conversation_and_status", ["conversationId", "status"])
     .index("by_organization_and_status", ["organizationId", "status"])
-    .index("by_status_and_next_attempt", ["status", "nextAttemptAt"]),
+    .index("by_status_and_next_attempt", ["status", "nextAttemptAt"])
+    // Retenção (fase 4a): itens terminais sem movimento há N dias.
+    .index("by_status_and_updated", ["status", "updatedAt"]),
 
   /**
    * Follow-ups que o ATENDENTE executa sozinho no vencimento (v0.60).
