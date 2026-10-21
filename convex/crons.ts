@@ -44,4 +44,10 @@ crons.daily(
 // execuções). Teto de 50 canais por execução, o resto segue por cursor.
 crons.interval("channel health", { minutes: 15 }, internal.channelHealth.internalChannelHealthTick, {});
 
+// Retenção (perf Convex I/O, fase 4a): apaga notificações lidas, fila/runs de
+// IA terminais, parciais abandonados e auditoria `low` além da janela.
+// 07:30 UTC = 04:30 BRT, depois do "expire deferred group media" (06:00 UTC).
+// Paginado e com teto diário — ver convex/retention.ts.
+crons.daily("data retention", { hourUTC: 7, minuteUTC: 30 }, internal.retention.internalRunRetention, {});
+
 export default crons;

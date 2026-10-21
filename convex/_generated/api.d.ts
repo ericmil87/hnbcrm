@@ -182,6 +182,7 @@ import type * as organizations from "../organizations.js";
 import type * as passwordReset from "../passwordReset.js";
 import type * as quickReplies from "../quickReplies.js";
 import type * as router from "../router.js";
+import type * as retention from "../retention.js";
 import type * as savedViews from "../savedViews.js";
 import type * as scheduledMessages from "../scheduledMessages.js";
 import type * as seed from "../seed.js";
@@ -380,6 +381,7 @@ declare const fullApi: ApiFromModules<{
   organizations: typeof organizations;
   passwordReset: typeof passwordReset;
   quickReplies: typeof quickReplies;
+  retention: typeof retention;
   router: typeof router;
   savedViews: typeof savedViews;
   scheduledMessages: typeof scheduledMessages;
