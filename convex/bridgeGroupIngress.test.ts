@@ -381,6 +381,89 @@ describe("mensagem de membro num grupo acompanhado", () => {
     expect(await messagesOf(t, organizationId)).toHaveLength(1);
   });
 
+  describe("patch de groupChats só quando algo mudou (perf Convex I/O, fase 3)", () => {
+    const at = (iso: string) => ({ Timestamp: iso });
+
+    test("2ª mensagem do mesmo membro em < 60 s não regrava a sala", async () => {
+      const t = setup();
+      const { configId, groupChatId } = await monitoredGroup(t);
+
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M1", ...at("2026-09-16T18:04:41-03:00") } }));
+      const before = await t.run(async (ctx) => ctx.db.get(groupChatId));
+      vi.setSystemTime(Date.now() + 5_000); // um patch agora mudaria updatedAt
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M2", ...at("2026-09-16T18:05:20-03:00") } }));
+      const after = await t.run(async (ctx) => ctx.db.get(groupChatId));
+
+      expect(after).toEqual(before);
+    });
+
+    test("nome novo do membro grava, mesmo dentro do minuto", async () => {
+      const t = setup();
+      const { configId, groupChatId } = await monitoredGroup(t);
+
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M1", ...at("2026-09-16T18:04:41-03:00") } }));
+      await ingest(
+        t,
+        configId,
+        groupMessageEvent({
+          info: { ID: "M2", PushName: "Eric M.", ...at("2026-09-16T18:04:50-03:00") },
+        })
+      );
+      const group = await t.run(async (ctx) => ctx.db.get(groupChatId));
+      expect(group!.participants!.find((p) => p.lid === ERIC_LID)!.name).toBe("Eric M.");
+    });
+
+    test("membro novo entra na lista e no contador", async () => {
+      const t = setup();
+      const { configId, groupChatId } = await monitoredGroup(t);
+
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M1", ...at("2026-09-16T18:04:41-03:00") } }));
+      await ingest(
+        t,
+        configId,
+        groupMessageEvent({
+          info: {
+            ID: "M2",
+            Sender: "111111111111111@lid",
+            SenderAlt: "5581999990000@s.whatsapp.net",
+            PushName: "Nova Pessoa",
+            ...at("2026-09-16T18:04:50-03:00"),
+          },
+        })
+      );
+      const group = await t.run(async (ctx) => ctx.db.get(groupChatId));
+      expect(group!.participants!.find((p) => p.lid === "111111111111111@lid")!.name).toBe(
+        "Nova Pessoa"
+      );
+      expect(group!.participantsCount).toBe(3);
+    });
+
+    test("lastMessageAt avança após ≥ 60 s", async () => {
+      const t = setup();
+      const { configId, groupChatId } = await monitoredGroup(t);
+
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M1", ...at("2026-09-16T18:04:41-03:00") } }));
+      const first = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!.lastMessageAt!;
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M2", ...at("2026-09-16T18:05:41-03:00") } }));
+      const second = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!.lastMessageAt!;
+
+      expect(second - first).toBe(60_000);
+    });
+
+    test("sala NÃO acompanhada: atividade em < 60 s não regrava", async () => {
+      const t = setup();
+      const { organizationId, asAdmin, configId } = await seed(t);
+      await enableGroups(t, asAdmin, configId);
+      const groupChatId = await seedGroup(t, { organizationId, configId });
+
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M1", ...at("2026-09-16T18:04:41-03:00") } }));
+      const before = await t.run(async (ctx) => ctx.db.get(groupChatId));
+      vi.setSystemTime(Date.now() + 5_000); // um patch agora mudaria updatedAt
+      await ingest(t, configId, groupMessageEvent({ info: { ID: "M2", ...at("2026-09-16T18:05:00-03:00") } }));
+      expect(await t.run(async (ctx) => ctx.db.get(groupChatId))).toEqual(before);
+    });
+  });
+
   test("menção a nós grava mentions e notifica quem responde no inbox", async () => {
     const t = setup();
     const { organizationId, configId, adminId } = await monitoredGroup(t);
