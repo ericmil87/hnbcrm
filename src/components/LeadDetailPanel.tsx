@@ -307,12 +307,13 @@ function ConversationTab({
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
-  // Só a primeira (não lidas primeiro, depois a mais recente) é usada; um lead
-  // raramente tem mais de uma conversa (perf Convex I/O, fase 2).
+  // Só a primeira (não lidas primeiro, depois a mais recente) é usada (perf
+  // Convex I/O, fase 2). O ramo por lead lê o índice por canal+criação e ordena
+  // DEPOIS do take: 20 dá folga para a mais recente não ficar de fora.
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
     leadId,
-    limit: 5,
+    limit: 20,
   });
 
   const firstConversation = conversations && conversations.length > 0 ? conversations[0] : null;
@@ -685,7 +686,9 @@ function ConversationTab({
             </div>
           )}
 
-          {messages && canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT) ? (
+          {messages &&
+          (loadingOlderMessages ||
+            canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
             <div className="text-center py-1">
               <Button
                 variant="ghost"

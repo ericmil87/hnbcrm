@@ -293,8 +293,12 @@ export function Inbox() {
   // Mantém a lista na tela enquanto o lote maior carrega.
   const conversations = useKeepPrevious(conversationsRaw, listFilterKey);
   const loadingMoreConversations = conversationsRaw === undefined && conversations !== undefined;
+  // Enquanto o lote maior carrega, o lote MANTIDO (menor que o limite novo)
+  // daria false — o botão sumiria em vez de mostrar "Carregando…".
   const canLoadMoreConversations =
-    !!conversations && canLoadMore(conversations.length, listLimit, CONVERSATIONS_MAX_LIMIT);
+    !!conversations &&
+    (loadingMoreConversations ||
+      canLoadMore(conversations.length, listLimit, CONVERSATIONS_MAX_LIMIT));
   const handleLoadMoreConversations = () =>
     setListPage({
       key: listFilterKey,
@@ -2357,7 +2361,9 @@ export function Inbox() {
               className="flex-1 min-h-0 overflow-y-auto"
             >
               <div className="min-h-full flex flex-col justify-end max-w-4xl mx-auto w-full p-4 space-y-4">
-                {messages && canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT) ? (
+                {messages &&
+                (loadingOlderMessages ||
+                  canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
                   <div className="text-center py-2 mb-2">
                     <Button
                       variant="ghost"
