@@ -73,7 +73,8 @@ function wasUnread(message: Doc<"messages">, conversation: Doc<"conversations"> 
   if (!conversation || (conversation.unreadCount ?? 0) <= 0) return false;
   if (message.direction !== "inbound" || message.metadata?.readAt) return false;
   const lastReadAt = (conversation as { lastReadAt?: number }).lastReadAt;
-  return lastReadAt === undefined || message.createdAt > lastReadAt;
+  // `_creationTime` (gravação), não `createdAt` (pode ser o `sentAt` do WhatsApp).
+  return lastReadAt === undefined || message._creationTime > lastReadAt;
 }
 
 function sameAuthor(a: Doc<"messages">, b: Doc<"messages">): boolean {

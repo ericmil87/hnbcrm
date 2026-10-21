@@ -1210,7 +1210,10 @@ const applicationTables = {
     // Badge da sidebar: range unreadCount > 0 direto no índice.
     .index("by_organization_and_unread", ["organizationId", "unreadCount"])
     // Conversa de grupo pelo JID, dentro de um canal (idempotência do ingest).
-    .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"]),
+    .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"])
+    // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
+    // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
+    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
 
   // Messages
   messages: defineTable({

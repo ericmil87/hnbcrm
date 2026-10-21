@@ -95,9 +95,10 @@ export function HandoffPeekSlideOver({
 
   const messages = useQuery(
     api.conversations.getMessages,
-    // A espiada só mostra as últimas THREAD_LIMIT: pedir só elas ao servidor.
+    // A espiada só mostra as últimas THREAD_LIMIT: pede uma a mais só para
+    // saber se há mensagens anteriores (aviso "Exibindo as últimas…").
     conversationId
-      ? { conversationId: conversationId as Id<"conversations">, limit: THREAD_LIMIT }
+      ? { conversationId: conversationId as Id<"conversations">, limit: THREAD_LIMIT + 1 }
       : "skip"
   ) as InboxMessage[] | undefined;
 
@@ -310,7 +311,7 @@ export function HandoffPeekSlideOver({
           <p className="text-center text-sm text-text-muted py-10">Nenhuma mensagem nesta conversa</p>
         ) : (
           <div className="flex flex-col gap-4">
-            {messages.length >= THREAD_LIMIT && (
+            {messages.length > THREAD_LIMIT && (
               <p className="text-center text-xs text-text-muted">
                 Exibindo as últimas {THREAD_LIMIT} mensagens
               </p>
