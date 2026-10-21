@@ -1130,9 +1130,11 @@ const applicationTables = {
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
     lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
-    nextDispatchAt: v.optional(v.number()), // pacing cursor for outbound dispatch (~1 msg/6s per recipient)
-    // Presença do contato (ChatPresence do bridge) — "digitando..." no header.
-    // `at` permite expirar no cliente (evento "paused" pode nunca chegar).
+    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
+    // O cursor de pacing por conversa vive em `conversationRuntime.nextDispatchAt`.
+    nextDispatchAt: v.optional(v.number()),
+    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
+    // A presença vive em `conversationRuntime.contactPresence`.
     contactPresence: v.optional(
       v.object({
         state: v.union(v.literal("composing"), v.literal("paused")),
@@ -1145,8 +1147,8 @@ const applicationTables = {
     // markConversationRead zera. Ausente = 0 (conversas antigas nascem "lidas").
     unreadCount: v.optional(v.number()),
     lastReadAt: v.optional(v.number()),
-    // Lock/lease OCC do turno de IA — evita resposta dupla de dois inbounds
-    // concorrentes. Claims concorrentes leem+escrevem o mesmo doc → só uma commita.
+    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
+    // O lock do turno de IA vive em `conversationRuntime.aiTurnLock`.
     aiTurnLock: v.optional(v.object({ runId: v.string(), leaseUntil: v.number() })),
     // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
     // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
@@ -1214,6 +1216,34 @@ const applicationTables = {
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
     .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
+
+  // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
+  // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
+  // que a leu (lista do inbox, thread aberto, chip da IA…), e estes três campos
+  // mudam muito sem que nenhuma dessas telas precise deles. 1 linha por
+  // conversa, criada sob demanda. Acesso SEMPRE via `lib/conversationRuntime.ts`.
+  conversationRuntime: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    // Presença do contato (ChatPresence do bridge) — "digitando..." no header.
+    // `at` permite expirar no cliente (evento "paused" pode nunca chegar).
+    contactPresence: v.optional(
+      v.object({
+        state: v.union(v.literal("composing"), v.literal("paused")),
+        at: v.number(),
+      })
+    ),
+    // Lock/lease OCC do turno de IA — evita resposta dupla de dois inbounds
+    // concorrentes. O claim lê a linha (ou a ausência dela, pelo índice) e
+    // escreve na MESMA transação → dois claims concorrentes colidem e só um commita.
+    aiTurnLock: v.optional(v.object({ runId: v.string(), leaseUntil: v.number() })),
+    // Cursor de pacing do dispatch por destinatário (~1 msg/6,5 s).
+    // NÃO confundir com `channelPacing.nextDispatchAt` (cursor por número).
+    nextDispatchAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_conversation", ["conversationId"])
+    .index("by_organization", ["organizationId"]),
 
   // Messages
   messages: defineTable({
