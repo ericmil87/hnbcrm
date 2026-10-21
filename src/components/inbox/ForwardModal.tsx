@@ -46,7 +46,8 @@ export function ForwardModal({
   const forwardMessage = useMutation(api.conversations.forwardMessage);
   const conversations = useQuery(
     api.conversations.getConversations,
-    open ? { organizationId } : "skip"
+    // Destinos = as 50 conversas ativas mais recentes (perf Convex I/O, fase 2).
+    open ? { organizationId, limit: 50 } : "skip"
   );
 
   const valid = useMemo(() => {
