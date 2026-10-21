@@ -21,7 +21,7 @@ Chamadas conhecidas (dashboard, out/2026): `/webhooks/bridge` 29K prod; `channel
 
 ## Fase 1 — crons que rodam sem usuário
 
-Branch: `perf/convex-io-fase1`. Status: implementada e revisada em 21/10/2026; aguardando deploy (quem publica é o Eric).
+Branch: `perf/convex-io-fase1` → PR #5, mergeado em `main` (9aae88b) e PUBLICADO em prod pelo Vercel em 21/10/2026 ~21:17 UTC; dev recebeu as funções via `convex dev --once` no mesmo dia e tem `CRONS_DISABLED=1`. `opsTasks:internalCountCronBacklog` em prod logo após o deploy: **0** lembretes vencidos pendentes e **0** recorrências sem sucessor em todos os ranges — nenhum carimbo foi necessário, sem burst.
 
 ### Mudanças
 
@@ -88,7 +88,56 @@ Com `CRONS_DISABLED=1` no dev, o I/O de cron do dev vai a zero. A conta depende 
 
 ## Fase 2 — frontend: queries reativas caras
 
-_não iniciada_
+Branch: `perf/convex-io-fase2`. Status: implementada, revisada e corrigida em 21/10/2026; aguardando PR/deploy.
+
+### Mudanças
+
+| Query / tela | Antes | Depois |
+|---|---|---|
+| `conversations.getConversations` (Inbox) | `take(200)` por `by_organization_and_last_message`, arquivadas filtradas DEPOIS do take; batchGet de lead/contato/responsável/canal/grupo + última mensagem por conversa | índice `by_organization_and_archived_and_last_message`: ativas `eq(archivedAt, undefined)`, arquivadas `gt(archivedAt, undefined)`; default **50** (teto 500); "Carregar mais conversas" (+50) com `useKeepPrevious` (sem piscar); `LeadDetailPanel` `limit: 20`, `ForwardModal` `limit: 50`; ramos da Central mantêm `max(limit, 200)` até terem índice próprio |
+| `conversations.getMessages` (conversa aberta) | `take(500)` ASC = as 500 mais ANTIGAS (bug) com `metadata.raw` e anexos | `limit` (default 50, teto 500) `.order("desc")` + inversão; "Carregar mensagens anteriores" no topo com rolagem preservada; busca/citação sobe o lote de 100 em 100 e no teto avisa; `HandoffPeekSlideOver` `limit: 30` |
+| `conversations.markConversationRead` | até 20 `patch` em `messages` reescrevendo `metadata` inteiro (`readAt`), cada um invalidando a thread aberta | só `lastReadAt` + `unreadCount` na conversa; marca d'água por `_creationTime` (em grupo `createdAt` é o `sentAt`); nada escrito sem inbound novo; recibos do bridge inalterados |
+| `conversations.getInboxUnreadCount` (Sidebar/BottomTabBar, sempre vivo) | `.collect()` de toda conversa com unread > 0 (arquivadas inclusive) | índice `by_organization_and_archived_and_unread`, `take(100)` ("99+" já existia); arquivar (single/bulk) zera `unreadCount` |
+| `KanbanBoard` | `getDashboardStats` (≈5.000 docs: boards, 500 leads/board, 2.000 leads, 2.000 tasks…) só para contar leads por board | `boards.getLeadCountsByBoard` com índice `leads.by_organization_and_board_and_archived`, ≤ 500 leads por board ativo ("500+" ao saturar) |
+| `getTaskCounts` em TasksPage / UpcomingTasksWidget / MyTasksWidget | `now` novo a cada 60 s nos args = assinatura nova + execução completa por minuto por aba; Dashboard com 2 assinaturas distintas | `useRoundedNow` (15 min, um `setTimeout` por fronteira; puro em `src/lib/roundedNow.ts`) compartilhado → 4 execuções/h por aba e 1 assinatura no Dashboard |
+| `UpcomingTasksWidget` | `getTasks` sem limit (600 docs: as 600 criadas mais recentes, concluídas inclusive) | `tasks.getUpcomingTasks({organizationId, now, limit})`: só pendentes/em andamento, faixas futuras ASC + atrasadas mais recentes DESC + sem prazo, ≤ 300 docs |
+| `CopilotPanel` fechado | `getThreadMessages` assinado com o painel fechado | `"skip"` quando `!open`, cache do último resultado por `threadId` |
+
+### Mudanças de comportamento visíveis
+
+- Inbox começa com 50 conversas e 50 mensagens recentes; botões "Carregar mais conversas" / "Carregar mensagens anteriores". Conversa com >500 mensagens passa a mostrar as mais RECENTES (antes mostrava as 500 mais antigas).
+- Desarquivar uma conversa não restaura o contador de não lidas (foi zerado ao arquivar).
+- Contadores "atrasadas"/"vence hoje" avançam a cada 15 min (na fronteira do relógio) e na hora quando uma tarefa muda; uma tarefa vencida há poucos minutos só conta na próxima fronteira.
+- Widget do painel mostra tarefas abertas por prazo (futuras e as atrasadas mais recentes), não as 600 criadas mais recentemente.
+- Kanban mostra "500+" quando um funil passa de 500 leads.
+- Copiloto reabre rolado até o fim.
+
+### Limites conhecidos (follow-up)
+
+- Ramos da Central (`departmentId`/`unitId`) ainda usam índices por criação e filtram arquivadas depois do take; precisam de índice `[organizationId, departmentId, archivedAt, lastMessageAt]`.
+- "Carregar mais" depende de o lote voltar cheio; filtros aplicados depois do take (canal, responsável) podem escondê-lo mesmo havendo mais.
+- Ao chegar mensagem nova com o lote em 50, a mais antiga sai do topo e a rolagem desloca a altura dela (cosmético).
+- `getTaskCounts` calcula "hoje" com `setHours` no fuso do servidor (preexistente).
+- `conversations` arquivadas pelos caminhos de `groupChats.ts` não zeram `unreadCount` (não contam mais no badge graças ao índice, mas o campo fica).
+
+### Estimativa de redução (por EXECUÇÃO; multiplica pelo nº de reexecuções = webhooks × abas abertas)
+
+| Query | Antes | Depois |
+|---|---|---|
+| `getConversations` | ≈200 × (conv + lead + contato + msg) ≈ 1–1,6 MB | ≈50 × idem ≈ 0,25–0,4 MB (−75%) |
+| `getMessages` | min(N, 500) × 1–3 KB ≈ até 1,5 MB | 50 × 1–3 KB ≈ 75–150 KB (−90% em conversa longa) |
+| `markConversationRead` | 1 patch na conversa + até 20 patches de `metadata` + 20 invalidações da thread | 1 patch (ou nenhum) |
+| `getInboxUnreadCount` | todas as não lidas, arquivadas inclusive | ≤ 100 docs ativos |
+| Kanban (contador) | ≈5.000 docs | ≤ 500 × funis ativos |
+| `getTaskCounts` | 60 execuções/h/aba × 2.000 docs | 4 execuções/h/aba × 2.000 docs (−93%) |
+| `UpcomingTasksWidget` | 600 docs | ≤ 300 docs |
+
+### Medição depois
+
+| Deployment | Database bandwidth (mês) | Observação |
+|---|---|---|
+| prod | _pendente_ | |
+| dev | _pendente_ | |
 
 ## Fase 3 — writes que invalidam o Inbox
 

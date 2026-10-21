@@ -726,12 +726,14 @@ export function KanbanBoard() {
     () => (allBoards ?? []).filter((b: any) => !!b.archivedAt),
     [allBoards]
   );
-  // Reaproveita a agregação existente do dashboard (sem query nova no backend)
-  // só para exibir a contagem de leads por board no seletor.
-  const dashboardStats = useQuery(api.dashboard.getDashboardStats, { organizationId });
+  // Contador leve por board (só leads ativos, teto de 500) para o seletor.
+  const leadCounts = useQuery(api.boards.getLeadCountsByBoard, { organizationId });
   const leadCountByBoard = useMemo(
-    () => new Map((dashboardStats?.pipelineStats ?? []).map((b) => [b.boardId, b.totalLeads])),
-    [dashboardStats]
+    () =>
+      new Map(
+        (leadCounts ?? []).map((b) => [b.boardId, b.capped ? `${b.count}+` : String(b.count)])
+      ),
+    [leadCounts]
   );
   const stages = useQuery(
     api.boards.getStages,

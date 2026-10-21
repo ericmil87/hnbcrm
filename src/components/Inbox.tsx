@@ -16,6 +16,19 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
+import { useKeepPrevious } from "@/hooks/useKeepPrevious";
+import {
+  CONVERSATIONS_DEFAULT_LIMIT,
+  CONVERSATIONS_MAX_LIMIT,
+  LOAD_MORE_STEP,
+  MESSAGES_DEFAULT_LIMIT,
+  MESSAGES_MAX_LIMIT,
+  SEARCH_JUMP_STEP,
+  canLoadMore,
+  limitForKey,
+  nextLimit,
+  scrollTopAfterPrepend,
+} from "@/lib/inboxPaging";
 import { MentionTextarea } from "@/components/ui/MentionTextarea";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -117,7 +130,7 @@ function readKindFilter(): ConversationKindFilter {
 }
 
 /**
- * Resolve o `?conversation=` que não está na lista carregada (fora do take(200)
+ * Resolve o `?conversation=` que não está na lista carregada (fora do lote carregado
  * ou arquivada). Fica isolado num filho sob ErrorBoundary porque a query
  * quebra para id malformado ou de outra org — nesse caso o deep-link é
  * simplesmente ignorado, sem derrubar a caixa de entrada.
@@ -261,18 +274,54 @@ export function Inbox() {
       : "skip"
   );
 
-  const conversations = useQuery(api.conversations.getConversations, {
+  // Lista em lotes de 50 ("Carregar mais conversas", até 500 — perf Convex
+  // I/O, fase 2). O limite vale para a combinação de filtros do SERVIDOR
+  // (arquivadas + fila); trocar o filtro volta a 50. Os filtros só de tela
+  // (Diretas/Grupos, etiqueta) não mudam a query e mantêm o limite.
+  const listFilterKey = `${showArchived ? "archived" : "active"}|${JSON.stringify(queueArgs)}`;
+  const [listPage, setListPage] = useState<{ key: string | null; limit: number }>(() => ({
+    key: null,
+    limit: CONVERSATIONS_DEFAULT_LIMIT,
+  }));
+  const listLimit = limitForKey(listPage, listFilterKey, CONVERSATIONS_DEFAULT_LIMIT);
+  const conversationsRaw = useQuery(api.conversations.getConversations, {
     organizationId,
     ...(showArchived ? { archived: true } : {}),
     ...queueArgs,
+    limit: listLimit,
   });
+  // Mantém a lista na tela enquanto o lote maior carrega.
+  const conversations = useKeepPrevious(conversationsRaw, listFilterKey);
+  const loadingMoreConversations = conversationsRaw === undefined && conversations !== undefined;
+  // Enquanto o lote maior carrega, o lote MANTIDO (menor que o limite novo)
+  // daria false — o botão sumiria em vez de mostrar "Carregando…".
+  const canLoadMoreConversations =
+    !!conversations &&
+    (loadingMoreConversations ||
+      canLoadMore(conversations.length, listLimit, CONVERSATIONS_MAX_LIMIT));
+  const handleLoadMoreConversations = () =>
+    setListPage({
+      key: listFilterKey,
+      limit: nextLimit(listLimit, LOAD_MORE_STEP, CONVERSATIONS_MAX_LIMIT),
+    });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
 
-  const messages = useQuery(
+  // Thread: as 50 mensagens mais RECENTES; "Carregar mensagens anteriores"
+  // sobe de 50 em 50 até 500. O limite é por conversa (trocar volta a 50).
+  const [messagePage, setMessagePage] = useState<{ key: string | null; limit: number }>(() => ({
+    key: null,
+    limit: MESSAGES_DEFAULT_LIMIT,
+  }));
+  const messageLimit = limitForKey(messagePage, selectedConversation, MESSAGES_DEFAULT_LIMIT);
+  const messagesRaw = useQuery(
     api.conversations.getMessages,
-    selectedConversation ? { conversationId: selectedConversation as Id<"conversations"> } : "skip"
+    selectedConversation
+      ? { conversationId: selectedConversation as Id<"conversations">, limit: messageLimit }
+      : "skip"
   );
+  const messages = useKeepPrevious(messagesRaw, selectedConversation);
+  const loadingOlderMessages = messagesRaw === undefined && messages !== undefined;
 
   // Recorte do mês selecionado → range [início, fim] em ms.
   const monthRange = (() => {
@@ -419,11 +468,48 @@ export function Inbox() {
     nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
 
+  // Rolagem guardada ao pedir o lote de mensagens anteriores: quando ele
+  // chega (conteúdo inserido ACIMA), a tela é compensada pela altura nova —
+  // sem isso ela pularia para o topo do histórico.
+  const prependAnchorRef = useRef<{
+    conversationId: string;
+    limit: number;
+    scrollTop: number;
+    scrollHeight: number;
+  } | null>(null);
+
+  const handleLoadOlderMessages = () => {
+    const el = messagesScrollRef.current;
+    if (!selectedConversation) return;
+    const limit = nextLimit(messageLimit, LOAD_MORE_STEP, MESSAGES_MAX_LIMIT);
+    if (el) {
+      prependAnchorRef.current = {
+        conversationId: selectedConversation,
+        limit,
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+      };
+    }
+    setMessagePage({ key: selectedConversation, limit });
+  };
+
   // On conversation switch: force-scroll to the newest message. On new messages:
   // only stick to the bottom if the user was already near it (reading history stays put).
   useLayoutEffect(() => {
     const el = messagesScrollRef.current;
     if (!el || !messages) return;
+    const anchor = prependAnchorRef.current;
+    if (anchor && anchor.conversationId !== selectedConversation) prependAnchorRef.current = null;
+    if (
+      anchor &&
+      anchor.conversationId === selectedConversation &&
+      anchor.limit === messageLimit &&
+      messagesRaw !== undefined
+    ) {
+      prependAnchorRef.current = null;
+      el.scrollTop = scrollTopAfterPrepend(anchor, el.scrollHeight);
+      return;
+    }
     const switched = scrolledConvRef.current !== selectedConversation;
     if (switched) {
       scrolledConvRef.current = selectedConversation;
@@ -432,7 +518,7 @@ export function Inbox() {
       return;
     }
     if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, selectedConversation]);
+  }, [messages, messagesRaw, messageLimit, selectedConversation]);
 
   const validConversations = (conversations ?? []).filter(
     (c): c is NonNullable<typeof c> => c !== null
@@ -453,7 +539,7 @@ export function Inbox() {
   });
 
   // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
-  // fora da lista carregada (fora do take(200), ou arquivada ainda carregando).
+  // fora da lista carregada (fora do lote carregado, ou arquivada ainda carregando).
   const conversationInList =
     conversationParam !== null && validConversations.some((c) => c._id === conversationParam);
   // Só fixa se ela PERTENCE à aba/filtro em tela: uma conversa ativa aberta por
@@ -1058,21 +1144,58 @@ export function Inbox() {
 
   useEffect(() => {
     const target = pendingJumpRef.current;
-    if (!target || !messages) return;
+    // Só decide com o lote do limite ATUAL na tela (não com o anterior que
+    // fica visível enquanto o maior carrega).
+    if (!target || !messagesRaw || !selectedConversation) return;
     const el = document.getElementById(`msg-${target}`);
-    if (!el) return;
+    if (!el) {
+      // Fora do lote carregado: sobe o limite (de 100 em 100) e tenta de novo
+      // quando o lote chegar; lote incompleto ou teto = não há mais o que buscar.
+      if (canLoadMore(messagesRaw.length, messageLimit, MESSAGES_MAX_LIMIT)) {
+        setMessagePage({
+          key: selectedConversation,
+          limit: nextLimit(messageLimit, SEARCH_JUMP_STEP, MESSAGES_MAX_LIMIT),
+        });
+      } else {
+        pendingJumpRef.current = null;
+        toast(
+          messageLimit >= MESSAGES_MAX_LIMIT
+            ? "Mensagem antiga demais para exibir aqui"
+            : "A mensagem original não está carregada"
+        );
+      }
+      return;
+    }
     pendingJumpRef.current = null;
     el.scrollIntoView({ behavior: "smooth", block: "center" });
     setHighlightId(target);
     window.setTimeout(() => {
       setHighlightId((cur) => (cur === target ? null : cur));
     }, 2000);
-  }, [messages]);
+  }, [messagesRaw, messageLimit, selectedConversation]);
 
   const handleJumpToMessage = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);
     if (!el) {
-      toast("A mensagem original não está carregada");
+      // Fora do lote carregado: o efeito do salto pendente sobe o limite e
+      // tenta de novo quando o lote chegar.
+      if (
+        selectedConversation &&
+        messages &&
+        canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)
+      ) {
+        pendingJumpRef.current = messageId;
+        setMessagePage({
+          key: selectedConversation,
+          limit: nextLimit(messageLimit, SEARCH_JUMP_STEP, MESSAGES_MAX_LIMIT),
+        });
+      } else {
+        toast(
+          messageLimit >= MESSAGES_MAX_LIMIT
+            ? "Mensagem antiga demais para exibir aqui"
+            : "A mensagem original não está carregada"
+        );
+      }
       return;
     }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -1187,7 +1310,7 @@ export function Inbox() {
   };
 
   // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
-  // (arquivada ou além do take(200)), o resolver busca o documento avulso:
+  // (arquivada ou além do lote carregado), o resolver busca o documento avulso:
   // arquivada troca a aba da lista, ativa entra fixada no topo e um id
   // inexistente sai da URL em silêncio.
   useEffect(() => {
@@ -1885,13 +2008,24 @@ export function Inbox() {
               </div>
             ))
           )}
-          {conversations && conversations.length === 200 && (
+          {!isSearching && canLoadMoreConversations ? (
+            <div className="text-center py-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLoadMoreConversations}
+                disabled={loadingMoreConversations}
+              >
+                {loadingMoreConversations ? "Carregando…" : "Carregar mais conversas"}
+              </Button>
+            </div>
+          ) : !isSearching && conversations && conversations.length >= CONVERSATIONS_MAX_LIMIT ? (
             <div className="text-center py-2">
               <span className="text-xs text-text-muted">
-                Mostrando as 200 conversas mais recentes
+                Mostrando as {CONVERSATIONS_MAX_LIMIT} conversas mais recentes
               </span>
             </div>
-          )}
+          ) : null}
         </div>
 
         {selectionMode && (
@@ -2227,13 +2361,26 @@ export function Inbox() {
               className="flex-1 min-h-0 overflow-y-auto"
             >
               <div className="min-h-full flex flex-col justify-end max-w-4xl mx-auto w-full p-4 space-y-4">
-                {messages && messages.length === 500 && (
+                {messages &&
+                (loadingOlderMessages ||
+                  canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
+                  <div className="text-center py-2 mb-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleLoadOlderMessages}
+                      disabled={loadingOlderMessages}
+                    >
+                      {loadingOlderMessages ? "Carregando…" : "Carregar mensagens anteriores"}
+                    </Button>
+                  </div>
+                ) : messages && messages.length >= MESSAGES_MAX_LIMIT ? (
                   <div className="text-center py-2 mb-2">
                     <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
-                      Exibindo as últimas 500 mensagens
+                      Exibindo as últimas {MESSAGES_MAX_LIMIT} mensagens
                     </span>
                   </div>
-                )}
+                ) : null}
                 {(messages as InboxMessage[] | undefined)?.map((message) =>
                   message.metadata?.kind === "transfer" && message.metadata?.transfer ? (
                     // Transferência de setor (Central): evento de sistema, não bolha

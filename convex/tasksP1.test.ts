@@ -1205,3 +1205,112 @@ describe("preferências de notificação", () => {
     expect((await notificationsOf(t, s.ana.memberId)).length).toBe(1);
   });
 });
+
+// ===== Widget de próximas tarefas =====
+
+describe("getUpcomingTasks", () => {
+  // `now` fixo e "arredondado" (múltiplo de 15 min), como o widget manda.
+  const step = 15 * 60 * 1000;
+  const NOW = Math.floor(Date.UTC(2026, 9, 21, 12, 7) / step) * step;
+  const day = 24 * 60 * 60 * 1000;
+
+  test("só abertas, três faixas (futuras, atrasadas, sem prazo), ordenado por prazo", async () => {
+    const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const base = {
+        organizationId: s.organizationId,
+        type: "task" as const,
+        priority: "medium" as const,
+        createdBy: s.admin.memberId,
+        assigneeIds: [],
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      await ctx.db.insert("tasks", { ...base, title: "Atrasada antiga", status: "pending", dueDate: NOW - 10 * day });
+      await ctx.db.insert("tasks", { ...base, title: "Hoje", status: "in_progress", dueDate: NOW });
+      await ctx.db.insert("tasks", { ...base, title: "Distante", status: "pending", dueDate: NOW + 30 * day });
+      await ctx.db.insert("tasks", { ...base, title: "Amanhã", status: "pending", dueDate: NOW + day });
+      await ctx.db.insert("tasks", { ...base, title: "Sem prazo", status: "pending" });
+      await ctx.db.insert("tasks", { ...base, title: "Concluída", status: "completed", dueDate: NOW });
+      await ctx.db.insert("tasks", { ...base, title: "Cancelada", status: "cancelled" });
+    });
+    const asAna = t.withIdentity({ subject: `${s.ana.userId}|s1` });
+
+    const all = await asAna.query(api.tasks.getUpcomingTasks, { organizationId: s.organizationId, now: NOW });
+    expect(all.map((x: any) => x.title)).toEqual(["Atrasada antiga", "Hoje", "Amanhã", "Distante", "Sem prazo"]);
+
+    // limit = 1 por faixa (status × futuras/atrasadas/sem prazo): das futuras
+    // pendentes só a mais próxima (Amanhã) fica; a distante sai.
+    const small = await asAna.query(api.tasks.getUpcomingTasks, {
+      organizationId: s.organizationId,
+      now: NOW,
+      limit: 1,
+    });
+    expect(small.map((x: any) => x.title)).toEqual(["Atrasada antiga", "Hoje", "Amanhã", "Sem prazo"]);
+  });
+
+  test("60 atrasadas antigas não expulsam as que vencem hoje e na semana", async () => {
+    const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const base = {
+        organizationId: s.organizationId,
+        type: "task" as const,
+        priority: "medium" as const,
+        createdBy: s.admin.memberId,
+        assigneeIds: [],
+        status: "pending" as const,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      for (let i = 1; i <= 60; i++) {
+        await ctx.db.insert("tasks", { ...base, title: `Atrasada ${i}`, dueDate: NOW - (10 + i) * day });
+      }
+      await ctx.db.insert("tasks", { ...base, title: "Vence hoje", dueDate: NOW + 2 * 60 * 60 * 1000 });
+      await ctx.db.insert("tasks", { ...base, title: "Vence em 3 dias", dueDate: NOW + 3 * day });
+    });
+    const asAna = t.withIdentity({ subject: `${s.ana.userId}|s1` });
+
+    const res = await asAna.query(api.tasks.getUpcomingTasks, { organizationId: s.organizationId, now: NOW });
+    const titles = res.map((x: any) => x.title);
+    expect(titles).toContain("Vence hoje");
+    expect(titles).toContain("Vence em 3 dias");
+
+    // As atrasadas devolvidas são as 50 MAIS RECENTES (Atrasada 1..50), em ordem de prazo ASC.
+    const overdue = res.filter((x: any) => x.dueDate < NOW);
+    expect(overdue).toHaveLength(50);
+    expect(new Set(overdue.map((x: any) => x.title))).toEqual(
+      new Set(Array.from({ length: 50 }, (_, i) => `Atrasada ${i + 1}`))
+    );
+    const dues = res.map((x: any) => x.dueDate);
+    expect(dues).toEqual([...dues].sort((a, b) => a - b));
+    expect(titles.slice(-2)).toEqual(["Vence hoje", "Vence em 3 dias"]);
+  });
+
+  test("limit inválido é saneado (NaN = default, 0 = 1, 999 = teto)", async () => {
+    const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const base = {
+        organizationId: s.organizationId,
+        type: "task" as const,
+        priority: "medium" as const,
+        createdBy: s.admin.memberId,
+        assigneeIds: [],
+        status: "pending" as const,
+        createdAt: NOW,
+        updatedAt: NOW,
+      };
+      for (let i = 1; i <= 60; i++) {
+        await ctx.db.insert("tasks", { ...base, title: `Futura ${i}`, dueDate: NOW + i * day });
+      }
+    });
+    const asAna = t.withIdentity({ subject: `${s.ana.userId}|s1` });
+    const q = (limit: number) =>
+      asAna.query(api.tasks.getUpcomingTasks, { organizationId: s.organizationId, now: NOW, limit });
+
+    expect(await q(NaN)).toHaveLength(50);
+    expect(await q(0)).toHaveLength(1);
+    expect(await q(-5)).toHaveLength(1);
+    expect(await q(999)).toHaveLength(60);
+    expect((await q(2.9)).map((x: any) => x.title)).toEqual(["Futura 1", "Futura 2"]);
+  });
+});

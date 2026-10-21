@@ -34,10 +34,26 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
     startNewThread,
   } = useCopilotStream(organizationId);
 
-  const messages = useQuery(
+  // Painel FECHADO não assina o histórico: a query reativa seria reexecutada a
+  // cada mensagem do thread mesmo sem ninguém olhando. Ao reabrir, o último
+  // resultado do MESMO thread é mostrado até a assinatura nova responder (sem
+  // "flash" vazio).
+  const liveMessages = useQuery(
     api.copilot.getThreadMessages,
-    threadId ? { threadId } : "skip"
+    threadId && open ? { threadId } : "skip"
   );
+  const [cachedMessages, setCachedMessages] = useState<{
+    threadId: string;
+    messages: NonNullable<typeof liveMessages>;
+  } | null>(null);
+  useEffect(() => {
+    if (threadId && liveMessages !== undefined) {
+      setCachedMessages({ threadId, messages: liveMessages });
+    }
+  }, [threadId, liveMessages]);
+  const messages =
+    liveMessages ??
+    (cachedMessages && cachedMessages.threadId === threadId ? cachedMessages.messages : undefined);
 
   const [input, setInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -48,7 +64,7 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streamingText, activeTools]);
+  }, [messages, streamingText, activeTools, open]);
 
   // Textarea auto-expansível (até um teto, depois rola internamente).
   useEffect(() => {

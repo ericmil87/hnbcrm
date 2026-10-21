@@ -977,7 +977,9 @@ const applicationTables = {
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
     .index("by_organization_and_archived", ["organizationId", "archivedAt"])
     .index("by_handoff_status", ["handoffState.status"])
-    .index("by_last_activity", ["lastActivityAt"]),
+    .index("by_last_activity", ["lastActivityAt"])
+    // Contagem de leads ATIVOS por board (seletor do Kanban) sem ler arquivados.
+    .index("by_organization_and_board_and_archived", ["organizationId", "boardId", "archivedAt"]),
 
   // Channel configurations (per-org connections to external messaging providers)
   channelConfigs: defineTable({
@@ -1202,10 +1204,16 @@ const applicationTables = {
     .index("by_organization_and_status", ["organizationId", "status"])
     // Lista do inbox ordenada por última mensagem (desc) sem collect() da org.
     .index("by_organization_and_last_message", ["organizationId", "lastMessageAt"])
+    // Lista do inbox: ativas = archivedAt ausente (eq undefined), arquivadas =
+    // gt undefined — o filtro sai do índice, não do take (perf Convex I/O, fase 2).
+    .index("by_organization_and_archived_and_last_message", ["organizationId", "archivedAt", "lastMessageAt"])
     // Badge da sidebar: range unreadCount > 0 direto no índice.
     .index("by_organization_and_unread", ["organizationId", "unreadCount"])
     // Conversa de grupo pelo JID, dentro de um canal (idempotência do ingest).
-    .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"]),
+    .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"])
+    // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
+    // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
+    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
 
   // Messages
   messages: defineTable({

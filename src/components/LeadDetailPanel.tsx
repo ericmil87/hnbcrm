@@ -4,6 +4,16 @@ import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useKeepPrevious } from "@/hooks/useKeepPrevious";
+import {
+  LOAD_MORE_STEP,
+  MESSAGES_DEFAULT_LIMIT,
+  MESSAGES_MAX_LIMIT,
+  canLoadMore,
+  limitForKey,
+  nextLimit,
+  scrollTopAfterPrepend,
+} from "@/lib/inboxPaging";
 import { TAB_ROUTES } from "@/lib/routes";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { LeadCampaignsSection } from "@/components/campaigns/LeadCampaignsSection";
@@ -297,17 +307,31 @@ function ConversationTab({
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
+  // Só a primeira (não lidas primeiro, depois a mais recente) é usada (perf
+  // Convex I/O, fase 2). O ramo por lead lê o índice por canal+criação e ordena
+  // DEPOIS do take: 20 dá folga para a mais recente não ficar de fora.
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
     leadId,
+    limit: 20,
   });
 
   const firstConversation = conversations && conversations.length > 0 ? conversations[0] : null;
+  const firstConversationId: string | null = firstConversation?._id ?? null;
 
-  const messages = useQuery(
+  // As 50 mensagens mais recentes; "Carregar mensagens anteriores" sobe de 50
+  // em 50 até 500 (mesma regra do Inbox).
+  const [messagePage, setMessagePage] = useState<{ key: string | null; limit: number }>(() => ({
+    key: null,
+    limit: MESSAGES_DEFAULT_LIMIT,
+  }));
+  const messageLimit = limitForKey(messagePage, firstConversationId, MESSAGES_DEFAULT_LIMIT);
+  const messagesRaw = useQuery(
     api.conversations.getMessages,
-    firstConversation ? { conversationId: firstConversation._id } : "skip"
+    firstConversation ? { conversationId: firstConversation._id, limit: messageLimit } : "skip"
   ) as InboxMessage[] | undefined;
+  const messages = useKeepPrevious(messagesRaw, firstConversationId);
+  const loadingOlderMessages = messagesRaw === undefined && messages !== undefined;
 
   const sendMessage = useMutation(api.conversations.sendMessage);
   const createConversation = useMutation(api.conversations.createConversation);
@@ -449,11 +473,47 @@ function ConversationTab({
     nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
   };
 
+  // Rolagem guardada ao pedir mensagens anteriores (compensada quando o lote
+  // chega, para a tela não pular para o topo).
+  const prependAnchorRef = useRef<{
+    conversationId: string;
+    limit: number;
+    scrollTop: number;
+    scrollHeight: number;
+  } | null>(null);
+
+  const handleLoadOlderMessages = () => {
+    if (!firstConversationId) return;
+    const el = messagesScrollRef.current;
+    const limit = nextLimit(messageLimit, LOAD_MORE_STEP, MESSAGES_MAX_LIMIT);
+    if (el) {
+      prependAnchorRef.current = {
+        conversationId: firstConversationId,
+        limit,
+        scrollTop: el.scrollTop,
+        scrollHeight: el.scrollHeight,
+      };
+    }
+    setMessagePage({ key: firstConversationId, limit });
+  };
+
   // On conversation switch: force-scroll to newest. On new messages: only stick
   // to the bottom when the user was already near it.
   useLayoutEffect(() => {
     const el = messagesScrollRef.current;
     if (!el || !messages) return;
+    const anchor = prependAnchorRef.current;
+    if (anchor && anchor.conversationId !== firstConversationId) prependAnchorRef.current = null;
+    if (
+      anchor &&
+      anchor.conversationId === firstConversationId &&
+      anchor.limit === messageLimit &&
+      messagesRaw !== undefined
+    ) {
+      prependAnchorRef.current = null;
+      el.scrollTop = scrollTopAfterPrepend(anchor, el.scrollHeight);
+      return;
+    }
     const convId = firstConversation?._id ?? null;
     const switched = scrolledConvRef.current !== convId;
     if (switched) {
@@ -463,7 +523,7 @@ function ConversationTab({
       return;
     }
     if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, firstConversation?._id]);
+  }, [messages, messagesRaw, messageLimit, firstConversationId, firstConversation?._id]);
 
   const handleSend = async () => {
     if ((!messageText.trim() && stagedFiles.length === 0) || sending) return;
@@ -625,6 +685,27 @@ function ConversationTab({
               Nenhuma conversa ainda. Envie uma mensagem para iniciar.
             </div>
           )}
+
+          {messages &&
+          (loadingOlderMessages ||
+            canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
+            <div className="text-center py-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLoadOlderMessages}
+                disabled={loadingOlderMessages}
+              >
+                {loadingOlderMessages ? "Carregando…" : "Carregar mensagens anteriores"}
+              </Button>
+            </div>
+          ) : messages && messages.length >= MESSAGES_MAX_LIMIT ? (
+            <div className="text-center py-1">
+              <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
+                Exibindo as últimas {MESSAGES_MAX_LIMIT} mensagens
+              </span>
+            </div>
+          ) : null}
 
           {messages?.map((message) =>
             getAiDraft(message) ? (

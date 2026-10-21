@@ -95,7 +95,11 @@ export function HandoffPeekSlideOver({
 
   const messages = useQuery(
     api.conversations.getMessages,
-    conversationId ? { conversationId: conversationId as Id<"conversations"> } : "skip"
+    // A espiada só mostra as últimas THREAD_LIMIT: pede uma a mais só para
+    // saber se há mensagens anteriores (aviso "Exibindo as últimas…").
+    conversationId
+      ? { conversationId: conversationId as Id<"conversations">, limit: THREAD_LIMIT + 1 }
+      : "skip"
   ) as InboxMessage[] | undefined;
 
   const conversation = useQuery(

@@ -132,6 +132,7 @@ import type * as lib_importMapping from "../lib/importMapping.js";
 import type * as lib_inboundLeadWelcome from "../lib/inboundLeadWelcome.js";
 import type * as lib_inboundLeadWelcomeHooks from "../lib/inboundLeadWelcomeHooks.js";
 import type * as lib_inboundRouting from "../lib/inboundRouting.js";
+import type * as lib_inboxLimits from "../lib/inboxLimits.js";
 import type * as lib_leadAttribution from "../lib/leadAttribution.js";
 import type * as lib_leadCascade from "../lib/leadCascade.js";
 import type * as lib_leadRef from "../lib/leadRef.js";
@@ -330,6 +331,7 @@ declare const fullApi: ApiFromModules<{
   "lib/inboundLeadWelcome": typeof lib_inboundLeadWelcome;
   "lib/inboundLeadWelcomeHooks": typeof lib_inboundLeadWelcomeHooks;
   "lib/inboundRouting": typeof lib_inboundRouting;
+  "lib/inboxLimits": typeof lib_inboxLimits;
   "lib/leadAttribution": typeof lib_leadAttribution;
   "lib/leadCascade": typeof lib_leadCascade;
   "lib/leadRef": typeof lib_leadRef;

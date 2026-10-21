@@ -1185,7 +1185,7 @@ export const internalDispatchReaction = internalAction({
 });
 
 // Internal: send bridge read receipts to the wuzapi gateway. Best-effort — the
-// local readAt stamps already happened in the mutation.
+// local read watermark (`conversation.lastReadAt`) already moved in the mutation.
 export const internalBridgeMarkRead = internalAction({
   args: {
     configId: v.id("channelConfigs"),

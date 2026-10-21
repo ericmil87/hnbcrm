@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { Button } from "@/components/ui/Button";
@@ -118,11 +119,14 @@ export function TasksPage() {
     project: TaskProjectSummary;
   } | null>(null);
 
+  // Relógio LOCAL (destaque de atrasada / "há X" na tela, sem custo no backend).
+  // Em args de query vai só o `queryNow` arredondado (15 min).
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
+  const queryNow = useRoundedNow();
 
   // Busca server-side (full-text) com debounce
   useEffect(() => {
@@ -140,7 +144,7 @@ export function TasksPage() {
     | { _id: Id<"taskLabels">; name: string; color: string }[]
     | undefined;
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
-  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
   const columns = useQuery(
     api.taskProjects.getColumns,
     selectedProjectId ? { projectId: selectedProjectId } : "skip"

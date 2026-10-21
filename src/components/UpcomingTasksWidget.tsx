@@ -4,6 +4,7 @@ import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -96,16 +97,18 @@ export function UpcomingTasksWidget({
   // Collapsed groups
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set());
 
-  // Time for date computations (updated every minute)
+  // Relógio LOCAL para agrupar/destacar na tela (atualiza a cada minuto, sem
+  // custo no backend). Em args de query vai só o `queryNow` arredondado.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60000);
     return () => clearInterval(interval);
   }, []);
+  const queryNow = useRoundedNow();
 
   // Queries
-  const tasks = useQuery(api.tasks.getTasks, { organizationId });
-  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now });
+  const tasks = useQuery(api.tasks.getUpcomingTasks, { organizationId, now: queryNow });
+  const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
   const currentMember = useQuery(api.teamMembers.getCurrentTeamMember, { organizationId });
   const completeTask = useMutation(api.tasks.completeTask);
 
@@ -216,6 +219,15 @@ export function UpcomingTasksWidget({
       } else {
         groups[4].tasks.push(task);
       }
+    }
+
+    // O servidor já devolve por prazo ASC (sem prazo por último), mas junta
+    // pending e in_progress — ordenar aqui garante que cada balde fique por
+    // prazo independentemente do status (estável: empate mantém a ordem dele).
+    // O balde "Sem Data" fica na ordem do servidor (mais recentes primeiro).
+    for (const group of groups) {
+      if (group.key === "noDate") continue;
+      group.tasks.sort((a, b) => (a.dueDate ?? 0) - (b.dueDate ?? 0));
     }
 
     return groups.filter((g) => g.tasks.length > 0);

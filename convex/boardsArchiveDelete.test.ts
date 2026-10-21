@@ -18,6 +18,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { LEAD_COUNT_CAP } from "./boards";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -508,5 +509,77 @@ describe("getBoardDeletionImpact", () => {
       boardId: s.principal.boardId,
     });
     expect(impacto).toEqual({ leadCount: 2, exclusiveContactCount: 1, capped: false });
+  });
+});
+
+describe("getLeadCountsByBoard (seletor do Kanban)", () => {
+  test("conta só leads ativos de boards ativos", async () => {
+    const s = await seed(t);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    await insertLead(t, { organizationId: s.organizationId, ...s.principal, title: "A" });
+    await insertLead(t, { organizationId: s.organizationId, ...s.principal, title: "B" });
+    const arquivado = await insertLead(t, {
+      organizationId: s.organizationId,
+      ...s.principal,
+      title: "Arquivado",
+    });
+    await t.run(async (ctx) => ctx.db.patch(arquivado, { archivedAt: Date.now() }));
+    await insertLead(t, { organizationId: s.organizationId, ...s.secundario, title: "C" });
+
+    const counts = await asAgent.query(api.boards.getLeadCountsByBoard, {
+      organizationId: s.organizationId,
+    });
+    expect(counts).toEqual([
+      { boardId: s.principal.boardId, count: 2, capped: false },
+      { boardId: s.secundario.boardId, count: 1, capped: false },
+    ]);
+
+    // Board arquivado some da contagem.
+    await t.run(async (ctx) => ctx.db.patch(s.secundario.boardId, { archivedAt: Date.now() }));
+    const depois = await asAgent.query(api.boards.getLeadCountsByBoard, {
+      organizationId: s.organizationId,
+    });
+    expect(depois.map((c) => c.boardId)).toEqual([s.principal.boardId]);
+  });
+
+  test("satura no teto e marca capped", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < LEAD_COUNT_CAP + 1; i++) {
+        await ctx.db.insert("leads", {
+          organizationId: s.organizationId,
+          title: `L${i}`,
+          boardId: s.principal.boardId,
+          stageId: s.principal.stageId,
+          value: 0,
+          currency: "BRL",
+          priority: "medium",
+          temperature: "warm",
+          tags: [],
+          customFields: {},
+          conversationStatus: "new",
+          lastActivityAt: now,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+    const counts = await asAdmin.query(api.boards.getLeadCountsByBoard, {
+      organizationId: s.organizationId,
+    });
+    expect(counts[0]).toEqual({ boardId: s.principal.boardId, count: LEAD_COUNT_CAP, capped: true });
+    expect(counts[1]).toEqual({ boardId: s.secundario.boardId, count: 0, capped: false });
+  });
+
+  test("recusa quem não é membro da org", async () => {
+    const s = await seed(t);
+    const outsider = await t.run(async (ctx) => ctx.db.insert("users", {}));
+    await expect(
+      t.withIdentity({ subject: `${outsider}|s1` }).query(api.boards.getLeadCountsByBoard, {
+        organizationId: s.organizationId,
+      })
+    ).rejects.toThrow();
   });
 });
