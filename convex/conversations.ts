@@ -2523,9 +2523,26 @@ export const internalUpdateDeliveryStatus = internalMutation({
       return null;
     }
 
+    // Nunca rebaixa e nunca reescreve igual (perf Convex I/O, fase 3): o
+    // webhook da Meta/bridge chega fora de ordem e repetido, e cada patch
+    // reexecutava as queries do Inbox que leram a mensagem. `failed` sempre
+    // aplica (com o detalhe do erro, quando vier). Status que não sobe = no-op,
+    // sem escrita e sem consultar o hook de campanha.
+    const current = message.deliveryStatus ?? "sent";
+    const isFailed = args.status === "failed";
+    const statusChanged = args.status !== message.deliveryStatus;
+    // Sem status gravado, qualquer recibo vale (inclusive o "sent" da Meta).
+    const rises =
+      message.deliveryStatus === undefined ||
+      DELIVERY_RANK[args.status] > DELIVERY_RANK[current];
+    const writeError = isFailed && !!args.errorDetail;
+    if (!(isFailed ? statusChanged || writeError : rises)) {
+      return message._id;
+    }
+
     await ctx.db.patch(message._id, {
-      deliveryStatus: args.status,
-      ...(args.errorDetail
+      ...(statusChanged ? { deliveryStatus: args.status } : {}),
+      ...(writeError
         ? {
             metadata: {
               ...(message.metadata ?? {}),
@@ -2536,13 +2553,17 @@ export const internalUpdateDeliveryStatus = internalMutation({
         : {}),
     });
 
-    // Campanhas: delivered/read/failed do webhook (no-op fora de campanha)
-    await applyCampaignDeliveryUpdate(ctx, {
-      messageId: message._id,
-      status: args.status,
-      errorCode: args.errorCode,
-      errorDetail: args.errorDetail,
-    });
+    // Campanhas: delivered/read/failed do webhook. Só mensagem de campanha
+    // (mesma guarda do recibo de grupo) — fora dela o hook só consultava
+    // `campaignRecipients.by_message` para não achar nada.
+    if (message.metadata?.campaign) {
+      await applyCampaignDeliveryUpdate(ctx, {
+        messageId: message._id,
+        status: args.status,
+        errorCode: args.errorCode,
+        errorDetail: args.errorDetail,
+      });
+    }
 
     return message._id;
   },
