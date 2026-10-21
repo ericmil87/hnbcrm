@@ -538,6 +538,7 @@ export const checkChannelHealth = action({
         if (!status.ok) {
           await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
             configId: args.configId,
+            forceStamp: true,
             ok: false,
             healthDetail: status.error,
             bridgeSessionState: "disconnected",
@@ -561,6 +562,7 @@ export const checkChannelHealth = action({
           : mapped.phone;
         const displaced = await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
           configId: args.configId,
+          forceStamp: true,
           ok,
           displayPhoneNumber: phone ? `+${phone}` : undefined,
           bridgePhone: phone,
@@ -578,6 +580,7 @@ export const checkChannelHealth = action({
         const error = e instanceof Error ? e.message : "Falha ao consultar o gateway bridge";
         await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
           configId: args.configId,
+          forceStamp: true,
           ok: false,
           healthDetail: error,
           bridgeSessionState: "disconnected",
@@ -608,6 +611,7 @@ export const checkChannelHealth = action({
 
     await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
       configId: args.configId,
+      forceStamp: true,
       ok: result.ok,
       displayPhoneNumber: result.displayPhoneNumber,
       healthDetail: result.ok
@@ -1254,6 +1258,14 @@ export const internalLogoutBridgeInstance = internalAction({
   },
 });
 
+/**
+ * Sem nenhuma mudança observável, o health check só re-carimba
+ * `lastHealthCheckAt` a cada 6 h. O único leitor é o "testado em …" do
+ * card em Configurações → Canais; reescrever o canal a cada tick de 15 min
+ * reexecutava o Inbox inteiro em todas as abas (perf Convex I/O, fase 3).
+ */
+export const HEALTH_STAMP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
 // Internal: store health check outcome
 export const internalRecordHealthCheck = internalMutation({
   args: {
@@ -1265,6 +1277,9 @@ export const internalRecordHealthCheck = internalMutation({
     healthDetail: v.string(),
     // Bridge-only: persist the whatsmeow pairing state for the card badge.
     bridgeSessionState: v.optional(bridgeSessionStateValidator),
+    // "Testar conexão" (ação do usuário): carimba `lastHealthCheckAt` mesmo sem
+    // mudança, para o "testado em" do card refletir o clique.
+    forceStamp: v.optional(v.boolean()),
   },
   // Nomes das contas que perderam este número para esta conexão (vazio é o
   // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
@@ -1275,41 +1290,74 @@ export const internalRecordHealthCheck = internalMutation({
 
     const now = Date.now();
 
+    const connected = args.bridgeSessionState === "connected";
+    const wasConnected = config.bridgeSessionState === "connected";
+
     // Exclusividade ANTES de gravar este canal como ativo: se o mesmo número
     // estava em outra conta, aquela sai primeiro, e nunca há um instante em que
-    // os dois valem.
+    // os dois valem. Só na TRANSIÇÃO (número novo neste canal, ou o canal
+    // acabou de conectar) — o tick de 15 min de um canal que segue conectado
+    // com o mesmo número não varre `by_bridge_phone` de novo (perf Convex I/O,
+    // fase 3). Consequência aceita: se um rival conectar o MESMO número DEPOIS,
+    // é a reivindicação DELE (na conexão dele) que desativa este canal.
     const displaced =
-      args.bridgeSessionState === "connected" && args.bridgePhone
+      connected &&
+      args.bridgePhone &&
+      (args.bridgePhone !== config.bridgePhone || !wasConnected)
         ? await claimBridgePhone(ctx, { config, phone: args.bridgePhone, now })
         : [];
 
-    await ctx.db.patch(args.configId, {
-      // A failing check marks the config as errored; a passing one restores
-      // active only if it wasn't deliberately disabled
-      status: args.ok ? (config.status === "disabled" ? "disabled" : "active") : "error",
-      displayPhoneNumber: args.displayPhoneNumber ?? config.displayPhoneNumber,
-      ...(args.bridgePhone ? { bridgePhone: args.bridgePhone } : {}),
-      healthDetail: args.healthDetail,
-      ...(args.bridgeSessionState ? { bridgeSessionState: args.bridgeSessionState } : {}),
-      // Campanhas: idade do número = 1ª vez que a sessão ficou "connected"
-      ...(args.bridgeSessionState === "connected" && config.bridgeConnectedAt === undefined
-        ? { bridgeConnectedAt: now }
-        : {}),
-      // T02: conectou de novo → zera o marcador de queda e o dedupe do alerta,
-      // para a PRÓXIMA queda voltar a notificar.
-      ...(args.bridgeSessionState === "connected"
-        ? {
-            bridgeUnhealthySince: undefined,
-            bridgeSessionAlertedAt: undefined,
-            bridgeSessionDetail: undefined,
-            bridgeSessionExpiresAt: undefined,
-          }
-        : {}),
-      lastHealthCheckAt: now,
-      updatedAt: now,
-    });
-    // Campanhas: sessão banida/desconectada pausa o que estiver rodando neste canal
-    if (args.bridgeSessionState === "banned" || args.bridgeSessionState === "disconnected") {
+    // Patch só com o que MUDOU de fato: todo patch no canal reexecuta as
+    // queries do Inbox que leram o config (`getConversations` faz batchGet de
+    // `channelConfigs`), em todas as abas abertas.
+    const patch: Partial<Doc<"channelConfigs">> = {};
+    // A failing check marks the config as errored; a passing one restores
+    // active only if it wasn't deliberately disabled
+    const status = args.ok ? (config.status === "disabled" ? "disabled" : "active") : "error";
+    if (status !== config.status) patch.status = status;
+    const displayPhoneNumber = args.displayPhoneNumber ?? config.displayPhoneNumber;
+    if (displayPhoneNumber !== config.displayPhoneNumber) patch.displayPhoneNumber = displayPhoneNumber;
+    if (args.bridgePhone && args.bridgePhone !== config.bridgePhone) patch.bridgePhone = args.bridgePhone;
+    if (args.healthDetail !== config.healthDetail) patch.healthDetail = args.healthDetail;
+    const sessionStateChanged =
+      !!args.bridgeSessionState && args.bridgeSessionState !== config.bridgeSessionState;
+    if (sessionStateChanged) patch.bridgeSessionState = args.bridgeSessionState;
+    // Campanhas: idade do número = 1ª vez que a sessão ficou "connected"
+    if (connected && config.bridgeConnectedAt === undefined) patch.bridgeConnectedAt = now;
+    // T02: conectou de novo → zera o marcador de queda e o dedupe do alerta,
+    // para a PRÓXIMA queda voltar a notificar. Só o campo que EXISTE no doc.
+    if (connected) {
+      for (const key of [
+        "bridgeUnhealthySince",
+        "bridgeSessionAlertedAt",
+        "bridgeSessionDetail",
+        "bridgeSessionExpiresAt",
+      ] as const) {
+        if (config[key] !== undefined) patch[key] = undefined;
+      }
+    }
+    const observableChange = Object.keys(patch).length > 0;
+    // "testado em …" do card: com mudança, carimba junto; sem mudança, só
+    // a cada HEALTH_STAMP_INTERVAL_MS (o card não precisa de precisão de 15 min).
+    if (
+      observableChange ||
+      args.forceStamp ||
+      now - (config.lastHealthCheckAt ?? 0) >= HEALTH_STAMP_INTERVAL_MS
+    ) {
+      patch.lastHealthCheckAt = now;
+    }
+    if (observableChange) patch.updatedAt = now;
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(args.configId, patch);
+    }
+
+    // Campanhas: sessão banida/desconectada pausa o que estiver rodando neste
+    // canal — só na TRANSIÇÃO para esse estado (o worker de campanha já trava
+    // envio com a sessão fora de "connected").
+    if (
+      sessionStateChanged &&
+      (args.bridgeSessionState === "banned" || args.bridgeSessionState === "disconnected")
+    ) {
       await pauseCampaignsForChannel(
         ctx,
         args.configId,
