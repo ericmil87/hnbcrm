@@ -172,6 +172,7 @@ import type * as opsAnonymous from "../opsAnonymous.js";
 import type * as opsBridgeReparse from "../opsBridgeReparse.js";
 import type * as opsMigration from "../opsMigration.js";
 import type * as opsPurge from "../opsPurge.js";
+import type * as opsTasks from "../opsTasks.js";
 import type * as optOuts from "../optOuts.js";
 import type * as orgModules from "../orgModules.js";
 import type * as orgSecrets from "../orgSecrets.js";
@@ -368,6 +369,7 @@ declare const fullApi: ApiFromModules<{
   opsBridgeReparse: typeof opsBridgeReparse;
   opsMigration: typeof opsMigration;
   opsPurge: typeof opsPurge;
+  opsTasks: typeof opsTasks;
   optOuts: typeof optOuts;
   orgModules: typeof orgModules;
   orgSecrets: typeof orgSecrets;

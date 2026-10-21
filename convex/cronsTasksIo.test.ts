@@ -12,6 +12,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { generateNextRecurrenceSafely } from "./lib/taskOps";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -35,6 +36,7 @@ afterEach(async () => {
 });
 
 const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
 async function seedOrg(slug: string) {
   return await t.run(async (ctx) => {
@@ -309,5 +311,179 @@ describe("CRONS_DISABLED", () => {
     vi.unstubAllEnvs();
     await t.mutation(internal.tasks.processOverdueReminders, {});
     expect((await getTask(reminderId))?.reminderTriggered).toBe(true);
+  });
+});
+
+// ===== Lembrete no prazo (job por task) =====
+
+async function triggerReminderJobsFor(taskId: Id<"tasks">) {
+  const jobs = await t.run(async (ctx) => await ctx.db.system.query("_scheduled_functions").collect());
+  return jobs.filter(
+    (j) =>
+      j.state.kind === "pending" &&
+      j.name.includes("triggerReminder") &&
+      !j.name.includes("PreDue") &&
+      (j.args[0] as { taskId?: string })?.taskId === taskId
+  );
+}
+
+describe("lembrete no prazo agendado por task", () => {
+  test("recorrência de reminder concluída agenda triggerReminder para a nova instância", async () => {
+    const org = await seedOrg("org-rem-rec");
+    const asAdmin = t.withIdentity({ subject: `${org.userId}|s1` });
+    const taskId = await asAdmin.mutation(api.tasks.createTask, {
+      organizationId: org.organizationId,
+      title: "Lembrete diário",
+      type: "reminder",
+      priority: "medium",
+      dueDate: Date.now() + HOUR,
+      recurrence: { pattern: "daily" },
+    });
+
+    await asAdmin.mutation(api.tasks.completeTask, { taskId });
+
+    const [next] = await successorsOf(taskId);
+    expect(next).toBeDefined();
+    const jobs = await triggerReminderJobsFor(next._id);
+    expect(jobs.length).toBe(1);
+    expect(jobs[0].scheduledTime).toBeGreaterThanOrEqual(next.dueDate! - 1000);
+  });
+
+  test("updateTask e internalUpdateTask mudando o prazo de reminder agendam triggerReminder", async () => {
+    const org = await seedOrg("org-rem-upd");
+    const asAdmin = t.withIdentity({ subject: `${org.userId}|s1` });
+    const taskId = await asAdmin.mutation(api.tasks.createTask, {
+      organizationId: org.organizationId,
+      title: "Lembrete",
+      type: "reminder",
+      priority: "medium",
+      dueDate: Date.now() + HOUR,
+    });
+    expect((await triggerReminderJobsFor(taskId)).length).toBe(1);
+
+    await asAdmin.mutation(api.tasks.updateTask, { taskId, dueDate: Date.now() + 2 * HOUR });
+    expect((await triggerReminderJobsFor(taskId)).length).toBe(2);
+
+    await t.mutation(internal.tasks.internalUpdateTask, {
+      taskId,
+      dueDate: Date.now() + 3 * HOUR,
+      teamMemberId: org.memberId,
+    });
+    expect((await triggerReminderJobsFor(taskId)).length).toBe(3);
+
+    // task comum não ganha triggerReminder
+    const plainId = await asAdmin.mutation(api.tasks.createTask, {
+      organizationId: org.organizationId,
+      title: "Comum",
+      type: "task",
+      priority: "low",
+      dueDate: Date.now() + HOUR,
+    });
+    await asAdmin.mutation(api.tasks.updateTask, { taskId: plainId, dueDate: Date.now() + 2 * HOUR });
+    expect((await triggerReminderJobsFor(plainId)).length).toBe(0);
+  });
+
+  test("job de prazo antigo não dispara lembrete cujo prazo foi adiado", async () => {
+    const org = await seedOrg("org-rem-stale");
+    const taskId = await insertTask(org, { dueDate: Date.now() + 2 * HOUR });
+    await t.mutation(internal.tasks.triggerReminder, { taskId });
+    expect((await getTask(taskId))?.reminderTriggered).toBeUndefined();
+  });
+});
+
+// ===== Recorrência que falha no resgate =====
+
+describe("resgate de recorrência com falha", () => {
+  test("stampOnFailure carimba lastGeneratedAt sem gerar instância", async () => {
+    const org = await seedOrg("org-rec-falha");
+    const taskId = await insertTask(org, {
+      type: "task",
+      status: "completed",
+      completedAt: Date.now() - HOUR,
+      recurrence: { pattern: "daily" },
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await t.run(async (ctx) => {
+      const doc = (await ctx.db.get(taskId))!;
+      // título inválido faz o insert da instância lançar
+      await generateNextRecurrenceSafely(ctx, { ...doc, title: 42 as unknown as string }, Date.now(), {
+        stampOnFailure: true,
+      });
+    });
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("taskRecurrenceFailed"))).toBe(true);
+    errors.mockRestore();
+    expect((await successorsOf(taskId)).length).toBe(0);
+    expect((await getTask(taskId))?.recurrence?.lastGeneratedAt).toBeDefined();
+  });
+});
+
+// ===== Ops do backlog =====
+
+describe("ops do backlog dos crons", () => {
+  async function seedBacklog() {
+    const org = await seedOrg("org-backlog");
+    const now = Date.now();
+    const ids = {
+      reminderOld: await insertTask(org, { dueDate: now - 40 * DAY }),
+      reminderMid: await insertTask(org, { dueDate: now - 10 * DAY, reminderTriggered: false }),
+      reminderRecent: await insertTask(org, { dueDate: now - HOUR }),
+      reminderSnoozed: await insertTask(org, {
+        dueDate: now - 40 * DAY, reminderTriggered: false, snoozedUntil: now + HOUR,
+      }),
+      recurringOld: await insertTask(org, {
+        type: "task", status: "completed", completedAt: now - 40 * DAY, recurrence: { pattern: "weekly" },
+      }),
+      recurringRecent: await insertTask(org, {
+        type: "task", status: "completed", completedAt: now - HOUR, recurrence: { pattern: "daily" },
+      }),
+    };
+    return { org, ids };
+  }
+
+  test("internalCountCronBacklog conta pelos ranges dos crons, por idade e por org", async () => {
+    const { org } = await seedBacklog();
+    const r = await t.query(internal.opsTasks.internalCountCronBacklog, {});
+    expect(r.reminders.total).toEqual({ count: 4, olderThan7d: 3, olderThan30d: 2 });
+    expect(r.reminders.byOrganization).toEqual([
+      { organizationId: org.organizationId, count: 4, olderThan7d: 3, olderThan30d: 2 },
+    ]);
+    const pendingFalse = r.reminders.ranges.find(
+      (x) => x.status === "pending" && x.reminderTriggered === "false"
+    )!;
+    expect(pendingFalse.snoozed).toBe(1);
+    expect(r.reminders.ranges.every((x) => !x.truncated)).toBe(true);
+    expect(r.recurrences.total).toEqual({ count: 2, olderThan7d: 1, olderThan30d: 1 });
+  });
+
+  test("dryRun não escreve; real carimba só o que passou do corte e o cron ignora o carimbado", async () => {
+    const { ids } = await seedBacklog();
+
+    const plan = await t.mutation(internal.opsTasks.internalStampLegacyCronBacklog, {});
+    expect(plan.dryRun).toBe(true);
+    expect(plan.reminders.byOrganization[0].taskIds.sort()).toEqual([ids.reminderOld, ids.reminderMid].sort());
+    expect(plan.recurrences.byOrganization[0].taskIds).toEqual([ids.recurringOld]);
+    expect((await getTask(ids.reminderOld))?.reminderTriggered).toBeUndefined();
+    expect((await getTask(ids.recurringOld))?.recurrence?.lastGeneratedAt).toBeUndefined();
+
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const real = await t.mutation(internal.opsTasks.internalStampLegacyCronBacklog, { dryRun: false });
+    logs.mockRestore();
+    expect(real.reminders.count).toBe(2);
+    expect(real.recurrences.count).toBe(1);
+    expect((await getTask(ids.reminderOld))?.reminderTriggered).toBe(true);
+    expect((await getTask(ids.reminderMid))?.reminderTriggered).toBe(true);
+    expect((await getTask(ids.reminderSnoozed))?.reminderTriggered).toBe(false);
+    expect((await getTask(ids.recurringOld))?.recurrence?.lastGeneratedAt).toBeDefined();
+    expect(await t.run(async (ctx) => await ctx.db.query("notifications").collect())).toEqual([]);
+
+    await t.mutation(internal.tasks.processOverdueReminders, {});
+    await t.mutation(internal.tasks.processRecurringTasks, {});
+
+    const notified = (await t.run(async (ctx) => await ctx.db.query("notifications").collect())).map(
+      (n) => n.taskId
+    );
+    expect(notified).toEqual([ids.reminderRecent]);
+    expect((await successorsOf(ids.recurringOld)).length).toBe(0);
+    expect((await successorsOf(ids.recurringRecent)).length).toBe(1);
   });
 });
