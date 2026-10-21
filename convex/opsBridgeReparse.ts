@@ -64,7 +64,11 @@ function pushSample(list: Id<"messages">[], id: Id<"messages">) {
   if (list.length < SAMPLE_CAP) list.push(id);
 }
 
-/** Inbound ainda não lido pelo time (mesma regra de `markConversationRead`). */
+/**
+ * Inbound ainda não lido pelo time (mesma regra de `markConversationRead`: a
+ * marca d'água é `conversation.lastReadAt`; `metadata.readAt` só existe em
+ * mensagem lida antes da fase 2 do perf Convex I/O e segue valendo como legado).
+ */
 function wasUnread(message: Doc<"messages">, conversation: Doc<"conversations"> | null): boolean {
   if (!conversation || (conversation.unreadCount ?? 0) <= 0) return false;
   if (message.direction !== "inbound" || message.metadata?.readAt) return false;

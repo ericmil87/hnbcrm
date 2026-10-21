@@ -30,6 +30,14 @@ import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming"
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
 import { applyBridgeEdit, applyBridgeRevoke } from "./lib/bridgeMessageMutations";
+import {
+  clampLimit,
+  INBOX_UNREAD_SCAN_CAP,
+  CONVERSATIONS_DEFAULT_LIMIT,
+  CONVERSATIONS_MAX_LIMIT,
+  MESSAGES_DEFAULT_LIMIT,
+  MESSAGES_MAX_LIMIT,
+} from "./lib/inboxLimits";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -304,6 +312,7 @@ export const getConversations = query({
       v.literal("internal")
     )),
     assignedTo: v.optional(v.id("teamMembers")),
+    // Default 50, teto 500 (validado no servidor).
     limit: v.optional(v.number()),
     // Lista do inbox: false/ausente = só ativas; true = só arquivadas.
     // Ignorado quando leadId é passado (painel do lead mostra tudo).
@@ -320,6 +329,7 @@ export const getConversations = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     const me = await requireAuth(ctx, args.organizationId);
+    const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
 
     let conversations;
     if (!args.leadId && args.departmentId) {
@@ -328,36 +338,49 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).eq("departmentId", args.departmentId!)
         )
         .order("desc")
-        .take(args.limit ?? 200);
+        .take(limit);
     } else if (!args.leadId && args.noDepartment) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_department", (q) =>
           q.eq("organizationId", args.organizationId).eq("departmentId", undefined)
         )
         .order("desc")
-        .take(args.limit ?? 200);
+        .take(limit);
     } else if (!args.leadId && args.unitId) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_unit", (q) =>
           q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!)
         )
         .order("desc")
-        .take(args.limit ?? 200);
+        .take(limit);
     } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
-        .take(args.limit ?? 200);
+        .take(limit);
     } else if (args.leadId) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
-        .take(args.limit ?? 200);
-    } else {
-      // Ordena pelo índice de última mensagem (desc) — o take(200) pega as
-      // conversas com atividade mais recente, não as mais antigas por criação.
+        .take(limit);
+    } else if (args.archived) {
+      // Arquivadas: `archivedAt` presente (`gt(undefined)` — undefined é o menor
+      // valor do índice). A ordem do índice é a de ARQUIVAMENTO (desc); a lista
+      // é reordenada por última mensagem no sort final.
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_last_message", (q) => q.eq("organizationId", args.organizationId))
+        .withIndex("by_organization_and_archived_and_last_message", (q) =>
+          q.eq("organizationId", args.organizationId).gt("archivedAt", undefined)
+        )
         .order("desc")
-        .take(args.limit ?? 200);
+        .take(limit);
+    } else {
+      // Ativas: `archivedAt` ausente (`eq(undefined)` casa doc SEM o campo),
+      // por última mensagem desc. O filtro de arquivadas sai do índice: antes
+      // vinha depois do take e conversas arquivadas recentes "comiam" vagas.
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_archived_and_last_message", (q) =>
+          q.eq("organizationId", args.organizationId).eq("archivedAt", undefined)
+        )
+        .order("desc")
+        .take(limit);
     }
 
     // Only filter by channel if we used the org-level index and channel was specified
@@ -426,6 +449,12 @@ export const getConversations = query({
 /**
  * Total de mensagens não lidas nas conversas ativas (badge da sidebar).
  * Mesmo gate de visibilidade do item de navegação (inbox:view_own).
+ *
+ * Lê no máximo `INBOX_UNREAD_SCAN_CAP` conversas não lidas (perf Convex I/O,
+ * fase 2): é montada em toda tela (sidebar + tab bar) e reexecuta a cada
+ * mensagem recebida. Com mais conversas não lidas que isso a soma fica
+ * limitada a elas — o badge mostra "99+" bem antes. Arquivar zera o
+ * `unreadCount`, então arquivadas não ocupam o teto; o filtro em JS é rede.
  */
 export const getInboxUnreadCount = query({
   args: { organizationId: v.id("organizations") },
@@ -437,7 +466,7 @@ export const getInboxUnreadCount = query({
       .withIndex("by_organization_and_unread", (q) =>
         q.eq("organizationId", args.organizationId).gt("unreadCount", 0)
       )
-      .collect();
+      .take(INBOX_UNREAD_SCAN_CAP);
     return unreadConversations
       .filter((c) => !c.archivedAt)
       .reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
@@ -492,9 +521,15 @@ export const getConversationById = query({
   },
 });
 
-// Get messages for conversation
+// Get messages for conversation — as `limit` mais RECENTES (default 50, teto
+// 500), devolvidas em ordem ASC (mais antiga primeiro), como sempre. Antes era
+// `take(500)` ASC, que numa conversa com mais de 500 mensagens trazia as 500
+// mais ANTIGAS. A REST usa `internalGetMessages`, não esta.
 export const getMessages = query({
-  args: { conversationId: v.id("conversations") },
+  args: {
+    conversationId: v.id("conversations"),
+    limit: v.optional(v.number()),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
@@ -503,10 +538,14 @@ export const getMessages = query({
 
     await requireAuth(ctx, conversation.organizationId);
 
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
-      .take(500);
+    const limit = clampLimit(args.limit, MESSAGES_DEFAULT_LIMIT, MESSAGES_MAX_LIMIT);
+    const messages = (
+      await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
+        .order("desc")
+        .take(limit)
+    ).reverse();
 
     // Batch fetch sender info
     const senderMap = await batchGet(ctx.db, messages.map(m => m.senderId));
@@ -705,9 +744,13 @@ export const setConversationArchived = mutation({
     if (!args.archived && conversation.kind === "group") {
       await assertGroupConversationSendable(ctx, conversation);
     }
+    const now = Date.now();
     await ctx.db.patch(args.conversationId, {
-      archivedAt: args.archived ? Date.now() : undefined,
-      updatedAt: Date.now(),
+      archivedAt: args.archived ? now : undefined,
+      // Arquivar = dar a conversa por lida: zera o contador (badge e teto de
+      // `getInboxUnreadCount`). Desarquivar NÃO restaura o contador.
+      ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
+      updatedAt: now,
     });
     return null;
   },
@@ -739,6 +782,8 @@ export const bulkSetConversationsArchived = mutation({
       }
       await ctx.db.patch(conversationId, {
         archivedAt: args.archived ? now : undefined,
+        // Mesma regra do `setConversationArchived`: arquivar zera o contador.
+        ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
         updatedAt: now,
       });
       changed++;
@@ -2609,10 +2654,15 @@ export const reactToMessage = mutation({
   },
 });
 
-// Mark the recent inbound messages of a conversation as read. Stamps
-// metadata.readAt locally and, for a BRIDGE whatsapp conversation, sends the read
-// receipts to the gateway (Meta already best-effort marks read on dispatch, so we
-// don't duplicate it there). Requires inbox "view_all".
+// Mark the recent inbound messages of a conversation as read. The local
+// watermark is `conversation.lastReadAt` (+ `unreadCount: 0`) — a single patch;
+// since the perf Convex I/O fase 2 nothing writes `messages.metadata.readAt`
+// anymore (it rewrote the whole metadata, `raw` included, of up to 20 messages
+// per call, and every write re-ran the inbox queries). For a BRIDGE whatsapp
+// conversation it also sends the read receipts to the gateway (Meta already
+// best-effort marks read on dispatch, so we don't duplicate it there). A
+// repeated call with nothing new since `lastReadAt` writes NOTHING.
+// Requires inbox "view_all".
 export const markConversationRead = mutation({
   args: {
     conversationId: v.id("conversations"),
@@ -2625,27 +2675,29 @@ export const markConversationRead = mutation({
     await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
 
     const now = Date.now();
+    const lastReadAt = conversation.lastReadAt ?? 0;
 
-    // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
-    // lista) — independe dos recibos de leitura do provedor logo abaixo.
-    if ((conversation.unreadCount ?? 0) > 0) {
-      await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
-    }
-
-    // Cap the batch: the newest 20 inbound messages that carry a provider id and
-    // aren't marked read yet. (Older history is left as-is.)
+    // Cap the batch: the newest 20 messages. (Older history is left as-is.)
     const recent = await ctx.db
       .query("messages")
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
       .order("desc")
       .take(20);
-    const unread = recent.filter(
-      (m) => m.direction === "inbound" && !!m.externalId && !m.metadata?.readAt
+    // Inbound que chegou depois da última leitura (dedupe pelo `lastReadAt`).
+    const newInbound = recent.filter(
+      (m) => m.direction === "inbound" && m.createdAt > lastReadAt
     );
+    if (newInbound.length === 0 && (conversation.unreadCount ?? 0) === 0) return null;
+
+    // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
+    // lista) e avança a marca d'água — independe dos recibos logo abaixo.
+    await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+
+    // Recibo só para quem tem id do provedor. `metadata.readAt` legado (antes da
+    // fase 2) continua respeitado, para não reenviar recibo de mensagem antiga
+    // na primeira leitura de uma conversa ainda sem `lastReadAt`.
+    const unread = newInbound.filter((m) => !!m.externalId && !m.metadata?.readAt);
     if (unread.length === 0) return null;
-    for (const m of unread) {
-      await ctx.db.patch(m._id, { metadata: { ...(m.metadata ?? {}), readAt: now } });
-    }
 
     if (conversation.channel === "whatsapp") {
       const { config, toPhone } = await resolveWhatsappTarget(ctx, conversation);
