@@ -331,6 +331,13 @@ export const getConversations = query({
     const me = await requireAuth(ctx, args.organizationId);
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
 
+    // Ramos da Central (setor/unidade): os índices ordenam por CRIAÇÃO, não por
+    // última mensagem, e as arquivadas só saem depois do take — com o default
+    // de 50 a lista perderia conversas ativas recentes. Mantém o take antigo de
+    // 200 como piso; o índice certo ([organizationId, departmentId|unitId,
+    // archivedAt, lastMessageAt]) fica para um follow-up.
+    const centralTake = Math.max(limit, 200);
+
     let conversations;
     if (!args.leadId && args.departmentId) {
       conversations = await ctx.db.query("conversations")
@@ -338,21 +345,21 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).eq("departmentId", args.departmentId!)
         )
         .order("desc")
-        .take(limit);
+        .take(centralTake);
     } else if (!args.leadId && args.noDepartment) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_department", (q) =>
           q.eq("organizationId", args.organizationId).eq("departmentId", undefined)
         )
         .order("desc")
-        .take(limit);
+        .take(centralTake);
     } else if (!args.leadId && args.unitId) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_unit", (q) =>
           q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!)
         )
         .order("desc")
-        .take(limit);
+        .take(centralTake);
     } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
@@ -442,7 +449,9 @@ export const getConversations = query({
       return (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt);
     });
 
-    return conversationsWithData;
+    // Os ramos da Central leem até `centralTake` (> limit): devolve só `limit`,
+    // senão o "Carregar mais" do front (lote cheio = há mais) nunca terminaria.
+    return conversationsWithData.slice(0, limit);
   },
 });
 
@@ -453,8 +462,10 @@ export const getConversations = query({
  * Lê no máximo `INBOX_UNREAD_SCAN_CAP` conversas não lidas (perf Convex I/O,
  * fase 2): é montada em toda tela (sidebar + tab bar) e reexecuta a cada
  * mensagem recebida. Com mais conversas não lidas que isso a soma fica
- * limitada a elas — o badge mostra "99+" bem antes. Arquivar zera o
- * `unreadCount`, então arquivadas não ocupam o teto; o filtro em JS é rede.
+ * limitada a elas — o badge mostra "99+" bem antes. Arquivadas nem são lidas
+ * (índice com `archivedAt` ausente): o ingest pode seguir somando
+ * `unreadCount` numa conversa arquivada e nem todo caminho de arquivamento
+ * (ex.: `groupChats.ts`) zera o contador. O filtro em JS é rede.
  */
 export const getInboxUnreadCount = query({
   args: { organizationId: v.id("organizations") },
@@ -463,8 +474,11 @@ export const getInboxUnreadCount = query({
     await requirePermission(ctx, args.organizationId, "inbox", "view_own");
     const unreadConversations = await ctx.db
       .query("conversations")
-      .withIndex("by_organization_and_unread", (q) =>
-        q.eq("organizationId", args.organizationId).gt("unreadCount", 0)
+      .withIndex("by_organization_and_archived_and_unread", (q) =>
+        q
+          .eq("organizationId", args.organizationId)
+          .eq("archivedAt", undefined)
+          .gt("unreadCount", 0)
       )
       .take(INBOX_UNREAD_SCAN_CAP);
     return unreadConversations

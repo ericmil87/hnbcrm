@@ -159,6 +159,39 @@ describe("getConversations — limite e arquivadas", () => {
   });
 });
 
+describe("getConversations — ramos da Central", () => {
+  test("noDepartment: arquivadas criadas depois não escondem as ativas; devolve no máximo limit", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, asAdmin } = await seedOrg(t);
+    const t0 = Date.now();
+    // Índice por criação: 5 ativas antigas + 60 arquivadas mais novas.
+    await seedConversations(t, organizationId, [
+      ...Array.from({ length: 5 }, (_, i) => ({ lastMessageAt: t0 + i })),
+      ...Array.from({ length: 60 }, (_, i) => ({
+        lastMessageAt: t0 + 100 + i,
+        archivedAt: t0 + 200 + i,
+      })),
+    ]);
+    const list = await asAdmin.query(api.conversations.getConversations, {
+      organizationId,
+      noDepartment: true,
+    });
+    expect(list).toHaveLength(5);
+
+    await seedConversations(
+      t,
+      organizationId,
+      Array.from({ length: 80 }, (_, i) => ({ lastMessageAt: t0 + 1_000 + i }))
+    );
+    const capped = await asAdmin.query(api.conversations.getConversations, {
+      organizationId,
+      noDepartment: true,
+      limit: 50,
+    });
+    expect(capped).toHaveLength(50);
+  });
+});
+
 describe("getMessages — as mais recentes, em ordem ASC", () => {
   test("default 50 das 60; limit 10; shape inalterado", async () => {
     const t = convexTest(schema, modules);
@@ -461,6 +494,21 @@ describe("getInboxUnreadCount — arquivar zera e soma tem teto", () => {
       archived: false,
     });
     expect(await asAdmin.query(api.conversations.getInboxUnreadCount, { organizationId })).toBe(4);
+  });
+
+  test("arquivada com unreadCount > 0 (ex.: arquivada por groupChats) não conta nem ocupa o teto", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, asAdmin } = await seedOrg(t);
+    const t0 = Date.now();
+    await seedConversations(t, organizationId, [
+      ...Array.from({ length: INBOX_UNREAD_SCAN_CAP }, (_, i) => ({
+        lastMessageAt: t0 + i,
+        archivedAt: t0 + i,
+        unreadCount: 5,
+      })),
+      { lastMessageAt: t0 + 500, unreadCount: 3 },
+    ]);
+    expect(await asAdmin.query(api.conversations.getInboxUnreadCount, { organizationId })).toBe(3);
   });
 
   test(`soma limitada a ${INBOX_UNREAD_SCAN_CAP} conversas não lidas`, async () => {
