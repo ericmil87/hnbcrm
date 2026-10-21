@@ -274,14 +274,18 @@ export const internalRouteInbound = internalMutation({
     // v4.1 P4: se o canal tem um atendente IA com pipelineConfig, o lead novo
     // nasce no board/estágio configurados (resolvido ANTES do lead — o filtro
     // de board do atendente não se aplica aqui, o lead ainda não existe).
-    const org = await ctx.db.get(config.organizationId);
-    const attendant = await findAttendantForChannel(ctx, org, config);
-    const pipeline = attendant?.agentProfile?.pipelineConfig;
+    // Perf Convex I/O, fase 3: o atendente (e a org) só são lidos quando o lead
+    // vai ser CRIADO — contato com lead existente não paga o `.collect()` de
+    // membros IA. A config do canal continua sendo lida aqui e nas outras
+    // etapas do ingest (snapshot único fica para depois — ganho baixo).
     const leadId = await ensureLeadForContact(ctx, {
       organizationId: config.organizationId,
       contactId,
-      preferredBoardId: pipeline?.boardId,
-      preferredStageId: pipeline?.initialStageId,
+      resolvePipeline: async () => {
+        const org = await ctx.db.get(config.organizationId);
+        const attendant = await findAttendantForChannel(ctx, org, config);
+        return attendant?.agentProfile?.pipelineConfig;
+      },
     });
     return { contactId, leadId };
   },

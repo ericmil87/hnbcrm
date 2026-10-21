@@ -88,7 +88,7 @@ Com `CRONS_DISABLED=1` no dev, o I/O de cron do dev vai a zero. A conta depende 
 
 ## Fase 2 — frontend: queries reativas caras
 
-Branch: `perf/convex-io-fase2`. Status: implementada, revisada e corrigida em 21/10/2026; aguardando PR/deploy.
+Branch: `perf/convex-io-fase2` → PR #6, mergeado em `main` (79fd1ba) e PUBLICADO em prod pelo Vercel em 21/10/2026 ~22:51 UTC (bundle `index-DreHCUuq.js`); dev via `convex dev --once` (3 índices). Sem erros nos logs de prod; Inbox e funil conferidos no navegador (org Eric Milfont: 17 conversas ativas, abaixo do lote de 50).
 
 ### Mudanças
 
@@ -141,7 +141,42 @@ Branch: `perf/convex-io-fase2`. Status: implementada, revisada e corrigida em 21
 
 ## Fase 3 — writes que invalidam o Inbox
 
-_não iniciada_
+Branch: `perf/convex-io-fase3`. Status: implementada em 21/10/2026; em revisão.
+
+### Mudanças
+
+| Ponto | Antes | Depois |
+|---|---|---|
+| `conversations.internalApplyGroupReceipt` (10K/mês prod) | `patch` SEMPRE, inclusive `{}` ("delivered" do 2º membro em diante); `appendReadBy` sempre gerava array novo (releitura reescrevia `readBy`); hook de campanha a cada recibo | `readBy` só com jid NOVO (primeira leitura vence); patch só com o que mudou, `continue` quando vazio; hook de campanha só na transição de status com `metadata.campaign` |
+| `conversations.internalUpdateDeliveryStatus` (recibos 1 a 1 do bridge e `statuses` da Meta) | gravava `deliveryStatus` incondicionalmente (rebaixava `read → delivered` fora de ordem) e chamava o hook de campanha sempre (consulta `campaignRecipients.by_message` por recibo) | `DELIVERY_RANK` compartilhado: status só sobe, `failed` sempre aplica; sem mudança = sem patch e sem hook; hook exige `metadata.campaign` |
+| `channelConfigs.internalRecordHealthCheck` (cron de 15 min + manual) | patch com `lastHealthCheckAt`/`updatedAt` = `Date.now()` em TODO tick → reexecutava `getConversations` em toda aba a cada 15 min; `claimBridgePhone` (`.collect()`) a cada tick | patch campo a campo (vazio não grava); `updatedAt` só com mudança real; `lastHealthCheckAt` com mudança, a cada 6 h (`HEALTH_STAMP_INTERVAL_MS`) ou `forceStamp` (botão "Testar conexão"); `claimBridgePhone` só com número novo ou canal que não estava conectado; `pauseCampaignsForChannel` só na transição |
+| `lib/groupChatCore.recordParticipantFromMessage` | patch de `participants` (até 1.024 itens, 60–90 KB) em TODA mensagem de grupo acompanhado; `lastMessageAt`/`updatedAt` a cada mensagem | `mergeParticipantWithFlag` → `{list, changed}`; `participants` só com mudança; `lastMessageAt` com granularidade de 60 s (`GROUP_ACTIVITY_GRANULARITY_MS`); patch vazio não grava |
+| `conversations.internalReceiveGroupMessage` | agendava `internalEnqueueFromGroup` em toda mensagem (mutation com 4 leituras, inclusive a sala) e lia `channelConfigs` sempre | agenda só com `group.ai.mode === "mention"`; lê a config só quando há `mentions` |
+| `whatsapp.internalRouteInbound` | `findAttendantForChannel` (`.collect()` de membros IA com `agentProfile.systemPrompt/knowledge`) + leitura da org em TODA mensagem 1 a 1 | `ensureLeadForContact` recebe `resolvePipeline` chamado só ao CRIAR o lead; lead existente não lê org nem membros IA |
+
+Sem mudança de schema. Fora de escopo (documentado): `configSnapshot` do `/webhooks/bridge` (config lida 3× por mensagem, ~45 MB/mês); `internalReceiveGroupDeviceMessage` ainda grava `lastMessageAt` incondicional.
+
+### Mudanças de comportamento visíveis
+
+- `readBy.at` de um membro não é atualizado numa releitura (vale a primeira).
+- "Checado às HH:MM" do card do canal avança a cada 6 h no cron; o botão "Testar conexão" ainda atualiza na hora.
+- Se outra conta parear o MESMO número depois, é a conexão dela que desativa o nosso canal; o tick de rotina não desativa o rival.
+- "Ativo há X" das salas com granularidade de 1 min.
+
+### Estimativa (por mês, prod)
+
+- Recibos de grupo: ≈7–9K patches a menos (de 10K), cada um uma reexecução a menos de `getMessages` por aba.
+- Recibos 1 a 1: ≈3–9K patches a menos (duplicados/fora de ordem) + ≈29K consultas a `campaignRecipients` evitadas.
+- Health check: ≈2.976 → ≈124 escritas em `channelConfigs` (cada uma reexecutava `getConversations` em toda aba) + outras tantas varreduras de `by_bridge_phone`.
+- Grupo acompanhado: doc de 60–90 KB não reescrito quando o mesmo membro fala de novo no mesmo minuto; o Inbox deixa de reexecutar 2× por mensagem.
+- 1 a 1 com lead existente: dezenas de KB (membros IA com knowledge) a menos por mensagem.
+
+### Medição depois
+
+| Deployment | Database bandwidth (mês) | Observação |
+|---|---|---|
+| prod | _pendente_ | |
+| dev | _pendente_ | |
 
 ## Fase 4 — estrutural
 

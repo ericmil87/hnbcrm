@@ -16,6 +16,7 @@ import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
 import {
   appendReadBy,
+  GROUP_ACTIVITY_GRANULARITY_MS,
   membersWithPermission,
   mentionsUs,
   recordParticipantFromMessage,
@@ -2105,8 +2106,11 @@ export const internalReceiveGroupMessage = internalMutation({
     // próxima vez que abrir o inbox. Sem LLM — é comparação de JID.
     // A F4 acrescentou o alerta por PALAVRA (`ai.alertKeywords`), que reusa o
     // mesmo tipo de notificação: também é "olhe esta sala agora", também sem LLM.
-    const config = await ctx.db.get(args.channelConfigId);
+    // O canal só é lido quando há menção a comparar (perf Convex I/O, fase 3):
+    // sem `mentions`, `mentionsUs` é falso de qualquer jeito.
     const alertKeyword = matchesKeyword(args.content, group.ai?.alertKeywords);
+    const config =
+      args.mentions && args.mentions.length > 0 ? await ctx.db.get(args.channelConfigId) : null;
     if (mentionsUs(args.mentions, config?.bridgeLid, config?.bridgePhone) || alertKeyword) {
       const recipients = await membersWithPermission(
         ctx,
@@ -2135,10 +2139,14 @@ export const internalReceiveGroupMessage = internalMutation({
     // conversa que não tem lead. Quem decide se a IA foi CHAMADA (menção,
     // citação, nosso número, palavra-chave) e se ela PODE responder é o próprio
     // `groupAgent` — aqui só agendamos, e a mutation sai no-op barato quando a
-    // org não tem IA ou o grupo está com a IA desligada.
-    await ctx.scheduler.runAfter(0, internal.groupAgent.internalEnqueueFromGroup, {
-      messageId,
-    });
+    // org não tem IA. Grupo com a IA desligada (`ai.mode !== "mention"`) nem
+    // agenda (perf Convex I/O, fase 3): a 1ª coisa que `internalEnqueueFromGroup`
+    // faria seria reler mensagem, conversa, org e sala só para sair no-op.
+    if (group.ai?.mode === "mention") {
+      await ctx.scheduler.runAfter(0, internal.groupAgent.internalEnqueueFromGroup, {
+        messageId,
+      });
+    }
     // Radar de oportunidade (§9.3): opt-in por grupo, em LOTE de 15 min. A
     // mutation faz o coalescing — mensagem nova não agenda um lote novo.
     if (group.ai?.opportunityRadar === true && args.content.trim().length >= RADAR_MIN_CHARS) {
@@ -2229,14 +2237,25 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
     });
-    await ctx.db.patch(group._id, {
-      lastMessageAt: Math.max(group.lastMessageAt ?? 0, sentAt),
-      updatedAt: now,
-    });
+    // Mesma granularidade de 1 min do ingest inbound (perf Convex I/O, fase 3):
+    // "ativo há X" não precisa de mais, e cada patch reexecuta quem leu a sala.
+    const groupLastMessageAt = Math.max(group.lastMessageAt ?? 0, sentAt);
+    if (groupLastMessageAt - (group.lastMessageAt ?? 0) >= GROUP_ACTIVITY_GRANULARITY_MS) {
+      await ctx.db.patch(group._id, {
+        lastMessageAt: groupLastMessageAt,
+        updatedAt: now,
+      });
+    }
 
     return messageId;
   },
 });
+
+/**
+ * Ordem do status de entrega: só sobe (`failed` é tratado à parte — sempre
+ * aplica). Compartilhada pelo recibo de grupo e pelo 1 a 1.
+ */
+const DELIVERY_RANK = { sent: 1, delivered: 2, read: 3, failed: 0 } as const;
 
 /**
  * Recibo de entrega/leitura dentro de um grupo.
@@ -2265,35 +2284,45 @@ export const internalApplyGroupReceipt = internalMutation({
         .first();
       if (!message) continue;
 
+      // Primeira leitura vence: se o membro já está em `readBy`, a lista fica
+      // como está (o `at` da releitura NÃO é atualizado). `appendReadBy` sempre
+      // devolve array novo — sem esta guarda todo "read" repetido reescrevia a
+      // mensagem e reexecutava o Inbox inteiro (perf Convex I/O, fase 3).
+      const alreadyRead =
+        !!args.readerJid && (message.readBy ?? []).some((r) => r.jid === args.readerJid);
       const readBy =
-        args.readerJid && args.status === "read"
+        args.readerJid && args.status === "read" && !alreadyRead
           ? appendReadBy(message.readBy, args.readerJid, args.at)
           : message.readBy;
 
       // Nunca rebaixa: read > delivered > sent. Um membro que só recebeu não
       // pode apagar o "lido" que outro já confirmou.
-      const rank = { sent: 1, delivered: 2, read: 3, failed: 0 } as const;
       const current = message.deliveryStatus ?? "sent";
       const next =
-        rank[args.status] > rank[current] || args.status === "failed"
+        DELIVERY_RANK[args.status] > DELIVERY_RANK[current] || args.status === "failed"
           ? args.status
           : current;
 
-      await ctx.db.patch(message._id, {
-        ...(next !== message.deliveryStatus ? { deliveryStatus: next } : {}),
-        ...(readBy !== message.readBy ? { readBy } : {}),
-      });
+      const statusChanged = next !== message.deliveryStatus;
+      const patch: { deliveryStatus?: typeof next; readBy?: typeof readBy } = {};
+      if (statusChanged) patch.deliveryStatus = next;
+      if (readBy !== message.readBy) patch.readBy = readBy;
+      // Recibo que não muda nada (o "delivered" do 2º membro em diante, o "read"
+      // repetido) não escreve — nem `patch({})`.
+      if (Object.keys(patch).length === 0) continue;
+      await ctx.db.patch(message._id, patch);
 
       // Campanha com público `groups` posta NA SALA, e a linha da mensagem
       // carrega `metadata.campaign`. Sem esta chamada, `campaignRecipients`
       // ficava em `sent` para sempre e o relatório por sala mostrava entrega
       // zero numa campanha que entregou tudo (review de correção nº 16).
-      // A regra de "nunca rebaixa" é a mesma do 1 a 1 e mora lá dentro
-      // (`transitionRecipient`), então o recibo por MEMBRO não regride nada.
-      if (message.metadata?.campaign) {
+      // Só na TRANSIÇÃO do status agregado da mensagem: o recibo por MEMBRO
+      // depois disso não muda o destinatário (`transitionRecipient` já não
+      // rebaixava; agora nem é consultado).
+      if (message.metadata?.campaign && statusChanged) {
         await applyCampaignDeliveryUpdate(ctx, {
           messageId: message._id,
-          status: args.status,
+          status: next,
           now: args.at,
         });
       }
@@ -2507,26 +2536,54 @@ export const internalUpdateDeliveryStatus = internalMutation({
       return null;
     }
 
+    // Nunca rebaixa e nunca reescreve igual (perf Convex I/O, fase 3): o
+    // webhook da Meta/bridge chega fora de ordem e repetido, e cada patch
+    // reexecutava as queries do Inbox que leram a mensagem. `failed` sempre
+    // aplica (com o detalhe do erro, quando vier). Status que não sobe = no-op,
+    // sem escrita e sem consultar o hook de campanha.
+    const current = message.deliveryStatus ?? "sent";
+    const isFailed = args.status === "failed";
+    const statusChanged = args.status !== message.deliveryStatus;
+    // Sem status gravado, qualquer recibo vale (inclusive o "sent" da Meta).
+    const rises =
+      message.deliveryStatus === undefined ||
+      DELIVERY_RANK[args.status] > DELIVERY_RANK[current];
+    // `failed` repetido com o MESMO detalhe/código não reescreve o metadata
+    // nem chama o hook. Código DIFERENTE conta como mudança mesmo sem detalhe:
+    // é como 131049/131050 se distinguem no hook de campanha.
+    const detailChanged =
+      isFailed && !!args.errorDetail && message.metadata?.deliveryError !== args.errorDetail;
+    const codeChanged =
+      isFailed && !!args.errorCode && message.metadata?.deliveryErrorCode !== args.errorCode;
+    const writeError = detailChanged || codeChanged;
+    if (!(isFailed ? statusChanged || writeError : rises)) {
+      return message._id;
+    }
+
     await ctx.db.patch(message._id, {
-      deliveryStatus: args.status,
-      ...(args.errorDetail
+      ...(statusChanged ? { deliveryStatus: args.status } : {}),
+      ...(writeError
         ? {
             metadata: {
               ...(message.metadata ?? {}),
-              deliveryError: args.errorDetail,
+              ...(args.errorDetail ? { deliveryError: args.errorDetail } : {}),
               ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
             },
           }
         : {}),
     });
 
-    // Campanhas: delivered/read/failed do webhook (no-op fora de campanha)
-    await applyCampaignDeliveryUpdate(ctx, {
-      messageId: message._id,
-      status: args.status,
-      errorCode: args.errorCode,
-      errorDetail: args.errorDetail,
-    });
+    // Campanhas: delivered/read/failed do webhook. Só mensagem de campanha
+    // (mesma guarda do recibo de grupo) — fora dela o hook só consultava
+    // `campaignRecipients.by_message` para não achar nada.
+    if (message.metadata?.campaign) {
+      await applyCampaignDeliveryUpdate(ctx, {
+        messageId: message._id,
+        status: args.status,
+        errorCode: args.errorCode,
+        errorDetail: args.errorDetail,
+      });
+    }
 
     return message._id;
   },

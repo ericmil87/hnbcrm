@@ -183,6 +183,78 @@ describe("roteamento inbound com pipelineConfig", () => {
     expect(lead!.stageId).toBe(seed.salesEntryStageId);
   });
 
+  // Perf Convex I/O, fase 3: o atendente do canal (um `.collect()` de membros
+  // IA com agentProfile inteiro) só é resolvido quando o lead vai ser CRIADO.
+  test("contato com lead existente mantém o lead e não resolve o atendente de novo", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    const first = await t.mutation(internal.whatsapp.internalRouteInbound, {
+      configId: seed.configId,
+      waId: "5511911117777",
+    });
+    await t.run(async (ctx) => {
+      const agent = (await ctx.db.get(seed.agentId))!;
+      await ctx.db.patch(seed.agentId, {
+        agentProfile: {
+          ...agent.agentProfile!,
+          pipelineConfig: { boardId: seed.defaultBoardId, initialStageId: seed.defaultStageId },
+        },
+      });
+    });
+    const second = await t.mutation(internal.whatsapp.internalRouteInbound, {
+      configId: seed.configId,
+      waId: "5511911117777",
+    });
+    expect(second.leadId).toBe(first.leadId);
+    const lead = await t.run(async (ctx) => ctx.db.get(second.leadId));
+    expect(lead!.boardId).toBe(seed.salesBoardId);
+  });
+
+  test("ensureLeadForContact só chama resolvePipeline no ramo de criação", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    const { contactId, leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
+      configId: seed.configId,
+      waId: "5511911118888",
+    });
+    const { ensureLeadForContact } = await import("./lib/inboundRouting");
+    const again = await t.run(async (ctx) =>
+      ensureLeadForContact(ctx, {
+        organizationId: seed.organizationId,
+        contactId,
+        resolvePipeline: async () => {
+          throw new Error("resolvePipeline não deveria ser chamado com lead existente");
+        },
+      })
+    );
+    expect(again).toBe(leadId);
+
+    // Contato sem lead: o resolver É chamado e decide o board.
+    const created = await t.run(async (ctx) => {
+      const now = Date.now();
+      const otherContact = await ctx.db.insert("contacts", {
+        organizationId: seed.organizationId,
+        firstName: "Sem lead",
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      let calls = 0;
+      const id = await ensureLeadForContact(ctx, {
+        organizationId: seed.organizationId,
+        contactId: otherContact,
+        resolvePipeline: async () => {
+          calls++;
+          return { boardId: seed.salesBoardId, initialStageId: seed.salesEntryStageId };
+        },
+      });
+      return { lead: await ctx.db.get(id), calls };
+    });
+    expect(created.calls).toBe(1);
+    expect(created.lead!.boardId).toBe(seed.salesBoardId);
+    expect(created.lead!.stageId).toBe(seed.salesEntryStageId);
+  });
+
   test("sem pipelineConfig → comportamento atual (board default, 1º estágio)", async () => {
     const t = setup();
     const seed = await seedOrg(t, { boardConfig: false });

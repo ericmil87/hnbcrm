@@ -23,6 +23,11 @@ export const GROUP_READ_BY_CAP = 50;
 /** Teto duro de participantes guardados (limite estrutural do WhatsApp). */
 export const GROUP_PARTICIPANTS_CAP = 1024;
 /**
+ * Granularidade de `groupChats.lastMessageAt` no ingest (perf Convex I/O,
+ * fase 3): só regravamos a atividade da sala quando ela avança ≥ 1 min.
+ */
+export const GROUP_ACTIVITY_GRANULARITY_MS = 60_000;
+/**
  * Tetos de nome e descrição da sala (review de segurança nº 8). Quem escolhe os
  * dois é um ADMIN DO GRUPO — um terceiro — e o valor viaja daqui para o prompt
  * da IA, a notificação, o card da UI e o payload do webhook. O conteúdo já é
@@ -65,14 +70,37 @@ export function mergeParticipant(
   current: GroupParticipantRow[] | undefined,
   incoming: Partial<GroupParticipantRow> & { lid?: string; phone?: string }
 ): GroupParticipantRow[] {
+  return mergeParticipantWithFlag(current, incoming).list;
+}
+
+/** Dois participantes iguais campo a campo (mesmo conjunto de chaves definidas). */
+function sameParticipant(a: GroupParticipantRow, b: GroupParticipantRow): boolean {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof GroupParticipantRow>;
+  for (const key of keys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
+/**
+ * Mesma regra de `mergeParticipant`, dizendo se algo MUDOU (perf Convex I/O,
+ * fase 3). Sem mudança devolve a MESMA referência de `current` — é o que deixa
+ * o ingest de grupo acompanhado pular o patch de um documento que carrega até
+ * 1.024 participantes (60–90 KB) a cada mensagem do mesmo membro.
+ */
+export function mergeParticipantWithFlag(
+  current: GroupParticipantRow[] | undefined,
+  incoming: Partial<GroupParticipantRow> & { lid?: string; phone?: string }
+): { list: GroupParticipantRow[]; changed: boolean } {
+  const base = current ?? [];
   const key = incoming.lid ?? incoming.phone;
-  if (!key) return current ?? [];
-  const list = [...(current ?? [])];
-  const index = list.findIndex(
+  if (!key) return { list: base, changed: false };
+  const index = base.findIndex(
     (p) => (incoming.lid && p.lid === incoming.lid) || (incoming.phone && p.phone === incoming.phone)
   );
   if (index === -1) {
-    if (list.length >= GROUP_PARTICIPANTS_CAP) return list;
+    if (base.length >= GROUP_PARTICIPANTS_CAP) return { list: base, changed: false };
+    const list = [...base];
     list.push({
       ...(incoming.lid ? { lid: incoming.lid } : {}),
       ...(incoming.phone ? { phone: incoming.phone } : {}),
@@ -82,10 +110,10 @@ export function mergeParticipant(
       isAdmin: incoming.isAdmin === true,
       isSuperAdmin: incoming.isSuperAdmin === true,
     });
-    return list;
+    return { list, changed: true };
   }
-  const prev = list[index];
-  list[index] = {
+  const prev = base[index];
+  const next: GroupParticipantRow = {
     ...prev,
     ...(incoming.lid ? { lid: incoming.lid } : {}),
     ...(incoming.phone ? { phone: incoming.phone } : {}),
@@ -96,7 +124,10 @@ export function mergeParticipant(
     ...(incoming.isAdmin !== undefined ? { isAdmin: incoming.isAdmin } : {}),
     ...(incoming.isSuperAdmin !== undefined ? { isSuperAdmin: incoming.isSuperAdmin } : {}),
   };
-  return list;
+  if (sameParticipant(prev, next)) return { list: base, changed: false };
+  const list = [...base];
+  list[index] = next;
+  return { list, changed: true };
 }
 
 /**
@@ -208,12 +239,18 @@ export async function recordParticipantFromMessage(
   now: number
 ): Promise<Id<"contacts"> | undefined> {
   const lastMessageAt = Math.max(group.lastMessageAt ?? 0, now);
+  // Granularidade de 1 min (perf Convex I/O, fase 3): "ativo há X" não precisa
+  // de mais, e cada patch reexecuta toda query reativa que leu a sala.
+  const activityPatch =
+    lastMessageAt - (group.lastMessageAt ?? 0) >= GROUP_ACTIVITY_GRANULARITY_MS
+      ? { lastMessageAt }
+      : {};
 
   if (group.monitored !== true) {
     // Nem a busca do contato acontece: sem gravar o participante, o
     // `senderContactId` não tem para onde ir (a mensagem nem é persistida).
-    if (lastMessageAt !== group.lastMessageAt) {
-      await ctx.db.patch(group._id, { lastMessageAt, updatedAt: now });
+    if (activityPatch.lastMessageAt !== undefined) {
+      await ctx.db.patch(group._id, { ...activityPatch, updatedAt: now });
     }
     return undefined;
   }
@@ -221,21 +258,27 @@ export async function recordParticipantFromMessage(
   const contactId = await findContactIdByPhone(ctx, group.organizationId, sender.phone);
   if (!sender.lid && !sender.phone) {
     // Evento sem chave nenhuma: nada a mesclar, mas a sala continua ativa.
-    if (lastMessageAt !== group.lastMessageAt) {
-      await ctx.db.patch(group._id, { lastMessageAt, updatedAt: now });
+    if (activityPatch.lastMessageAt !== undefined) {
+      await ctx.db.patch(group._id, { ...activityPatch, updatedAt: now });
     }
     return contactId;
   }
-  const participants = mergeParticipant(group.participants, {
+  const { list: participants, changed } = mergeParticipantWithFlag(group.participants, {
     ...(sender.lid ? { lid: sender.lid } : {}),
     ...(sender.phone ? { phone: sender.phone } : {}),
     ...(sender.name ? { name: sender.name } : {}),
     ...(contactId ? { contactId } : {}),
   });
+  // Mesma mensagem do mesmo membro em < 1 min = patch vazio, nada é gravado.
+  if (!changed && activityPatch.lastMessageAt === undefined) return contactId;
   await ctx.db.patch(group._id, {
-    participants,
-    participantsCount: participants.filter((p) => p.leftAt === undefined).length,
-    lastMessageAt,
+    ...(changed
+      ? {
+          participants,
+          participantsCount: participants.filter((p) => p.leftAt === undefined).length,
+        }
+      : {}),
+    ...activityPatch,
     updatedAt: now,
   });
   return contactId;

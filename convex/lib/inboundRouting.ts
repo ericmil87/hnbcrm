@@ -198,6 +198,16 @@ export async function ensureLeadForContact(
     // Inválidos/deletados NUNCA quebram o ingest — fallback ao default + aviso.
     preferredBoardId?: Id<"boards">;
     preferredStageId?: Id<"stages">;
+    /**
+     * Alternativa preguiçosa aos dois campos acima (perf Convex I/O, fase 3):
+     * chamada SÓ quando o lead vai ser CRIADO. O ingest 1 a 1 resolve o
+     * atendente do canal aqui dentro — um `.collect()` de membros IA com
+     * `agentProfile` inteiro (dezenas de KB cada) — e não em toda mensagem de
+     * contato que já tem lead. Campos explícitos vencem o resolver.
+     */
+    resolvePipeline?: () => Promise<
+      { boardId?: Id<"boards">; initialStageId?: Id<"stages"> } | undefined
+    >;
   }
 ): Promise<Id<"leads">> {
   // Most recent lead for this contact in this org
@@ -208,6 +218,13 @@ export async function ensureLeadForContact(
     .take(50);
   const existing = leads.find((l) => l.organizationId === args.organizationId);
   if (existing) return existing._id;
+
+  const resolved =
+    args.preferredBoardId === undefined && args.preferredStageId === undefined && args.resolvePipeline
+      ? await args.resolvePipeline()
+      : undefined;
+  const preferredBoardId = args.preferredBoardId ?? resolved?.boardId;
+  const preferredStageId = args.preferredStageId ?? resolved?.initialStageId;
 
   // Default board + first stage (arquivado nunca entra na roleta)
   const boards = (
@@ -221,8 +238,8 @@ export async function ensureLeadForContact(
 
   let pipelineFallback: string | null = null;
   let board = defaultBoard;
-  if (args.preferredBoardId) {
-    const preferred = boards.find((b) => b._id === args.preferredBoardId);
+  if (preferredBoardId) {
+    const preferred = boards.find((b) => b._id === preferredBoardId);
     if (preferred) {
       board = preferred;
     } else {
@@ -236,8 +253,8 @@ export async function ensureLeadForContact(
     .collect();
   let firstStage = stages[0];
   if (!firstStage) throw new Error("No stages configured");
-  if (args.preferredStageId && !pipelineFallback) {
-    const preferredStage = stages.find((s) => s._id === args.preferredStageId);
+  if (preferredStageId && !pipelineFallback) {
+    const preferredStage = stages.find((s) => s._id === preferredStageId);
     if (preferredStage) {
       firstStage = preferredStage;
     } else {
