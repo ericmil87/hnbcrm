@@ -100,6 +100,7 @@ import type * as lib_channelHealthSignals from "../lib/channelHealthSignals.js";
 import type * as lib_channelResolve from "../lib/channelResolve.js";
 import type * as lib_conversationTiming from "../lib/conversationTiming.js";
 import type * as lib_conversationTransfer from "../lib/conversationTransfer.js";
+import type * as lib_cronGuard from "../lib/cronGuard.js";
 import type * as lib_csv from "../lib/csv.js";
 import type * as lib_cursor from "../lib/cursor.js";
 import type * as lib_disclosure from "../lib/disclosure.js";
@@ -297,6 +298,7 @@ declare const fullApi: ApiFromModules<{
   "lib/channelResolve": typeof lib_channelResolve;
   "lib/conversationTiming": typeof lib_conversationTiming;
   "lib/conversationTransfer": typeof lib_conversationTransfer;
+  "lib/cronGuard": typeof lib_cronGuard;
   "lib/csv": typeof lib_csv;
   "lib/cursor": typeof lib_cursor;
   "lib/disclosure": typeof lib_disclosure;
