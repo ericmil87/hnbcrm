@@ -241,6 +241,192 @@ describe("markConversationRead — marca d'água na conversa", () => {
   });
 });
 
+/** Canal bridge mínimo (sem credenciais: o teste só olha o AGENDAMENTO do recibo). */
+async function seedBridgeConfig(t: T, organizationId: Id<"organizations">) {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    return await ctx.db.insert("channelConfigs", {
+      organizationId,
+      channel: "whatsapp",
+      provider: "bridge",
+      displayName: "Bridge",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+}
+
+/** `externalIds` de cada `internalBridgeMarkRead` agendado (sem drenar a fila). */
+async function scheduledMarkReads(t: T): Promise<string[][]> {
+  return await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs
+      .filter((j) => j.name.includes("internalBridgeMarkRead"))
+      .map((j) => (j.args[0] as { externalIds: string[] }).externalIds);
+  });
+}
+
+describe("markConversationRead — marca d'água por _creationTime e recibo do bridge", () => {
+  test("inbound gravado DEPOIS da leitura com createdAt (sentAt) antigo recebe recibo na leitura seguinte", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, asAdmin } = await seedOrg(t);
+    const configId = await seedBridgeConfig(t, organizationId);
+    const t0 = Date.now();
+    const conversationId = await t.run(async (ctx) =>
+      ctx.db.insert("conversations", {
+        organizationId,
+        channel: "whatsapp",
+        channelConfigId: configId,
+        kind: "group",
+        externalChatId: "120363000000000001@g.us",
+        status: "active",
+        messageCount: 0,
+        lastMessageAt: t0,
+        unreadCount: 1,
+        createdAt: t0,
+        updatedAt: t0,
+      })
+    );
+    const insertGroupInbound = (externalId: string, createdAt: number) =>
+      t.run(async (ctx) => {
+        await ctx.db.insert("messages", {
+          organizationId,
+          conversationId,
+          direction: "inbound",
+          senderType: "contact",
+          senderLid: "111@lid",
+          content: externalId,
+          contentType: "text",
+          isInternal: false,
+          externalId,
+          createdAt,
+        });
+      });
+    await insertGroupInbound("G1", t0);
+
+    vi.setSystemTime(t0 + 10_000);
+    await asAdmin.mutation(api.conversations.markConversationRead, { conversationId });
+    expect(await scheduledMarkReads(t)).toEqual([["G1"]]);
+
+    // Chega DEPOIS da leitura (gravação em t0+20s), mas o `sentAt` do WhatsApp
+    // é anterior ao `lastReadAt` (mídia lenta / reconexão).
+    vi.setSystemTime(t0 + 20_000);
+    await insertGroupInbound("G2", t0 + 5_000);
+    await t.run(async (ctx) => ctx.db.patch(conversationId, { unreadCount: 1 }));
+
+    vi.setSystemTime(t0 + 30_000);
+    await asAdmin.mutation(api.conversations.markConversationRead, { conversationId });
+    expect(await scheduledMarkReads(t)).toEqual([["G1"], ["G2"]]);
+    const conv = await t.run(async (ctx) => ctx.db.get(conversationId));
+    expect(conv!.unreadCount).toBe(0);
+    expect(conv!.lastReadAt).toBe(t0 + 30_000);
+  });
+
+  test("bridge 1 a 1: mensagem com metadata.readAt legado não tem recibo reenviado", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, asAdmin } = await seedOrg(t);
+    const configId = await seedBridgeConfig(t, organizationId);
+    const t0 = Date.now();
+    const conversationId = await t.run(async (ctx) => {
+      const contactId = await ctx.db.insert("contacts", {
+        organizationId,
+        firstName: "Cliente",
+        phone: "5585999990000",
+        whatsappNumber: "5585999990000",
+        tags: [],
+        createdAt: t0,
+        updatedAt: t0,
+      });
+      const boardId = await ctx.db.insert("boards", {
+        organizationId,
+        name: "Funil",
+        color: "#000000",
+        order: 0,
+        isDefault: true,
+        createdAt: t0,
+        updatedAt: t0,
+      });
+      const stageId = await ctx.db.insert("stages", {
+        organizationId,
+        boardId,
+        name: "Novo",
+        order: 0,
+        color: "#000000",
+        isClosedWon: false,
+        isClosedLost: false,
+        createdAt: t0,
+        updatedAt: t0,
+      });
+      const leadId = await ctx.db.insert("leads", {
+        organizationId,
+        title: "Lead",
+        contactId,
+        boardId,
+        stageId,
+        value: 0,
+        currency: "BRL",
+        priority: "medium",
+        temperature: "warm",
+        tags: [],
+        customFields: {},
+        conversationStatus: "active",
+        lastActivityAt: t0,
+        createdAt: t0,
+        updatedAt: t0,
+      });
+      const conversationId = await ctx.db.insert("conversations", {
+        organizationId,
+        leadId,
+        channel: "whatsapp",
+        channelConfigId: configId,
+        status: "active",
+        messageCount: 0,
+        lastMessageAt: t0,
+        unreadCount: 2,
+        createdAt: t0,
+        updatedAt: t0,
+      });
+      // Lida antes da fase 2: tem `metadata.readAt`, conversa sem `lastReadAt`.
+      await ctx.db.insert("messages", {
+        organizationId,
+        conversationId,
+        leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "antiga",
+        contentType: "text",
+        isInternal: false,
+        externalId: "OLD1",
+        metadata: { readAt: t0 },
+        createdAt: t0,
+      });
+      await ctx.db.insert("messages", {
+        organizationId,
+        conversationId,
+        leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "nova",
+        contentType: "text",
+        isInternal: false,
+        externalId: "NEW1",
+        createdAt: t0,
+      });
+      return conversationId;
+    });
+
+    vi.setSystemTime(t0 + 5_000);
+    await asAdmin.mutation(api.conversations.markConversationRead, { conversationId });
+    expect(await scheduledMarkReads(t)).toEqual([["NEW1"]]);
+
+    // Repetir sem inbound novo: nenhum recibo a mais.
+    vi.setSystemTime(t0 + 10_000);
+    await asAdmin.mutation(api.conversations.markConversationRead, { conversationId });
+    expect(await scheduledMarkReads(t)).toEqual([["NEW1"]]);
+  });
+});
+
 describe("getInboxUnreadCount — arquivar zera e soma tem teto", () => {
   test("arquivar (1 e em lote) zera unreadCount; desarquivar não restaura", async () => {
     const t = convexTest(schema, modules);

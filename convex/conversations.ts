@@ -2683,9 +2683,14 @@ export const markConversationRead = mutation({
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
       .order("desc")
       .take(20);
-    // Inbound que chegou depois da última leitura (dedupe pelo `lastReadAt`).
+    // Inbound GRAVADO depois da última leitura (dedupe pelo `lastReadAt`).
+    // Compara `_creationTime`, não `createdAt`: em grupo e em mensagem do
+    // aparelho `createdAt` é o `sentAt` do WhatsApp, que pode ser ANTERIOR ao
+    // `lastReadAt` (mídia lenta, reconexão) — a mensagem ficaria sem recibo.
+    // O ingest lê/patcha este mesmo doc da conversa, então o OCC serializa os
+    // dois e o `_creationTime` fica do lado certo da marca d'água.
     const newInbound = recent.filter(
-      (m) => m.direction === "inbound" && m.createdAt > lastReadAt
+      (m) => m.direction === "inbound" && m._creationTime > lastReadAt
     );
     if (newInbound.length === 0 && (conversation.unreadCount ?? 0) === 0) return null;
 
