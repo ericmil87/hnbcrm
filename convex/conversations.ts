@@ -2542,7 +2542,14 @@ export const internalUpdateDeliveryStatus = internalMutation({
     const rises =
       message.deliveryStatus === undefined ||
       DELIVERY_RANK[args.status] > DELIVERY_RANK[current];
-    const writeError = isFailed && !!args.errorDetail;
+    // `failed` repetido com o MESMO detalhe/código não reescreve o metadata
+    // nem chama o hook. Código DIFERENTE conta como mudança mesmo sem detalhe:
+    // é como 131049/131050 se distinguem no hook de campanha.
+    const detailChanged =
+      isFailed && !!args.errorDetail && message.metadata?.deliveryError !== args.errorDetail;
+    const codeChanged =
+      isFailed && !!args.errorCode && message.metadata?.deliveryErrorCode !== args.errorCode;
+    const writeError = detailChanged || codeChanged;
     if (!(isFailed ? statusChanged || writeError : rises)) {
       return message._id;
     }
@@ -2553,7 +2560,7 @@ export const internalUpdateDeliveryStatus = internalMutation({
         ? {
             metadata: {
               ...(message.metadata ?? {}),
-              deliveryError: args.errorDetail,
+              ...(args.errorDetail ? { deliveryError: args.errorDetail } : {}),
               ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
             },
           }

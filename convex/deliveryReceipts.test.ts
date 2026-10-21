@@ -263,6 +263,35 @@ describe("internalUpdateDeliveryStatus — nunca rebaixa, nunca reescreve igual"
     expect(msg!.metadata).toMatchObject({ deliveryError: "boom", deliveryErrorCode: 131026 });
   });
 
+  test("failed repetido com o mesmo detalhe/código não escreve nem chama o hook", async () => {
+    const t = setup();
+    const { organizationId, messageId, recipientId } = await seed(t, { campaign: true });
+    const failed = upd(organizationId, "failed", { errorDetail: "boom", errorCode: 131026 });
+    await t.mutation(internal.conversations.internalUpdateDeliveryStatus, failed);
+    const before = await getMsg(t, messageId);
+    await t.run((ctx) => ctx.db.patch(recipientId!, { status: "sent" }));
+    const recBefore = await getRecipient(t, recipientId!);
+    await t.mutation(internal.conversations.internalUpdateDeliveryStatus, failed);
+    expect(await getMsg(t, messageId)).toStrictEqual(before);
+    expect(await getRecipient(t, recipientId!)).toStrictEqual(recBefore);
+  });
+
+  test("failed repetido com errorCode diferente (sem detalhe) chega ao hook", async () => {
+    const t = setup();
+    const { organizationId, messageId, recipientId } = await seed(t, { campaign: true });
+    await t.mutation(
+      internal.conversations.internalUpdateDeliveryStatus,
+      upd(organizationId, "failed", { errorDetail: "boom", errorCode: 131026 })
+    );
+    await t.mutation(
+      internal.conversations.internalUpdateDeliveryStatus,
+      upd(organizationId, "failed", { errorCode: 131050 })
+    );
+    const msg = await getMsg(t, messageId);
+    expect(msg!.metadata).toMatchObject({ deliveryError: "boom", deliveryErrorCode: 131050 });
+    expect((await getRecipient(t, recipientId!))!.status).toBe("opted_out");
+  });
+
   test("hook de campanha não roda em recibo que não muda nada", async () => {
     const t = setup();
     const { organizationId, recipientId } = await seed(t, { campaign: true });
