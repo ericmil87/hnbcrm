@@ -1768,6 +1768,8 @@ const applicationTables = {
     .index("by_organization_and_type", ["organizationId", "type"])
     // Cron de resgate de lembretes (deployment-wide): só vencidos e não disparados.
     .index("by_type_and_status_and_reminder_and_due", ["type", "status", "reminderTriggered", "dueDate"])
+    // Cron de resgate da recorrência: concluídas recorrentes que nunca geraram sucessor.
+    .index("by_status_and_recurrence_pattern_and_generated", ["status", "recurrence.pattern", "recurrence.lastGeneratedAt"])
     .index("by_organization_and_assigned_and_status", ["organizationId", "assignedTo", "status"])
     .index("by_lead", ["leadId"])
     .index("by_contact", ["contactId"])

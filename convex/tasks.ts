@@ -13,9 +13,12 @@ import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import {
   ORDER_STEP,
   applyTaskCompletion,
-  columnsOfProject,
+  defaultColumnForProject,
   doneColumnForProject,
+  generateNextRecurrenceSafely,
   nextOrderInColumn,
+  readTaskAssignees as readAssignees,
+  schedulePreDueReminder,
 } from "./lib/taskOps";
 import {
   assertNoActiveFollowUpForRecurrence,
@@ -32,15 +35,6 @@ const ORG_SCAN_LIMIT = 1000;
 
 // Teto da contagem de comentários em getTask (acima disso a UI mostra "100+").
 const COMMENT_COUNT_CAP = 100;
-
-// `assigneeIds` é a fonte de verdade; `assignedTo` é o espelho legado (= assigneeIds[0]).
-function readAssignees(task: {
-  assigneeIds?: Id<"teamMembers">[];
-  assignedTo?: Id<"teamMembers">;
-}): Id<"teamMembers">[] {
-  if (task.assigneeIds && task.assigneeIds.length > 0) return task.assigneeIds;
-  return task.assignedTo ? [task.assignedTo] : [];
-}
 
 function dedupeIds<T extends string>(ids: T[]): T[] {
   return [...new Set(ids)];
@@ -82,12 +76,6 @@ async function validateColumn(
     throw new Error("A coluna não pertence ao projeto informado");
   }
   return column;
-}
-
-// Coluna default de um projeto: a de menor `order` que não seja done column.
-async function defaultColumnForProject(ctx: QueryCtx | MutationCtx, projectId: Id<"taskProjects">) {
-  const columns = await columnsOfProject(ctx, projectId);
-  return columns.find((c) => !c.isDoneColumn) ?? columns[0] ?? null;
 }
 
 // ===== Helpers: hierarquia, dependências, responsáveis =====
@@ -228,25 +216,6 @@ async function notifyNewAssignees(
       },
     });
   }
-}
-
-// Lembrete antecipado: agenda o disparo para dueDate - minutos.
-async function schedulePreDueReminder(
-  ctx: MutationCtx,
-  taskId: Id<"tasks">,
-  dueDate?: number,
-  reminderMinutesBefore?: number
-): Promise<void> {
-  if (!dueDate || !reminderMinutesBefore || reminderMinutesBefore <= 0) return;
-  const fireAt = dueDate - reminderMinutesBefore * 60_000;
-  const delay = Math.max(0, fireAt - Date.now());
-  // `expectedMinutes` viaja junto para o trigger detectar agendamento obsoleto
-  // (usuário desligou o lembrete ou trocou a antecedência depois de agendado).
-  await ctx.scheduler.runAfter(delay, internal.tasks.triggerPreDueReminder, {
-    taskId,
-    expectedDueDate: dueDate,
-    expectedMinutes: reminderMinutesBefore,
-  });
 }
 
 /**
@@ -1239,6 +1208,13 @@ export const updateTask = mutation({
         changes.dueDate ?? task.dueDate,
         changes.reminderMinutesBefore ?? task.reminderMinutesBefore
       );
+    }
+
+    // Concluir pelo status também gera a próxima recorrência na hora (mesmo
+    // núcleo de applyCompletion; o cron é só resgate).
+    if (changes.status === "completed" && task.status !== "completed") {
+      const fresh = await ctx.db.get(args.taskId);
+      if (fresh) await generateNextRecurrenceSafely(ctx, fresh, now);
     }
 
     if (nextAssignees) {
@@ -2775,98 +2751,41 @@ export const processOverdueReminders = internalMutation({
   },
 });
 
-// Internal: Process recurring tasks
+// Tamanho de cada range do cron de recorrência (um por padrão).
+const RECURRING_RESCUE_BATCH = 50;
+const RECURRENCE_PATTERNS = ["daily", "weekly", "biweekly", "monthly"] as const;
+
+// Internal: Process recurring tasks — REDE DE SEGURANÇA. A próxima instância
+// nasce na própria conclusão (`generateNextRecurrence` em lib/taskOps.ts);
+// aqui só se resgata, por índice, a concluída recorrente que NUNCA gerou
+// (`recurrence.lastGeneratedAt` ausente): tarefa legada, ou conclusão cuja
+// geração falhou. O núcleo grava `lastGeneratedAt` também quando pula (fim da
+// recorrência / sucessor existente), então ninguém fica no range para sempre.
+// "Reabrir e concluir de novo" (lastGeneratedAt < completedAt) é coberto só
+// pelo caminho de conclusão.
 export const processRecurringTasks = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
     const now = Date.now();
 
-    // Find completed tasks with recurrence
-    const completedTasks = await ctx.db
-      .query("tasks")
-      .withIndex("by_organization_and_status")
-      .order("asc")
-      .take(500);
+    const pages = await Promise.all(
+      RECURRENCE_PATTERNS.map((pattern) =>
+        ctx.db
+          .query("tasks")
+          .withIndex("by_status_and_recurrence_pattern_and_generated", (q) =>
+            q
+              .eq("status", "completed")
+              .eq("recurrence.pattern", pattern)
+              .eq("recurrence.lastGeneratedAt", undefined)
+          )
+          .take(RECURRING_RESCUE_BATCH)
+      )
+    );
 
-    for (const task of completedTasks) {
-      if (task.status !== "completed" || !task.recurrence) continue;
-
-      // Check if already generated child after this completion
-      if (task.recurrence.lastGeneratedAt && task.recurrence.lastGeneratedAt >= (task.completedAt || 0)) continue;
-
-      // Check end date
-      if (task.recurrence.endDate && now > task.recurrence.endDate) continue;
-
-      // Reabrir e concluir de novo NÃO gera outra instância: se a task já tem
-      // sucessor vivo, a linhagem seguiu adiante a partir dele.
-      const successors = await ctx.db
-        .query("tasks")
-        .withIndex("by_recurrence_source", (q) => q.eq("recurrenceSourceId", task._id))
-        .take(10);
-      if (successors.some((s) => s.status !== "cancelled")) continue;
-
-      // Calculate next due date
-      let nextDueDate: number | undefined;
-      if (task.dueDate) {
-        const d = new Date(task.dueDate);
-        switch (task.recurrence.pattern) {
-          case "daily": d.setDate(d.getDate() + 1); break;
-          case "weekly": d.setDate(d.getDate() + 7); break;
-          case "biweekly": d.setDate(d.getDate() + 14); break;
-          case "monthly": d.setMonth(d.getMonth() + 1); break;
-        }
-        nextDueDate = d.getTime();
-      }
-
-      // A nova instância entra na coluna default (não-done) do projeto
-      let columnId = task.columnId;
-      let order = task.order;
-      if (task.projectId) {
-        const column = await defaultColumnForProject(ctx, task.projectId);
-        columnId = column?._id;
-        order = columnId ? await nextOrderInColumn(ctx, columnId) : undefined;
-      }
-
-      // Nova instância da recorrência — linhagem via recurrenceSourceId
-      // (parentTaskId é hierarquia de subtarefa, não recorrência)
-      const nextTaskId = await ctx.db.insert("tasks", {
-        organizationId: task.organizationId,
-        title: task.title,
-        description: task.description,
-        type: task.type,
-        status: "pending",
-        priority: task.priority,
-        activityType: task.activityType,
-        dueDate: nextDueDate,
-        leadId: task.leadId,
-        contactId: task.contactId,
-        assignedTo: task.assignedTo,
-        assigneeIds: readAssignees(task),
-        createdBy: task.createdBy,
-        recurrence: task.recurrence,
-        recurrenceSourceId: task._id,
-        parentTaskId: task.parentTaskId,
-        projectId: task.projectId,
-        columnId,
-        order,
-        labelIds: task.labelIds,
-        reminderMinutesBefore: task.reminderMinutesBefore,
-        checklist: task.checklist?.map(item => ({ ...item, completed: false })),
-        tags: task.tags,
-        searchText: task.searchText,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      // Lembrete antecipado da nova instância (preDueReminderSentAt nasce limpo)
-      await schedulePreDueReminder(ctx, nextTaskId, nextDueDate, task.reminderMinutesBefore);
-
-      // Update parent to mark as generated
-      await ctx.db.patch(task._id, {
-        recurrence: { ...task.recurrence, lastGeneratedAt: now },
-        updatedAt: now,
-      });
+    // Uma task com dado ruim não trava o lote (o erro é logado).
+    for (const task of pages.flat()) {
+      await generateNextRecurrenceSafely(ctx, task, now);
     }
 
     return null;
