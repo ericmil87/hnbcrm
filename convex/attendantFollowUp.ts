@@ -27,7 +27,7 @@ import { requirePermission } from "./lib/auth";
 import { isSessionLostState } from "./lib/channelHealthSignals";
 import { orgAiActive } from "./lib/agentSecurity";
 import { resolveConversationChannelConfig, transportOf } from "./lib/channelResolve";
-import { evaluateEligibility, findAttendantForConversation } from "./attendant";
+import { evaluateEligibility, findAttendantForConversation, lastInboundIsStandby } from "./attendant";
 import { getLeadRef } from "./lib/leadRef";
 import { releaseAiTurnLock } from "./lib/conversationRuntime";
 import { normalizeCampaignPhone } from "./lib/phone";
@@ -236,13 +236,38 @@ async function fireCore(
     return { ok: false, reason: "modo_desligado" };
   }
 
-  // PASSO 5 — opt-out por TELEFONE. Follow-up é mensagem ATIVA: quem escreveu
-  // "SAIR" pediu exatamente para não receber isto. O atendente só olhava
-  // `contact.aiOptOut`, que é outra coisa (e não cobre quem digitou a palavra
-  // no meio de uma campanha).
-  const phone = contact?.phone
-    ? normalizeCampaignPhone(contact.phone, resolveDefaultCountry(org?.settings))
-    : null;
+  // PASSO 5 — opt-out. Follow-up é mensagem ATIVA: quem escreveu "SAIR" pediu
+  // exatamente para não receber isto. O atendente só olhava `contact.aiOptOut`,
+  // que é outra coisa (e não cobre quem digitou a palavra no meio de uma
+  // campanha).
+  // Instagram/Messenger (F3): por IDENTIDADE, não por telefone — o contato de
+  // um PSID/IGSID não tem telefone, e "sem telefone" NÃO pode virar "sem
+  // opt-out" em silêncio. Vale o `optedOutAt` da identidade do contato PARA O
+  // CONFIG DA CONVERSA; sem identidade resolvível, falha fechado (a resposta
+  // também não teria destino).
+  if (provider === "instagram" || provider === "messenger") {
+    const identities = contact
+      ? await ctx.db
+          .query("contactChannelIdentities")
+          .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
+          .take(50)
+      : [];
+    const identity = identities.find(
+      (i) => i.channelConfigId === channelConfig?._id && i.organizationId === followUp.organizationId
+    );
+    if (!identity) {
+      await resolveFollowUpOutcome(ctx, followUp._id, { kind: "needs_human", reason: "sem_identidade" });
+      return { ok: false, reason: "sem_identidade" };
+    }
+    if (identity.optedOutAt !== undefined) {
+      await resolveFollowUpOutcome(ctx, followUp._id, { kind: "canceled", reason: "opt_out" });
+      return { ok: false, reason: "opt_out" };
+    }
+  }
+  const phone =
+    provider !== "instagram" && provider !== "messenger" && contact?.phone
+      ? normalizeCampaignPhone(contact.phone, resolveDefaultCountry(org?.settings))
+      : null;
   if (phone?.ok) {
     const optOut = await ctx.db
       .query("optOuts")
@@ -339,6 +364,7 @@ async function fireCore(
   // pronto para quando a janela reabrir — 4.7) e `fora_do_horario` já foi
   // decidido pela janela de follow-up, acima.
   const counts = await countAiRepliesForFollowUp(ctx, conversation._id, now);
+  const lastInboundStandby = await lastInboundIsStandby(ctx, conversation, provider);
   const eligibility = evaluateEligibility({
     org,
     agent,
@@ -346,6 +372,7 @@ async function fireCore(
     lead,
     contact,
     channelProvider: provider,
+    lastInboundStandby,
     aiReplyCountConversation: counts.total,
     aiReplyCountLastHour: counts.lastHour,
     now,
@@ -366,6 +393,7 @@ async function fireCore(
         lead,
         contact,
         channelProvider: provider,
+        lastInboundStandby,
         aiReplyCountConversation: counts.total,
         aiReplyCountLastHour: counts.lastHour,
         now,

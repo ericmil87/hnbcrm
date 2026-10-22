@@ -200,6 +200,7 @@ export const replayEval = action({
       expectation: string;
       followUp?: GoldenFollowUp;
       simulatedNow?: number;
+      tags?: string[];
     } | null = await ctx.runQuery(internal.agentEvals.internalGetEval, {
       evalId: args.evalId,
     });
@@ -214,6 +215,8 @@ export const replayEval = action({
         // relógio (sem ele, golden com regra de data deriva com o dia real).
         ...(evalDoc.followUp ? { followUp: evalDoc.followUp } : {}),
         ...(evalDoc.simulatedNow !== undefined ? { simulatedNow: evalDoc.simulatedNow } : {}),
+        // Golden de canal (tag instagram/messenger): saída em texto puro.
+        ...(goldenTransport(evalDoc.tags) ? { transport: goldenTransport(evalDoc.tags) } : {}),
       });
     return { ...result, expectation: evalDoc.expectation };
   },
@@ -280,6 +283,51 @@ export const FOLLOW_UP_NUDGE_GOLDEN: {
   },
 };
 
+// ── Goldens de canal (Meta Messaging F3) ──
+// O canal da golden viaja na TAG (`instagram`/`messenger`), sem campo novo no
+// schema: o replay passa o transporte ao simulador, que devolve a resposta em
+// TEXTO PURO, como a produção manda nesses canais.
+
+/** Tag de canal → transporte do simulador (ausente = WhatsApp). */
+export function goldenTransport(tags: string[] | undefined): "instagram" | "messenger" | undefined {
+  if (tags?.includes("instagram")) return "instagram";
+  if (tags?.includes("messenger")) return "messenger";
+  return undefined;
+}
+
+export const INSTAGRAM_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+} = {
+  name: "Instagram: DM pedindo preço — texto puro, sem formatação",
+  transcript: [
+    { role: "customer", content: "oi! vi o post de vocês, quanto custa a vivência de sábado?" },
+  ],
+  expectation:
+    "Responder em texto PURO, sem nenhum marcador de formatação (nada de *, _, ~, # ou crases — no " +
+    "Instagram eles aparecem crus). Mensagem curta, no tom de DM, respondendo ao preço com base no " +
+    "conhecimento ou dizendo que vai confirmar. Nunca inventar preço que não esteja no conhecimento.",
+  tags: ["instagram", "canal", "regressao"],
+};
+
+export const MESSENGER_GOLDEN: {
+  name: string;
+  transcript: TranscriptTurn[];
+  expectation: string;
+  tags: string[];
+} = {
+  name: "Messenger: lista de horários — texto puro, lista com hífen",
+  transcript: [
+    { role: "customer", content: "Bom dia! Quais são os horários de atendimento de vocês?" },
+  ],
+  expectation:
+    "Responder em texto PURO: se listar horários, usar linhas com hífen (\"- \"), nunca negrito, itálico, " +
+    "títulos ou crases (o Messenger não formata nada). Não inventar horário que não esteja no conhecimento.",
+  tags: ["messenger", "canal", "regressao"],
+};
+
 /** Forma comum das goldens curadas (o follow-up só existe nas duas novas). */
 type CuratedGolden = {
   name: string;
@@ -296,6 +344,8 @@ export const CURATED_GOLDENS: CuratedGolden[] = [
   FILE_PDF_GOLDEN,
   FOLLOW_UP_RESOLVED_GOLDEN,
   FOLLOW_UP_NUDGE_GOLDEN,
+  INSTAGRAM_GOLDEN,
+  MESSENGER_GOLDEN,
 ];
 
 // Instala as goldens curadas numa org. Idempotente pelo nome — goldens são

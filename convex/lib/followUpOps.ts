@@ -604,6 +604,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   bridge_sem_aceite: "o canal não tem o aceite de risco do WhatsApp não oficial",
   janela_24h: "a janela de 24h do WhatsApp está fechada",
   suspeita_de_bot: "o outro lado parece ser um robô — aguardando verificação humana",
+  outro_app_controla: "outro app controla a conversa",
   // ── Fila do atendente ──
   budget_mensal: "o teto mensal de conversas com IA foi atingido",
   conversa_removida: "a conversa não existe mais",
@@ -627,6 +628,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   tarefa_sem_prazo: "a tarefa ficou sem prazo",
   conversa_sem_mensagens: "a conversa não tem mensagens",
   bridge_offline: "o número do WhatsApp está desconectado",
+  sem_identidade: "o contato não tem identidade neste canal do Instagram/Messenger",
   fila_ocupada: "a conversa ficou ocupada com o atendimento normal",
   cadeia_maxima: "o cliente não respondeu aos follow-ups anteriores",
   teto_diario: "o teto diário de follow-ups deste número foi atingido",

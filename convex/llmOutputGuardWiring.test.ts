@@ -38,4 +38,33 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
   test("o prompt da publicação proíbe chamada de ferramenta (REGRA 7)", () => {
     expect(read("lib/groupPostPrompt.ts")).toMatch(/7\. Nesta tarefa você NÃO tem ferramentas/);
   });
+
+  // Meta Messaging F3: a saída por canal (`formatReplyForTransport`, que
+  // escolhe `toWhatsAppText` ou `toPlainChatText`) é o ÚNICO formatador do
+  // texto da IA no atendente, e fica DEPOIS do guard nos dois pontos de saída.
+  test("atendente: formatação por canal só depois do detectLeakedModelMarkup (runtime e simulador)", () => {
+    const src = read("attendant.ts");
+    const helper = src.slice(src.indexOf("export function formatReplyForTransport"));
+    expect(helper.slice(0, 600)).toMatch(/toPlainChatText\(text\)/);
+    expect(helper.slice(0, 600)).toMatch(/toWhatsAppText\(text\)/);
+
+    // Ninguém formata o texto da IA por fora do helper.
+    expect(src).not.toMatch(/toWhatsAppText\(reply/);
+    expect(src).not.toMatch(/toPlainChatText\(reply/);
+
+    // Runtime: trava final do guard → formatação → commit.
+    const finalGuard = src.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const runtimeFormat = src.indexOf("replyText = formatReplyForTransport(replyText");
+    const commitBase = src.indexOf("const commitArgsBase = {");
+    expect(finalGuard).toBeGreaterThan(-1);
+    expect(runtimeFormat).toBeGreaterThan(finalGuard);
+    expect(commitBase).toBeGreaterThan(runtimeFormat);
+
+    // Simulador: o guard da rodada vem antes da formatação devolvida.
+    const sim = src.slice(src.indexOf("export const simulateAttendant"));
+    const simGuard = sim.indexOf("leakInOutgoingRound(");
+    const simFormat = sim.indexOf("formatReplyForTransport(reply, simulatedTransport)");
+    expect(simGuard).toBeGreaterThan(-1);
+    expect(simFormat).toBeGreaterThan(simGuard);
+  });
 });

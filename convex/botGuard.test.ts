@@ -382,6 +382,40 @@ describe("elegibilidade", () => {
       ).toEqual({ ok: true });
     });
   });
+
+  // Meta Messaging F3: a suspeita de robô (nº 12, logo depois do repasse)
+  // continua vencendo nos canais novos — antes da janela da Meta e do standby.
+  test("Instagram/Messenger: suspeita ativa vence janela e standby", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const org = await ctx.db.get(seed.organizationId);
+      const agent = await ctx.db.get(seed.agentId);
+      const conversation = (await ctx.db.get(seed.conversationId))!;
+      const lead = await ctx.db.get(seed.leadId);
+      const suspicion = { at: Date.now(), source: "heuristic" as const, reason: "x" };
+      for (const channelProvider of ["instagram", "messenger"] as const) {
+        const base = {
+          org,
+          agent,
+          lead,
+          contact: null,
+          channelProvider,
+          aiReplyCountConversation: 0,
+          aiReplyCountLastHour: 0,
+          now: Date.now(),
+        };
+        expect(evaluateEligibility({ ...base, conversation })).toEqual({ ok: true });
+        expect(
+          evaluateEligibility({
+            ...base,
+            conversation: { ...conversation, botSuspicion: suspicion, lastInboundAt: Date.now() - 2 * DAY },
+            lastInboundStandby: true,
+          })
+        ).toEqual({ ok: false, reason: "suspeita_de_bot" });
+      }
+    });
+  });
 });
 
 describe("limpeza pelo humano", () => {

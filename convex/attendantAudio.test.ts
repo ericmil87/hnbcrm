@@ -520,8 +520,9 @@ describe("simulador + golden com áudio (F4)", () => {
     expect(again).toEqual(first); // idempotente pelo nome
 
     const evals = await t.run(async (ctx) => ctx.db.query("agentEvals").collect());
-    // 3 de mídia (áudio, comprovante por imagem, PDF) + 2 de follow-up (v0.60).
-    expect(evals).toHaveLength(5);
+    // 3 de mídia (áudio, comprovante por imagem, PDF) + 2 de follow-up (v0.60)
+    // + 2 de canal (Instagram e Messenger, Meta Messaging F3).
+    expect(evals).toHaveLength(7);
     expect(evals.every((e) => e.createdBy === seed.humanId)).toBe(true);
 
     const audio = evals.find((e) => e.tags?.includes("audio"))!;

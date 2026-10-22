@@ -64,6 +64,8 @@ export const DEFAULT_QUIET_END_HOUR = 20;
 /** D5: estimativas calibráveis, como nas campanhas — não são limites oficiais. */
 export const DEFAULT_DAILY_CAP_BRIDGE = 30;
 export const DEFAULT_DAILY_CAP_META = 100;
+/** Instagram/Messenger (Meta Messaging F3): conta da Página, cap próprio e mais baixo. */
+export const DEFAULT_DAILY_CAP_META_MESSAGING = 50;
 
 export const MAX_CHAIN_LIMIT = 5;
 export const MAX_DAILY_CAP = 500;
@@ -83,14 +85,19 @@ function intOr(value: number | undefined, fallback: number, min: number, max: nu
  * Resolve a configuração efetiva a partir do perfil do agente e do transporte
  * do canal. `provider` null (canal não resolvido) é tratado como Meta — mesma
  * postura conservadora da condição 11 da elegibilidade. instagram/messenger
- * ainda caem no cap da Meta (cap próprio entra na F3 do Meta Messaging).
+ * têm cap próprio (`DEFAULT_DAILY_CAP_META_MESSAGING`, F3).
  */
 export function resolveFollowUpSettings(
   profile: { followUps?: FollowUpProfileConfig } | null | undefined,
   provider: ChannelTransport | null | undefined
 ): FollowUpSettings {
   const cfg = profile?.followUps;
-  const defaultCap = provider === "bridge" ? DEFAULT_DAILY_CAP_BRIDGE : DEFAULT_DAILY_CAP_META;
+  const defaultCap =
+    provider === "bridge"
+      ? DEFAULT_DAILY_CAP_BRIDGE
+      : provider === "instagram" || provider === "messenger"
+        ? DEFAULT_DAILY_CAP_META_MESSAGING
+        : DEFAULT_DAILY_CAP_META;
 
   const quietStart = intOr(cfg?.quietStartHour, DEFAULT_QUIET_START_HOUR, 0, 24);
   const quietEnd = intOr(cfg?.quietEndHour, DEFAULT_QUIET_END_HOUR, 0, 24);

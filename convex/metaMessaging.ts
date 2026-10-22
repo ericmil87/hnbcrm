@@ -76,6 +76,8 @@ import {
   scrubbedDeletedMetadata,
 } from "./lib/metaInbound";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { pendingFollowUpsForConversation, resolveFollowUpOutcome } from "./lib/followUpOps";
+import { isOptOutText } from "./lib/campaignHooks";
 import { deleteFileRow } from "./lib/storageUsage";
 import {
   MetaAttachment,
@@ -391,6 +393,7 @@ export const internalRouteMetaInbound = internalMutation({
       organizationId: v.id("organizations"),
       leadId: v.id("leads"),
       contactId: v.id("contacts"),
+      identityId: v.id("contactChannelIdentities"),
       needsProfile: v.boolean(),
     })
   ),
@@ -429,8 +432,118 @@ export const internalRouteMetaInbound = internalMutation({
       organizationId: config.organizationId,
       leadId,
       contactId,
+      identityId,
       needsProfile: identity?.profileFetchedAt === undefined,
     };
+  },
+});
+
+// ── Opt-out por identidade (F3) ──
+// Instagram/Messenger não têm telefone: o "pare" do cliente vale para a
+// IDENTIDADE (PSID/IGSID) daquele config. Decisão do plano: só desliga o
+// FOLLOW-UP da IA (mensagem ativa); o atendente segue respondendo quando o
+// cliente escreve. Inbound posterior NÃO reverte; só `internalClearIdentityOptOut`
+// (manual, F5/UI futura).
+
+/** Palavras que, sozinhas na mensagem, marcam o opt-out (sem acento/caixa). */
+export const META_OPT_OUT_KEYWORDS = ["PARE", "PARAR", "STOP", "SAIR"];
+
+export function isMetaOptOutKeyword(text: string): boolean {
+  return isOptOutText(text, META_OPT_OUT_KEYWORDS);
+}
+
+export const internalMarkIdentityOptOut = internalMutation({
+  args: {
+    identityId: v.id("contactChannelIdentities"),
+    source: v.union(v.literal("keyword"), v.literal("manual")),
+  },
+  returns: v.object({ marked: v.boolean(), canceledFollowUps: v.number() }),
+  handler: async (ctx, args) => {
+    const identity = await ctx.db.get(args.identityId);
+    if (!identity) return { marked: false, canceledFollowUps: 0 };
+    const now = Date.now();
+    const marked = identity.optedOutAt === undefined;
+    if (marked) {
+      await ctx.db.patch(identity._id, { optedOutAt: now, optOutSource: args.source });
+    }
+
+    // Follow-ups ATIVOS das conversas deste contato NESTE config morrem como
+    // `canceled`/`opt_out` (o desfecho único desarma o `runAt`). Idempotente:
+    // roda de novo mesmo com a identidade já marcada.
+    let canceled = 0;
+    let firstLeadId: Id<"leads"> | null = null;
+    const leads = await ctx.db
+      .query("leads")
+      .withIndex("by_contact", (q) => q.eq("contactId", identity.contactId))
+      .take(20);
+    for (const lead of leads) {
+      if (lead.organizationId !== identity.organizationId) continue;
+      firstLeadId ??= lead._id;
+      const conversations = await ctx.db
+        .query("conversations")
+        .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
+        .take(20);
+      for (const conversation of conversations) {
+        if (conversation.channelConfigId !== identity.channelConfigId) continue;
+        for (const followUp of await pendingFollowUpsForConversation(ctx, conversation._id)) {
+          await resolveFollowUpOutcome(ctx, followUp._id, { kind: "canceled", reason: "opt_out" });
+          canceled += 1;
+        }
+      }
+    }
+
+    if (marked) {
+      const canal = identity.kind === "instagram" ? "Instagram" : "Messenger";
+      await ctx.db.insert("auditLogs", {
+        organizationId: identity.organizationId,
+        entityType: "contact",
+        entityId: identity.contactId,
+        action: "update",
+        actorType: "system",
+        changes: { before: { optedOutAt: null }, after: { optedOutAt: now, optOutSource: args.source } },
+        metadata: { channel: identity.kind, externalIdLast4: last4(identity.externalId), canceledFollowUps: canceled },
+        description: `Contato pediu para não receber follow-ups da IA no ${canal}`,
+        severity: "medium",
+        createdAt: now,
+      });
+      if (firstLeadId) {
+        await ctx.db.insert("activities", {
+          organizationId: identity.organizationId,
+          leadId: firstLeadId,
+          type: "note",
+          actorType: "system",
+          content: `O contato pediu para não receber follow-ups da IA no ${canal}.`,
+          metadata: { channel: identity.kind, source: args.source },
+          createdAt: now,
+        });
+      }
+    }
+    return { marked, canceledFollowUps: canceled };
+  },
+});
+
+/** Reverte o opt-out da identidade (manual; a UI chega na F5). */
+export const internalClearIdentityOptOut = internalMutation({
+  args: { identityId: v.id("contactChannelIdentities") },
+  returns: v.object({ cleared: v.boolean() }),
+  handler: async (ctx, args) => {
+    const identity = await ctx.db.get(args.identityId);
+    if (!identity || identity.optedOutAt === undefined) return { cleared: false };
+    const now = Date.now();
+    await ctx.db.patch(identity._id, { optedOutAt: undefined, optOutSource: undefined });
+    await ctx.db.insert("auditLogs", {
+      organizationId: identity.organizationId,
+      entityType: "contact",
+      entityId: identity.contactId,
+      action: "update",
+      actorType: "system",
+      changes: { before: { optedOutAt: identity.optedOutAt }, after: { optedOutAt: null } },
+      metadata: { channel: identity.kind, externalIdLast4: last4(identity.externalId) },
+      description: "Opt-out de follow-up da IA revertido",
+      severity: "medium",
+      createdAt: now,
+    });
+    return { cleared: true };
   },
 });
 
@@ -679,6 +792,15 @@ export const internalIngestEvent = internalAction({
       externalId: event.mid,
       metadata,
     });
+
+    // F3: "pare"/"parar"/"stop"/"sair" sozinho na mensagem = opt-out do
+    // follow-up da IA para ESTA identidade. Não silencia o atendente.
+    if (event.kind === "message" && text && isMetaOptOutKeyword(text)) {
+      await ctx.runMutation(internal.metaMessaging.internalMarkIdentityOptOut, {
+        identityId: routed.identityId,
+        source: "keyword",
+      });
+    }
     return null;
   },
 });

@@ -69,6 +69,9 @@ import {
 import { buildDisclosurePromptLine, resolveDisclosurePolicy } from "./lib/disclosure";
 import { readAgentTexts } from "./lib/agentProfileTexts";
 import { toWhatsAppText } from "./lib/whatsappText";
+import { toPlainChatText } from "./lib/chatText";
+import { META_AI_WINDOW_MARGIN_MS, metaConversationWindow } from "./lib/metaSend";
+import { modulesOf } from "./lib/orgModules";
 import {
   describeLeakedModelMarkup,
   detectLeakedModelMarkup,
@@ -155,7 +158,7 @@ const DEFAULT_DISCLOSURE =
 // Custo por run: preço POR MODELO (ou `usage.cost` do provedor) em
 // lib/aiSpend.ts — o antigo preço fixo do flash para qualquer modelo saiu (v0.69).
 
-// ── Elegibilidade (12 condições; usada no enqueue e RE-checada no commit) ──
+// ── Elegibilidade (13 condições; usada no enqueue e RE-checada no commit) ──
 // `channelProvider` vem SEMPRE de resolveConversationChannelConfig (helper
 // único) para enqueue e commit nunca divergirem sobre qual canal é (v4.1 DIFF 2).
 
@@ -166,6 +169,12 @@ type EligibilityInput = {
   lead: Doc<"leads"> | null;
   contact: Doc<"contacts"> | null;
   channelProvider: ChannelTransport | null; // transporte (configTransport); só alargamento de tipo
+  /**
+   * Meta Messaging F3: a última inbound do cliente chegou por `entry[].standby[]`
+   * (outro app controla a thread). Calculado por `lastInboundIsStandby` com o
+   * MESMO transporte; ausente = false (WhatsApp nunca tem standby).
+   */
+  lastInboundStandby?: boolean;
   aiReplyCountConversation: number;
   aiReplyCountLastHour: number;
   now: number;
@@ -237,15 +246,84 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   if (channelProvider === "bridge" && org!.settings.aiConfig?.bridgeAiAck === undefined) {
     return { ok: false, reason: "bridge_sem_aceite" };
   }
-  // 11. janela de 24h da Meta aberta — só no transporte oficial. Bridge não tem
-  // janela; conversa cujo provider não resolve é tratada como Meta (conservador).
-  if (
-    channelProvider !== "bridge" &&
-    (!conversation.lastInboundAt || conversation.lastInboundAt + SERVICE_WINDOW_MS <= now)
-  ) {
+  // 11. janela de atendimento aberta — por transporte (`aiWindowClosed`).
+  // Bridge não tem janela; WhatsApp oficial: 24 h; Instagram/Messenger: 24 h
+  // (7 dias quando aberta por anúncio) com margem de 15 min; conversa cujo
+  // transporte não resolve é tratada como WhatsApp oficial (conservador).
+  if (aiWindowClosed(channelProvider, conversation, now)) {
     return { ok: false, reason: "janela_24h" };
   }
+  // 13 (Meta Messaging F3, depois da 11). A última inbound chegou em STANDBY:
+  // outro app (Business Suite, outro bot) é o dono da thread no Handover
+  // Protocol, e responder por cima dele é o que a Meta proíbe. Só humano
+  // responde até o cliente escrever fora do standby.
+  if (
+    (channelProvider === "instagram" || channelProvider === "messenger") &&
+    input.lastInboundStandby === true
+  ) {
+    return { ok: false, reason: "outro_app_controla" };
+  }
   return { ok: true };
+}
+
+/**
+ * Janela de atendimento FECHADA para a IA (condição 11 da elegibilidade e a
+ * medida da degradação do follow-up — um lugar só, para as duas nunca
+ * divergirem). Instagram/Messenger usam a janela da Meta (`lib/metaSend.ts`:
+ * 24 h da última inbound ou 7 dias do anúncio) MENOS 15 min de margem: a IA não
+ * começa um turno que o dispatcher recusaria no fim da geração.
+ */
+export function aiWindowClosed(
+  transport: ChannelTransport | null,
+  conversation: { lastInboundAt?: number; windowOpenedByAdAt?: number },
+  now: number
+): boolean {
+  if (transport === "bridge") return false;
+  if (transport === "instagram" || transport === "messenger") {
+    const w = metaConversationWindow(transport, conversation, now);
+    return !w.open || w.closesAt === undefined || w.closesAt - META_AI_WINDOW_MARGIN_MS <= now;
+  }
+  return !conversation.lastInboundAt || conversation.lastInboundAt + SERVICE_WINDOW_MS <= now;
+}
+
+/**
+ * A última inbound do cliente veio em standby? (condição 13). Só lê para
+ * Instagram/Messenger. Começa no instante de `lastInboundAt` pelo índice e
+ * desce no máximo 10 linhas até achar a inbound do contato.
+ */
+export async function lastInboundIsStandby(
+  ctx: { db: QueryCtx["db"] },
+  conversation: Doc<"conversations">,
+  transport: ChannelTransport | null
+): Promise<boolean> {
+  if (transport !== "instagram" && transport !== "messenger") return false;
+  if (conversation.lastInboundAt === undefined) return false;
+  const rows = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) =>
+      q.eq("conversationId", conversation._id).lte("createdAt", conversation.lastInboundAt!)
+    )
+    .order("desc")
+    .take(10);
+  const last = rows.find((m) => m.direction === "inbound" && m.senderType === "contact" && !m.isInternal);
+  return last?.metadata?.standby === true;
+}
+
+/**
+ * Saída do funil do atendente por transporte: `toWhatsAppText` no WhatsApp
+ * (meta, bridge e transporte não resolvido), `toPlainChatText` no Instagram e
+ * no Messenger. Chamada só DEPOIS do `detectLeakedModelMarkup`, no runtime e no
+ * simulador (os dois pontos de saída). Nunca em texto humano nem na divulgação.
+ */
+export function formatReplyForTransport(text: string, transport: ChannelTransport | null): string {
+  return transport === "instagram" || transport === "messenger" ? toPlainChatText(text) : toWhatsAppText(text);
+}
+
+/** Nome do canal para cópias da IA (planner, persona padrão). */
+export function channelLabelFor(transport: ChannelTransport | null): string {
+  if (transport === "instagram") return "Instagram";
+  if (transport === "messenger") return "Messenger";
+  return "WhatsApp";
 }
 
 // Campos a capturar (v4.2): resolve as fieldDefinitions da whitelist do perfil
@@ -310,11 +388,31 @@ export async function findAttendantForConversation(
   lead: Doc<"leads"> | null,
   config: Doc<"channelConfigs"> | null
 ): Promise<Doc<"teamMembers"> | null> {
-  if (conversation.channel !== "whatsapp") return null;
+  if (
+    conversation.channel !== "whatsapp" &&
+    conversation.channel !== "instagram" &&
+    conversation.channel !== "messenger"
+  ) {
+    return null;
+  }
   if (!config || config.status !== "active") return null;
   const provider = configTransport(config);
   if (provider === "bridge" && org?.settings.aiConfig?.bridgeAiAck === undefined) {
     return null;
+  }
+  // Instagram/Messenger (Meta Messaging F3): módulo da org ligado e a conexão
+  // da Página saudável. Token morto (`reauth_required`/`revoked`) = a resposta
+  // nunca sairia, então nem cria fila.
+  if (provider === "instagram" || provider === "messenger") {
+    if (!modulesOf(org).metaMessaging) return null;
+    const connection = config.metaConnectionId ? await ctx.db.get(config.metaConnectionId) : null;
+    if (
+      !connection ||
+      connection.organizationId !== conversation.organizationId ||
+      connection.authState !== "ok"
+    ) {
+      return null;
+    }
   }
 
   const aiMembers = await ctx.db
@@ -671,6 +769,7 @@ export const internalEnqueueFromInbound = internalMutation({
     }
 
     const counts = await countAiReplies(ctx, conversation._id, now);
+    const lastInboundStandby = await lastInboundIsStandby(ctx, conversation, transportOf(channelConfig));
     const eligibility = evaluateEligibility({
       org,
       agent,
@@ -678,6 +777,7 @@ export const internalEnqueueFromInbound = internalMutation({
       lead,
       contact,
       channelProvider: transportOf(channelConfig),
+      lastInboundStandby,
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -1115,6 +1215,7 @@ export const internalClaimForProcessing = internalMutation({
     }
 
     const counts = await countAiReplies(ctx, conversation._id, now);
+    const lastInboundStandby = await lastInboundIsStandby(ctx, conversation, transportOf(channelConfig));
     const eligibility = evaluateEligibility({
       org,
       agent,
@@ -1122,6 +1223,7 @@ export const internalClaimForProcessing = internalMutation({
       lead,
       contact,
       channelProvider: transportOf(channelConfig),
+      lastInboundStandby,
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -1160,6 +1262,7 @@ export const internalClaimForProcessing = internalMutation({
           lead,
           contact,
           channelProvider: transportOf(channelConfig),
+          lastInboundStandby,
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,
@@ -1170,9 +1273,9 @@ export const internalClaimForProcessing = internalMutation({
           // elegibilidade curto-circuita (horário é a condição 8, janela é a
           // 11), então "fora_do_horario" pode estar escondendo uma janela
           // fechada — e aí um envio direto morreria no commit.
-          followUpDegraded =
-            transportOf(channelConfig) !== "bridge" &&
-            (!conversation.lastInboundAt || conversation.lastInboundAt + SERVICE_WINDOW_MS <= now);
+          // Por transporte (IG/Messenger com a margem de 15 min): mesma função
+          // da condição 11.
+          followUpDegraded = aiWindowClosed(transportOf(channelConfig), conversation, now);
         } else {
           effectiveReason = recheck.reason;
         }
@@ -1187,6 +1290,7 @@ export const internalClaimForProcessing = internalMutation({
             : lead,
           contact,
           channelProvider: transportOf(channelConfig),
+          lastInboundStandby,
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,
@@ -1519,6 +1623,9 @@ export const internalClaimForProcessing = internalMutation({
         // decrypt acontece na action (mesmo padrão do BYO em lib/agentRoutes).
         externalAgenda: externalAgendaForRun(profile.externalAgenda),
         botGuardEnabled: resolveBotGuardSettings(profile).enabled,
+        // Meta Messaging F3: decide o formato da saída (texto puro no IG/Messenger).
+        transport: transportOf(channelConfig),
+        channelLabel: channelLabelFor(transportOf(channelConfig)),
       },
     };
   },
@@ -1776,7 +1883,15 @@ async function planFollowUpSchedule(
   // Meta: "me chama amanhã" cai SEMPRE fora da janela de 24h (ela conta do
   // último inbound). A IA precisa saber disso no ato para não prometer o que o
   // canal não entrega — o texto fica pronto e a equipe envia.
-  if (
+  // Instagram/Messenger (F3): mesma régua da condição 11 (janela da Meta, 7
+  // dias por anúncio, margem de 15 min), avaliada no instante do follow-up.
+  if (aiExecutes && (provider === "instagram" || provider === "messenger")) {
+    if (aiWindowClosed(provider, conversation, dueAt)) {
+      avisos.push(
+        `nesse horário a janela de 24 h do ${channelLabelFor(provider)} estará fechada (a IA só envia se o cliente escrever de novo): vou preparar o texto e a equipe envia`
+      );
+    }
+  } else if (
     aiExecutes &&
     provider !== "bridge" &&
     dueAt > (conversation.lastInboundAt ?? 0) + SERVICE_WINDOW_MS
@@ -2527,6 +2642,7 @@ export const internalCommitAiReply = internalMutation({
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
 
     const counts = await countAiReplies(ctx, conversation._id, now);
+    const lastInboundStandby = await lastInboundIsStandby(ctx, conversation, transportOf(channelConfig));
     const eligibility = evaluateEligibility({
       org,
       agent,
@@ -2534,6 +2650,7 @@ export const internalCommitAiReply = internalMutation({
       lead,
       contact,
       channelProvider: transportOf(channelConfig),
+      lastInboundStandby,
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -2562,6 +2679,7 @@ export const internalCommitAiReply = internalMutation({
         lead,
         contact,
         channelProvider: transportOf(channelConfig),
+        lastInboundStandby,
         aiReplyCountConversation: counts.total,
         aiReplyCountLastHour: counts.lastHour,
         now,
@@ -2589,6 +2707,7 @@ export const internalCommitAiReply = internalMutation({
           lead: lead ? { ...lead, assignedTo: agent?._id, handoffState: undefined } : lead,
           contact,
           channelProvider: transportOf(channelConfig),
+          lastInboundStandby,
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,
@@ -3124,6 +3243,10 @@ type RunContext = {
   externalAgenda: ExternalAgendaRunConfig | null;
   /** Guardrail anti-bot ligado (v0.65) — oferece `flagAutomatedSender` + REGRA 11. */
   botGuardEnabled: boolean;
+  /** Transporte da conversa (F3): `instagram`/`messenger` saem em texto puro. */
+  transport?: ChannelTransport | null;
+  /** Nome do canal na persona padrão ("WhatsApp", "Instagram", "Messenger"). */
+  channelLabel?: string;
 };
 
 // Subconjunto do contexto que o prompt de sistema realmente usa — permite que o
@@ -3148,6 +3271,7 @@ type PromptContext = Pick<
   | "previousDraftText"
   | "followUp"
   | "pendingFollowUps"
+  | "channelLabel"
 > & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean };
 
 // P4: allowMoveStages:false remove moveThisLead das tools da run (subtração do
@@ -3173,11 +3297,12 @@ function attendantToolsFor(
 }
 
 function buildAttendantSystemPrompt(context: PromptContext): string {
+  const canal = context.channelLabel ?? "WhatsApp";
   const persona =
     context.systemPrompt ??
     [
-      `Você é ${context.agentName}, atendente virtual da empresa "${context.orgName}" no WhatsApp.`,
-      "Atenda com cordialidade e objetividade, em mensagens CURTAS (estilo WhatsApp).",
+      `Você é ${context.agentName}, atendente virtual da empresa "${context.orgName}" no ${canal}.`,
+      `Atenda com cordialidade e objetividade, em mensagens CURTAS (estilo ${canal}).`,
       "Seu objetivo: entender a necessidade do cliente, responder dúvidas com base no",
       "conhecimento fornecido e qualificar o lead. Nunca invente preços, prazos ou",
       "políticas que não estejam no conhecimento — na dúvida, escale para um humano.",
@@ -3866,7 +3991,9 @@ export const internalProcessQueueItem = internalAction({
       // caminho que tenha chegado aqui com marcação técnica falha o turno.
       const finalLeak = detectLeakedModelMarkup(replyText);
       if (finalLeak) throw new Error(describeLeakedModelMarkup(finalLeak));
-      replyText = toWhatsAppText(replyText);
+      // Formato por canal (F3): WhatsApp entende `*x*`; Instagram e Messenger
+      // não entendem formatação nenhuma — texto puro. Sempre DEPOIS do guard.
+      replyText = formatReplyForTransport(replyText, context.transport ?? null);
 
       // Flyer (v0.64): só URL que veio do campo `image` de um evento que a IA
       // consultou NESTE turno. Fora disso, ou se o download falhar, sai só o
@@ -4807,6 +4934,12 @@ export const simulateAttendant = action({
     // texto puro NÃO vira mensagem — é assim que se valida "o comprovante já
     // chegou, não cobra" sem esperar o prazo vencer de verdade.
     followUp: v.optional(v.object({ title: v.string(), note: v.optional(v.string()) })),
+    // Meta Messaging F3: canal simulado. `instagram`/`messenger` trocam o nome
+    // do canal na persona padrão e a saída para TEXTO PURO (`toPlainChatText`),
+    // como em produção. Ausente = WhatsApp (meta e bridge saem iguais).
+    transport: v.optional(
+      v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger"))
+    ),
     // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
     // regras. Ausente = atendimento 1:1 de sempre.
     group: v.optional(
@@ -4896,6 +5029,9 @@ export const simulateAttendant = action({
     context.dateTimeBlock = context.includeCurrentDateTime
       ? buildCurrentDateTimeBlock(simulatedNow, context.timezone)
       : null;
+    // Grupo só existe no WhatsApp: o transporte simulado vale para o 1:1.
+    const simulatedTransport: ChannelTransport | null = args.group ? null : (args.transport ?? null);
+    context.channelLabel = channelLabelFor(simulatedTransport);
     // Turno de follow-up simulado: o mesmo contexto do runtime, com datas
     // formatadas no fuso do agente.
     if (args.followUp && !args.group) {
@@ -5120,7 +5256,7 @@ export const simulateAttendant = action({
         return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
       }
       return {
-        reply: reply === null ? null : toWhatsAppText(reply),
+        reply: reply === null ? null : formatReplyForTransport(reply, simulatedTransport),
         actions,
         error: null,
         imageUrl: reply === null ? null : replyImageUrl,
