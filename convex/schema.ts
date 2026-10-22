@@ -1226,7 +1226,11 @@ const applicationTables = {
     .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"])
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
-    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
+    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"])
+    // Filas da Central (setor/unidade) por última mensagem, com o filtro de
+    // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
+    .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
+    .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa

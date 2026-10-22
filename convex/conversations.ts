@@ -315,7 +315,7 @@ export const getConversations = query({
     archived: v.optional(v.boolean()),
     // MVP Central (filas do inbox) — opcionais; ausentes = comportamento antigo.
     // unitId/departmentId/noDepartment usam índice próprio (mais recentes por
-    // criação, até `limit`); assignedToMe filtra `conversations.assignedTo`
+    // última mensagem, até `limit`); assignedToMe filtra `conversations.assignedTo`
     // (responsável da CONVERSA, não do lead).
     unitId: v.optional(v.id("units")),
     departmentId: v.optional(v.id("departments")),
@@ -327,35 +327,28 @@ export const getConversations = query({
     const me = await requireAuth(ctx, args.organizationId);
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
 
-    // Ramos da Central (setor/unidade): os índices ordenam por CRIAÇÃO, não por
-    // última mensagem, e as arquivadas só saem depois do take — com o default
-    // de 50 a lista perderia conversas ativas recentes. Mantém o take antigo de
-    // 200 como piso; o índice certo ([organizationId, departmentId|unitId,
-    // archivedAt, lastMessageAt]) fica para um follow-up.
-    const centralTake = Math.max(limit, 200);
-
+    // Ramos da Central (setor/unidade): índices por [org, setor|unidade,
+    // archivedAt, lastMessageAt] — ativas = eq(archivedAt, undefined),
+    // arquivadas = gt(archivedAt, undefined), mais recentes primeiro, igual ao
+    // ramo padrão (perf Convex I/O, onda 2). `noDepartment` = departmentId ausente.
     let conversations;
-    if (!args.leadId && args.departmentId) {
+    if (!args.leadId && (args.departmentId || args.noDepartment)) {
+      const departmentId = args.departmentId ?? undefined;
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_department", (q) =>
-          q.eq("organizationId", args.organizationId).eq("departmentId", args.departmentId!)
-        )
+        .withIndex("by_organization_and_department_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("departmentId", departmentId);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
         .order("desc")
-        .take(centralTake);
-    } else if (!args.leadId && args.noDepartment) {
-      conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_department", (q) =>
-          q.eq("organizationId", args.organizationId).eq("departmentId", undefined)
-        )
-        .order("desc")
-        .take(centralTake);
+        .take(limit);
     } else if (!args.leadId && args.unitId) {
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_unit", (q) =>
-          q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!)
-        )
+        .withIndex("by_organization_and_unit_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
         .order("desc")
-        .take(centralTake);
+        .take(limit);
     } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
@@ -440,8 +433,8 @@ export const getConversations = query({
       return (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt);
     });
 
-    // Os ramos da Central leem até `centralTake` (> limit): devolve só `limit`,
-    // senão o "Carregar mais" do front (lote cheio = há mais) nunca terminaria.
+    // Nenhum ramo lê mais que `limit`; o slice fica como garantia do contrato
+    // do "Carregar mais" do front (lote cheio = há mais).
     return conversationsWithData.slice(0, limit);
   },
 });

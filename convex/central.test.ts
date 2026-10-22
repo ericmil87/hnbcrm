@@ -381,6 +381,44 @@ describe("getConversations — filtros novos", () => {
     expect(await ids({ departmentId: deptId, noDepartment: true })).toEqual([other]);
     expect(await ids({ leadId: s.leadId })).toEqual([s.conversationId]);
   });
+
+  test("setor/unidade: índice por última mensagem com arquivadas fora (60 conversas, limit 5)", async () => {
+    const s = await seed({ modules: ALL_ON });
+    const unitId = await as(s).mutation(api.units.createUnit, { organizationId: s.organizationId, name: "H1" });
+    const deptId = await as(s).mutation(api.departments.createDepartment, {
+      organizationId: s.organizationId, name: "Reservas",
+    });
+    const base = Date.now();
+    const { active, archived } = await t.run(async (ctx) => {
+      const active: Array<{ id: Id<"conversations">; last: number }> = [];
+      const archived: Id<"conversations">[] = [];
+      for (let i = 0; i < 60; i++) {
+        // Criação em ordem INVERSA da última mensagem: o índice antigo (por
+        // criação) traria as erradas primeiro.
+        const last = base + i * 1000;
+        const isArchived = i >= 57; // as 3 mais recentes estão arquivadas
+        const id = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", status: "active",
+          messageCount: 0, lastMessageAt: last, createdAt: base - i * 1000, updatedAt: base,
+          unitId, departmentId: deptId,
+          ...(isArchived ? { archivedAt: base + 100_000 } : {}),
+        });
+        if (isArchived) archived.push(id);
+        else active.push({ id, last });
+      }
+      return { active, archived };
+    });
+    const expected = active.sort((a, b) => b.last - a.last).slice(0, 5).map((c) => c.id);
+    const run = async (args: Record<string, unknown>) =>
+      ((await as(s, "agent").query(api.conversations.getConversations, {
+        organizationId: s.organizationId, limit: 5, ...args,
+      })) as Array<{ _id: Id<"conversations"> }>).map((c) => c._id);
+
+    expect(await run({ departmentId: deptId })).toEqual(expected);
+    expect(await run({ unitId })).toEqual(expected);
+    expect((await run({ departmentId: deptId, archived: true })).sort()).toEqual([...archived].sort());
+    expect((await run({ unitId, archived: true })).sort()).toEqual([...archived].sort());
+  });
 });
 
 describe("primeira resposta e origem de anúncio (ingest)", () => {
