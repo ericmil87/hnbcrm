@@ -498,6 +498,36 @@ describe("turno: prompt, tools e commit", () => {
     expect(after).toEqual(before);
   });
 
+  test("perf I/O onda 2: persona e conhecimento iguais antes e depois de migrar os textos", async () => {
+    const claimPrompt = async (migrate: boolean) => {
+      const t = setup();
+      const seed = await seedGroupOrg(t);
+      if (migrate) {
+        await t.mutation(internal.opsAgentProfile.internalMigrateAgentTexts, { dryRun: false });
+        const ai = await t.run(async (ctx) =>
+          (await ctx.db.query("teamMembers").collect()).find((m) => m.type === "ai")
+        );
+        expect(ai?.agentProfile?.textsMigratedAt).toBeDefined();
+        expect(ai?.agentProfile).not.toHaveProperty("systemPrompt");
+      }
+      const item = await runTurn(t, seed);
+      const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+        queueItemId: item._id,
+        runId: `run-texts-${migrate}`,
+      });
+      expect(claim.kind).toBe("run");
+      const prompt = (claim as { context: { prompt: { persona: string | null; knowledge: string | null } } })
+        .context.prompt;
+      return { persona: prompt.persona, knowledge: prompt.knowledge };
+    };
+    const before = await claimPrompt(false);
+    expect(before).toEqual({
+      persona: "Você é o Guardião, atendente da loja.",
+      knowledge: "Entregamos às terças.",
+    });
+    expect(await claimPrompt(true)).toEqual(before);
+  });
+
   test("modo sugestão cria RASCUNHO (nada sai para o grupo) e notifica quem revisa", async () => {
     const t = setup();
     const seed = await seedGroupOrg(t, { replyMode: "suggest" });
