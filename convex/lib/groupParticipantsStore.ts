@@ -275,43 +275,48 @@ export async function markLeft(
   return res.changed;
 }
 
-/** Apaga as linhas da sala em lote. Devolve `true` se ainda sobrou. */
-export async function deleteParticipants(
+/**
+ * Apaga até `budget.left` linhas de uma das tabelas da sala, descontando do
+ * orçamento cada escrita. Devolve `true` quando a tabela ficou VAZIA.
+ */
+async function deleteSideRows(
   ctx: MutationCtx,
+  table: "groupParticipants" | "groupTimeline",
   groupChatId: Id<"groupChats">,
-  limit = STORE_PARTICIPANTS_CAP
+  budget: { left: number }
 ): Promise<boolean> {
-  const rows = await ctx.db
-    .query("groupParticipants")
-    .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
-    .take(limit + 1);
-  for (const row of rows.slice(0, limit)) await ctx.db.delete(row._id);
-  return rows.length > limit;
+  const limit = Math.max(0, budget.left);
+  const rows =
+    table === "groupParticipants"
+      ? await ctx.db
+          .query("groupParticipants")
+          .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+          .take(limit + 1)
+      : await ctx.db
+          .query("groupTimeline")
+          .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
+          .take(limit + 1);
+  const batch = rows.slice(0, limit);
+  for (const row of batch) await ctx.db.delete(row._id);
+  budget.left -= batch.length;
+  return rows.length <= limit;
 }
 
-/** Apaga a linha do tempo da sala em lote. Devolve `true` se ainda sobrou. */
-export async function deleteTimeline(
-  ctx: MutationCtx,
-  groupChatId: Id<"groupChats">,
-  limit = 500
-): Promise<boolean> {
-  const rows = await ctx.db
-    .query("groupTimeline")
-    .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
-    .take(limit + 1);
-  for (const row of rows.slice(0, limit)) await ctx.db.delete(row._id);
-  return rows.length > limit;
-}
-
-/** Tudo o que a sala tem nas duas tabelas (cascata de exclusão da sala). */
+/**
+ * Cascata de exclusão da sala nas duas tabelas, DENTRO do orçamento de escritas
+ * de quem chama (cada linha apagada conta 1). Devolve `true` só quando as duas
+ * tabelas da sala estão vazias — aí o chamador pode apagar o doc da sala; com
+ * `false`, ele para e se reagenda (uma sala de 1.024 membros sozinha já passa
+ * do orçamento de uma execução, e 16 delas estourariam o limite de escritas da
+ * transação).
+ */
 export async function deleteGroupSideTables(
   ctx: MutationCtx,
-  groupChatId: Id<"groupChats">
-): Promise<void> {
-  // Laços limitados: o teto estrutural (1.024) e o cap da linha do tempo (100)
-  // fazem cada um terminar em 1–2 voltas.
-  for (let i = 0; i < 4 && (await deleteParticipants(ctx, groupChatId)); i++);
-  for (let i = 0; i < 4 && (await deleteTimeline(ctx, groupChatId)); i++);
+  groupChatId: Id<"groupChats">,
+  budget: { left: number }
+): Promise<boolean> {
+  if (!(await deleteSideRows(ctx, "groupParticipants", groupChatId, budget))) return false;
+  return await deleteSideRows(ctx, "groupTimeline", groupChatId, budget);
 }
 
 export function timelineRowToEntry(row: Doc<"groupTimeline">): GroupTimelineEntry {
@@ -372,6 +377,35 @@ export async function appendTimelineRows(
     .take(STORE_TIMELINE_CAP + Math.min(entries.length, STORE_TIMELINE_CAP) + 1);
   const excess = rows.length - STORE_TIMELINE_CAP;
   for (let i = 0; i < excess; i++) await ctx.db.delete(rows[i]._id);
+}
+
+/**
+ * Faz a linha do tempo da sala na TABELA ficar igual à lista dada (backfill):
+ * apaga as linhas atuais e insere `entries` (cap 100). Necessário porque o
+ * array legado corta pelo mais antigo INSERIDO e a tabela pelo menor `at` — um
+ * evento atrasado com `at` antigo faria as duas divergirem para sempre se o
+ * backfill só inserisse o que falta. Devolve quantos eventos gravou.
+ */
+export async function replaceTimelineRows(
+  ctx: MutationCtx,
+  group: Pick<Doc<"groupChats">, "_id" | "organizationId">,
+  entries: GroupTimelineEntry[],
+  existingRows?: Doc<"groupTimeline">[]
+): Promise<number> {
+  const rows = existingRows ?? (await loadTimelineRows(ctx, group._id));
+  for (const row of rows) await ctx.db.delete(row._id);
+  const keep = entries.slice(-STORE_TIMELINE_CAP);
+  for (const entry of keep) {
+    await ctx.db.insert("groupTimeline", {
+      organizationId: group.organizationId,
+      groupChatId: group._id,
+      at: entry.at,
+      type: entry.type,
+      ...(entry.actorJid !== undefined ? { actorJid: entry.actorJid } : {}),
+      ...(entry.data !== undefined ? { data: entry.data } : {}),
+    });
+  }
+  return keep.length;
 }
 
 /** Lista legada com os eventos novos, no cap FIFO. */

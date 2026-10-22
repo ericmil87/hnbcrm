@@ -84,7 +84,7 @@ import {
   syncGroupSummaryToConversation,
 } from "./lib/conversationListFields";
 import {
-  appendTimelineRows,
+  replaceTimelineRows,
   dedupeParticipants,
   deleteGroupSideTables,
   diffParticipantsTable,
@@ -974,6 +974,12 @@ export const internalUpsertGroupsFromSync = internalMutation({
       const fields = groupFieldsFromGateway(group, ourLid, ourPhone, now);
       const prev = byJid.get(group.jid);
       if (prev) {
+        // Limite conhecido (fase 4d): lê até 1.024 linhas por sala acompanhada
+        // — com ~31 salas grandes num canal passa das 32 mil leituras da
+        // transação; e entre o deploy e o backfill, o 1º sync insere a tabela
+        // inteira de cada sala (16 salas de 1.024 ≈ 16 mil escritas). Rodar o
+        // backfill logo após o deploy; canal com >15 salas acompanhadas
+        // grandes pode precisar de sync paginado (follow-up).
         const current = await participantsForWrite(ctx, prev);
         const merged = mergeParticipantsFromGateway(current.list, group.participants, now);
         // Sala NÃO acompanhada guarda só a contagem — nome e telefone de
@@ -1039,9 +1045,13 @@ export const internalUpsertGroupsFromSync = internalMutation({
       for (const prev of existing) {
         if (seen.has(prev.jid) || prev.removedAt !== undefined) continue;
         const timelinePatch = await recordTimeline(ctx, prev, [{ at: now, type: "removed" }]);
+        // LGPD: deixou de ser acompanhada → membros (nome/telefone de
+        // terceiros) saem do banco; a contagem fica.
+        const participantsPatch = await writeParticipants(ctx, prev, [], now);
         await ctx.db.patch(prev._id, {
           removedAt: now,
           monitored: false,
+          ...participantsPatch,
           ...timelinePatch,
           updatedAt: now,
         });
@@ -1170,7 +1180,15 @@ export const internalApplyGroupInfoEvent = internalMutation({
     const weLeft = args.leave.some(isUs);
     const meNow = findSelfParticipant(participants ?? [], ourLid, ourPhone);
     // Sala não acompanhada: a contagem é atualizada, a lista não é guardada.
-    const stored = participants
+    // Só recalcula quando o evento mexe em membros OU a sala é acompanhada:
+    // sala não acompanhada não tem linhas, e um evento só de rename/tópico
+    // recalcularia a contagem a partir de uma lista vazia (zeraria o número).
+    const membershipChanged =
+      args.join.length > 0 ||
+      args.leave.length > 0 ||
+      args.promote.length > 0 ||
+      args.demote.length > 0;
+    const stored = participants && (membershipChanged || group.monitored === true)
       ? participantsForStorage(weLeft ? false : group.monitored, participants)
       : null;
     const participantsPatch = stored
@@ -1382,9 +1400,13 @@ export const internalMarkGroupLeft = internalMutation({
     const group = await ctx.db.get(args.groupChatId);
     if (!group) return null;
     const timelinePatch = await recordTimeline(ctx, group, [{ at: args.at, type: "left" }]);
+    // LGPD: saímos da sala e ela deixa de ser acompanhada → membros saem do
+    // banco (a contagem fica).
+    const participantsPatch = await writeParticipants(ctx, group, [], args.at);
     await ctx.db.patch(group._id, {
       leftAt: args.at,
       monitored: false,
+      ...participantsPatch,
       ...timelinePatch,
       updatedAt: args.at,
     });
@@ -1761,10 +1783,17 @@ export const internalRefreshGroup = internalAction({
  * exclusão do número (o histórico do cliente não é do canal).
  */
 export const internalCascadeDeleteChannelGroups = internalMutation({
-  args: { channelConfigId: v.id("channelConfigs") },
+  args: {
+    channelConfigId: v.id("channelConfigs"),
+    // Só para teste: orçamento de escritas por execução (default
+    // `CASCADE_WRITE_BUDGET`). Propagado no reagendamento.
+    budget: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const budget = newBudget();
+    const budget = newBudget(
+      args.budget !== undefined ? Math.max(1, Math.floor(args.budget)) : undefined
+    );
 
     while (budget.left > 0) {
       const group = await ctx.db
@@ -1779,8 +1808,11 @@ export const internalCascadeDeleteChannelGroups = internalMutation({
           if (!(await deleteConversationCascade(ctx, conversation._id, budget))) break;
         }
       }
-      // Fase 4d: membros e linha do tempo moram em tabelas próprias.
-      await deleteGroupSideTables(ctx, group._id);
+      // Fase 4d: membros e linha do tempo moram em tabelas próprias. Cada
+      // linha apagada conta no orçamento; a sala só sai quando as duas
+      // tabelas dela estão vazias (senão para e continua na próxima execução).
+      if (!(await deleteGroupSideTables(ctx, group._id, budget))) break;
+      if (budget.left <= 0) break;
       await ctx.db.delete(group._id);
       budget.left -= 1;
     }
@@ -1794,7 +1826,10 @@ export const internalCascadeDeleteChannelGroups = internalMutation({
       await ctx.scheduler.runAfter(
         0,
         internal.groupChats.internalCascadeDeleteChannelGroups,
-        { channelConfigId: args.channelConfigId }
+        {
+          channelConfigId: args.channelConfigId,
+          ...(args.budget !== undefined ? { budget: args.budget } : {}),
+        }
       );
     }
     return null;
@@ -2119,18 +2154,27 @@ export const summarizeGroup = action({
 // → finish dryRun → real (é aqui que o doc encolhe). Rollback = restore.
 // Todas com `dryRun` default true, cursor e auto-reagendamento.
 //
-// Página pequena de propósito (default 10, teto 50): cada sala pode ter 1.024
-// linhas, e 200 salas numa transação passariam dos limites de leitura/escrita
-// do Convex (32 mil docs lidos, 16 mil escritos).
+// Página pequena de propósito (default 10, teto 12): cada sala pode ter 1.024
+// linhas, e a transação do Convex tem teto de 32 mil docs lidos e 16 mil
+// escritos — 12 salas cheias ≈ 12,3 mil escritas no backfill (50 dariam ~51
+// mil).
+//
+// Rodar o backfill LOGO APÓS o deploy: até lá o 1º `syncGroups` de cada canal
+// insere a tabela inteira de cada sala acompanhada numa transação só (16 salas
+// de 1.024 ≈ 16 mil escritas), e mesmo depois do finish o sync lê até 1.024
+// linhas por sala — canal com >15 salas acompanhadas grandes pode precisar de
+// sync paginado (follow-up).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MIGRATION_PAGE_DEFAULT = 10;
-const MIGRATION_PAGE_MAX = 50;
+const MIGRATION_PAGE_MAX = 12;
 
 const migrationArgs = {
   dryRun: v.optional(v.boolean()),
   cursor: v.optional(v.union(v.string(), v.null())),
   organizationId: v.optional(v.id("organizations")),
+  // Salas por página: default 10, teto 12 (cada sala pode ter 1.024 linhas e a
+  // transação aceita 16 mil escritas). Valor acima do teto é rebaixado.
   pageSize: v.optional(v.number()),
 };
 
@@ -2167,6 +2211,16 @@ function desiredParticipantsFromLegacy(group: Doc<"groupChats">) {
 function missingTimelineEntries(group: Doc<"groupChats">, rows: Doc<"groupTimeline">[]) {
   const have = new Set(rows.map((r) => timelineSignature(timelineRowToEntry(r))));
   return (group.timeline ?? []).slice(-GROUP_TIMELINE_CAP).filter((e) => !have.has(timelineSignature(e)));
+}
+
+/**
+ * A tabela tem EXATAMENTE os eventos do array legado (mesmo multiconjunto de
+ * assinaturas)? Se não, o backfill substitui a tabela pela lista do array.
+ */
+function timelineMatchesLegacy(group: Doc<"groupChats">, rows: Doc<"groupTimeline">[]) {
+  const legacy = (group.timeline ?? []).slice(-GROUP_TIMELINE_CAP).map(timelineSignature).sort();
+  const table = rows.map((r) => timelineSignature(timelineRowToEntry(r))).sort();
+  return legacy.length === table.length && legacy.every((sig, i) => sig === table[i]);
 }
 
 /**
@@ -2209,27 +2263,27 @@ export const internalBackfillGroupParticipants = internalMutation({
       if (group.monitored !== true) lgpdDropped += (group.participants ?? []).length;
       const rows = await loadParticipantRows(ctx, group._id);
       const timelineRows = await loadTimelineRows(ctx, group._id);
-      const missing = missingTimelineEntries(group, timelineRows);
+      const timelineOk = timelineMatchesLegacy(group, timelineRows);
+      const legacyTimeline = (group.timeline ?? []).slice(-GROUP_TIMELINE_CAP);
       const diff = diffParticipantsTable(rows, desired);
-      if (!diff.ok || missing.length > 0) pending++;
+      if (!diff.ok || !timelineOk) pending++;
       if (dryRun) {
         participantsInserted += diff.missing;
         participantsUpdated += diff.changed;
         participantsDeleted += diff.extra;
-        timelineInserted += missing.length;
+        if (!timelineOk) timelineInserted += legacyTimeline.length;
         continue;
       }
       const res = await syncParticipantsTable(ctx, group, desired, now, rows);
       participantsInserted += res.inserted;
       participantsUpdated += res.updated;
       participantsDeleted += res.deleted;
-      // Ordena por `at` antes de inserir: o corte FIFO da tabela é por `at`.
-      await appendTimelineRows(
-        ctx,
-        group,
-        [...missing].sort((a, b) => a.at - b.at)
-      );
-      timelineInserted += missing.length;
+      // A tabela passa a ser a cópia do array (não só "insere o que falta"):
+      // o array corta pelo mais antigo INSERIDO e a tabela pelo menor `at`,
+      // então um evento atrasado faria as duas divergirem para sempre.
+      if (!timelineOk) {
+        timelineInserted += await replaceTimelineRows(ctx, group, legacyTimeline, timelineRows);
+      }
     }
 
     const continueCursor = page.isDone ? null : page.continueCursor;
@@ -2271,11 +2325,14 @@ export const internalBackfillGroupParticipants = internalMutation({
 });
 
 /**
- * Passo 2: para cada sala cuja tabela BATE com o array legado (mesmas chaves,
- * linhas iguais campo a campo, todos os eventos presentes), carimba
+ * Passo 2: para cada sala cuja tabela de MEMBROS bate com o array legado
+ * (mesmas chaves, linhas iguais campo a campo), carimba
  * `participantsMigratedAt` e apaga `participants`/`timeline` do doc — é aqui
- * que o doc encolhe. Sala divergente é RECUSADA e reportada (rode o backfill
- * de novo).
+ * que o doc encolhe. Sala com membros divergentes é RECUSADA e reportada (rode
+ * o backfill de novo). Divergência só de LINHA DO TEMPO é apenas reportada
+ * (`timelineDivergent`), sem bloquear: o array corta pelo mais antigo inserido
+ * e a tabela pelo menor `at`, então um evento atrasado pode deixá-las
+ * diferentes para sempre, e o único leitor da linha do tempo é o `getGroup`.
  */
 export const internalFinishGroupParticipantsMigration = internalMutation({
   args: migrationArgs,
@@ -2285,6 +2342,10 @@ export const internalFinishGroupParticipantsMigration = internalMutation({
     finished: v.number(),
     alreadyMigrated: v.number(),
     divergent: v.number(),
+    // Salas com eventos do array que faltam na tabela (só reportado; não
+    // impede o finish) + amostra dos ids.
+    timelineDivergent: v.number(),
+    timelineDivergentSample: v.array(v.id("groupChats")),
     divergentSample: v.array(
       v.object({
         groupChatId: v.id("groupChats"),
@@ -2306,6 +2367,8 @@ export const internalFinishGroupParticipantsMigration = internalMutation({
     let finished = 0;
     let alreadyMigrated = 0;
     let divergent = 0;
+    let timelineDivergent = 0;
+    const timelineDivergentSample: Id<"groupChats">[] = [];
     const divergentSample: {
       groupChatId: Id<"groupChats">;
       missing: number;
@@ -2324,7 +2387,11 @@ export const internalFinishGroupParticipantsMigration = internalMutation({
       const diff = diffParticipantsTable(rows, desired);
       const timelineMissing = missingTimelineEntries(group, await loadTimelineRows(ctx, group._id))
         .length;
-      if (!diff.ok || timelineMissing > 0) {
+      if (timelineMissing > 0) {
+        timelineDivergent++;
+        if (timelineDivergentSample.length < 20) timelineDivergentSample.push(group._id);
+      }
+      if (!diff.ok) {
         divergent++;
         if (divergentSample.length < 20) {
           divergentSample.push({
@@ -2378,6 +2445,7 @@ export const internalFinishGroupParticipantsMigration = internalMutation({
         scanned: page.page.length,
         finished,
         divergent,
+        timelineDivergent,
       })
     );
     return {
@@ -2386,6 +2454,8 @@ export const internalFinishGroupParticipantsMigration = internalMutation({
       finished,
       alreadyMigrated,
       divergent,
+      timelineDivergent,
+      timelineDivergentSample,
       divergentSample,
       isDone: page.isDone,
       continueCursor,
