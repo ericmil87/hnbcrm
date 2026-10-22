@@ -15,6 +15,7 @@ import {
   hasPermission,
   resolvePermissions,
 } from "./permissions";
+import { groupParticipantsCountOf, syncGroupSummaryToConversation } from "./conversationListFields";
 
 /** Teto da linha do tempo da sala (FIFO, mesmo padrão de `campaigns.timeline`). */
 export const GROUP_TIMELINE_CAP = 100;
@@ -281,6 +282,11 @@ export async function recordParticipantFromMessage(
     ...activityPatch,
     updatedAt: now,
   });
+  // Membro NOVO muda a contagem da lista do inbox (fase 4c); nome/LID de
+  // membro já conhecido não — aí nem lê a conversa.
+  if (changed && groupParticipantsCountOf({ ...group, participants }) !== groupParticipantsCountOf(group)) {
+    await syncGroupSummaryToConversation(ctx, { ...group, participants });
+  }
   return contactId;
 }
 

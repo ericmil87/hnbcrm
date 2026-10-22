@@ -78,6 +78,11 @@ import {
   DEFERRED_TOO_BIG_REASON,
   DEFERRED_UNAVAILABLE_REASON,
 } from "./groupMedia";
+import {
+  channelProviderPatch,
+  groupSummaryFieldsOf,
+  syncGroupSummaryToConversation,
+} from "./lib/conversationListFields";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leitura (app)
@@ -274,6 +279,8 @@ export async function setMonitoredHandler(ctx: MutationCtx, args: SetMonitoredAr
           groupChatId: group._id,
           channel: "whatsapp",
           channelConfigId: group.channelConfigId,
+          ...channelProviderPatch(config),
+          ...groupSummaryFieldsOf(group),
           status: "active",
           messageCount: 0,
           createdAt: now,
@@ -303,6 +310,12 @@ export async function setMonitoredHandler(ctx: MutationCtx, args: SetMonitoredAr
         data: member.name,
       }),
       updatedAt: now,
+    });
+    // Lista do inbox (fase 4c): nome/contagem espelhados na conversa.
+    await syncGroupSummaryToConversation(ctx, {
+      ...group,
+      conversationId,
+      ...(args.monitored ? {} : { participants: [] }),
     });
 
     // Passou a acompanhar: busca a lista de membros agora (a sincronização não
@@ -954,6 +967,13 @@ export const internalUpsertGroupsFromSync = internalMutation({
           // Voltou a aparecer na listagem: não estamos mais fora dele.
           leftAt: undefined,
         });
+        await syncGroupSummaryToConversation(ctx, {
+          ...prev,
+          ...fields,
+          subject: fields.subject ?? prev.subject,
+          participants: stored.participants,
+          participantsCount: stored.participantsCount,
+        });
       } else {
         const merged = mergeParticipantsFromGateway(undefined, group.participants, now);
         await ctx.db.insert("groupChats", {
@@ -1136,6 +1156,13 @@ export const internalApplyGroupInfoEvent = internalMutation({
       timeline,
       updatedAt: args.at,
     });
+    await syncGroupSummaryToConversation(ctx, {
+      ...group,
+      ...(args.name !== undefined ? { subject: args.name.slice(0, GROUP_SUBJECT_CAP) } : {}),
+      ...(stored
+        ? { participants: stored.participants, participantsCount: stored.participantsCount }
+        : {}),
+    });
 
     if (weLeft && group.conversationId) {
       const conversation = await ctx.db.get(group.conversationId);
@@ -1214,6 +1241,12 @@ export const internalApplyJoinedGroup = internalMutation({
           type: "joined",
           ...(args.reason ? { data: args.reason } : {}),
         }),
+      });
+      await syncGroupSummaryToConversation(ctx, {
+        ...existing,
+        ...fields,
+        subject: fields.subject ?? existing.subject,
+        participants,
       });
     } else {
       const participants = mergeParticipantsFromGateway(undefined, parsed.participants, args.at);
