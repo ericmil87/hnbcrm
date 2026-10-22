@@ -120,9 +120,37 @@ scripts/claude/     Hook scripts and the docs no-loss guard
 public/             Logo assets
 ```
 
-### Working with AI coding agents
+### Working with Claude Code
 
-The root `CLAUDE.md` is intentionally short (stack, commands, dev × prod, invariants). Everything else loads on demand: `convex/CLAUDE.md` and `src/CLAUDE.md` when files in those folders are touched, `.claude/rules/*.md` by path glob, and `docs/architecture/<area>.md` is the place to read before changing an area. `scripts/claude/check-no-loss.mjs` (run in CI) guarantees nothing from the documentation disappears. See [CONTRIBUTING.md](CONTRIBUTING.md).
+The repo is set up so that each agent only pays for the context it needs. The root `CLAUDE.md` is short (stack, commands, dev × prod, invariants); everything else loads on demand: `convex/CLAUDE.md` and `src/CLAUDE.md` when files in those folders are touched, `.claude/rules/*.md` by path glob, and `docs/architecture/<area>.md` holds the decisions and measured gotchas to read before changing an area. `scripts/claude/check-no-loss.mjs` (run in CI) guarantees nothing from that documentation disappears. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Orchestrate with Fable, delegate to Opus/Sonnet.** The main session runs on Fable (the default model in `~/.claude/settings.json`) and acts as the orchestrator: it holds the conversation with you, reads the plan, splits the work, reviews what comes back and keeps the summary. Delegate anything that is well-specified or read-heavy so the orchestrator's context stays small:
+
+| Task | Delegate to | Why |
+|---|---|---|
+| Find where something lives, sweep many files | built-in `Explore` (Sonnet) | read-only, skips `CLAUDE.md`, returns only the conclusion |
+| Design an implementation strategy | built-in `Plan` (Opus) | read-only, returns the plan and critical files |
+| Research docs, libraries, vendors, best practices | `scout` (web) or `claude-code-guide` (Claude Code itself) | reports with sources, no repo context needed |
+| Implement a UI change under `src/` | `frontend-specialist` (Sonnet) | gets `.claude/rules/frontend.md` + `src/CLAUDE.md` automatically, nothing else |
+| Implement a backend change under `convex/` | `convex-backend` (Sonnet) | gets the Convex rules, backend invariants and the area rule (bridge, AI, tests) by path |
+| Review a diff or a branch before merge | `reviewer` (Opus, read-only) | preloads the review checklist; findings ranked, never edits |
+| Mechanical multi-file edits, scripts, cleanups | `general-purpose` with `model: sonnet` | cheap, gets the full `CLAUDE.md` |
+| Risky or long experiments (upgrades, migrations) | any agent with `isolation: worktree` | works on its own checkout and branch; nothing touches `main` |
+
+Rules of thumb that make this cheap and safe:
+
+- **One brief per agent, written for a peer**: goal, what is already ruled out, the files and docs to read, the explicit scope, and what to report back. The agent sees nothing else.
+- **Fan out independent work in one message** (several `Agent` calls at once); keep dependent work sequential. Keep the orchestrator out of the file dumps — ask agents for conclusions, not contents.
+- **Review before merge, always**: the implementer and the reviewer are different agents (Sonnet writes, Opus reads). The reviewer caught two real bugs in the first script written this way.
+- **Rules only load through Read/Edit**: an agent that `cat`s a file via Bash gets no path rules. Implementers should open files with the Read tool.
+- **Nobody runs deployments**: `npx convex dev`, `deploy`, `--prod` are for the human. Agents typecheck (`npx tsc -p convex`, `npx tsc -p tsconfig.app.json`) and run `npx vitest run <file>`. `/convex-ops` is the runbook when you do need an operation, `/release` when shipping a version.
+- **Measure**: `/context` shows what is loaded; a headless `claude -p "ok" --output-format json` prints the exact token count of the initial context (≈36k today, was ≈103k before this layout).
+
+**Frontend work.** Say what the user should see, in PT-BR, and where (`/app/<route>`). The frontend agent reuses `src/components/ui/` primitives, keeps the URL as the source of truth for deep links, gates UI with `usePermissions`/`PermissionGate`, and puts pure logic in `src/lib/*.ts` with a vitest next to it. `STYLE_GUIDE.md` is the full design system when a token or component detail is missing from the rule.
+
+**Backend work.** Point the agent at the area file in `docs/architecture/` and the single port it must extend (`moveLeadToStageCore`, `createHandoffCore`, `sendTransactionalEmail`, `scheduleWebhookEvent`, `convex/lib/phone.ts`…). Every public function starts with `requireAuth`/`requirePermission`, every change is additive to the schema, every ops function is `internal*` with `dryRun` and a cursor. Tests are convex-test (`convex/*.test.ts`); build-guard tests exist on purpose and must not be deleted.
+
+**Keeping it this way.** A new feature adds one paragraph to `docs/architecture/<area>.md`, at most a few bullets to `.claude/rules/<area>.md`, a PT-BR entry to `CHANGELOG.md`, and zero lines to the root `CLAUDE.md`. The no-loss guard fails CI if documentation goes missing.
 
 ## API & Integrations
 
