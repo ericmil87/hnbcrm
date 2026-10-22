@@ -41,6 +41,8 @@ interface FileUploadButtonProps {
   onFilesRemoved?: (fileId: Id<"files">) => void;
   uploadedFiles: UploadedFile[];
   disabled?: boolean;
+  /** Tooltip explicando por que o botão está desligado (sobrepõe "Anexar arquivo"). */
+  disabledHint?: string;
   className?: string;
 }
 
@@ -50,6 +52,7 @@ export function FileUploadButton({
   onFilesRemoved,
   uploadedFiles,
   disabled,
+  disabledHint,
   className,
 }: FileUploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,7 +180,9 @@ export function FileUploadButton({
           "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
         )}
         title={
-          uploading
+          disabled && disabledHint
+            ? disabledHint
+            : uploading
             ? `Enviando... ${progress}%`
             : uploadedFiles.length >= MAX_FILES
             ? `Máximo de ${MAX_FILES} arquivos`

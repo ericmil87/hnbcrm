@@ -47,5 +47,8 @@ describe("deviceViaLabel", () => {
     expect(deviceViaLabel("other")).toBe("pelo app");
     expect(deviceViaLabel("unknown")).toBe("fora do CRM");
     expect(deviceViaLabel(undefined)).toBe("fora do CRM");
+    expect(deviceViaLabel("unknown", "instagram")).toBe("fora do CRM");
+    expect(deviceViaLabel("page_inbox", "whatsapp")).toBe("pelo aparelho");
+    expect(deviceViaLabel(undefined, "whatsapp")).toBe("pelo aparelho");
   });
 });

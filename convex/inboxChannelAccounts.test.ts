@@ -19,13 +19,17 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function seedOrg(t: TestConvex<typeof schema>, slug: string) {
+async function seedOrg(t: TestConvex<typeof schema>, slug: string, opts: { moduleOn?: boolean } = {}) {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const organizationId = await ctx.db.insert("organizations", {
       name: slug,
       slug,
-      settings: { timezone: "America/Sao_Paulo", currency: "BRL", modules: { metaMessaging: true } },
+      settings: {
+        timezone: "America/Sao_Paulo",
+        currency: "BRL",
+        modules: { metaMessaging: opts.moduleOn !== false },
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -154,7 +158,8 @@ async function conversation(
   t: TestConvex<typeof schema>,
   org: Org,
   opts: {
-    channel: "whatsapp" | "instagram" | "messenger";
+    channel: "whatsapp" | "instagram" | "messenger" | "email" | "webchat";
+    leadId?: Id<"leads">;
     configId?: Id<"channelConfigs">;
     provider?: "meta" | "bridge" | "instagram" | "messenger";
     lastMessageAt: number;
@@ -167,7 +172,7 @@ async function conversation(
   return await t.run(async (ctx) =>
     ctx.db.insert("conversations", {
       organizationId: opts.organizationId ?? org.organizationId,
-      leadId: org.leadId,
+      leadId: opts.leadId ?? org.leadId,
       channel: opts.channel,
       ...(opts.configId ? { channelConfigId: opts.configId } : {}),
       ...(opts.provider ? { channelProvider: opts.provider } : {}),
@@ -222,6 +227,19 @@ describe("getInboxChannelAccounts", () => {
     expect(json).not.toContain("fake-phone-number-id");
     expect(json).not.toContain("ciphertext");
     expect(json).not.toContain("99999");
+  });
+
+  test("módulo desligado (ou config desativado pelo módulo) não lista contas Meta; WhatsApp continua", async () => {
+    const t = convexTest(schema, modules);
+    const off = await seedOrg(t, "off", { moduleOn: false });
+    const rows = await as(t, off).query(api.channelConfigs.getInboxChannelAccounts, { organizationId: off.organizationId });
+    expect(rows.map((r) => r._id).sort()).toEqual([off.waMeta, off.waBridge].sort());
+
+    const on = await seedOrg(t, "on");
+    await t.run(async (ctx) => ctx.db.patch(on.messenger, { status: "disabled", disabledByModuleAt: Date.now() }));
+    const rowsOn = await as(t, on).query(api.channelConfigs.getInboxChannelAccounts, { organizationId: on.organizationId });
+    expect(rowsOn.map((r) => r._id)).not.toContain(on.messenger);
+    expect(rowsOn.map((r) => r._id)).toContain(on.instagram);
   });
 
   test("membro de outra org não lê", async () => {
@@ -299,6 +317,20 @@ describe("getConversations por conta (channelConfigId)", () => {
     expect(await q({ channel: "instagram" })).toEqual([]);
   });
 
+  test("painel do lead (leadId) também respeita channelConfigId", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const base = Date.now();
+    const ig = await conversation(t, a, { channel: "instagram", configId: a.instagram, provider: "instagram", lastMessageAt: base });
+    await conversation(t, a, { channel: "messenger", configId: a.messenger, provider: "messenger", lastMessageAt: base + 1 });
+    const rows = await as(t, a).query(api.conversations.getConversations, {
+      organizationId: a.organizationId,
+      leadId: a.leadId,
+      channelConfigId: a.instagram,
+    });
+    expect(rows.map((r: any) => r._id)).toEqual([ig]);
+  });
+
   test("internalGetConversations (REST) aceita channelConfigId", async () => {
     const t = convexTest(schema, modules);
     const a = await seedOrg(t, "a");
@@ -338,6 +370,23 @@ describe("janela por canal na lista", () => {
 
     const one = await as(t, a).query(api.conversations.getConversationById, { conversationId: ig });
     expect(one!.serviceWindowKind).toBe("wait");
+  });
+
+  test("e-mail e webchat (ex.: conversas de exemplo do onboarding) não têm janela", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const now = Date.now();
+    const email = await conversation(t, a, { channel: "email", lastMessageAt: now, lastInboundAt: now - 2 * DAY });
+    const webchat = await conversation(t, a, { channel: "webchat", lastMessageAt: now - 1, lastInboundAt: now - 1000 });
+    const rows = await as(t, a).query(api.conversations.getConversations, { organizationId: a.organizationId });
+    const byId = new Map(rows.map((r: any) => [r._id, r]));
+    for (const id of [email, webchat]) {
+      expect(byId.get(id)).toMatchObject({
+        serviceWindowExpiresAt: null,
+        serviceWindowApplies: false,
+        serviceWindowKind: null,
+      });
+    }
   });
 
   test("primeira inbound Meta com referral ADS grava windowOpenedByAdAt; WhatsApp e 2ª inbound não", async () => {

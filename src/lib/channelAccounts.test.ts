@@ -59,7 +59,8 @@ describe("account labels and visibility", () => {
     expect(accountBadgeLabel(acc("1", "instagram", "Casa Lumiar", "casalumiar"))).toBe("@casalumiar");
     expect(accountBadgeLabel(acc("1", "instagram", "Casa Lumiar", "@casalumiar"))).toBe("@casalumiar");
     expect(accountBadgeLabel(acc("2", "messenger", "Casa Lumiar"))).toBe("Casa Lumiar");
-    expect(accountBadgeLabel(acc("3", "whatsapp", "Loja", "+55 11 99999-5729"))).toBe("WhatsApp ····5729");
+    expect(accountBadgeLabel(acc("3", "whatsapp", "Loja", "+55 11 99999-5729"))).toBe("Loja");
+    expect(accountBadgeLabel(acc("3", "whatsapp", "", "+55 11 99999-5729"))).toBe("WhatsApp ····5729");
     expect(accountBadgeLabel(acc("4", "whatsapp", "Loja Centro"))).toBe("Loja Centro");
     expect(accountBadgeLabel(null)).toBe("");
   });

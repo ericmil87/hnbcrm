@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, AlertTriangle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { FormattedMessageText } from "./FormattedMessageText";
@@ -407,7 +407,7 @@ export function MessageBubble({
       )}
       {viaDevice && (
         <span className="text-[10px]" title="Enviada fora do HNBCRM">
-          {deviceViaLabel(message.metadata?.viaApp)}
+          {deviceViaLabel(message.metadata?.viaApp, channel)}
         </span>
       )}
     </div>
@@ -613,6 +613,13 @@ export function MessageBubble({
 
           {isFailed && message.metadata?.deliveryError && (
             <p className="text-[10px] text-semantic-error">{message.metadata.deliveryError}</p>
+          )}
+          {/* Falha parcial / "só o texto saiu": aparece mesmo sem status failed. */}
+          {!message.isInternal && typeof message.metadata?.dispatchNote === "string" && message.metadata.dispatchNote && (
+            <p className="mt-1 flex items-start gap-1 text-[11px] text-semantic-warning">
+              <AlertTriangle className="size-3 mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{message.metadata.dispatchNote}</span>
+            </p>
           )}
         </div>
         {reactionChips}

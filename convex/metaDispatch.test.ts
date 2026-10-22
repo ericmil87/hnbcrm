@@ -325,6 +325,58 @@ describe("envio pela porta", () => {
     expect(sent.map((r) => r.mid).sort()).toEqual(["ig_p1", "ig_p2", "ig_p3"]);
   });
 
+  test("IG em 3 partes: mid de cada parte registrado antes do próximo POST; eco da parte 1 no meio não duplica", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const sentBeforePost: string[][] = [];
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        n++;
+        sentBeforePost.push(await t.run(async (ctx) => (await ctx.db.query("metaSentMids").collect()).map((r) => r.mid)));
+        if (n === 2) {
+          // Eco (sem app_id) da parte 1 chega enquanto as partes 2 e 3 estão em voo.
+          await t.action(internal.metaMessaging.internalIngestEvent, {
+            configId: s.instagramId,
+            event: {
+              surface: "instagram",
+              accountId: IG_ID,
+              kind: "echo",
+              userId: IGSID,
+              mid: "ig_part_1",
+              timestamp: Date.now(),
+              text: "A".repeat(900),
+              attachments: [],
+            },
+          });
+        }
+        return new Response(JSON.stringify({ message_id: `ig_part_${n}` }), { status: 200 });
+      })
+    );
+    const id = await send(t, s, s.igConv, ["A".repeat(900), "B".repeat(900), "C".repeat(900)].join("\n\n"));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(sentBeforePost).toEqual([[], ["ig_part_1"], ["ig_part_1", "ig_part_2"]]);
+    const rows = await t.run(async (ctx) =>
+      ctx.db.query("messages").withIndex("by_conversation_and_created", (q) => q.eq("conversationId", s.igConv)).collect()
+    );
+    expect(rows.map((r) => r._id)).toEqual([id]);
+    expect(rows[0].metadata?.metaMids).toEqual(["ig_part_1", "ig_part_2", "ig_part_3"]);
+  });
+
+  test("2xx sem message_id: não reenvia; fica sent com a nota", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([{ status: 200, body: {} }]);
+    const id = await send(t, s, s.msConv, "Oi");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls).toHaveLength(1);
+    const m = await getMessage(t, id);
+    expect(m.deliveryStatus).toBe("sent");
+    expect(m.externalId).toBeUndefined();
+    expect(m.metadata?.dispatchNote).toBe("Enviada, mas a Meta não devolveu o id da mensagem.");
+  });
+
   test("mensagem só com anexo falha com cópia clara, sem rede (mídia é F2)", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

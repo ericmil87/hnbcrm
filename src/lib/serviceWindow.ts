@@ -62,7 +62,9 @@ export function isComposerBlockedByWindow(
 }
 
 /** Rótulo de mensagem enviada fora do CRM (`metadata.via === "device"`). */
-export function deviceViaLabel(viaApp: unknown): string {
+export function deviceViaLabel(viaApp: unknown, channel?: string | null): string {
+  // WhatsApp sempre foi "o aparelho" (bridge); não muda a leitura que tinha.
+  if (channel === "whatsapp") return "pelo aparelho";
   if (viaApp === "page_inbox") return "pelo Business Suite";
   if (viaApp === "other") return "pelo app";
   return "fora do CRM";

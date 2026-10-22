@@ -14,6 +14,9 @@
  *  - `lib/whatsappDispatch.ts`: o pacing do WhatsApp, chamado pela porta.
  *  - `whatsapp.ts`: o dispatcher do WhatsApp reagenda A SI MESMO no retry
  *    (`internalRescheduleDispatch`, backoff da Meta) — não é porta de envio.
+ *  - Meta Messaging (F1), mesma regra: `lib/metaDispatch.ts` agenda o
+ *    dispatcher do Instagram/Messenger (chamado só pela porta) e
+ *    `metaMessaging.ts` só pode reagendá-lo dentro de `internalRescheduleMetaDispatch`.
  *
  * HEURÍSTICA (lê os fontes, sem AST; comentários removidos antes).
  */
@@ -28,14 +31,21 @@ const SCHEDULE_WA = /\bscheduleWhatsappDispatch\b/g;
 // O dispatcher do WhatsApp por ponto, colchete ou chave literal.
 const DISPATCH_WA =
   /internal\s*\.\s*whatsapp\s*(\.\s*|\[\s*["'])internalDispatchMessage\b|["']whatsapp:internalDispatchMessage["']/g;
-const FORBIDDEN: RegExp[] = [SCHEDULE_WA, DISPATCH_WA];
+// Instagram/Messenger: o agendamento da porta e o dispatcher da Meta, nos mesmos formatos.
+const SCHEDULE_META = /\bscheduleMetaMessagingDispatch\b/g;
+const DISPATCH_META =
+  /internal\s*\.\s*metaMessaging\s*(\.\s*|\[\s*["'])internalDispatchMessage\b|["']metaMessaging:internalDispatchMessage["']/g;
+const FORBIDDEN: RegExp[] = [SCHEDULE_WA, DISPATCH_WA, SCHEDULE_META, DISPATCH_META];
 
 const ALLOWED: Record<string, RegExp[]> = {
-  [PORT]: [SCHEDULE_WA],
+  [PORT]: [SCHEDULE_WA, SCHEDULE_META],
   "lib/whatsappDispatch.ts": [SCHEDULE_WA, DISPATCH_WA],
+  "lib/metaDispatch.ts": [SCHEDULE_META, DISPATCH_META],
 };
 // `whatsapp.ts`: a exceção vale só para o reagendamento do próprio retry, dentro desta função.
 const SELF_RESCHEDULE_FN = "internalRescheduleDispatch";
+// `metaMessaging.ts`: idem, só dentro do reagendamento do dispatcher da Meta.
+const META_SELF_RESCHEDULE_FN = "internalRescheduleMetaDispatch";
 
 /** Apaga (em branco) o corpo de `export const <name>` até o próximo `export` na coluna 0. */
 function cutExportedFunction(src: string, name: string): string {
@@ -106,6 +116,23 @@ describe("heurística (auto-teste)", () => {
   });
 
 
+  test("pega o agendamento e o dispatcher da Meta em todos os formatos", () => {
+    expect(findDirectDispatches(`await scheduleMetaMessagingDispatch(ctx, conversation, messageId);`)).toHaveLength(1);
+    expect(findDirectDispatches(`import { scheduleMetaMessagingDispatch as sm } from "./lib/metaDispatch";`)).toHaveLength(1);
+    expect(findDirectDispatches(`runAfter(0, internal.metaMessaging.internalDispatchMessage, {});`)).toHaveLength(1);
+    expect(findDirectDispatches(`runAfter(0, internal.metaMessaging["internalDispatchMessage"], {});`)).toHaveLength(1);
+    expect(findDirectDispatches(`const ref = "metaMessaging:internalDispatchMessage";`)).toHaveLength(1);
+    expect(findDirectDispatches(`internal . metaMessaging . internalDispatchMessage`)).toHaveLength(1);
+  });
+
+  test("a exceção de metaMessaging.ts vale só dentro de internalRescheduleMetaDispatch", () => {
+    const call = `    runAfter(1, internal.metaMessaging.internalDispatchMessage, {});\n`;
+    const inside = `export const ${META_SELF_RESCHEDULE_FN} = internalMutation({\n${call}});\n`;
+    const outside = `export const outra = internalMutation({\n${call}});\n`;
+    expect(findDirectDispatches(cutExportedFunction(inside, META_SELF_RESCHEDULE_FN))).toEqual([]);
+    expect(findDirectDispatches(cutExportedFunction(inside + outside, META_SELF_RESCHEDULE_FN))).toHaveLength(1);
+  });
+
   test("ignora comentário e a porta", () => {
     expect(findDirectDispatches(`// scheduleWhatsappDispatch(ctx, c, m)\n/* internal.whatsapp.internalDispatchMessage */`)).toEqual([]);
     expect(findDirectDispatches(`await scheduleOutboundDispatch(ctx, conversation, messageId);`)).toEqual([]);
@@ -121,6 +148,7 @@ describe("porta única de envio", () => {
       const r = rel(abs);
       let src = readFileSync(abs, "utf8");
       if (r === "whatsapp.ts") src = cutExportedFunction(src, SELF_RESCHEDULE_FN);
+      if (r === "metaMessaging.ts") src = cutExportedFunction(src, META_SELF_RESCHEDULE_FN);
       for (const hit of findDirectDispatches(src, ALLOWED[r] ?? [])) {
         violations.push(`${r}:${hit}`);
       }
@@ -134,9 +162,16 @@ describe("porta única de envio", () => {
     ).toEqual([]);
   });
 
-  test("controle positivo: a porta chama o pacing do WhatsApp", () => {
+  test("controle positivo: a porta chama o pacing do WhatsApp e o da Meta", () => {
     const src = readFileSync(path.join(CONVEX_DIR, PORT), "utf8");
-    expect(findDirectDispatches(src)).toHaveLength(2);
+    // import + chamada de cada um.
+    expect(findDirectDispatches(src)).toHaveLength(4);
+  });
+
+  test("controle positivo: o reagendamento da Meta existe e agenda o próprio dispatcher", () => {
+    const src = readFileSync(path.join(CONVEX_DIR, "metaMessaging.ts"), "utf8");
+    expect(findDirectDispatches(src).length).toBeGreaterThan(0);
+    expect(findDirectDispatches(cutExportedFunction(src, META_SELF_RESCHEDULE_FN))).toEqual([]);
   });
 
   test("os pontos de envio importam só a porta", () => {

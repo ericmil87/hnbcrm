@@ -313,6 +313,62 @@ describe("eco do Instagram sem app_id (camadas)", () => {
     expect(rows[0].externalId).toBe("ig_race_1");
   });
 
+  test("(b) POST lento: ainda em voo na 1ª reavaliação, reagenda UMA vez e não duplica", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const id = await outbound(t, s, s.igConv, { metadata: { metaDispatchStartedAt: Date.now() } });
+    await ingest(t, s.instagramId, echo("instagram", "ig_slow_1"));
+
+    // 1ª reavaliação (15 s depois): o POST ainda não voltou → reagenda, não grava device.
+    vi.advanceTimersByTime(15_001);
+    await t.finishInProgressScheduledFunctions();
+    expect(await messagesOf(t, s.igConv)).toHaveLength(1);
+    const pending = await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter(
+        (j) => j.name === "metaMessaging:internalReconcileEcho" && j.state.kind === "pending"
+      )
+    );
+    expect(pending).toHaveLength(1);
+    expect((pending[0].args[0] as { attempt?: number }).attempt).toBe(2);
+
+    // O POST volta; a 2ª reavaliação reconhece o mid.
+    await t.mutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId: id, mids: ["ig_slow_1"] });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const rows = await messagesOf(t, s.igConv);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].externalId).toBe("ig_slow_1");
+  });
+
+  test("(camada 3) duplicata device criada antes é removida ao marcar despachado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ours = await outbound(t, s, s.igConv, { createdAt: Date.now() - 1000 });
+    // Eco venceu tudo e virou device (sem envio em voo visível).
+    await ingest(t, s.instagramId, echo("instagram", "ig_dup_1"));
+    let rows = await messagesOf(t, s.igConv);
+    expect(rows).toHaveLength(2);
+    const dup = rows.find((r) => r.externalId === "ig_dup_1")!;
+    const before = await t.run(async (ctx) => (await ctx.db.get(s.igConv))!);
+    expect(before.lastMessageId).toBe(dup._id);
+
+    await t.mutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId: ours, mids: ["ig_dup_1"] });
+    rows = await messagesOf(t, s.igConv);
+    expect(rows.map((r) => r._id)).toEqual([ours]);
+    expect(rows[0].externalId).toBe("ig_dup_1");
+    const after = await t.run(async (ctx) => (await ctx.db.get(s.igConv))!);
+    expect(after.messageCount).toBe(before.messageCount - 1);
+    expect(after.lastMessageId).toBe(ours);
+  });
+
+  test("(camada 3) não apaga mensagem device de outra conversa nem com outro mid", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await ingest(t, s.messengerId, echo("messenger", "m_other_1", { text: "Business Suite" }));
+    const ours = await outbound(t, s, s.igConv);
+    await t.mutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId: ours, mids: ["m_other_1"] });
+    expect(await messagesOf(t, s.msConv)).toHaveLength(1);
+  });
+
   test("(c) resposta pelo app do celular (sem envio em voo) vira device", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

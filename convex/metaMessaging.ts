@@ -22,6 +22,7 @@ import {
   internalMutation,
   internalQuery,
   ActionCtx,
+  MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -35,6 +36,11 @@ import { getLeadRef } from "./lib/leadRef";
 import { resolveConversationChannelConfig } from "./lib/channelResolve";
 import { claimChannelSlot } from "./lib/whatsappDispatch";
 import { findMetaConversationForUser } from "./lib/metaDispatch";
+import {
+  CLEARED_LAST_MESSAGE_PATCH,
+  findLastPreviewMessage,
+  lastMessageFieldsPatch,
+} from "./lib/conversationListFields";
 import {
   OUTSIDE_WINDOW_COPY,
   buildTextPayload,
@@ -451,7 +457,7 @@ export const internalIngestEvent = internalAction({
     if (!config || config.status !== "active" || config.channel !== event.surface) return null;
 
     if (event.kind === "echo") {
-      await handleEcho(ctx, config, event, false);
+      await handleEcho(ctx, config, event, 0);
       return null;
     }
     if (event.kind === "delivery" || event.kind === "read") {
@@ -542,7 +548,13 @@ const RECONNECT_COPY = "Este canal precisa ser reconectado. Reconecte em Configu
 const NO_RECIPIENT_COPY = "Não encontramos o destinatário desta conversa neste canal.";
 const MAX_META_DISPATCH_RETRIES = 5; // backoff 4^n: 1 s, 4 s, 16 s, 64 s, 256 s
 const ECHO_RACE_WINDOW_MS = 60 * 1000;
-const ECHO_RECONCILE_DELAY_MS = 5000;
+// Timeout do POST da Send API. A reavaliação do eco do IG em corrida espera
+// MAIS que isso: quando ela roda, o POST já voltou (com mid) ou já desistiu.
+const META_SEND_TIMEOUT_MS = 12000;
+const ECHO_RECONCILE_DELAY_MS = 15000;
+// Reavaliações do eco em corrida antes de decidir "device" (1ª + UMA a mais).
+const ECHO_MAX_RECONCILES = 2;
+const NO_MID_NOTE = "Enviada, mas a Meta não devolveu o id da mensagem.";
 
 /**
  * Tudo que o dispatcher precisa numa leitura. O destino é a identidade do
@@ -551,7 +563,22 @@ const ECHO_RECONCILE_DELAY_MS = 5000;
  */
 export const internalGetMetaDispatchContext = internalQuery({
   args: { messageId: v.id("messages") },
-  returns: v.any(),
+  returns: v.union(
+    v.null(),
+    v.object({
+      // Documentos inteiros (convex 1.31 não tem `schema.doc`); o resto é tipado.
+      message: v.any(),
+      conversation: v.any(),
+      config: v.any(),
+      connection: v.any(),
+      surface: surfaceValidator,
+      recipientId: v.union(v.string(), v.null()),
+      replyToMid: v.union(v.string(), v.null()),
+      demoMode: v.boolean(),
+      openedByAd: v.boolean(),
+      hasAttachments: v.boolean(),
+    })
+  ),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) return null;
@@ -629,7 +656,7 @@ async function postSend(
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(META_SEND_TIMEOUT_MS),
     });
     const body: unknown = await res.json().catch(() => ({}));
     return { ok: res.ok, status: res.status, body };
@@ -700,32 +727,44 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
   const note = context.hasAttachments ? `${OUTBOUND_MEDIA_COPY} Só o texto foi enviado.` : undefined;
 
   const mids: string[] = [];
+  let acceptedWithoutMid = false;
   for (const part of parts) {
     const payload = buildTextPayload(surface, recipientId, part, {
       messageId,
-      ...(replyToMid && mids.length === 0 ? { replyToMid } : {}),
+      ...(replyToMid && mids.length === 0 && !acceptedWithoutMid ? { replyToMid } : {}),
     });
     const res = await postSend(url, token, payload);
-    const mid = res.ok ? midOf(res.body) : null;
-    if (mid) {
+    if (res.ok) {
+      const mid = midOf(res.body);
+      if (!mid) {
+        // A Meta aceitou mas não devolveu o id: reenviar duplicaria.
+        acceptedWithoutMid = true;
+        continue;
+      }
       mids.push(mid);
+      // Instagram: registra o mid JÁ (antes do próximo POST), para o eco sem
+      // `app_id` desta parte ser reconhecido mesmo com as demais em voo.
+      if (surface === "instagram") {
+        await ctx.runMutation(internal.metaMessaging.internalRecordMetaSentMid, { messageId, mid });
+      }
       continue;
     }
 
-    const cls = classifyMetaError(res.ok ? 500 : res.status, res.body);
+    const cls = classifyMetaError(res.status, res.body);
     if (cls.kind === "token_invalid") {
       await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
         connectionId: connection._id,
         detail: `Erro ${cls.code ?? 190} no envio`,
       });
     }
-    if (mids.length > 0) {
+    if (mids.length > 0 || acceptedWithoutMid) {
       // Parte do texto já saiu: reenviar duplicaria. Registra o que saiu + o motivo.
-      await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, {
-        messageId,
-        mids,
-        note: `Só ${mids.length} de ${parts.length} partes foram enviadas. ${cls.userMessage}`,
-      });
+      const partial = `Só ${mids.length} de ${parts.length} partes foram enviadas. ${cls.userMessage}`;
+      if (mids.length > 0) {
+        await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId, mids, note: partial });
+      } else {
+        await ctx.runMutation(internal.metaMessaging.internalMarkMetaSentWithoutMid, { messageId, note: partial });
+      }
       return;
     }
     if (cls.kind === "rate_limited" || cls.kind === "transient") {
@@ -739,12 +778,66 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
     return await fail(cls.userMessage, cls.code);
   }
 
+  const finalNote = [note, acceptedWithoutMid ? NO_MID_NOTE : undefined].filter(Boolean).join(" ") || undefined;
+  if (mids.length === 0) {
+    await ctx.runMutation(internal.metaMessaging.internalMarkMetaSentWithoutMid, {
+      messageId,
+      note: finalNote ?? NO_MID_NOTE,
+    });
+    return;
+  }
   await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, {
     messageId,
     mids,
-    ...(note ? { note } : {}),
+    ...(finalNote ? { note: finalNote } : {}),
   });
 }
+
+async function recordSentMid(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  messageId: Id<"messages">,
+  mid: string
+): Promise<void> {
+  const exists = await ctx.db
+    .query("metaSentMids")
+    .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", organizationId).eq("mid", mid))
+    .first();
+  if (!exists) {
+    await ctx.db.insert("metaSentMids", { organizationId, mid, messageId, createdAt: Date.now() });
+  }
+}
+
+/** Instagram: mid de UMA parte, gravado assim que o POST dela volta (D6 camada a). */
+export const internalRecordMetaSentMid = internalMutation({
+  args: { messageId: v.id("messages"), mid: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) return null;
+    await recordSentMid(ctx, message.organizationId, args.messageId, args.mid);
+    return null;
+  },
+});
+
+/**
+ * 2xx sem `message_id`: a Meta aceitou, então NÃO reenvia (duplicaria). Fica
+ * `sent` sem `externalId`, com a nota visível no metadata.
+ */
+export const internalMarkMetaSentWithoutMid = internalMutation({
+  args: { messageId: v.id("messages"), note: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.externalId) return null;
+    if (message.deliveryStatus && message.deliveryStatus !== "failed") return null;
+    await ctx.db.patch(args.messageId, {
+      deliveryStatus: "sent",
+      metadata: { ...(message.metadata ?? {}), dispatchNote: args.note },
+    });
+    return null;
+  },
+});
 
 /** Carimba o início do envio (camada b do eco do IG). false = já despachada. */
 export const internalStampMetaDispatchStarted = internalMutation({
@@ -782,25 +875,53 @@ export const internalMarkMetaDispatched = internalMutation({
       metadata,
     });
     if (conversation?.channel === "instagram") {
-      const now = Date.now();
       for (const mid of args.mids) {
-        const exists = await ctx.db
-          .query("metaSentMids")
-          .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", message.organizationId).eq("mid", mid))
-          .first();
-        if (!exists) {
-          await ctx.db.insert("metaSentMids", {
-            organizationId: message.organizationId,
-            mid,
-            messageId: args.messageId,
-            createdAt: now,
-          });
-        }
+        await recordSentMid(ctx, message.organizationId, args.messageId, mid);
       }
     }
+    // D6 camada 3 (rede de segurança): o eco do IG sem `app_id` venceu a corrida
+    // e virou mensagem "pelo aparelho" com um mid NOSSO. Apaga a duplicata.
+    if (conversation) await removeDeviceDuplicates(ctx, conversation, args.messageId, args.mids);
     return null;
   },
 });
+
+async function removeDeviceDuplicates(
+  ctx: MutationCtx,
+  conversation: Doc<"conversations">,
+  messageId: Id<"messages">,
+  mids: string[]
+): Promise<void> {
+  let removed = 0;
+  let removedLast = false;
+  for (const mid of mids) {
+    const rows = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", conversation.organizationId).eq("externalId", mid)
+      )
+      .take(5);
+    for (const dup of rows) {
+      if (dup._id === messageId || dup.conversationId !== conversation._id) continue;
+      if (dup.direction !== "outbound" || dup.metadata?.via !== "device") continue;
+      if (dup.attachments && dup.attachments.length > 0) continue; // F1 não grava mídia em device; nunca apaga blob aqui
+      await ctx.db.delete(dup._id);
+      removed++;
+      if (conversation.lastMessageId === dup._id) removedLast = true;
+    }
+  }
+  if (removed === 0) return;
+  console.log(`meta-messaging: ${removed} duplicata(s) de eco removida(s)`);
+  let previewPatch = {};
+  if (removedLast) {
+    const { message } = await findLastPreviewMessage(ctx, conversation._id);
+    previewPatch = message ? lastMessageFieldsPatch(message._id, message) : CLEARED_LAST_MESSAGE_PATCH;
+  }
+  await ctx.db.patch(conversation._id, {
+    messageCount: Math.max(0, conversation.messageCount - removed),
+    ...previewPatch,
+  });
+}
 
 /**
  * Falha de envio Meta, visível no inbox (`deliveryStatus:"failed"` +
@@ -1027,14 +1148,17 @@ type EchoEvent = Extract<MetaEvent, { kind: "echo" }>;
  * D6. Nosso `app_id` → no-op (liga o mid pelo "hnb:"). `app_id` de outro app
  * (Page Inbox/Business Suite) ou ausente no Messenger → mensagem enviada fora
  * do CRM (`via:"device"` + `viaApp`). Instagram sem `app_id`: (a) mid já
- * registrado → nosso; (b) envio nosso em voo → reavalia em 5 s; (c) device.
+ * registrado → nosso; (b) envio nosso em voo → reavalia em 15 s (até 2 vezes);
+ * (c) device. Se o eco ainda vencer, `internalMarkMetaDispatched` apaga a
+ * duplicata (camada 3).
  */
 async function handleEcho(
   ctx: ActionCtx,
   config: Doc<"channelConfigs">,
   event: EchoEvent,
-  reconciled: boolean
+  attempt: number // 0 = webhook; 1..ECHO_MAX_RECONCILES = reavaliações
 ): Promise<void> {
+  const reconciled = attempt > 0;
   const ourAppId = process.env.META_MESSAGING_APP_ID;
   const isOurApp = !!event.appId && !!ourAppId && event.appId === ourAppId;
   if (!reconciled) {
@@ -1055,7 +1179,7 @@ async function handleEcho(
   });
   if (isOurApp || link === "ours") return;
 
-  if (event.surface === "instagram" && !event.appId && !reconciled) {
+  if (event.surface === "instagram" && !event.appId && attempt < ECHO_MAX_RECONCILES) {
     const inFlight: boolean = await ctx.runQuery(internal.metaMessaging.internalHasMetaSendInFlight, {
       configId: config._id,
       userId: event.userId,
@@ -1065,6 +1189,7 @@ async function handleEcho(
       await ctx.scheduler.runAfter(ECHO_RECONCILE_DELAY_MS, internal.metaMessaging.internalReconcileEcho, {
         configId: config._id,
         event,
+        attempt: attempt + 1,
       });
       return;
     }
@@ -1101,7 +1226,7 @@ async function handleEcho(
 
 /** Segunda passada do eco do IG em corrida (camada b): reavalia (a) e decide. */
 export const internalReconcileEcho = internalAction({
-  args: { configId: v.id("channelConfigs"), event: metaEventValidator },
+  args: { configId: v.id("channelConfigs"), event: metaEventValidator, attempt: v.optional(v.number()) },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     if (args.event.kind !== "echo") return null;
@@ -1109,7 +1234,7 @@ export const internalReconcileEcho = internalAction({
       configId: args.configId,
     });
     if (!config || config.status !== "active" || config.channel !== args.event.surface) return null;
-    await handleEcho(ctx, config, args.event, true);
+    await handleEcho(ctx, config, args.event, Math.max(1, Math.min(args.attempt ?? 1, ECHO_MAX_RECONCILES)));
     return null;
   },
 });

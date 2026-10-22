@@ -33,7 +33,10 @@ import {
   formatTextCounter,
   measureText,
   textLimitFor,
+  textNeedsSplit,
   textPartsCount,
+  mediaSendBlocked,
+  MEDIA_BLOCKED_HINT,
 } from "@/lib/channelCapabilities";
 import {
   STANDBY_BANNER_TEXT,
@@ -664,6 +667,7 @@ export function Inbox() {
   const canUseAiAttendant = channelSupports(convChannel, convTransport, "aiAttendant");
   const canRecordVoice = channelSupports(convChannel, convTransport, "voiceRecorder");
   const isWhatsappConversation = convChannel === "whatsapp";
+  const mediaBlocked = mediaSendBlocked(convChannel, convTransport) && !isInternal;
   const textLimit = textLimitFor(convChannel, convTransport);
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
@@ -1664,7 +1668,7 @@ export function Inbox() {
       ? {
           label: formatTextCounter(measureText(newMessage, textLimit.unit), textLimit),
           parts: textPartsCount(newMessage, textLimit),
-          over: measureText(newMessage, textLimit.unit) > textLimit.max,
+          over: textNeedsSplit(newMessage, textLimit),
         }
       : null;
 
@@ -2747,7 +2751,8 @@ export function Inbox() {
                           setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))
                         }
                         className="shrink-0"
-                        disabled={composerBlocked}
+                        disabled={composerBlocked || mediaBlocked}
+                        disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
                       />
                       <EmojiPickerButton onPick={insertEmoji} />
                       <MentionTextarea
@@ -2866,7 +2871,7 @@ export function Inbox() {
                     aria-live="polite"
                   >
                     {textCounter.label}
-                    {textCounter.over && ` — a mensagem será enviada em ${textCounter.parts} partes`}
+                    {textCounter.over && ` — a mensagem será enviada em cerca de ${textCounter.parts} partes`}
                   </p>
                 )}
                 </div>

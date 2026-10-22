@@ -23,7 +23,7 @@ const NOTIFICATION_EVENTS = [
   { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead é atribuído a você" },
   { key: "aiFollowupNeedsHuman", label: "Follow-up da IA precisa de você", desc: "Quando a IA não consegue executar sozinha um follow-up que ela mesma agendou" },
   { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu setor" },
-  { key: "channelSessionLost", label: "Canal desconectado", desc: "Quando um canal perde a conexão (número deslogado, banido ou fora do ar por tempo demais; conta do Instagram ou Messenger que precisa reconectar), no sino e por e-mail" },
+  { key: "channelSessionLost", label: "Canal desconectado", desc: "Avisa quando um canal conectado perde a conexão" },
   { key: "aiSpendAlert", label: "Gasto de IA do mês", desc: "Para administradores: quando o gasto de IA chega perto do teto mensal em R$ ou o atinge (no sino e por e-mail, uma vez por mês)" },
   { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
   { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },

@@ -103,6 +103,11 @@ function serviceWindowFields(
       serviceWindowKind: "wait",
     };
   }
+  // E-mail, webchat, telegram, interno: não existe janela (o onboarding cria
+  // conversas de exemplo nesses canais; antes mostravam "requer template").
+  if (conversation.channel !== "whatsapp") {
+    return { serviceWindowExpiresAt: null, serviceWindowApplies: false, serviceWindowKind: null };
+  }
   const applies = transport !== "bridge";
   return {
     serviceWindowExpiresAt: applies ? serviceWindowExpiresAt(conversation) : null,
@@ -446,6 +451,10 @@ export const getConversations = query({
     // Only filter by channel if we used the org-level index and channel was specified
     if (!args.leadId && args.channel) {
       conversations = conversations.filter(c => c.channel === args.channel);
+    }
+    // Painel do lead com conta: poucas conversas por lead, pós-filtro basta.
+    if (args.leadId && args.channelConfigId) {
+      conversations = conversations.filter(c => c.channelConfigId === args.channelConfigId);
     }
 
     if (!args.leadId) {

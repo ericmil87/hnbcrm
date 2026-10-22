@@ -4,6 +4,8 @@ import {
   deliveryTicksMode,
   formatTextCounter,
   textLimitFor,
+  mediaSendBlocked,
+  textNeedsSplit,
   textPartsCount,
 } from "./channelCapabilities";
 
@@ -53,7 +55,9 @@ describe("channelSupports", () => {
       expect(channelSupports(c, c, "templates")).toBe(false);
       expect(channelSupports(c, c, "newConversation")).toBe(false);
       expect(channelSupports(c, c, "serviceWindow")).toBe(true);
-      expect(channelSupports(c, c, "aiAttendant")).toBe(true);
+      // F3: IA ainda não responde nesses canais
+      expect(channelSupports(c, c, "aiAttendant")).toBe(false);
+      expect(channelSupports(c, c, "mediaSend")).toBe(false);
       expect(channelSupports(c, c, "typingIndicator")).toBe(false);
     }
   });
@@ -62,8 +66,8 @@ describe("channelSupports", () => {
 describe("text counter", () => {
   it("limits", () => {
     expect(textLimitFor("whatsapp", "meta")).toBeNull();
-    expect(textLimitFor("instagram", "instagram")).toEqual({ unit: "bytes", max: 1000 });
-    expect(textLimitFor("messenger", "messenger")).toEqual({ unit: "chars", max: 2000 });
+    expect(textLimitFor("instagram", "instagram")).toEqual({ unit: "bytes", max: 1000, part: 1000 });
+    expect(textLimitFor("messenger", "messenger")).toEqual({ unit: "chars", max: 2000, part: 1900 });
   });
 
   it("counts bytes for instagram and parts above the limit", () => {
@@ -72,6 +76,28 @@ describe("text counter", () => {
     expect(textPartsCount("a".repeat(1001), ig)).toBe(2);
     expect(textPartsCount("ã".repeat(501), ig)).toBe(2);
     expect(textPartsCount("", ig)).toBe(1);
+  });
+
+  it("messenger splits at 1900 chars, like the backend", () => {
+    const ms = textLimitFor("messenger")!;
+    expect(textNeedsSplit("a".repeat(1900), ms)).toBe(false);
+    expect(textNeedsSplit("a".repeat(1901), ms)).toBe(true);
+    expect(textPartsCount("a".repeat(1900), ms)).toBe(1);
+    expect(textPartsCount("a".repeat(1901), ms)).toBe(2);
+    expect(textNeedsSplit("a".repeat(1000), textLimitFor("instagram")!)).toBe(false);
+    expect(textNeedsSplit("a".repeat(1001), textLimitFor("instagram")!)).toBe(true);
+  });
+
+  it("whatsapp supports media send, instagram/messenger do not yet", () => {
+    expect(channelSupports("whatsapp", "bridge", "mediaSend")).toBe(true);
+    expect(channelSupports("whatsapp", "meta", "mediaSend")).toBe(true);
+    expect(mediaSendBlocked("instagram", "instagram")).toBe(true);
+    expect(mediaSendBlocked("messenger", "messenger")).toBe(true);
+    // canais fora da matriz mantêm o comportamento de antes
+    expect(mediaSendBlocked("telegram", null)).toBe(false);
+    expect(mediaSendBlocked("email", null)).toBe(false);
+    expect(mediaSendBlocked("whatsapp", "meta")).toBe(false);
+    expect(mediaSendBlocked(undefined)).toBe(false);
   });
 
   it("formats", () => {

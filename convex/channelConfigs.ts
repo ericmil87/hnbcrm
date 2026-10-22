@@ -1,5 +1,5 @@
 import { v, ConvexError } from "convex/values";
-import { assertModule } from "./lib/orgModules";
+import { assertModule, getModules } from "./lib/orgModules";
 import { configTransport, isWhatsappTransport } from "./lib/channelTransport";
 import {
   query,
@@ -230,12 +230,16 @@ export const getInboxChannelAccounts = query({
   ),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
+    // Módulo desligado = UI do Instagram/Messenger some (D12); WhatsApp segue.
+    const metaOn = (await getModules(ctx, args.organizationId)).metaMessaging;
     const configs = await ctx.db
       .query("channelConfigs")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .take(100);
     const out = [];
     for (const config of configs) {
+      const isMeta = config.channel === "instagram" || config.channel === "messenger";
+      if (isMeta && (!metaOn || config.disabledByModuleAt !== undefined)) continue;
       const transport = configTransport(config);
       let label: string;
       let handle: string | null = null;

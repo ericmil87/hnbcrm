@@ -2,6 +2,18 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado] — Instagram e Facebook Messenger: responder pelo inbox (F1)
+
+### Responder no Instagram e no Messenger, e saber de onde cada conversa veio
+
+- **Responder pelo inbox chega no Instagram Direct e no Messenger** da pessoa, dentro da janela da Meta: 24 horas após a última mensagem dela (até 7 dias quando a conversa começou por um anúncio). Com a janela fechada o composer fica bloqueado e explica: "aguarde o cliente escrever de novo" (não há templates nesses canais). Textos longos são divididos automaticamente (1.000 bytes no Instagram, 2.000 caracteres no Messenger); o composer mostra o contador e em quantas partes vai sair
+- **Entregue e lida:** no Messenger os dois ticks; no Instagram só "lida" (a Meta não informa entrega)
+- **Respostas dadas fora do CRM aparecem na conversa** (pela Caixa de entrada do Meta Business Suite ou pelo app do Instagram), marcadas "pelo Business Suite" / "pelo app", sem acordar o atendente IA. O que o próprio HNBCRM enviou nunca aparece duplicado
+- **Quando outro app controla a conversa** (ex.: Business Suite como app padrão da Página), o inbox avisa e orienta a definir o HNBCRM como app padrão em Configurações da Página > Mensagens avançadas
+- **Origem visível:** o selo da conversa mostra o canal e a conta (@ do Instagram, nome da Página ou número do WhatsApp) quando a organização tem mais de uma conta ou mais de um canal; o cabeçalho diz "via Instagram / Messenger / WhatsApp". Chips **Canal** e **Conta** na lista filtram por eles, valendo também para quem tem dois ou mais números de WhatsApp
+- **Credencial que morre** (senha trocada, app revogado, papel perdido): o envio falha com aviso claro e a conexão fica marcada para reconectar; alerta e botão Reconectar chegam na próxima fase
+- Interno: envio pela porta única (`scheduleOutboundDispatch` → `lib/metaDispatch.ts` → `metaMessaging.internalDispatchMessage`), janela verificada no servidor na porta e no dispatcher, eco por `app_id` (Messenger) e em camadas (Instagram), `conversations.windowOpenedByAdAt` (aditivo), `channelConfigs.getInboxChannelAccounts`, filtro `channelConfigId` por índice, matriz `src/lib/channelCapabilities.ts` no lugar de `channelIsWhatsapp`
+
 ## [Não lançado] — Instagram e Facebook Messenger, fundação (F0)
 
 ### Novos canais pela API oficial da Meta: mensagens do Instagram e do Messenger entrando na Caixa de Entrada

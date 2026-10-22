@@ -59,7 +59,8 @@ export function accountBadgeLabel(account: AccountLike | null | undefined): stri
   if (account.handle) {
     const h = account.handle.trim();
     if (account.channel === "instagram") return h.startsWith("@") ? h : `@${h}`;
-    if (account.channel === "whatsapp") {
+    // WhatsApp: o nome dado ao canal vence os 4 últimos dígitos (fallback).
+    if (account.channel === "whatsapp" && !account.label?.trim()) {
       const digits = h.replace(/\D/g, "");
       if (digits.length >= 4) return `WhatsApp ····${digits.slice(-4)}`;
     }

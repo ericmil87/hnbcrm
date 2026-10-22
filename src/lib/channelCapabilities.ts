@@ -14,13 +14,16 @@ export type CapabilityFeature =
   | "templates"
   | "newConversation"
   | "aiAttendant"
-  | "typingIndicator";
+  | "typingIndicator"
+  | "mediaSend";
 
 export type TicksMode = "full" | "read" | false;
 
 export interface TextCounter {
   unit: "bytes" | "chars";
   max: number;
+  /** Tamanho de cada parte quando o backend divide (Messenger: 1900, igual ao backend). */
+  part: number;
 }
 
 type Row = Record<CapabilityFeature, boolean | TicksMode>;
@@ -37,6 +40,7 @@ const NONE: Row = {
   newConversation: false,
   aiAttendant: false,
   typingIndicator: false,
+  mediaSend: false,
 };
 
 const WHATSAPP_BRIDGE: Row = {
@@ -51,6 +55,7 @@ const WHATSAPP_BRIDGE: Row = {
   newConversation: true,
   aiAttendant: true,
   typingIndicator: true,
+  mediaSend: true,
 };
 
 const WHATSAPP_META: Row = {
@@ -71,8 +76,11 @@ const INSTAGRAM: Row = {
   serviceWindow: true,
   templates: false,
   newConversation: false,
-  aiAttendant: true,
+  // F3: o atendente de IA ainda não responde por Instagram/Messenger.
+  aiAttendant: false,
   typingIndicator: false,
+  // F2: envio de anexo por Instagram/Messenger.
+  mediaSend: false,
 };
 
 const MESSENGER: Row = {
@@ -105,6 +113,19 @@ export function channelSupports(
   return !!rowFor(channel, transport)[feature];
 }
 
+/**
+ * Anexo desligado só onde o canal é conhecido e ainda não envia mídia (F2:
+ * Instagram/Messenger). Canais fora da matriz mantêm o comportamento de antes.
+ */
+export function mediaSendBlocked(
+  channel: string | null | undefined,
+  transport?: string | null
+): boolean {
+  return (channel === "instagram" || channel === "messenger") && !channelSupports(channel, transport, "mediaSend");
+}
+
+export const MEDIA_BLOCKED_HINT = "Anexos por Instagram/Messenger chegam na próxima versão";
+
 export function deliveryTicksMode(
   channel: string | null | undefined,
   transport?: string | null
@@ -117,8 +138,8 @@ export function textLimitFor(
   channel: string | null | undefined,
   _transport?: string | null
 ): TextCounter | null {
-  if (channel === "instagram") return { unit: "bytes", max: 1000 };
-  if (channel === "messenger") return { unit: "chars", max: 2000 };
+  if (channel === "instagram") return { unit: "bytes", max: 1000, part: 1000 };
+  if (channel === "messenger") return { unit: "chars", max: 2000, part: 1900 };
   return null;
 }
 
@@ -130,7 +151,12 @@ export function measureText(text: string, unit: TextCounter["unit"]): number {
 /** Quantas partes o backend vai enviar (>= 1). */
 export function textPartsCount(text: string, limit: TextCounter): number {
   const size = measureText(text, limit.unit);
-  return Math.max(1, Math.ceil(size / limit.max));
+  return Math.max(1, Math.ceil(size / limit.part));
+}
+
+/** O texto passa do tamanho de uma parte (avisa a partir daí: 1900 chars / 1000 bytes). */
+export function textNeedsSplit(text: string, limit: TextCounter): boolean {
+  return measureText(text, limit.unit) > limit.part;
 }
 
 /** "812 / 1000 bytes" ou "1.230 / 2000". */
