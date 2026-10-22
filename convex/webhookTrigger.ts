@@ -1,7 +1,10 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { WEBHOOK_SCAN_LIMIT, webhookMatches } from "./lib/webhookDispatch";
 
-// Internal query to get matching webhooks
+// Webhooks que casam com o evento — MESMO predicado do gate da mutation
+// (`lib/webhookDispatch.ts`); aqui é a 2ª checagem (o webhook pode ter sido
+// desativado entre o agendamento e a execução).
 export const getMatchingWebhooks = internalQuery({
   args: {
     organizationId: v.id("organizations"),
@@ -12,11 +15,9 @@ export const getMatchingWebhooks = internalQuery({
     const webhooks = await ctx.db
       .query("webhooks")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(100);
+      .take(WEBHOOK_SCAN_LIMIT);
 
-    return webhooks.filter(
-      (w) => w.isActive && w.events.some((e) => e === args.event || e === "*")
-    );
+    return webhooks.filter((w) => webhookMatches(w, args.event));
   },
 });
 
