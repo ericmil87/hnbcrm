@@ -32,7 +32,8 @@ public/        Static assets (logos)
 - **TypeScript** everywhere — strict mode, always include type annotations for function args/returns
 - **TailwindCSS** — dark theme first, mobile-first responsive (`md:`, `lg:` breakpoints)
 - **PT-BR** — all user-facing text is in Portuguese (BR)
-- **Convex rules** — see `CLAUDE.md` for mandatory backend patterns (validators, indexes, no `.filter()`, etc.)
+- **Convex rules** — `.claude/rules/convex-official.md` (official guidelines) and `.claude/rules/backend-invariants.md` (project single ports, auth, side effects); the root `CLAUDE.md` keeps only the summary
+- **Why things are the way they are** — `docs/architecture/README.md` indexes the decisions and measured gotchas per area; read the area file before changing it
 - **Icons** — use `lucide-react`, never emoji
 
 ## Making Changes

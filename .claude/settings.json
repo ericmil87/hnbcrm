@@ -1,0 +1,49 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npx vite build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(npx convex codegen:*)",
+      "Bash(npx convex dev --once:*)",
+      "Bash(node scripts/claude/*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/claude/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(jq -r '.tool_input.file_path // empty') && case \"$FILE\" in \"$CLAUDE_PROJECT_DIR\"/convex/*|convex/*) \"$CLAUDE_PROJECT_DIR\"/scripts/claude/validate-convex-function.sh \"$FILE\" ;; esac || true",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "FILE=$(jq -r '.tool_input.file_path // empty') && case \"$FILE\" in \"$CLAUDE_PROJECT_DIR\"/convex/schema.ts|convex/schema.ts) cd \"$CLAUDE_PROJECT_DIR\" && npx convex codegen 2>&1 ;; esac || true",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
