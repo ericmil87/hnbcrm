@@ -289,6 +289,8 @@ export type EmitChannelDegradedArgs = {
   configs: Doc<"channelConfigs">[];
   state: "reauth_required" | "data_access_expiring";
   detail: string;
+  /** Quem detectou (só vale para `reauth_required`): decide se o cron pode recuperar sozinho. */
+  source?: "health" | "send" | "test" | "subscribe";
   now: number;
 };
 
@@ -296,7 +298,8 @@ export type EmitChannelDegradedArgs = {
  * Generalização de `emitChannelSessionLost` para a CONEXÃO da Meta. Grava o
  * estado da conexão (nunca o `status` dos configs: o ingest segue) e dispara
  * audit `high`, sino (mesmo tipo/preferência `channel_session_lost`), e-mail e
- * webhook `channel.session_lost` (um por config, ids mascarados, sem token).
+ * webhook `channel.session_lost` (um por config, ids mascarados, sem token; só em
+ * `reauth_required`, o aviso "expirando" não gera webhook).
  * Campanhas e publicações de grupo são só de WhatsApp: nada a pausar.
  *
  * Dedupe por `authAlertedAt`: `reauth_required` repetido não notifica de novo;
@@ -317,7 +320,9 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
   }
 
   await ctx.db.patch(conn._id, {
-    ...(args.state === "reauth_required" ? { authState: "reauth_required" as const } : {}),
+    ...(args.state === "reauth_required"
+      ? { authState: "reauth_required" as const, authSource: args.source ?? ("send" as const) }
+      : {}),
     authDetail: args.state === "reauth_required" ? args.detail : "data_access_expiring",
     authAlertedAt: now,
     updatedAt: now,
@@ -374,6 +379,8 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
     });
   }
 
+  // "Expirando" é aviso, não perda: sem webhook `channel.session_lost`.
+  if (args.state !== "reauth_required") return true;
   for (const config of args.configs) {
     if (config.channel !== "instagram" && config.channel !== "messenger") continue;
     const accountId = config.channel === "instagram" ? config.instagramAccountId : config.messengerPageId;
@@ -384,7 +391,7 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
         channelConfigId: config._id,
         provider: config.channel,
         state: args.state,
-        detail: args.state === "reauth_required" ? args.detail : "data_access_expiring",
+        detail: args.detail,
         accountMasked: accountId ? maskExternalId(accountId) : "",
       },
     });

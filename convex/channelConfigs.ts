@@ -20,6 +20,8 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deleteFileRow } from "./lib/storageUsage";
 import {
   buildBridgeConnectRequest,
   buildBridgeHmacConfigRequest,
@@ -659,6 +661,15 @@ export const deleteChannelConfig = mutation({
 
     await ctx.db.delete(args.configId);
 
+    // Meta Messaging: a foto do negócio (blob + linha de `files`) vai junto com o canal.
+    if (config.metaAccountAvatarFileId) {
+      const avatar = await ctx.db.get(config.metaAccountAvatarFileId);
+      if (avatar && avatar.organizationId === config.organizationId) {
+        await deleteBlobIfUnreferenced(ctx, avatar);
+        await deleteFileRow(ctx, avatar);
+      }
+    }
+
     // Meta Messaging: a conexão (credencial) some junto quando nenhum outro canal a usa.
     let metaConnectionDeleted = false;
     if ((config.channel === "instagram" || config.channel === "messenger") && config.metaConnectionId) {
@@ -780,6 +791,7 @@ async function checkMetaMessagingHealth(
   const applied: { outcome: string } = await ctx.runMutation(internal.metaMessaging.internalApplyHealthObservation, {
     connectionId: conn._id,
     observation: dbg.observation,
+    source: "test",
   });
   if (applied.outcome === "degraded") {
     const error = "A Meta não aceita mais a autorização desta conta. Reconecte em Configurações → Canais.";
@@ -803,6 +815,7 @@ async function checkMetaMessagingHealth(
       await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
         connectionId: conn._id,
         detail: "A Meta recusou a autorização desta Página.",
+        source: "test",
       });
     }
     const error = profile

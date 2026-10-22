@@ -1352,7 +1352,11 @@ export const internalRescheduleMetaDispatch = internalMutation({
  * webhook saem de `emitChannelDegraded` (dedupe por `authAlertedAt`).
  */
 export const internalMarkConnectionReauthRequired = internalMutation({
-  args: { connectionId: v.id("metaConnections"), detail: v.string() },
+  args: {
+    connectionId: v.id("metaConnections"),
+    detail: v.string(),
+    source: v.optional(v.union(v.literal("send"), v.literal("test"), v.literal("subscribe"))),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const conn = await ctx.db.get(args.connectionId);
@@ -1366,6 +1370,7 @@ export const internalMarkConnectionReauthRequired = internalMutation({
       configs: configs.filter((c) => c.organizationId === conn.organizationId),
       state: "reauth_required",
       detail: args.detail,
+      source: args.source ?? "send",
       now: Date.now(),
     });
     return null;
@@ -2516,6 +2521,7 @@ export const internalUpsertMetaConnection = internalMutation({
       authState: "ok" as const,
       authDetail: undefined,
       authAlertedAt: undefined,
+      authSource: undefined,
       connectedByMemberId: args.memberId,
       updatedAt: now,
       ...(args.subscribedAt !== undefined
@@ -2696,7 +2702,12 @@ export const internalListHealthTargets = internalQuery({
  * informativo único. Também serve ao "Testar conexão" e às ops.
  */
 export const internalApplyHealthObservation = internalMutation({
-  args: { connectionId: v.id("metaConnections"), observation: healthObservationValidator },
+  args: {
+    connectionId: v.id("metaConnections"),
+    observation: healthObservationValidator,
+    // "health" = cron/ops; "test" = botão "Testar conexão" (não recupera sozinho).
+    source: v.optional(v.union(v.literal("health"), v.literal("test"))),
+  },
   returns: v.object({
     outcome: v.union(
       v.literal("skipped"),
@@ -2735,6 +2746,7 @@ export const internalApplyHealthObservation = internalMutation({
         configs,
         state: "reauth_required",
         detail: verdict.detail,
+        source: args.source ?? "health",
         now,
       });
       return { outcome: "degraded" as const };
@@ -2742,9 +2754,17 @@ export const internalApplyHealthObservation = internalMutation({
 
     let current: Doc<"metaConnections"> = { ...conn, ...seen };
     let outcome: "ok" | "recovered" | "expiring" = "ok";
-    if (conn.authState === "reauth_required") {
-      // A Meta voltou a aceitar o token: a credencial se recuperou sem reconectar.
-      const cleared = { authState: "ok" as const, authDetail: undefined, authAlertedAt: undefined, updatedAt: now };
+    if (conn.authState === "reauth_required" && conn.authSource === "health" && args.source !== "test") {
+      // A Meta voltou a aceitar o token. Só recupera o que o PRÓPRIO cron marcou: um 190 no
+      // envio (ou no teste) exige Reconectar, senão o cron recuperaria e o envio falharia de
+      // novo todo dia, com novo e-mail.
+      const cleared = {
+        authState: "ok" as const,
+        authDetail: undefined,
+        authAlertedAt: undefined,
+        authSource: undefined,
+        updatedAt: now,
+      };
       await ctx.db.patch(conn._id, { ...seen, ...cleared });
       current = { ...current, ...cleared };
       await ctx.db.insert("auditLogs", {
@@ -2774,7 +2794,7 @@ export const internalApplyHealthObservation = internalMutation({
       });
       if (emitted) outcome = "expiring";
     } else if (current.authDetail === "data_access_expiring") {
-      // A Meta renovou o acesso ao usar a API: o aviso some sozinho.
+      // Se a Meta renovar o acesso, o aviso some sozinho (a confirmar, §13 item 13).
       await ctx.db.patch(conn._id, { authDetail: undefined, authAlertedAt: undefined });
     }
     return { outcome };
@@ -3002,6 +3022,7 @@ export const completeMetaConnection = action({
       await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
         connectionId: conn._id,
         detail: "A Meta recusou a autorização desta Página ao concluir a conexão.",
+        source: "subscribe",
       });
       return { ok: false, code: "reauth_required" };
     }

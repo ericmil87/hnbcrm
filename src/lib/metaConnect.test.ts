@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   STANDARD_ACCESS_NOTICE,
+  completeConnectionMessage,
   daysUntil,
   expiringDays,
   groupMetaConfigs,
@@ -155,5 +156,15 @@ describe("card health helpers", () => {
 
   it("offers no action when disabled by the module", () => {
     expect(metaCardView({ ...base, disabledByModuleAt: 1, metaSubscribed: false }, NOW).action).toBeNull();
+  });
+});
+
+describe("completeConnectionMessage", () => {
+  it("maps known codes and falls back to a generic message", () => {
+    expect(completeConnectionMessage("reauth_required")).toBe("A Meta recusou a autorização. Reconecte a conta.");
+    expect(completeConnectionMessage("desconectada")).toBe("Esta conexão foi desconectada. Conecte de novo.");
+    expect(completeConnectionMessage("sem_pagina")).toContain("não está mais acessível");
+    expect(completeConnectionMessage("xyz")).toContain("Tente novamente");
+    expect(completeConnectionMessage(undefined)).toContain("Tente novamente");
   });
 });

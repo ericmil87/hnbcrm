@@ -214,3 +214,40 @@ export function groupMetaConfigs<T extends GroupableMetaConfig>(configs: T[]): M
 
 /** Marca no sessionStorage que o login da Meta em curso é um Reconectar. */
 export const RECONNECT_FLAG_KEY = "hnbcrm:meta-reconnecting";
+
+/** sessionStorage que nunca lança (storage bloqueado só perde o toast "Conexão renovada"). */
+export const safeSession = {
+  get(key: string): string | null {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key: string, value: string): void {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+      /* ignore */
+    }
+  },
+  remove(key: string): void {
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
+const COMPLETE_MESSAGES: Record<string, string> = {
+  reauth_required: "A Meta recusou a autorização. Reconecte a conta.",
+  desconectada: "Esta conexão foi desconectada. Conecte de novo.",
+  sem_pagina: "A Página desta conexão não está mais acessível pela sua conta da Meta.",
+};
+
+/** Mensagem do código devolvido por completeMetaConnection; desconhecido cai no genérico. */
+export function completeConnectionMessage(code: string | undefined): string {
+  if (code && COMPLETE_MESSAGES[code]) return COMPLETE_MESSAGES[code];
+  return "Não foi possível concluir a conexão com a Meta. Tente novamente em instantes.";
+}

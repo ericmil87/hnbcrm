@@ -1159,6 +1159,10 @@ const applicationTables = {
     authState: v.union(v.literal("ok"), v.literal("reauth_required"), v.literal("revoked")),
     authDetail: v.optional(v.string()),
     authAlertedAt: v.optional(v.number()),
+    // Quem marcou `reauth_required`: só o que o cron de saúde marcou se recupera sozinho.
+    authSource: v.optional(
+      v.union(v.literal("health"), v.literal("send"), v.literal("test"), v.literal("subscribe"))
+    ),
     subscribedAt: v.optional(v.number()),
     subscribedFields: v.optional(v.array(v.string())),
     lastHealthAt: v.optional(v.number()),

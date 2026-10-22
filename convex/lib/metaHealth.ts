@@ -82,12 +82,9 @@ export function parseDebugToken(status: number, body: unknown): DebugTokenResult
       },
     };
   }
-  // Erro do próprio debug_token: só 190 aponta para o token de entrada; o resto
-  // (app secret errado, limite de taxa, 5xx) é problema nosso, não do cliente.
-  const err = root.error && typeof root.error === "object" ? (root.error as Record<string, unknown>) : null;
-  if (err && err.code === 190) {
-    return { kind: "observation", observation: { isValid: false, scopes: [] } };
-  }
+  // `error` na RAIZ (inclusive 190) fala do `access_token` da chamada (APP_ID|APP_SECRET),
+  // não do token da Página: segredo rotacionado, limite de taxa, 5xx. É problema nosso e
+  // NUNCA invalida a conexão. Só `data.is_valid === false` (acima) invalida.
   return { kind: "unavailable", reason: `HTTP ${status}` };
 }
 
@@ -146,9 +143,23 @@ export async function downloadAvatar(url: string): Promise<Blob | null> {
     if (!mime.startsWith("image/")) return null;
     const len = Number(res.headers.get("content-length") ?? "0");
     if (len > AVATAR_MAX_BYTES) return null;
-    const buf = await res.arrayBuffer();
-    if (buf.byteLength === 0 || buf.byteLength > AVATAR_MAX_BYTES) return null;
-    return new Blob([buf], { type: mime });
+    // Lê em pedaços e aborta acima do teto (o content-length pode mentir ou faltar).
+    const reader = res.body?.getReader();
+    if (!reader) return null;
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > AVATAR_MAX_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return null;
+      }
+      chunks.push(value);
+    }
+    if (size === 0) return null;
+    return new Blob(chunks as BlobPart[], { type: mime });
   } catch {
     return null;
   }

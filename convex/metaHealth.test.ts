@@ -9,7 +9,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { encryptSecret } from "./lib/secretCrypto";
-import { evaluateHealth, parseDebugToken } from "./lib/metaHealth";
+import { downloadAvatar, evaluateHealth, parseDebugToken } from "./lib/metaHealth";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -198,7 +198,12 @@ describe("lib/metaHealth (puro)", () => {
       kind: "observation",
       observation: { isValid: false },
     });
-    expect(parseDebugToken(400, { error: { code: 190 } })).toMatchObject({ kind: "observation" });
+    // `error` na raiz (mesmo 190) é do access_token do APP: nunca invalida a conexão.
+    expect(parseDebugToken(400, { error: { code: 190 } }).kind).toBe("unavailable");
+    expect(parseDebugToken(200, { data: { is_valid: false, error: { code: 190 } } })).toMatchObject({
+      kind: "observation",
+      observation: { isValid: false },
+    });
     expect(parseDebugToken(400, { error: { code: 101 } }).kind).toBe("unavailable");
     expect(parseDebugToken(503, {}).kind).toBe("unavailable");
     const ok = parseDebugToken(200, { data: { is_valid: true, scopes: ["a"], data_access_expires_at: 2_000_000_000, expires_at: 0 } });
@@ -281,7 +286,7 @@ describe("internalHealthTick", () => {
 
   test("data_access_expires_at em 10 dias: aviso informativo único, sem trocar o estado", async () => {
     const t = convexTest(schema, modules);
-    const org = await seedOrg(t);
+    const org = await seedOrg(t, { webhook: true });
     const c = await seedConnection(t, org, 1);
     const exp = Math.floor((Date.now() + 10 * DAY) / 1000);
     stubDebug({ "tok-1": { is_valid: true, scopes: GOOD_SCOPES, data_access_expires_at: exp } });
@@ -294,6 +299,8 @@ describe("internalHealthTick", () => {
     const n = await t.run(async (ctx) => await ctx.db.query("notifications").collect());
     expect(n).toHaveLength(1);
     expect(n[0].title).toBe("Reconecte Página / @conta para manter o acesso");
+    // Aviso, não perda: sem webhook channel.session_lost.
+    expect((await counts(t, c.connectionId)).hooks).toHaveLength(0);
 
     // A Meta renovou: o aviso some sozinho.
     const far = Math.floor((Date.now() + 80 * DAY) / 1000);
@@ -314,7 +321,7 @@ describe("internalHealthTick", () => {
     stubDebug({
       "tok-1": "network",
       "tok-2": { status: 503, body: {} },
-      "tok-3": { status: 400, body: { error: { code: 101, message: "Invalid app secret" } } },
+      "tok-3": { status: 400, body: { error: { code: 190, message: "Invalid OAuth access token." } } },
     });
     const r = await tick(t);
     expect(r).toMatchObject({ checked: 0, unavailable: 3 });
@@ -424,6 +431,67 @@ describe("internalHealthTick", () => {
       pending: (await ctx.db.query("metaOAuthPending").collect()).length,
     }));
     expect(left).toEqual({ mids: ["m-new"], states: ["h2"], pending: 0 });
+  });
+
+  test("só o que o cron marcou se recupera sozinho: 190 do envio e do teste exigem Reconectar", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t);
+    const c = await seedConnection(t, org, 1);
+    await t.mutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+      connectionId: c.connectionId,
+      detail: "190 no envio",
+    });
+    expect((await t.run((ctx) => ctx.db.get(c.connectionId)))?.authSource).toBe("send");
+    stubDebug({ "tok-1": { is_valid: true, scopes: GOOD_SCOPES } });
+    await tick(t);
+    const after = await t.run((ctx) => ctx.db.get(c.connectionId));
+    expect(after?.authState).toBe("reauth_required"); // sem flapping
+    expect(after?.lastHealthAt).toBeTypeOf("number");
+    expect((await counts(t, c.connectionId)).notifications).toBe(1);
+
+    // Marcado pelo cron: recupera e limpa a origem.
+    const org2 = await seedOrg(t);
+    const d = await seedConnection(t, org2, 2);
+    stubDebug({ "tok-2": { is_valid: false } });
+    await tick(t);
+    expect((await t.run((ctx) => ctx.db.get(d.connectionId)))?.authSource).toBe("health");
+    stubDebug({ "tok-2": { is_valid: true, scopes: GOOD_SCOPES } });
+    await tick(t);
+    const rec = await t.run((ctx) => ctx.db.get(d.connectionId));
+    expect(rec?.authState).toBe("ok");
+    expect(rec?.authSource).toBeUndefined();
+
+    // O "Testar conexão" que acusa a queda não vira recuperação automática.
+    await t.mutation(internal.metaMessaging.internalApplyHealthObservation, {
+      connectionId: d.connectionId,
+      observation: { isValid: false, scopes: [] },
+      source: "test",
+    });
+    expect((await t.run((ctx) => ctx.db.get(d.connectionId)))?.authSource).toBe("test");
+    stubDebug({ "tok-2": { is_valid: true, scopes: GOOD_SCOPES } });
+    await tick(t);
+    expect((await t.run((ctx) => ctx.db.get(d.connectionId)))?.authState).toBe("reauth_required");
+    await cancelPendingJobs(t);
+  });
+
+  test("avatar acima de 1 MB é abortado na leitura, mesmo sem content-length", async () => {
+    const big = new Uint8Array(1024 * 1024 + 10);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(big, { status: 200, headers: { "content-type": "image/png" } }))
+    );
+    expect(await downloadAvatar("https://cdn.test/big.png")).toBeNull();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array(100), { status: 200, headers: { "content-type": "image/png" } }))
+    );
+    const ok = await downloadAvatar("https://cdn.test/small.png");
+    expect(ok?.size).toBe(100);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array(100), { status: 200, headers: { "content-type": "text/html" } }))
+    );
+    expect(await downloadAvatar("https://cdn.test/x.png")).toBeNull();
   });
 
   test("erro 190 no envio dispara emitChannelDegraded uma vez", async () => {

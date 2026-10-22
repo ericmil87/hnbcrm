@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
-import { RECONNECT_FLAG_KEY, metaReturnMessage } from "@/lib/metaConnect";
+import { RECONNECT_FLAG_KEY, metaReturnMessage, safeSession } from "@/lib/metaConnect";
 import { MetaMessagingCard } from "@/components/settings/MetaMessagingCard";
 import { MetaChannelCards, type MetaChannelConfig } from "@/components/settings/MetaChannelCards";
 import { MetaPageSelectionModal } from "@/components/settings/MetaPageSelectionModal";
@@ -179,8 +179,8 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
   const pendingId = searchParams.get("pendente");
   useEffect(() => {
     if (!metaCode || metaCode === "selecionar") return;
-    const reconnecting = metaCode === "ok" && sessionStorage.getItem(RECONNECT_FLAG_KEY) === "1";
-    sessionStorage.removeItem(RECONNECT_FLAG_KEY);
+    const reconnecting = metaCode === "ok" && safeSession.get(RECONNECT_FLAG_KEY) === "1";
+    safeSession.remove(RECONNECT_FLAG_KEY);
     const message = metaReturnMessage(metaCode, reconnecting);
     if (message) {
       // `id` evita toast duplicado no StrictMode.

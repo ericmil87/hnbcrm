@@ -273,6 +273,25 @@ describe("completeMetaConnection", () => {
     await cancelPendingJobs(t);
   });
 
+  test("apagar o canal remove a foto: linha de files e blob", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    stubGraph();
+    await asAdmin(t, s).action(api.metaMessaging.completeMetaConnection, {
+      organizationId: s.organizationId,
+      connectionId: s.connectionId,
+    });
+    const before = await t.run(async (ctx) => await ctx.db.query("files").collect());
+    expect(before).toHaveLength(2);
+    const messengerFile = before.find((f) => f.name === "avatar-messenger")!;
+    await asAdmin(t, s).mutation(api.channelConfigs.deleteChannelConfig, { configId: s.messengerId });
+    const after = await t.run(async (ctx) => await ctx.db.query("files").collect());
+    expect(after.map((f) => f.name)).toEqual(["avatar-instagram"]);
+    const url = await t.run(async (ctx) => await ctx.storage.getUrl(messengerFile.storageId as Id<"_storage">));
+    expect(url).toBeNull();
+    await cancelPendingJobs(t);
+  });
+
   test("sem foto na Meta: segue sem avatar e a conclusão não falha", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

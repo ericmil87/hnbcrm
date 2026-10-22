@@ -18,7 +18,8 @@ import {
   groupMetaConfigs,
   metaCardView,
   metaConnectionState,
-  metaReturnMessage,
+  completeConnectionMessage,
+  safeSession,
   verifiedAgoLabel,
   type MetaAuthState,
 } from "@/lib/metaConnect";
@@ -149,16 +150,16 @@ function MetaChannelCard({
     try {
       if (view.action === "reconnect") {
         // Marca para a volta (?meta=ok) mostrar "Conexão renovada".
-        sessionStorage.setItem(RECONNECT_FLAG_KEY, "1");
+        safeSession.set(RECONNECT_FLAG_KEY, "1");
         const { url } = await startMetaConnect({ organizationId, connectionId });
         window.location.assign(url);
         return;
       }
       const result = await completeMetaConnection({ organizationId, connectionId });
       if (result.ok) toast.success("Conexão concluída");
-      else toast.error(metaReturnMessage(result.code ?? "falha_meta")?.text ?? "Não foi possível concluir a conexão");
+      else toast.error(completeConnectionMessage(result.code));
     } catch (error) {
-      sessionStorage.removeItem(RECONNECT_FLAG_KEY);
+      safeSession.remove(RECONNECT_FLAG_KEY);
       toast.error(mutationErrorMessage(error, "Não foi possível continuar. Tente novamente."));
     }
     setBusy(null);

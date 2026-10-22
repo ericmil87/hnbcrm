@@ -2,6 +2,17 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado] — Instagram e Facebook Messenger: saúde da conexão e reconexão (F4)
+
+### A conexão com a Meta é vigiada todo dia, e reconectar é um clique
+
+- **Verificação diária da credencial** de cada Página conectada (`debug_token` da Meta): credencial inválida ou sem a permissão de mensagens marca o canal como **"Precisa reconectar"**, avisa os administradores no sino e por e-mail (mesma preferência "Canal desconectado" do WhatsApp) e dispara o webhook `channel.session_lost` com `provider` `instagram` ou `messenger`. Um alerta por ocorrência, sem repetir todo dia. As mensagens continuam entrando enquanto a Meta entregar; só o envio para
+- **Acesso expirando**: quando o prazo de acesso aos dados (~90 dias) estiver a menos de 14 dias, o card avisa "Acesso expira em N dias, reconecte para manter"
+- **Reconectar**, **Concluir conexão** (refaz a inscrição dos webhooks quando ficou pela metade) e **Testar conexão** no card do canal, com o resultado e "verificado há X" visíveis. Reconectar exige a mesma Página e devolve o canal a "Conectado"
+- **Foto da conta** (da Página ou do perfil do Instagram, nunca do cliente) no card, no selo da conversa e no cabeçalho, com o ícone do canal sobreposto. **Saúde do canal (7 dias)** também para Instagram e Messenger, por conta
+- Operação: `opsMeta:internalMetaConnectionsReport`, `internalMetaHealthNow`, `internalMetaPurge` (simulação por padrão, ids mascarados, nunca o token)
+- Interno: `convex/lib/metaHealth.ts`, `internalApplyHealthObservation` (porta única da observação), `emitChannelDegraded` ao lado de `emitChannelSessionLost`, cron `meta messaging health` 09:30 UTC, purga de `metaSentMids`/states expirados, `keepStatus` em `internalRecordHealthCheck`
+
 ## [Não lançado] — Instagram e Facebook Messenger: atendente de IA (F3)
 
 ### O atendente IA responde no Instagram e no Messenger, dentro das regras da Meta
