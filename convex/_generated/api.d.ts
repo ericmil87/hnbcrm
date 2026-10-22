@@ -191,6 +191,7 @@ import type * as openapiSpec from "../openapiSpec.js";
 import type * as opsAgentProfile from "../opsAgentProfile.js";
 import type * as opsAnonymous from "../opsAnonymous.js";
 import type * as opsBridgeReparse from "../opsBridgeReparse.js";
+import type * as opsMeta from "../opsMeta.js";
 import type * as opsMigration from "../opsMigration.js";
 import type * as opsPurge from "../opsPurge.js";
 import type * as opsTasks from "../opsTasks.js";
@@ -410,6 +411,7 @@ declare const fullApi: ApiFromModules<{
   opsAgentProfile: typeof opsAgentProfile;
   opsAnonymous: typeof opsAnonymous;
   opsBridgeReparse: typeof opsBridgeReparse;
+  opsMeta: typeof opsMeta;
   opsMigration: typeof opsMigration;
   opsPurge: typeof opsPurge;
   opsTasks: typeof opsTasks;

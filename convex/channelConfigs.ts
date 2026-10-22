@@ -1,6 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import { assertModule, getModules } from "./lib/orgModules";
 import { configTransport, isWhatsappTransport } from "./lib/channelTransport";
+import { fetchDebugToken, graphGetJson, isGraphAuthError } from "./lib/metaHealth";
 import {
   query,
   action,
@@ -9,6 +10,8 @@ import {
   internalMutation,
   internalAction,
   MutationCtx,
+  QueryCtx,
+  ActionCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -107,13 +110,29 @@ type MetaMaskExtras = {
   metaSubscribed: boolean | null;
   metaConnectedBy: { memberId: Id<"teamMembers">; name: string } | null;
   hasMetaToken: boolean;
+  metaAuthDetail: string | null;
+  metaDataAccessExpiresAt: number | null;
+  metaLastHealthAt: number | null;
+  metaAvatarUrl: string | null;
 };
 const NO_META_EXTRAS: MetaMaskExtras = {
   metaAuthState: null,
   metaSubscribed: null,
   metaConnectedBy: null,
   hasMetaToken: false,
+  metaAuthDetail: null,
+  metaDataAccessExpiresAt: null,
+  metaLastHealthAt: null,
+  metaAvatarUrl: null,
 };
+
+/** URL assinada da foto do NEGÓCIO (uma leitura de `files`); `null` sem foto ou de outra org. */
+async function accountAvatarUrl(ctx: QueryCtx, config: Doc<"channelConfigs">): Promise<string | null> {
+  if (!config.metaAccountAvatarFileId) return null;
+  const file = await ctx.db.get(config.metaAccountAvatarFileId);
+  if (!file || file.organizationId !== config.organizationId) return null;
+  return await ctx.storage.getUrl(file.storageId as Id<"_storage">);
+}
 
 function maskConfig(config: Doc<"channelConfigs">, meta: MetaMaskExtras = NO_META_EXTRAS) {
   return {
@@ -128,6 +147,10 @@ function maskConfig(config: Doc<"channelConfigs">, meta: MetaMaskExtras = NO_MET
     metaSubscribed: meta.metaSubscribed,
     metaConnectedBy: meta.metaConnectedBy,
     hasMetaToken: meta.hasMetaToken,
+    metaAuthDetail: meta.metaAuthDetail,
+    metaDataAccessExpiresAt: meta.metaDataAccessExpiresAt,
+    metaLastHealthAt: meta.metaLastHealthAt,
+    metaAvatarUrl: meta.metaAvatarUrl,
     disabledByModuleAt: config.disabledByModuleAt ?? null,
     _id: config._id,
     organizationId: config.organizationId,
@@ -193,6 +216,10 @@ export const getChannelConfigs = query({
             metaSubscribed: conn.subscribedAt !== undefined,
             metaConnectedBy: member ? { memberId: member._id, name: member.name } : null,
             hasMetaToken: conn.tokenEncrypted !== "",
+            metaAuthDetail: conn.authDetail ?? null,
+            metaDataAccessExpiresAt: conn.dataAccessExpiresAt ?? null,
+            metaLastHealthAt: conn.lastHealthAt ?? null,
+            metaAvatarUrl: await accountAvatarUrl(ctx, config),
           };
         }
       }
@@ -267,7 +294,7 @@ export const getInboxChannelAccounts = query({
         transport,
         label,
         handle,
-        avatarUrl: null, // F4 (cópia da foto do negócio em storage)
+        avatarUrl: isMeta ? await accountAvatarUrl(ctx, config) : null,
         status: config.status,
         authState,
       });
@@ -276,12 +303,66 @@ export const getInboxChannelAccounts = query({
   },
 });
 
+const META_STATS_CONVERSATIONS = 50;
+const META_STATS_MESSAGES_PER_CONVERSATION = 40;
+
+/**
+ * Estatísticas de UMA conta Instagram/Messenger: conversas pelo índice da conta
+ * (as 50 mais recentes, não arquivadas) e as últimas mensagens de cada uma.
+ * `sampled` avisa quando algum teto cortou.
+ */
+async function metaAccountStats(ctx: QueryCtx, config: Doc<"channelConfigs">, since: number) {
+  const conversations = await ctx.db
+    .query("conversations")
+    .withIndex("by_organization_and_channel_config_and_archived_and_last_message", (q) =>
+      q.eq("organizationId", config.organizationId).eq("channelConfigId", config._id).eq("archivedAt", undefined)
+    )
+    .order("desc")
+    .take(META_STATS_CONVERSATIONS);
+  let sent = 0;
+  let delivered = 0;
+  let read = 0;
+  let failed = 0;
+  let inbound = 0;
+  let lastInboundAt: number | null = null;
+  let lastOutboundAt: number | null = null;
+  let sampled = conversations.length === META_STATS_CONVERSATIONS;
+  for (const conv of conversations) {
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conv._id))
+      .order("desc")
+      .take(META_STATS_MESSAGES_PER_CONVERSATION);
+    if (messages.length === META_STATS_MESSAGES_PER_CONVERSATION) sampled = true;
+    for (const m of messages) {
+      if (m.isInternal) continue;
+      if (m.direction === "outbound") {
+        if (lastOutboundAt === null || m.createdAt > lastOutboundAt) lastOutboundAt = m.createdAt;
+        if (m.createdAt < since) continue;
+        sent++;
+        if (m.deliveryStatus === "delivered") delivered++;
+        else if (m.deliveryStatus === "read") {
+          delivered++;
+          read++;
+        } else if (m.deliveryStatus === "failed") failed++;
+      } else if (m.direction === "inbound") {
+        if (lastInboundAt === null || m.createdAt > lastInboundAt) lastInboundAt = m.createdAt;
+        if (m.createdAt >= since) inbound++;
+      }
+    }
+  }
+  return { sent, delivered, read, failed, inbound, lastInboundAt, lastOutboundAt, sampled };
+}
+
 // Saúde do canal WhatsApp: métricas de entrega sobre as mensagens recentes da
 // org (janela `since`, teto de 1000 — `sampled` avisa quando o teto cortou).
 export const getChannelStats = query({
   args: {
     organizationId: v.id("organizations"),
     since: v.number(), // timestamp do início da janela (calculado no cliente)
+    // Instagram/Messenger (F4): conta a conta pedida. Ausente ou WhatsApp = o
+    // cálculo de sempre (todas as conversas WhatsApp da org).
+    configId: v.optional(v.id("channelConfigs")),
   },
   returns: v.object({
     sent: v.number(),
@@ -295,6 +376,16 @@ export const getChannelStats = query({
   }),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
+
+    if (args.configId) {
+      const config = await ctx.db.get(args.configId);
+      if (!config || config.organizationId !== args.organizationId) {
+        throw new ConvexError("Canal não encontrado.");
+      }
+      if (config.channel === "instagram" || config.channel === "messenger") {
+        return await metaAccountStats(ctx, config, args.since);
+      }
+    }
 
     const recent = await ctx.db
       .query("messages")
@@ -648,6 +739,84 @@ async function resolveBridgePhone(params: {
   }
 }
 
+// Instagram/Messenger: `debug_token` (mesma observação do cron diário) + leitura do
+// nome/@ da conta com o token da conexão. Token só decifrado aqui, nunca devolvido.
+async function checkMetaMessagingHealth(
+  ctx: ActionCtx,
+  config: Doc<"channelConfigs">
+): Promise<{ ok: boolean; verifiedName?: string; error?: string }> {
+  const record = async (healthDetail: string) => {
+    await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
+      configId: config._id,
+      forceStamp: true,
+      keepStatus: true,
+      ok: true,
+      healthDetail,
+    });
+  };
+  const conn: Doc<"metaConnections"> | null = config.metaConnectionId
+    ? await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, { connectionId: config.metaConnectionId })
+    : null;
+  if (!conn || conn.organizationId !== config.organizationId || conn.authState === "revoked" || !conn.tokenEncrypted) {
+    const error = "Conta desconectada. Conecte novamente em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const appId = process.env.META_MESSAGING_APP_ID;
+  const appSecret = process.env.META_MESSAGING_APP_SECRET;
+  if (!appId || !appSecret) {
+    const error = "Instagram/Messenger não está configurado neste ambiente.";
+    await record(error);
+    return { ok: false, error };
+  }
+
+  const pageToken = await decryptSecret(conn.tokenEncrypted);
+  const dbg = await fetchDebugToken({ pageToken, appId, appSecret });
+  if (dbg.kind === "unavailable") {
+    const error = "Não foi possível falar com a Meta agora. Tente de novo em instantes.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const applied: { outcome: string } = await ctx.runMutation(internal.metaMessaging.internalApplyHealthObservation, {
+    connectionId: conn._id,
+    observation: dbg.observation,
+  });
+  if (applied.outcome === "degraded") {
+    const error = "A Meta não aceita mais a autorização desta conta. Reconecte em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+
+  const isIg = config.channel === "instagram";
+  const accountId = isIg ? config.instagramAccountId : config.messengerPageId;
+  if (!accountId) {
+    const error = "Conta desconectada. Conecte novamente em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const profile = await graphGetJson(
+    `${encodeURIComponent(accountId)}?fields=${isIg ? "username" : "name"}`,
+    pageToken
+  );
+  if (!profile || !profile.ok) {
+    if (isGraphAuthError(profile)) {
+      await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+        connectionId: conn._id,
+        detail: "A Meta recusou a autorização desta Página.",
+      });
+    }
+    const error = profile
+      ? "A Meta recusou a leitura da conta. Reconecte em Configurações → Canais."
+      : "Não foi possível falar com a Meta agora. Tente de novo em instantes.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const raw = isIg ? profile.body.username : profile.body.name;
+  const verifiedName = typeof raw === "string" && raw ? (isIg ? `@${raw}` : raw) : undefined;
+  await record(`Conectado como ${verifiedName ?? "conta da Meta"}`);
+  return { ok: true, ...(verifiedName ? { verifiedName } : {}) };
+}
+
 // Health check: Graph API lookup with the decrypted token ("Test connection").
 // For a bridge config this instead probes the wuzapi session status and maps it
 // to a pairing state, recording it the same way (internalRecordHealthCheck).
@@ -692,11 +861,11 @@ export const checkChannelHealth = action({
       };
     }
 
-    // Transporte genérico: só WhatsApp tem probe hoje (Meta Messaging ganha o
-    // seu na F4). Nunca cair no probe da Graph do WhatsApp com outro canal.
+    // Transporte genérico: Instagram/Messenger têm probe próprio (F4); nunca cair
+    // no probe da Graph do WhatsApp com outro canal.
     const transport = configTransport(config);
     if (!isWhatsappTransport(transport)) {
-      return { ok: false, error: "Teste de conexão ainda não disponível para este canal" };
+      return await checkMetaMessagingHealth(ctx, config);
     }
 
     // Bridge health check: probe GET /session/status on the gateway and map the
@@ -1485,6 +1654,9 @@ export const internalRecordHealthCheck = internalMutation({
     // passa o tick inteiro (até 50 × 8 s). Se o canal foi desativado nesse
     // meio-tempo, não grava nada — igual a `internalApplyUnhealthyObservation`.
     skipIfDisabled: v.optional(v.boolean()),
+    // Instagram/Messenger: o resultado do teste NÃO muda `status` (o webhook descarta
+    // canal que não esteja "active"); o estado da credencial vive em `metaConnections`.
+    keepStatus: v.optional(v.boolean()),
   },
   // Nomes das contas que perderam este número para esta conexão (vazio é o
   // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
@@ -1528,7 +1700,11 @@ export const internalRecordHealthCheck = internalMutation({
     const patch: Partial<Doc<"channelConfigs">> = {};
     // A failing check marks the config as errored; a passing one restores
     // active only if it wasn't deliberately disabled
-    const status = args.ok ? (config.status === "disabled" ? "disabled" : "active") : "error";
+    const status = args.keepStatus
+      ? config.status
+      : args.ok
+        ? (config.status === "disabled" ? "disabled" : "active")
+        : "error";
     if (status !== config.status) patch.status = status;
     const displayPhoneNumber = args.displayPhoneNumber ?? config.displayPhoneNumber;
     if (displayPhoneNumber !== config.displayPhoneNumber) patch.displayPhoneNumber = displayPhoneNumber;

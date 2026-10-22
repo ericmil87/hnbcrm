@@ -76,9 +76,20 @@ import {
   scrubbedDeletedMetadata,
 } from "./lib/metaInbound";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { cronsDisabled } from "./lib/cronGuard";
 import { pendingFollowUpsForConversation, resolveFollowUpOutcome } from "./lib/followUpOps";
 import { isOptOutText } from "./lib/campaignHooks";
-import { deleteFileRow } from "./lib/storageUsage";
+import { deleteFileRow, insertFileRow } from "./lib/storageUsage";
+import { emitChannelDegraded } from "./lib/channelHealthSignals";
+import {
+  evaluateHealth,
+  fetchAccountAvatars,
+  fetchDebugToken,
+  isGraphAuthError,
+  purgeMetaTemp,
+  type AvatarBlobs,
+  type MetaChannel,
+} from "./lib/metaHealth";
 import {
   MetaAttachment,
   MetaEvent,
@@ -1337,7 +1348,8 @@ export const internalRescheduleMetaDispatch = internalMutation({
 
 /**
  * Erro 190: a credencial morreu. Estado da CONEXÃO (derruba Messenger e IG da
- * Página juntos); o `status` dos configs não muda. Notificação é F4.
+ * Página juntos); o `status` dos configs não muda. Estado, audit, sino, e-mail e
+ * webhook saem de `emitChannelDegraded` (dedupe por `authAlertedAt`).
  */
 export const internalMarkConnectionReauthRequired = internalMutation({
   args: { connectionId: v.id("metaConnections"), detail: v.string() },
@@ -1345,19 +1357,16 @@ export const internalMarkConnectionReauthRequired = internalMutation({
   handler: async (ctx, args) => {
     const conn = await ctx.db.get(args.connectionId);
     if (!conn || conn.authState !== "ok") return null;
-    const now = Date.now();
-    await ctx.db.patch(conn._id, { authState: "reauth_required", authDetail: args.detail, updatedAt: now });
-    await ctx.db.insert("auditLogs", {
-      organizationId: conn.organizationId,
-      entityType: "metaConnection",
-      entityId: conn._id,
-      action: "update",
-      actorType: "system",
-      changes: { before: { authState: "ok" }, after: { authState: "reauth_required" } },
-      metadata: { fields: ["authState", "authDetail"], detail: args.detail },
-      description: `A Página "${conn.pageName ?? ""}" (Instagram/Messenger) precisa ser reconectada`,
-      severity: "high",
-      createdAt: now,
+    const configs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+      .take(20);
+    await emitChannelDegraded(ctx, {
+      connection: conn,
+      configs: configs.filter((c) => c.organizationId === conn.organizationId),
+      state: "reauth_required",
+      detail: args.detail,
+      now: Date.now(),
     });
     return null;
   },
@@ -2026,6 +2035,7 @@ async function finalizeConnection(
   ctx: {
     runQuery: (...a: any[]) => Promise<any>;
     runMutation: (...a: any[]) => Promise<any>;
+    storage: ActionCtx["storage"];
   },
   args: {
     organizationId: Id<"organizations">;
@@ -2109,6 +2119,14 @@ async function finalizeConnection(
       instagram: args.instagram && !!igAccountId,
     }
   );
+  // Foto do negócio (F4): best-effort, a conexão já está gravada.
+  await storeAccountAvatars(ctx, {
+    organizationId: args.organizationId,
+    connectionId: upsert.connectionId,
+    pageToken: page.pageToken,
+    pageId: page.pageId,
+    igAccountId,
+  });
   return { ok: true, configIds };
 }
 
@@ -2621,6 +2639,386 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
     if (args.messenger) await upsert("messenger");
     if (args.instagram) await upsert("instagram");
     return ids;
+  },
+});
+
+// ── F4: saúde diária da credencial (D8) ──
+
+const HEALTH_PAGE_SIZE = 50;
+
+const healthObservationValidator = v.object({
+  isValid: v.boolean(),
+  scopes: v.array(v.string()),
+  dataAccessExpiresAt: v.optional(v.number()),
+  expiresAt: v.optional(v.number()),
+});
+
+/** Uma página de conexões a sondar (sem revogadas, sem org demo, sem token vazio). */
+export const internalListHealthTargets = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  returns: v.object({
+    targets: v.array(v.object({ connectionId: v.id("metaConnections"), tokenEncrypted: v.string() })),
+    skipped: v.number(),
+    isDone: v.boolean(),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("metaConnections")
+      .paginate({ cursor: args.cursor, numItems: Math.max(1, Math.min(args.numItems, HEALTH_PAGE_SIZE)) });
+    const demo = new Map<string, boolean>();
+    const targets: { connectionId: Id<"metaConnections">; tokenEncrypted: string }[] = [];
+    let skipped = 0;
+    for (const conn of page.page) {
+      if (conn.authState === "revoked" || !conn.tokenEncrypted) {
+        skipped++;
+        continue;
+      }
+      let isDemo = demo.get(conn.organizationId);
+      if (isDemo === undefined) {
+        isDemo = await isDemoOrg(ctx, conn.organizationId);
+        demo.set(conn.organizationId, isDemo);
+      }
+      if (isDemo) {
+        skipped++;
+        continue;
+      }
+      targets.push({ connectionId: conn._id, tokenEncrypted: conn.tokenEncrypted });
+    }
+    return { targets, skipped, isDone: page.isDone, nextCursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+/**
+ * Aplica uma observação do `debug_token` à conexão. Inválido ou sem o escopo de
+ * mensagens → `reauth_required` (+ `emitChannelDegraded`, 1 aviso). Válido →
+ * volta a `ok` e limpa o alerta; `data_access_expires_at` a < 14 dias → aviso
+ * informativo único. Também serve ao "Testar conexão" e às ops.
+ */
+export const internalApplyHealthObservation = internalMutation({
+  args: { connectionId: v.id("metaConnections"), observation: healthObservationValidator },
+  returns: v.object({
+    outcome: v.union(
+      v.literal("skipped"),
+      v.literal("ok"),
+      v.literal("recovered"),
+      v.literal("expiring"),
+      v.literal("degraded")
+    ),
+  }),
+  handler: async (ctx, args) => {
+    const conn = await ctx.db.get(args.connectionId);
+    if (!conn || conn.authState === "revoked") return { outcome: "skipped" as const };
+    const configs = (
+      await ctx.db
+        .query("channelConfigs")
+        .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+        .take(20)
+    ).filter((c) => c.organizationId === conn.organizationId);
+    const channels = configs
+      .filter((c) => c.channel === "messenger" || c.channel === "instagram")
+      .map((c) => c.channel as MetaChannel);
+    if (channels.length === 0) return { outcome: "skipped" as const };
+
+    const now = Date.now();
+    const obs = args.observation;
+    const verdict = evaluateHealth({ observation: obs, channels, now });
+    const seen = {
+      lastHealthAt: now,
+      ...(obs.dataAccessExpiresAt !== undefined ? { dataAccessExpiresAt: obs.dataAccessExpiresAt } : {}),
+    };
+
+    if (verdict.kind !== "ok") {
+      await ctx.db.patch(conn._id, seen);
+      await emitChannelDegraded(ctx, {
+        connection: { ...conn, ...seen },
+        configs,
+        state: "reauth_required",
+        detail: verdict.detail,
+        now,
+      });
+      return { outcome: "degraded" as const };
+    }
+
+    let current: Doc<"metaConnections"> = { ...conn, ...seen };
+    let outcome: "ok" | "recovered" | "expiring" = "ok";
+    if (conn.authState === "reauth_required") {
+      // A Meta voltou a aceitar o token: a credencial se recuperou sem reconectar.
+      const cleared = { authState: "ok" as const, authDetail: undefined, authAlertedAt: undefined, updatedAt: now };
+      await ctx.db.patch(conn._id, { ...seen, ...cleared });
+      current = { ...current, ...cleared };
+      await ctx.db.insert("auditLogs", {
+        organizationId: conn.organizationId,
+        entityType: "metaConnection",
+        entityId: conn._id,
+        action: "update",
+        actorType: "system",
+        changes: { before: { authState: "reauth_required" }, after: { authState: "ok" } },
+        metadata: { fields: ["authState", "authDetail"], source: "health" },
+        description: `A Página "${conn.pageName ?? ""}" (Instagram/Messenger) voltou a responder`,
+        severity: "medium",
+        createdAt: now,
+      });
+      outcome = "recovered";
+    } else {
+      await ctx.db.patch(conn._id, seen);
+    }
+
+    if (verdict.expiring) {
+      const emitted = await emitChannelDegraded(ctx, {
+        connection: current,
+        configs,
+        state: "data_access_expiring",
+        detail: "data_access_expiring",
+        now,
+      });
+      if (emitted) outcome = "expiring";
+    } else if (current.authDetail === "data_access_expiring") {
+      // A Meta renovou o acesso ao usar a API: o aviso some sozinho.
+      await ctx.db.patch(conn._id, { authDetail: undefined, authAlertedAt: undefined });
+    }
+    return { outcome };
+  },
+});
+
+/** Purga de apoio (cron e op): bounded; `dryRun` só conta. */
+export const internalPurgeMetaTemp = internalMutation({
+  args: { dryRun: v.optional(v.boolean()), limit: v.optional(v.number()) },
+  returns: v.object({
+    sentMids: v.number(),
+    oauthStates: v.number(),
+    oauthPending: v.number(),
+    more: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(Math.floor(args.limit ?? 200), 200));
+    return await purgeMetaTemp(ctx, { now: Date.now(), dryRun: args.dryRun ?? false, limit });
+  },
+});
+
+/** Cron diário (09:30 UTC). Erro de rede/5xx nunca marca a credencial como inválida. */
+export const internalHealthTick = internalAction({
+  args: { cursor: v.optional(v.union(v.string(), v.null())), pageSize: v.optional(v.number()) },
+  returns: v.object({ checked: v.number(), unavailable: v.number(), skipped: v.number() }),
+  handler: async (ctx, args): Promise<{ checked: number; unavailable: number; skipped: number }> => {
+    if (cronsDisabled()) return { checked: 0, unavailable: 0, skipped: 0 };
+
+    // Purga na primeira página do ciclo (até 5 lotes de 200 por tabela).
+    if (!args.cursor) {
+      for (let i = 0; i < 5; i++) {
+        const purged: { more: boolean } = await ctx.runMutation(internal.metaMessaging.internalPurgeMetaTemp, {});
+        if (!purged.more) break;
+      }
+    }
+
+    const appId = process.env.META_MESSAGING_APP_ID;
+    const appSecret = process.env.META_MESSAGING_APP_SECRET;
+    if (!appId || !appSecret) return { checked: 0, unavailable: 0, skipped: 0 };
+
+    const page: {
+      targets: { connectionId: Id<"metaConnections">; tokenEncrypted: string }[];
+      skipped: number;
+      isDone: boolean;
+      nextCursor: string | null;
+    } = await ctx.runQuery(internal.metaMessaging.internalListHealthTargets, {
+      cursor: args.cursor ?? null,
+      numItems: args.pageSize ?? HEALTH_PAGE_SIZE,
+    });
+    let checked = 0;
+    let unavailable = 0;
+    for (const target of page.targets) {
+      try {
+        const pageToken = await decryptSecret(target.tokenEncrypted);
+        const result = await fetchDebugToken({ pageToken, appId, appSecret });
+        if (result.kind === "unavailable") {
+          unavailable++;
+          console.warn(`meta health: debug_token indisponível (${result.reason})`);
+          continue;
+        }
+        await ctx.runMutation(internal.metaMessaging.internalApplyHealthObservation, {
+          connectionId: target.connectionId,
+          observation: result.observation,
+        });
+        checked++;
+      } catch (e) {
+        unavailable++;
+        console.warn(`meta health: falha ao sondar conexão: ${e instanceof Error ? e.name : "erro"}`);
+      }
+    }
+    if (!page.isDone && page.nextCursor) {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalHealthTick, {
+        cursor: page.nextCursor,
+        ...(args.pageSize ? { pageSize: args.pageSize } : {}),
+      });
+    }
+    return { checked, unavailable, skipped: page.skipped };
+  },
+});
+
+// ── F4: avatar da conta (só do negócio, nunca de cliente) ──
+
+export const internalSetMetaAvatars = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    connectionId: v.id("metaConnections"),
+    avatars: v.array(
+      v.object({
+        channel: v.union(v.literal("messenger"), v.literal("instagram")),
+        storageId: v.id("_storage"),
+        mimeType: v.string(),
+        size: v.number(),
+      })
+    ),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conn = await ctx.db.get(args.connectionId);
+    const configs =
+      conn && conn.organizationId === args.organizationId
+        ? await ctx.db
+            .query("channelConfigs")
+            .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+            .take(20)
+        : [];
+    const now = Date.now();
+    for (const a of args.avatars) {
+      const config = configs.find((c) => c.organizationId === args.organizationId && c.channel === a.channel);
+      if (!config) {
+        await ctx.storage.delete(a.storageId); // sem dono: não deixa blob órfão
+        continue;
+      }
+      const old = config.metaAccountAvatarFileId ? await ctx.db.get(config.metaAccountAvatarFileId) : null;
+      // `files.fileType` não tem literal próprio (schema só aditivo): "other" + metadata.kind.
+      const fileId = await insertFileRow(ctx, {
+        organizationId: args.organizationId,
+        storageId: a.storageId,
+        name: `avatar-${a.channel}`,
+        mimeType: a.mimeType,
+        size: a.size,
+        fileType: "other",
+        metadata: { kind: "channel_avatar", channel: a.channel },
+        createdAt: now,
+      });
+      await ctx.db.patch(config._id, { metaAccountAvatarFileId: fileId, updatedAt: now });
+      if (old && old.organizationId === args.organizationId) {
+        await deleteBlobIfUnreferenced(ctx, old);
+        await deleteFileRow(ctx, old);
+      }
+    }
+    return null;
+  },
+});
+
+/** Baixa e grava a foto das contas da conexão. Falha em qualquer ponto = segue sem a foto. */
+async function storeAccountAvatars(
+  ctx: Pick<ActionCtx, "storage" | "runMutation">,
+  args: {
+    organizationId: Id<"organizations">;
+    connectionId: Id<"metaConnections">;
+    pageToken: string;
+    pageId: string;
+    igAccountId?: string;
+  }
+): Promise<void> {
+  const stored: Id<"_storage">[] = [];
+  try {
+    const blobs: AvatarBlobs = await fetchAccountAvatars(args);
+    const avatars: { channel: "messenger" | "instagram"; storageId: Id<"_storage">; mimeType: string; size: number }[] = [];
+    for (const channel of ["messenger", "instagram"] as const) {
+      const blob = blobs[channel];
+      if (!blob) continue;
+      const storageId = await ctx.storage.store(blob);
+      stored.push(storageId);
+      avatars.push({ channel, storageId, mimeType: blob.type, size: blob.size });
+    }
+    if (avatars.length === 0) return;
+    await ctx.runMutation(internal.metaMessaging.internalSetMetaAvatars, {
+      organizationId: args.organizationId,
+      connectionId: args.connectionId,
+      avatars,
+    });
+  } catch (e) {
+    console.warn(`meta avatar: sem foto (${e instanceof Error ? e.name : "erro"})`);
+    for (const id of stored) await ctx.storage.delete(id).catch(() => undefined);
+  }
+}
+
+// ── F4: concluir conexão ──
+
+export const internalMarkSubscribed = internalMutation({
+  args: { connectionId: v.id("metaConnections"), fields: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conn = await ctx.db.get(args.connectionId);
+    if (!conn || conn.authState === "revoked") return null;
+    const now = Date.now();
+    await ctx.db.patch(conn._id, { subscribedAt: now, subscribedFields: args.fields, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: conn.organizationId,
+      entityType: "metaConnection",
+      entityId: conn._id,
+      action: "update",
+      actorType: "system",
+      metadata: { fields: ["subscribedAt", "subscribedFields"], source: "complete" },
+      description: `Concluiu a inscrição da Página "${conn.pageName ?? ""}" (Instagram/Messenger)`,
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/** Refaz só `POST /{page-id}/subscribed_apps` (a conexão ficou sem `subscribedAt`). */
+export const completeMetaConnection = action({
+  args: { organizationId: v.id("organizations"), connectionId: v.id("metaConnections") },
+  returns: v.object({ ok: v.boolean(), code: v.optional(v.string()) }),
+  handler: async (ctx, args): Promise<{ ok: boolean; code?: string }> => {
+    await ctx.runQuery(internal.metaMessaging.internalAuthorizeMetaConnect, {
+      organizationId: args.organizationId,
+      connectionId: args.connectionId,
+    });
+    const conn: Doc<"metaConnections"> | null = await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, {
+      connectionId: args.connectionId,
+    });
+    if (!conn || conn.organizationId !== args.organizationId || !conn.pageId) return { ok: false, code: "sem_pagina" };
+    if (conn.authState === "revoked" || !conn.tokenEncrypted) return { ok: false, code: "desconectada" };
+
+    let pageToken: string;
+    try {
+      pageToken = await decryptSecret(conn.tokenEncrypted);
+    } catch {
+      return { ok: false, code: "falha_meta" };
+    }
+    let sub: GraphResult;
+    try {
+      sub = await graphCall(
+        `${graphBase("facebook_login")}/${encodeURIComponent(conn.pageId)}/subscribed_apps?subscribed_fields=${SUBSCRIBED_FIELDS.join(",")}`,
+        { token: pageToken, method: "POST" }
+      );
+    } catch {
+      return { ok: false, code: "falha_meta" };
+    }
+    if (isGraphAuthError(sub)) {
+      await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+        connectionId: conn._id,
+        detail: "A Meta recusou a autorização desta Página ao concluir a conexão.",
+      });
+      return { ok: false, code: "reauth_required" };
+    }
+    if (!sub.ok || sub.body.success !== true) return { ok: false, code: "falha_meta" };
+
+    await ctx.runMutation(internal.metaMessaging.internalMarkSubscribed, {
+      connectionId: conn._id,
+      fields: [...SUBSCRIBED_FIELDS],
+    });
+    await storeAccountAvatars(ctx, {
+      organizationId: conn.organizationId,
+      connectionId: conn._id,
+      pageToken,
+      pageId: conn.pageId,
+      igAccountId: conn.igAccountId,
+    });
+    return { ok: true };
   },
 });
 

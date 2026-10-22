@@ -17,6 +17,7 @@ import { pausePostCore } from "./groupPostOps";
 import { isMembershipRevoked } from "./auth";
 import { hasPermission, resolvePermissions, type Role } from "./permissions";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { maskExternalId } from "./metaIdentity";
 
 /**
  * Humanos com `settings:manage` que ainda fazem parte da org. Variante local
@@ -277,5 +278,116 @@ export async function emitChannelSessionLost(
     },
   });
 
+  return true;
+}
+
+// ── Meta Messaging (Instagram/Messenger): credencial degradada (F4, D8) ─────
+
+export type EmitChannelDegradedArgs = {
+  connection: Doc<"metaConnections">;
+  /** Configs da conexão (messenger e/ou instagram), já lidos por `by_meta_connection`. */
+  configs: Doc<"channelConfigs">[];
+  state: "reauth_required" | "data_access_expiring";
+  detail: string;
+  now: number;
+};
+
+/**
+ * Generalização de `emitChannelSessionLost` para a CONEXÃO da Meta. Grava o
+ * estado da conexão (nunca o `status` dos configs: o ingest segue) e dispara
+ * audit `high`, sino (mesmo tipo/preferência `channel_session_lost`), e-mail e
+ * webhook `channel.session_lost` (um por config, ids mascarados, sem token).
+ * Campanhas e publicações de grupo são só de WhatsApp: nada a pausar.
+ *
+ * Dedupe por `authAlertedAt`: `reauth_required` repetido não notifica de novo;
+ * `data_access_expiring` avisa uma vez até a Meta renovar (o tick limpa o marcador).
+ * Devolve `false` quando é repetição.
+ */
+export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDegradedArgs): Promise<boolean> {
+  const { connection: conn, now } = args;
+  const repeated =
+    conn.authAlertedAt !== undefined &&
+    (args.state === "reauth_required" ? conn.authState === "reauth_required" : true);
+  if (repeated) {
+    // Texto atualizado sem reanunciar; um aviso "expirando" não rebaixa um reauth.
+    if (args.state === "reauth_required") {
+      await ctx.db.patch(conn._id, { authDetail: args.detail, updatedAt: now });
+    }
+    return false;
+  }
+
+  await ctx.db.patch(conn._id, {
+    ...(args.state === "reauth_required" ? { authState: "reauth_required" as const } : {}),
+    authDetail: args.state === "reauth_required" ? args.detail : "data_access_expiring",
+    authAlertedAt: now,
+    updatedAt: now,
+  });
+
+  const pageName = conn.pageName ?? "Página";
+  const label = `${pageName}${conn.igUsername ? ` / @${conn.igUsername}` : ""}`;
+  const title =
+    args.state === "reauth_required"
+      ? `Página ${label} precisa ser reconectada`
+      : `Reconecte ${label} para manter o acesso`;
+
+  await ctx.db.insert("auditLogs", {
+    organizationId: conn.organizationId,
+    entityType: "metaConnection",
+    entityId: conn._id,
+    action: "update",
+    actorType: "system",
+    changes: {
+      before: { authState: conn.authState },
+      after: { authState: args.state === "reauth_required" ? "reauth_required" : conn.authState },
+    },
+    metadata: { fields: ["authState", "authDetail"], state: args.state, detail: args.detail },
+    description:
+      args.state === "reauth_required"
+        ? `A Página "${pageName}" (Instagram/Messenger) precisa ser reconectada`
+        : `O acesso da Página "${pageName}" (Instagram/Messenger) está perto de expirar`,
+    severity: "high",
+    createdAt: now,
+  });
+
+  const members = await channelAdmins(ctx, conn.organizationId);
+  const org = members.length > 0 ? await ctx.db.get(conn.organizationId) : null;
+  for (const m of members) {
+    await createNotification(ctx, {
+      organizationId: conn.organizationId,
+      memberId: m._id,
+      type: "channel_session_lost",
+      title,
+      body: args.state === "reauth_required" ? args.detail : "Reconecte a conta para manter o acesso às mensagens.",
+      data: { metaConnectionId: conn._id, state: args.state },
+    });
+    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      organizationId: conn.organizationId,
+      recipientMemberId: m._id,
+      eventType: "channelSessionLost",
+      templateData: {
+        orgName: org?.name ?? "",
+        channelName: label,
+        provider: "meta_messaging",
+        state: args.state,
+        detail: args.state === "reauth_required" ? args.detail : undefined,
+      },
+    });
+  }
+
+  for (const config of args.configs) {
+    if (config.channel !== "instagram" && config.channel !== "messenger") continue;
+    const accountId = config.channel === "instagram" ? config.instagramAccountId : config.messengerPageId;
+    await scheduleWebhookEvent(ctx, {
+      organizationId: conn.organizationId,
+      event: "channel.session_lost",
+      payload: {
+        channelConfigId: config._id,
+        provider: config.channel,
+        state: args.state,
+        detail: args.state === "reauth_required" ? args.detail : "data_access_expiring",
+        accountMasked: accountId ? maskExternalId(accountId) : "",
+      },
+    });
+  }
   return true;
 }
