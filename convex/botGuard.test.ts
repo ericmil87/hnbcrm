@@ -19,6 +19,7 @@ import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { evaluateEligibility } from "./attendant";
+import { getAiTurnLock } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -555,7 +556,7 @@ describe("runtime do turno", () => {
       // Nem envio, nem rascunho.
       expect(s.messages.filter((m) => m.direction !== "inbound")).toHaveLength(0);
       expect(s.conversation.botSuspicion).toMatchObject({ source: "model" });
-      expect(s.conversation.aiTurnLock).toBeUndefined();
+      expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId))) ?? null).toBeNull();
       const item = s.queue.find((i) => i._id === itemId)!;
       expect(item).toMatchObject({ status: "skipped", error: "suspeita_de_bot" });
       expect(s.handoffs).toHaveLength(1);

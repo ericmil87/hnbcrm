@@ -20,6 +20,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { upsertRuntime } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -433,9 +434,11 @@ describe("TOCTOU e guards do rascunho", () => {
         metadata: { aiDraft: { status: "sent" } },
         createdAt: now,
       });
-      await ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-1", leaseUntil: now + 60_000 },
-      });
+      await upsertRuntime(
+        ctx,
+        { organizationId: seed.organizationId, conversationId: seed.conversationId },
+        { aiTurnLock: { runId: "run-1", leaseUntil: now + 60_000 } }
+      );
       const agentRunId = await ctx.db.insert("agentRuns", {
         organizationId: seed.organizationId, memberId: seed.agentId,
         kind: "attendant", status: "running", conversationId: seed.conversationId,
@@ -1005,9 +1008,11 @@ describe("notas da equipe e devolver com instrução", () => {
         metadata: { aiDraft: { status: "pending", proposedActions: [] } },
         createdAt: now,
       });
-      await ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-direct", leaseUntil: now + 60_000 },
-      });
+      await upsertRuntime(
+        ctx,
+        { organizationId: seed.organizationId, conversationId: seed.conversationId },
+        { aiTurnLock: { runId: "run-direct", leaseUntil: now + 60_000 } }
+      );
       const agentRunId = await ctx.db.insert("agentRuns", {
         organizationId: seed.organizationId, memberId: seed.agentId,
         kind: "attendant", status: "running", conversationId: seed.conversationId,
@@ -1049,8 +1054,12 @@ describe("notas da equipe e devolver com instrução", () => {
         // Pausa chegou DURANTE a geração (outro membro clicou "Assumir").
         await ctx.db.patch(seed.conversationId, {
           aiPausedUntil: Number.MAX_SAFE_INTEGER,
-          aiTurnLock: { runId: "run-h", leaseUntil: now + 60_000 },
         });
+        await upsertRuntime(
+          ctx,
+          { organizationId: seed.organizationId, conversationId: seed.conversationId },
+          { aiTurnLock: { runId: "run-h", leaseUntil: now + 60_000 } }
+        );
         const agentRunId = await ctx.db.insert("agentRuns", {
           organizationId: seed.organizationId, memberId: seed.agentId,
           kind: "attendant", status: "running", conversationId: seed.conversationId,

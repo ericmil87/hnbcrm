@@ -21,6 +21,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "files", index: "by_organization" },
   { table: "messages", index: "by_organization" },
   { table: "conversationTransfers", index: "by_organization_and_created" },
+  { table: "conversationRuntime", index: "by_organization" },
   { table: "conversations", index: "by_organization" },
   { table: "conversationLabels", index: "by_organization" },
   { table: "groupChats", index: "by_organization" },

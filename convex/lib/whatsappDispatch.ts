@@ -2,7 +2,8 @@
  * Outbound WhatsApp dispatch scheduling — pacing em DOIS níveis (v4.1 P2).
  *
  * Nível 1 (por conversa/destinatário): a Meta impõe ~1 msg/6s por par (erro
- * 131056). Cursor `conversations.nextDispatchAt`, com margem (6,5s).
+ * 131056). Cursor `conversationRuntime.nextDispatchAt` (fase 4b: fora do doc
+ * da conversa, que reexecutaria a lista do inbox a cada envio), margem 6,5s.
  *
  * Nível 2 (por NÚMERO/canal): anti-burst — N conversas do mesmo canal nunca
  * despacham juntas. Cursor OCC em `channelPacing` (doc próprio de propósito:
@@ -30,6 +31,7 @@ import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { resolveConversationChannelConfig, providerOf } from "./channelResolve";
+import { getRuntime, upsertRuntime } from "./conversationRuntime";
 
 export const PAIR_RATE_INTERVAL_MS = 6500; // Meta: 1 msg/6s por destinatário (131056) + margem
 
@@ -144,7 +146,9 @@ export async function scheduleWhatsappDispatch(
     if (message) typingDelayMs = computeTypingDelayMs(message);
   }
 
-  const earliestAt = Math.max(now, conversation.nextDispatchAt ?? 0);
+  // Cursor por conversa no runtime: lido e escrito nesta transação (OCC na linha).
+  const runtime = await getRuntime(ctx, conversation._id);
+  const earliestAt = Math.max(now, runtime?.nextDispatchAt ?? 0);
   const slot = config
     ? await claimChannelSlot(ctx, {
         config,
@@ -156,7 +160,12 @@ export async function scheduleWhatsappDispatch(
       })
     : earliestAt; // sem config resolvível: só o pacing por-conversa (comportamento antigo)
 
-  await ctx.db.patch(conversation._id, { nextDispatchAt: slot + PAIR_RATE_INTERVAL_MS });
+  await upsertRuntime(
+    ctx,
+    { organizationId: conversation.organizationId, conversationId: conversation._id },
+    { nextDispatchAt: slot + PAIR_RATE_INTERVAL_MS },
+    runtime
+  );
   await ctx.scheduler.runAfter(slot - now, internal.whatsapp.internalDispatchMessage, {
     messageId,
     ...(typingDelayMs > 0 ? { typingDelayMs } : {}),

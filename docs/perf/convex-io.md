@@ -178,9 +178,33 @@ Sem mudança de schema. Fora de escopo (documentado): `configSnapshot` do `/webh
 | prod | _pendente_ | |
 | dev | _pendente_ | |
 
-## Fase 4 — estrutural
+## Fase 4 — estrutural (aprovada pelo Eric em 21/10/2026, dividida em 4 PRs)
 
-_não iniciada (requer aprovação explícita do Eric)_. Escopo previsto: mover `contactPresence`/`aiTurnLock`/`nextDispatchAt` para tabela própria; `groupChats.participants`/`timeline` em `groupParticipants`/`groupTimeline`; desnormalizar `contactName`/`lastMessagePreview`/`groupSubject`/`groupParticipantsCount` em `conversations`; cron diário de retenção (notifications lidas > 90 d, `aiReplyQueue`/`agentRuns` terminais > 90 d, `formPartials` > 30 d, `auditLogs` baixa severidade > 180 d). Exige migração paginada com feature flag e rollback.
+### 4a — retenção (PR #8, mergeado em `main` 9fbc785 em 22/10/2026 ~00:05 UTC)
+
+Cron diário `data retention` (07:30 UTC) em `convex/retention.ts`: lotes de 200 por transação, uma tabela por vez, teto 20.000 docs/dia, reagendamento até esgotar, corte fixado na 1ª chamada.
+
+| Tabela | O que sai | Janela | Índice |
+|---|---|---|---|
+| `notifications` | lidas (`readAt`) | 90 d | novo `by_read_at` |
+| `aiReplyQueue` | `done`/`skipped`/`failed` por `updatedAt` | 90 d | novo `by_status_and_updated` |
+| `agentRuns` | `done`/`error`/`aborted` por `startedAt` | 90 d | novo `by_status_and_started` |
+| `formPartials` | `abandoned` por `lastActivityAt` | 30 d | existente |
+| `auditLogs` | só `low`, nunca ação `delete` | 180 d | novo `by_severity_and_action_and_created` |
+
+Kill switches `RETENTION_DISABLED=1` (sempre) e `CRONS_DISABLED=1` (só o cron); janelas por env `RETENTION_<TABELA>_DAYS` (piso 7). Ops: `retention:internalRetentionPreview` (só leitura) e `retention:internalRunRetentionNow {dryRun default true, table?, maxDocs?}`. `aiSpend:internalBackfillMonthlyUsage` recusa `dryRun:false` para mês anterior à janela de `agentRuns` e nunca reduz o agregado. Revisado: o gate do autopilot só vale na transição (sem rebaixamento automático); a taxa de parciais de formulário passa a refletir os abandonos dos últimos 30 d (efeito aceito).
+
+### 4b — `conversationRuntime` (branch `perf/convex-io-fase4b`, em revisão)
+
+`contactPresence`, `aiTurnLock` e `nextDispatchAt` saem do doc `conversations` para `conversationRuntime` (1 doc por conversa, índices `by_conversation`/`by_organization`; helper único `lib/conversationRuntime.ts`). Cada patch neles reexecutava ~9 queries que leem a conversa (lista do Inbox, `getConversationById`, `getMessages`, chip da IA, follow-ups, roteamento, repasse pendente, agendadas, lista do painel do lead) em toda aba. Presença: query nova `getConversationPresence` assinada só pela conversa aberta. Lock: claim lê a linha pelo índice e grava na mesma transação (OCC preservado). Pacing por conversa lido/gravado no runtime. Limpeza `conversations:internalClearLegacyRuntimeFields {dryRun, cursor}`; os 3 campos ficam no schema como legado até um PR posterior removê-los. Tabela fora do backup; apagada na cascata/purga.
+
+### 4c — desnormalizar em `conversations` (não iniciada)
+
+`lastMessagePreview`/`Direction`/`ContentType`/`BridgeType`/`Revoked` + `lastMessageId` (helper único nos ~14 pontos de insert + revoke/edit + nota de transferência), `groupSubject`/`groupParticipantsCount` (6 escritores) e `channelProvider` (4 escritores), para `getConversations` deixar de fazer `batchGet` de `groupChats` (60–90 KB cada) e `channelConfigs` e o `first()` em `messages` por conversa. Nome do contato fica FORA (≈10 escritores, drift por PushName/IA/import; o `batchGet` de contatos/leads é barato). Leitura com fallback por campo ausente + kill switch por env; backfill paginado.
+
+### 4d — `groupParticipants`/`groupTimeline` (não iniciada)
+
+Maior risco (~25 leitores: menções, agente de grupo, campanhas de membros, admin check, REST/MCP shape, backup, purga, cascata). Só depois de medir 4b/4c.
 
 ## Follow-ups menores (fora das fases)
 

@@ -419,9 +419,14 @@ function ConversationTab({
   }, []);
 
   // "digitando…" do contato — TTL de 12s (mesmo comportamento do Inbox).
-  const contactPresence = firstConversation?.contactPresence as
-    | { state: "composing" | "paused"; at: number }
-    | undefined;
+  // Fase 4b: presença vem da query leve por conversa, não do doc da conversa.
+  const contactPresence =
+    useQuery(
+      api.conversations.getConversationPresence,
+      firstConversation?._id
+        ? { conversationId: firstConversation._id as Id<"conversations"> }
+        : "skip"
+    ) ?? undefined;
   const [presenceNow, setPresenceNow] = useState(() => Date.now());
   useEffect(() => {
     if (contactPresence?.state !== "composing") return;

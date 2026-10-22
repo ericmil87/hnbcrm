@@ -29,6 +29,7 @@ import { orgAiActive } from "./lib/agentSecurity";
 import { resolveConversationChannelConfig, providerOf } from "./lib/channelResolve";
 import { evaluateEligibility, findAttendantForConversation } from "./attendant";
 import { getLeadRef } from "./lib/leadRef";
+import { releaseAiTurnLock } from "./lib/conversationRuntime";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import {
@@ -497,10 +498,7 @@ export const internalFinishSilentTurn = internalMutation({
         updatedAt: now,
       });
     }
-    const conversation = await ctx.db.get(args.conversationId);
-    if (conversation?.aiTurnLock?.runId === args.runId) {
-      await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
-    }
+    await releaseAiTurnLock(ctx, args.conversationId, args.runId);
     // `resolved` = a IA chamou `resolveFollowUp` (o desfecho já foi gravado por
     // aquela tool). Sem isso, ela não decidiu nada — e "nada" não pode ser o
     // fim da linha de uma tarefa que alguém está esperando.

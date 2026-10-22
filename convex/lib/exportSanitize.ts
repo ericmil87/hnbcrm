@@ -26,6 +26,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "channelConfigs",
   "aiReplyQueue",
   "aiPacing",
+  // Estado efêmero da conversa (presença/lock da IA/pacing — fase 4b), recomputável.
+  "conversationRuntime",
   "channelPacing",
   "agentRuns",
   // Contador mensal de uso/custo de IA (v0.69) — derivado de `agentRuns`.

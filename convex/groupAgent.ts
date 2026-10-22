@@ -88,6 +88,14 @@ import {
 } from "./lib/groupAgentCore";
 import { describeLeakedModelMarkup, detectLeakedModelMarkup } from "./lib/llmOutputGuard";
 import {
+  clearOwnedAiTurnLock,
+  effectiveAiTurnLock,
+  ownsAiTurnLock,
+  getRuntime,
+  releaseAiTurnLock,
+  upsertRuntime,
+} from "./lib/conversationRuntime";
+import {
   buildCurrentDateTimeBlock,
   resolveAgentTimezone,
   shouldIncludeCurrentDateTime,
@@ -487,15 +495,21 @@ export const internalClaimGroupTurn = internalMutation({
       });
     }
 
-    const lock = conversation.aiTurnLock;
+    // Lock/lease da sala (fase 4b: em `conversationRuntime`) — lido e escrito
+    // na MESMA transação, então claims concorrentes colidem no OCC.
+    const runtime = await getRuntime(ctx, conversation._id);
+    const lock = effectiveAiTurnLock(runtime, conversation); // TRANSITÓRIO: respeita lock legado vivo (remover com os campos legados)
     if (lock && lock.leaseUntil > now) {
       const delayMs = Math.max(lock.leaseUntil - now, 1_000);
       await ctx.db.patch(item._id, { nextAttemptAt: now + delayMs, updatedAt: now });
       return { kind: "defer" as const, delayMs };
     }
-    await ctx.db.patch(conversation._id, {
-      aiTurnLock: { runId: args.runId, leaseUntil: now + LEASE_MS },
-    });
+    await upsertRuntime(
+      ctx,
+      { organizationId: conversation.organizationId, conversationId: conversation._id },
+      { aiTurnLock: { runId: args.runId, leaseUntil: now + LEASE_MS } },
+      runtime
+    );
     await ctx.db.patch(item._id, { status: "processing", updatedAt: now });
 
     const profile = agent.agentProfile!;
@@ -608,10 +622,7 @@ export const internalReleaseGroupLock = internalMutation({
   args: { conversationId: v.id("conversations"), runId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const conversation = await ctx.db.get(args.conversationId);
-    if (conversation?.aiTurnLock?.runId === args.runId) {
-      await ctx.db.patch(args.conversationId, { aiTurnLock: undefined });
-    }
+    await releaseAiTurnLock(ctx, args.conversationId, args.runId);
     return null;
   },
 });
@@ -669,10 +680,7 @@ export const internalMarkGroupItemSkipped = internalMutation({
         updatedAt: Date.now(),
       });
     }
-    const conversation = await ctx.db.get(args.conversationId);
-    if (conversation?.aiTurnLock?.runId === args.runId) {
-      await ctx.db.patch(args.conversationId, { aiTurnLock: undefined });
-    }
+    await releaseAiTurnLock(ctx, args.conversationId, args.runId);
     return null;
   },
 });
@@ -712,7 +720,7 @@ export const internalCommitGroupAiReply = internalMutation({
     const now = Date.now();
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return { committed: false as const, reason: "conversa_removida" };
-    if (conversation.aiTurnLock?.runId !== args.runId) {
+    if (!(await ownsAiTurnLock(ctx, conversation, args.runId))) {
       return { committed: false as const, reason: "lock_perdido" };
     }
     const loaded = await loadGroupTurnContext(ctx, args.conversationId, now);
@@ -774,7 +782,7 @@ export const internalCommitGroupAiReply = internalMutation({
     });
 
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
-    await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
+    await clearOwnedAiTurnLock(ctx, conversation, args.runId);
     return { committed: true as const, messageId };
   },
 });
@@ -800,7 +808,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
     const now = Date.now();
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return { committed: false as const, reason: "conversa_removida" };
-    if (conversation.aiTurnLock?.runId !== args.runId) {
+    if (!(await ownsAiTurnLock(ctx, conversation, args.runId))) {
       return { committed: false as const, reason: "lock_perdido" };
     }
     if (conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now) {
@@ -809,7 +817,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
         error: "ia_pausada",
         updatedAt: now,
       });
-      await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
+      await clearOwnedAiTurnLock(ctx, conversation, args.runId);
       return { committed: false as const, reason: "ia_pausada" };
     }
 
@@ -835,8 +843,9 @@ export const internalCommitGroupAiSuggestion = internalMutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
-      aiTurnLock: undefined,
     });
+    // Fase 4b: o lock mora no runtime (já validado como nosso nesta transação).
+    await clearOwnedAiTurnLock(ctx, conversation, args.runId);
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
 
     // Sino: numa sala não há "dono do lead", então o aviso vai para quem pode

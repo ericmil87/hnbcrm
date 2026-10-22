@@ -15,6 +15,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { evaluateEligibility, isWithinSchedule } from "./attendant";
+import { getAiTurnLock, upsertRuntime } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -332,7 +333,7 @@ describe("claim: pacing + lock de turno", () => {
     expect(claim.context.stages.map((s: { name: string }) => s.name)).toContain("Qualificado");
 
     const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
-    expect(conversation!.aiTurnLock?.runId).toBe("run-1");
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId)))?.runId).toBe("run-1");
 
     const updated = await t.run(async (ctx) => ctx.db.get(item._id));
     expect(updated!.status).toBe("processing");
@@ -375,7 +376,7 @@ describe("claim: pacing + lock de turno", () => {
     expect(claim2.kind).toBe("defer"); // lock de run-A segura a 2ª run
 
     const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
-    expect(conversation!.aiTurnLock?.runId).toBe("run-A");
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId)))?.runId).toBe("run-A");
   });
 });
 
@@ -475,7 +476,7 @@ describe("commit transacional (TOCTOU)", () => {
     expect(outbound[0].senderType).toBe("ai");
     // Divulgação LGPD prefixada na 1ª resposta.
     expect(outbound[0].content.startsWith("Você fala com um assistente virtual.")).toBe(true);
-    expect(conversation!.aiTurnLock).toBeUndefined(); // lock liberado
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId))) ?? null).toBeNull(); // lock liberado
     expect(queueItem!.status).toBe("done");
   });
 
@@ -559,9 +560,11 @@ describe("commit transacional (TOCTOU)", () => {
 
     // Outra run tomou o lock (lease expirado + novo claim).
     await t.run(async (ctx) => {
-      await ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-nova", leaseUntil: Date.now() + 60_000 },
-      });
+      await upsertRuntime(
+        ctx,
+        { organizationId: seed.organizationId, conversationId: seed.conversationId },
+        { aiTurnLock: { runId: "run-nova", leaseUntil: Date.now() + 60_000 } }
+      );
     });
 
     const commit = await t.mutation(internal.attendant.internalCommitAiReply, {
