@@ -50,6 +50,7 @@ import { applyInboundWelcomeDeliveryFailure } from "./lib/inboundLeadWelcomeHook
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import { getLeadRef } from "./lib/leadRef";
 import { isDemoOrg } from "./lib/orgModules";
+import { inboundRouteChannelValidator, toInboundRouteChannel } from "./lib/bridgeSnapshot";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -230,7 +231,7 @@ export const internalIngestMessage = internalAction({
     }
 
     const { leadId } = await ctx.runMutation(internal.whatsapp.internalRouteInbound, {
-      configId: args.configId,
+      channel: toInboundRouteChannel(config),
       waId: args.message.from,
       profileName: args.message.profileName,
     });
@@ -254,7 +255,9 @@ export const internalIngestMessage = internalAction({
 // Internal: contact + lead routing for an inbound sender (shared lib helpers)
 export const internalRouteInbound = internalMutation({
   args: {
-    configId: v.id("channelConfigs"),
+    // Perf I/O (onda 2): o recorte da config vem de quem chama (que já a leu)
+    // — esta mutation não relê `channelConfigs` (lib/bridgeSnapshot.ts).
+    channel: inboundRouteChannelValidator,
     waId: v.string(),
     profileName: v.optional(v.string()),
   },
@@ -263,8 +266,7 @@ export const internalRouteInbound = internalMutation({
     leadId: v.id("leads"),
   }),
   handler: async (ctx, args) => {
-    const config = await ctx.db.get(args.configId);
-    if (!config) throw new Error("Channel config not found");
+    const config = args.channel;
 
     const contactId = await findOrCreateContactByPhone(ctx, {
       organizationId: config.organizationId,
@@ -277,8 +279,7 @@ export const internalRouteInbound = internalMutation({
     // de board do atendente não se aplica aqui, o lead ainda não existe).
     // Perf Convex I/O, fase 3: o atendente (e a org) só são lidos quando o lead
     // vai ser CRIADO — contato com lead existente não paga o `.collect()` de
-    // membros IA. A config do canal continua sendo lida aqui e nas outras
-    // etapas do ingest (snapshot único fica para depois — ganho baixo).
+    // membros IA. A config do canal NÃO é relida aqui: vem por argumento.
     const leadId = await ensureLeadForContact(ctx, {
       organizationId: config.organizationId,
       contactId,

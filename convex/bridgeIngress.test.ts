@@ -4,6 +4,12 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { buildBridgeConfigSnapshot } from "./lib/bridgeSnapshot";
+
+const bridgeSource = readFileSync(path.join(__dirname, "bridge.ts"), "utf8");
+const whatsappSource = readFileSync(path.join(__dirname, "whatsapp.ts"), "utf8");
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -509,5 +515,114 @@ describe("POST /webhooks/bridge receipts → delivery updates", () => {
       ).first()
     );
     expect(message!.deliveryStatus).toBe("read");
+  });
+});
+
+// Perf Convex I/O, onda 2: a config do canal é lida UMA vez por webhook. O
+// httpAction monta o snapshot (lib/bridgeSnapshot.ts) e as etapas agendadas —
+// ingest e roteamento — não releem `channelConfigs`.
+describe("snapshot da config no fluxo do webhook", () => {
+  test("o ingest agendado leva só os campos da allowlist, nunca o token em claro", async () => {
+    const t = setup();
+    const { configId, organizationId } = await seedOrgWithBridgeConfig(t);
+
+    const body = messageBody(INSTANCE_ID, { conversation: "Olá" });
+    await postBridge(t, body, await sign(body, HMAC_SECRET));
+
+    const [args] = await t.run(async (ctx) => {
+      const scheduled = await ctx.db.system.query("_scheduled_functions").collect();
+      return scheduled
+        .filter((s) => s.name.includes("internalIngestBridgeMessage"))
+        .map((s) => s.args[0] as { config: Record<string, unknown> });
+    });
+    const snapshot = args.config;
+    expect(snapshot._id).toEqual(configId);
+    expect(snapshot.organizationId).toEqual(organizationId);
+    expect(snapshot.status).toBe("active");
+    expect(snapshot.provider).toBe("bridge");
+    expect(snapshot.bridgeBaseUrl).toBe(BRIDGE_BASE_URL);
+    const allowed = new Set([
+      "_id",
+      "organizationId",
+      "status",
+      "provider",
+      "bridgeBaseUrl",
+      "bridgeTokenEncrypted",
+      "bridgeGroupsEnabled",
+      "bridgeLid",
+      "bridgePhone",
+      "bridgeGroupMedia",
+    ]);
+    for (const key of Object.keys(snapshot)) expect(allowed.has(key)).toBe(true);
+    expect(typeof snapshot.bridgeTokenEncrypted).toBe("string");
+    expect(JSON.stringify(snapshot)).not.toContain(BRIDGE_TOKEN);
+  });
+
+  test("ingest + roteamento não releem a config (doc apagado depois do webhook ainda ingere)", async () => {
+    const t = setup();
+    const { configId, organizationId } = await seedOrgWithBridgeConfig(t);
+
+    const body = messageBody(INSTANCE_ID, { conversation: "Olá, snapshot" }, "3EB0SNAPSHOT1");
+    expect((await postBridge(t, body, await sign(body, HMAC_SECRET))).status).toBe(200);
+
+    // Se `internalIngestBridgeMessage` relesse a config (internalGetConfig) a
+    // mensagem seria descartada; se `internalRouteInbound` a relesse, lançaria
+    // "Channel config not found". Com o snapshot, nenhuma das duas lê.
+    await t.run(async (ctx) => ctx.db.delete(configId));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const message = await t.run(async (ctx) =>
+      ctx.db
+        .query("messages")
+        .withIndex("by_organization_and_external_id", (q) =>
+          q.eq("organizationId", organizationId).eq("externalId", "3EB0SNAPSHOT1")
+        )
+        .first()
+    );
+    expect(message).not.toBeNull();
+    expect(message!.content).toBe("Olá, snapshot");
+    expect(message!.direction).toBe("inbound");
+  });
+
+  test("snapshot de outro canal que o configId é recusado", async () => {
+    const t = setup();
+    const a = await seedOrgWithBridgeConfig(t);
+    const b = await seedOrgWithBridgeConfig(t, { slug: "outra-org", instanceId: "org_other" });
+    const other = await t.run(async (ctx) => ctx.db.get(b.configId));
+    await t.action(internal.bridge.internalIngestBridgeMessage, {
+      configId: a.configId,
+      config: buildBridgeConfigSnapshot(other!),
+      message: {
+        externalId: "3EB0MISMATCH",
+        from: "15550000001",
+        fromMe: false,
+        timestamp: Date.now(),
+        contentType: "text",
+        content: "não deveria entrar",
+      },
+    });
+    const count = await t.run(async (ctx) => (await ctx.db.query("messages").collect()).length);
+    expect(count).toBe(0);
+  });
+
+  test("estrutura: ingest e roteamento não chamam internalGetConfig nem releem por configId", () => {
+    const block = (src: string, name: string) => {
+      const start = src.indexOf(`export const ${name} =`);
+      expect(start).toBeGreaterThan(-1);
+      const next = src.indexOf("\nexport const ", start + 1);
+      return src.slice(start, next === -1 ? undefined : next);
+    };
+    for (const name of ["internalIngestBridgeMessage", "internalIngestGroupMessage"]) {
+      const src = block(bridgeSource, name);
+      expect(src).not.toContain("internalGetConfig");
+      expect(src).toContain("resolveIngestConfig");
+    }
+    const route = block(whatsappSource, "internalRouteInbound");
+    expect(route).not.toContain("internalGetConfig");
+    expect(route).not.toMatch(/db\.get\(\s*(args\.configId|args\.channel\._id|config\._id)/);
+    expect(route).not.toContain("configId");
+    // O webhook passa o snapshot nos dois agendamentos de ingest.
+    const hook = block(bridgeSource, "webhookReceive");
+    expect(hook.match(/config: buildBridgeConfigSnapshot\(config\)/g)?.length).toBe(2);
   });
 });

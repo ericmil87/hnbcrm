@@ -44,6 +44,12 @@ import {
   selectHistoryRows,
 } from "./lib/bridgeHistory";
 import { getLeadRef } from "./lib/leadRef";
+import {
+  BridgeConfigSnapshot,
+  bridgeConfigSnapshotValidator,
+  buildBridgeConfigSnapshot,
+  toInboundRouteChannel,
+} from "./lib/bridgeSnapshot";
 
 const parsedBridgeMessageValidator = v.object({
   externalId: v.string(),
@@ -78,7 +84,7 @@ const parsedBridgeMessageValidator = v.object({
 async function downloadInboundMedia(
   ctx: ActionCtx,
   args: {
-    config: any;
+    config: BridgeConfigSnapshot;
     media:
       | {
           kind: string;
@@ -109,6 +115,22 @@ async function downloadInboundMedia(
   else metadata.mediaSkipped = result.reason;
   metadata.mediaPending = true;
   return undefined;
+}
+
+/**
+ * Config das actions de ingest. O caminho quente (webhook) traz o snapshot e
+ * NÃO lê o banco; só job agendado antes deste deploy (args sem `config`) e a
+ * importação do histórico, que chama a action direto, caem na releitura.
+ * Snapshot de OUTRO canal que o `configId` (não deveria acontecer) é recusado.
+ */
+async function resolveIngestConfig(
+  ctx: ActionCtx,
+  configId: Id<"channelConfigs">,
+  snapshot: BridgeConfigSnapshot | undefined
+): Promise<BridgeConfigSnapshot | null> {
+  if (snapshot) return snapshot._id === configId ? snapshot : null;
+  const doc = await ctx.runQuery(internal.channelConfigs.internalGetConfig, { configId });
+  return doc ? buildBridgeConfigSnapshot(doc) : null;
 }
 
 // POST /webhooks/bridge — wuzapi message + receipt deliveries
@@ -159,15 +181,19 @@ export const webhookReceive = httpAction(async (ctx, request) => {
 
   const parsed = parseBridgeEvent(payload);
   if (parsed.kind === "message") {
-    // Schedule per message — routing + persistence (and media download in U4)
+    // Schedule per message — routing + persistence (and media download in U4).
+    // Perf I/O (onda 2): a config já lida aqui vai junto como snapshot; o
+    // ingest e o roteamento não a releem (lib/bridgeSnapshot.ts).
     await ctx.scheduler.runAfter(0, internal.bridge.internalIngestBridgeMessage, {
       configId: config._id,
+      config: buildBridgeConfigSnapshot(config),
       message: parsed.message,
     });
   } else if (parsed.kind === "group_message") {
     // Mesma forma do 1:1: a mídia precisa de uma action (download + storage).
     await ctx.scheduler.runAfter(0, internal.bridge.internalIngestGroupMessage, {
       configId: config._id,
+      config: buildBridgeConfigSnapshot(config),
       message: parsed.message,
     });
   } else if (parsed.kind === "receipt") {
@@ -298,13 +324,13 @@ export const webhookReceive = httpAction(async (ctx, request) => {
 export const internalIngestBridgeMessage = internalAction({
   args: {
     configId: v.id("channelConfigs"),
+    /** Snapshot montado pelo webhook. Ausente = job antigo ou chamada direta. */
+    config: v.optional(bridgeConfigSnapshotValidator),
     message: parsedBridgeMessageValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
-      configId: args.configId,
-    });
+    const config = await resolveIngestConfig(ctx, args.configId, args.config);
     if (!config || config.status !== "active") return null;
 
     // Early idempotency: gateways may redeliver on retry
@@ -318,7 +344,7 @@ export const internalIngestBridgeMessage = internalAction({
     // Vale para os dois sentidos: uma conversa iniciada pelo aparelho com um
     // número novo também precisa de contato e lead para aparecer no inbox.
     const { leadId } = await ctx.runMutation(internal.whatsapp.internalRouteInbound, {
-      configId: args.configId,
+      channel: toInboundRouteChannel(config),
       waId: args.message.from,
       profileName: args.message.profileName,
     });
@@ -431,13 +457,13 @@ type DeferredMediaArg = {
 export const internalIngestGroupMessage = internalAction({
   args: {
     configId: v.id("channelConfigs"),
+    /** Snapshot montado pelo webhook. Ausente = job antigo ou chamada direta. */
+    config: v.optional(bridgeConfigSnapshotValidator),
     message: parsedGroupMessageValidator,
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
-    const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
-      configId: args.configId,
-    });
+    const config = await resolveIngestConfig(ctx, args.configId, args.config);
     if (!config || config.status !== "active") return null;
     // Interruptor do NÚMERO: com grupos desligados o CRM não ingere nada, nem
     // de grupo que já esteja cadastrado de uma configuração anterior.

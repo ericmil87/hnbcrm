@@ -22,7 +22,9 @@ import { configProvider } from "../channelConfigs";
 export async function findAttendantForChannel(
   ctx: MutationCtx,
   org: Doc<"organizations"> | null,
-  config: Doc<"channelConfigs">
+  // Só os campos lidos aqui: o roteamento inbound passa o recorte da config
+  // (lib/bridgeSnapshot.ts) em vez do doc inteiro.
+  config: Pick<Doc<"channelConfigs">, "_id" | "organizationId" | "status" | "provider">
 ): Promise<Doc<"teamMembers"> | null> {
   if (!orgAiActive(org)) return null;
   const aiConfig = org!.settings.aiConfig;
