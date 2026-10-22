@@ -6,6 +6,8 @@
 
 Fluxo do atendente de WhatsApp (`convex/attendant.ts`, `convex/attendantFollowUp.ts`, `convex/handoffs.ts`, `convex/lib/agentTools.ts`): repasses fluidos e coaching (v0.45), devolver com instrução (v0.50), follow-up executado pela IA (v0.60), agenda externa + lead do site (v0.64), guardrail anti-bot (v0.65), palavras-chave de repasse (T09), guardrail de saída + tipos de mensagem do bridge (v0.70), divulgação sob demanda.
 
+Desde a F3 do Meta Messaging (22/10/2026) o mesmo atendente responde no Instagram e no Messenger: janela da Meta com margem de 15 min, standby (`outro_app_controla`), saída em texto puro, follow-up com cap 50 e opt-out por identidade. Detalhes em `docs/architecture/meta-messaging.md` (seção F3).
+
 ## Decisões, pegadinhas medidas e histórico
 
 ### Handoffs fluidos + coaching (v0.45)

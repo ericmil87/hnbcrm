@@ -2,6 +2,17 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado] — Instagram e Facebook Messenger: atendente de IA (F3)
+
+### O atendente IA responde no Instagram e no Messenger, dentro das regras da Meta
+
+- **Mesmo atendente, mesmas configurações:** com o módulo ligado e o canal conectado, o atendente IA da organização passa a responder também pelo Instagram Direct e pelo Messenger, com a mesma persona, funil, horário, repasses e guardrails do WhatsApp. O texto sai **sem formatação de WhatsApp** (nada de `*negrito*` ou `_itálico_`): a Meta mostra tudo como texto puro
+- **Só dentro da janela da Meta, com 15 minutos de margem:** a IA responde até 24 horas após a última mensagem do cliente (até 7 dias quando a conversa veio de anúncio) e para 15 minutos antes de a janela fechar. Fora disso, o que ela escreveria vira rascunho para a equipe, como já acontecia com a Cloud API
+- **Outro app no controle:** quando a Caixa de entrada do Meta Business Suite (ou outro app) controla a conversa, a IA não responde e o motivo aparece como "outro app controla a conversa"
+- **Follow-ups:** valem nos dois canais, com teto de 50 por dia; fora da janela viram rascunho. "pare", "parar", "stop" ou "sair" desligam o follow-up automático daquela pessoa naquele canal (o atendente continua respondendo ao que ela escrever); a decisão fica registrada na identidade do contato, não no telefone
+- **Simulador** com seletor de canal (WhatsApp oficial, gateway, Instagram, Messenger) e duas conversas de referência novas para Instagram e Messenger; aviso sobre a divulgação "sob demanda" nesses canais
+- Interno: `convex/lib/chatText.ts` (`toPlainChatText`), janela da IA por transporte (`aiWindowClosed`), condição 13 de elegibilidade (standby), opt-out por identidade no `fire`, `followUpSettings` com cap próprio, goldens por tag de canal; guard de fiação da saída estendido
+
 ## [Não lançado] — Instagram e Facebook Messenger: fotos, áudios, stories, reações (F2)
 
 ### Mídia e tipos ricos nos dois canais

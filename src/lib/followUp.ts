@@ -60,6 +60,8 @@ export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
   teto_hora: "o teto de respostas por hora foi atingido",
   bridge_sem_aceite: "o canal não tem o aceite de risco do WhatsApp não oficial",
   janela_24h: "a janela de 24h do WhatsApp está fechada",
+  outro_app_controla: "outro app controla a conversa",
+  sem_identidade: "o contato não tem identidade neste canal do Instagram/Messenger",
   suspeita_de_bot: "o outro lado parece um robô ou mensagem automática — aguardando verificação",
 
   // Fila / turno do atendente
@@ -110,10 +112,17 @@ export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
  * código novo que este mapa ainda não conhece — devolve o texto como veio, em
  * vez de esconder a informação.
  */
-export function humanizeFollowUpReason(reason: string | null | undefined): string | null {
+export function humanizeFollowUpReason(
+  reason: string | null | undefined,
+  /** Canal Meta ("Instagram"/"Messenger"): troca "WhatsApp" na janela de 24 h. WhatsApp não muda. */
+  channelName?: string | null
+): string | null {
   if (reason === null || reason === undefined) return null;
   const trimmed = reason.trim();
   if (!trimmed) return null;
+  if (trimmed === "janela_24h" && channelName && channelName !== "WhatsApp") {
+    return `a janela de 24 h do ${channelName} está fechada`;
+  }
   return FOLLOW_UP_REASON_LABELS[trimmed] ?? trimmed;
 }
 

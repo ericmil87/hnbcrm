@@ -10,6 +10,15 @@ import {
 } from "./followUp";
 
 describe("humanizeFollowUpReason", () => {
+  it("janela_24h cita o canal Meta e mantém o WhatsApp", () => {
+    expect(humanizeFollowUpReason("janela_24h", "Instagram")).toBe(
+      "a janela de 24 h do Instagram está fechada"
+    );
+    expect(humanizeFollowUpReason("janela_24h", "WhatsApp")).toBe(
+      "a janela de 24h do WhatsApp está fechada"
+    );
+  });
+
   it("traduz um código reconhecido", () => {
     expect(humanizeFollowUpReason("ia_pausada")).toBe("a conversa está com um humano");
     expect(humanizeFollowUpReason("janela_24h")).toBe("a janela de 24h do WhatsApp está fechada");

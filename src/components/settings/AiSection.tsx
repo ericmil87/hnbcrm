@@ -24,6 +24,7 @@ import {
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -1020,6 +1021,7 @@ type Attendant = {
     schedule?: { timezone: string; startHour: number; endHour: number };
     handoffKeywords?: string[];
     disclosure?: string;
+    disclosureMode?: "first_reply" | "on_demand";
     maxRepliesPerConversation?: number;
     maxRepliesPerHour?: number;
     messageDebounceSeconds?: number;
@@ -1348,6 +1350,7 @@ function AttendantConfig({
   const updateProfile = useMutation(api.aiSettings.updateAgentProfile);
   const [showCustomize, setShowCustomize] = useState(false);
   const [showSimulator, setShowSimulator] = useState(false);
+  const { modules: orgModules } = useOrgModules(organizationId);
   // Autopilot antecipado (pular o gate de métricas com aceite de risco).
   const [showEarlyAutopilot, setShowEarlyAutopilot] = useState(false);
   const [earlyRiskChecked, setEarlyRiskChecked] = useState(false);
@@ -1666,6 +1669,12 @@ function AttendantConfig({
             )}
           </div>
         </div>
+        {orgModules.metaMessaging && profile.disclosureMode === "on_demand" && (
+          <p className="text-xs text-text-muted">
+            No Instagram e no Messenger a divulgação sob demanda depende de o cliente perguntar;
+            considere "sempre" para esses canais.
+          </p>
+        )}
         <div className="flex gap-2">
           <Button variant="secondary" onClick={() => setShowSimulator(true)}>
             <FlaskConical size={15} className="mr-1.5" />
@@ -2353,6 +2362,7 @@ function AttendantConfig({
 
       {showSimulator && (
         <SimulatorModal
+          metaEnabled={orgModules.metaMessaging}
           organizationId={organizationId}
           agentMemberId={attendant._id}
           onClose={() => setShowSimulator(false)}
@@ -2413,11 +2423,22 @@ const SIM_KINDS: Array<{
   },
 ];
 
+type SimTransport = "meta" | "bridge" | "instagram" | "messenger";
+
+const SIM_TRANSPORT_OPTIONS: Array<{ value: SimTransport; label: string }> = [
+  { value: "meta", label: "WhatsApp oficial" },
+  { value: "bridge", label: "WhatsApp não oficial" },
+  { value: "instagram", label: "Instagram" },
+  { value: "messenger", label: "Messenger" },
+];
+
 function SimulatorModal({
   organizationId,
   agentMemberId,
+  metaEnabled,
   onClose,
 }: {
+  metaEnabled: boolean;
   organizationId: Id<"organizations">;
   agentMemberId: Id<"teamMembers">;
   onClose: () => void;
@@ -2432,6 +2453,8 @@ function SimulatorModal({
   const [groupMode, setGroupMode] = useState(false);
   const [senderName, setSenderName] = useState("Eric");
   const [busy, setBusy] = useState(false);
+  const [transport, setTransport] = useState<SimTransport>("meta");
+  const plainTextChannel = transport === "instagram" || transport === "messenger";
 
   const handleSend = async () => {
     const text = input.trim();
@@ -2463,6 +2486,7 @@ function SimulatorModal({
           senderName: from,
         })),
         ...(groupMode ? { group: SIM_GROUP } : {}),
+        ...(metaEnabled && transport !== "meta" ? { transport } : {}),
       });
       if (result.error) {
         toast.error(result.error);
@@ -2521,6 +2545,34 @@ function SimulatorModal({
             </>
           )}
         </div>
+        {metaEnabled && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="sim-transport" className="text-xs text-text-muted">
+              Canal simulado
+            </label>
+            <select
+              id="sim-transport"
+              value={transport}
+              onChange={(e) => {
+                setTransport(e.target.value as SimTransport);
+                setTranscript([]);
+              }}
+              className="min-h-[44px] px-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-xs focus:outline-none focus:border-brand-500"
+            >
+              {SIM_TRANSPORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            {plainTextChannel && (
+              <span className="text-[11px] text-text-muted">
+                Neste canal a resposta sai em texto puro, sem a formatação do WhatsApp (negrito,
+                itálico, listas com marcadores).
+              </span>
+            )}
+          </div>
+        )}
         <div className="h-72 overflow-y-auto space-y-2 rounded-lg bg-surface-sunken p-3">
           {transcript.length === 0 && (
             <p className="text-sm text-text-muted text-center py-8">

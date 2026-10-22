@@ -155,7 +155,51 @@ npx convex data channelConfigs        # canais instagram/messenger com messenger
 - Revogar o HNBCRM nas configurações do Facebook do usuário, trocar a senha ou perder o papel na Página invalida a credencial:
   até a F4 isso não gera alerta; o sintoma é envio/perfil falhando com erro 190 nos logs.
 
-## 7. Ambiente de desenvolvimento
+## 7. Monitoramento manual até a F4 (sem saúde automática nem Reconectar)
+
+Até a F4 não há verificação diária da credencial, alerta nem botão Reconectar. O que fazer à mão:
+
+- **Sintoma de credencial morta** (senha trocada, app revogado em facebook.com/settings > Integrações comerciais, papel na
+  Página perdido, Página desvinculada do portfólio): envios passam a falhar com "Este canal precisa ser reconectado" e o card
+  do canal mostra **"Precisa reconectar"** (`authState: reauth_required`, gravado quando a Meta devolve erro 190). As mensagens
+  recebidas podem continuar entrando por um tempo.
+- **Como conferir** (sem flag = DEV; `--prod` = PROD):
+  ```bash
+  npx convex data metaConnections --prod          # authState, authDetail, lastHealthAt, dataAccessExpiresAt (token nunca aparece)
+  npx convex logs --prod | grep -i "meta"          # erros 190/10/613 do envio; "meta echo" nos ecos
+  curl -s "https://graph.facebook.com/v26.0/debug_token?input_token=<token da Página>&access_token=<APP_ID>|<APP_SECRET>"
+  ```
+  (o token da Página só sai do banco cifrado; para o `debug_token` gere um no Dashboard, em Casos de uso > Messenger > Gere
+  tokens de acesso, e descarte depois.)
+- **Como reconectar à mão**: Configurações > Canais > **Desconectar** o canal e **Conectar** de novo pela opção
+  "Instagram / Facebook Messenger (oficial)" com a MESMA conta da Meta. Conversas, contatos e leads ficam; a conexão
+  nova reaproveita os canais da Página (índice por conexão).
+- **`data_access_expires_at`** (~90 dias): quando faltar menos de 14 dias, reconectar à mão pelo mesmo caminho.
+- **Webhooks parados** (a Meta desinscreve o app após ~1 h de falhas): `GET /{app-id}/subscriptions` deve mostrar `active: true`
+  com `fields` nos dois objetos (seção 2.5); `GET /{page-id}/subscribed_apps` deve listar o app. Reassinar pela API se faltar.
+- **Standard Access**: uma pessoa nova que não recebe resposta provavelmente não tem papel no app (seção 2.5). Até o App
+  Review, é o esperado.
+
+## 8. Produção (PROD): o app da Meta e as envs
+
+- Um app Meta serve UM deployment (o callback de webhook é um por objeto). Para o PROD, ou o app atual passa a apontar para
+  `careful-anaconda-127` (e o DEV ganha um app novo só com testers), ou cria-se um app "HNBCRM" novo repetindo as seções 2.1 a 2.5.
+  O app que vai para App Review deve ser o de PROD.
+- Envs em PROD (cada uma com `--prod`; valores do app de PROD):
+  ```bash
+  npx convex env set META_MESSAGING_APP_ID <id> --prod
+  npx convex env set META_MESSAGING_APP_SECRET <segredo> --prod
+  npx convex env set META_MESSAGING_LOGIN_CONFIG_ID <config_id> --prod
+  npx convex env set META_MESSAGING_WEBHOOK_VERIFY_TOKEN <token> --prod
+  npx convex env list --prod | grep META_MESSAGING_
+  ```
+- Redirect URI `https://careful-anaconda-127.convex.site/oauth/meta/callback`; webhooks dos objetos Page e Instagram em
+  `https://careful-anaconda-127.convex.site/webhooks/meta-messaging` com os campos da seção 2.5 (conferir `fields` pela API).
+- Deploy do backend com os testes verdes (`npm run deploy:prod`); o frontend sobe pela Vercel no merge em `main`.
+- Primeiro cliente real: a pessoa que conecta precisa de papel no app (admin/dev/tester) e papel na Página; os clientes
+  finais dela só recebem resposta depois do App Review (seção 2.5).
+
+## 9. Ambiente de desenvolvimento
 - `npm run dev` sobe o Convex DEV; só o DEV deve ter o app "HNBCRM Dev" apontando para ele. **Nunca conecte ativos de
   cliente no DEV.**
 - Testes (`npm run test`) não precisam das envs: usam `fetch` stubado e fixtures em `convex/__fixtures__/meta/` (sintéticas,

@@ -59,8 +59,8 @@ describe("channelSupports", () => {
       expect(channelSupports(c, c, "templates")).toBe(false);
       expect(channelSupports(c, c, "newConversation")).toBe(false);
       expect(channelSupports(c, c, "serviceWindow")).toBe(true);
-      // F3: IA ainda não responde nesses canais
-      expect(channelSupports(c, c, "aiAttendant")).toBe(false);
+      // F3: o atendente de IA responde nesses canais
+      expect(channelSupports(c, c, "aiAttendant")).toBe(true);
       expect(channelSupports(c, c, "mediaSend")).toBe(true);
       expect(channelSupports(c, c, "typingIndicator")).toBe(true);
     }

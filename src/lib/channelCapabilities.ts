@@ -79,8 +79,7 @@ const INSTAGRAM: Row = {
   serviceWindow: true,
   templates: false,
   newConversation: false,
-  // F3: o atendente de IA ainda não responde por Instagram/Messenger.
-  aiAttendant: false,
+  aiAttendant: true,
   typingIndicator: true,
   // F2: envio de anexo por Instagram/Messenger.
   mediaSend: true,
