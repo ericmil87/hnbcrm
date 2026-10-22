@@ -39,6 +39,7 @@ import {
   WriteBudget,
 } from "./lib/leadCascade";
 import { DEFAULT_STORED_MODELS } from "./lib/llm/registry";
+import { lastMessagePatchForId } from "./lib/conversationListFields";
 
 export const MAX_OPS_PER_CALL = 50;
 // Escritas por execução do reset. Cada escrita custa várias leituras (cascata
@@ -891,6 +892,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         messageCount: conversation.messageCount + 1,
         updatedAt: at,
       };
+      Object.assign(patch, await lastMessagePatchForId(ctx, conversation, messageId));
       if (inbound) {
         Object.assign(patch, {
           lastInboundAt: Math.max(conversation.lastInboundAt ?? 0, at),

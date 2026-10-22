@@ -15,6 +15,7 @@ import { buildAuditDescription } from "./auditDescription";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { getLeadRef } from "./leadRef";
 import { firstResponsePatch } from "./conversationTiming";
+import { lastMessagePatchForId } from "./conversationListFields";
 
 export async function applyOutboundMessageSideEffects(
   ctx: MutationCtx,
@@ -34,6 +35,8 @@ export async function applyOutboundMessageSideEffects(
     messageCount: conversation.messageCount + 1,
     updatedAt: now,
     ...firstResponsePatch(conversation, actorType, now),
+    // Prévia da lista (fase 4c) — a mensagem já foi inserida pelo chamador.
+    ...(await lastMessagePatchForId(ctx, conversation, messageId)),
   });
 
   // Conversa de GRUPO não tem lead (v0.57): o bump de atividade e a activity

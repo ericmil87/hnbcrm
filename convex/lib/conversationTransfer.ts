@@ -12,6 +12,7 @@ import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
 import { getLeadRef } from "./leadRef";
+import { lastMessagePatchForId } from "./conversationListFields";
 
 export async function transferConversationCore(
   ctx: MutationCtx,
@@ -32,13 +33,6 @@ export async function transferConversationCore(
   // anterior). Pessoa sem setor = mantém o setor atual.
   const nextDepartmentId = toDept?._id ?? conversation.departmentId;
   const nextAssignedTo = toMember ? toMember._id : toDept ? undefined : conversation.assignedTo;
-  await ctx.db.patch(conversation._id, {
-    departmentId: nextDepartmentId,
-    assignedTo: nextAssignedTo,
-    messageCount: conversation.messageCount + 1,
-    updatedAt: now,
-  });
-
   const transferId = await ctx.db.insert("conversationTransfers", {
     organizationId: orgId,
     conversationId: conversation._id,
@@ -54,7 +48,7 @@ export async function transferConversationCore(
 
   // Evento de sistema na timeline da conversa (nota interna, nunca sai).
   const target = [toDept?.name, toMember?.name].filter(Boolean).join(" · ");
-  await ctx.db.insert("messages", {
+  const noteMessageId = await ctx.db.insert("messages", {
     organizationId: orgId,
     conversationId: conversation._id,
     ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
@@ -75,6 +69,16 @@ export async function transferConversationCore(
       },
     },
     createdAt: now,
+  });
+
+  // A nota NÃO mexe em `lastMessageAt` (a ordem da lista não muda), mas é a
+  // última mensagem — a prévia da lista mostra "Nota: …" (fase 4c).
+  await ctx.db.patch(conversation._id, {
+    departmentId: nextDepartmentId,
+    assignedTo: nextAssignedTo,
+    messageCount: conversation.messageCount + 1,
+    updatedAt: now,
+    ...(await lastMessagePatchForId(ctx, conversation, noteMessageId)),
   });
 
   // Sino: a pessoa de destino; sem pessoa, os membros do setor.

@@ -14,6 +14,7 @@
 import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { phoneLookupCandidates } from "./phone";
+import { refreshLastMessagePreviewIfLast } from "./conversationListFields";
 
 export const EDIT_PREVIOUS_CONTENT_MAX = 2000;
 export const EDIT_CONTENT_MAX = 65536;
@@ -130,9 +131,10 @@ export async function applyBridgeRevoke(
   }
   const { message } = verdict;
   if (message.metadata?.revoked === true) return message._id;
-  await ctx.db.patch(message._id, {
-    metadata: { ...(message.metadata ?? {}), revoked: true, revokedAt: args.at },
-  });
+  const metadata = { ...(message.metadata ?? {}), revoked: true, revokedAt: args.at };
+  await ctx.db.patch(message._id, { metadata });
+  // Era a última mensagem: a lista do inbox passa a dizer "Mensagem apagada".
+  await refreshLastMessagePreviewIfLast(ctx, { ...message, metadata });
   return message._id;
 }
 
@@ -155,9 +157,8 @@ export async function applyBridgeEdit(
   const prior = message.metadata?.previousContent;
   const previousContent =
     typeof prior === "string" ? prior : message.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX);
-  await ctx.db.patch(message._id, {
-    content: newContent,
-    metadata: { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent },
-  });
+  const metadata = { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent };
+  await ctx.db.patch(message._id, { content: newContent, metadata });
+  await refreshLastMessagePreviewIfLast(ctx, { ...message, content: newContent, metadata });
   return message._id;
 }

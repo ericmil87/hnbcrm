@@ -100,6 +100,7 @@ import {
   resolveAgentTimezone,
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
+import { lastMessagePatchForId } from "./lib/conversationListFields";
 
 // ── Constantes de runtime (espelham as do atendente onde o contrato é o mesmo) ──
 const DEFAULT_DEBOUNCE_SECONDS = 5;
@@ -843,6 +844,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
     // Fase 4b: o lock mora no runtime (já validado como nosso nesta transação).
     await clearOwnedAiTurnLock(ctx, conversation, args.runId);

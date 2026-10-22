@@ -98,6 +98,7 @@ import type * as lib_campaignRender from "../lib/campaignRender.js";
 import type * as lib_centralDashboard from "../lib/centralDashboard.js";
 import type * as lib_channelHealthSignals from "../lib/channelHealthSignals.js";
 import type * as lib_channelResolve from "../lib/channelResolve.js";
+import type * as lib_conversationListFields from "../lib/conversationListFields.js";
 import type * as lib_conversationRuntime from "../lib/conversationRuntime.js";
 import type * as lib_conversationTiming from "../lib/conversationTiming.js";
 import type * as lib_conversationTransfer from "../lib/conversationTransfer.js";
@@ -299,6 +300,7 @@ declare const fullApi: ApiFromModules<{
   "lib/centralDashboard": typeof lib_centralDashboard;
   "lib/channelHealthSignals": typeof lib_channelHealthSignals;
   "lib/channelResolve": typeof lib_channelResolve;
+  "lib/conversationListFields": typeof lib_conversationListFields;
   "lib/conversationRuntime": typeof lib_conversationRuntime;
   "lib/conversationTiming": typeof lib_conversationTiming;
   "lib/conversationTransfer": typeof lib_conversationTransfer;
