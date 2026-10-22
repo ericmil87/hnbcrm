@@ -37,6 +37,13 @@ import {
   visionModelOptions,
 } from "./lib/llm/registry";
 import { personaById, personaForIndustry } from "./lib/agentPersonas";
+import {
+  insertAgentTextsForNewMember,
+  readAgentTexts,
+  writeAgentTexts,
+  type AgentProfile,
+} from "./lib/agentProfileTexts";
+import { auditTextSnapshot } from "./lib/auditText";
 import { resolveBotGuardSettings, validateBotGuardTag } from "./lib/botGuard";
 import {
   DEFAULT_QUIET_END_HOUR,
@@ -580,12 +587,28 @@ export const listAttendants = query({
       .collect();
     return aiMembers
       .filter((m) => m.agentProfile?.kind === "attendant")
-      .map((m) => ({
-        _id: m._id,
-        name: m.name,
-        status: m.status,
-        agentProfile: m.agentProfile,
-      }));
+      .map((m) => {
+        // Sem os textos grandes: o editor carrega `getAttendantTexts` só ao abrir
+        // (membro legado ainda os tem no doc — tirados aqui de qualquer forma).
+        const { systemPrompt: _sp, knowledge: _kn, ...agentProfile } = m.agentProfile!;
+        return { _id: m._id, name: m.name, status: m.status, agentProfile };
+      });
+  },
+});
+
+/** Persona + conhecimento do atendente, carregados SÓ quando o editor abre. */
+export const getAttendantTexts = query({
+  args: { agentMemberId: v.id("teamMembers") },
+  returns: v.union(
+    v.null(),
+    v.object({ systemPrompt: v.union(v.string(), v.null()), knowledge: v.union(v.string(), v.null()) })
+  ),
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentMemberId);
+    if (!agent || agent.type !== "ai" || !agent.agentProfile) return null;
+    // Mesmo gate de quem salva o editor (`updateAgentProfile`).
+    await requirePermission(ctx, agent.organizationId, "settings", "manage");
+    return await readAgentTexts(ctx, agent);
   },
 });
 
@@ -623,8 +646,8 @@ async function seedAttendant(
     agentProfile: {
       kind: "attendant",
       mode: "suggest", // atendente começa SEMPRE em sugestão
-      systemPrompt: persona.systemPrompt,
-      knowledge,
+      // Texto (persona + FAQ) nasce em `agentProfileTexts`, não no doc.
+      textsMigratedAt: now,
       language: "pt-BR",
       handoffKeywords: persona.handoffKeywords,
       // P4: regra de avanço default coerente com a persona (editável em
@@ -635,6 +658,12 @@ async function seedAttendant(
     createdAt: now,
     updatedAt: now,
   });
+  await insertAgentTextsForNewMember(
+    ctx,
+    { _id: attendantId, organizationId: org._id },
+    { systemPrompt: persona.systemPrompt, knowledge },
+    now
+  );
 
   await ctx.db.insert("auditLogs", {
     organizationId: org._id,
@@ -948,12 +977,24 @@ export const updateAgentProfile = mutation({
       }
     }
 
-    const { schedule, pipelineConfig: _pc, followUps: _fu, botGuard: _bg, ...rest } = args.patch;
+    const {
+      schedule,
+      pipelineConfig: _pc,
+      followUps: _fu,
+      botGuard: _bg,
+      systemPrompt: patchSystemPrompt,
+      knowledge: patchKnowledge,
+      ...rest
+    } = args.patch;
     const clean = Object.fromEntries(
       Object.entries(rest).filter(([, value]) => value !== undefined)
     );
     const now = Date.now();
-    const next = {
+    const writesTexts = patchSystemPrompt !== undefined || patchKnowledge !== undefined;
+    // Texto do audit: só o campo que o patch trouxe E mudou (antes o audit
+    // copiava o perfil INTEIRO com os 35 KB nos dois lados a cada salvar).
+    const textsBefore = writesTexts ? await readAgentTexts(ctx, agent) : null;
+    const next: AgentProfile = {
       ...agent.agentProfile,
       ...clean,
       ...(schedule !== undefined ? { schedule: schedule ?? undefined } : {}),
@@ -964,7 +1005,34 @@ export const updateAgentProfile = mutation({
       ...(botGuard !== undefined ? { botGuard: botGuard ?? undefined } : {}),
       ...(autopilotEarly ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: member._id } } : {}),
     };
-    await ctx.db.patch(agent._id, { agentProfile: next, updatedAt: now });
+    // Texto vai para `agentProfileTexts` (e migra o membro legado na mesma
+    // transação); metadado só regrava o doc, que num membro migrado já não
+    // tem os textos — o spread de `agent.agentProfile` não os reintroduz.
+    const saved = writesTexts
+      ? await writeAgentTexts(
+          ctx,
+          agent,
+          { systemPrompt: patchSystemPrompt, knowledge: patchKnowledge },
+          { profile: next, now }
+        )
+      : next;
+    if (!writesTexts) await ctx.db.patch(agent._id, { agentProfile: saved, updatedAt: now });
+    const textChanges: { before: Record<string, unknown>; after: Record<string, unknown> } = {
+      before: {},
+      after: {},
+    };
+    if (textsBefore) {
+      for (const [field, value] of [
+        ["systemPrompt", patchSystemPrompt],
+        ["knowledge", patchKnowledge],
+      ] as const) {
+        const previous = textsBefore[field] ?? "";
+        if (value === undefined || value === previous) continue;
+        textChanges.before[field] = await auditTextSnapshot(previous);
+        textChanges.after[field] = await auditTextSnapshot(value);
+      }
+    }
+    const { systemPrompt: _bsp, knowledge: _bkn, ...beforeMeta } = agent.agentProfile;
 
     await ctx.db.insert("auditLogs", {
       organizationId: agent.organizationId,
@@ -974,8 +1042,8 @@ export const updateAgentProfile = mutation({
       actorId: member._id,
       actorType: "human",
       changes: {
-        before: { agentProfile: agent.agentProfile as unknown as Record<string, unknown> },
-        after: { agentProfile: next as unknown as Record<string, unknown> },
+        before: { agentProfile: beforeMeta as unknown as Record<string, unknown>, ...textChanges.before },
+        after: { agentProfile: saved as unknown as Record<string, unknown>, ...textChanges.after },
       },
       metadata: { name: agent.name, agentConfig: true, ...(autopilotEarly ? { autopilotEarly: true } : {}) },
       description: autopilotEarly

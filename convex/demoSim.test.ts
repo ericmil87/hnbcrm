@@ -9,6 +9,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { readAgentTexts } from "./lib/agentProfileTexts";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const NOW = new Date("2026-09-28T15:00:00Z").getTime();
@@ -124,7 +125,9 @@ test("setup cria a org demo e é idempotente", async () => {
       (await ctx.db.query(table).collect()).filter((r: any) => r.organizationId === orgId).length;
     const ai = (await ctx.db.query("teamMembers").collect()).find((m) => m.type === "ai");
     const fin = (await ctx.db.query("departments").collect()).find((d) => d.name === "Financeiro");
+    const texts = ai ? await readAgentTexts(ctx, ai) : null;
     return {
+      texts,
       settings: org!.settings,
       members: await count("teamMembers"),
       units: await count("units"),
@@ -150,7 +153,10 @@ test("setup cria a org demo e é idempotente", async () => {
   expect(snapshot.labels).toBe(1);
   expect(snapshot.ai?.agentProfile?.kind).toBe("attendant");
   expect(snapshot.ai?.agentProfile?.mode).toBe("suggest");
-  expect(snapshot.ai?.agentProfile?.systemPrompt).toBe("Você é a concierge.");
+  // Persona do cenário na tabela própria (o doc do membro já nasce migrado).
+  expect(snapshot.texts?.systemPrompt).toBe("Você é a concierge.");
+  expect(snapshot.ai?.agentProfile?.textsMigratedAt).toBeDefined();
+  expect(snapshot.ai?.agentProfile).not.toHaveProperty("systemPrompt");
   expect(snapshot.fin?.memberIds).toHaveLength(1);
   expect(snapshot.fin?.unitIds).toHaveLength(1);
   expect(first.map.ownerMemberId).not.toBeNull();
