@@ -36,6 +36,7 @@ import {
   shouldSendWelcome,
   WELCOME_SENT_TAG,
 } from "./lib/inboundLeadWelcome";
+import { channelProviderPatch } from "./lib/conversationListFields";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Board/estágio/responsável do lead novo
@@ -329,7 +330,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
     let conversation = (await ctx.db.get(conversationId))!;
     // Conversa pré-existente (ex.: nota do formulário) sem número carimbado.
     if (!conversation.channelConfigId) {
-      await ctx.db.patch(conversationId, { channelConfigId: config._id });
+      await ctx.db.patch(conversationId, { channelConfigId: config._id, ...channelProviderPatch(config) });
       conversation = (await ctx.db.get(conversationId))!;
     }
 

@@ -20,6 +20,7 @@ import {
   findOrCreateContactByPhone,
   findContactsByPhoneCandidates,
 } from "./inboundRouting";
+import { channelConfigPatchFor } from "./conversationListFields";
 
 export interface GroupMemberLeadResult {
   contactId: Id<"contacts">;
@@ -84,7 +85,7 @@ export async function createLeadFromGroupMemberCore(
       organizationId: group.organizationId,
       leadId,
       channel: "whatsapp",
-      channelConfigId: group.channelConfigId,
+      ...(await channelConfigPatchFor(ctx, {}, group.channelConfigId)),
       status: "active",
       messageCount: 0,
       createdAt: now,
