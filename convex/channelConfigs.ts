@@ -202,6 +202,76 @@ export const getChannelConfigs = query({
   },
 });
 
+/** "WhatsApp ····1234" quando o canal não tem nome próprio. */
+function whatsappFallbackLabel(phone: string | undefined): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? `WhatsApp ····${digits.slice(-4)}` : "WhatsApp";
+}
+
+/**
+ * Contas de canal da org para o inbox (D11): rótulo, @ e estado, juntados no
+ * front por `channelConfigId`. O rótulo NUNCA é copiado nas conversas. Lê N
+ * configs da org (tipicamente 1 a 5) + a conexão Meta de cada um. Nunca token,
+ * nunca `phoneNumberId`; telefone só com os 4 últimos dígitos.
+ */
+export const getInboxChannelAccounts = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(
+    v.object({
+      _id: v.id("channelConfigs"),
+      channel: channelValidator,
+      transport: v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger")),
+      label: v.string(),
+      handle: v.union(v.string(), v.null()),
+      avatarUrl: v.union(v.string(), v.null()),
+      status: statusValidator,
+      authState: v.union(v.literal("ok"), v.literal("reauth_required"), v.literal("revoked"), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const configs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(100);
+    const out = [];
+    for (const config of configs) {
+      const transport = configTransport(config);
+      let label: string;
+      let handle: string | null = null;
+      let authState: "ok" | "reauth_required" | "revoked" | null = null;
+      if (config.channel === "whatsapp") {
+        const phone = config.displayPhoneNumber ?? config.bridgePhone;
+        label = config.displayName?.trim() || whatsappFallbackLabel(phone);
+        const digits = (phone ?? "").replace(/\D/g, "");
+        handle = digits.length >= 4 ? `····${digits.slice(-4)}` : null;
+      } else {
+        if (config.channel === "instagram") {
+          label = config.metaAccountHandle || config.metaAccountLabel || config.displayName || "Instagram";
+        } else {
+          label = config.metaAccountLabel || config.displayName || "Messenger";
+        }
+        handle = config.metaAccountHandle ?? null;
+        if (config.metaConnectionId) {
+          const conn = await ctx.db.get(config.metaConnectionId);
+          if (conn && conn.organizationId === config.organizationId) authState = conn.authState;
+        }
+      }
+      out.push({
+        _id: config._id,
+        channel: config.channel,
+        transport,
+        label,
+        handle,
+        avatarUrl: null, // F4 (cópia da foto do negócio em storage)
+        status: config.status,
+        authState,
+      });
+    }
+    return out;
+  },
+});
+
 // Saúde do canal WhatsApp: métricas de entrega sobre as mensagens recentes da
 // org (janela `since`, teto de 1000 — `sampled` avisa quando o teto cortou).
 export const getChannelStats = query({

@@ -1261,6 +1261,9 @@ const applicationTables = {
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
     lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
+    // Instagram/Messenger: 1ª inbound veio de anúncio (referral.source "ADS") →
+    // janela de 7 dias a partir daqui (Meta Messaging F1). Ausente = 24 h.
+    windowOpenedByAdAt: v.optional(v.number()),
     // Presença, lock do turno de IA e cursor de pacing por conversa vivem em
     // `conversationRuntime` (fase 4b) — fora deste doc de propósito.
     archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)

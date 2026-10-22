@@ -43,8 +43,12 @@ const BRIDGE_REACTIVE_JITTER_MS = 6000;
 const BRIDGE_COLD_GAP_MS = 8000;
 const BRIDGE_COLD_JITTER_MS = 7000;
 const REACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
-// Instagram/Messenger (Meta Messaging): valor provisório, F1 ajusta.
-const META_MESSAGING_CHANNEL_GAP_MS = 1000;
+// Instagram/Messenger (Meta Messaging F1): a Send API aceita ~100 chamadas/s
+// por conta no Instagram e ~300/s por Página no Messenger. Os intervalos abaixo
+// ficam MUITO abaixo disso de propósito (anti-burst, como o 1 s do WhatsApp
+// oficial): o atendimento é reativo e a rajada só aparece em envio em massa.
+const INSTAGRAM_CHANNEL_GAP_MS = 1000;
+const MESSENGER_CHANNEL_GAP_MS = 500;
 
 // Digitação simulada (bridge, IA/agendadas): humano real seria ~267ms/char
 // (modelo WPM 45±15 do baileys-antiban); 55ms/char + teto de 8s é o compromisso
@@ -72,9 +76,8 @@ export function computeTypingDelayMs(message: {
 }
 
 function channelGapMs(transport: ChannelTransport, reactive: boolean): number {
-  if (transport === "instagram" || transport === "messenger") {
-    return META_MESSAGING_CHANNEL_GAP_MS;
-  }
+  if (transport === "instagram") return INSTAGRAM_CHANNEL_GAP_MS;
+  if (transport === "messenger") return MESSENGER_CHANNEL_GAP_MS;
   if (transport === "meta") {
     return META_CHANNEL_GAP_MS + Math.random() * META_CHANNEL_JITTER_MS;
   }

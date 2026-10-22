@@ -15,7 +15,8 @@ import {
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
-import { configTransport } from "./lib/channelTransport";
+import { ChannelTransport, configTransport } from "./lib/channelTransport";
+import { metaWindowClosesAt } from "./lib/metaSend";
 import {
   appendReadBy,
   GROUP_ACTIVITY_GRANULARITY_MS,
@@ -75,23 +76,38 @@ function serviceWindowExpiresAt(conversation: { lastInboundAt?: number }): numbe
   return conversation.lastInboundAt ? conversation.lastInboundAt + SERVICE_WINDOW_MS : null;
 }
 
+// Tipo de janela para a cópia da UI: `template` = WhatsApp Cloud API (fora da
+// janela só com template aprovado); `wait` = Instagram/Messenger (fora da
+// janela só resta esperar o cliente escrever); `null` = sem janela (bridge).
+export type ServiceWindowKind = "template" | "wait" | null;
+
 // The 24h window + templates are exclusive to the official Cloud API. The bridge
 // (unofficial wuzapi) has no such window, so bridge conversations are ALWAYS free
 // to message: `serviceWindowApplies` is false and no expiry is exposed. A meta
 // config, or a conversation with no channelConfigId, keeps the original behavior.
+// Instagram/Messenger (F1): janela de 24 h, ou 7 dias quando a conversa abriu
+// por anúncio (`windowOpenedByAdAt`), decidida pelo CANAL da conversa.
 // (The U5 UI reads `serviceWindowApplies` to hide the window/template controls.)
 function serviceWindowFields(
-  conversation: { lastInboundAt?: number },
-  config: { channel?: string; provider?: "meta" | "bridge" | null } | null | undefined
-): { serviceWindowExpiresAt: number | null; serviceWindowApplies: boolean } {
-  // Transporte genérico. O espelho `{ provider }` da lista não tem `channel`
-  // (só WhatsApp grava `channelProvider` hoje) → tratado como linha de WhatsApp.
-  const applies =
-    !config ||
-    configTransport({ channel: config.channel ?? "whatsapp", provider: config.provider }) !== "bridge";
+  conversation: { channel: string; lastInboundAt?: number; windowOpenedByAdAt?: number },
+  transport: ChannelTransport | null
+): {
+  serviceWindowExpiresAt: number | null;
+  serviceWindowApplies: boolean;
+  serviceWindowKind: ServiceWindowKind;
+} {
+  if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+    return {
+      serviceWindowExpiresAt: metaWindowClosesAt(conversation),
+      serviceWindowApplies: true,
+      serviceWindowKind: "wait",
+    };
+  }
+  const applies = transport !== "bridge";
   return {
     serviceWindowExpiresAt: applies ? serviceWindowExpiresAt(conversation) : null,
     serviceWindowApplies: applies,
+    serviceWindowKind: applies ? "template" : null,
   };
 }
 
@@ -146,6 +162,7 @@ type InboxRowExtras = LastMessageFields & {
   groupChat: { subject: string; participantsCount: number; jid: string } | null;
   serviceWindowExpiresAt: number | null;
   serviceWindowApplies: boolean;
+  serviceWindowKind: ServiceWindowKind;
 };
 
 /**
@@ -185,16 +202,21 @@ async function inboxRowExtras(
       denorm && conversation.groupSubject !== undefined
         ? groupChatFromConversation(conversation)
         : groupChatSummary(conversation, groupMap).groupChat;
+    // Espelho `channelProvider` (D11): o transporte sem ler o channelConfig.
     const config =
+      conversation.channelConfigId && !(denorm && conversation.channelProvider !== undefined)
+        ? configMap.get(conversation.channelConfigId) ?? null
+        : null;
+    const transport: ChannelTransport | null =
       denorm && conversation.channelProvider !== undefined
-        ? { provider: conversation.channelProvider }
-        : conversation.channelConfigId
-          ? configMap.get(conversation.channelConfigId) ?? null
+        ? conversation.channelProvider
+        : config
+          ? configTransport(config)
           : null;
     out.set(conversation._id, {
       ...lastMessage,
       groupChat,
-      ...serviceWindowFields(conversation, config),
+      ...serviceWindowFields(conversation, transport),
     });
   }
   return out;
@@ -339,6 +361,9 @@ export const getConversations = query({
     departmentId: v.optional(v.id("departments")),
     assignedToMe: v.optional(v.boolean()),
     noDepartment: v.optional(v.boolean()),
+    // Filtro por CONTA (D11): índice próprio [org, channelConfigId, archivedAt,
+    // lastMessageAt], sem pós-filtro. Combinável com `channel` (pós-filtro).
+    channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -356,11 +381,22 @@ export const getConversations = query({
     // Piso de 200 linhas nesses casos; sem pós-filtro, `limit` exato.
     const hasPostFilter = !args.leadId && (
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
+      (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
       !!args.assignedToMe || !!args.assignedTo || !!args.channel
     );
     const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
     let conversations;
-    if (!args.leadId && (args.departmentId || args.noDepartment)) {
+    if (!args.leadId && args.channelConfigId) {
+      // Conta: o índice já devolve só as conversas daquele config e da org.
+      // Setor/unidade/responsável ficam como pós-filtros abaixo.
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel_config_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channelConfigId", args.channelConfigId!);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
+        .order("desc")
+        .take(readLimit);
+    } else if (!args.leadId && (args.departmentId || args.noDepartment)) {
       const departmentId = args.departmentId ?? undefined;
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_department_and_archived_and_last_message", (q) => {
@@ -1288,6 +1324,9 @@ export const internalGetConversations = internalQuery({
     kind: v.optional(
       v.union(v.literal("direct"), v.literal("group"), v.literal("all"))
     ),
+    // Filtro por conta (D11). REST é F5: aqui é pós-filtro para manter o cursor
+    // por `_creationTime` desta rota (o índice da conta ordena por lastMessageAt).
+    channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1318,6 +1357,9 @@ export const internalGetConversations = internalQuery({
     const jsFilters: ((c: any) => boolean)[] = [];
     if (!args.leadId && args.channel) {
       jsFilters.push(c => c.channel === args.channel);
+    }
+    if (args.channelConfigId) {
+      jsFilters.push((c) => c.channelConfigId === args.channelConfigId);
     }
     if (kind !== "all") {
       // `kind` ausente no doc = conversa antiga, que é sempre 1 a 1.
@@ -1701,9 +1743,18 @@ export const internalReceiveMessage = internalMutation({
       );
     }
 
+    // Instagram/Messenger: primeira inbound vinda de anúncio abre a janela de
+    // 7 dias (Click-to-Messenger / Click-to-Direct). WhatsApp não passa aqui.
+    const openedByAd =
+      (args.channel === "instagram" || args.channel === "messenger") &&
+      conversation.firstInboundAt === undefined &&
+      conversation.windowOpenedByAdAt === undefined &&
+      (args.metadata?.referral as { source?: unknown } | undefined)?.source === "ADS";
+
     // Update conversation (reopen if closed — an inbound message revives it);
     // stamp which connected number it belongs to so egress uses the right credentials
     await ctx.db.patch(conversationId, {
+      ...(openedByAd ? { windowOpenedByAdAt: now } : {}),
       status: "active",
       lastMessageAt: now,
       lastInboundAt: now, // (re)opens the 24h customer-service window
@@ -1809,6 +1860,9 @@ export const internalReceiveDeviceMessage = internalMutation({
   args: {
     organizationId: v.id("organizations"),
     leadId: v.id("leads"),
+    // Meta Messaging F1 (D6): eco do Instagram/Messenger enviado fora do CRM
+    // (Business Suite, app do celular). Ausente = WhatsApp (bridge), como antes.
+    channel: v.optional(v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"))),
     channelConfigId: v.optional(v.id("channelConfigs")),
     content: v.string(),
     contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
@@ -1831,10 +1885,11 @@ export const internalReceiveDeviceMessage = internalMutation({
     if (!lead) throw new Error("Lead not found");
     if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
 
+    const channel = args.channel ?? "whatsapp";
     const conversationId = await getOrCreateConversation(ctx, {
       organizationId: args.organizationId,
       leadId: args.leadId,
-      channel: "whatsapp",
+      channel,
     });
     const conversation = (await ctx.db.get(conversationId))!;
 
@@ -1890,7 +1945,10 @@ export const internalReceiveDeviceMessage = internalMutation({
       leadId: args.leadId,
       type: "message_sent",
       actorType: "human",
-      content: "Mensagem enviada pelo aparelho (fora do CRM)",
+      content:
+        channel === "whatsapp"
+          ? "Mensagem enviada pelo aparelho (fora do CRM)"
+          : "Mensagem enviada fora do CRM",
       metadata: { conversationId, externalId: args.externalId, via: "device" },
       createdAt: sentAt,
     });
@@ -1902,7 +1960,7 @@ export const internalReceiveDeviceMessage = internalMutation({
         messageId,
         conversationId,
         leadId: args.leadId,
-        channel: "whatsapp",
+        channel,
         senderType: "human",
         via: "device",
         externalId: args.externalId,
@@ -2588,7 +2646,7 @@ export const internalUpdateDeliveryStatus = internalMutation({
       .first();
 
     if (!message) {
-      console.warn(`Delivery status for unknown externalId: ${args.externalId}`);
+      console.warn(`Delivery status for unknown externalId: ····${args.externalId.slice(-4)}`);
       return null;
     }
 
@@ -2642,6 +2700,39 @@ export const internalUpdateDeliveryStatus = internalMutation({
     }
 
     return message._id;
+  },
+});
+
+/**
+ * Recibo por watermark (Meta Messaging F1, §4): toda outbound da conversa com
+ * `createdAt <= watermark` sobe para `status` (nunca rebaixa, nunca toca
+ * `failed`). Messenger manda watermark em delivery/read; o read do Instagram
+ * vem por mid e chega aqui com o `createdAt` daquela mensagem. Limitado às
+ * 200 mais recentes até a marca.
+ */
+export const internalMarkDeliveredUpToWatermark = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    watermark: v.number(),
+    status: v.union(v.literal("delivered"), v.literal("read")),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) =>
+        q.eq("conversationId", args.conversationId).lte("createdAt", args.watermark)
+      )
+      .order("desc")
+      .take(200);
+    let updated = 0;
+    for (const m of rows) {
+      if (m.direction !== "outbound" || !m.deliveryStatus || m.deliveryStatus === "failed") continue;
+      if (DELIVERY_RANK[args.status] <= DELIVERY_RANK[m.deliveryStatus]) continue;
+      await ctx.db.patch(m._id, { deliveryStatus: args.status });
+      updated++;
+    }
+    return updated;
   },
 });
 

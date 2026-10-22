@@ -13,8 +13,8 @@
  */
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
-import { internal } from "../_generated/api";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
+import { scheduleMetaMessagingDispatch } from "./metaDispatch";
 
 export async function scheduleOutboundDispatch(
   ctx: MutationCtx,
@@ -26,12 +26,8 @@ export async function scheduleOutboundDispatch(
     return;
   }
   if (conversation.channel === "instagram" || conversation.channel === "messenger") {
-    // Fail-closed até a F1: sem dispatcher, a mensagem NÃO fica "enviando" para sempre,
-    // vira `failed` com texto claro, sem rede. A F1 troca por scheduleMetaMessagingDispatch.
-    await ctx.scheduler.runAfter(0, internal.metaMessaging.internalMarkDispatchUnsupported, {
-      messageId,
-      detail: "Envio por Instagram/Messenger ainda não está disponível nesta versão.",
-    });
+    // Janela server-side + pacing por canal + dispatcher único da Meta (F1).
+    await scheduleMetaMessagingDispatch(ctx, conversation, messageId);
     return;
   }
   // Demais canais (telegram, email, webchat, internal): no-op, nada é despachado.

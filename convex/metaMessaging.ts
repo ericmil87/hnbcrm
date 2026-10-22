@@ -2,9 +2,10 @@
  * Meta Messaging (Instagram + Facebook Messenger, API oficial) — handlers finos.
  *
  * F0.3: webhook (GET handshake + POST), ingest de TEXTO/placeholder, OAuth do
- * Facebook Login for Business, conexão/desconexão. Lógica pura em
- * `lib/metaMessagingParse.ts`, `lib/metaOAuth.ts`, `lib/metaGraph.ts`,
- * `lib/metaIdentity.ts`. Envio (dispatcher) é a F1.
+ * Facebook Login for Business, conexão/desconexão. F1: envio
+ * (`internalDispatchMessage`, agendado só pela porta via `lib/metaDispatch.ts`),
+ * eco (D6), entregue/lida. Lógica pura em `lib/metaMessagingParse.ts`,
+ * `lib/metaOAuth.ts`, `lib/metaGraph.ts`, `lib/metaIdentity.ts`, `lib/metaSend.ts`.
  *
  * Invariantes: org derivada SEMPRE do config (índice por Página/conta IG);
  * assinatura verificada antes do parse; desconhecido/desativado = 200 e
@@ -20,25 +21,39 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  ActionCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission, requireAccountWithEmail, isMembershipRevoked } from "./lib/auth";
 import { hasPermission, resolvePermissions, Role } from "./lib/permissions";
-import { assertModule, modulesOf } from "./lib/orgModules";
+import { assertModule, isDemoOrg, modulesOf } from "./lib/orgModules";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { appUrl } from "./lib/appUrl";
 import { ensureLeadForContact } from "./lib/inboundRouting";
-import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
-import { applyInboundWelcomeDeliveryFailure } from "./lib/inboundLeadWelcomeHooks";
+import { getLeadRef } from "./lib/leadRef";
+import { resolveConversationChannelConfig } from "./lib/channelResolve";
+import { claimChannelSlot } from "./lib/whatsappDispatch";
+import { findMetaConversationForUser } from "./lib/metaDispatch";
+import {
+  OUTSIDE_WINDOW_COPY,
+  buildTextPayload,
+  classifyMetaError,
+  last4,
+  metaConversationWindow,
+  parseHnbMetadata,
+  splitMetaText,
+  viaAppFor,
+} from "./lib/metaSend";
 import {
   MetaAttachment,
   MetaEvent,
+  MetaSurface,
   isTestPayload,
   parseMetaMessagingWebhook,
   verifyMetaSignature,
 } from "./lib/metaMessagingParse";
-import { graphBase, profileEndpoint } from "./lib/metaGraph";
+import { graphBase, profileEndpoint, sendEndpoint } from "./lib/metaGraph";
 import {
   MetaOAuthErrorCode,
   UsablePage,
@@ -435,8 +450,16 @@ export const internalIngestEvent = internalAction({
     });
     if (!config || config.status !== "active" || config.channel !== event.surface) return null;
 
+    if (event.kind === "echo") {
+      await handleEcho(ctx, config, event, false);
+      return null;
+    }
+    if (event.kind === "delivery" || event.kind === "read") {
+      await handleReceipt(ctx, config, event);
+      return null;
+    }
     if (event.kind !== "message" && event.kind !== "unsupported") {
-      // F1 (eco, entregue/lida) e F2 (reação, edição, apagada) tratam; aqui só registro curto.
+      // F2 (reação, edição, apagada, postback) trata; aqui só registro curto.
       console.log(`meta-messaging: ${event.kind} (${event.surface}) ignorado nesta fase`);
       return null;
     }
@@ -511,21 +534,302 @@ export const internalIngestEvent = internalAction({
   },
 });
 
+// ── Envio (F1, D4) ──
+
+const OUTBOUND_MEDIA_COPY = "Mídia por Instagram/Messenger chega na próxima versão.";
+const CHANNEL_DISABLED_COPY = "Canal desativado. Reative em Configurações > Canais.";
+const RECONNECT_COPY = "Este canal precisa ser reconectado. Reconecte em Configurações > Canais.";
+const NO_RECIPIENT_COPY = "Não encontramos o destinatário desta conversa neste canal.";
+const MAX_META_DISPATCH_RETRIES = 5; // backoff 4^n: 1 s, 4 s, 16 s, 64 s, 256 s
+const ECHO_RACE_WINDOW_MS = 60 * 1000;
+const ECHO_RECONCILE_DELAY_MS = 5000;
+
 /**
- * Fail-closed do envio Instagram/Messenger até a F1: a mensagem vira `failed`
- * com texto claro, sem rede. (`whatsapp.internalMarkDispatchFailed` grava
- * "no WhatsApp" na atividade e mexe em campanhas, então não serve aqui.)
+ * Tudo que o dispatcher precisa numa leitura. O destino é a identidade do
+ * contato PARA O CONFIG DA CONVERSA (o mesmo contato pode ter PSID e IGSID em
+ * configs diferentes). Ciphertext do token incluso: só para a action.
  */
-export const internalMarkDispatchUnsupported = internalMutation({
-  args: { messageId: v.id("messages"), detail: v.string() },
+export const internalGetMetaDispatchContext = internalQuery({
+  args: { messageId: v.id("messages") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message) return null;
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation || conversation.organizationId !== message.organizationId) return null;
+    if (conversation.channel !== "instagram" && conversation.channel !== "messenger") return null;
+
+    const config = await resolveConversationChannelConfig(ctx, conversation);
+    const connection = config?.metaConnectionId ? await ctx.db.get(config.metaConnectionId) : null;
+
+    let recipientId: string | null = null;
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
+    const contactId = lead?.contactId;
+    if (config && contactId) {
+      const identities = await ctx.db
+        .query("contactChannelIdentities")
+        .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+        .take(50);
+      recipientId =
+        identities.find(
+          (i) => i.channelConfigId === config._id && i.organizationId === conversation.organizationId
+        )?.externalId ?? null;
+    }
+
+    const quoted = message.metadata?.quoted as { externalId?: unknown } | undefined;
+    const replyToMid = typeof quoted?.externalId === "string" ? quoted.externalId : null;
+
+    return {
+      message,
+      conversation,
+      surface: conversation.channel,
+      config,
+      connection: connection && connection.organizationId === conversation.organizationId ? connection : null,
+      recipientId,
+      replyToMid,
+      demoMode: await isDemoOrg(ctx, message.organizationId),
+      openedByAd: conversation.windowOpenedByAdAt !== undefined,
+      hasAttachments: (message.attachments?.length ?? 0) > 0,
+    };
+  },
+});
+
+export const internalDispatchMessage = internalAction({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    try {
+      await dispatchMetaMessage(ctx, args.messageId);
+    } catch (e) {
+      // Rede de segurança (mesmo motivo do WhatsApp): exceção fora dos caminhos
+      // tratados não pode deixar a mensagem sem status para sempre.
+      console.error(`meta-messaging dispatch lançou: ${e instanceof Error ? e.name : "erro"}`);
+      await ctx.runMutation(internal.metaMessaging.internalMarkDispatchFailed, {
+        messageId: args.messageId,
+        detail: "Falha inesperada no envio. Tente de novo.",
+        onlyIfUndispatched: true,
+      });
+    }
+    return null;
+  },
+});
+
+/** Texto sem conteúdo real: vazio ou só o placeholder de mídia ("[imagem]"). */
+function isPlaceholderText(text: string): boolean {
+  return text.length === 0 || /^\[[^\]\n]{1,40}\]$/.test(text);
+}
+
+async function postSend(
+  url: string,
+  token: string,
+  payload: unknown
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10000),
+    });
+    const body: unknown = await res.json().catch(() => ({}));
+    return { ok: res.ok, status: res.status, body };
+  } catch {
+    return { ok: false, status: 0, body: {} }; // rede/timeout → transient
+  }
+}
+
+function midOf(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const mid = (body as { message_id?: unknown }).message_id;
+  return typeof mid === "string" && mid ? mid : null;
+}
+
+async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): Promise<void> {
+  const context = await ctx.runQuery(internal.metaMessaging.internalGetMetaDispatchContext, { messageId });
+  if (!context) return;
+  const message = context.message as Doc<"messages">;
+  const conversation = context.conversation as Doc<"conversations">;
+  const surface = context.surface as MetaSurface;
+  const config = context.config as Doc<"channelConfigs"> | null;
+  const connection = context.connection as Doc<"metaConnections"> | null;
+  const recipientId = context.recipientId as string | null;
+  const replyToMid = context.replyToMid as string | null;
+
+  if (message.externalId || message.deliveryStatus) return; // já despachada
+
+  const fail = async (detail: string, errorCode?: number) => {
+    await ctx.runMutation(internal.metaMessaging.internalMarkDispatchFailed, {
+      messageId,
+      detail,
+      ...(errorCode !== undefined ? { errorCode } : {}),
+    });
+  };
+
+  // Demonstração: nunca sai para a rede (mesmo gancho agnóstico do WhatsApp).
+  if (context.demoMode === true) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDemoDelivered, { messageId });
+    return;
+  }
+  if (!config || config.status !== "active") return await fail(CHANNEL_DISABLED_COPY);
+  if (!connection || connection.authState !== "ok" || !connection.tokenEncrypted) {
+    return await fail(RECONNECT_COPY);
+  }
+  if (!metaConversationWindow(surface, conversation, Date.now()).open) {
+    return await fail(OUTSIDE_WINDOW_COPY);
+  }
+  if (!recipientId) return await fail(NO_RECIPIENT_COPY);
+
+  const text = (message.content ?? "").trim();
+  if (context.hasAttachments && isPlaceholderText(text)) return await fail(OUTBOUND_MEDIA_COPY);
+  const parts = splitMetaText(text, surface);
+  if (parts.length === 0) return await fail("Mensagem vazia.");
+
+  const started: boolean = await ctx.runMutation(internal.metaMessaging.internalStampMetaDispatchStarted, {
+    messageId,
+  });
+  if (!started) return;
+
+  const token = await decryptSecret(connection.tokenEncrypted);
+  const url = sendEndpoint({
+    authMethod: connection.authMethod,
+    surface,
+    pageId: connection.pageId,
+    igAccountId: connection.igAccountId,
+  });
+  // Texto com anexo: sai só o texto nesta fase (mídia de saída é F2).
+  const note = context.hasAttachments ? `${OUTBOUND_MEDIA_COPY} Só o texto foi enviado.` : undefined;
+
+  const mids: string[] = [];
+  for (const part of parts) {
+    const payload = buildTextPayload(surface, recipientId, part, {
+      messageId,
+      ...(replyToMid && mids.length === 0 ? { replyToMid } : {}),
+    });
+    const res = await postSend(url, token, payload);
+    const mid = res.ok ? midOf(res.body) : null;
+    if (mid) {
+      mids.push(mid);
+      continue;
+    }
+
+    const cls = classifyMetaError(res.ok ? 500 : res.status, res.body);
+    if (cls.kind === "token_invalid") {
+      await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+        connectionId: connection._id,
+        detail: `Erro ${cls.code ?? 190} no envio`,
+      });
+    }
+    if (mids.length > 0) {
+      // Parte do texto já saiu: reenviar duplicaria. Registra o que saiu + o motivo.
+      await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, {
+        messageId,
+        mids,
+        note: `Só ${mids.length} de ${parts.length} partes foram enviadas. ${cls.userMessage}`,
+      });
+      return;
+    }
+    if (cls.kind === "rate_limited" || cls.kind === "transient") {
+      const rescheduled: { retryInMs: number } | null = await ctx.runMutation(
+        internal.metaMessaging.internalRescheduleMetaDispatch,
+        { messageId, ...(cls.code !== undefined ? { errorCode: cls.code } : {}) }
+      );
+      if (rescheduled) return;
+      return await fail(`${cls.userMessage} (tentativas esgotadas)`, cls.code);
+    }
+    return await fail(cls.userMessage, cls.code);
+  }
+
+  await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, {
+    messageId,
+    mids,
+    ...(note ? { note } : {}),
+  });
+}
+
+/** Carimba o início do envio (camada b do eco do IG). false = já despachada. */
+export const internalStampMetaDispatchStarted = internalMutation({
+  args: { messageId: v.id("messages") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.externalId || message.deliveryStatus) return false;
+    await ctx.db.patch(args.messageId, {
+      metadata: { ...(message.metadata ?? {}), metaDispatchStartedAt: Date.now() },
+    });
+    return true;
+  },
+});
+
+/**
+ * Envio aceito pela Meta: `externalId` = primeiro mid, `metaMids` quando o texto
+ * saiu em partes, e `metaSentMids` (só Instagram: o eco pode vir sem `app_id`).
+ * Nunca rebaixa um recibo que já chegou (delivery antes da resposta do POST).
+ */
+export const internalMarkMetaDispatched = internalMutation({
+  args: { messageId: v.id("messages"), mids: v.array(v.string()), note: v.optional(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || args.mids.length === 0) return null;
+    const conversation = await ctx.db.get(message.conversationId);
+    const metadata: Record<string, unknown> = { ...(message.metadata ?? {}) };
+    if (args.mids.length > 1) metadata.metaMids = args.mids;
+    if (args.note) metadata.dispatchNote = args.note;
+    const keepStatus = message.deliveryStatus === "delivered" || message.deliveryStatus === "read";
+    await ctx.db.patch(args.messageId, {
+      externalId: message.externalId ?? args.mids[0],
+      deliveryStatus: keepStatus ? message.deliveryStatus : "sent",
+      metadata,
+    });
+    if (conversation?.channel === "instagram") {
+      const now = Date.now();
+      for (const mid of args.mids) {
+        const exists = await ctx.db
+          .query("metaSentMids")
+          .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", message.organizationId).eq("mid", mid))
+          .first();
+        if (!exists) {
+          await ctx.db.insert("metaSentMids", {
+            organizationId: message.organizationId,
+            mid,
+            messageId: args.messageId,
+            createdAt: now,
+          });
+        }
+      }
+    }
+    return null;
+  },
+});
+
+/**
+ * Falha de envio Meta, visível no inbox (`deliveryStatus:"failed"` +
+ * `metadata.deliveryError`, o mesmo campo do WhatsApp que o `MessageBubble`
+ * mostra). Sem os ganchos de campanha/follow-up/boas-vindas do WhatsApp
+ * (nenhum deles roda em Instagram/Messenger nesta fase). Substitui o
+ * `internalMarkDispatchUnsupported` da F0.
+ */
+export const internalMarkDispatchFailed = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    detail: v.string(),
+    errorCode: v.optional(v.number()),
+    onlyIfUndispatched: v.optional(v.boolean()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message) return null;
-    if (message.externalId || message.deliveryStatus) return null; // nunca rebaixa o que já saiu
+    // Nunca rebaixa o que já saiu (o eco pode ter ligado o mid antes).
+    if (message.externalId) return null;
+    if (args.onlyIfUndispatched && message.deliveryStatus) return null;
     await ctx.db.patch(args.messageId, {
       deliveryStatus: "failed",
-      metadata: { ...(message.metadata ?? {}), deliveryError: args.detail },
+      metadata: {
+        ...(message.metadata ?? {}),
+        deliveryError: args.detail,
+        ...(args.errorCode !== undefined ? { deliveryErrorCode: args.errorCode } : {}),
+      },
     });
     if (message.leadId) {
       await ctx.db.insert("activities", {
@@ -538,11 +842,326 @@ export const internalMarkDispatchUnsupported = internalMutation({
         createdAt: Date.now(),
       });
     }
-    await applyFollowUpDeliveryUpdate(ctx, { messageId: args.messageId, ok: false, detail: args.detail });
-    await applyInboundWelcomeDeliveryFailure(ctx, { messageId: args.messageId, detail: args.detail });
     return null;
   },
 });
+
+/**
+ * Reagenda após 613/4 (limite) ou falha transitória: backoff 4^n, até
+ * `MAX_META_DISPATCH_RETRIES`, com novo slot no cursor do canal (no limite da
+ * conta o floor empurra a fila toda). null = teto (o chamador marca failed).
+ */
+export const internalRescheduleMetaDispatch = internalMutation({
+  args: { messageId: v.id("messages"), errorCode: v.optional(v.number()) },
+  returns: v.union(v.object({ retryInMs: v.number() }), v.null()),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.externalId || message.deliveryStatus) return { retryInMs: 0 };
+    const attempts = ((message.metadata?.dispatchAttempts as number | undefined) ?? 0) + 1;
+    if (attempts > MAX_META_DISPATCH_RETRIES) return null;
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation) return null;
+
+    const now = Date.now();
+    const backoffMs = Math.pow(4, attempts - 1) * 1000;
+    await ctx.db.patch(args.messageId, {
+      metadata: { ...(message.metadata ?? {}), dispatchAttempts: attempts },
+    });
+    const config = await resolveConversationChannelConfig(ctx, conversation);
+    let slot = now + backoffMs;
+    if (config) {
+      slot = await claimChannelSlot(ctx, {
+        config,
+        conversation,
+        earliestAt: now + backoffMs,
+        now,
+        ...(args.errorCode === 613 || args.errorCode === 4 ? { floorMs: now + backoffMs } : {}),
+      });
+    }
+    await ctx.scheduler.runAfter(slot - now, internal.metaMessaging.internalDispatchMessage, {
+      messageId: args.messageId,
+    });
+    return { retryInMs: slot - now };
+  },
+});
+
+/**
+ * Erro 190: a credencial morreu. Estado da CONEXÃO (derruba Messenger e IG da
+ * Página juntos); o `status` dos configs não muda. Notificação é F4.
+ */
+export const internalMarkConnectionReauthRequired = internalMutation({
+  args: { connectionId: v.id("metaConnections"), detail: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conn = await ctx.db.get(args.connectionId);
+    if (!conn || conn.authState !== "ok") return null;
+    const now = Date.now();
+    await ctx.db.patch(conn._id, { authState: "reauth_required", authDetail: args.detail, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: conn.organizationId,
+      entityType: "metaConnection",
+      entityId: conn._id,
+      action: "update",
+      actorType: "system",
+      changes: { before: { authState: "ok" }, after: { authState: "reauth_required" } },
+      metadata: { fields: ["authState", "authDetail"], detail: args.detail },
+      description: `A Página "${conn.pageName ?? ""}" (Instagram/Messenger) precisa ser reconectada`,
+      severity: "high",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+// ── Eco, entregue, lida (F1, D6, §4) ──
+
+/**
+ * Eco de mensagem NOSSA: já gravada por `externalId` ou `metaSentMids` → "ours";
+ * `metadata` "hnb:<id>" de uma outbound desta org → liga o mid (se ainda não
+ * tem `externalId`) e "ours". Senão "unknown".
+ */
+export const internalLinkEchoToMessage = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    mid: v.string(),
+    metadata: v.optional(v.string()),
+  },
+  returns: v.union(v.literal("ours"), v.literal("unknown")),
+  handler: async (ctx, args) => {
+    const byExternal = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.mid)
+      )
+      .first();
+    if (byExternal) return "ours";
+    const sent = await ctx.db
+      .query("metaSentMids")
+      .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", args.organizationId).eq("mid", args.mid))
+      .first();
+    if (sent) return "ours";
+    const rawId = parseHnbMetadata(args.metadata);
+    const id = rawId ? ctx.db.normalizeId("messages", rawId) : null;
+    if (!id) return "unknown";
+    const message = await ctx.db.get(id);
+    if (!message || message.organizationId !== args.organizationId || message.direction !== "outbound") {
+      return "unknown";
+    }
+    if (!message.externalId) {
+      // O eco chegou antes da resposta do POST: liga já (o reagendamento e a
+      // falha passam a ver a mensagem como enviada; nada de reenvio duplicado).
+      await ctx.db.patch(message._id, {
+        externalId: args.mid,
+        ...(message.deliveryStatus === undefined || message.deliveryStatus === "failed"
+          ? { deliveryStatus: "sent" as const }
+          : {}),
+      });
+    }
+    return "ours";
+  },
+});
+
+/** Camada (b): há envio NOSSO em voo nesta conversa (carimbado há ≤ 60 s, sem mid)? */
+export const internalHasMetaSendInFlight = internalQuery({
+  args: { configId: v.id("channelConfigs"), userId: v.string(), now: v.number() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) return false;
+    const conversation = await findMetaConversationForUser(ctx, config, args.userId);
+    if (!conversation) return false;
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+      .order("desc")
+      .take(20);
+    return recent.some((m) => {
+      const started = m.metadata?.metaDispatchStartedAt;
+      return (
+        m.direction === "outbound" &&
+        !m.externalId &&
+        typeof started === "number" &&
+        args.now - started <= ECHO_RACE_WINDOW_MS
+      );
+    });
+  },
+});
+
+/** Conversa do cliente no config (recibos por watermark). */
+export const internalFindMetaConversation = internalQuery({
+  args: { configId: v.id("channelConfigs"), userId: v.string() },
+  returns: v.union(v.id("conversations"), v.null()),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) return null;
+    return (await findMetaConversationForUser(ctx, config, args.userId))?._id ?? null;
+  },
+});
+
+/** Mensagem pelo mid (externalId, ou parte registrada em `metaSentMids`). */
+export const internalFindMessageByMid = internalQuery({
+  args: { organizationId: v.id("organizations"), mid: v.string() },
+  returns: v.union(v.null(), v.object({ conversationId: v.id("conversations"), createdAt: v.number() })),
+  handler: async (ctx, args) => {
+    let message = await ctx.db
+      .query("messages")
+      .withIndex("by_organization_and_external_id", (q) =>
+        q.eq("organizationId", args.organizationId).eq("externalId", args.mid)
+      )
+      .first();
+    if (!message) {
+      const sent = await ctx.db
+        .query("metaSentMids")
+        .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", args.organizationId).eq("mid", args.mid))
+        .first();
+      message = sent ? await ctx.db.get(sent.messageId) : null;
+    }
+    if (!message || message.organizationId !== args.organizationId) return null;
+    return { conversationId: message.conversationId, createdAt: message.createdAt };
+  },
+});
+
+type EchoEvent = Extract<MetaEvent, { kind: "echo" }>;
+
+/**
+ * D6. Nosso `app_id` → no-op (liga o mid pelo "hnb:"). `app_id` de outro app
+ * (Page Inbox/Business Suite) ou ausente no Messenger → mensagem enviada fora
+ * do CRM (`via:"device"` + `viaApp`). Instagram sem `app_id`: (a) mid já
+ * registrado → nosso; (b) envio nosso em voo → reavalia em 5 s; (c) device.
+ */
+async function handleEcho(
+  ctx: ActionCtx,
+  config: Doc<"channelConfigs">,
+  event: EchoEvent,
+  reconciled: boolean
+): Promise<void> {
+  const ourAppId = process.env.META_MESSAGING_APP_ID;
+  const isOurApp = !!event.appId && !!ourAppId && event.appId === ourAppId;
+  if (!reconciled) {
+    // Validação viva do §13 item 5: nunca o texto nem ids completos.
+    console.log("meta echo", {
+      surface: event.surface,
+      hasAppId: !!event.appId,
+      isOurApp,
+      hasMetadata: !!event.metadata,
+      midLast4: last4(event.mid),
+    });
+  }
+
+  const link: "ours" | "unknown" = await ctx.runMutation(internal.metaMessaging.internalLinkEchoToMessage, {
+    organizationId: config.organizationId,
+    mid: event.mid,
+    ...(event.metadata ? { metadata: event.metadata } : {}),
+  });
+  if (isOurApp || link === "ours") return;
+
+  if (event.surface === "instagram" && !event.appId && !reconciled) {
+    const inFlight: boolean = await ctx.runQuery(internal.metaMessaging.internalHasMetaSendInFlight, {
+      configId: config._id,
+      userId: event.userId,
+      now: Date.now(),
+    });
+    if (inFlight) {
+      await ctx.scheduler.runAfter(ECHO_RECONCILE_DELAY_MS, internal.metaMessaging.internalReconcileEcho, {
+        configId: config._id,
+        event,
+      });
+      return;
+    }
+  }
+
+  // Enviada por alguém fora do CRM (Business Suite, app do celular, outro app).
+  const text = event.text?.trim() ?? "";
+  const first = event.attachments[0];
+  if (!text && !first) return;
+  const routed = await ctx.runMutation(internal.metaMessaging.internalRouteMetaInbound, {
+    configId: config._id,
+    surface: event.surface,
+    userId: event.userId,
+  });
+  if (!routed) return;
+  await ctx.runMutation(internal.conversations.internalReceiveDeviceMessage, {
+    organizationId: routed.organizationId,
+    leadId: routed.leadId,
+    channel: event.surface,
+    channelConfigId: config._id,
+    content: text || PLACEHOLDER_BY_TYPE[first.type],
+    contentType: "text",
+    externalId: event.mid,
+    sentAt: event.timestamp,
+    metadata: {
+      viaApp: viaAppFor(event.appId),
+      metaType: text ? "text" : first.type,
+      ...(event.attachments.length > 0
+        ? { mediaPending: true, metaAttachments: event.attachments.slice(0, 10) }
+        : {}),
+    },
+  });
+}
+
+/** Segunda passada do eco do IG em corrida (camada b): reavalia (a) e decide. */
+export const internalReconcileEcho = internalAction({
+  args: { configId: v.id("channelConfigs"), event: metaEventValidator },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    if (args.event.kind !== "echo") return null;
+    const config: Doc<"channelConfigs"> | null = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+      configId: args.configId,
+    });
+    if (!config || config.status !== "active" || config.channel !== args.event.surface) return null;
+    await handleEcho(ctx, config, args.event, true);
+    return null;
+  },
+});
+
+/** delivery (Messenger: mids + watermark) e read (Messenger: watermark; IG: mid). */
+async function handleReceipt(
+  ctx: ActionCtx,
+  config: Doc<"channelConfigs">,
+  event: Extract<MetaEvent, { kind: "delivery" | "read" }>
+): Promise<void> {
+  const markUpTo = async (
+    conversationId: Id<"conversations">,
+    watermark: number,
+    status: "delivered" | "read"
+  ) => {
+    await ctx.runMutation(internal.conversations.internalMarkDeliveredUpToWatermark, {
+      conversationId,
+      watermark,
+      status,
+    });
+  };
+  const conversationOfUser = async (): Promise<Id<"conversations"> | null> =>
+    await ctx.runQuery(internal.metaMessaging.internalFindMetaConversation, {
+      configId: config._id,
+      userId: event.userId,
+    });
+
+  if (event.kind === "delivery") {
+    for (const mid of event.mids.slice(0, 50)) {
+      await ctx.runMutation(internal.conversations.internalUpdateDeliveryStatus, {
+        organizationId: config.organizationId,
+        externalId: mid,
+        status: "delivered",
+      });
+    }
+    const conversationId = await conversationOfUser();
+    if (conversationId) await markUpTo(conversationId, event.watermark, "delivered");
+    return;
+  }
+  if (event.mid) {
+    const target: { conversationId: Id<"conversations">; createdAt: number } | null = await ctx.runQuery(
+      internal.metaMessaging.internalFindMessageByMid,
+      { organizationId: config.organizationId, mid: event.mid }
+    );
+    if (target) await markUpTo(target.conversationId, target.createdAt, "read");
+    return;
+  }
+  if (event.watermark !== undefined) {
+    const conversationId = await conversationOfUser();
+    if (conversationId) await markUpTo(conversationId, event.watermark, "read");
+  }
+}
 
 // ── OAuth: autorização e state ──
 

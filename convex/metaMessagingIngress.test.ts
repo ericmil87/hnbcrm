@@ -397,8 +397,8 @@ describe("internalIngestEvent", () => {
   });
 });
 
-describe("saída de conversa Meta (fail-closed até a F1)", () => {
-  test("scheduleOutboundDispatch marca failed sem tocar na rede", async () => {
+describe("saída de conversa Meta pela porta (F1)", () => {
+  test("conversa sem inbound (janela fechada): scheduleOutboundDispatch marca failed sem tocar na rede", async () => {
     const t = convexTest(schema, modules);
     const a = await seedOrg(t, "a", PAGE_A, IG_A);
     const fetchMock = vi.fn();
@@ -454,7 +454,7 @@ describe("saída de conversa Meta (fail-closed até a F1)", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const message = await t.run(async (ctx) => await ctx.db.get(messageId));
     expect(message?.deliveryStatus).toBe("failed");
-    expect(message?.metadata?.deliveryError).toMatch(/ainda não está disponível/);
+    expect(message?.metadata?.deliveryError).toMatch(/Fora da janela de 24 h/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
