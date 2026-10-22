@@ -15,6 +15,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { clearRuntimeField } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -514,7 +515,7 @@ describe("atendente 1 a 1 com teto em R$ em `block`", () => {
     await t.run(async (ctx) => {
       await ctx.db.patch(handoffs[0]._id, { status: "rejected" });
       await ctx.db.patch(seed.a.leadId, { handoffState: undefined });
-      await ctx.db.patch(seed.a.conversationId, { aiTurnLock: undefined });
+      await clearRuntimeField(ctx, seed.a.conversationId, "aiTurnLock");
       await ctx.db.patch(item._id, { status: "done" });
     });
     const item2 = await inboundAndSettle(t, seed, seed.a, "Ainda está aí?");
@@ -598,7 +599,7 @@ describe("monthlyConversationBudget (teto por conversas)", () => {
 
     // Mesma conversa de novo: já atendida no mês → passa e não conta outra vez.
     await t.run(async (ctx) => {
-      await ctx.db.patch(seed.a.conversationId, { aiTurnLock: undefined });
+      await clearRuntimeField(ctx, seed.a.conversationId, "aiTurnLock");
       await ctx.db.patch(first._id, { status: "done" });
     });
     const again = await inboundAndSettle(t, seed, seed.a, "Mais uma dúvida");

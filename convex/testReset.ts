@@ -22,6 +22,7 @@ import { v } from "convex/values";
 import { internalMutation, MutationCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
+import { deleteRuntime } from "./lib/conversationRuntime";
 
 function normalizePhone(p: string): string {
   return p.replace(/\D/g, "");
@@ -167,6 +168,7 @@ async function hardResetByPhone(
           deleted.agentRuns++;
         }
 
+        await deleteRuntime(ctx, conversation._id);
         await ctx.db.delete(conversation._id);
         deleted.conversations++;
       }

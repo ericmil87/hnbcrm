@@ -27,6 +27,7 @@ import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/gro
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
+import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
@@ -536,6 +537,33 @@ export const getConversationById = query({
   },
 });
 
+/**
+ * Presença do contato ("digitando…") de UMA conversa — fase 4b.
+ *
+ * Lê só a linha de `conversationRuntime` (e a membership): não lê o doc da
+ * conversa, então só reexecuta quando a presença muda, e a mudança de presença
+ * não reexecuta mais a lista/thread. Isolamento pelo `organizationId` da
+ * própria linha; não-membro recebe null. Sem `Date.now()`: o TTL de 12 s é
+ * aplicado no cliente.
+ */
+export const getConversationPresence = query({
+  args: { conversationId: v.id("conversations") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      state: v.union(v.literal("composing"), v.literal("paused")),
+      at: v.number(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const runtime = await getRuntime(ctx, args.conversationId);
+    if (!runtime?.contactPresence) return null;
+    if (!(await isActiveMemberOf(ctx, runtime.organizationId))) return null;
+    const { state, at } = runtime.contactPresence;
+    return { state, at };
+  },
+});
+
 // Get messages for conversation — as `limit` mais RECENTES (default 50, teto
 // 500), devolvidas em ordem ASC (mais antiga primeiro), como sempre. Antes era
 // `take(500)` ASC, que numa conversa com mais de 500 mensagens trazia as 500
@@ -950,9 +978,13 @@ export const internalSetContactPresence = internalMutation({
       .first();
     if (!conversation) return null;
 
-    await ctx.db.patch(conversation._id, {
-      contactPresence: { state: args.state, at: Date.now() },
-    });
+    // Fase 4b: presença vive em `conversationRuntime` — patch na conversa
+    // reexecutaria a lista do inbox, o thread aberto e afins a cada "digitando".
+    await upsertRuntime(
+      ctx,
+      { organizationId: conversation.organizationId, conversationId: conversation._id },
+      { contactPresence: { state: args.state, at: Date.now() } }
+    );
     return null;
   },
 });
@@ -2353,9 +2385,13 @@ export const internalSetGroupPresence = internalMutation({
     if (!group || !group.monitored || !group.conversationId) return null;
     const conversation = await ctx.db.get(group.conversationId);
     if (!conversation) return null;
-    await ctx.db.patch(conversation._id, {
-      contactPresence: { state: args.state, at: Date.now() },
-    });
+    // Fase 4b: presença vive em `conversationRuntime` — patch na conversa
+    // reexecutaria a lista do inbox, o thread aberto e afins a cada "digitando".
+    await upsertRuntime(
+      ctx,
+      { organizationId: conversation.organizationId, conversationId: conversation._id },
+      { contactPresence: { state: args.state, at: Date.now() } }
+    );
     return null;
   },
 });
@@ -2941,5 +2977,94 @@ export const sendTypingState = mutation({
       });
     }
     return null;
+  },
+});
+
+const LEGACY_RUNTIME_PAGE_SIZE = 200;
+
+/**
+ * Ops (fase 4b, sem UI): apaga do doc `conversations` os campos legados
+ * `contactPresence`, `aiTurnLock` e `nextDispatchAt`, que agora vivem em
+ * `conversationRuntime`. NÃO migra valor nenhum: presença é efêmera (TTL de
+ * 12 s no cliente), o lock expira sozinho e o pacing recomeça do `now`.
+ *
+ * Nenhum código lê mais esses campos: um lock "vivo" no doc já é ignorado
+ * desde o deploy (é ali, não aqui, que um turno em voo pode perder a
+ * exclusão — no máximo 1 defer/turno duplicado; faça o deploy com a IA
+ * quieta). Rodar isto não muda comportamento, só limpa.
+ *
+ * `dryRun` (default TRUE) lê UMA página e não escreve — repita com o `cursor`
+ * devolvido para ver o resto; o real se reagenda sozinho até o fim. A REMOÇÃO
+ * dos campos do schema é um PR posterior, depois que este backfill zerar.
+ *
+ *   npx convex run conversations:internalClearLegacyRuntimeFields '{"dryRun":true}'
+ *   npx convex run conversations:internalClearLegacyRuntimeFields '{"dryRun":false}'
+ */
+export const internalClearLegacyRuntimeFields = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    cleared: v.number(),
+    withContactPresence: v.number(),
+    withAiTurnLock: v.number(),
+    withNextDispatchAt: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const page = await ctx.db
+      .query("conversations")
+      .paginate({ numItems: LEGACY_RUNTIME_PAGE_SIZE, cursor: args.cursor ?? null });
+
+    let cleared = 0;
+    let withContactPresence = 0;
+    let withAiTurnLock = 0;
+    let withNextDispatchAt = 0;
+    for (const conversation of page.page) {
+      const hasPresence = conversation.contactPresence !== undefined;
+      const hasLock = conversation.aiTurnLock !== undefined;
+      const hasDispatch = conversation.nextDispatchAt !== undefined;
+      if (hasPresence) withContactPresence++;
+      if (hasLock) withAiTurnLock++;
+      if (hasDispatch) withNextDispatchAt++;
+      if (!hasPresence && !hasLock && !hasDispatch) continue;
+      cleared++;
+      if (!dryRun) {
+        // Sem `updatedAt`: limpeza de campo morto, não mudança da conversa.
+        await ctx.db.patch(conversation._id, {
+          contactPresence: undefined,
+          aiTurnLock: undefined,
+          nextDispatchAt: undefined,
+        });
+      }
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.conversations.internalClearLegacyRuntimeFields, {
+        dryRun: false,
+        cursor: page.continueCursor,
+      });
+      scheduledNext = true;
+    }
+
+    return {
+      dryRun,
+      scanned: page.page.length,
+      cleared,
+      withContactPresence,
+      withAiTurnLock,
+      withNextDispatchAt,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
   },
 });
