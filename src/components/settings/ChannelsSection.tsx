@@ -345,8 +345,16 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
               <li>Teste a conexão pelo botão "Testar conexão" de cada número.</li>
             </ol>
             <p className="text-xs text-text-muted">
-              Guia completo disponível em <span className="font-mono">docs/WHATSAPP-SETUP.md</span> no
-              repositório.
+              Guia completo na documentação oficial da Meta:{" "}
+              <a
+                href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-text-primary"
+              >
+                WhatsApp Cloud API — Get Started
+              </a>
+              .
             </p>
           </div>
         )}
