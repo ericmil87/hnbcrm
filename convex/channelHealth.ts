@@ -62,25 +62,40 @@ export const internalRecordSessionEvent = internalMutation({
 
 // ── Cron ────────────────────────────────────────────────────────────────────
 
+const probeTargetValidator = v.object({
+  configId: v.id("channelConfigs"),
+  baseUrl: v.string(),
+  // CIPHERTEXT — só trafega entre esta query interna e a action do cron, que
+  // decifra na hora da sonda. Nunca vai a log nem a cliente.
+  tokenEncrypted: v.string(),
+});
+
 /**
- * Uma página de canais elegíveis. Não há índice por provider/status, e a tabela
- * é pequena (um doc por número): pagina a tabela inteira e filtra em memória
- * (sem `.filter()` de query). Elegível = bridge, não desativado, credenciais
- * completas, org que não é demo e que já esteve conectado alguma vez (canal
- * esperando o 1º QR não é "queda").
+ * Uma página de canais elegíveis, já com o alvo da sonda.
+ *
+ * Perf Convex I/O (onda 2): pagina o índice `by_bridge_instance` só a partir
+ * dos docs COM instância (`gt(undefined)` — na ordem do índice `undefined`
+ * vem antes de qualquer valor), em vez da tabela inteira; canal Meta não tem
+ * `bridgeInstanceId` e nem entra na leitura. Os filtros que restam são em
+ * memória (sem `.filter()` de query): bridge, não desativado, credenciais
+ * completas, que já esteve conectado alguma vez (canal esperando o 1º QR não é
+ * "queda") e, por último — só para quem passou nos outros —, org que não é
+ * demo. Devolve `baseUrl`/`tokenEncrypted` para a action não reler o canal
+ * (antes era um `internalGetProbeTarget` por canal).
  */
 export const internalListBridgeChannelsPage = internalQuery({
   args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
   returns: v.object({
-    ids: v.array(v.id("channelConfigs")),
+    targets: v.array(probeTargetValidator),
     nextCursor: v.union(v.string(), v.null()),
     isDone: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const page = await ctx.db
       .query("channelConfigs")
+      .withIndex("by_bridge_instance", (q) => q.gt("bridgeInstanceId", undefined))
       .paginate({ cursor: args.cursor, numItems: args.numItems });
-    const ids: Id<"channelConfigs">[] = [];
+    const targets: { configId: Id<"channelConfigs">; baseUrl: string; tokenEncrypted: string }[] = [];
     const demoCache = new Map<string, boolean>();
     for (const c of page.page) {
       if (configProvider(c) !== "bridge") continue;
@@ -94,23 +109,9 @@ export const internalListBridgeChannelsPage = internalQuery({
         demoCache.set(c.organizationId, demo);
       }
       if (demo) continue;
-      ids.push(c._id);
+      targets.push({ configId: c._id, baseUrl: c.bridgeBaseUrl, tokenEncrypted: c.bridgeTokenEncrypted });
     }
-    return { ids, nextCursor: page.isDone ? null : page.continueCursor, isDone: page.isDone };
-  },
-});
-
-/** Leitura mínima para o cron (nunca devolve o token cifrado ao log). */
-export const internalGetProbeTarget = internalQuery({
-  args: { configId: v.id("channelConfigs") },
-  returns: v.union(
-    v.null(),
-    v.object({ baseUrl: v.string(), tokenEncrypted: v.string() })
-  ),
-  handler: async (ctx, args) => {
-    const c = await ctx.db.get(args.configId);
-    if (!c || c.status === "disabled" || !c.bridgeBaseUrl || !c.bridgeTokenEncrypted) return null;
-    return { baseUrl: c.bridgeBaseUrl, tokenEncrypted: c.bridgeTokenEncrypted };
+    return { targets, nextCursor: page.isDone ? null : page.continueCursor, isDone: page.isDone };
   },
 });
 
@@ -180,10 +181,11 @@ export const internalChannelHealthTick = internalAction({
     });
     let checked = 0;
     let probeErrors = 0;
-    for (const configId of page.ids) {
+    for (const target of page.targets) {
+      const configId = target.configId;
       try {
-        const target = await ctx.runQuery(internal.channelHealth.internalGetProbeTarget, { configId });
-        if (!target) continue;
+        // O alvo veio da página (lida há milissegundos): sem releitura por canal.
+        // As mutations abaixo releem o doc e re-checam provider/`disabled`.
         const token = await decryptSecret(target.tokenEncrypted);
         const probe = await bridgeFetchJson(
           buildBridgeStatusRequest({ baseUrl: target.baseUrl, token }),

@@ -474,6 +474,7 @@ describe("cron: listagem de canais", () => {
         provider: "bridge",
         status: "disabled",
         bridgeBaseUrl: "https://x",
+        bridgeInstanceId: "inst_disabled",
         bridgeTokenEncrypted: "c",
         bridgeConnectedAt: now,
       });
@@ -482,6 +483,7 @@ describe("cron: listagem de canais", () => {
         provider: "bridge",
         status: "active",
         bridgeBaseUrl: "https://x",
+        bridgeInstanceId: "inst_qr",
         bridgeTokenEncrypted: "c",
         bridgeSessionState: "qr",
       });
@@ -490,7 +492,12 @@ describe("cron: listagem de canais", () => {
       cursor: null,
       numItems: 50,
     });
-    expect(page.ids).toEqual([configId as Id<"channelConfigs">]);
+    expect(page.targets.map((x) => x.configId)).toEqual([configId as Id<"channelConfigs">]);
+    // O alvo da sonda vem na própria página (sem releitura por canal).
+    expect(page.targets[0]).toMatchObject({
+      baseUrl: "https://wa-gw.example.test",
+      tokenEncrypted: "cifrado",
+    });
 
     const demo = convexTest(schema, modules);
     await seed(demo, { demo: true });
@@ -498,7 +505,69 @@ describe("cron: listagem de canais", () => {
       cursor: null,
       numItems: 50,
     });
-    expect(demoPage.ids).toHaveLength(0);
+    expect(demoPage.targets).toHaveLength(0);
+    await cancelPendingJobs(t);
+  });
+});
+
+describe("cron: tick sonda só os bridge elegíveis", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  test("canal Meta e bridge desativado não são sondados; bridge normal é", async () => {
+    vi.stubEnv("CHANNEL_ENCRYPTION_KEY", btoa("A".repeat(32)));
+    const { encryptSecret } = await import("./lib/secretCrypto");
+    const t = convexTest(schema, modules);
+    const { configId, organizationId } = await seed(t);
+    const tokenEncrypted = await encryptSecret("tok-loja");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.patch(configId, { bridgeTokenEncrypted: tokenEncrypted });
+      const base = {
+        organizationId,
+        channel: "whatsapp" as const,
+        displayName: "x",
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Meta com campos de bridge de sobra: ainda assim nunca é sondado.
+      await ctx.db.insert("channelConfigs", {
+        ...base,
+        provider: "meta",
+        status: "active",
+        bridgeBaseUrl: "https://meta.example.test",
+        bridgeInstanceId: "inst_meta",
+        bridgeTokenEncrypted: tokenEncrypted,
+        bridgeConnectedAt: now,
+      });
+      await ctx.db.insert("channelConfigs", {
+        ...base,
+        provider: "bridge",
+        status: "disabled",
+        bridgeBaseUrl: "https://disabled.example.test",
+        bridgeInstanceId: "inst_off",
+        bridgeTokenEncrypted: tokenEncrypted,
+        bridgeConnectedAt: now,
+      });
+    });
+
+    const probed: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        probed.push(String(url));
+        return new Response(
+          JSON.stringify({ success: true, data: { Connected: true, LoggedIn: true, Jid: "" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      })
+    );
+
+    const result = await t.action(internal.channelHealth.internalChannelHealthTick, {});
+    expect(result).toEqual({ checked: 1, probeErrors: 0 });
+    expect(probed).toEqual(["https://wa-gw.example.test/session/status"]);
     await cancelPendingJobs(t);
   });
 });
