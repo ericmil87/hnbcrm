@@ -8,7 +8,6 @@
  *  - o claim respeita o lease gravado no runtime (2º claim defere) e o
  *    release só solta o lock do próprio runId;
  *  - `scheduleWhatsappDispatch` avança o cursor no runtime sem patchar a conversa;
- *  - `internalClearLegacyRuntimeFields` limpa os campos legados (dryRun e real);
  *  - a cascata de exclusão da conversa apaga a linha de runtime.
  */
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
@@ -412,20 +411,6 @@ describe("lock do turno de IA no runtime", () => {
     expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock ?? null).toBeNull();
   });
 
-  // TRANSITÓRIO (janela de deploy): remover junto com os campos legados.
-  async function moveLockToLegacy(
-    t: TestConvex<typeof schema>,
-    conversationId: Id<"conversations">,
-    runId: string,
-    leaseUntil: number
-  ) {
-    await t.run(async (ctx) => {
-      const row = (await getRuntime(ctx, conversationId))!;
-      await ctx.db.patch(row._id, { aiTurnLock: undefined });
-      await ctx.db.patch(conversationId, { aiTurnLock: { runId, leaseUntil } });
-    });
-  }
-
   async function commitSuggestion(
     t: TestConvex<typeof schema>,
     seed: Seed & { agentId: Id<"teamMembers"> },
@@ -446,27 +431,25 @@ describe("lock do turno de IA no runtime", () => {
     });
   }
 
-  test("janela de deploy: commit aceita lock SÓ no campo legado da conversa e limpa-o", async () => {
+  test("commit com o lock do runtime commita e solta o lock", async () => {
     const t = setup();
     const seed = await seedAttendant(t);
     const itemId = await enqueue(t, seed);
     const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
       queueItemId: itemId,
-      runId: "run-antiga",
+      runId: "run-dona",
     });
     expect(claim.kind).toBe("run");
     const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
-    // Simula a run que começou no código ANTIGO: lock só no doc da conversa.
-    await moveLockToLegacy(t, seed.conversationId, "run-antiga", Date.now() + 60_000);
-    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock).toBeUndefined();
+    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock?.runId).toBe("run-dona");
 
-    const result = await commitSuggestion(t, seed, itemId, "run-antiga", agentRunId);
+    const result = await commitSuggestion(t, seed, itemId, "run-dona", agentRunId);
     expect(result.committed).toBe(true);
-    // O lock legado deste runId é limpo (o próximo claim não defere à toa).
-    expect((await conversationDoc(t, seed.conversationId))!.aiTurnLock).toBeUndefined();
+    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock).toBeUndefined();
+    expectNoLegacyFields(await conversationDoc(t, seed.conversationId));
   });
 
-  test("commit: runId diferente do lock (runtime ou legado) → lock_perdido", async () => {
+  test("commit: runId diferente do lock → lock_perdido", async () => {
     const t = setup();
     const seed = await seedAttendant(t);
     const itemId = await enqueue(t, seed);
@@ -479,43 +462,6 @@ describe("lock do turno de IA no runtime", () => {
       committed: false,
       reason: "lock_perdido",
     });
-
-    // Lock no runtime vence o legado: legado com o runId da intrusa não vale.
-    await t.run(async (ctx) =>
-      ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-intrusa", leaseUntil: Date.now() + 60_000 },
-      })
-    );
-    expect(await commitSuggestion(t, seed, itemId, "run-intrusa", agentRunId)).toEqual({
-      committed: false,
-      reason: "lock_perdido",
-    });
-  });
-
-  test("claim: lock legado vivo defere; lock legado expirado não segura o claim", async () => {
-    const t = setup();
-    const seed = await seedAttendant(t);
-    await t.run(async (ctx) =>
-      ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
-      })
-    );
-    const itemId = await enqueue(t, seed);
-    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
-      queueItemId: itemId,
-      runId: "run-nova",
-    });
-    expect(claim).toMatchObject({ kind: "defer" });
-    expect(await runtimeOf(t, seed.conversationId)).toBeNull();
-
-    vi.setSystemTime(Date.now() + 61_000);
-    await t.run(async (ctx) => ctx.db.patch(itemId, { nextAttemptAt: Date.now() }));
-    const claim2 = await t.mutation(internal.attendant.internalClaimForProcessing, {
-      queueItemId: itemId,
-      runId: "run-nova",
-    });
-    expect(claim2.kind).toBe("run");
-    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock?.runId).toBe("run-nova");
   });
 
   test("release sem linha de runtime é no-op (não cria linha)", async () => {
@@ -570,70 +516,6 @@ describe("pacing por conversa no runtime", () => {
     const after = await conversationDoc(t, seed.conversationId);
     expect(after).toEqual(before);
     expectNoLegacyFields(after);
-  });
-});
-
-describe("internalClearLegacyRuntimeFields", () => {
-  test("dryRun conta sem escrever; real limpa os 3 campos", async () => {
-    const t = setup();
-    const seed = await seedOrg(t);
-    const legacyId = await t.run(async (ctx) => {
-      const now = Date.now();
-      await ctx.db.patch(seed.conversationId, {
-        contactPresence: { state: "composing", at: now },
-        aiTurnLock: { runId: "velho", leaseUntil: now + 60_000 },
-      });
-      return await ctx.db.insert("conversations", {
-        organizationId: seed.organizationId,
-        leadId: seed.leadId,
-        channel: "whatsapp",
-        status: "active",
-        nextDispatchAt: now + 6_500,
-        messageCount: 3,
-        createdAt: now,
-        updatedAt: now,
-      });
-    });
-    // Uma conversa limpa, para provar que ela não conta.
-    await t.run(async (ctx) =>
-      ctx.db.insert("conversations", {
-        organizationId: seed.organizationId,
-        channel: "webchat",
-        status: "active",
-        messageCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-    );
-
-    const dry = await t.mutation(internal.conversations.internalClearLegacyRuntimeFields, {});
-    expect(dry).toMatchObject({
-      dryRun: true,
-      scanned: 3,
-      cleared: 2,
-      withContactPresence: 1,
-      withAiTurnLock: 1,
-      withNextDispatchAt: 1,
-      isDone: true,
-      scheduledNext: false,
-    });
-    expect((await conversationDoc(t, seed.conversationId))!.aiTurnLock).toBeDefined();
-
-    const updatedAtBefore = (await conversationDoc(t, legacyId))!.updatedAt;
-    const real = await t.mutation(internal.conversations.internalClearLegacyRuntimeFields, {
-      dryRun: false,
-    });
-    expect(real).toMatchObject({ dryRun: false, cleared: 2, isDone: true, scheduledNext: false });
-    expectNoLegacyFields(await conversationDoc(t, seed.conversationId));
-    const legacy = await conversationDoc(t, legacyId);
-    expectNoLegacyFields(legacy);
-    expect(legacy!.updatedAt).toBe(updatedAtBefore);
-
-    // Idempotente.
-    const again = await t.mutation(internal.conversations.internalClearLegacyRuntimeFields, {
-      dryRun: false,
-    });
-    expect(again.cleared).toBe(0);
   });
 });
 

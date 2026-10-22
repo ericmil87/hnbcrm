@@ -1130,26 +1130,14 @@ const applicationTables = {
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
     lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
-    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
-    // O cursor de pacing por conversa vive em `conversationRuntime.nextDispatchAt`.
-    nextDispatchAt: v.optional(v.number()),
-    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
-    // A presença vive em `conversationRuntime.contactPresence`.
-    contactPresence: v.optional(
-      v.object({
-        state: v.union(v.literal("composing"), v.literal("paused")),
-        at: v.number(),
-      })
-    ),
+    // Presença, lock do turno de IA e cursor de pacing por conversa vivem em
+    // `conversationRuntime` (fase 4b) — fora deste doc de propósito.
     archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
     labelIds: v.optional(v.array(v.id("conversationLabels"))),
     // Não lidas pela EQUIPE (compartilhado, não por membro): ingress incrementa,
     // markConversationRead zera. Ausente = 0 (conversas antigas nascem "lidas").
     unreadCount: v.optional(v.number()),
     lastReadAt: v.optional(v.number()),
-    // legado (fase 4b) — não ler nem escrever; remover após o backfill de limpeza.
-    // O lock do turno de IA vive em `conversationRuntime.aiTurnLock`.
-    aiTurnLock: v.optional(v.object({ runId: v.string(), leaseUntil: v.number() })),
     // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
     // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
     aiPausedUntil: v.optional(v.number()),
