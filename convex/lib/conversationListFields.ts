@@ -142,17 +142,38 @@ export function lastMessageFieldsPatch(
   };
 }
 
+/** O que `lastMessagePatchFor` lê da conversa (o doc ANTES do patch). */
+export type PreviewFloorConversation = {
+  lastMessagePreviewAt?: number;
+  lastMessageAt?: number;
+  messageCount?: number;
+};
+
 /**
  * Patch da prévia para uma mensagem recém-inserida, ou `null` se ela é mais
  * antiga que a prévia atual (histórico do aparelho importado depois). Empate
  * vence a mais nova (inserida depois), como no índice.
+ *
+ * Piso quando a conversa JÁ tem mensagens mas ainda não tem prévia (antes do
+ * backfill, ou prévia limpa pelo reparse): o piso é `lastMessageAt`, não 0.
+ * Senão uma mensagem ANTIGA (histórico do aparelho, `createdAt = sentAt`)
+ * gravaria a prévia e ela "andaria para trás" — e a leitura não corrige,
+ * porque com o campo presente o fallback (`first()`) não roda. Abaixo do piso
+ * não grava nada: a leitura segue no fallback até a próxima mensagem nova ou
+ * o backfill.
  */
 export function lastMessagePatchFor(
-  conversation: { lastMessagePreviewAt?: number },
+  conversation: PreviewFloorConversation,
   messageId: Id<"messages">,
   message: PreviewMessage
 ): LastMessagePatch | null {
-  if (message.createdAt < (conversation.lastMessagePreviewAt ?? 0)) return null;
+  const floor =
+    conversation.lastMessagePreviewAt !== undefined
+      ? conversation.lastMessagePreviewAt
+      : (conversation.messageCount ?? 0) > 0
+        ? (conversation.lastMessageAt ?? 0)
+        : 0;
+  if (message.createdAt < floor) return null;
   return lastMessageFieldsPatch(messageId, message);
 }
 
@@ -173,7 +194,7 @@ export const CLEARED_LAST_MESSAGE_PATCH = {
  */
 export async function lastMessagePatchForId(
   ctx: { db: MutationCtx["db"] },
-  conversation: { lastMessagePreviewAt?: number },
+  conversation: PreviewFloorConversation,
   messageId: Id<"messages">
 ): Promise<Partial<LastMessagePatch>> {
   const message = await ctx.db.get(messageId);
@@ -347,6 +368,17 @@ const LAST_MESSAGE_KEYS = [
 /**
  * O que falta/difere na conversa, dado o estado real (última mensagem, grupo,
  * config). Patch vazio = já está certo — rodar de novo não escreve nada.
+ *
+ * Duas mudanças de comportamento ACEITAS na revisão da fase 4c (o caminho
+ * antigo lia a fonte a cada render; o novo lê o espelho guardado):
+ *  - canal: conversa cujo `channelConfigs` foi apagado DEPOIS de o provider
+ *    ser espelhado continua usando o `channelProvider` guardado na janela de
+ *    serviço (antes, config ausente = sem provider). Rodar este backfill
+ *    nela remove o campo (`channelProviderOf(null)` = `undefined`) e a
+ *    leitura volta ao comportamento antigo.
+ *  - grupo: conversa de grupo cuja sala (`groupChats`) foi apagada pela
+ *    cascata mostra o `groupSubject` guardado em vez do genérico "Grupo"
+ *    (sem `source.group` o backfill não toca nos campos de grupo).
  */
 export function listFieldsBackfillPatch(
   conversation: Doc<"conversations">,
