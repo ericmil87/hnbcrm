@@ -55,8 +55,11 @@ const MEMBERS_PAGE_SIZE = 50;
  *
  * Perf (Convex I/O, onda 2): os membros vêm PAGINADOS de
  * `groupChats.listGroupMembers` (50 por vez, scroll infinito + "Carregar
- * mais"), e a busca é no servidor (nome ou começo do telefone). O `getGroup`
- * aqui só traz o cabeçalho (assunto e contagem), sem a lista.
+ * mais"), e a busca é no servidor (nome sem acento/caixa, ou começo do
+ * telefone com e sem 55 e com e sem o 9º dígito — `convex/lib/groupMemberSearch.ts`).
+ * Busca pelo FIM do número (os 4 dígitos que aparecem mascarados, ••••5729)
+ * NÃO existe: o índice de telefone só serve prefixo. O `getGroup` aqui só traz
+ * o cabeçalho (assunto e contagem), sem a lista.
  */
 export function GroupMembersPanel({
   open,
@@ -227,7 +230,7 @@ export function GroupMembersPanel({
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar por nome ou telefone..."
+                placeholder="Buscar por nome ou começo do telefone"
                 aria-label="Buscar membro"
                 className="h-9 w-full rounded-full border border-border-strong bg-surface-sunken pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 [&::-webkit-search-cancel-button]:hidden"
               />

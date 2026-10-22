@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { filterMentionCandidates, mentionResultsPending } from "@/lib/groupMentionFilter";
 import {
   groupSenderColor,
   initialsOf,
@@ -100,16 +101,27 @@ export function useGroupMentions({
       : "skip";
   const found = useQuery(api.groupChats.listGroupMembers, searchArgs);
   // Enquanto a próxima busca carrega, mantém os candidatos da anterior (sem
-  // piscar o dropdown a cada tecla).
+  // piscar o dropdown a cada tecla) — mas REFILTRADOS pelo termo atual: o
+  // resultado de "@Ma" não pode deixar "@Mari"+Enter mencionar o "Marcos".
   const lastFound = useRef<GroupParticipant[]>([]);
   if (found !== undefined) lastFound.current = found.page as GroupParticipant[];
   const candidates: GroupParticipant[] =
     searchArgs === "skip" ? [] : ((found?.page as GroupParticipant[] | undefined) ?? lastFound.current);
+  // A lista exibida ainda não é a do termo digitado agora (debounce ou servidor).
+  const pending =
+    searchArgs !== "skip" &&
+    mentionResultsPending({
+      query: trigger?.query ?? "",
+      searchedTerm: searchTerm,
+      loaded: found !== undefined,
+    });
 
   const items = useMemo(() => {
     if (!trigger) return [];
-    return candidates
-      .filter((p) => p.leftAt === undefined && participantJid(p) !== null)
+    return filterMentionCandidates(
+      candidates.filter((p) => p.leftAt === undefined && participantJid(p) !== null),
+      trigger.query
+    )
       .map((p) => ({
         participant: p,
         key: participantKeyOf(p),
@@ -118,7 +130,7 @@ export function useGroupMentions({
       .slice(0, 8);
   }, [trigger, candidates]);
 
-  const open = trigger !== null && items.length > 0;
+  const open = trigger !== null && (items.length > 0 || pending);
 
   useEffect(() => setActiveIndex(0), [trigger?.query, open]);
 
@@ -159,16 +171,19 @@ export function useGroupMentions({
     if (!open) return false;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => (i + 1) % items.length);
+      if (items.length > 0) setActiveIndex((i) => (i + 1) % items.length);
       return true;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => (i - 1 + items.length) % items.length);
+      if (items.length > 0) setActiveIndex((i) => (i - 1 + items.length) % items.length);
       return true;
     }
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
+      // Lista ainda do termo anterior: não escolhe ninguém (o dropdown mostra
+      // "buscando…"); a tecla é consumida para não enviar a mensagem no meio.
+      if (pending || !items[activeIndex]) return true;
       pick(items[activeIndex]);
       return true;
     }
@@ -207,6 +222,8 @@ export function useGroupMentions({
   return {
     open,
     items,
+    /** A lista exibida ainda não corresponde ao termo atual (Enter bloqueado). */
+    pending,
     activeIndex,
     pick,
     handleKeyDown,
@@ -222,6 +239,8 @@ interface GroupMentionDropdownProps {
   items: { participant: GroupParticipant; key: string; label: string }[];
   activeIndex: number;
   onPick: (row: { participant: GroupParticipant; key: string; label: string }) => void;
+  /** Busca do termo atual em andamento: mostra "buscando…" no rodapé. */
+  pending?: boolean;
 }
 
 /** Dropdown ancorado acima do composer — o pai precisa de um container relative. */
@@ -230,6 +249,7 @@ export function GroupMentionDropdown({
   items,
   activeIndex,
   onPick,
+  pending = false,
 }: GroupMentionDropdownProps) {
   if (!open) return null;
   return (
@@ -266,6 +286,11 @@ export function GroupMentionDropdown({
           <AtSign size={13} className="shrink-0 text-text-muted" />
         </button>
       ))}
+      {pending && (
+        <div className="px-3 py-2 text-xs text-text-muted" role="status">
+          Buscando…
+        </div>
+      )}
     </div>
   );
 }

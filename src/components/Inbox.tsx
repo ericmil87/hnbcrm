@@ -648,7 +648,14 @@ export function Inbox() {
       ? { groupChatId, jids: mentionedJids }
       : "skip"
   );
+  // Último mapa carregado, para não piscar enquanto a próxima consulta volta —
+  // zerado ao trocar de sala (senão os nomes de uma sala vazariam na outra).
   const lastMentionNames = useRef<{ jid: string; name: string }[]>([]);
+  const lastMentionNamesGroup = useRef<string | undefined>(groupChatId);
+  if (lastMentionNamesGroup.current !== groupChatId) {
+    lastMentionNamesGroup.current = groupChatId;
+    lastMentionNames.current = [];
+  }
   if (mentionNames !== undefined) lastMentionNames.current = mentionNames;
   const groupNameByKey = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -657,7 +664,7 @@ export function Inbox() {
       map.set(jid.split("@")[0], name);
     }
     return map;
-  }, [mentionNames]);
+  }, [mentionNames, groupChatId]);
 
   // Menção a membro no grupo: o "@" busca os membros no servidor, o texto
   // recebe "@<nome>" e os JIDs escolhidos viajam em `mentions[]` no envio.
@@ -2556,6 +2563,7 @@ export function Inbox() {
                     items={groupMentions.items}
                     activeIndex={groupMentions.activeIndex}
                     onPick={groupMentions.pick}
+                    pending={groupMentions.pending}
                   />
                   {!recorderActive && (
                     <>
