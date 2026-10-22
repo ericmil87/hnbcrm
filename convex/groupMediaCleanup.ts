@@ -19,6 +19,7 @@
  * para liberar espaço". Transcrição e descrição de imagem continuam.
  */
 import { v } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -136,7 +137,7 @@ export const internalPurgeGroupMedia = internalMutation({
 
       if (await deleteBlobIfUnreferenced(ctx, file)) bytes += file.size;
       else sharedKept++;
-      await ctx.db.delete(file._id);
+      await deleteFileRow(ctx, file);
       // Relê: outra mídia da MESMA mensagem pode ter sido tirada neste lote.
       const fresh = await ctx.db.get(message._id);
       if (fresh) {

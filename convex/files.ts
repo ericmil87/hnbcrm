@@ -5,7 +5,13 @@
  */
 
 import { v } from "convex/values";
-import { mutation, query, internalMutation, internalQuery } from "./_generated/server";
+import {
+  computeStorageUsageFromFiles,
+  deleteFileRow,
+  insertFileRow,
+} from "./lib/storageUsage";
+import { internal } from "./_generated/api";
+import { mutation, query, internalMutation, internalQuery, MutationCtx } from "./_generated/server";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { validateFileUpload } from "./lib/fileValidation";
 import { checkUploadQuota } from "./lib/fileQuotas";
@@ -81,7 +87,7 @@ export const saveFile = mutation({
     });
 
     // Insert file record
-    const fileId = await ctx.db.insert("files", {
+    const fileId = await insertFileRow(ctx, {
       organizationId: args.organizationId,
       storageId: args.storageId,
       name: args.name,
@@ -170,7 +176,7 @@ export const deleteFile = mutation({
     await deleteBlobIfUnreferenced(ctx, file);
 
     // Delete metadata
-    await ctx.db.delete(args.fileId);
+    await deleteFileRow(ctx, file);
 
     // Audit log
     await ctx.db.insert("auditLogs", {
@@ -370,7 +376,7 @@ export const internalSaveFile = internalMutation({
     });
 
     // Insert file record
-    const fileId = await ctx.db.insert("files", {
+    const fileId = await insertFileRow(ctx, {
       organizationId: args.organizationId,
       storageId: args.storageId,
       name: args.name,
@@ -443,7 +449,7 @@ export const internalDeleteFile = internalMutation({
     await deleteBlobIfUnreferenced(ctx, file);
 
     // Delete metadata
-    await ctx.db.delete(args.fileId);
+    await deleteFileRow(ctx, file);
 
     // Audit log
     await ctx.db.insert("auditLogs", {
@@ -466,5 +472,85 @@ export const internalDeleteFile = internalMutation({
     });
 
     return null;
+  },
+});
+
+// ===== Contador agregado de armazenamento (perf Convex I/O, onda 2) =====
+
+const REBUILD_ORGS_PER_PAGE = 20;
+
+const rebuildRowValidator = v.object({
+  organizationId: v.id("organizations"),
+  before: v.union(v.null(), v.object({ bytes: v.number(), count: v.number() })),
+  actual: v.object({ bytes: v.number(), count: v.number() }),
+  changed: v.boolean(),
+});
+
+async function rebuildOrgUsage(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  dryRun: boolean
+) {
+  const row = await ctx.db
+    .query("orgStorageUsage")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .unique();
+  const actual = await computeStorageUsageFromFiles(ctx, organizationId);
+  const before = row ? { bytes: row.bytes, count: row.count } : null;
+  const changed = !before || before.bytes !== actual.bytes || before.count !== actual.count;
+  if (!dryRun && changed) {
+    if (row) await ctx.db.patch(row._id, { ...actual, updatedAt: Date.now() });
+    else await ctx.db.insert("orgStorageUsage", { organizationId, ...actual, updatedAt: Date.now() });
+  }
+  return { organizationId, before, actual, changed };
+}
+
+/**
+ * Recalcula `orgStorageUsage` a partir de `files` (soma de `size` + nº de
+ * linhas). Não é obrigatório: sem linha, a 1ª checagem de quota inicializa
+ * sozinha. Serve para corrigir divergência e para pré-aquecer o contador.
+ *
+ * `organizationId` → só aquela org. Sem ele, varre `organizations` em páginas de
+ * 20: dryRun devolve UMA página (e o cursor); o real grava e se reagenda.
+ *
+ *   npx convex run files:internalRebuildStorageUsage '{"dryRun":true}'
+ */
+export const internalRebuildStorageUsage = internalMutation({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    orgs: v.array(rebuildRowValidator),
+    changedCount: v.number(),
+    continueCursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    if (args.organizationId) {
+      const r = await rebuildOrgUsage(ctx, args.organizationId, dryRun);
+      return { dryRun, orgs: [r], changedCount: r.changed ? 1 : 0, continueCursor: null, isDone: true };
+    }
+    const page = await ctx.db
+      .query("organizations")
+      .paginate({ numItems: REBUILD_ORGS_PER_PAGE, cursor: args.cursor ?? null });
+    const orgs = [];
+    for (const org of page.page) orgs.push(await rebuildOrgUsage(ctx, org._id, dryRun));
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.files.internalRebuildStorageUsage, {
+        dryRun: false,
+        cursor: page.continueCursor,
+      });
+    }
+    return {
+      dryRun,
+      orgs,
+      changedCount: orgs.filter((o) => o.changed).length,
+      continueCursor: page.isDone ? null : page.continueCursor,
+      isDone: page.isDone,
+    };
   },
 });

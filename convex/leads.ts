@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -825,7 +826,7 @@ export const removeLeadDocument = mutation({
     // Delete file from storage
     if (file) {
       await ctx.storage.delete(file.storageId);
-      await ctx.db.delete(file._id);
+      await deleteFileRow(ctx, file);
     }
 
     // Delete lead document entry

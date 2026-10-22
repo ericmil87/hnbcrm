@@ -1,4 +1,5 @@
 import { v, type Infer } from "convex/values";
+import { insertFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -1170,7 +1171,7 @@ export const forwardMessage = mutation({
       for (const fileId of source.attachments) {
         const file = sourceFileMap.get(fileId);
         if (!file) continue;
-        const copyId = await ctx.db.insert("files", {
+        const copyId = await insertFileRow(ctx, {
           organizationId: target.organizationId,
           storageId: file.storageId,
           name: file.name,

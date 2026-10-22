@@ -2422,7 +2422,24 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
     .index("by_storage_id", ["storageId"])
-    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"]),
+    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"])
+    // Teto diário de uploads da quota: range createdAt > agora-24h, com take
+    // limitado ao teto (perf Convex I/O, onda 2).
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  /**
+   * Contador agregado de armazenamento por org (perf Convex I/O, onda 2): soma
+   * de `files.size` e nº de linhas, mantido por `lib/storageUsage.ts` em todo
+   * insert/delete de `files`. A quota lê 1 doc em vez de `.collect()` da org.
+   * Ausente = não inicializado (a 1ª checagem de quota calcula e grava).
+   * Recomputável: fora do backup; `files:internalRebuildStorageUsage` corrige.
+   */
+  orgStorageUsage: defineTable({
+    organizationId: v.id("organizations"),
+    bytes: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   /**
    * Mídia de grupo que a política NÃO baixou (v0.62) — o suficiente para baixar
