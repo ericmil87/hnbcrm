@@ -6,7 +6,7 @@ import { Search, Forward, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
-import { Badge } from "@/components/ui/Badge";
+import { ChannelOriginBadge } from "./ChannelOriginBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import type { InboxMessage } from "./types";
@@ -18,19 +18,6 @@ interface ForwardModalProps {
   /** Exclude the source conversation from the target list. */
   currentConversationId?: string | null;
   onClose: () => void;
-}
-
-function channelBadgeVariant(channel: string) {
-  switch (channel) {
-    case "whatsapp":
-      return "success" as const;
-    case "telegram":
-      return "info" as const;
-    case "email":
-      return "brand" as const;
-    default:
-      return "default" as const;
-  }
 }
 
 export function ForwardModal({
@@ -140,7 +127,7 @@ export function ForwardModal({
                           <p className="text-xs text-text-muted truncate">{c.lead.title}</p>
                         )}
                       </div>
-                      <Badge variant={channelBadgeVariant(c.channel)}>{c.channel}</Badge>
+                      <ChannelOriginBadge channel={c.channel} />
                       {sending ? (
                         <Loader2 size={16} className="animate-spin text-brand-500 shrink-0" />
                       ) : (

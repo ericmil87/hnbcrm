@@ -13,6 +13,7 @@ import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
+import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
@@ -1510,19 +1511,6 @@ export function Inbox() {
     );
   }
 
-  const getChannelBadgeVariant = (channel: string) => {
-    switch (channel) {
-      case "whatsapp":
-        return "success";
-      case "telegram":
-        return "info";
-      case "email":
-        return "brand";
-      default:
-        return "default";
-    }
-  };
-
   // Media icon for the last-message preview in the conversation list
   const getPreviewIcon = (contentType: string | null, bridgeType: string | null) => {
     if (contentType === "audio" || bridgeType === "audio") return Mic;
@@ -1937,9 +1925,7 @@ export function Inbox() {
                       ) : null;
                     })}
                   </h3>
-                  <Badge variant={getChannelBadgeVariant(conversation.channel)}>
-                    {conversation.channel}
-                  </Badge>
+                  <ChannelOriginBadge channel={conversation.channel} />
                 </div>
 
                 {conversation.kind === "group" && (

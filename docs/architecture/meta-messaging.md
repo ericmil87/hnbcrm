@@ -1,0 +1,34 @@
+# Meta Messaging: Instagram + Facebook Messenger (API oficial)
+
+> Criado em 22/10/2026 na F0 do plano "Meta Messaging v2". Plano completo, pesquisa e status por fase são documentos locais (gitignorados): `docs/META-MESSAGING-PLAN.md`, `docs/META-MESSAGING-STATUS.md`, `temp/instagram/pesquisa/`. Este arquivo é o registro público: **Estado atual** + decisões e pegadinhas por fase.
+
+## Estado atual
+
+Segundo e terceiro canais despacháveis do HNBCRM, sob uma camada única "Meta Messaging": `channelConfigs.channel` aceita `"instagram"` e `"messenger"` (além de `"whatsapp"`), conectados de uma vez por **Facebook Login for Business** (uma Página do Facebook + a conta Instagram profissional vinculada a ela, token de Página sem expiração). Módulo opcional `settings.modules.metaMessaging`, desligado por padrão: org que não liga não vê nada e se comporta exatamente como antes.
+
+- **Transporte** (`convex/lib/channelTransport.ts`): `configTransport(config)` → `meta | bridge | instagram | messenger`, decidido pelo `channel` antes do `provider`; `configProvider()` virou WhatsApp-only e lança para outro canal. `resolveConversationChannelConfig` é estrito fora do WhatsApp. Toda saída passa por `scheduleOutboundDispatch` (`convex/lib/outboundDispatch.ts`, build guard `outboundDispatchPort.test.ts`).
+- **Credencial** (`metaConnections`): 1 linha por Página (`authMethod:"facebook_login"`, `tokenKind:"page"`, token com `encryptSecret`), compartilhada pelos configs `messenger` e `instagram` da mesma Página (`channelConfigs.metaConnectionId`). Estados `ok | reauth_required | revoked`. Sem cron de refresh (token de Página não expira); saúde diária com `debug_token` chega na F4.
+- **Ingest** (`convex/metaMessaging.ts` + parser puro `convex/lib/metaMessagingParse.ts`): rota única `GET/POST /webhooks/meta-messaging` para os objetos `page` e `instagram`; assinatura com `META_MESSAGING_APP_SECRET` antes do parse; roteamento por `by_messenger_page_id` / `by_instagram_account_id`; eventos agendados em `internalIngestEvent`. F0 ingere **texto** (mídia vira placeholder com `metadata.mediaPending`; F2 baixa).
+- **Identidade** (`contactChannelIdentities`, `convex/lib/metaIdentity.ts`): PSID/IGSID nunca entram em `contacts.phone`; chave `(channelConfigId, externalId)`; lead criado por `ensureLeadForContact` com título = nome ou `@username`.
+- **OAuth** (`convex/lib/metaOAuth.ts` + `startMetaConnect`/`GET /oauth/meta/callback`/`finalizeMetaSelection`): `config_id` no diálogo (sem `scope`), state single-use com hash e TTL de 10 min, token de usuário trocado por longo e descartado após derivar o token de Página; N Páginas → `metaOAuthPending` (tokens cifrados, TTL 15 min) e tela de seleção; códigos de retorno `?secao=canais&meta=<code>`.
+- **UI** (`src/components/settings/ChannelsSection.tsx`, `src/components/inbox/ChannelOriginBadge.tsx`, `src/lib/channelAccounts.ts`): card do módulo, opção "Instagram / Facebook Messenger (oficial)" no chooser, seleção de Páginas, card por canal (estado, "Conectado por", aviso de Standard Access, Desconectar/Excluir), badge de origem com ícone + canal.
+- **Envs** (plataforma, nunca por tenant): `META_MESSAGING_APP_ID`, `META_MESSAGING_APP_SECRET`, `META_MESSAGING_LOGIN_CONFIG_ID`, `META_MESSAGING_WEBHOOK_VERIFY_TOKEN`. Dois apps Meta: "HNBCRM Dev" (DEV) e "HNBCRM" (PROD, F3/F4).
+- **Ainda não** (fases seguintes): envio humano e eco (F1), mídia e tipos ricos (F2), atendente de IA por transporte (F3), saúde/reconexão/ops (F4), REST/OpenAPI/MCP e callbacks de desautorização (F5).
+
+## Decisões, pegadinhas e histórico
+
+### F0 — fundação (v0.71, 22/10/2026)
+
+**Por que Facebook Login for Business e não Instagram Login:** um login cobre Messenger e Instagram; o token de Página derivado de um token de usuário longo não tem data de expiração (morre só por ação do usuário: senha, revogação, perda de papel); os clientes-piloto são contas Business com Página; o Eric é admin do Meta Business deles. Instagram Login (token de 60 dias com refresh, sem Página) fica como forma #2 futura, e `lib/metaGraph.ts` já isola host/endpoints por `authMethod` para ela entrar sem migração.
+
+**Standard Access, sem App Review (nesta entrega):** só conecta quem tem papel no app Meta e no ativo; a UI avisa ("este canal só funciona para contas em que o HNBCRM tem papel de teste"). Pedimos exatamente 8 permissões (`public_profile`, `business_management`, `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `pages_read_engagement`, `instagram_basic`, `instagram_manage_messages`); nada de `HUMAN_AGENT` nem `instagram_manage_comments`. A verificação viva de que o app Live entrega DMs de quem não tem papel (§13 item 1 do plano) decide se clientes funcionam sem review.
+
+**Transporte por canal antes de qualquer Meta (F0.2):** o risco técnico #1 era `configProvider()` colapsar tudo não-bridge em `"meta"` (57 usos) e cinco portas despacharem só WhatsApp — um config do Instagram seria tratado como Cloud API e uma conversa do Instagram sem `channelConfigId` cairia no "primeiro WhatsApp ativo" e sairia por um número de WhatsApp. Refactor sem mudança observável: `configTransport` fail-closed, `configProvider` WhatsApp-only que lança, resolver estrito, porta única `scheduleOutboundDispatch` com build guard. Achados do refactor: havia um 6º ponto de despacho (`opsMigration.internalRedispatchStuckOutbound`) sem guard de canal; `internalRescheduleDispatch` agenda o próprio dispatcher e é a única exceção documentada no guard; linhas de teste sem `channel` contam como WhatsApp legado.
+
+**Credencial em tabela própria, nunca no config:** o token é UM para Messenger e IG da mesma Página; dois ciphertexts divergiriam na reconexão, e o estado `reauth_required` é da credencial (derruba os dois canais juntos). `metaConnections` com `by_page_id`/`by_ig_account_id` deployment-wide dá a exclusividade (mesma Página em outra org → "conta em uso", sem dizer qual), precedente `claimBridgePhone`.
+
+**Rótulo de conta nunca denormalizado (D11):** o nome da Página / `@` muda, e copiá-lo em N conversas exigiria fan-out de escrita reexecutando a lista do inbox (o oposto do projeto de redução de I/O). A conversa guarda só chaves estáveis (`channel`, `channelConfigId`, `channelProvider`); o rótulo vem de uma query pequena por org (F1).
+
+**Módulo desligado = canais desativados, não apagados:** desligar grava `status:"disabled"` + `disabledByModuleAt` e audita; o ingest descarta com 200 (a Meta para de reentregar); religar reativa só esses, e só se a conexão está `ok`. Desconectar e excluir nunca exigem o módulo (limpeza sempre possível). O módulo NÃO entra em `assertAnyModule`: ligar Instagram não pode acender a Central.
+
+**Envio fail-closed até a F1:** com os literais no schema, uma resposta humana numa conversa Instagram/Messenger passaria pela porta e ficaria `sent` sem sair. A porta marca `failed` com cópia PT-BR até o dispatcher da F1 existir.

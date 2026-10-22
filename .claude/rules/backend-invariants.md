@@ -34,6 +34,8 @@ Project-specific rules that change how code must be written. Official Convex rul
 | Follow-up terminal states | `resolveFollowUpOutcome` (`convex/lib/followUpOps.ts`) | `attendantFollowUp.test.ts` |
 | Bridge number check | `convex/lib/bridgeNumberCheck.ts` (used by Nova conversa AND campaigns) | — |
 | Webhook scheduling | `scheduleWebhookEvent` (`convex/lib/webhookDispatch.ts`) | `webhookDispatchPort.test.ts` |
+| Outbound message dispatch (any channel) | `scheduleOutboundDispatch` (`convex/lib/outboundDispatch.ts`) branches by `conversation.channel`; callers keep their own business guards (`!isInternal`) | `outboundDispatchPort.test.ts` fails on `scheduleWhatsappDispatch(` or `internal.whatsapp.internalDispatchMessage` outside the port |
+| Channel transport | `configTransport(config)` (`convex/lib/channelTransport.ts`) decides by `channel` BEFORE `provider`; `configProvider()` is WhatsApp-only and throws for other channels | `channelTransport.test.ts` |
 | Contact lookup by phone | `findContactsByPhoneCandidates` (`convex/lib/inboundRouting.ts`); only callers holding the REAL channel JID pass `phoneIsChannelJid` | `phoneDedupe.test.ts` |
 
 ## Ops functions (`convex/ops*.ts`, `internal*` everywhere)

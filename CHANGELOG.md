@@ -2,6 +2,18 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado] — Instagram e Facebook Messenger, fundação (F0)
+
+### Novos canais pela API oficial da Meta: mensagens do Instagram e do Messenger entrando na Caixa de Entrada
+
+- **Módulo opcional "Mais canais: Instagram e Facebook Messenger"** em Configurações > Canais, desligado por padrão. Quem não liga não vê nada e nada muda no WhatsApp. Desligar com canais conectados desativa os canais (as mensagens recebidas nesse período não entram no HNBCRM; a tela avisa antes) e religar reativa só o que foi desativado pelo módulo
+- **Conectar pela conta da Meta, sem senha nem intermediário:** a opção "Instagram / Facebook Messenger (oficial)" abre o login do Facebook para empresas; o administrador escolhe a Página e a conta do Instagram vinculada, e o HNBCRM recebe uma credencial de Página que serve aos dois canais e não expira. Com mais de uma Página, uma tela deixa escolher "Messenger da Página X" e "Instagram @y" separadamente. A mesma Página ou conta do Instagram não pode ser conectada em duas organizações ("Esta conta já está conectada a outra organização")
+- **Mensagens de texto do Instagram e do Messenger chegam na Caixa de Entrada** como conversas próprias (uma pessoa que escreve pelo Instagram e pelo Messenger vira dois contatos até serem unidos manualmente). O contato recebe nome e `@usuário` do perfil; o identificador da Meta nunca é tratado como telefone. Mídia, menções em story, posts e "curtir" aparecem por enquanto como marcadores (`[imagem]`, `[menção em story]`…) e passam a ser baixados na próxima versão
+- **Origem da conversa visível:** o selo de canal na lista e no encaminhar mostra o ícone do WhatsApp, do Instagram ou do Messenger. As visões salvas aceitam filtrar por Instagram e Messenger
+- **Card de cada canal conectado:** nome da Página / `@` do Instagram, estado da conexão, quem conectou, aviso de que neste momento só funcionam contas em que o HNBCRM tem papel de teste (acesso padrão da Meta, sem revisão de app), botões Desconectar e Excluir
+- **Ainda não nesta versão** (próximas fases): responder pelo inbox (uma resposta enviada numa conversa do Instagram/Messenger fica marcada como falha com aviso claro), mídia, atendente de IA, saúde da conexão e reconexão, API REST/MCP. Campanhas, grupos, templates e "Nova conversa" continuam só para WhatsApp
+- Interno: transporte por canal (`configTransport`) decidido pelo canal antes do provedor, porta única de envio (`scheduleOutboundDispatch`, com teste de build) e resolução de canal estrita, sem mudança de comportamento no WhatsApp; webhook `GET/POST /webhooks/meta-messaging` com assinatura verificada antes de qualquer leitura; novas tabelas `metaConnections`, `contactChannelIdentities`, `metaSentMids`, `oauthStates`, `metaOAuthPending` (schema 100% aditivo); envs de plataforma `META_MESSAGING_APP_ID`, `META_MESSAGING_APP_SECRET`, `META_MESSAGING_LOGIN_CONFIG_ID`, `META_MESSAGING_WEBHOOK_VERIFY_TOKEN`
+
 ## [0.70.2] - 2026-10-22
 
 ### Documentação e ferramental para agentes de código

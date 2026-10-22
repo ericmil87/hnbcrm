@@ -13,6 +13,7 @@ Cada arquivo tem **Estado atual** (curto) e **Decisões, pegadinhas medidas e hi
 | [`email.md`](email.md) | E-mail transacional e notificações | `email.ts`, `emailTemplates.ts`, `notificationPreferences`, Resend, reset de senha |
 | [`api.md`](api.md) | HTTP API REST, API keys e MCP | `router.ts`, `apiKeys.ts`, `mcp-server/`, OpenAPI |
 | [`whatsapp-bridge.md`](whatsapp-bridge.md) | Canal WhatsApp: Meta Cloud API e bridge (wuzapi/whatsmeow) | `whatsapp.ts`, `bridge.ts`, `channelConfigs.ts`, `lib/bridge*.ts`, `channelHealth.ts` |
+| [`meta-messaging.md`](meta-messaging.md) | Canais Instagram + Facebook Messenger (Facebook Login for Business, API oficial) | `metaMessaging.ts`, `lib/meta*.ts`, `lib/channelTransport.ts`, `lib/outboundDispatch.ts`, `lib/orgModules.ts` (módulo `metaMessaging`), `ChannelOriginBadge` |
 | [`inbox.md`](inbox.md) | Inbox: transcrição, busca, respostas rápidas, agendadas, Nova conversa | `conversations.ts`, `startConversation.ts`, `src/components/inbox/`, transcrição, agendadas |
 | [`tasks.md`](tasks.md) | Tarefas (projetos, kanban, subtarefas, notificações) | `tasks.ts`, `taskProjects.ts`, `notifications.ts`, `src/components/tasks/` |
 | [`ai-core.md`](ai-core.md) | IA — runtime, provedores, rotas, custo e data/hora | `lib/llm/`, `lib/agentRoutes.ts`, `aiSettings.ts`, `aiSpend.ts`, `agentRuns`, `lib/promptDateTime.ts`, `lib/whatsappText.ts` |

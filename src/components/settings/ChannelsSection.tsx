@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
+import { useSearchParams } from "react-router";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
@@ -30,8 +32,15 @@ import {
   Radio,
   LayoutTemplate,
   History,
+  Instagram,
+  Facebook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { mutationErrorMessage } from "@/lib/errors";
+import { metaReturnMessage } from "@/lib/metaConnect";
+import { MetaMessagingCard } from "@/components/settings/MetaMessagingCard";
+import { MetaChannelCards, type MetaChannelConfig } from "@/components/settings/MetaChannelCards";
+import { MetaPageSelectionModal } from "@/components/settings/MetaPageSelectionModal";
 import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
 import { BridgeGroupsPanel } from "@/components/settings/BridgeGroupsPanel";
 
@@ -149,9 +158,57 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
   const [guideOpen, setGuideOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const configs = useQuery(api.channelConfigs.getChannelConfigs, { organizationId }) as
-    | ChannelConfig[]
+  const { modules } = useOrgModules(organizationId);
+  const metaEnabled = modules.metaMessaging;
+
+  const allConfigs = useQuery(api.channelConfigs.getChannelConfigs, { organizationId }) as
+    | (ChannelConfig | MetaChannelConfig)[]
     | undefined;
+  // WhatsApp (Cloud API / gateway) segue no fluxo de sempre; Instagram/Messenger só com o módulo ligado.
+  const configs = allConfigs?.filter(
+    (c): c is ChannelConfig => c.channel !== "instagram" && c.channel !== "messenger"
+  );
+  const allMetaConfigs = allConfigs?.filter(
+    (c): c is MetaChannelConfig => c.channel === "instagram" || c.channel === "messenger"
+  );
+  const metaConfigs = metaEnabled ? (allMetaConfigs ?? []) : [];
+
+  // Volta do OAuth da Meta: /configuracoes?secao=canais&meta=<code>[&pendente=<id>].
+  const [searchParams, setSearchParams] = useSearchParams();
+  const metaCode = searchParams.get("meta");
+  const pendingId = searchParams.get("pendente");
+  useEffect(() => {
+    if (!metaCode || metaCode === "selecionar") return;
+    const message = metaReturnMessage(metaCode);
+    if (message) {
+      // `id` evita toast duplicado no StrictMode.
+      const opts = { id: `meta-${metaCode}` };
+      if (message.kind === "success") toast.success(message.text, opts);
+      else if (message.kind === "info") toast.info(message.text, opts);
+      else toast.error(message.text, opts);
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("meta");
+        next.delete("pendente");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [metaCode, setSearchParams]);
+
+  const closeSelection = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("meta");
+        next.delete("pendente");
+        return next;
+      },
+      { replace: true }
+    );
+  }, [setSearchParams]);
 
   const createChannelConfig = useAction(api.channelConfigs.createChannelConfig);
   const updateChannelConfig = useAction(api.channelConfigs.updateChannelConfig);
@@ -230,6 +287,14 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
 
   return (
     <div className="space-y-6">
+      {canManage && (
+        <MetaMessagingCard
+          organizationId={organizationId}
+          enabled={metaEnabled}
+          hasActiveMetaChannels={(allMetaConfigs ?? []).some((c) => c.status === "active")}
+        />
+      )}
+
       <Card>
         <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -291,6 +356,21 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
 
         {configs && configs.length > 0 && <ChannelHealthPanel organizationId={organizationId} />}
       </Card>
+
+      {metaConfigs.length > 0 && (
+        <Card>
+          <div className="mb-4 flex items-center gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500/10">
+              <Instagram size={20} className="text-brand-500" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold text-text-primary">Instagram e Messenger</h3>
+              <p className="text-sm text-text-secondary">Contas conectadas pela conexão oficial da Meta.</p>
+            </div>
+          </div>
+          <MetaChannelCards organizationId={organizationId} configs={metaConfigs} />
+        </Card>
+      )}
 
       {/* Meta webhook configuration block */}
       <Card variant="sunken">
@@ -372,9 +452,18 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
         variant="danger"
       />
 
+      {metaEnabled && canManage && metaCode === "selecionar" && pendingId && (
+        <MetaPageSelectionModal
+          organizationId={organizationId}
+          pendingId={pendingId as Id<"metaOAuthPending">}
+          onClose={closeSelection}
+        />
+      )}
+
       {showForm && (
         <ChannelFormModal
           organizationId={organizationId}
+          metaEnabled={metaEnabled}
           config={editingConfig}
           onClose={closeForm}
           createChannelConfig={createChannelConfig}
@@ -1096,6 +1185,7 @@ type ProvisionBridgeFn = (args: {
 // --- Create/edit form modal (provider-aware) ---
 function ChannelFormModal({
   organizationId,
+  metaEnabled,
   config,
   onClose,
   createChannelConfig,
@@ -1103,6 +1193,7 @@ function ChannelFormModal({
   provisionBridgeChannel,
 }: {
   organizationId: Id<"organizations">;
+  metaEnabled: boolean;
   config: ChannelConfig | null;
   onClose: () => void;
   createChannelConfig: CreateChannelConfigFn;
@@ -1124,7 +1215,11 @@ function ChannelFormModal({
   return (
     <Modal open onClose={onClose} title={title}>
       {provider === null ? (
-        <ProviderChooser onPick={setProvider} />
+        <ProviderChooser
+          onPick={setProvider}
+          organizationId={organizationId}
+          metaEnabled={metaEnabled && !isEditing}
+        />
       ) : provider === "meta" ? (
         <MetaForm
           organizationId={organizationId}
@@ -1149,7 +1244,30 @@ function ChannelFormModal({
   );
 }
 
-function ProviderChooser({ onPick }: { onPick: (p: Provider) => void }) {
+function ProviderChooser({
+  onPick,
+  organizationId,
+  metaEnabled,
+}: {
+  onPick: (p: Provider) => void;
+  organizationId: Id<"organizations">;
+  metaEnabled: boolean;
+}) {
+  const startMetaConnect = useAction(api.metaMessaging.startMetaConnect);
+  const [connecting, setConnecting] = useState(false);
+
+  // Não abre formulário: pede a URL do login da Meta e redireciona.
+  const handleConnectMeta = async () => {
+    setConnecting(true);
+    try {
+      const { url } = await startMetaConnect({ organizationId });
+      window.location.assign(url);
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Não foi possível iniciar a conexão com a Meta"));
+      setConnecting(false);
+    }
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-sm text-text-secondary">Escolha como este número será conectado.</p>
@@ -1179,6 +1297,24 @@ function ProviderChooser({ onPick }: { onPick: (p: Provider) => void }) {
           <span className="text-semantic-warning">Risco de banimento — use por sua conta e risco.</span>
         </p>
       </button>
+      {metaEnabled && (
+        <button
+          onClick={() => void handleConnectMeta()}
+          disabled={connecting}
+          className="w-full text-left rounded-lg border border-border bg-surface-sunken p-4 hover:border-brand-500 transition-colors disabled:opacity-60 disabled:cursor-wait"
+        >
+          <div className="flex items-center gap-2 mb-1">
+            <Instagram size={18} className="text-brand-500" />
+            <Facebook size={18} className="text-brand-500" />
+            <span className="font-medium text-text-primary">Instagram / Facebook Messenger (oficial)</span>
+            {connecting && <Spinner size="sm" />}
+          </div>
+          <p className="text-sm text-text-secondary">
+            Conexão oficial pela Meta, sem senha. Você entra com o Facebook e escolhe a Página e a conta do
+            Instagram.
+          </p>
+        </button>
+      )}
     </div>
   );
 }
