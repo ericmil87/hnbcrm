@@ -20,10 +20,22 @@ function formatRelative(ts: number | null): string {
   return new Date(ts).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
-export function ChannelHealthPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
+export function ChannelHealthPanel({
+  organizationId,
+  configId,
+  className,
+}: {
+  organizationId: Id<"organizations">;
+  /** Canal Meta específico (Instagram / Messenger); sem ele, o painel do WhatsApp. */
+  configId?: Id<"channelConfigs">;
+  className?: string;
+}) {
   // Congelado na montagem — janela móvel não precisa ser reativa ao minuto.
   const [since] = useState(() => Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000);
-  const stats = useQuery(api.channelConfigs.getChannelStats, { organizationId, since });
+  const stats = useQuery(
+    api.channelConfigs.getChannelStats,
+    configId ? { organizationId, since, configId } : { organizationId, since }
+  );
 
   if (!stats) return null;
 
@@ -47,7 +59,7 @@ export function ChannelHealthPanel({ organizationId }: { organizationId: Id<"org
   ];
 
   return (
-    <div className="mt-4 rounded-xl border border-border bg-surface-sunken p-4">
+    <div className={cn("rounded-xl border border-border bg-surface-sunken p-4", className ?? "mt-4")}>
       <div className="flex items-center gap-2 mb-3">
         <Activity size={15} className="text-brand-500" />
         <h4 className="text-sm font-semibold text-text-primary">Saúde do canal</h4>

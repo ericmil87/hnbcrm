@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useMutation } from "convex/react";
+import { useAction, useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Link2Off, ShieldAlert, Trash2 } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Link2Off, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
@@ -9,12 +9,17 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { channelIcon, channelLabel } from "@/lib/channelAccounts";
+import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   DEFAULT_APP_HINT,
+  RECONNECT_FLAG_KEY,
   STANDARD_ACCESS_NOTICE,
   groupMetaConfigs,
+  metaCardView,
   metaConnectionState,
+  metaReturnMessage,
+  verifiedAgoLabel,
   type MetaAuthState,
 } from "@/lib/metaConnect";
 
@@ -30,6 +35,11 @@ export interface MetaChannelConfig {
   metaAuthState: MetaAuthState | null;
   metaSubscribed: boolean | null;
   metaConnectedBy: { memberId: string; name: string } | null;
+  metaAuthDetail?: string | null;
+  metaDataAccessExpiresAt?: number | null;
+  metaLastHealthAt?: number | null;
+  metaAvatarUrl?: string | null;
+  healthDetail?: string | null;
   disabledByModuleAt: number | null;
 }
 
@@ -116,17 +126,73 @@ function MetaChannelCard({
   onDisconnect: () => void;
   onDelete: () => void;
 }) {
+  const startMetaConnect = useAction(api.metaMessaging.startMetaConnect);
+  const completeMetaConnection = useAction(api.metaMessaging.completeMetaConnection);
+  const checkChannelHealth = useAction(api.channelConfigs.checkChannelHealth);
+  const [busy, setBusy] = useState<"action" | "test" | null>(null);
+  const [showHealth, setShowHealth] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  // Congelado na montagem: o rótulo "há Xh" não precisa ser reativo ao segundo.
+  const [now] = useState(() => Date.now());
+
   const Icon = channelIcon(config.channel, config.channel);
   const state = metaConnectionState(config);
+  const view = metaCardView(config, now);
+  const verified = config.metaAuthState === "ok" ? verifiedAgoLabel(config.metaLastHealthAt, now) : null;
   const name = config.metaAccountLabel ?? config.displayName;
   const handle = config.metaAccountHandle ? `@${config.metaAccountHandle.replace(/^@/, "")}` : null;
+  const connectionId = config.metaConnectionId;
+
+  const handleAction = async () => {
+    if (!connectionId || !view.action) return;
+    setBusy("action");
+    try {
+      if (view.action === "reconnect") {
+        // Marca para a volta (?meta=ok) mostrar "Conexão renovada".
+        sessionStorage.setItem(RECONNECT_FLAG_KEY, "1");
+        const { url } = await startMetaConnect({ organizationId, connectionId });
+        window.location.assign(url);
+        return;
+      }
+      const result = await completeMetaConnection({ organizationId, connectionId });
+      if (result.ok) toast.success("Conexão concluída");
+      else toast.error(metaReturnMessage(result.code ?? "falha_meta")?.text ?? "Não foi possível concluir a conexão");
+    } catch (error) {
+      sessionStorage.removeItem(RECONNECT_FLAG_KEY);
+      toast.error(mutationErrorMessage(error, "Não foi possível continuar. Tente novamente."));
+    }
+    setBusy(null);
+  };
+
+  const handleTest = async () => {
+    setBusy("test");
+    try {
+      const result = await checkChannelHealth({ configId: config._id });
+      if (result.ok) toast.success("Conexão verificada");
+      else toast.error(result.error ?? config.healthDetail ?? "A verificação encontrou um problema");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Não foi possível testar a conexão"));
+    }
+    setBusy(null);
+  };
 
   return (
     <div className="rounded-lg border border-border bg-surface-sunken p-3.5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex min-w-0 flex-1 items-start gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-brand-500">
-            <Icon size={18} aria-hidden="true" />
+          <div className="relative h-9 w-9 shrink-0">
+            {config.metaAvatarUrl && !avatarFailed ? (
+              <img
+                src={config.metaAvatarUrl}
+                alt=""
+                onError={() => setAvatarFailed(true)}
+                className="h-9 w-9 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500">
+                <Icon size={18} aria-hidden="true" />
+              </div>
+            )}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -140,12 +206,40 @@ function MetaChannelCard({
             {config.metaConnectedBy && (
               <p className="mt-0.5 text-xs text-text-muted">Conectado por {config.metaConnectedBy.name}</p>
             )}
+            {verified && (
+              <p className="mt-0.5 flex items-center gap-1 text-xs text-text-muted">
+                <CheckCircle2 size={12} className="text-semantic-success" aria-hidden="true" />
+                {verified}
+              </p>
+            )}
           </div>
         </div>
 
         <PermissionGate organizationId={organizationId} category="settings" level="manage">
           <div className="flex items-center gap-1.5 flex-wrap">
-            {config.metaConnectionId && (
+            {view.action && connectionId && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAction}
+                disabled={busy !== null}
+                className="min-h-[44px] md:min-h-0"
+              >
+                <RefreshCw size={14} className={busy === "action" ? "animate-spin" : undefined} />
+                {view.actionLabel}
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleTest}
+              disabled={busy !== null}
+              className="min-h-[44px] md:min-h-0"
+            >
+              <Activity size={14} className={busy === "test" ? "animate-pulse" : undefined} />
+              {busy === "test" ? "Testando..." : "Testar conexão"}
+            </Button>
+            {connectionId && (
               <Button variant="secondary" size="sm" onClick={onDisconnect} className="min-h-[44px] md:min-h-0">
                 <Link2Off size={14} />
                 Desconectar
@@ -158,6 +252,27 @@ function MetaChannelCard({
           </div>
         </PermissionGate>
       </div>
+
+      {view.notice && (
+        <p
+          role="status"
+          className="mt-3 flex items-start gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-xs text-semantic-warning"
+        >
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{view.notice.text}</span>
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowHealth((v) => !v)}
+        aria-expanded={showHealth}
+        className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 text-xs font-medium text-brand-500 hover:underline md:min-h-0"
+      >
+        <Activity size={13} aria-hidden="true" />
+        {showHealth ? "Ocultar saúde do canal" : "Ver saúde do canal (7 dias)"}
+      </button>
+      {showHealth && <ChannelHealthPanel organizationId={organizationId} configId={config._id} className="mt-2" />}
 
       <div className="mt-3 space-y-1.5 rounded-lg border border-border-subtle bg-surface-base p-2.5 text-xs text-text-muted">
         <p className="flex items-start gap-2">

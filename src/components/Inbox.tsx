@@ -13,6 +13,7 @@ import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
+import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
 import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
 import {
@@ -1645,7 +1646,16 @@ export function Inbox() {
   const OriginIcon = channelIcon(convChannel ?? "", convTransport);
   const originLine = originShown ? (
     <span className="inline-flex items-center gap-1 min-w-0 text-xs text-text-muted">
-      <OriginIcon size={12} aria-hidden="true" className="shrink-0" />
+      {currentAccount?.avatarUrl ? (
+        <ChannelAvatar
+          channel={convChannel ?? ""}
+          transport={convTransport}
+          avatarUrl={currentAccount.avatarUrl}
+          size={28}
+        />
+      ) : (
+        <OriginIcon size={12} aria-hidden="true" className="shrink-0" />
+      )}
       <span className="truncate">{originText}</span>
     </span>
   ) : null;

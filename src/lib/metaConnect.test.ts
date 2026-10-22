@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   STANDARD_ACCESS_NOTICE,
+  daysUntil,
+  expiringDays,
   groupMetaConfigs,
+  humanizeAuthDetail,
+  metaCardView,
   metaConnectionState,
   metaReturnMessage,
+  verifiedAgoLabel,
 } from "./metaConnect";
 
 describe("metaReturnMessage", () => {
@@ -70,5 +75,85 @@ describe("groupMetaConfigs", () => {
       { _id: "b", channel: "instagram", displayName: "@y", metaConnectionId: null },
     ]);
     expect(groups).toHaveLength(2);
+  });
+});
+
+describe("metaReturnMessage reconnect", () => {
+  it("says the connection was renewed only when reconnecting", () => {
+    expect(metaReturnMessage("ok", true)?.text).toBe("Conexão renovada.");
+    expect(metaReturnMessage("ok")?.text).toBe("Conta conectada com sucesso.");
+    expect(metaReturnMessage("falha_meta", true)?.kind).toBe("error");
+  });
+});
+
+describe("card health helpers", () => {
+  const NOW = 1_000_000_000_000;
+  const DAY = 86_400_000;
+  const base = {
+    metaAuthState: "ok" as const,
+    metaSubscribed: true,
+    disabledByModuleAt: null,
+    metaAuthDetail: null,
+    metaDataAccessExpiresAt: null,
+  };
+
+  it("computes days until expiry, rounding up and never negative", () => {
+    expect(daysUntil(null, NOW)).toBeNull();
+    expect(daysUntil(NOW + 3 * DAY - 1000, NOW)).toBe(3);
+    expect(daysUntil(NOW - DAY, NOW)).toBe(0);
+  });
+
+  it("detects expiring access by detail or by date", () => {
+    expect(expiringDays(base, NOW)).toBeNull();
+    expect(expiringDays({ ...base, metaDataAccessExpiresAt: NOW + 30 * DAY }, NOW)).toBeNull();
+    expect(expiringDays({ ...base, metaDataAccessExpiresAt: NOW + 5 * DAY }, NOW)).toBe(5);
+    expect(
+      expiringDays({ ...base, metaAuthDetail: "data_access_expiring", metaDataAccessExpiresAt: NOW + 2 * DAY }, NOW)
+    ).toBe(2);
+    expect(expiringDays({ ...base, metaAuthState: "reauth_required", metaDataAccessExpiresAt: NOW + DAY }, NOW)).toBeNull();
+  });
+
+  it("humanizes the auth detail with a default", () => {
+    expect(humanizeAuthDetail(null)).toContain("senha trocada");
+    expect(humanizeAuthDetail("qualquer coisa")).toContain("papel perdido");
+  });
+
+  it("formats the last verification", () => {
+    expect(verifiedAgoLabel(null, NOW)).toBeNull();
+    expect(verifiedAgoLabel(NOW - 10_000, NOW)).toBe("Verificado agora");
+    expect(verifiedAgoLabel(NOW - 30 * 60_000, NOW)).toBe("Verificado há 30min");
+    expect(verifiedAgoLabel(NOW - 3 * 3_600_000, NOW)).toBe("Verificado há 3h");
+    expect(verifiedAgoLabel(NOW - 2 * DAY, NOW)).toBe("Verificado há 2d");
+  });
+
+  it("picks the action and notice per state", () => {
+    expect(metaCardView(base, NOW)).toEqual({ action: null, actionLabel: null, notice: null });
+
+    const reauth = metaCardView({ ...base, metaAuthState: "reauth_required" }, NOW);
+    expect(reauth.action).toBe("reconnect");
+    expect(reauth.actionLabel).toBe("Reconectar");
+    expect(reauth.notice?.text).toContain("A Meta invalidou a credencial");
+
+    const revoked = metaCardView({ ...base, metaAuthState: "revoked" }, NOW);
+    expect(revoked.actionLabel).toBe("Conectar de novo");
+    expect(revoked.action).toBe("reconnect");
+
+    const incomplete = metaCardView({ ...base, metaSubscribed: false }, NOW);
+    expect(incomplete.action).toBe("complete");
+    expect(incomplete.actionLabel).toBe("Concluir conexão");
+
+    const expiring = metaCardView(
+      { ...base, metaAuthDetail: "data_access_expiring", metaDataAccessExpiresAt: NOW + 3 * DAY },
+      NOW
+    );
+    expect(expiring.action).toBe("reconnect");
+    expect(expiring.notice?.text).toBe("Acesso expira em 3 dias. Reconecte para manter.");
+    expect(
+      metaCardView({ ...base, metaDataAccessExpiresAt: NOW + DAY - 1000 }, NOW).notice?.text
+    ).toContain("1 dia.");
+  });
+
+  it("offers no action when disabled by the module", () => {
+    expect(metaCardView({ ...base, disabledByModuleAt: 1, metaSubscribed: false }, NOW).action).toBeNull();
   });
 });

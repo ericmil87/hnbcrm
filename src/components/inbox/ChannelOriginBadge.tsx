@@ -1,3 +1,4 @@
+import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { Badge } from "@/components/ui/Badge";
 import {
   accountBadgeLabel,
@@ -34,7 +35,11 @@ export function ChannelOriginBadge({
   return (
     <Badge variant={channelBadgeVariant(channel)} className={className}>
       <span className="inline-flex items-center gap-1 min-w-0">
-        <Icon size={11} aria-hidden="true" className="shrink-0" />
+        {showAccount && account?.avatarUrl ? (
+          <ChannelAvatar channel={channel} transport={transport} avatarUrl={account.avatarUrl} size={20} />
+        ) : (
+          <Icon size={11} aria-hidden="true" className="shrink-0" />
+        )}
         {accountLabel && duplicate ? (
           <span className="truncate max-w-[9rem]">{accountLabel}</span>
         ) : (
