@@ -15,6 +15,8 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { Id } from "./_generated/dataModel";
+import fx from "./__fixtures__/bridgeMessageTypes.json";
+import { lastMessageFieldsPatch } from "./lib/conversationListFields";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -458,6 +460,43 @@ describe("fallback e backfill", () => {
     expect(row.serviceWindowApplies).toBe(false);
   });
 
+  test("sem prévia e com mensagens: mensagem ANTIGA do aparelho não grava a prévia; mensagem nova grava", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const NOW = 1_800_000_000_000;
+    vi.setSystemTime(NOW);
+    await receive(t, s, "mais recente", "EXT1");
+    const conversation = await conversationOf(t, s);
+    // Pré-backfill (ou prévia limpa pelo reparse): messageCount > 0, sem prévia.
+    await stripDenorm(t, conversation!._id);
+    expect((await conversationOf(t, s))!.messageCount).toBe(1);
+
+    // Histórico do aparelho: mensagem de 3 dias atrás.
+    await t.mutation(internal.conversations.internalReceiveDeviceMessage, {
+      organizationId: s.organizationId,
+      leadId: s.leadId,
+      channelConfigId: s.bridgeConfigId,
+      content: "de três dias atrás",
+      externalId: "DEV-OLD",
+      sentAt: NOW - 3 * 86_400_000,
+    });
+    let after = await conversationOf(t, s);
+    expect(after!.lastMessagePreviewAt).toBeUndefined();
+    expect(after!.lastMessagePreview).toBeUndefined();
+    // A lista (fallback) mostra a mensagem mais recente de verdade.
+    let [row] = await listRows(s);
+    expect(row.lastMessagePreview).toBe("mais recente");
+    await expectEquivalent(s);
+
+    // Mensagem nova (≥ lastMessageAt) grava normalmente.
+    vi.setSystemTime(NOW + 60_000);
+    await receive(t, s, "chegou agora", "EXT2");
+    after = await conversationOf(t, s);
+    expect(after).toMatchObject({ lastMessagePreview: "chegou agora", lastMessagePreviewAt: NOW + 60_000 });
+    [row] = await expectEquivalent(s);
+    expect(row.lastMessagePreview).toBe("chegou agora");
+  });
+
   test("getConversationById no mesmo formato da lista", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -494,5 +533,157 @@ describe("fallback e backfill", () => {
 
     const again = await t.mutation(internal.conversations.internalBackfillListFields, { dryRun: false });
     expect(again.patched).toBe(0);
+  });
+});
+
+describe("reparse do bridge limpa a prévia", () => {
+  /** Insere uma bolha legada `unknown` como ÚLTIMA mensagem, com a prévia apontando para ela. */
+  async function insertLegacyLast(t: TestConvex<typeof schema>, s: Seed, raw: unknown, externalId: string) {
+    const conversation = (await conversationOf(t, s))!;
+    return await t.run(async (ctx) => {
+      const message = {
+        organizationId: s.organizationId,
+        conversationId: conversation._id,
+        leadId: s.leadId,
+        direction: "inbound" as const,
+        senderType: "contact" as const,
+        contentType: "text" as const,
+        content: "[mensagem não suportada]",
+        isInternal: false,
+        externalId,
+        metadata: { bridgeType: "unknown", raw },
+        createdAt: Date.now() + 1000,
+      };
+      const id = await ctx.db.insert("messages", message);
+      await ctx.db.patch(conversation._id, {
+        messageCount: conversation.messageCount + 1,
+        lastMessageAt: message.createdAt,
+        ...lastMessageFieldsPatch(id, message),
+      });
+      return id;
+    });
+  }
+
+  test("apagar o ruído que era a última mensagem volta ao fallback (mensagem anterior)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await receive(t, s, "mensagem real", "EXT1");
+    const noiseId = await insertLegacyLast(t, s, fx.senderKeyOnly, "L1");
+    expect((await conversationOf(t, s))!.lastMessageId).toBe(noiseId);
+
+    const res = await t.mutation(internal.opsBridgeReparse.internalReparseUnknownBridgeMessages, {
+      organizationId: s.organizationId,
+      dryRun: false,
+    });
+    expect(res.ignoredDeleted).toBe(1);
+    const conversation = await conversationOf(t, s);
+    expect(conversation!.lastMessageId).toBeUndefined();
+    expect(conversation!.lastMessagePreviewAt).toBeUndefined();
+    const [row] = await expectEquivalent(s);
+    expect(row.lastMessagePreview).toBe("mensagem real");
+  });
+
+  test("retipar a última mensagem limpa a prévia e a lista mostra o tipo novo", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await receive(t, s, "antes", "EXT1");
+    await insertLegacyLast(t, s, fx.album, "L2");
+
+    await t.mutation(internal.opsBridgeReparse.internalReparseUnknownBridgeMessages, {
+      organizationId: s.organizationId,
+      dryRun: false,
+    });
+    expect((await conversationOf(t, s))!.lastMessagePreviewAt).toBeUndefined();
+    const [row] = await expectEquivalent(s);
+    expect(row.lastMessagePreview).toBe("[álbum: 20 fotos]");
+    expect(row.lastMessageBridgeType).toBe("album");
+  });
+
+  test("dryRun não mexe na prévia", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await receive(t, s, "mensagem real", "EXT1");
+    const noiseId = await insertLegacyLast(t, s, fx.senderKeyOnly, "L1");
+    await t.mutation(internal.opsBridgeReparse.internalReparseUnknownBridgeMessages, {
+      organizationId: s.organizationId,
+    });
+    expect((await conversationOf(t, s))!.lastMessageId).toBe(noiseId);
+  });
+});
+
+describe("searchMessages e REST", () => {
+  test("searchMessages devolve o nome da sala desnormalizado (groupSubject); kill switch lê groupChats", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const groupChatId = await t.run(async (ctx) =>
+      ctx.db.insert("groupChats", {
+        organizationId: s.organizationId,
+        channelConfigId: s.bridgeConfigId,
+        jid: GROUP_JID,
+        subject: "Sala Original",
+        participants: [{ lid: "1@lid", phone: "15550000011", isAdmin: false, isSuperAdmin: false }],
+        participantsCount: 1,
+        monitored: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      } as any)
+    );
+    await s.asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
+    await t.mutation(internal.conversations.internalReceiveGroupMessage, {
+      organizationId: s.organizationId,
+      groupChatId,
+      channelConfigId: s.bridgeConfigId,
+      externalId: "G1",
+      content: "orçamento da festa",
+      senderLid: "1@lid",
+      senderPhone: "15550000011",
+      senderName: "Membro",
+    });
+    // Divergência proposital: o doc do grupo diz outra coisa. Os espelhos
+    // vazios são contorno do fake de search index do `convex-test` (quebra em
+    // doc com o campo do índice `undefined`) — ver bridgeGroupIngress.test.ts.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(groupChatId, { subject: "Nome no groupChats" });
+      for (const m of await ctx.db.query("messages").collect()) {
+        await ctx.db.patch(m._id, { transcriptText: "", imageDescription: "" });
+      }
+    });
+
+    const search = () =>
+      s.asAdmin.query(api.conversations.searchMessages, {
+        organizationId: s.organizationId,
+        searchQuery: "orçamento",
+      });
+    let hits = await search();
+    expect(hits).toHaveLength(1);
+    expect(hits[0].contactName).toBe("Sala Original");
+
+    vi.stubEnv("INBOX_DENORM_READ", "0");
+    hits = await search();
+    expect(hits[0].contactName).toBe("Nome no groupChats");
+  });
+
+  test("internalGetConversations (REST) devolve a prévia e lastMessageBridgeExtra null; kill switch devolve o objeto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await receive(t, s, "Qual dia?", "EXT1", {
+      metadata: { bridgeType: "poll", bridgeExtra: { question: "Qual dia?" } },
+    });
+    const rest = async () =>
+      (
+        (await t.query(internal.conversations.internalGetConversations, {
+          organizationId: s.organizationId,
+        })) as any
+      ).conversations as any[];
+
+    let [row] = await rest();
+    expect(row.lastMessagePreview).toBe("Qual dia?");
+    expect(row.lastMessageBridgeType).toBe("poll");
+    expect(row).toHaveProperty("lastMessageBridgeExtra", null);
+
+    vi.stubEnv("INBOX_DENORM_READ", "0");
+    [row] = await rest();
+    expect(row.lastMessagePreview).toBe("Qual dia?");
+    expect(row.lastMessageBridgeExtra).toEqual({ question: "Qual dia?" });
   });
 });

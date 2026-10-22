@@ -602,7 +602,7 @@ describe("mensagem de membro num grupo acompanhado", () => {
 
     const queue = await t.run(async (ctx) => ctx.db.query("aiReplyQueue").collect());
     expect(queue).toHaveLength(0);
-  });
+  }, 15_000); // estourou 5 s sob carga na suíte inteira (passa isolado)
 
   test("NÃO aplica opt-out de campanha: 'SAIR' num grupo não suprime ninguém (D13)", async () => {
     const t = setup();
