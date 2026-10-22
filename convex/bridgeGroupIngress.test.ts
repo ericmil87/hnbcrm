@@ -702,6 +702,24 @@ describe("mensagem de membro num grupo acompanhado", () => {
     expect(messages).toHaveLength(1);
     expect(messages[0].senderName).toBe("Eric Milfont");
   });
+
+  // Perf Convex I/O, onda 2: espelho do caso 1:1 de `bridgeIngress.test.ts`. O
+  // webhook passa o snapshot da config ao ingest de grupo; se o ingest
+  // relesse `channelConfigs`, a mensagem seria descartada com o doc apagado.
+  test("ingest de grupo usa o snapshot do webhook (config apagada depois ainda ingere)", async () => {
+    const t = setup();
+    const { organizationId, configId } = await monitoredGroup(t);
+
+    const response = await postBridge(t, groupMessageEvent());
+    expect(response.status).toBe(200);
+    await t.run(async (ctx) => ctx.db.delete(configId));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const messages = await messagesOf(t, organizationId);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].senderName).toBe("Eric Milfont");
+    expect(messages[0].direction).toBe("inbound");
+  });
 });
 
 describe("eventos de grupo (GroupInfo / JoinedGroup)", () => {
