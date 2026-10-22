@@ -40,6 +40,7 @@ import { personaById, personaForIndustry } from "./lib/agentPersonas";
 import {
   insertAgentTextsForNewMember,
   readAgentTexts,
+  stripAgentTexts,
   writeAgentTexts,
   type AgentProfile,
 } from "./lib/agentProfileTexts";
@@ -590,7 +591,7 @@ export const listAttendants = query({
       .map((m) => {
         // Sem os textos grandes: o editor carrega `getAttendantTexts` só ao abrir
         // (membro legado ainda os tem no doc — tirados aqui de qualquer forma).
-        const { systemPrompt: _sp, knowledge: _kn, ...agentProfile } = m.agentProfile!;
+        const agentProfile = stripAgentTexts(m.agentProfile!);
         return { _id: m._id, name: m.name, status: m.status, agentProfile };
       });
   },
@@ -1032,7 +1033,9 @@ export const updateAgentProfile = mutation({
         textChanges.after[field] = await auditTextSnapshot(value);
       }
     }
-    const { systemPrompt: _bsp, knowledge: _bkn, ...beforeMeta } = agent.agentProfile;
+    // Legado: o doc ainda carrega os ~35 KB; o audit leva só metadado (o texto,
+    // quando muda, vai em `textChanges`).
+    const beforeMeta = stripAgentTexts(agent.agentProfile);
 
     await ctx.db.insert("auditLogs", {
       organizationId: agent.organizationId,
@@ -1043,7 +1046,7 @@ export const updateAgentProfile = mutation({
       actorType: "human",
       changes: {
         before: { agentProfile: beforeMeta as unknown as Record<string, unknown>, ...textChanges.before },
-        after: { agentProfile: saved as unknown as Record<string, unknown>, ...textChanges.after },
+        after: { agentProfile: stripAgentTexts(saved) as unknown as Record<string, unknown>, ...textChanges.after },
       },
       metadata: { name: agent.name, agentConfig: true, ...(autopilotEarly ? { autopilotEarly: true } : {}) },
       description: autopilotEarly

@@ -1358,10 +1358,16 @@ function AttendantConfig({
   // Textos grandes (persona + conhecimento) só ao abrir "Personalizar" e só para
   // quem pode salvar (gate `settings:manage` da query). Até carregar, os campos
   // ficam travados e o salvar NÃO manda os textos — senão gravaria vazio.
+  const canManageTexts = can("settings", "manage");
   const attendantTexts = useQuery(
     api.aiSettings.getAttendantTexts,
-    showCustomize && can("settings", "manage") ? { agentMemberId: attendant._id } : "skip"
+    showCustomize && canManageTexts ? { agentMemberId: attendant._id } : "skip"
   );
+  // Sem `settings:manage` a query é pulada de propósito: os campos ficam
+  // travados com um aviso, nunca em "Carregando…" para sempre.
+  const textsPlaceholder = canManageTexts
+    ? "Carregando…"
+    : "Só quem gerencia as configurações vê e edita a persona";
   const [knowledge, setKnowledge] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [textsLoaded, setTextsLoaded] = useState(false);
@@ -1815,7 +1821,7 @@ function AttendantConfig({
                 rows={5}
                 disabled={!textsLoaded}
                 placeholder={
-                  textsLoaded ? "Preços, serviços, horários, políticas, diferenciais..." : "Carregando…"
+                  textsLoaded ? "Preços, serviços, horários, políticas, diferenciais..." : textsPlaceholder
                 }
                 className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
@@ -1829,7 +1835,7 @@ function AttendantConfig({
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 rows={4}
                 disabled={!textsLoaded}
-                placeholder={textsLoaded ? undefined : "Carregando…"}
+                placeholder={textsLoaded ? undefined : textsPlaceholder}
                 className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
             </div>

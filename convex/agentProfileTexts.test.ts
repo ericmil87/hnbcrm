@@ -227,6 +227,27 @@ describe("dual-read e escrita", () => {
     expect((audit?.changes?.before as any).agentProfile).not.toHaveProperty("systemPrompt");
   });
 
+  test("updateAgentProfile só com metadado num legado não leva o texto ao audit", async () => {
+    const { t, seed } = await setup();
+    await asUser(t, seed.adminUserId).mutation(api.aiSettings.updateAgentProfile, {
+      agentMemberId: seed.agentId,
+      patch: { botGuard: { enabled: false } },
+    });
+    const audit = await t.run(async (ctx) =>
+      (await ctx.db.query("auditLogs").collect()).find((a) => a.entityId === seed.agentId)
+    );
+    for (const side of ["before", "after"] as const) {
+      const changes = audit?.changes?.[side] as any;
+      expect(changes).not.toHaveProperty("systemPrompt");
+      expect(changes).not.toHaveProperty("knowledge");
+      expect(changes.agentProfile).not.toHaveProperty("systemPrompt");
+      expect(changes.agentProfile).not.toHaveProperty("knowledge");
+    }
+    expect((audit?.changes?.after as any).agentProfile.botGuard).toEqual({ enabled: false });
+    // o doc legado segue com os textos (metadado não migra)
+    expect((await member(t, seed.agentId)).agentProfile).toMatchObject({ knowledge: KNOWLEDGE });
+  });
+
   test("ativação em 1 toque cria o atendente já migrado", async () => {
     const t = convexTest(schema, modules);
     const { organizationId, adminUserId } = await t.run(async (ctx) => {
