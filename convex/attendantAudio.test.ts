@@ -15,6 +15,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { getAiTurnLock } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -272,7 +273,7 @@ describe("espera pela transcrição no claim (D1)", () => {
     expect(updated!.mediaWaitUntil).toBe(item.createdAt + 60_000);
     // …sem consumir tentativa de falha nem tomar o lock de turno.
     expect(updated!.attempts).toBe(0);
-    expect(conversation!.aiTurnLock).toBeUndefined();
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId))) ?? null).toBeNull();
   });
 
   test("áudio ainda sem metadata de transcrição também segura o turno", async () => {
@@ -429,7 +430,7 @@ describe("regressão: conversa de texto", () => {
     }));
     expect(updated!.status).toBe("processing");
     expect(updated!.transcriptWaitUntil).toBeUndefined();
-    expect(conversation!.aiTurnLock?.runId).toBe("run-texto");
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId)))?.runId).toBe("run-texto");
   });
 
   test("áudio já transcrito seguido de texto: a rajada não espera de novo", async () => {

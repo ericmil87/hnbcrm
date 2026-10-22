@@ -33,6 +33,7 @@ import {
   VISION_TEXT_ONLY_PROMPT_TOKENS,
 } from "./lib/llm/registry";
 import { parseVisionJson, VISION_SYSTEM_PROMPT, VISION_USER_PROMPT } from "./vision";
+import { getAiTurnLock } from "./lib/conversationRuntime";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -419,7 +420,7 @@ describe("espera pelo enriquecimento de mídia no claim (D12)", () => {
     expect(updated!.mediaWaitUntil).toBe(item.createdAt + 60_000);
     // Espera não é falha: nem tentativa consumida, nem lock de turno tomado.
     expect(updated!.attempts).toBe(0);
-    expect(conversation!.aiTurnLock).toBeUndefined();
+    expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId))) ?? null).toBeNull();
   });
 
   test("imagem ainda sem metadata de visão também segura o turno", async () => {
