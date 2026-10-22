@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation, type MutationCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildTaskSearchText } from "./lib/taskSearchText";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 const MAX_NAME_LENGTH = 30;
 // Cap defensivo para as varreduras org-scoped abaixo (sem índice em labelIds).
@@ -93,7 +93,7 @@ export const createLabel = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "task_label.created",
       payload: { labelId, name },
@@ -176,7 +176,7 @@ export const updateLabel = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: label.organizationId,
       event: "task_label.updated",
       payload: { labelId: args.labelId, changes },
@@ -236,7 +236,7 @@ export const deleteLabel = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: label.organizationId,
       event: "task_label.deleted",
       payload: { labelId: args.labelId, name: label.name },

@@ -26,6 +26,7 @@ import { buildAuditDescription } from "./auditDescription";
 import { deleteBlobIfUnreferenced } from "./fileRefs";
 import { purgeFollowUpsOfConversation } from "./followUpOps";
 import { deleteRuntime } from "./conversationRuntime";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -403,7 +404,7 @@ export async function hardDeleteLead(
     createdAt: now,
   });
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: lead.organizationId,
     event: "lead.deleted",
     payload: { leadId: lead._id, title: lead.title, boardId: lead.boardId },

@@ -8,7 +8,7 @@
  * (detect só roda em `mapping`, dry-run só em `previewing`, a execução tem
  * claim exatamente-uma-vez), então tanto faz quem chega primeiro.
  */
-import { expect, test, describe, beforeEach, afterEach } from "vitest";
+import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -40,6 +40,7 @@ afterEach(async () => {
     }
   });
   await t.finishInProgressScheduledFunctions();
+  vi.unstubAllGlobals();
 });
 
 // ===== Seeds =====
@@ -329,8 +330,23 @@ describe("wizard de contatos", () => {
     expect(contacts[0].customFields).toEqual({ origem_lead: "Indicação" });
   });
 
+  // Gate de webhooks (lib/webhookDispatch): sem assinante ATIVO nada é
+  // agendado, então a org assina "*". Os jobs rodam sozinhos (relógio real) —
+  // o `fetch` é stubado para a action não sair para a rede.
   test("dispara os webhooks import.completed e import.rolled_back", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("ok", { status: 200 })));
     const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("webhooks", {
+        organizationId: s.organizationId,
+        name: "Assinante de teste",
+        url: "https://example.test/hook",
+        events: ["*"],
+        secret: "segredo-de-teste",
+        isActive: true,
+        createdAt: Date.now(),
+      });
+    });
     const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
     const csv = ["Nome,E-mail", "Rita,rita@exemplo.com"].join("\n");
 

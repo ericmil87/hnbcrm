@@ -13,6 +13,7 @@ import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
 import { createNotification, filterMembersOfOrg } from "./notify";
 import { appUrl as resolveAppUrl } from "./appUrl";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 /** Espaçamento entre tasks numa coluna do kanban (inserir no meio sem renumerar). */
 export const ORDER_STEP = 1000;
@@ -337,7 +338,7 @@ export async function applyTaskCompletion(
     });
   }
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: task.organizationId,
     event: "task.completed",
     payload: { taskId: task._id, title: task.title },
@@ -443,7 +444,7 @@ export async function addTaskCommentCore(
     });
   }
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: task.organizationId,
     event: "task.comment_added",
     payload: { taskId: task._id, commentId, content: opts.content },

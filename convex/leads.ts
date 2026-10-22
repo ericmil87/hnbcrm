@@ -26,6 +26,7 @@ import {
   leadCreationStagePatch,
   backfillPatchForLead,
 } from "./lib/leadStageMove";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Get leads for organization
 export const getLeads = query({
@@ -206,7 +207,7 @@ export const createLead = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "lead.created",
       payload: { leadId, title: args.title, contactId: args.contactId, boardId: args.boardId, stageId },
@@ -297,7 +298,7 @@ export const updateLead = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.updated",
       payload: { leadId: args.leadId, changes },
@@ -628,7 +629,7 @@ export const assignLead = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
@@ -719,7 +720,7 @@ export const updateLeadQualification = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.qualification_updated",
       payload: { leadId: args.leadId, qualification: args.qualification },
@@ -793,7 +794,7 @@ export const addLeadDocument = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.updated",
       payload: { leadId: args.leadId, documentAdded: args.title || file.name },
@@ -861,7 +862,7 @@ export const removeLeadDocument = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.updated",
       payload: { leadId: doc.leadId, documentRemoved: doc.title || fileName },
@@ -1103,7 +1104,7 @@ export const internalCreateLead = internalMutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "lead.created",
       payload: { leadId, title: args.title, contactId: args.contactId, boardId: args.boardId, stageId },
@@ -1195,7 +1196,7 @@ export const internalUpdateLead = internalMutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.updated",
       payload: { leadId: args.leadId, changes },
@@ -1349,7 +1350,7 @@ export const internalAssignLead = internalMutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
@@ -1483,7 +1484,7 @@ export const bulkAssignLeads = mutation({
       });
 
       // Trigger webhooks
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: lead.organizationId,
         event: "lead.assigned",
         payload: { leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
@@ -1541,7 +1542,7 @@ export const bulkAddTags = mutation({
       });
 
       // Trigger webhooks
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: lead.organizationId,
         event: "lead.updated",
         payload: { leadId, changes: { tags: merged } },
@@ -1600,7 +1601,7 @@ export const bulkRemoveTags = mutation({
       });
 
       // Trigger webhooks
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: lead.organizationId,
         event: "lead.updated",
         payload: { leadId, changes: { tags: filtered } },
@@ -1679,7 +1680,7 @@ export const bulkArchiveLeads = mutation({
       });
 
       // Trigger webhooks
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: lead.organizationId,
         event: args.archived ? "lead.archived" : "lead.unarchived",
         payload: { leadId, title: lead.title },

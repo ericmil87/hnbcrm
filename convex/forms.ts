@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Helper: generate a short random ID (8 chars)
 function generateFieldId(): string {
@@ -163,7 +163,7 @@ export const createForm = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "form.created",
       payload: { formId, name: args.name, slug },
@@ -258,7 +258,7 @@ export const updateForm = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: form.organizationId,
       event: "form.updated",
       payload: { formId: args.formId, changes },

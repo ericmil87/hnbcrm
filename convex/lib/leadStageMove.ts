@@ -23,10 +23,10 @@
  * fechamento novo (emite `lead.lost`). Mover para a MESMA etapa é no-op.
  */
 import { MutationCtx } from "../_generated/server";
-import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { buildAuditDescription } from "./auditDescription";
 import { sanitizeFollowUpNote } from "./followUpNote";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 export type StageMoveActorType = "human" | "ai" | "api" | "automation";
 
@@ -294,7 +294,7 @@ export async function moveLeadToStageCore(
     createdAt: now,
   });
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: lead.organizationId,
     event: "lead.stage_changed",
     payload: {
@@ -311,7 +311,7 @@ export async function moveLeadToStageCore(
   });
 
   if (plan.closureEvent) {
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: lead.organizationId,
       event: plan.closureEvent === "won" ? "lead.won" : "lead.lost",
       payload: {

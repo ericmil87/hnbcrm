@@ -114,6 +114,7 @@ export function rowLimitMessage(rows: number): string {
 export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importKeys";
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 /** Cabeçalho legível a partir da chave (só para mensagens de erro). */
 function headerLabel(key: string): string {
@@ -883,7 +884,7 @@ export const internalFailJob = internalMutation({
       { error: args.error },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: job.organizationId,
       event: "import.failed",
       payload: {
@@ -916,7 +917,7 @@ export const internalFinishImport = internalMutation({
       { status, ...p },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: job.organizationId,
       event: "import.completed",
       payload: {
@@ -1341,7 +1342,7 @@ export const internalFinishRollback = internalMutation({
       { deleted: args.deleted, reverted: args.reverted },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: job.organizationId,
       event: "import.rolled_back",
       payload: {

@@ -129,6 +129,17 @@ async function seed(opts: { qualifiedStage?: "won" | "open"; modules?: boolean }
     const b = await mkLead("Lead B");
     const c = await mkLead("Lead C");
 
+    // Gate de webhooks (lib/webhookDispatch): sem assinante ATIVO na org nada
+    // é agendado — os testes daqui afirmam os eventos, então a org assina "*".
+    await ctx.db.insert("webhooks", {
+      organizationId,
+      name: "Assinante de teste",
+      url: "https://example.test/hook",
+      events: ["*"],
+      secret: "segredo-de-teste",
+      isActive: true,
+      createdAt: now,
+    });
     return {
       organizationId, userId, humanId, agentId, boardId, otherBoardId, otherStageId,
       openStageId, proposalStageId, wonStageId, won2StageId, lostStageId, a, b, c,

@@ -122,6 +122,7 @@ import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGu
 import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 export { isWithinSchedule };
 
@@ -556,7 +557,7 @@ export async function applyBotSuspicion(
     severity: "medium",
     createdAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: "conversation.bot_suspected",
     payload: {
@@ -2071,7 +2072,7 @@ export async function executeAttendantToolCore(
           severity: "medium",
           createdAt: now,
         });
-        await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+        await scheduleWebhookEvent(ctx, {
           organizationId: args.organizationId,
           event: "task.created",
           payload: {
@@ -4515,7 +4516,7 @@ async function returnGroupConversationToAi(
       resolvedBy: memberId,
       resolvedAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,
       event: "handoff.canceled",
       payload: {
@@ -4541,7 +4542,7 @@ async function returnGroupConversationToAi(
     createdAt: now,
   });
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: "conversation.returned_to_ai",
     payload: {
@@ -4642,7 +4643,7 @@ export const returnToAi = mutation({
         resolvedBy: member._id,
         resolvedAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: conversation.organizationId,
         event: "handoff.canceled",
         payload: {
@@ -4680,7 +4681,7 @@ export const returnToAi = mutation({
       metadata: { conversationId: conversation._id },
       createdAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,
       event: "conversation.returned_to_ai",
       payload: {

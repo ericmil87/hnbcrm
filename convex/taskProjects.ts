@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildTaskSearchText } from "./lib/taskSearchText";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Gestão de projetos/colunas (create/update/archive/delete) exige tasks:edit_all
 // via RBAC (defaults: admin=full, manager=edit_all, agent/ai=edit_own — sempre
@@ -165,7 +165,7 @@ export const createProject = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "task_project.created",
       payload: { projectId, name },
@@ -244,7 +244,7 @@ export const updateProject = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: project.organizationId,
       event: "task_project.updated",
       payload: { projectId: args.projectId, changes },
@@ -279,7 +279,7 @@ export const archiveProject = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: project.organizationId,
       event: "task_project.archived",
       payload: { projectId: args.projectId },
@@ -314,7 +314,7 @@ export const unarchiveProject = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: project.organizationId,
       event: "task_project.updated",
       payload: { projectId: args.projectId, unarchived: true },
@@ -398,7 +398,7 @@ export const deleteProject = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: project.organizationId,
       event: "task_project.deleted",
       payload: { projectId: args.projectId, name: project.name },
@@ -462,7 +462,7 @@ export const createColumn = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: project.organizationId,
       event: "task_project.updated",
       payload: { projectId: args.projectId, columnId, columnEvent: "created" },
@@ -528,7 +528,7 @@ export const updateColumn = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: column.organizationId,
       event: "task_project.updated",
       payload: { projectId: column.projectId, columnId: args.columnId, columnEvent: "updated" },
@@ -603,7 +603,7 @@ export const deleteColumn = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: column.organizationId,
       event: "task_project.updated",
       payload: { projectId: column.projectId, columnId: args.columnId, columnEvent: "deleted" },

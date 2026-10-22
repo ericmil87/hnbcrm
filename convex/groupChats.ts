@@ -111,6 +111,7 @@ import {
   timelineSignature,
   writeParticipants,
 } from "./lib/groupParticipantsStore";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leitura (app)
@@ -1733,7 +1734,7 @@ export const internalApplyGroupInfoEvent = internalMutation({
       }
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: group.organizationId,
       event: weLeft ? "group.left" : "group.updated",
       payload: {
@@ -1875,7 +1876,7 @@ export const internalApplyJoinedGroup = internalMutation({
       });
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: config.organizationId,
       event: "group.joined",
       payload: {
@@ -1915,7 +1916,7 @@ export const internalMarkGroupLeft = internalMutation({
         await ctx.db.patch(group.conversationId, { archivedAt: args.at, updatedAt: args.at });
       }
     }
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: group.organizationId,
       event: "group.left",
       payload: { groupChatId: group._id, jid: group.jid, subject: group.subject },

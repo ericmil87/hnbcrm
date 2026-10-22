@@ -11,6 +11,7 @@ import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
 import { getLeadRef } from "./leadRef";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CAMPAIGN_REPLY_WINDOW_MS = 7 * DAY_MS;
@@ -188,7 +189,7 @@ export async function pauseCampaignCore(
       body: args.reason,
     });
   }
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: campaign.organizationId,
     event: "campaign.paused",
     payload: { campaignId: campaign._id, name: campaign.name, reason: args.reason, automatic: args.automatic },
@@ -225,7 +226,7 @@ export async function completeCampaignCore(
     title: `Campanha «${campaign.name}» concluída`,
     body: `${campaign.stats.sent + campaign.stats.delivered + campaign.stats.read + campaign.stats.replied} enviadas · ${campaign.stats.failed} falhas · ${campaign.stats.replied} respostas`,
   });
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: campaign.organizationId,
     event: "campaign.completed",
     payload: { campaignId: campaign._id, name: campaign.name, stats: campaign.stats },
@@ -313,7 +314,7 @@ async function upsertOptOut(
     reason: args.reason,
     createdAt: args.now,
   });
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: args.organizationId,
     event: "contact.opted_out",
     payload: {
@@ -561,7 +562,7 @@ export async function applyCampaignInboundHooks(
       createdAt: now,
     });
   }
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: "campaign.recipient_replied",
     payload: {
@@ -604,7 +605,7 @@ export async function applyCampaignGroupReplyHook(
   const moved = await transitionRecipient(ctx, recent, "replied", { repliedAt: now }, { now });
   if (!moved) return;
   // Sem `activities` (a conversa do grupo não tem lead — D2) e sem opt-out.
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: "campaign.recipient_replied",
     payload: {

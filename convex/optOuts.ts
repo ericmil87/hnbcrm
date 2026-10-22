@@ -6,7 +6,6 @@
 import { v, type ObjectType } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { query, mutation, QueryCtx, MutationCtx } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import {
@@ -18,6 +17,7 @@ import {
 } from "./lib/campaignAuth";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 /** DDI padrão da org (telefone digitado/gravado sem código de país). */
 async function orgDefaultCountry(ctx: QueryCtx | MutationCtx, organizationId: Id<"organizations">): Promise<string> {
@@ -143,7 +143,7 @@ export async function addOptOutHandler(ctx: MutationCtx, args: AddOptOutArgs) {
       severity: "medium",
       createdAt: now,
     });
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "contact.opted_out",
       payload: { phone: n.phone, source: "manual", contactId, by: member._id },

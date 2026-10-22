@@ -36,6 +36,7 @@ import {
 } from "./lib/exportColumns";
 import { sanitizeDocument, EXCLUDED_BACKUP_TABLES } from "./lib/exportSanitize";
 import { cronsDisabled } from "./lib/cronGuard";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // ===== Constantes =====
 
@@ -685,7 +686,7 @@ export const internalFinishJob = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: job.organizationId,
       event: args.status === "completed" ? "export.completed" : "export.failed",
       payload: {

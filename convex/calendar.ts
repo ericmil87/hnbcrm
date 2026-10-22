@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { requireAuth, assertAssignableMember } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Shared validators
 const eventTypeValidator = v.union(
@@ -277,7 +277,7 @@ export const createEvent = mutation({
     }
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "calendar_event.created",
       payload: { eventId, title: args.title, eventType: args.eventType, startTime: args.startTime, endTime: args.endTime, assignedTo: args.assignedTo },
@@ -361,7 +361,7 @@ export const updateEvent = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.updated",
       payload: { eventId: args.eventId, changes },
@@ -415,7 +415,7 @@ export const rescheduleEvent = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.rescheduled",
       payload: { eventId: args.eventId, oldStartTime: event.startTime, newStartTime: args.newStartTime, newEndTime },
@@ -515,7 +515,7 @@ export const completeEvent = mutation({
     }
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.completed",
       payload: { eventId: args.eventId, title: event.title },
@@ -555,7 +555,7 @@ export const cancelEvent = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.cancelled",
       payload: { eventId: args.eventId, title: event.title },
@@ -592,7 +592,7 @@ export const deleteEvent = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.deleted",
       payload: { eventId: args.eventId, title: event.title },
@@ -787,7 +787,7 @@ export const internalCreateEvent = internalMutation({
     }
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "calendar_event.created",
       payload: { eventId, title: args.title, eventType: args.eventType, startTime: args.startTime, endTime: args.endTime, assignedTo: args.assignedTo },
@@ -861,7 +861,7 @@ export const internalUpdateEvent = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.updated",
       payload: { eventId: args.eventId, changes },
@@ -902,7 +902,7 @@ export const internalDeleteEvent = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.deleted",
       payload: { eventId: args.eventId, title: event.title },
@@ -965,7 +965,7 @@ export const internalRescheduleEvent = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.rescheduled",
       payload: { eventId: args.eventId, oldStartTime: event.startTime, newStartTime: args.newStartTime, newEndTime },
@@ -1022,7 +1022,7 @@ export const internalCompleteEvent = internalMutation({
       });
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: event.organizationId,
       event: "calendar_event.completed",
       payload: { eventId: args.eventId, title: event.title },

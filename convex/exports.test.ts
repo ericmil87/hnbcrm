@@ -31,6 +31,7 @@ afterEach(async () => {
     }
   });
   await t.finishInProgressScheduledFunctions();
+  vi.unstubAllGlobals();
 });
 
 // ===== Seeds =====
@@ -926,10 +927,23 @@ describe("regras do job de export", () => {
     }
   });
 
-  // Nenhum webhook é cadastrado de propósito: o disparo real faria `fetch` de
-  // verdade no ambiente de teste. Basta conferir o evento agendado.
+  // Gate de webhooks (lib/webhookDispatch): sem assinante ATIVO nada é
+  // agendado, então a org assina "*". O job roda sozinho (relógio real) — o
+  // `fetch` é stubado para a action não sair para a rede.
   test("dispara webhook export.completed com o resumo do arquivo", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("ok", { status: 200 })));
     const s = await seedOrg(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("webhooks", {
+        organizationId: s.organizationId,
+        name: "Assinante de teste",
+        url: "https://example.test/hook",
+        events: ["*"],
+        secret: "segredo-de-teste",
+        isActive: true,
+        createdAt: Date.now(),
+      });
+    });
     await seedContacts(t, s.organizationId);
     const admin = asAdmin(t, s.admin.userId);
     const jobId = await admin.mutation(api.exports.createExportJob, {

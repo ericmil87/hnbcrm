@@ -2,7 +2,6 @@ import { v, ConvexError } from "convex/values";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { internal } from "./_generated/api";
 import { QueryCtx, MutationCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import {
@@ -23,6 +22,7 @@ import {
 } from "./lib/permissions";
 import { normalizeEmail } from "./lib/emailAddress";
 import { stripAgentTexts } from "./lib/agentProfileTexts";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Role hierarchy for elevation checks: admin > manager > agent/ai
 const ROLE_RANK: Record<string, number> = { admin: 3, manager: 2, agent: 1, ai: 0 };
@@ -346,7 +346,7 @@ export const updateTeamMember = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: teamMember.organizationId,
       event: "teamMember.updated",
       payload: { teamMemberId: args.teamMemberId, changes },
@@ -409,7 +409,7 @@ export const removeTeamMember = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: teamMember.organizationId,
       event: "teamMember.removed",
       payload: { teamMemberId: args.teamMemberId, name: teamMember.name },

@@ -55,6 +55,7 @@ import {
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
 
@@ -1097,7 +1098,7 @@ export const sendMessage = mutation({
     if (!args.isInternal) {
       // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
       // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: conversation.organizationId,
         event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
         payload: {
@@ -1520,7 +1521,7 @@ export const internalSendMessage = internalMutation({
     if (!args.isInternal) {
       // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
       // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: conversation.organizationId,
         event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
         payload: {
@@ -1716,7 +1717,7 @@ export const internalReceiveMessage = internalMutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "message.received",
       payload: {
@@ -1867,7 +1868,7 @@ export const internalReceiveDeviceMessage = internalMutation({
       createdAt: sentAt,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "message.sent",
       payload: {
@@ -2094,7 +2095,7 @@ export const internalReceiveGroupMessage = internalMutation({
     // aqui — é o D13, e `applyCampaignInboundHooks` continua fora do grupo.
     await applyCampaignGroupReplyHook(ctx, { conversation, now: sentAt });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "group.message.received",
       payload: {
@@ -2496,7 +2497,7 @@ export const internalSendTemplate = internalMutation({
       });
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,
       event: "message.sent",
       payload: {

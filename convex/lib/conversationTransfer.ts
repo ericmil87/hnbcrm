@@ -8,11 +8,11 @@
  * demonstração, com `now` retroativo).
  */
 import { MutationCtx } from "../_generated/server";
-import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
 import { getLeadRef } from "./leadRef";
 import { lastMessagePatchForId } from "./conversationListFields";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 export async function transferConversationCore(
   ctx: MutationCtx,
@@ -135,7 +135,7 @@ export async function transferConversationCore(
     createdAt: now,
   });
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: orgId,
     event: "conversation.transferred",
     payload: {

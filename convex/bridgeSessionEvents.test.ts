@@ -21,9 +21,15 @@ const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
 beforeEach(() => {
   vi.useFakeTimers();
+  // A org semeada assina webhooks ("*"); quando um teste avança o relógio a
+  // action de webhook roda — responde 200 na hora (sem rede, sem o backoff de
+  // 2/5 s que nunca andaria sob relógio falso). Testes que sondam o gateway
+  // sobrescrevem este stub.
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("ok", { status: 200 })));
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("parser", () => {
@@ -164,6 +170,17 @@ async function seed(t: TestConvex<typeof schema>, opts?: { demo?: boolean }) {
       createdBy: adminId,
       createdAt: now,
       updatedAt: now,
+    });
+    // Gate de webhooks (lib/webhookDispatch): sem assinante ATIVO na org nada
+    // é agendado — os testes daqui afirmam os eventos, então a org assina "*".
+    await ctx.db.insert("webhooks", {
+      organizationId,
+      name: "Assinante de teste",
+      url: "https://example.test/hook",
+      events: ["*"],
+      secret: "segredo-de-teste",
+      isActive: true,
+      createdAt: now,
     });
     return { organizationId, configId, campaignId, adminId };
   });

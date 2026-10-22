@@ -9,6 +9,7 @@ import { getLeadRef } from "./lib/leadRef";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { firstResponsePatch } from "./lib/conversationTiming";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Mensagens agendadas: o composer agenda um texto para uma conversa; a entrega
 // roda via ctx.scheduler.runAt e reaproveita o mesmo caminho de dispatch do
@@ -224,7 +225,7 @@ export const deliver = internalMutation({
     }
 
     // Sala de grupo tem evento próprio — `message.sent` segue exclusivo do 1 a 1.
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,
       event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
       payload: {

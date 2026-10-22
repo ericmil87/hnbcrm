@@ -16,6 +16,7 @@ import { pauseCampaignsForChannel } from "./campaignHooks";
 import { pausePostCore } from "./groupPostOps";
 import { isMembershipRevoked } from "./auth";
 import { hasPermission, resolvePermissions, type Role } from "./permissions";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 /**
  * Humanos com `settings:manage` que ainda fazem parte da org. Variante local
@@ -264,7 +265,7 @@ export async function emitChannelSessionLost(
     });
   }
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: config.organizationId,
     event: "channel.session_lost",
     payload: {
