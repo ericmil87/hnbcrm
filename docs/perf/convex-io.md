@@ -1,5 +1,7 @@
 # Database I/O do Convex — registro de medição (out/2026)
 
+**Estado em 22/10/2026 ~01:50 UTC: todas as fases (1, 2, 3, 4a, 4b+limpeza, 4c, 4d) publicadas em `main` (PRs #5–#12), prod e dev; migrações de dados concluídas em prod. Próximo passo: leitura 2 do painel (~29/10) para fechar o antes/depois em bytes.**
+
 Contexto: plano Free estourou **Database bandwidth** (2,04 GB de 2 GB) com Function Calls em 249K de 2M. O gargalo é bytes lidos/escritos, não número de chamadas. Dev (`tacit-chicken-195`) e prod (`careful-anaconda-127`) consomem a mesma cota.
 
 Auditoria de origem (somente leitura, 21/10/2026): `projects_manager/prompts/convex-io/auditoria-convex-dossie.md`, seções "HNBCRM — backend" e "HNBCRM — frontend".
@@ -211,7 +213,7 @@ Kill switches `RETENTION_DISABLED=1` (sempre) e `CRONS_DISABLED=1` (só o cron);
 
 `lastMessagePreview`/`Direction`/`ContentType`/`BridgeType`/`Revoked` + `lastMessageId` (helper único nos ~14 pontos de insert + revoke/edit + nota de transferência), `groupSubject`/`groupParticipantsCount` (6 escritores) e `channelProvider` (4 escritores), para `getConversations` deixar de fazer `batchGet` de `groupChats` (60–90 KB cada) e `channelConfigs` e o `first()` em `messages` por conversa. Nome do contato fica FORA (≈10 escritores, drift por PushName/IA/import; o `batchGet` de contatos/leads é barato). Leitura com fallback por campo ausente + kill switch por env; backfill paginado.
 
-### 4d — `groupParticipants`/`groupTimeline` (branch `perf/convex-io-fase4d`, em revisão)
+### 4d — `groupParticipants`/`groupTimeline` (PR #12, mergeado em `main` 5679937 e publicado em prod 22/10/2026 ~01:40 UTC; migração em prod: backfill de 6 salas, finish com `divergent` 0 e `timelineDivergent` 0, 6 salas migradas; dev sem salas a migrar)
 
 Tabelas `groupParticipants` (`by_group`, `by_group_and_key`, `by_group_and_phone`, `by_organization_and_contact`, `by_organization`) e `groupTimeline` (`by_group_and_at`, cap 100), store único `lib/groupParticipantsStore.ts`. Migração em 2 passos: dual-write + leitura pelo array enquanto `groupChats.participantsMigratedAt` não existe; `internalBackfillGroupParticipants` copia; `internalFinishGroupParticipantsMigration` confere membros, grava `participantsMigratedAt`, remove `participants`/`timeline` (o doc encolhe de 60–90 KB para ~1–2 KB) e recalcula `participantsCount`; `internalRestoreGroupArraysFromTable` é o rollback. ~25 leitores trocados; shape de `getGroup`/REST/MCP idêntico. Trade-off: `getGroup` de sala com 1.024 membros lê ~250 KB em linhas (follow-up: query de membros separada). Limites: ops com 10 salas/página (máx. 12); `syncGroups` de canal com >15 salas acompanhadas grandes pode precisar de paginação (follow-up).
 
