@@ -88,6 +88,7 @@ import {
   replaceTimelineRows,
   dedupeParticipants,
   deleteGroupSideTables,
+  deleteParticipantRows,
   diffParticipantsTable,
   findParticipant,
   isGroupMigrated,
@@ -1219,10 +1220,50 @@ const gatewayGroupValidator = v.object({
   participantsCount: v.number(),
 });
 
+const gatewayParticipantsValidator = v.array(
+  v.object({
+    lid: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    name: v.optional(v.string()),
+    isAdmin: v.boolean(),
+    isSuperAdmin: v.boolean(),
+  })
+);
+
+/**
+ * Escritas de "apagar membros" que o sync faz INLINE por execução (sala que
+ * sumiu da listagem). O resto vai para `internalPurgeGroupParticipants`, que
+ * se reagenda — 16 salas de 1.024 apagadas numa transação só estourariam.
+ */
+const SYNC_INLINE_DELETE_BUDGET = 2000;
+
+/** Campos do doc da sala que o sync compara antes de regravar. */
+function syncPatchChanges(
+  prev: Doc<"groupChats">,
+  patch: Partial<Doc<"groupChats">>
+): boolean {
+  for (const [key, value] of Object.entries(patch)) {
+    // Carimbos não contam como "mudou": senão todo sync regravaria toda sala
+    // (e reexecutaria toda query que lê o doc), com nada de novo.
+    if (key === "lastSyncAt" || key === "updatedAt") continue;
+    const before = (prev as Record<string, unknown>)[key];
+    if (JSON.stringify(before ?? null) !== JSON.stringify(value ?? null)) return true;
+  }
+  return false;
+}
+
 /**
  * Aplica o resultado de `/group/list`: upsert dos que vieram e `removedAt` nos
  * que sumiram. NUNCA toca em `monitored`, `conversationId` ou `ai` — essas são
  * decisões do operador, e uma sincronização não pode desfazê-las.
+ *
+ * Perf (Convex I/O, onda 2): esta mutation grava só os METADADOS das salas
+ * (barato) e devolve em `participantJobs` as salas cujos membros precisam do
+ * diff; quem chama (`applyGatewayGroupList`, numa action) roda
+ * `internalApplyGatewayParticipants` UMA vez por sala, em série — cada uma na
+ * sua transação. Antes o diff de todas as salas acompanhadas corria aqui
+ * dentro (até 1.024 leituras/escritas por sala; 16 salas grandes ≈ 16 mil
+ * escritas numa transação só). Sala sem nada novo não é regravada.
  */
 export const internalUpsertGroupsFromSync = internalMutation({
   args: {
@@ -1232,7 +1273,12 @@ export const internalUpsertGroupsFromSync = internalMutation({
     // ausentes como removidos — a lista recebida não é a verdade completa.
     full: v.boolean(),
   },
-  returns: v.object({ upserted: v.number(), removed: v.number() }),
+  returns: v.object({
+    upserted: v.number(),
+    removed: v.number(),
+    syncedAt: v.number(),
+    participantJobs: v.array(v.object({ groupChatId: v.id("groupChats"), jid: v.string() })),
+  }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new Error("Canal não encontrado");
@@ -1246,51 +1292,49 @@ export const internalUpsertGroupsFromSync = internalMutation({
       .collect();
     const byJid = new Map(existing.map((g) => [g.jid, g]));
 
+    const participantJobs: { groupChatId: Id<"groupChats">; jid: string }[] = [];
     let upserted = 0;
     for (const raw of args.groups) {
       const group = raw as ParsedGroupInfo;
       const fields = groupFieldsFromGateway(group, ourLid, ourPhone, now);
+      // Membros ativos da sala segundo o gateway — o MESMO número que o diff
+      // chega (o merge mantém 1 linha ativa por participante recebido, e quem
+      // sumiu ganha `leftAt`), então dá para gravar a contagem já aqui.
+      const activeCount = mergeParticipantsFromGateway(undefined, group.participants, now).length;
       const prev = byJid.get(group.jid);
       if (prev) {
-        // Limite conhecido (fase 4d): lê até 1.024 linhas por sala acompanhada
-        // — com ~31 salas grandes num canal passa das 32 mil leituras da
-        // transação; e entre o deploy e o backfill, o 1º sync insere a tabela
-        // inteira de cada sala (16 salas de 1.024 ≈ 16 mil escritas). Rodar o
-        // backfill logo após o deploy; canal com >15 salas acompanhadas
-        // grandes pode precisar de sync paginado (follow-up).
-        const current = await participantsForWrite(ctx, prev);
-        const merged = mergeParticipantsFromGateway(current.list, group.participants, now);
-        // Sala NÃO acompanhada guarda só a contagem — nome e telefone de
-        // terceiros ficam fora do banco (review de segurança nº 1).
-        const stored = participantsForStorage(prev.monitored, merged);
-        const participantsPatch = await writeParticipants(
-          ctx,
-          prev,
-          stored.participants,
-          now,
-          current.rows
-        );
+        const migrated = isGroupMigrated(prev);
+        // Diff de membros: sala acompanhada; e a legada (não migrada) sempre,
+        // porque o array dela mora no doc e o diff é quem o mantém (inclusive
+        // esvaziando o de sala NÃO acompanhada — LGPD).
+        if (prev.monitored === true || !migrated) {
+          participantJobs.push({ groupChatId: prev._id, jid: group.jid });
+        }
         const timelinePatch =
           prev.subject !== group.subject
             ? await recordTimeline(ctx, prev, [{ at: now, type: "renamed", data: group.subject }])
             : {};
-        await ctx.db.patch(prev._id, {
+        const patch: Partial<Doc<"groupChats">> = {
           ...fields,
-          ...participantsPatch,
-          participantsCount: stored.participantsCount,
+          participantsCount: activeCount,
           ...timelinePatch,
           // Voltou a aparecer na listagem: não estamos mais fora dele.
           leftAt: undefined,
-        });
-        await syncGroupSummaryToConversation(ctx, {
-          ...prev,
-          ...fields,
-          subject: fields.subject ?? prev.subject,
-          participants: isGroupMigrated(prev) ? undefined : stored.participants,
-          participantsCount: stored.participantsCount,
-        });
+        };
+        if (syncPatchChanges(prev, patch)) {
+          await ctx.db.patch(prev._id, patch);
+        }
+        // Sala legada: o espelho da conversa conta o array, que só o diff
+        // atualiza — ele sincroniza no fim.
+        if (migrated) {
+          await syncGroupSummaryToConversation(ctx, {
+            ...prev,
+            subject: fields.subject ?? prev.subject,
+            participants: undefined,
+            participantsCount: activeCount,
+          });
+        }
       } else {
-        const merged = mergeParticipantsFromGateway(undefined, group.participants, now);
         const groupChatId = await ctx.db.insert("groupChats", {
           organizationId: config.organizationId,
           channelConfigId: args.channelConfigId,
@@ -1301,7 +1345,7 @@ export const internalUpsertGroupsFromSync = internalMutation({
           // populada por `internalRefreshGroup` quando alguém marca
           // "Acompanhar". Fase 4d: já nasce migrado (membros e linha do tempo
           // só nas tabelas próprias).
-          participantsCount: merged.length,
+          participantsCount: activeCount,
           participantsMigratedAt: now,
           // D4: grupo novo NASCE sem acompanhamento.
           monitored: false,
@@ -1320,16 +1364,23 @@ export const internalUpsertGroupsFromSync = internalMutation({
     let removed = 0;
     if (args.full) {
       const seen = new Set(args.groups.map((g) => g.jid));
+      const budget = { left: SYNC_INLINE_DELETE_BUDGET };
       for (const prev of existing) {
         if (seen.has(prev.jid) || prev.removedAt !== undefined) continue;
         const timelinePatch = await recordTimeline(ctx, prev, [{ at: now, type: "removed" }]);
         // LGPD: deixou de ser acompanhada → membros (nome/telefone de
-        // terceiros) saem do banco; a contagem fica.
-        const participantsPatch = await writeParticipants(ctx, prev, [], now);
+        // terceiros) saem do banco; a contagem fica. Dentro de um orçamento:
+        // o que não couber vai para a limpeza auto-reagendada.
+        const cleared = await deleteParticipantRows(ctx, prev._id, budget);
+        if (!cleared) {
+          await ctx.scheduler.runAfter(0, internal.groupChats.internalPurgeGroupParticipants, {
+            groupChatId: prev._id,
+          });
+        }
         await ctx.db.patch(prev._id, {
           removedAt: now,
           monitored: false,
-          ...participantsPatch,
+          ...(isGroupMigrated(prev) ? {} : { participants: [] }),
           ...timelinePatch,
           updatedAt: now,
         });
@@ -1347,9 +1398,120 @@ export const internalUpsertGroupsFromSync = internalMutation({
       bridgeGroupsLastSyncAt: now,
       updatedAt: now,
     });
-    return { upserted, removed };
+    return { upserted, removed, syncedAt: now, participantJobs };
   },
 });
+
+/**
+ * Diff dos membros de UMA sala contra o que o gateway devolveu (o passo 2 do
+ * sync — ver `internalUpsertGroupsFromSync`). Semântica idêntica à de antes:
+ * novos entram, mudados atualizam, quem sumiu ganha `leftAt`; sala NÃO
+ * acompanhada fica sem linhas (LGPD). Atualiza `participantsCount` e o espelho
+ * `groupParticipantsCount` da conversa (fase 4c) só se mudaram.
+ *
+ * Relê a sala: se ela deixou de ser acompanhada (ou foi removida) entre o
+ * passo 1 e este, o diff vira "apagar todos", como faria o sync antigo.
+ */
+export const internalApplyGatewayParticipants = internalMutation({
+  args: {
+    groupChatId: v.id("groupChats"),
+    participants: gatewayParticipantsValidator,
+    syncedAt: v.number(),
+  },
+  returns: v.object({ inserted: v.number(), updated: v.number(), deleted: v.number() }),
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group) return { inserted: 0, updated: 0, deleted: 0 };
+    const current = await participantsForWrite(ctx, group);
+    const merged = mergeParticipantsFromGateway(current.list, args.participants, args.syncedAt);
+    const stored = participantsForStorage(
+      group.monitored === true && group.removedAt === undefined,
+      merged
+    );
+    const counts = await syncParticipantsTable(
+      ctx,
+      group,
+      stored.participants,
+      args.syncedAt,
+      current.rows
+    );
+    const migrated = isGroupMigrated(group);
+    const patch: Partial<Doc<"groupChats">> = {};
+    if (
+      !migrated &&
+      JSON.stringify(group.participants ?? []) !== JSON.stringify(stored.participants)
+    ) {
+      patch.participants = stored.participants;
+    }
+    if (group.participantsCount !== stored.participantsCount) {
+      patch.participantsCount = stored.participantsCount;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(group._id, { ...patch, updatedAt: Date.now() });
+    }
+    await syncGroupSummaryToConversation(ctx, {
+      ...group,
+      participants: migrated ? undefined : stored.participants,
+      participantsCount: stored.participantsCount,
+    });
+    return counts;
+  },
+});
+
+/** Lote da limpeza auto-reagendada de membros de uma sala fora de uso. */
+const PURGE_PARTICIPANTS_BATCH = 500;
+
+/**
+ * Apaga as linhas de membros de uma sala que deixou de ser acompanhada (ou
+ * sumiu da listagem) quando o sync não conseguiu fazer tudo inline. Para se a
+ * sala voltou a ser acompanhada nesse meio-tempo — aí quem manda é o diff.
+ */
+export const internalPurgeGroupParticipants = internalMutation({
+  args: { groupChatId: v.id("groupChats") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (group && group.monitored === true && group.removedAt === undefined) return null;
+    const done = await deleteParticipantRows(ctx, args.groupChatId, {
+      left: PURGE_PARTICIPANTS_BATCH,
+    });
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalPurgeGroupParticipants, {
+        groupChatId: args.groupChatId,
+      });
+    }
+    return null;
+  },
+});
+
+/**
+ * Sincroniza uma lista do gateway em DOIS passos (perf I/O, onda 2): os
+ * metadados de todas as salas numa mutation e, depois, o diff de membros de
+ * cada sala acompanhada na sua própria mutation, em série. Se a action cair no
+ * meio, as salas que faltaram ficam com a lista anterior até o próximo sync —
+ * nada fica inconsistente, só atrasado.
+ */
+async function applyGatewayGroupList(
+  ctx: ActionCtx,
+  args: { channelConfigId: Id<"channelConfigs">; groups: ParsedGroupInfo[]; full: boolean }
+): Promise<{ upserted: number; removed: number }> {
+  const result = await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    channelConfigId: args.channelConfigId,
+    groups: args.groups,
+    full: args.full,
+  });
+  const byJid = new Map(args.groups.map((g) => [g.jid, g]));
+  for (const job of result.participantJobs) {
+    const group = byJid.get(job.jid);
+    if (!group) continue;
+    await ctx.runMutation(internal.groupChats.internalApplyGatewayParticipants, {
+      groupChatId: job.groupChatId,
+      participants: group.participants,
+      syncedAt: result.syncedAt,
+    });
+  }
+  return { upserted: result.upserted, removed: result.removed };
+}
 
 /**
  * Evento `GroupInfo` do whatsmeow: nome/tópico/config mudaram, ou alguém
@@ -1794,10 +1956,11 @@ export async function syncGroupsHandler(
     const parsed = parseGroupListResponse(listRes.ok, listRes.status, listBody);
     if (!parsed.ok) throw new Error(parsed.error);
 
-    const result: { upserted: number; removed: number } = await ctx.runMutation(
-      internal.groupChats.internalUpsertGroupsFromSync,
-      { channelConfigId: args.channelConfigId, groups: parsed.groups, full: true }
-    );
+    const result = await applyGatewayGroupList(ctx, {
+      channelConfigId: args.channelConfigId,
+      groups: parsed.groups,
+      full: true,
+    });
     return {
       ...result,
       detail:
@@ -1989,7 +2152,7 @@ export const joinByInviteLink = action({
     if (!ack.ok) throw new Error(ack.error);
 
     // Cadastra já (o evento `JoinedGroup` pode chegar depois, e é idempotente).
-    await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    await applyGatewayGroupList(ctx, {
       channelConfigId: args.channelConfigId,
       groups: [info.group],
       full: false,
@@ -2039,7 +2202,7 @@ export const internalRefreshGroup = internalAction({
     const body = await res.json().catch(() => ({}));
     const parsed = parseGroupInfoResponse(res.ok, res.status, body);
     if (!parsed.ok) return false;
-    await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    await applyGatewayGroupList(ctx, {
       channelConfigId: context.channelConfigId,
       groups: [parsed.group],
       full: false,

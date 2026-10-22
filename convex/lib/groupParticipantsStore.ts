@@ -303,6 +303,20 @@ async function deleteSideRows(
 }
 
 /**
+ * Apaga as linhas de MEMBROS da sala (só `groupParticipants`) até
+ * `budget.left` escritas. Devolve `true` quando não sobrou nenhuma — com
+ * `false`, quem chama agenda a continuação (perf I/O onda 2: o sync não apaga
+ * mais 1.024 linhas por sala numa transação só).
+ */
+export async function deleteParticipantRows(
+  ctx: MutationCtx,
+  groupChatId: Id<"groupChats">,
+  budget: { left: number }
+): Promise<boolean> {
+  return await deleteSideRows(ctx, "groupParticipants", groupChatId, budget);
+}
+
+/**
  * Cascata de exclusão da sala nas duas tabelas, DENTRO do orçamento de escritas
  * de quem chama (cada linha apagada conta 1). Devolve `true` só quando as duas
  * tabelas da sala estão vazias — aí o chamador pode apagar o doc da sala; com
