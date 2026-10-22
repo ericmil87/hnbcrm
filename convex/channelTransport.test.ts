@@ -58,12 +58,12 @@ describe("configProvider (WhatsApp-only)", () => {
 });
 
 describe("channelProviderOf (denormalização da lista)", () => {
-  test("WhatsApp inalterado; outro transporte não grava provider nesta fase", () => {
+  test("WhatsApp inalterado; Instagram e Messenger gravam o próprio transporte (F0.3)", () => {
     expect(channelProviderOf(null)).toBeUndefined();
     expect(channelProviderOf({ provider: "bridge" })).toBe("bridge");
     expect(channelProviderOf({ channel: "whatsapp" })).toBe("meta");
-    expect(channelProviderOf({ channel: "instagram" })).toBeUndefined();
-    expect(channelProviderOf({ channel: "messenger" })).toBeUndefined();
+    expect(channelProviderOf({ channel: "instagram" })).toBe("instagram");
+    expect(channelProviderOf({ channel: "messenger" })).toBe("messenger");
   });
 });
 
@@ -95,7 +95,7 @@ async function seedOrg(t: TestConvex<typeof schema>, slug: string) {
 async function insertConversation(
   t: TestConvex<typeof schema>,
   organizationId: Id<"organizations">,
-  channel: "whatsapp" | "internal" | "webchat",
+  channel: "whatsapp" | "internal" | "webchat" | "instagram" | "messenger",
   channelConfigId?: Id<"channelConfigs">
 ) {
   return await t.run(async (ctx) => {
@@ -135,14 +135,27 @@ describe("resolveConversationChannelConfig estrito por canal", () => {
     expect(transportOf(resolved)).toBeNull();
   });
 
-  test("conversa não-WhatsApp usa só o próprio channelConfigId da mesma org", async () => {
+  test("conversa não-WhatsApp só resolve config da mesma org E do mesmo canal", async () => {
     const t = convexTest(schema, modules);
     const { organizationId, configId } = await seedOrg(t, "a");
-    const convId = await insertConversation(t, organizationId, "webchat", configId);
-    const resolved = await t.run(async (ctx) =>
-      resolveConversationChannelConfig(ctx, (await ctx.db.get(convId))!)
-    );
-    expect(resolved?._id).toEqual(configId);
+    const { igId, msgId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const igId = await ctx.db.insert("channelConfigs", {
+        organizationId, channel: "instagram", displayName: "ig", status: "active", instagramAccountId: "ig1", createdAt: now, updatedAt: now,
+      });
+      const msgId = await ctx.db.insert("channelConfigs", {
+        organizationId, channel: "messenger", displayName: "msg", status: "active", messengerPageId: "pg1", createdAt: now, updatedAt: now,
+      });
+      return { igId, msgId };
+    });
+    const resolve = async (channel: "webchat" | "instagram", cfg: Id<"channelConfigs">) => {
+      const convId = await insertConversation(t, organizationId, channel, cfg);
+      return await t.run(async (ctx) => resolveConversationChannelConfig(ctx, (await ctx.db.get(convId))!));
+    };
+    expect((await resolve("instagram", igId))?._id).toEqual(igId);
+    expect(await resolve("instagram", msgId)).toBeNull(); // superfície errada
+    expect(await resolve("instagram", configId)).toBeNull(); // config de WhatsApp
+    expect(await resolve("webchat", configId)).toBeNull();
   });
 
   test("channelConfigId de OUTRA org → null (sem fallback)", async () => {

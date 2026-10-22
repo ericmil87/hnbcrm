@@ -25,7 +25,14 @@ export async function resolveConversationChannelConfig(
   if (conversation.channel !== "whatsapp") {
     if (!conversation.channelConfigId) return null;
     const config = await ctx.db.get(conversation.channelConfigId);
-    if (!config || config.organizationId !== conversation.organizationId) return null;
+    // Mesma org E mesmo canal: conversa instagram nunca sai por config messenger (mesma Página).
+    if (
+      !config ||
+      config.organizationId !== conversation.organizationId ||
+      config.channel !== conversation.channel
+    ) {
+      return null;
+    }
     return config;
   }
 

@@ -298,6 +298,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
     }
 
     if (
+      config.channel === "whatsapp" &&
       configProvider(config) === "bridge" &&
       (isSessionLostState(config.bridgeSessionState) || config.bridgeSessionState === "disconnected")
     ) {

@@ -23,6 +23,11 @@ import {
   webhookReceive as whatsappWebhookReceive,
 } from "./whatsapp";
 import { webhookReceive as bridgeWebhookReceive } from "./bridge";
+import {
+  webhookVerify as metaMessagingWebhookVerify,
+  webhookReceive as metaMessagingWebhookReceive,
+  oauthCallback as metaOAuthCallback,
+} from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
 
 const http = httpRouter();
@@ -4196,6 +4201,12 @@ http.route({
 http.route({ path: "/webhooks/whatsapp", method: "GET", handler: whatsappWebhookVerify });
 http.route({ path: "/webhooks/whatsapp", method: "POST", handler: whatsappWebhookReceive });
 http.route({ path: "/webhooks/bridge", method: "POST", handler: bridgeWebhookReceive });
+
+// ---- Meta Messaging (Instagram + Messenger): webhook único e callback do OAuth ----
+// Fora de /api/v1 (sem API key), como os webhooks acima.
+http.route({ path: "/webhooks/meta-messaging", method: "GET", handler: metaMessagingWebhookVerify });
+http.route({ path: "/webhooks/meta-messaging", method: "POST", handler: metaMessagingWebhookReceive });
+http.route({ path: "/oauth/meta/callback", method: "GET", handler: metaOAuthCallback });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

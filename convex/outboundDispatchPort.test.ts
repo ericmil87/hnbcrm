@@ -23,15 +23,28 @@ import path from "node:path";
 
 const CONVEX_DIR = __dirname;
 const PORT = "lib/outboundDispatch.ts";
+// Qualquer menção ao pacing do WhatsApp (pega import com alias, chamada e referência).
+const SCHEDULE_WA = /\bscheduleWhatsappDispatch\b/g;
+// O dispatcher do WhatsApp por ponto, colchete ou chave literal.
+const DISPATCH_WA =
+  /internal\s*\.\s*whatsapp\s*(\.\s*|\[\s*["'])internalDispatchMessage\b|["']whatsapp:internalDispatchMessage["']/g;
+const FORBIDDEN: RegExp[] = [SCHEDULE_WA, DISPATCH_WA];
+
 const ALLOWED: Record<string, RegExp[]> = {
-  [PORT]: [/\bscheduleWhatsappDispatch\s*\(/],
-  "lib/whatsappDispatch.ts": [/\bscheduleWhatsappDispatch\s*\(/, /internal\.whatsapp\.internalDispatchMessage\b/],
-  "whatsapp.ts": [/internal\.whatsapp\.internalDispatchMessage\b/],
+  [PORT]: [SCHEDULE_WA],
+  "lib/whatsappDispatch.ts": [SCHEDULE_WA, DISPATCH_WA],
 };
-const FORBIDDEN: RegExp[] = [
-  /\bscheduleWhatsappDispatch\s*\(/g,
-  /internal\.whatsapp\.internalDispatchMessage\b/g,
-];
+// `whatsapp.ts`: a exceção vale só para o reagendamento do próprio retry, dentro desta função.
+const SELF_RESCHEDULE_FN = "internalRescheduleDispatch";
+
+/** Apaga (em branco) o corpo de `export const <name>` até o próximo `export` na coluna 0. */
+function cutExportedFunction(src: string, name: string): string {
+  const start = src.search(new RegExp(`^export const ${name}\\b`, "m"));
+  if (start < 0) return src;
+  const next = src.slice(start + 1).search(/^export\s/m);
+  const end = next < 0 ? src.length : start + 1 + next;
+  return src.slice(0, start) + src.slice(start, end).replace(/[^\n]/g, " ") + src.slice(end);
+}
 
 function stripComments(src: string): string {
   // Preserva as quebras de linha para o número da linha continuar certo.
@@ -44,7 +57,7 @@ function findDirectDispatches(src: string, allowed: RegExp[] = []): string[] {
   const code = stripComments(src);
   const hits: string[] = [];
   for (const re of FORBIDDEN) {
-    if (allowed.some((a) => a.source === re.source)) continue;
+    if (allowed.includes(re)) continue;
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(code))) {
@@ -76,6 +89,23 @@ describe("heurística (auto-teste)", () => {
     ).toEqual(["3: internal.whatsapp.internalDispatchMessage"]);
   });
 
+  test("pega import com alias e acesso por colchete", () => {
+    expect(findDirectDispatches(`import { scheduleWhatsappDispatch as sw } from "./lib/whatsappDispatch";`)).toHaveLength(1);
+    expect(findDirectDispatches(`await ctx.scheduler.runAfter(0, internal.whatsapp["internalDispatchMessage"], {});`)).toHaveLength(1);
+    expect(findDirectDispatches(`const ref = "whatsapp:internalDispatchMessage";`)).toHaveLength(1);
+    expect(findDirectDispatches(`internal . whatsapp . internalDispatchMessage`)).toHaveLength(1);
+  });
+
+  test("a exceção de whatsapp.ts vale só dentro de internalRescheduleDispatch", () => {
+    const call = `    runAfter(1, internal.whatsapp.internalDispatchMessage, {});\n`;
+    const inside = `export const ${SELF_RESCHEDULE_FN} = internalMutation({\n${call}});\n`;
+    const outside = `export const outra = internalMutation({\n${call}});\n`;
+    expect(findDirectDispatches(cutExportedFunction(inside, SELF_RESCHEDULE_FN))).toEqual([]);
+    expect(findDirectDispatches(cutExportedFunction(inside + outside, SELF_RESCHEDULE_FN))).toHaveLength(1);
+    expect(findDirectDispatches(cutExportedFunction(outside + inside, SELF_RESCHEDULE_FN))).toHaveLength(1);
+  });
+
+
   test("ignora comentário e a porta", () => {
     expect(findDirectDispatches(`// scheduleWhatsappDispatch(ctx, c, m)\n/* internal.whatsapp.internalDispatchMessage */`)).toEqual([]);
     expect(findDirectDispatches(`await scheduleOutboundDispatch(ctx, conversation, messageId);`)).toEqual([]);
@@ -89,7 +119,9 @@ describe("porta única de envio", () => {
     const violations: string[] = [];
     for (const abs of files) {
       const r = rel(abs);
-      for (const hit of findDirectDispatches(readFileSync(abs, "utf8"), ALLOWED[r] ?? [])) {
+      let src = readFileSync(abs, "utf8");
+      if (r === "whatsapp.ts") src = cutExportedFunction(src, SELF_RESCHEDULE_FN);
+      for (const hit of findDirectDispatches(src, ALLOWED[r] ?? [])) {
         violations.push(`${r}:${hit}`);
       }
     }
@@ -104,7 +136,7 @@ describe("porta única de envio", () => {
 
   test("controle positivo: a porta chama o pacing do WhatsApp", () => {
     const src = readFileSync(path.join(CONVEX_DIR, PORT), "utf8");
-    expect(findDirectDispatches(src)).toHaveLength(1);
+    expect(findDirectDispatches(src)).toHaveLength(2);
   });
 
   test("os pontos de envio importam só a porta", () => {

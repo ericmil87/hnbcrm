@@ -58,7 +58,14 @@ import {
 } from "./lib/inboxLimits";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
-type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
+type ConversationChannel =
+  | "whatsapp"
+  | "telegram"
+  | "email"
+  | "webchat"
+  | "internal"
+  | "instagram"
+  | "messenger";
 
 // 24h Meta customer-service window. Clients compare against the clock — queries
 // must stay Date.now()-free for reactivity, so we expose the expiry timestamp.
@@ -314,7 +321,9 @@ export const getConversations = query({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     )),
     assignedTo: v.optional(v.id("teamMembers")),
     // Default 50, teto 500 (validado no servidor).
@@ -1239,7 +1248,9 @@ export const createConversation = mutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
   },
   returns: v.id("conversations"),
@@ -1262,7 +1273,9 @@ export const internalGetConversations = internalQuery({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     )),
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
@@ -1565,7 +1578,9 @@ export const internalCreateConversation = internalMutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
     // v0.64 (inbound/lead): carimba o número do WhatsApp ao criar. Só aceita
     // canal da MESMA org (senão é ignorado).
@@ -1593,7 +1608,9 @@ export const internalReceiveMessage = internalMutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
     channelConfigId: v.optional(v.id("channelConfigs")),
     content: v.string(),

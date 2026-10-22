@@ -156,7 +156,7 @@ export const webhookReceive = httpAction(async (ctx, request) => {
   });
   // Unknown instance, wrong provider, or inactive → 200 + drop: don't make the
   // gateway retry, don't leak tenant existence.
-  if (!config || configProvider(config) !== "bridge" || config.status !== "active") {
+  if (!config || config.channel !== "whatsapp" || configProvider(config) !== "bridge" || config.status !== "active") {
     console.warn(`Bridge webhook for unknown/inactive instance ${instanceId} — dropped`);
     return new Response("OK", { status: 200 });
   }

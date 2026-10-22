@@ -213,6 +213,11 @@ export const internalRedispatchStuckOutbound = internalMutation({
       if (m.direction !== "outbound" || m.isInternal || m.externalId || m.deliveryStatus) continue;
       const conversation = await ctx.db.get(m.conversationId);
       if (!conversation) continue;
+      if (conversation.channel !== "whatsapp") {
+        // Instagram/Messenger: o redispatch ainda não existe (F1); não listar como reenviado.
+        out.push({ messageId: m._id, createdAt: m.createdAt, action: "skipped_channel" });
+        continue;
+      }
       out.push({ messageId: m._id, createdAt: m.createdAt, action: dryRun ? "dryRun" : "redispatched" });
       if (dryRun) continue;
       await scheduleOutboundDispatch(ctx, conversation, m._id);

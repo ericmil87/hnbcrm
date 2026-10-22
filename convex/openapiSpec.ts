@@ -64,7 +64,7 @@ export const OPENAPI_SPEC = `{
                     }
                   },
                   "message": { "type": "string", "description": "Mensagem que a pessoa escreveu no formulário. Com boas-vindas aplicável ou channel=whatsapp vira nota interna; senão (legado) é registrada numa conversa do canal informado" },
-                  "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal"], "default": "webchat", "description": "Canal da conversa" },
+                  "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "default": "webchat", "description": "Canal da conversa" },
                   "value": { "type": "number", "default": 0, "description": "Valor monetário do lead" },
                   "currency": { "type": "string", "description": "Código da moeda (ex: BRL)" },
                   "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "default": "medium", "description": "Prioridade do lead" },
@@ -2408,7 +2408,7 @@ export const OPENAPI_SPEC = `{
           "_creationTime": { "type": "number", "description": "Timestamp de criação" },
           "organizationId": { "type": "string", "description": "ID da organização" },
           "leadId": { "type": "string", "description": "ID do lead associado" },
-          "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal"], "description": "Canal da conversa" },
+          "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "description": "Canal da conversa" },
           "status": { "type": "string", "enum": ["active", "closed"], "description": "Status da conversa" },
           "messageCount": { "type": "integer", "description": "Total de mensagens" }
         }

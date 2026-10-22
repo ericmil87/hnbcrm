@@ -1,0 +1,25 @@
+{
+  "_note": "sintética; substituir pela captura real da F0.1",
+  "object": "page",
+  "entry": [
+    {
+      "id": "1000000000000001",
+      "time": 1760000000000,
+      "standby": [
+        {
+          "sender": {
+            "id": "1000000000000002"
+          },
+          "recipient": {
+            "id": "1000000000000001"
+          },
+          "timestamp": 1760000000000,
+          "message": {
+            "mid": "m_fake_mid_000003",
+            "text": "Alguém me responde?"
+          }
+        }
+      ]
+    }
+  ]
+}

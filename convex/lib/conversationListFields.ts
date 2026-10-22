@@ -28,7 +28,7 @@
  * ser grandes e a lista não usa): no caminho novo a query devolve `null`.
  */
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { configTransport, isWhatsappTransport } from "./channelTransport";
+import { configTransport, type ChannelTransport } from "./channelTransport";
 import type { Doc, Id } from "../_generated/dataModel";
 
 export const LIST_PREVIEW_MAX = 80;
@@ -343,19 +343,17 @@ type ChannelConfigLike = { channel?: string; provider?: "meta" | "bridge" | null
 
 /**
  * Decide por `configTransport` (channel antes do provider; sem `channel` =
- * linha legada de WhatsApp). `conversations.channelProvider` no schema ainda só
- * aceita "meta" | "bridge": transporte não-WhatsApp devolve `undefined` nesta
- * fase (Meta Messaging F0.2; a F0.3 alarga o union e mapeia instagram/messenger).
+ * linha legada de WhatsApp). Os 4 transportes (meta|bridge|instagram|messenger)
+ * são gravados em `conversations.channelProvider`.
  */
 export function channelProviderOf(
   config: ChannelConfigLike | null | undefined
-): "meta" | "bridge" | undefined {
+): ChannelTransport | undefined {
   if (!config) return undefined;
-  const transport = configTransport({
+  return configTransport({
     channel: config.channel ?? "whatsapp",
     provider: config.provider,
   });
-  return isWhatsappTransport(transport) ? transport : undefined;
 }
 
 /**
@@ -364,7 +362,7 @@ export function channelProviderOf(
  */
 export function channelProviderPatch(
   config: ChannelConfigLike | null | undefined
-): { channelProvider: "meta" | "bridge" | undefined } {
+): { channelProvider: ChannelTransport | undefined } {
   return { channelProvider: channelProviderOf(config) };
 }
 
@@ -374,9 +372,9 @@ export function channelProviderPatch(
  */
 export async function channelConfigPatchFor(
   ctx: { db: MutationCtx["db"] },
-  conversation: { channelConfigId?: Id<"channelConfigs">; channelProvider?: "meta" | "bridge" },
+  conversation: { channelConfigId?: Id<"channelConfigs">; channelProvider?: ChannelTransport },
   channelConfigId: Id<"channelConfigs"> | undefined
-): Promise<{ channelConfigId?: Id<"channelConfigs">; channelProvider?: "meta" | "bridge" }> {
+): Promise<{ channelConfigId?: Id<"channelConfigs">; channelProvider?: ChannelTransport }> {
   if (!channelConfigId) return {};
   if (conversation.channelConfigId === channelConfigId && conversation.channelProvider !== undefined) {
     return {};

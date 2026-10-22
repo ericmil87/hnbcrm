@@ -29,6 +29,7 @@ import {
   findAttendantForChannel,
 } from "./lib/inboundRouting";
 import { configProvider } from "./channelConfigs";
+import { configTransport } from "./lib/channelTransport";
 import { resolveConversationChannelConfig } from "./lib/channelResolve";
 import { claimChannelSlot } from "./lib/whatsappDispatch";
 import {
@@ -723,7 +724,7 @@ async function dispatchMessage(
   }
   // Bridge provider (unofficial wuzapi/whatsmeow gateway) uses a separate REST
   // egress. Everything below this branch is the untouched Meta Graph API path.
-  if (configProvider(config) === "bridge") {
+  if (config.channel === "whatsapp" && configProvider(config) === "bridge") {
     await dispatchViaBridge(ctx, {
       messageId: args.messageId,
       message,
@@ -1156,7 +1157,7 @@ export const internalDispatchReaction = internalAction({
     if (!config || !toPhone || !message.externalId) return null;
 
     try {
-      if (configProvider(config) === "bridge") {
+      if (config.channel === "whatsapp" && configProvider(config) === "bridge") {
         if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
         const token = await decryptSecret(config.bridgeTokenEncrypted);
         const request = buildBridgeReactRequest({
@@ -1208,7 +1209,7 @@ export const internalBridgeMarkRead = internalAction({
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
       configId: args.configId,
     });
-    if (!config || configProvider(config) !== "bridge") return null;
+    if (!config || configTransport(config) !== "bridge") return null;
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
     if (
       await ctx.runQuery(internal.orgModules.internalIsDemoOrg, {
@@ -1246,7 +1247,7 @@ export const internalBridgeSendPresence = internalAction({
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
       configId: args.configId,
     });
-    if (!config || configProvider(config) !== "bridge") return null;
+    if (!config || configTransport(config) !== "bridge") return null;
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
     if (
       await ctx.runQuery(internal.orgModules.internalIsDemoOrg, {

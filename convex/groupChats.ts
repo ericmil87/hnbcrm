@@ -1061,6 +1061,7 @@ export const downloadDeferredMedia = action({
       !config ||
       config.organizationId !== args.organizationId ||
       config.status !== "active" ||
+      config.channel !== "whatsapp" ||
       configProvider(config) !== "bridge"
     ) {
       await release();
@@ -1180,7 +1181,7 @@ export const internalGetGroupActionContext = internalQuery({
       jid: group.jid,
       subject: group.subject,
       channelConfigId: group.channelConfigId,
-      provider: configProvider(config),
+      provider: config.channel === "whatsapp" ? configProvider(config) : null,
       status: config.status,
       baseUrl: config.bridgeBaseUrl ?? null,
       tokenEncrypted: config.bridgeTokenEncrypted ?? null,

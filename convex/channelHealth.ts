@@ -12,9 +12,9 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import {
   bridgeFetchJson,
-  configProvider,
 } from "./channelConfigs";
 import { decryptSecret } from "./lib/secretCrypto";
+import { configTransport } from "./lib/channelTransport";
 import {
   buildBridgeStatusRequest,
   mapBridgeSessionState,
@@ -42,7 +42,7 @@ export const internalRecordSessionEvent = internalMutation({
   returns: v.object({ emitted: v.boolean() }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
-    if (!config || configProvider(config) !== "bridge") return { emitted: false };
+    if (!config || configTransport(config) !== "bridge") return { emitted: false };
     const now = Date.now();
     const described = describeSessionEvent(
       { event: args.event, code: args.code, expiresInMs: args.expiresInMs },
@@ -98,7 +98,7 @@ export const internalListBridgeChannelsPage = internalQuery({
     const targets: { configId: Id<"channelConfigs">; baseUrl: string; tokenEncrypted: string }[] = [];
     const demoCache = new Map<string, boolean>();
     for (const c of page.page) {
-      if (configProvider(c) !== "bridge") continue;
+      if (configTransport(c) !== "bridge") continue;
       if (c.status === "disabled") continue;
       if (!c.bridgeBaseUrl || !c.bridgeTokenEncrypted) continue;
       if (c.bridgeConnectedAt === undefined && c.bridgeSessionState !== "connected") continue;
@@ -130,7 +130,7 @@ export const internalApplyUnhealthyObservation = internalMutation({
   returns: v.object({ action: v.string() }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
-    if (!config || configProvider(config) !== "bridge" || config.status === "disabled") {
+    if (!config || configTransport(config) !== "bridge" || config.status === "disabled") {
       return { action: "none" };
     }
     const now = Date.now();

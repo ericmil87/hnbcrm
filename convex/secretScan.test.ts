@@ -17,6 +17,8 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   { name: "webhook signing secret", re: /whsec_[A-Za-z0-9+/=]{20,}/ },
   // Meta Graph API access tokens (canal WhatsApp oficial).
   { name: "Meta access token", re: /EAA[A-Za-z0-9]{40,}/ },
+  // Instagram Login (forma #2 do Meta Messaging): tokens IGAA… / IGQ….
+  { name: "Instagram access token", re: /\bIG(?:AA|Q[A-Za-z])[A-Za-z0-9_-]{40,}/ },
   { name: "GitHub token", re: /gh[pousr]_[A-Za-z0-9]{30,}/ },
   { name: "private key block", re: /-----BEGIN (RSA )?PRIVATE KEY-----/ },
   // Tokens hex de 64 chars (HMAC do bridge, admin token do wuzapi, Whisper).
