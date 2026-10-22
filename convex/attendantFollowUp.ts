@@ -26,7 +26,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { isSessionLostState } from "./lib/channelHealthSignals";
 import { orgAiActive } from "./lib/agentSecurity";
-import { resolveConversationChannelConfig, providerOf } from "./lib/channelResolve";
+import { resolveConversationChannelConfig, transportOf } from "./lib/channelResolve";
 import { evaluateEligibility, findAttendantForConversation } from "./attendant";
 import { getLeadRef } from "./lib/leadRef";
 import { releaseAiTurnLock } from "./lib/conversationRuntime";
@@ -215,7 +215,7 @@ async function fireCore(
   }
   const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
-  const provider = providerOf(channelConfig);
+  const provider = transportOf(channelConfig);
 
   // PASSO 4 — `findAttendantForConversation` ANTES da elegibilidade: só a
   // segunda deixaria passar canal fora do escopo do perfil ou lead em board
@@ -616,7 +616,7 @@ async function adoptTaskCore(
 
   const org = await ctx.db.get(task.organizationId);
   const channelConfig = await resolveConversationChannelConfig(ctx, candidate);
-  const settings = resolveFollowUpSettings(agent.agentProfile, providerOf(channelConfig));
+  const settings = resolveFollowUpSettings(agent.agentProfile, transportOf(channelConfig));
   const timezone = resolveAgentTimezone(
     agent.agentProfile?.schedule?.timezone,
     org?.settings.timezone
@@ -727,7 +727,7 @@ async function summarizeFollowUp(
         conversation
       )
     : null;
-  const settings = resolveFollowUpSettings(agent?.agentProfile, providerOf(channelConfig));
+  const settings = resolveFollowUpSettings(agent?.agentProfile, transportOf(channelConfig));
   return {
     _id: followUp._id,
     status: followUp.status,

@@ -25,7 +25,9 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `attendantFollowUp.ts` | Follow-up the AI executes itself: `fire` guard chain, `internalWatchdog`, `adoptTask`/`internalAdoptTask`, `runNow`, `cancelAuto` |
 | `lib/followUpOps.ts` | Follow-up core: `resolveFollowUpOutcome` (single outcome), `syncFollowUpForTask`, `armFollowUp`/`cancelArmedFollowUp`, delivery hook |
 | `lib/followUpSettings.ts` / `agentSchedule.ts` / `followUpNote.ts` | Pure: `resolveFollowUpSettings` / `isWithinSchedule`, `followUpWindow` / `sanitizeFollowUpNote` |
-| `lib/channelResolve.ts` / `inboundRouting.ts` / `whatsappDispatch.ts` | Channel resolution / inbound routing / 2-level pacing (`channelPacing`) |
+| `lib/channelResolve.ts` / `inboundRouting.ts` / `whatsappDispatch.ts` | Channel resolution (strict per channel; `transportOf`) / inbound routing / 2-level pacing (`channelPacing`) |
+| `lib/channelTransport.ts` | Pure `configTransport` (`ChannelTransport`: meta\|bridge\|instagram\|messenger; channel before provider, unknown channel throws); `configProvider` is WhatsApp-only and fail-closed |
+| `lib/outboundDispatch.ts` | Single outbound port `scheduleOutboundDispatch` (picks the dispatcher by `conversation.channel`); build guard `outboundDispatchPort.test.ts` |
 | `copilot.ts` / `copilotHttp.ts` | Copilot threads + tool executors (destructive → `pendingActions`) / SSE `POST /api/copilot/stream` with tool_calls loop |
 | `aiSettings.ts` | Org AI config: activation + LGPD ack, profile/mode, models/ZDR, `setProductRouting`, `internalSetFollowUpMode`, metrics |
 | `aiDiagnostics.ts` / `agentRuns.ts` / `orgSecrets.ts` | `pingProvider` smoke test / AI run log (no PII) / BYO keys (encrypted, always masked) |

@@ -28,6 +28,7 @@
  * ser grandes e a lista não usa): no caminho novo a query devolve `null`.
  */
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { configTransport, isWhatsappTransport } from "./channelTransport";
 import type { Doc, Id } from "../_generated/dataModel";
 
 export const LIST_PREVIEW_MAX = 80;
@@ -338,11 +339,23 @@ export function groupChatFromConversation(
 
 // ── Canal ──
 
+type ChannelConfigLike = { channel?: string; provider?: "meta" | "bridge" | null };
+
+/**
+ * Decide por `configTransport` (channel antes do provider; sem `channel` =
+ * linha legada de WhatsApp). `conversations.channelProvider` no schema ainda só
+ * aceita "meta" | "bridge": transporte não-WhatsApp devolve `undefined` nesta
+ * fase (Meta Messaging F0.2; a F0.3 alarga o union e mapeia instagram/messenger).
+ */
 export function channelProviderOf(
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
+  config: ChannelConfigLike | null | undefined
 ): "meta" | "bridge" | undefined {
   if (!config) return undefined;
-  return config.provider === "bridge" ? "bridge" : "meta";
+  const transport = configTransport({
+    channel: config.channel ?? "whatsapp",
+    provider: config.provider,
+  });
+  return isWhatsappTransport(transport) ? transport : undefined;
 }
 
 /**
@@ -350,7 +363,7 @@ export function channelProviderOf(
  * `undefined` (remove o campo; a leitura cai no fallback e trata como hoje).
  */
 export function channelProviderPatch(
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
+  config: ChannelConfigLike | null | undefined
 ): { channelProvider: "meta" | "bridge" | undefined } {
   return { channelProvider: channelProviderOf(config) };
 }
@@ -420,7 +433,7 @@ export function listFieldsBackfillPatch(
     // desconhecida (só notas nas 20 mais recentes) → a prévia não é tocada.
     lastMessage: (PreviewMessage & { _id: Id<"messages"> }) | null | undefined;
     group: (GroupLike & { _id: Id<"groupChats"> }) | null;
-    config: { provider?: "meta" | "bridge" | null } | null;
+    config: ChannelConfigLike | null;
   }
 ): {
   patch: Record<string, unknown>;

@@ -728,7 +728,8 @@ export const internalGetHistorySyncContext = internalQuery({
 
     return {
       organizationId: config.organizationId,
-      provider: configProvider(config),
+      // configId vem de fora: canal não-WhatsApp vira null (quem lê exige "bridge").
+      provider: config.channel === "whatsapp" ? configProvider(config) : null,
       status: config.status,
       baseUrl: config.bridgeBaseUrl ?? null,
       tokenEncrypted: config.bridgeTokenEncrypted ?? null,
@@ -789,7 +790,7 @@ export const internalPatchBridgeHistory = internalMutation({
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) throw new Error("Canal não encontrado");
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("Histórico do aparelho só existe no canal bridge");
     }
     await ctx.db.patch(args.configId, {

@@ -34,8 +34,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
-import { configProvider } from "./channelConfigs";
-import { resolveConversationChannelConfig, providerOf } from "./lib/channelResolve";
+import { ChannelTransport, configTransport } from "./lib/channelTransport";
+import { resolveConversationChannelConfig, transportOf } from "./lib/channelResolve";
 import {
   ATTENDANT_TOOLS,
   toChatTools,
@@ -165,7 +165,7 @@ type EligibilityInput = {
   conversation: Doc<"conversations">;
   lead: Doc<"leads"> | null;
   contact: Doc<"contacts"> | null;
-  channelProvider: "meta" | "bridge" | null;
+  channelProvider: ChannelTransport | null; // transporte (configTransport); só alargamento de tipo
   aiReplyCountConversation: number;
   aiReplyCountLastHour: number;
   now: number;
@@ -312,7 +312,7 @@ export async function findAttendantForConversation(
 ): Promise<Doc<"teamMembers"> | null> {
   if (conversation.channel !== "whatsapp") return null;
   if (!config || config.status !== "active") return null;
-  const provider = configProvider(config);
+  const provider = configTransport(config);
   if (provider === "bridge" && org?.settings.aiConfig?.bridgeAiAck === undefined) {
     return null;
   }
@@ -677,7 +677,7 @@ export const internalEnqueueFromInbound = internalMutation({
       conversation,
       lead,
       contact,
-      channelProvider: providerOf(channelConfig),
+      channelProvider: transportOf(channelConfig),
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -1121,7 +1121,7 @@ export const internalClaimForProcessing = internalMutation({
       conversation,
       lead,
       contact,
-      channelProvider: providerOf(channelConfig),
+      channelProvider: transportOf(channelConfig),
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -1159,7 +1159,7 @@ export const internalClaimForProcessing = internalMutation({
           conversation: { ...conversation, lastInboundAt: now },
           lead,
           contact,
-          channelProvider: providerOf(channelConfig),
+          channelProvider: transportOf(channelConfig),
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,
@@ -1171,7 +1171,7 @@ export const internalClaimForProcessing = internalMutation({
           // 11), então "fora_do_horario" pode estar escondendo uma janela
           // fechada — e aí um envio direto morreria no commit.
           followUpDegraded =
-            providerOf(channelConfig) !== "bridge" &&
+            transportOf(channelConfig) !== "bridge" &&
             (!conversation.lastInboundAt || conversation.lastInboundAt + SERVICE_WINDOW_MS <= now);
         } else {
           effectiveReason = recheck.reason;
@@ -1186,7 +1186,7 @@ export const internalClaimForProcessing = internalMutation({
             ? { ...lead, assignedTo: agent?._id, handoffState: undefined }
             : lead,
           contact,
-          channelProvider: providerOf(channelConfig),
+          channelProvider: transportOf(channelConfig),
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,
@@ -1379,7 +1379,7 @@ export const internalClaimForProcessing = internalMutation({
     const disclosurePolicy = resolveDisclosurePolicy(profile, hasPriorAiOutbound);
     const providerConfig = org!.settings.aiConfig?.providerConfig;
     const timezone = resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone);
-    const followUpSettings = resolveFollowUpSettings(profile, providerOf(channelConfig));
+    const followUpSettings = resolveFollowUpSettings(profile, transportOf(channelConfig));
 
     // Último outbound HUMANO: no turno de follow-up é o que diz à IA se alguém
     // do time já falou com a pessoa depois de ela agendar o lembrete.
@@ -1730,7 +1730,7 @@ async function planFollowUpSchedule(
   const profile = agent.agentProfile;
   const timezone = resolveAgentTimezone(profile?.schedule?.timezone, org?.settings.timezone);
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
-  const provider = providerOf(channelConfig);
+  const provider = transportOf(channelConfig);
   const settings = resolveFollowUpSettings(profile, provider);
 
   const due = parseFollowUpDueAt(parsed, timezone, now);
@@ -2156,7 +2156,7 @@ export async function executeAttendantToolCore(
           const channelConfig = conversation
             ? await resolveConversationChannelConfig(ctx, conversation)
             : null;
-          const settings = resolveFollowUpSettings(profile, providerOf(channelConfig));
+          const settings = resolveFollowUpSettings(profile, transportOf(channelConfig));
           const window = followUpWindow(
             profile?.schedule,
             timezone,
@@ -2533,7 +2533,7 @@ export const internalCommitAiReply = internalMutation({
       conversation,
       lead,
       contact,
-      channelProvider: providerOf(channelConfig),
+      channelProvider: transportOf(channelConfig),
       aiReplyCountConversation: counts.total,
       aiReplyCountLastHour: counts.lastHour,
       now,
@@ -2561,7 +2561,7 @@ export const internalCommitAiReply = internalMutation({
         conversation,
         lead,
         contact,
-        channelProvider: providerOf(channelConfig),
+        channelProvider: transportOf(channelConfig),
         aiReplyCountConversation: counts.total,
         aiReplyCountLastHour: counts.lastHour,
         now,
@@ -2588,7 +2588,7 @@ export const internalCommitAiReply = internalMutation({
           conversation: { ...conversation, aiPausedUntil: undefined },
           lead: lead ? { ...lead, assignedTo: agent?._id, handoffState: undefined } : lead,
           contact,
-          channelProvider: providerOf(channelConfig),
+          channelProvider: transportOf(channelConfig),
           aiReplyCountConversation: counts.total,
           aiReplyCountLastHour: counts.lastHour,
           now,

@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { configTransport, isWhatsappTransport } from "./lib/channelTransport";
 import {
   query,
   action,
@@ -65,9 +66,18 @@ const channelValidator = v.union(v.literal("whatsapp"));
 const providerValidator = v.union(v.literal("meta"), v.literal("bridge"));
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"), v.literal("error"));
 
-// Normalize the provider of a config. Legacy rows predate the `provider` field,
-// so undefined always means the original Meta Cloud API transport.
-export function configProvider(config: { provider?: "meta" | "bridge" | null }): "meta" | "bridge" {
+// Normalize the provider of a WhatsApp config. Legacy rows predate the `provider`
+// field, so undefined always means the original Meta Cloud API transport.
+// WhatsApp-only and FAIL-CLOSED (Meta Messaging F0.2): a config of another channel
+// (instagram/messenger) throws instead of silently becoming "meta". Generic
+// transport decisions use `configTransport` (lib/channelTransport.ts).
+export function configProvider(config: {
+  channel?: string;
+  provider?: "meta" | "bridge" | null;
+}): "meta" | "bridge" {
+  if (config.channel !== undefined && config.channel !== "whatsapp") {
+    throw new Error(`configProvider: config não é WhatsApp (channel=${config.channel})`);
+  }
   return config.provider === "bridge" ? "bridge" : "meta";
 }
 
@@ -94,7 +104,9 @@ function maskConfig(config: Doc<"channelConfigs">) {
     _id: config._id,
     organizationId: config.organizationId,
     channel: config.channel,
-    provider: configProvider(config),
+    // Listagem genérica: `configProvider` é WA-only (fail-closed). Canal não-WhatsApp
+    // devolve null até a F0.3 do Meta Messaging mapear instagram/messenger.
+    provider: config.channel === "whatsapp" ? configProvider(config) : null,
     displayName: config.displayName,
     // Meta fields
     phoneNumberId: config.phoneNumberId ?? null,
@@ -396,6 +408,7 @@ export const deleteChannelConfig = mutation({
     // órfãs vivas apareceram no gateway de produção — excluir/reparear canal era
     // o caminho normal e ninguém desvinculava nada.
     if (
+      config.channel === "whatsapp" &&
       configProvider(config) === "bridge" &&
       config.bridgeBaseUrl &&
       config.bridgeTokenEncrypted
@@ -430,10 +443,14 @@ export const deleteChannelConfig = mutation({
       metadata: {
         name: config.displayName,
         channel: config.channel,
-        provider: configProvider(config),
-        ...(configProvider(config) === "meta"
-          ? { phoneNumberId: config.phoneNumberId }
-          : { bridgeInstanceId: config.bridgeInstanceId }),
+        ...(config.channel === "whatsapp"
+          ? {
+              provider: configProvider(config),
+              ...(configProvider(config) === "meta"
+                ? { phoneNumberId: config.phoneNumberId }
+                : { bridgeInstanceId: config.bridgeInstanceId }),
+            }
+          : {}),
       },
       description: buildAuditDescription({ action: "delete", entityType: "channelConfig", metadata: { name: config.displayName } }),
       severity: "high",
@@ -523,9 +540,16 @@ export const checkChannelHealth = action({
       };
     }
 
+    // Transporte genérico: só WhatsApp tem probe hoje (Meta Messaging ganha o
+    // seu na F4). Nunca cair no probe da Graph do WhatsApp com outro canal.
+    const transport = configTransport(config);
+    if (!isWhatsappTransport(transport)) {
+      return { ok: false, error: "Teste de conexão ainda não disponível para este canal" };
+    }
+
     // Bridge health check: probe GET /session/status on the gateway and map the
     // connected/loggedIn flags to a pairing state + PT-BR detail.
-    if (configProvider(config) === "bridge") {
+    if (transport === "bridge") {
       if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
         return { ok: false, error: "Configuração bridge incompleta — reconfigure o canal" };
       }
@@ -649,7 +673,7 @@ export const getBridgeQrCode = action({
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfigForMember, {
       configId: args.configId,
     });
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("QR só se aplica a canais do provider bridge");
     }
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
@@ -1067,6 +1091,11 @@ export const internalPatchConfig = internalMutation({
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
 
+    // Allowlist abaixo é de WhatsApp (meta|bridge); outro canal não passa daqui
+    // até ganhar a sua (Meta Messaging F0.3).
+    if (config.channel !== "whatsapp") {
+      throw new Error("Edição de credenciais ainda não suportada para este canal");
+    }
     const provider = configProvider(config);
     const META_FIELDS = new Set([
       "phoneNumberId", "wabaId", "verifyToken",
@@ -1483,7 +1512,7 @@ export const internalBackfillBridgePhone = internalMutation({
     let patched = 0;
 
     for (const config of configs) {
-      if (configProvider(config) !== "bridge") continue;
+      if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") continue;
       if (config.bridgePhone) continue;
       const digits = (config.displayPhoneNumber ?? "").replace(/\D/g, "");
       if (!digits) continue;
@@ -1495,7 +1524,7 @@ export const internalBackfillBridgePhone = internalMutation({
     const after = await ctx.db.query("channelConfigs").collect();
     const byPhone = new Map<string, string[]>();
     for (const config of after) {
-      if (configProvider(config) !== "bridge") continue;
+      if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") continue;
       if (!config.bridgePhone || config.status === "disabled") continue;
       const list = byPhone.get(config.bridgePhone) ?? [];
       list.push(`${config.displayName} (${config._id})`);

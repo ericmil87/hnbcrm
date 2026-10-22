@@ -735,6 +735,7 @@ export async function getSafeDefaultsHandler(ctx: QueryCtx, args: GetSafeDefault
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new ConvexError("Canal não encontrado");
     await authorize(ctx, config.organizationId, "view", args.actorMemberId);
+    if (config.channel !== "whatsapp") throw new ConvexError("Campanhas existem só em canais de WhatsApp");
     const provider = configProvider(config);
     const warmupDay = channelAgeDay(config, args.now);
     const audienceSource = args.audienceSource as CampaignAudienceSource | undefined;

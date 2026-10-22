@@ -9,6 +9,8 @@
  * Módulo PURO (sem ctx, sem Date.now()).
  */
 
+import type { ChannelTransport } from "./channelTransport";
+
 export type FollowUpMode = "off" | "draft" | "send";
 
 export type FollowUpProfileConfig = {
@@ -80,11 +82,12 @@ function intOr(value: number | undefined, fallback: number, min: number, max: nu
 /**
  * Resolve a configuração efetiva a partir do perfil do agente e do transporte
  * do canal. `provider` null (canal não resolvido) é tratado como Meta — mesma
- * postura conservadora da condição 11 da elegibilidade.
+ * postura conservadora da condição 11 da elegibilidade. instagram/messenger
+ * ainda caem no cap da Meta (cap próprio entra na F3 do Meta Messaging).
  */
 export function resolveFollowUpSettings(
   profile: { followUps?: FollowUpProfileConfig } | null | undefined,
-  provider: "meta" | "bridge" | null | undefined
+  provider: ChannelTransport | null | undefined
 ): FollowUpSettings {
   const cfg = profile?.followUps;
   const defaultCap = provider === "bridge" ? DEFAULT_DAILY_CAP_BRIDGE : DEFAULT_DAILY_CAP_META;

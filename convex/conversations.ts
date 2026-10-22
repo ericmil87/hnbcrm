@@ -7,7 +7,7 @@ import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
-import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 import {
   applyCampaignDeliveryUpdate,
   applyCampaignInboundHooks,
@@ -15,6 +15,7 @@ import {
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
+import { configTransport } from "./lib/channelTransport";
 import {
   appendReadBy,
   GROUP_ACTIVITY_GRANULARITY_MS,
@@ -74,9 +75,13 @@ function serviceWindowExpiresAt(conversation: { lastInboundAt?: number }): numbe
 // (The U5 UI reads `serviceWindowApplies` to hide the window/template controls.)
 function serviceWindowFields(
   conversation: { lastInboundAt?: number },
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
+  config: { channel?: string; provider?: "meta" | "bridge" | null } | null | undefined
 ): { serviceWindowExpiresAt: number | null; serviceWindowApplies: boolean } {
-  const applies = !config || configProvider(config) !== "bridge";
+  // Transporte genérico. O espelho `{ provider }` da lista não tem `channel`
+  // (só WhatsApp grava `channelProvider` hoje) → tratado como linha de WhatsApp.
+  const applies =
+    !config ||
+    configTransport({ channel: config.channel ?? "whatsapp", provider: config.provider }) !== "bridge";
   return {
     serviceWindowExpiresAt: applies ? serviceWindowExpiresAt(conversation) : null,
     serviceWindowApplies: applies,
@@ -232,13 +237,18 @@ async function resolveReplyMeta(
 // Resolve the WhatsApp config + destination phone for a conversation, mirroring
 // the dispatch context resolution (per-conversation config, falling back to the
 // org's default active whatsapp config). Used by mark-read / typing / reaction.
+// WhatsApp-only and strict (Meta Messaging F0.2): a conversation of another
+// channel never reaches the "first active WhatsApp" fallback, and the returned
+// config is always a WhatsApp one (callers feed it to the WA-only `configProvider`).
 async function resolveWhatsappTarget(
   ctx: MutationCtx,
   conversation: Doc<"conversations">
 ): Promise<{ config: Doc<"channelConfigs"> | null; toPhone: string | null }> {
+  if (conversation.channel !== "whatsapp") return { config: null, toPhone: null };
   let config = conversation.channelConfigId
     ? await ctx.db.get(conversation.channelConfigId)
     : null;
+  if (config && config.channel !== "whatsapp") config = null;
   if (!config) {
     const configs = await ctx.db
       .query("channelConfigs")
@@ -1113,9 +1123,9 @@ export const sendMessage = mutation({
       });
     }
 
-    // Real channel dispatch (paced per conversation)
-    if (!args.isInternal && conversation.channel === "whatsapp") {
-      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    // Real channel dispatch (paced per conversation); channel gate lives in the port
+    if (!args.isInternal) {
+      await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
     return messageId;
@@ -1536,9 +1546,9 @@ export const internalSendMessage = internalMutation({
       });
     }
 
-    // Real channel dispatch (paced per conversation)
-    if (!args.isInternal && conversation.channel === "whatsapp") {
-      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    // Real channel dispatch (paced per conversation); channel gate lives in the port
+    if (!args.isInternal) {
+      await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
     return messageId;
@@ -2412,9 +2422,13 @@ export const internalSendTemplate = internalMutation({
     // bridge config before scheduling any dispatch — never call a template on the
     // gateway. Resolve the provider the same way dispatch does: the conversation's
     // config, falling back to the org's default active whatsapp config.
+    // A conversa já é WhatsApp (guard acima), então o fallback "primeiro
+    // WhatsApp ativo" nunca roda para outro canal; um channelConfigId de outro
+    // canal é ignorado antes do `configProvider` (WA-only, fail-closed).
     let config = conversation.channelConfigId
       ? await ctx.db.get(conversation.channelConfigId)
       : null;
+    if (config && config.channel !== "whatsapp") config = null;
     if (!config) {
       const configs = await ctx.db
         .query("channelConfigs")
@@ -2510,7 +2524,7 @@ export const internalSendTemplate = internalMutation({
       },
     });
 
-    await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    await scheduleOutboundDispatch(ctx, conversation, messageId);
 
     return messageId;
   },

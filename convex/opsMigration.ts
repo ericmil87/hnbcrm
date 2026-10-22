@@ -18,7 +18,7 @@ import { internal } from "./_generated/api";
 import { decryptSecret } from "./lib/secretCrypto";
 import { BRIDGE_WEBHOOK_EVENTS, buildBridgeHmacConfigRequest } from "./lib/bridgeSession";
 import { computeNextRunAt, scheduleGroupPostTick, wakeAtFor } from "./lib/groupPostOps";
-import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 
 const trimBase = (u: string) => u.replace(/\/+$/, "");
 
@@ -215,7 +215,7 @@ export const internalRedispatchStuckOutbound = internalMutation({
       if (!conversation) continue;
       out.push({ messageId: m._id, createdAt: m.createdAt, action: dryRun ? "dryRun" : "redispatched" });
       if (dryRun) continue;
-      await scheduleWhatsappDispatch(ctx, conversation, m._id);
+      await scheduleOutboundDispatch(ctx, conversation, m._id);
     }
     return out;
   },

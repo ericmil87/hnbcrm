@@ -11,7 +11,7 @@
 import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
-import { scheduleWhatsappDispatch } from "./whatsappDispatch";
+import { scheduleOutboundDispatch } from "./outboundDispatch";
 import { getLeadRef } from "./leadRef";
 import { firstResponsePatch } from "./conversationTiming";
 import { lastMessagePatchForId } from "./conversationListFields";
@@ -90,7 +90,5 @@ export async function applyOutboundMessageSideEffects(
     },
   });
 
-  if (conversation.channel === "whatsapp") {
-    await scheduleWhatsappDispatch(ctx, conversation, messageId);
-  }
+  await scheduleOutboundDispatch(ctx, conversation, messageId);
 }

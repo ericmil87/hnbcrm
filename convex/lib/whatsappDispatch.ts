@@ -30,7 +30,8 @@
 import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
-import { resolveConversationChannelConfig, providerOf } from "./channelResolve";
+import { resolveConversationChannelConfig, transportOf } from "./channelResolve";
+import { ChannelTransport } from "./channelTransport";
 import { getRuntime, upsertRuntime } from "./conversationRuntime";
 
 export const PAIR_RATE_INTERVAL_MS = 6500; // Meta: 1 msg/6s por destinatário (131056) + margem
@@ -42,6 +43,8 @@ const BRIDGE_REACTIVE_JITTER_MS = 6000;
 const BRIDGE_COLD_GAP_MS = 8000;
 const BRIDGE_COLD_JITTER_MS = 7000;
 const REACTIVE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Instagram/Messenger (Meta Messaging): valor provisório, F1 ajusta.
+const META_MESSAGING_CHANNEL_GAP_MS = 1000;
 
 // Digitação simulada (bridge, IA/agendadas): humano real seria ~267ms/char
 // (modelo WPM 45±15 do baileys-antiban); 55ms/char + teto de 8s é o compromisso
@@ -68,8 +71,11 @@ export function computeTypingDelayMs(message: {
   return Math.min(TYPING_BASE_MS + message.content.length * TYPING_PER_CHAR_MS, TYPING_MAX_MS);
 }
 
-function channelGapMs(provider: "meta" | "bridge", reactive: boolean): number {
-  if (provider === "meta") {
+function channelGapMs(transport: ChannelTransport, reactive: boolean): number {
+  if (transport === "instagram" || transport === "messenger") {
+    return META_MESSAGING_CHANNEL_GAP_MS;
+  }
+  if (transport === "meta") {
     return META_CHANNEL_GAP_MS + Math.random() * META_CHANNEL_JITTER_MS;
   }
   return reactive
@@ -95,7 +101,7 @@ export async function claimChannelSlot(
     countSend?: boolean;
   }
 ): Promise<number> {
-  const provider = providerOf(args.config) ?? "meta";
+  const transport = transportOf(args.config) ?? "meta";
   const reactive =
     (args.conversation.lastInboundAt ?? 0) + REACTIVE_WINDOW_MS > args.now;
 
@@ -108,7 +114,7 @@ export async function claimChannelSlot(
 
   const slot = Math.max(args.earliestAt, cursor);
   const nextAt =
-    slot + Math.round(channelGapMs(provider, reactive)) + (args.extraAdvanceMs ?? 0);
+    slot + Math.round(channelGapMs(transport, reactive)) + (args.extraAdvanceMs ?? 0);
 
   // Métrica-only (sem enforcement): envios do dia UTC p/ calibrar futuro warm-up.
   const day = new Date(args.now).toISOString().slice(0, 10);
@@ -141,7 +147,7 @@ export async function scheduleWhatsappDispatch(
   const config = await resolveConversationChannelConfig(ctx, conversation);
 
   let typingDelayMs = 0;
-  if (config && providerOf(config) === "bridge") {
+  if (config && transportOf(config) === "bridge") {
     const message = await ctx.db.get(messageId);
     if (message) typingDelayMs = computeTypingDelayMs(message);
   }
