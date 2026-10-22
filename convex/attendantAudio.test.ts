@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * O atendente "ouve" as mensagens de voz (plano docs/archive/AI-ATTENDANT-AUDIO-PLAN.md).
+ * O atendente "ouve" as mensagens de voz (plano AI-ATTENDANT-AUDIO-PLAN.md (removido do repo em 22/10/2026; histórico git até ea71ddd)).
  * Prova que:
  *  - o claim ESPERA a transcrição em voo em vez de responder ao placeholder
  *    "[áudio]" (D1) — sem consumir tentativas de falha;

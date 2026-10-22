@@ -1488,7 +1488,7 @@ http.route({
 // ---- Export / Import Endpoints ----
 //
 // Exportar/importar dados da organização exige `settings: manage` na chave de
-// API (plano docs/archive/EXPORT-IMPORT-PLAN-v2.md, regra 3). O gate saiu do antigo
+// API (plano EXPORT-IMPORT-PLAN-v2.md (removido do repo em 22/10/2026; histórico git até ea71ddd), regra 3). O gate saiu do antigo
 // `denyDataOps` local e hoje vem do mecanismo único `ROUTE_PERMISSIONS` +
 // `requireRoutePermission`, compartilhado com todas as demais rotas.
 
