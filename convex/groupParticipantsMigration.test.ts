@@ -896,3 +896,132 @@ describe("listGroupMembers / getGroup sem lista (perf I/O, onda 2)", () => {
     expect(stripSystem(pub!)).toEqual(rest);
   });
 });
+
+describe("correções pós-revisão da busca de membros (perf I/O, onda 2)", () => {
+  // Todo mundo com nome: o search index do convex-test quebra em linha sem o
+  // campo de busca (o Convex real só a ignora).
+  const named: Participant[] = [
+    { lid: OUR_LID, phone: OUR_PHONE, name: "Empresa", isAdmin: false, isSuperAdmin: false },
+    { lid: ERIC_LID, phone: ERIC_PHONE, name: "João Ávila", isAdmin: false, isSuperAdmin: false },
+    // Celular gravado COM o 9º dígito (13 dígitos).
+    { lid: ANA_LID, phone: "5585981392929", name: "Ana", isAdmin: false, isSuperAdmin: false },
+  ];
+  type Client = ReturnType<TestConvex<typeof schema>["withIdentity"]>;
+  const search = (asUser: Client, groupChatId: Id<"groupChats">, term: string) =>
+    asUser.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      search: term,
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+
+  test("busca por nome ignora acento e caixa: 'joao' acha 'João'", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t, { participants: named });
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+        .collect()
+    );
+    expect(rows.find((r) => r.lid === ERIC_LID)!.searchName).toBe("joao avila");
+    expect((await search(asAdmin, groupChatId, "joao")).page.map((p) => p.lid)).toEqual([ERIC_LID]);
+    expect((await search(asAdmin, groupChatId, "ÁVILA")).page.map((p) => p.lid)).toEqual([ERIC_LID]);
+    // O nome devolvido continua o original, com acento.
+    expect((await search(asAdmin, groupChatId, "João")).page[0].name).toBe("João Ávila");
+  });
+
+  test("telefone: variante do 9º dígito BR (12 ↔ 13 dígitos)", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t, { participants: named });
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    // Digitado SEM o 9 (forma antiga), gravado com ele.
+    expect((await search(asAdmin, groupChatId, "85 8139")).page.map((p) => p.lid)).toEqual([ANA_LID]);
+    // Digitado COM o 9, gravado sem ele (558181392929).
+    expect((await search(asAdmin, groupChatId, "81 98139")).page.map((p) => p.lid)).toEqual([ERIC_LID]);
+  });
+
+  test("LGPD: sala não acompanhada, removida ou abandonada não expõe membros nem nomes", async () => {
+    const patches: Partial<Doc<"groupChats">>[] = [
+      { monitored: false },
+      { removedAt: 1 },
+      { leftAt: 1 },
+    ];
+    for (const patch of patches) {
+      const t = setup();
+      const { groupChatId, userId } = await seed(t, { participants: named });
+      await migrate(t);
+      // Simula a janela antes da purga assíncrona: as linhas ainda existem.
+      await t.run(async (ctx) => ctx.db.patch(groupChatId, patch));
+      const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+      expect(
+        await asAdmin.query(api.groupChats.listGroupMembers, {
+          groupChatId,
+          paginationOpts: { numItems: 50, cursor: null },
+        })
+      ).toEqual({ page: [], isDone: true, continueCursor: "" });
+      expect((await search(asAdmin, groupChatId, "ana")).page).toEqual([]);
+      expect(
+        await asAdmin.query(api.groupChats.resolveGroupMemberNames, {
+          groupChatId,
+          jids: [ERIC_LID],
+        })
+      ).toEqual([]);
+    }
+  });
+
+  test("backfill de searchName: dryRun só conta; o real grava e a busca passa a achar", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t, { participants: named });
+    await migrate(t);
+    // Linhas gravadas antes do campo existir.
+    await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+        .collect();
+      for (const r of rows) await ctx.db.patch(r._id, { searchName: undefined });
+    });
+    const dry = await t.mutation(internal.groupChats.internalBackfillParticipantSearchName, {});
+    expect(dry).toMatchObject({ scanned: 3, patched: 3, isDone: true });
+    const stillMissing = await t.run(async (ctx) =>
+      (await ctx.db.query("groupParticipants").collect()).filter((r) => r.searchName === undefined)
+    );
+    expect(stillMissing).toHaveLength(3);
+    const real = await t.mutation(internal.groupChats.internalBackfillParticipantSearchName, {
+      dryRun: false,
+    });
+    expect(real.patched).toBe(3);
+    const again = await t.mutation(internal.groupChats.internalBackfillParticipantSearchName, {
+      dryRun: false,
+    });
+    expect(again.patched).toBe(0);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    expect((await search(asAdmin, groupChatId, "joao")).page.map((p) => p.lid)).toEqual([ERIC_LID]);
+  });
+
+  test("upsert do ingest regrava searchName quando o nome muda", async () => {
+    const t = setup();
+    const { groupChatId } = await seed(t, { participants: named });
+    await migrate(t);
+    await t.run(async (ctx) => {
+      const group = (await ctx.db.get(groupChatId))!;
+      await upsertParticipant(
+        ctx,
+        group,
+        { lid: ANA_LID },
+        (prev) => (prev ? { ...prev, name: "Anaís" } : null),
+        Date.now()
+      );
+    });
+    const row = await t.run(async (ctx) =>
+      ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group_and_key", (q) => q.eq("groupChatId", groupChatId).eq("key", ANA_LID))
+        .first()
+    );
+    expect(row!.searchName).toBe("anais");
+  });
+});

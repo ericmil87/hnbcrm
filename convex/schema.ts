@@ -1520,6 +1520,12 @@ const applicationTables = {
     joinedAt: v.optional(v.number()),
     leftAt: v.optional(v.number()),
     updatedAt: v.number(),
+    // `name` normalizado (NFD sem acento, minúsculas — `lib/groupMemberSearch.ts`)
+    // para a busca do painel/"@": o search index do Convex não ignora acento.
+    // Gravado pelo store em todo upsert; linhas antigas ganham pelo backfill
+    // `groupChats:internalBackfillParticipantSearchName` (até lá, a linha sem o
+    // campo não aparece na busca por NOME — telefone e listagem não dependem dele).
+    searchName: v.optional(v.string()),
   })
     .index("by_group", ["groupChatId"])
     .index("by_group_and_key", ["groupChatId", "key"])
@@ -1533,7 +1539,7 @@ const applicationTables = {
     .index("by_group_and_left", ["groupChatId", "leftAt"])
     // Busca por nome no painel e no autocomplete de "@" (telefone usa o
     // `by_group_and_phone` por prefixo).
-    .searchIndex("search_name", { searchField: "name", filterFields: ["groupChatId"] }),
+    .searchIndex("search_name", { searchField: "searchName", filterFields: ["groupChatId"] }),
 
   /** Linha do tempo da sala (fase 4d; ex-`groupChats.timeline`, cap 100 FIFO). */
   groupTimeline: defineTable({

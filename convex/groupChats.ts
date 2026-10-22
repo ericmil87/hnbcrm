@@ -85,6 +85,13 @@ import {
   syncGroupSummaryToConversation,
 } from "./lib/conversationListFields";
 import {
+  memberMatchesSearch,
+  normalizeSearchText,
+  participantSearchName,
+  phonePrefixVariants,
+  phoneSearchDigits,
+} from "./lib/groupMemberSearch";
+import {
   replaceTimelineRows,
   dedupeParticipants,
   deleteGroupSideTables,
@@ -286,6 +293,18 @@ export const getGroup = query({
     getGroupHandler(ctx, { ...args, includeParticipants: args.includeParticipants === true }),
 });
 
+/**
+ * Os membros da sala podem ser mostrados? Só com a sala ACOMPANHADA e ativa
+ * (LGPD — `participantsForStorage`): parar de acompanhar, remover a sala ou
+ * sairmos dela agenda a purga das linhas, que é assíncrona; até ela terminar
+ * nada pode sair por `listGroupMembers`/`resolveGroupMemberNames`.
+ */
+function groupMembersVisible(
+  group: Pick<Doc<"groupChats">, "monitored" | "removedAt" | "leftAt">
+): boolean {
+  return group.monitored === true && group.removedAt === undefined && group.leftAt === undefined;
+}
+
 /** Página do painel de membros (e teto da busca do "@"). */
 export const GROUP_MEMBERS_PAGE_MAX = 50;
 /** Teto do termo de busca (nome/telefone). */
@@ -354,23 +373,6 @@ function toGroupMember(
   };
 }
 
-function normalizeSearchText(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
-}
-
-/**
- * Termo "parece telefone"? Só dígitos e pontuação de telefone, com ≥ 1 dígito.
- * Aí a busca vai pelo índice de telefone (prefixo), não pelo de nome.
- */
-function phoneSearchDigits(term: string): string | null {
-  if (!/^[\d\s()+\-.]+$/.test(term)) return null;
-  const digits = term.replace(/\D/g, "");
-  return digits.length > 0 ? digits : null;
-}
-
 /**
  * Membros ATIVOS de uma sala, paginados (perf Convex I/O, onda 2).
  *
@@ -383,13 +385,21 @@ function phoneSearchDigits(term: string): string | null {
  * muda custa uma página, não a lista. O canal é lido uma vez por chamada.
  *
  * `search`: termo com cara de telefone vai por PREFIXO no `by_group_and_phone`
- * (também com o DDI 55 na frente, para "85 9…" achar "5585 9…"); o resto vai
- * pelo search index de nome (prefixo por palavra, como toda busca do Convex).
+ * (variantes de `phonePrefixVariants`: com o DDI 55 na frente, para "85 9…"
+ * achar "5585 9…", e com/sem o 9º dígito BR, 12 ↔ 13 dígitos). Busca pelo FIM
+ * do número (os 4 dígitos visíveis, ••••5729) não existe — o índice só serve
+ * prefixo. O resto vai pelo search index de `searchName` (nome normalizado sem
+ * acento/caixa — o termo é normalizado igual, então "joao" acha "João"; prefixo
+ * por palavra, como toda busca do Convex). Linha antiga sem `searchName` não
+ * aparece na busca por nome até o backfill
+ * `internalBackfillParticipantSearchName`.
  * Busca devolve UMA página (`isDone: true`), até `numItems` (≤ 50) — é
  * autocomplete/filtro, não listagem.
  *
  * Não-membro (ou sala inexistente) recebe página vazia, sem erro: a query é
- * reativa e um throw derrubaria a tela.
+ * reativa e um throw derrubaria a tela. Sala não acompanhada, removida ou de
+ * onde saímos também recebe vazio (LGPD, defesa em profundidade): a purga das
+ * linhas é assíncrona e, até terminar, os membros ainda estariam na tabela.
  * Sala ainda NÃO migrada (fase 4d): a lista vem do array legado do doc, numa
  * página só — transitório até o backfill.
  */
@@ -402,7 +412,7 @@ export const listGroupMembers = query({
   returns: groupMembersPageValidator,
   handler: async (ctx, args) => {
     const group = await ctx.db.get(args.groupChatId);
-    if (!group) return EMPTY_MEMBERS_PAGE;
+    if (!group || !groupMembersVisible(group)) return EMPTY_MEMBERS_PAGE;
     try {
       await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
     } catch {
@@ -415,16 +425,9 @@ export const listGroupMembers = query({
     const digits = term ? phoneSearchDigits(term) : null;
 
     if (!isGroupMigrated(group)) {
-      const needle = normalizeSearchText(term);
       const page = (group.participants ?? [])
         .filter((p) => p.leftAt === undefined)
-        .filter((p) => {
-          if (!needle) return true;
-          if (digits && (p.phone ?? "").includes(digits)) return true;
-          return (
-            normalizeSearchText(p.name ?? "").includes(needle) || (p.phone ?? "").includes(needle)
-          );
-        })
+        .filter((p) => memberMatchesSearch(p, term))
         .slice(0, term ? numItems : STORE_PARTICIPANTS_CAP)
         .map((p) => toGroupMember(p, isSelf))
         .filter((p): p is GroupMember => p !== null);
@@ -457,8 +460,7 @@ export const listGroupMembers = query({
       }
     };
     if (digits) {
-      const prefixes = digits.startsWith("55") ? [digits] : [digits, `55${digits}`];
-      for (const prefix of prefixes) {
+      for (const prefix of phonePrefixVariants(digits)) {
         // `~` vem depois de todo dígito: [prefixo, prefixo~) = "começa com".
         push(
           await ctx.db
@@ -470,14 +472,17 @@ export const listGroupMembers = query({
         );
       }
     } else {
-      push(
-        await ctx.db
-          .query("groupParticipants")
-          .withSearchIndex("search_name", (q) =>
-            q.search("name", term).eq("groupChatId", args.groupChatId)
-          )
-          .take(numItems * 2)
-      );
+      const needle = normalizeSearchText(term);
+      if (needle) {
+        push(
+          await ctx.db
+            .query("groupParticipants")
+            .withSearchIndex("search_name", (q) =>
+              q.search("searchName", needle).eq("groupChatId", args.groupChatId)
+            )
+            .take(numItems * 2)
+        );
+      }
     }
     return {
       page: rows
@@ -504,7 +509,8 @@ export const resolveGroupMemberNames = query({
   handler: async (ctx, args) => {
     if (args.jids.length === 0) return [];
     const group = await ctx.db.get(args.groupChatId);
-    if (!group) return [];
+    // LGPD: sala não acompanhada/removida/abandonada não expõe nome de membro.
+    if (!group || !groupMembersVisible(group)) return [];
     try {
       await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
     } catch {
@@ -1244,7 +1250,11 @@ function syncPatchChanges(
 ): boolean {
   for (const [key, value] of Object.entries(patch)) {
     // Carimbos não contam como "mudou": senão todo sync regravaria toda sala
-    // (e reexecutaria toda query que lê o doc), com nada de novo.
+    // (e reexecutaria toda query que lê o doc), com nada de novo. Consequência:
+    // `groupChats.lastSyncAt` da SALA passou a significar "última mudança vinda
+    // do sync", não "último sync" (o do número inteiro é
+    // `channelConfigs.bridgeGroupsLastSyncAt`). A REST/MCP devolvem o doc cru,
+    // então quem integra vê esse significado novo.
     if (key === "lastSyncAt" || key === "updatedAt") continue;
     const before = (prev as Record<string, unknown>)[key];
     if (JSON.stringify(before ?? null) !== JSON.stringify(value ?? null)) return true;
@@ -1484,12 +1494,61 @@ export const internalPurgeGroupParticipants = internalMutation({
   },
 });
 
+/** Linhas por página do backfill de `searchName`. */
+const BACKFILL_SEARCH_NAME_PAGE = 200;
+
+/**
+ * Backfill de `groupParticipants.searchName` (perf I/O onda 2, busca sem
+ * acento). Linhas gravadas antes do campo existir ficam fora da busca por NOME
+ * até passar por aqui (a listagem e a busca por telefone não dependem dele).
+ * Varre a tabela inteira pelo cursor, 200 linhas por página; `dryRun` (padrão)
+ * só conta uma página. O real se reagenda até o fim. Idempotente.
+ *
+ * `npx convex run --prod groupChats:internalBackfillParticipantSearchName '{"dryRun":false}'`
+ */
+export const internalBackfillParticipantSearchName = internalMutation({
+  args: { dryRun: v.optional(v.boolean()), cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    scanned: v.number(),
+    patched: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const result = await ctx.db
+      .query("groupParticipants")
+      .paginate({ numItems: BACKFILL_SEARCH_NAME_PAGE, cursor: args.cursor ?? null });
+    let patched = 0;
+    for (const row of result.page) {
+      const searchName = participantSearchName(row.name);
+      if (row.searchName === searchName) continue;
+      patched++;
+      if (!dryRun) await ctx.db.patch(row._id, { searchName });
+    }
+    if (!dryRun && !result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalBackfillParticipantSearchName, {
+        dryRun: false,
+        cursor: result.continueCursor,
+      });
+    }
+    return {
+      scanned: result.page.length,
+      patched,
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
+  },
+});
+
 /**
  * Sincroniza uma lista do gateway em DOIS passos (perf I/O, onda 2): os
  * metadados de todas as salas numa mutation e, depois, o diff de membros de
  * cada sala acompanhada na sua própria mutation, em série. Se a action cair no
  * meio, as salas que faltaram ficam com a lista anterior até o próximo sync —
- * nada fica inconsistente, só atrasado.
+ * e a CONTAGEM (`participantsCount`, gravada no 1º passo a partir do gateway)
+ * pode divergir da lista de membros da tabela até lá. Nenhuma das duas se
+ * corrompe; o próximo sync reconcilia.
  */
 async function applyGatewayGroupList(
   ctx: ActionCtx,
