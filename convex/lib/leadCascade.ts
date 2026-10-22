@@ -24,6 +24,7 @@ import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
 import { deleteBlobIfUnreferenced } from "./fileRefs";
 import { purgeFollowUpsOfConversation } from "./followUpOps";
+import { deleteRuntime } from "./conversationRuntime";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -178,6 +179,9 @@ export async function deleteConversationCascade(
     }
     if (budget.left <= 0) return false;
   }
+
+  // Estado efêmero da conversa (presença/lock/pacing — fase 4b).
+  budget.left -= await deleteRuntime(ctx, conversationId);
 
   await ctx.db.delete(conversationId);
   budget.left -= 1;

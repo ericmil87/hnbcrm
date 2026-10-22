@@ -2979,3 +2979,92 @@ export const sendTypingState = mutation({
     return null;
   },
 });
+
+const LEGACY_RUNTIME_PAGE_SIZE = 200;
+
+/**
+ * Ops (fase 4b, sem UI): apaga do doc `conversations` os campos legados
+ * `contactPresence`, `aiTurnLock` e `nextDispatchAt`, que agora vivem em
+ * `conversationRuntime`. NÃO migra valor nenhum: presença é efêmera (TTL de
+ * 12 s no cliente), o lock expira sozinho e o pacing recomeça do `now`.
+ *
+ * Nenhum código lê mais esses campos: um lock "vivo" no doc já é ignorado
+ * desde o deploy (é ali, não aqui, que um turno em voo pode perder a
+ * exclusão — no máximo 1 defer/turno duplicado; faça o deploy com a IA
+ * quieta). Rodar isto não muda comportamento, só limpa.
+ *
+ * `dryRun` (default TRUE) lê UMA página e não escreve — repita com o `cursor`
+ * devolvido para ver o resto; o real se reagenda sozinho até o fim. A REMOÇÃO
+ * dos campos do schema é um PR posterior, depois que este backfill zerar.
+ *
+ *   npx convex run conversations:internalClearLegacyRuntimeFields '{"dryRun":true}'
+ *   npx convex run conversations:internalClearLegacyRuntimeFields '{"dryRun":false}'
+ */
+export const internalClearLegacyRuntimeFields = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    cleared: v.number(),
+    withContactPresence: v.number(),
+    withAiTurnLock: v.number(),
+    withNextDispatchAt: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const page = await ctx.db
+      .query("conversations")
+      .paginate({ numItems: LEGACY_RUNTIME_PAGE_SIZE, cursor: args.cursor ?? null });
+
+    let cleared = 0;
+    let withContactPresence = 0;
+    let withAiTurnLock = 0;
+    let withNextDispatchAt = 0;
+    for (const conversation of page.page) {
+      const hasPresence = conversation.contactPresence !== undefined;
+      const hasLock = conversation.aiTurnLock !== undefined;
+      const hasDispatch = conversation.nextDispatchAt !== undefined;
+      if (hasPresence) withContactPresence++;
+      if (hasLock) withAiTurnLock++;
+      if (hasDispatch) withNextDispatchAt++;
+      if (!hasPresence && !hasLock && !hasDispatch) continue;
+      cleared++;
+      if (!dryRun) {
+        // Sem `updatedAt`: limpeza de campo morto, não mudança da conversa.
+        await ctx.db.patch(conversation._id, {
+          contactPresence: undefined,
+          aiTurnLock: undefined,
+          nextDispatchAt: undefined,
+        });
+      }
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.conversations.internalClearLegacyRuntimeFields, {
+        dryRun: false,
+        cursor: page.continueCursor,
+      });
+      scheduledNext = true;
+    }
+
+    return {
+      dryRun,
+      scanned: page.page.length,
+      cleared,
+      withContactPresence,
+      withAiTurnLock,
+      withNextDispatchAt,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
+  },
+});
