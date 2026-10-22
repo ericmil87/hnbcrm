@@ -57,7 +57,12 @@ import { spendBlockedNow } from "./aiSpend";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import { visionEnabledForOrg } from "./lib/mediaEnrichment";
-import { appendTimeline, membersWithPermission } from "./lib/groupChatCore";
+import { membersWithPermission } from "./lib/groupChatCore";
+import {
+  findParticipantByKey,
+  participantsOf,
+  recordTimeline,
+} from "./lib/groupParticipantsStore";
 import {
   historyTextOf,
   isWithinSchedule,
@@ -550,7 +555,9 @@ export const internalClaimGroupTurn = internalMutation({
         em: m.createdAt,
       }));
 
-    const participants = (group.participants ?? [])
+    // Fase 4d: membros vêm de `groupParticipants` quando a sala já migrou.
+    const allParticipants = await participantsOf(ctx, group);
+    const participants = allParticipants
       .filter((p) => p.leftAt === undefined)
       .slice(0, PARTICIPANTS_IN_CONTEXT)
       .map((p) => ({
@@ -609,7 +616,7 @@ export const internalClaimGroupTurn = internalMutation({
               }
             : null,
         },
-        participants: (group.participants ?? []).map((p) => ({
+        participants: allParticipants.map((p) => ({
           lid: p.lid,
           phone: p.phone,
           leftAt: p.leftAt,
@@ -773,14 +780,10 @@ export const internalCommitGroupAiReply = internalMutation({
       now,
       activityContent: "Resposta do agente de IA no grupo",
     });
-    await ctx.db.patch(loaded.group._id, {
-      timeline: appendTimeline(loaded.group.timeline, {
-        at: now,
-        type: "ai_reply",
-        data: args.text.slice(0, 200),
-      }),
-      updatedAt: now,
-    });
+    const timelinePatch = await recordTimeline(ctx, loaded.group, [
+      { at: now, type: "ai_reply", data: args.text.slice(0, 200) },
+    ]);
+    await ctx.db.patch(loaded.group._id, { ...timelinePatch, updatedAt: now });
 
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
     await clearOwnedAiTurnLock(ctx, conversation, args.runId);
@@ -957,9 +960,7 @@ export const internalFlagOpportunity = internalMutation({
       { kind: "conversation", id: args.conversationId }
     );
 
-    const participant = (group.participants ?? []).find(
-      (p) => (p.lid ?? p.phone) === args.participantKey
-    );
+    const participant = await findParticipantByKey(ctx, group, args.participantKey);
     if (!participant) return "ignorado";
     const agent = await ctx.db.get(args.agentMemberId);
     const org = await ctx.db.get(args.organizationId);
