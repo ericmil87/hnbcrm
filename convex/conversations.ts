@@ -41,6 +41,7 @@ import {
   lastMessageFieldsFromConversation,
   channelConfigPatchFor,
   lastMessagePatchForId,
+  listFieldsBackfillPatch,
   type LastMessageFields,
 } from "./lib/conversationListFields";
 import {
@@ -3054,6 +3055,104 @@ export const internalClearLegacyRuntimeFields = internalMutation({
       withContactPresence,
       withAiTurnLock,
       withNextDispatchAt,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
+  },
+});
+
+const LIST_FIELDS_BACKFILL_PAGE_SIZE = 200;
+
+/**
+ * Backfill da desnormalização da lista do inbox (perf Convex I/O, fase 4c):
+ * prévia da última mensagem, nome/contagem do grupo e provider do canal.
+ * Grava só o que falta/difere (idempotente); `dryRun` (default) só conta.
+ * Em `dryRun:false` se re-agenda pelo cursor até o fim.
+ *
+ *   npx convex run conversations:internalBackfillListFields '{"dryRun":true}'
+ *   npx convex run conversations:internalBackfillListFields '{"dryRun":false}'
+ */
+export const internalBackfillListFields = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    organizationId: v.optional(v.id("organizations")),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    patched: v.number(),
+    lastMessageFixed: v.number(),
+    groupFixed: v.number(),
+    providerFixed: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const paginationOpts = {
+      numItems: LIST_FIELDS_BACKFILL_PAGE_SIZE,
+      cursor: args.cursor ?? null,
+    };
+    const page = args.organizationId
+      ? await ctx.db
+          .query("conversations")
+          .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId!))
+          .paginate(paginationOpts)
+      : await ctx.db.query("conversations").paginate(paginationOpts);
+
+    const configCache = new Map<string, Doc<"channelConfigs"> | null>();
+    let patched = 0;
+    let lastMessageFixed = 0;
+    let groupFixed = 0;
+    let providerFixed = 0;
+    for (const conversation of page.page) {
+      const lastMessage = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+        .order("desc")
+        .first();
+      const group =
+        conversation.kind === "group" && conversation.groupChatId
+          ? await ctx.db.get(conversation.groupChatId)
+          : null;
+      let config: Doc<"channelConfigs"> | null = null;
+      if (conversation.channelConfigId) {
+        if (!configCache.has(conversation.channelConfigId)) {
+          configCache.set(conversation.channelConfigId, await ctx.db.get(conversation.channelConfigId));
+        }
+        config = configCache.get(conversation.channelConfigId) ?? null;
+      }
+      const plan = listFieldsBackfillPatch(conversation, { lastMessage, group, config });
+      if (Object.keys(plan.patch).length === 0) continue;
+      patched++;
+      if (plan.lastMessage) lastMessageFixed++;
+      if (plan.group) groupFixed++;
+      if (plan.provider) providerFixed++;
+      // Sem `updatedAt`: espelho de dado existente, não mudança da conversa.
+      if (!dryRun) await ctx.db.patch(conversation._id, plan.patch);
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.conversations.internalBackfillListFields, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+      });
+      scheduledNext = true;
+    }
+
+    return {
+      dryRun,
+      scanned: page.page.length,
+      patched,
+      lastMessageFixed,
+      groupFixed,
+      providerFixed,
       isDone: page.isDone,
       continueCursor,
       scheduledNext,
