@@ -5,7 +5,7 @@ import {
   resolveDisclosurePolicy,
 } from "./disclosure";
 
-const TEXT = "Sou o Guardião, o assistente digital da casa.";
+const TEXT = "Sou o Guia, o assistente digital da casa.";
 
 describe("resolveDisclosureMode", () => {
   test("ausente, null ou valor desconhecido = first_reply (comportamento histórico)", () => {

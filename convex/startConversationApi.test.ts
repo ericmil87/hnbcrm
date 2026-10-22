@@ -170,7 +170,7 @@ describe("POST /api/v1/conversations/start", () => {
     const s = await seed(t);
     const urls = wuzapi(["558181392929"]);
     const { status, json } = await call(t, AGENT_KEY, "POST", "/api/v1/conversations/start", {
-      channelConfigId: s.bridgeId, phone: "(81) 98139-2929", firstName: "Rejane", content: "Olá! Tudo bem?",
+      channelConfigId: s.bridgeId, phone: "(81) 98139-2929", firstName: "Marina", content: "Olá! Tudo bem?",
     });
     expect(status).toBe(201);
     expect(json).toMatchObject({
@@ -187,7 +187,7 @@ describe("POST /api/v1/conversations/start", () => {
       message: await ctx.db.get(json.messageId),
     }));
     expect((state.contact as any).phone).toBe("558181392929");
-    expect((state.contact as any).firstName).toBe("Rejane");
+    expect((state.contact as any).firstName).toBe("Marina");
     expect((state.lead as any).assignedTo).toBe(s.agentId);
     expect((state.message as any)).toMatchObject({ direction: "outbound", senderId: s.agentId, content: "Olá! Tudo bem?" });
 

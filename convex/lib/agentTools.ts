@@ -926,7 +926,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
       "Cria o RASCUNHO de uma publicação programada em grupos com mensagens prontas (biblioteca). Não ativa: quem ativa é uma pessoa.",
     parameters: schema(
       {
-        name: { type: "string", description: "Nome da rotina (ex.: 'Bom dia do Guardião')" },
+        name: { type: "string", description: "Nome da rotina (ex.: 'Bom dia do Guia')" },
         groupChatIds: { type: "array", items: { type: "string" }, description: "Grupos de destino (do MESMO número)" },
         times: { type: "array", items: { type: "string" }, description: 'Horários "HH:MM" (ex.: ["12:00"])' },
         days: { type: "array", items: { type: "number" }, description: "Dias da semana 1=seg … 7=dom; vazio = todos" },

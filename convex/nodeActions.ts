@@ -96,7 +96,7 @@ export const inviteHumanMember = action({
     emailSent: boolean;
   }> => {
     // Antes de QUALQUER escrita: o banco já tem membro com e-mail "toni" e
-    // "oli@milfont.netdd" — conta criada com endereço impossível não recebe
+    // "oli@exemplo.netdd" — conta criada com endereço impossível não recebe
     // convite nem consegue recuperar a senha depois.
     if (!hasEmailShape(args.email)) {
       throw new Error("E-mail inválido. Confira o endereço e tente de novo.");

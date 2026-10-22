@@ -93,7 +93,7 @@ describe("o que NUNCA pode ser tocado", () => {
   });
 
   test("chave Pix e e-mail passam intactos", () => {
-    expect(toWhatsAppText("Pix: pix@milfont.net")).toBe("Pix: pix@milfont.net");
+    expect(toWhatsAppText("Pix: pix@exemplo.net")).toBe("Pix: pix@exemplo.net");
     expect(toWhatsAppText("contato_novo@empresa.com.br")).toBe("contato_novo@empresa.com.br");
   });
 
@@ -122,7 +122,7 @@ describe("idempotência", () => {
     "Use o cupom **PORTO50** hoje",
     "# Agenda\n* item __um__\n* item ~~dois~~\nveja [site](https://x.com/a__b__c)",
     "***tudo junto*** e https://ex.com/__z__",
-    "Pix: pix@milfont.net — valor ~~R$ 97~~ **R$ 67**",
+    "Pix: pix@exemplo.net — valor ~~R$ 97~~ **R$ 67**",
   ];
 
   test("aplicar duas vezes é igual a aplicar uma", () => {

@@ -333,13 +333,13 @@ function llmResponse(content: string) {
 }
 
 const COMPROVANTE_JSON = JSON.stringify({
-  descricao: "Comprovante de Pix de R$ 1.247,90 realizado em 26/08/2026 para Aos Filhos da Terra LTDA.",
+  descricao: "Comprovante de Pix de R$ 1.247,90 realizado em 26/08/2026 para Casa Lumiar LTDA.",
   tipo: "comprovante",
   campos: {
     valor: "R$ 1.247,90",
     data: "26/08/2026",
-    pagador: "Rubens Carvalho de Almeida",
-    recebedor: "Aos Filhos da Terra LTDA",
+    pagador: "Carlos Henrique da Silva",
+    recebedor: "Casa Lumiar LTDA",
     chave_pix: "contato@aosfilhosdaterra.com.br",
     id_transacao: "E18236120260826143207s8k2p91xz4",
     banco: null,
@@ -584,7 +584,7 @@ describe("gate do passe de visão — UM interruptor só", () => {
     const result = await t.action(internal.vision.autoDescribe, { messageId });
     expect(result.status).toBe("done");
     expect(result.text).toContain("R$ 1.247,90");
-    expect(result.fields?.pagador).toBe("Rubens Carvalho de Almeida");
+    expect(result.fields?.pagador).toBe("Carlos Henrique da Silva");
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const message = await t.run(async (ctx) => await ctx.db.get(messageId));
@@ -846,7 +846,7 @@ describe("cadeia de visão por rota (D4/D5)", () => {
 
 // ── Imagem descartada no caminho (incidente de 14/09/2026) ───────────────────
 //
-// Três comprovantes reais da Aos Filhos da Terra: o glm-5.3-flash deu 429 (o
+// Três comprovantes reais da Casa Lumiar: o glm-5.3-flash deu 429 (o
 // OpenRouter, com allow_fallbacks:false, só tentava o provedor primário), a
 // cadeia desceu para o kimi-k2.7-code, e o provedor escolhido jogou a imagem
 // fora — 200, 425 tokens de entrada, "Nenhuma imagem foi enviada". Isso virou a

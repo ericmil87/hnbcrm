@@ -1247,8 +1247,8 @@ export const internalProcessGroupTurn = internalAction({
       // nº 15). O guard `if (processing) return null` de
       // `internalEnqueueFromGroup` foi copiado do atendente 1 a 1, mas a
       // compensação dele não: lá o pós-commit chama
-      // `internalCheckMissedInbound`. Sem este passo, "@Guardião e o prazo?"
-      // chegando 3 s depois de "@Guardião qual o preço?" nunca era respondido,
+      // `internalCheckMissedInbound`. Sem este passo, "@Guia e o prazo?"
+      // chegando 3 s depois de "@Guia qual o preço?" nunca era respondido,
       // e nem rastro `skipped` ficava.
       await ctx.runMutation(internal.groupAgent.internalCheckMissedMention, {
         conversationId: context.conversationId,

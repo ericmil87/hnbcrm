@@ -441,7 +441,7 @@ export {
 
 // ── Publicações programadas em grupos de WhatsApp (v0.57 / F3, D7 e D8) ──
 //
-// "Todo dia às 12h o Guardião posta no grupo XYZ". Uma publicação = destinos +
+// "Todo dia às 12h o Guia posta no grupo XYZ". Uma publicação = destinos +
 // agenda + fonte de conteúdo + política de aprovação. O worker é um job
 // auto-reagendado POR publicação (molde do `campaignWorker.tick`), não um cron
 // global: pausar uma publicação não pode depender de filtrar um cron.

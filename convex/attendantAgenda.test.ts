@@ -38,7 +38,7 @@ const AGENDA_JSON = {
       startsAtLocal: "2026-10-18T09:00",
       endsAtLocal: "2026-10-18T13:00",
       locationLabel: "Sítio da casa",
-      leaders: ["Guardião"],
+      leaders: ["Guia"],
       pricing: { formatted: "R$ 180,00", note: "Pix com 10% de desconto", internalCost: 50 },
       spotsLeft: 7,
       validationRequired: false,
@@ -121,7 +121,7 @@ async function seedOrg(
     }
     const agentId = await ctx.db.insert("teamMembers", {
       organizationId,
-      name: "Guardião (IA)",
+      name: "Guia (IA)",
       role: "ai",
       type: "ai",
       status: "active",

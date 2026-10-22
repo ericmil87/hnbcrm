@@ -97,11 +97,11 @@ async function seedGroupOrg(t: TestConvex<typeof schema>, opts: SeedOpts = {}) {
       },
     });
     const agentId = await ctx.db.insert("teamMembers", {
-      organizationId, name: "Guardião (IA)", role: "ai", type: "ai", status: "active",
+      organizationId, name: "Guia (IA)", role: "ai", type: "ai", status: "active",
       agentProfile: {
         kind: "attendant",
         mode: opts.attendantMode ?? "suggest",
-        systemPrompt: "Você é o Guardião, atendente da loja.",
+        systemPrompt: "Você é o Guia, atendente da loja.",
         knowledge: "Entregamos às terças.",
         ...(opts.autopilotEarlyAck
           ? { autopilotEarlyAck: { acceptedAt: now, acceptedBy: adminId } }
@@ -522,7 +522,7 @@ describe("turno: prompt, tools e commit", () => {
     };
     const before = await claimPrompt(false);
     expect(before).toEqual({
-      persona: "Você é o Guardião, atendente da loja.",
+      persona: "Você é o Guia, atendente da loja.",
       knowledge: "Entregamos às terças.",
     });
     expect(await claimPrompt(true)).toEqual(before);
@@ -557,7 +557,7 @@ describe("turno: prompt, tools e commit", () => {
     const body = bodyOf(fetchMock);
     const system = body.messages[0].content as string;
     expect(system).toContain("VOCÊ ESTÁ NUM GRUPO");
-    expect(system).toContain("Você é o Guardião");
+    expect(system).toContain("Você é o Guia");
     const toolNames = (body.tools ?? []).map((x: { function: { name: string } }) => x.function.name);
     expect(toolNames).toEqual(["replyToGroup", "requestGroupHandoff"]);
     expect(toolNames).not.toContain("moveThisLead");

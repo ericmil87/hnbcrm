@@ -334,7 +334,7 @@ describe("publicações programadas", () => {
     const t = setup();
     const s = await seed(t);
     const result = await write(t, s, s.adminId, "createGroupPostDraft", {
-      name: "Bom dia do Guardião",
+      name: "Bom dia do Guia",
       groupChatIds: [s.groupChatId],
       times: ["12:00"],
       days: [1, 2, 3, 4, 5],
@@ -345,7 +345,7 @@ describe("publicações programadas", () => {
 
     const posts = await t.run(async (ctx) => ctx.db.query("groupPosts").collect());
     expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({ status: "draft", name: "Bom dia do Guardião" });
+    expect(posts[0]).toMatchObject({ status: "draft", name: "Bom dia do Guia" });
     // Rascunho não agenda nada: sem tick, sem token.
     expect(posts[0].tickToken).toBeUndefined();
   });

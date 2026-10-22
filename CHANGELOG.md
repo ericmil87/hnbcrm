@@ -11,6 +11,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Removidos o submódulo `.claude/convex-agent-plugins` (formato Cursor) e as regras não versionadas em `.cursor/`; os scripts dos hooks vivem em `scripts/claude/`. `README.md` e `CONTRIBUTING.md` apontam para a nova estrutura
 - `docs/PROJECT-STATUS.md` removido: era um retrato da v0.33 (fev/2026) com fatos já desatualizados e uma lista de versões que duplicava este CHANGELOG; a tabela de desvios do PRD original foi preservada em `docs/architecture/backend-core.md`
 - Limpeza de `docs/`: 16 planos, prompts e mapas gerados já superados saíram do repositório (ficam no histórico do git); `docs/archive/` inteiro (planos já entregues, relatório de incidente resolvido, mapas gerados) removido após triagem — tudo segue no histórico do git até `ea71ddd`; as citações em código e no guia do bridge dizem isso
+- Repositório público sem material interno: planos, logs de status, runbooks de operação e `docs/perf/` deixaram de ser versionados (`docs/*` ignorado, exceto `docs/architecture/` e `docs/AI-WHATSAPP-LIMITS.md`); nomes de clientes e de pessoas em testes, comentários e `docs/architecture/` foram substituídos por fictícios; org e conta de demo saíram para `CLAUDE.local.md` (ignorado)
 - Avaliação do upgrade do Convex (1.31 → 1.47), do `npx convex ai-files` e do plugin oficial feita numa worktree, sem aplicar — registro em `temp/plano-claude-code-config/03-AVALIACAO-CONVEX.md`
 
 ## [0.70.1] - 2026-10-10
@@ -141,7 +142,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [0.64.0] - 2026-10-02
 
-### Agenda externa, flyer, follow-up de evento e lead do site (Guardião v4)
+### Agenda externa, flyer, follow-up de evento e lead do site (Guia v4)
 
 - Tool de leitura `consultarAgenda` para o atendente (URL + chave cifrada por org, sem taxonomia fixa de categorias); `replyToCustomer.imageUrl` anexa o flyer de um evento devolvido pela consulta
 - Follow-up nunca após o evento (`followUps.eventDateField`)

@@ -223,10 +223,10 @@ describe("histórico e menções", () => {
 
 describe("prompt do grupo (§9.1)", () => {
   const ctx = {
-    agentName: "Guardião",
-    orgName: "Aos Filhos da Terra",
+    agentName: "Guia",
+    orgName: "Casa Lumiar",
     language: "pt-BR",
-    persona: "Você é o Guardião, atendente da loja.",
+    persona: "Você é o Guia, atendente da loja.",
     knowledge: "Entregamos às terças.",
     groupSubject: "Clientes VIP",
     participantsCount: 42,
@@ -243,7 +243,7 @@ describe("prompt do grupo (§9.1)", () => {
     expect(prompt).toContain("NUNCA confirme pagamento");
     expect(prompt).toContain("privado");
     // A persona da org continua valendo.
-    expect(prompt).toContain("Você é o Guardião");
+    expect(prompt).toContain("Você é o Guia");
     expect(prompt).toContain("Entregamos às terças");
     // E NADA do 1:1 vaza: nem a tool, nem a obrigação de qualificar lead.
     expect(prompt).not.toContain("replyToCustomer");
@@ -305,7 +305,7 @@ describe("radar (§9.3)", () => {
 
   test("o rascunho de DM é sugestão para um HUMANO mandar", () => {
     const dm = suggestedDmFor({
-      agentName: "Guardião",
+      agentName: "Guia",
       orgName: "Loja",
       memberName: "Maria",
       groupSubject: "Clientes VIP",

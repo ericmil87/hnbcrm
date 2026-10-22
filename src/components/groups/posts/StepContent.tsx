@@ -231,7 +231,7 @@ export function StepContent({
                 id="ai-custom"
                 rows={3}
                 className={TEXTAREA_CLASS}
-                placeholder="Ex.: você é o Guardião, escreve em tom acolhedor, sem emojis em excesso…"
+                placeholder="Ex.: você é o Guia, escreve em tom acolhedor, sem emojis em excesso…"
                 value={draft.ai.customPersona ?? ""}
                 onChange={(e) => setAi({ customPersona: e.target.value })}
               />

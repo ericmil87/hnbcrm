@@ -25,7 +25,7 @@ CI (`.github/workflows/ci.yml`): `npm ci` → 3× `tsc` → `npm run test` → `
 
 | | PROD `careful-anaconda-127` | DEV `tacit-chicken-195` |
 |---|---|---|
-| Serves | hnbcrm.com and real customers | development, tests, demos (org `grupo-terrae-demo`, account `ericteste@milfont.net`) |
+| Serves | hnbcrm.com and real customers | development, tests, demos (demo org and test account: `CLAUDE.local.md`, not in git) |
 | Reached by | `npm run deploy:prod`, Vercel on push to `main`, or any CLI call with `--prod` | `npx convex dev`, `npx convex run`, … without flags (`.env.local` → `CONVEX_DEPLOYMENT=dev:tacit-chicken-195`) |
 | Key | `convex-prod-key.env.local` (gitignored, never commit) | `CONVEX_DEV_ADMIN_KEY` in `.env.local` — never name it `CONVEX_DEPLOY_KEY` or `npx convex deploy` would target DEV |
 | State | real data, real webhooks | neutralized (`RESEND_TEST_MODE=true`, channels disarmed, frozen copy of 02/10/2026 data) |
@@ -58,7 +58,7 @@ Rules: (1) no flag = DEV; PROD only with `--prod` (`run`, `env`, `data`, `logs`,
 - `docs/architecture/README.md` — map of 20 area files (auth, e-mail, WhatsApp bridge, groups, campaigns, AI attendant/vision/core, leads, inbox, tasks, central, export/import, security, frontend, ops). Read the area file before touching the area.
 - `.claude/rules/` — auto-loaded by path: `convex-official`, `backend-invariants` (convex/**), `whatsapp-bridge`, `ai-pipeline`, `frontend` (src/**), `tests` (*.test.ts).
 - Skills: `/convex-ops` (dev×prod runbook, ops catalog), `/release` (version bump, CHANGELOG, docs). Agents: `frontend-specialist`, `convex-backend`, `reviewer`.
-- `CHANGELOG.md` (PT-BR, user-facing), `docs/*-PLAN.md` / `*-STATUS.md` (original plans), `docs/perf/convex-io.md`.
+- `CHANGELOG.md` (PT-BR, user-facing). Plans, status logs, ops runbooks and `docs/perf/` are LOCAL files (gitignored, see `CLAUDE.local.md`); `docs/architecture/` is the public, anonymized record.
 
 ## Working conventions
 

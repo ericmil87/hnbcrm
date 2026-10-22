@@ -12,7 +12,7 @@ import { buildSystemPrompt } from "./copilotHttp";
 const session = {
   member: { name: "Eric" },
   org: {
-    name: "Aos Filhos da Terra",
+    name: "Casa Lumiar",
     currency: "BRL",
     timezone: "America/Sao_Paulo",
     industry: null,

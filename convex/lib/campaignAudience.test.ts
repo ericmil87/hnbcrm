@@ -541,7 +541,7 @@ describe("buildGroupMembersAudience — lista 'quem vai receber'", () => {
       selfKey: "meu@lid",
       selfPhone: "5511900000000",
       participants: [
-        member({ lid: "meu@lid", phone: "5511900000000", name: "Guardião", isAdmin: true }),
+        member({ lid: "meu@lid", phone: "5511900000000", name: "Guia", isAdmin: true }),
         member({ phone: "5511988887777", name: "Ana", lid: "ana@lid", isAdmin: true }),
         member({ phone: "5511988886666", name: "Bruno", lid: "bruno@lid", contactId: contactId("k1") }),
         member({ lid: "sem-telefone@lid", name: "Dani" }),

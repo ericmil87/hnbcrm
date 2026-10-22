@@ -1,5 +1,5 @@
 {
-  "source": "CLAUDE.md @ 1f51a2f",
+  "source": "CLAUDE.md @ 1f51a2f (nomes de cliente/pessoas anonimizados em 22/10/2026; org/conta de demo movidas para CLAUDE.local.md e na allowlist)",
   "generatedAt": "2026-10-22T04:39:45.132Z",
   "identifiers": [
     "npm run test",
@@ -2063,7 +2063,7 @@
     "Central de atendimento — unidades, setores, desfecho, atribuição e painel (v0.63, opcional por org):",
     "ROAS/CAC só de mídia paga",
     "`settings.demoMode`",
-    "Agenda externa, flyer, follow-up de evento e lead do site (v0.64, 02/10/2026 — Guardião v4):",
+    "Agenda externa, flyer, follow-up de evento e lead do site (v0.64, 02/10/2026 — Guia v4):",
     "Tool de LEITURA `consultarAgenda`",
     "sem taxonomia fixa",
     "Rodada com consulta + `replyToCustomer` juntos descarta o reply",
@@ -2140,5 +2140,8 @@
     "Always",
     "Never"
   ],
-  "allowlist": []
+  "allowlist": [
+    "grupo-terrae-demo",
+    "ericteste@milfont.net"
+  ]
 }

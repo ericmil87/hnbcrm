@@ -678,7 +678,7 @@ async function adoptTaskCore(
 }
 
 /**
- * Op interna: adota uma tarefa que JÁ existe (a da Rejane, por exemplo) como
+ * Op interna: adota uma tarefa que JÁ existe (a da Marina, por exemplo) como
  * follow-up da IA. Não há backfill automático (D6) — dispararia tudo de uma
  * vez —, então a adoção é sempre um ato deliberado.
  */

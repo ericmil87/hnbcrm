@@ -14,7 +14,7 @@ const UNDELIVERABLE_DOMAINS = new Set([
 const UNDELIVERABLE_TLDS = new Set(["test", "example", "invalid", "localhost", "local"]);
 
 // Deliberadamente simples: local@dominio.tld, sem espaço, TLD alfabético de 2+
-// letras. O banco tem "toni", "fdgfdg@gdffdgf" e "oli@milfont.netdd" gravados —
+// letras. O banco tem "toni", "fdgfdg@gdffdgf" e "oli@exemplo.netdd" gravados —
 // o objetivo é barrar isso, não validar a RFC 5322 inteira.
 const EMAIL_SHAPE = /^[^\s@<>(),;:"]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,24}$/;
 

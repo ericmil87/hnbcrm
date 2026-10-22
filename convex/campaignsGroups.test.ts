@@ -134,7 +134,7 @@ async function makeGroup(
       monitored,
       participants: [
         // Nós mesmos: NUNCA pode virar destinatário.
-        { lid: "eu@lid", phone: "5511900000000", name: "Guardião", isAdmin: true, isSuperAdmin: false },
+        { lid: "eu@lid", phone: "5511900000000", name: "Guia", isAdmin: true, isSuperAdmin: false },
         ...opts.members.map((m) => ({
           lid: m.lid,
           phone: m.phone,

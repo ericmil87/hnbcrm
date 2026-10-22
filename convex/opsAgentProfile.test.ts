@@ -19,7 +19,7 @@ async function seed(t: ReturnType<typeof convexTest>, systemPrompt: string) {
     });
     const agentMemberId = await ctx.db.insert("teamMembers", {
       organizationId,
-      name: "Guardião",
+      name: "Guia",
       role: "ai",
       type: "ai",
       status: "active",

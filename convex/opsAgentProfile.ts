@@ -1,7 +1,7 @@
 /**
  * Ops SEM sessão de usuário para manutenção de perfil de agente e de campos
  * personalizados de uma org — o caminho usado para aplicar versões novas de
- * prompt/knowledge de um atendente em produção (ex.: Guardião v4, 02/10/2026)
+ * prompt/knowledge de um atendente em produção (ex.: Guia v4, 02/10/2026)
  * sem mutation temporária.
  *
  * Todas são `internalMutation` com `dryRun` DEFAULT TRUE: a chamada sem a flag

@@ -1,7 +1,7 @@
 /**
  * Publicações programadas em grupos de WhatsApp — superfície do app (F3, D7/D8).
  *
- * "Todo dia às 12h o Guardião posta no grupo XYZ." Uma publicação junta:
+ * "Todo dia às 12h o Guia posta no grupo XYZ." Uma publicação junta:
  *   destinos (grupos monitorados do MESMO canal) + agenda (horários/dias/fuso)
  *   + conteúdo (biblioteca de mensagens prontas OU geração por IA)
  *   + política de aprovação.

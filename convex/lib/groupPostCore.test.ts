@@ -206,7 +206,7 @@ describe("validateGroupPostContent", () => {
 
   test("persona custom exige o texto da persona", () => {
     expect(validateGroupPostContent(ai({ persona: "custom" })).ok).toBe(false);
-    expect(validateGroupPostContent(ai({ persona: "custom", customPersona: "Você é o Guardião" }))).toEqual({
+    expect(validateGroupPostContent(ai({ persona: "custom", customPersona: "Você é o Guia" }))).toEqual({
       ok: true,
     });
   });
@@ -293,8 +293,8 @@ describe("cleanGeneratedPost", () => {
 
 describe("buildGroupPostPrompt", () => {
   const base = {
-    agentName: "Guardião",
-    orgName: "Aos Filhos da Terra",
+    agentName: "Guia",
+    orgName: "Casa Lumiar",
     language: "pt-BR",
     persona: null,
     knowledge: null,
@@ -340,10 +340,10 @@ describe("buildGroupPostPrompt", () => {
   test("persona e conhecimento da org entram no system", () => {
     const { system } = buildGroupPostPrompt({
       ...base,
-      persona: "Você é o Guardião, sério e direto.",
+      persona: "Você é o Guia, sério e direto.",
       knowledge: "Pix: chave 123",
     });
-    expect(system).toContain("Você é o Guardião, sério e direto.");
+    expect(system).toContain("Você é o Guia, sério e direto.");
     expect(system).toContain("Pix: chave 123");
   });
 });

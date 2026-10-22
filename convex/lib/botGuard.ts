@@ -1,7 +1,7 @@
 /**
  * Guardrail anti-bot do atendente IA (v0.65) — núcleo PURO (sem ctx).
  *
- * Caso real que originou tudo (org Aos Filhos da Terra, Guardião): o número
+ * Caso real que originou tudo (org Casa Lumiar, Guia): o número
  * oficial do suporte do WhatsApp mandava "Este atendimento foi encerrado…", o
  * atendente respondia, o suporte devolvia NO MESMO MINUTO "thanks for contacting
  * WhatsApp Support. Your ticket number is …", o atendente respondia de novo — e

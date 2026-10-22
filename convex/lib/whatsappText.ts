@@ -15,7 +15,7 @@
  * O que NÃO se toca, de propósito:
  *  - `*x*` e `_x_` simples — já são formatação válida do WhatsApp;
  *  - URL e e-mail — viram ÁTOMOS antes de qualquer troca. `https://ex.com/__a__`
- *    e `pix@milfont.net` não podem ser "consertados", eles quebrariam;
+ *    e `pix@exemplo.net` não podem ser "consertados", eles quebrariam;
  *  - `snake_case` no meio de palavra — `__` colado em letra não é ênfase (é a
  *    mesma regra do CommonMark);
  *  - quebras de linha e espaçamento.

@@ -157,7 +157,7 @@ async function seedFollowUpOrg(
     });
     const contactId = await ctx.db.insert("contacts", {
       organizationId,
-      firstName: "Rejane",
+      firstName: "Marina",
       phone: "5511988887777",
       tags: [],
       createdAt: now,
@@ -165,7 +165,7 @@ async function seedFollowUpOrg(
     });
     const leadId = await ctx.db.insert("leads", {
       organizationId,
-      title: "Rejane — Vivência Maré Nova",
+      title: "Marina — Vivência Maré Nova",
       contactId,
       boardId,
       stageId,
@@ -876,7 +876,7 @@ describe("turno de follow-up", () => {
     });
 
     const { fetchMock } = await runQueuedTurn(t, [
-      { kind: "tool", name: "replyToCustomer", args: { text: "Oi Rejane! Conseguiu fazer o pix?" } },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Oi Marina! Conseguiu fazer o pix?" } },
     ]);
 
     // O user message é o do turno PROATIVO, não "responda ao cliente agora".
@@ -1579,7 +1579,7 @@ describe("rascunho: coaching, aceite e descarte", () => {
     });
 
     stubLlmSequence([
-      { kind: "tool", name: "replyToCustomer", args: { text: "Rejane, conseguiu o pix?" } },
+      { kind: "tool", name: "replyToCustomer", args: { text: "Marina, conseguiu o pix?" } },
     ]);
     await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: coachItem._id });
 

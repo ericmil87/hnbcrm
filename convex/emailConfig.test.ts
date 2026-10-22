@@ -64,7 +64,7 @@ describe("configuração do Resend", () => {
 
 describe("endereços", () => {
   test("barra o lixo que já está gravado no banco", () => {
-    for (const bad of ["toni", "fdgfdg@gdffdgf", "oli@milfont.netdd1", "a@b", "", "  ", "dois @x.com", "x@y..com"]) {
+    for (const bad of ["toni", "fdgfdg@gdffdgf", "oli@exemplo.netdd1", "a@b", "", "  ", "dois @x.com", "x@y..com"]) {
       expect(isDeliverableEmail(bad), bad).toBe(false);
     }
   });
@@ -77,13 +77,13 @@ describe("endereços", () => {
   });
 
   test("aceita endereço real e o de teste do Resend, normalizando", () => {
-    expect(isDeliverableEmail("  Eric@Milfont.NET ")).toBe(true);
+    expect(isDeliverableEmail("  Eric@Exemplo.NET ")).toBe(true);
     expect(isDeliverableEmail("delivered+x@resend.dev")).toBe(true);
     expect(isDeliverableEmail("joao.silva@sindicato.org.br")).toBe(true);
   });
 
   test("log nunca leva o endereço inteiro", () => {
-    expect(maskEmailForLog("eric@milfont.net")).toBe("***@milfont.net");
+    expect(maskEmailForLog("eric@exemplo.net")).toBe("***@exemplo.net");
     expect(maskEmailForLog("toni")).toBe("***");
   });
 });

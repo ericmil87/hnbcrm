@@ -8,7 +8,7 @@
  * - `"on_demand"`: nada é prependido nem exigido na abertura. O prompt ganha
  *   uma regra de identificação: quando a pessoa perguntar se fala com robô/IA/
  *   pessoa, ou quando a IA abrir um repasse, ela responde com o texto da
- *   divulgação. Caso real (Aos Filhos da Terra, 13/10/2026): o cliente quer uma
+ *   divulgação. Caso real (Casa Lumiar, 13/10/2026): o cliente quer uma
  *   abertura humana da casa, sem "sou um assistente" logo de cara, mas sem que
  *   a IA jamais finja ser humana.
  */

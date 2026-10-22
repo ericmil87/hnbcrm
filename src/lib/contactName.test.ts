@@ -11,7 +11,7 @@ describe("splitFullName", () => {
     expect(splitFullName("Ana Paula Souza")).toEqual({ firstName: "Ana", lastName: "Paula Souza" });
   });
   it("uma palavra só = sobrenome vazio", () => {
-    expect(splitFullName("Rejane")).toEqual({ firstName: "Rejane", lastName: "" });
+    expect(splitFullName("Marina")).toEqual({ firstName: "Marina", lastName: "" });
   });
   it("normaliza espaços", () => {
     expect(splitFullName("  Ana   Souza  ")).toEqual({ firstName: "Ana", lastName: "Souza" });

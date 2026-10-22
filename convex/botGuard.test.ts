@@ -3,7 +3,7 @@
  * Guardrail anti-bot do atendente (v0.65). Casos reais que originaram:
  *  - suporte oficial do WhatsApp: "Este atendimento foi encerrado…" ↔ "thanks for
  *    contacting WhatsApp Support. Your ticket number is …" em ping-pong com o
- *    Guardião por dias;
+ *    Guia por dias;
  *  - canal/newsletter do Google Gemini virando conversa 1 a 1 (resolvido no
  *    parser — teste em bridgeParse.test.ts).
  *
@@ -54,7 +54,7 @@ async function seedOrg(
   return await t.run(async (ctx) => {
     const now = Date.now();
     const organizationId = await ctx.db.insert("organizations", {
-      name: "Aos Filhos (teste)",
+      name: "Casa Lumiar (teste)",
       slug: "aos-filhos-teste",
       settings: {
         timezone: "America/Sao_Paulo",
@@ -77,7 +77,7 @@ async function seedOrg(
     });
     const agentId = await ctx.db.insert("teamMembers", {
       organizationId,
-      name: "Guardião (IA)",
+      name: "Guia (IA)",
       role: "ai",
       type: "ai",
       status: "active",

@@ -83,7 +83,7 @@ export const VISION_RECEIPT_GOLDEN: {
       role: "customer",
       content:
         "Comprovante de transferência Pix no valor de R$ 1.247,90, realizado em 26/08/2026 às " +
-        "14:32, de Rubens Carvalho de Almeida para Aos Filhos da Terra LTDA, chave " +
+        "14:32, de Carlos Henrique da Silva para Casa Lumiar LTDA, chave " +
         "contato@aosfilhosdaterra.com.br.",
       image: true,
     },

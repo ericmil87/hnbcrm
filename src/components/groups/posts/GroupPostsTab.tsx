@@ -1,7 +1,7 @@
 /**
  * Aba "Publicações" de `/app/grupos` (F3).
  *
- * "Todo dia às 12h o Guardião posta no grupo XYZ." Aqui a equipe vê o que está
+ * "Todo dia às 12h o Guia posta no grupo XYZ." Aqui a equipe vê o que está
  * programado, aprova o texto que a IA escreveu para o próximo horário e abre o
  * histórico de cada disparo.
  *

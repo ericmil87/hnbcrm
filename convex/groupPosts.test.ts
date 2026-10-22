@@ -56,7 +56,7 @@ async function seed() {
   return await t.run(async (ctx) => {
     const now = Date.now();
     const organizationId = await ctx.db.insert("organizations", {
-      name: "Aos Filhos da Terra",
+      name: "Casa Lumiar",
       slug: "aft",
       settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
       createdAt: now,
@@ -263,14 +263,14 @@ async function enableAi(s: Seed, over: Record<string, unknown> = {}) {
     await ctx.db.insert("teamMembers", {
       organizationId: s.organizationId,
       userId,
-      name: "Guardião",
+      name: "Guia",
       role: "agent",
       type: "ai",
       status: "active",
       agentProfile: {
         kind: "attendant",
         mode: "suggest",
-        systemPrompt: "Você é o Guardião, sério e acolhedor.",
+        systemPrompt: "Você é o Guia, sério e acolhedor.",
         knowledge: "Entregas às quartas.",
       },
       createdAt: Date.now(),
@@ -801,7 +801,7 @@ describe("worker — conteúdo por IA", () => {
       runAt: SLOT_1,
     });
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    expect(body.messages[0].content).toContain("Você é o Guardião, sério e acolhedor.");
+    expect(body.messages[0].content).toContain("Você é o Guia, sério e acolhedor.");
     expect(body.messages[0].content).toContain("Entregas às quartas.");
   });
 
@@ -832,7 +832,7 @@ describe("worker — conteúdo por IA", () => {
 
     // A persona e o conhecimento do atendente entraram no system prompt.
     const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
-    expect(body.messages[0].content).toContain("Você é o Guardião");
+    expect(body.messages[0].content).toContain("Você é o Guia");
     expect(body.messages[0].content).toContain("Entregas às quartas.");
     expect(body.messages[1].content).toContain("Anuncie a agenda da semana");
     // …e o carimbo de data/hora, no fuso da AGENDA da publicação.

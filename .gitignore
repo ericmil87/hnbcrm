@@ -35,9 +35,9 @@ dist-ssr
 
 temp/
 
-# Internal planning docs (not for public repo)
-docs/EXPORT-IMPORT-PLAN.md
-docs/FEATURE-ROADMAP-RESEARCH.md
-docs/FORM_BUILDER_ROADMAP_V3.md
-docs/I18N-IMPLEMENTATION-PLAN.md
-docs/MCP-PUBLISHING-PLAN.md
+# Internal planning docs, status logs, ops runbooks and personal/client reports (not for the public repo).
+# Public docs/ = docs/architecture/ (technical decisions, anonymized) + docs/AI-WHATSAPP-LIMITS.md (research).
+docs/*
+!docs/architecture/
+!docs/AI-WHATSAPP-LIMITS.md
+CLAUDE.local.md
