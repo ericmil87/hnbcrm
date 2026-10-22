@@ -2678,14 +2678,14 @@ describe("follow-up no Instagram/Messenger (F3)", () => {
     expect(updated).toMatchObject({
       status: "needs_human",
       reasonCode: "janela_24h",
-      reason: "a janela de 24 h do Instagram está fechada",
+      reason: "a janela de atendimento do Instagram está fechada",
     });
     const comments = await t.run(async (ctx) => ctx.db.query("taskComments").collect());
-    expect(comments.some((c) => c.content.includes("janela de 24 h do Instagram"))).toBe(true);
+    expect(comments.some((c) => c.content.includes("janela de atendimento do Instagram"))).toBe(true);
     expect(comments.some((c) => c.content.includes("WhatsApp"))).toBe(false);
     const notes = await notificationsOf(t);
     expect(notes.length).toBeGreaterThan(0);
-    expect(notes.every((n) => (n.body ?? "").includes("janela de 24 h do Instagram"))).toBe(true);
+    expect(notes.every((n) => (n.body ?? "").includes("janela de atendimento do Instagram"))).toBe(true);
 
     // A tela da tarefa recebe o nome do canal.
     const summary = await asUser(t, seed.adminUserId).query(api.attendantFollowUp.getForTask, {
@@ -2696,7 +2696,7 @@ describe("follow-up no Instagram/Messenger (F3)", () => {
     // WhatsApp mantém a cópia de sempre.
     expect(describeFollowUpReason("janela_24h")).toBe("a janela de 24h do WhatsApp está fechada");
     expect(describeFollowUpReason("janela_24h", "WhatsApp")).toBe("a janela de 24h do WhatsApp está fechada");
-    expect(describeFollowUpReason("janela_24h", "Messenger")).toBe("a janela de 24 h do Messenger está fechada");
+    expect(describeFollowUpReason("janela_24h", "Messenger")).toBe("a janela de atendimento do Messenger está fechada");
   });
 
   test("planner do Messenger cita a janela da Meta (24 h, ou 7 dias por anúncio)", async () => {

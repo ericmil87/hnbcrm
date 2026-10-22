@@ -38,6 +38,7 @@ describe("toPlainChatText", () => {
     ["itálico em palavra acentuada", "é _ótimo_ mesmo", "é ótimo mesmo"],
     ["escape de asterisco", "Isso \\*isso\\* aqui", "Isso isso aqui"],
     ["escape de sublinhado e hashtag", "\\_nota\\_ e \\#promo", "nota e #promo"],
+    ["escape de pontuação comum", "1\\. Pix por R\\$ 50 \\- à vista", "1. Pix por R$ 50 - à vista"],
     ["cerca de tis", "~~~\ncódigo\n~~~", "código\n"],
     ["cerca de 4 crases", "````md\ncódigo\n````", "código\n"],
     ["crases dentro de cerca maior somem", "````md\n```x```\n````", "x\n"],

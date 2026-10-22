@@ -121,7 +121,7 @@ export function humanizeFollowUpReason(
   const trimmed = reason.trim();
   if (!trimmed) return null;
   if (trimmed === "janela_24h" && channelName && channelName !== "WhatsApp") {
-    return `a janela de 24 h do ${channelName} está fechada`;
+    return `a janela de atendimento do ${channelName} está fechada`;
   }
   return FOLLOW_UP_REASON_LABELS[trimmed] ?? trimmed;
 }

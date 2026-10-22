@@ -12,7 +12,7 @@ import {
 describe("humanizeFollowUpReason", () => {
   it("janela_24h cita o canal Meta e mantém o WhatsApp", () => {
     expect(humanizeFollowUpReason("janela_24h", "Instagram")).toBe(
-      "a janela de 24 h do Instagram está fechada"
+      "a janela de atendimento do Instagram está fechada"
     );
     expect(humanizeFollowUpReason("janela_24h", "WhatsApp")).toBe(
       "a janela de 24h do WhatsApp está fechada"

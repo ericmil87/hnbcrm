@@ -67,7 +67,7 @@ export function toPlainChatText(text: string): string {
 
   // 0. Escape do markdown (`\*isso\*`): a barra some e o marcador vira
   // ênfase comum, que o passo 5 remove — nunca sobra barra para o cliente.
-  out = out.replace(/\\([*_~`#>])/g, "$1");
+  out = out.replace(/\\([!-\/:-@\[-`{-~])/g, "$1");
 
   // 1. Código: cerca de crases OU de tis (3+, mesmo tamanho para fechar) some
   // inteira, o conteúdo fica; crase inline some.

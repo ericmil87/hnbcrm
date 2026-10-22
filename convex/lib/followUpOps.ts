@@ -664,11 +664,11 @@ export function isFollowUpReasonCode(value: string): boolean {
 
 /**
  * `channelName` (F3): conversa do Instagram/Messenger troca a cópia da janela
- * ("a janela de 24 h do Instagram está fechada"); WhatsApp/ausente não muda.
+ * ("a janela de atendimento do Instagram está fechada"); WhatsApp/ausente não muda.
  */
 export function describeFollowUpReason(reason: string, channelName?: string | null): string {
   if (reason === "janela_24h" && channelName && channelName !== "WhatsApp") {
-    return `a janela de 24 h do ${channelName} está fechada`;
+    return `a janela de atendimento do ${channelName} está fechada`;
   }
   return FOLLOW_UP_REASONS[reason] ?? "a IA não conseguiu concluir este follow-up";
 }

@@ -249,7 +249,8 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   // 11. janela de atendimento aberta — por transporte (`aiWindowClosed`).
   // Bridge não tem janela; WhatsApp oficial: 24 h; Instagram/Messenger: 24 h
   // (7 dias quando aberta por anúncio) com margem de 15 min; conversa cujo
-  // transporte não resolve é tratada como WhatsApp oficial (conservador).
+  // transporte não resolve é tratada como WhatsApp oficial, exceto conversa
+  // instagram/messenger, que fecha (fail-closed; ver `aiWindowClosed`).
   if (aiWindowClosed(channelProvider, conversation, now)) {
     return { ok: false, reason: "janela_24h" };
   }
