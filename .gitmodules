@@ -1,3 +1,0 @@
-[submodule ".claude/convex-agent-plugins"]
-	path = .claude/convex-agent-plugins
-	url = https://github.com/get-convex/convex-agent-plugins.git
