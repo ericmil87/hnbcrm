@@ -787,6 +787,24 @@ describe("worker — guardas do canal e tetos", () => {
 });
 
 describe("worker — conteúdo por IA", () => {
+  test("perf I/O onda 2: com os textos migrados, persona e conhecimento seguem no prompt", async () => {
+    const s = await seed();
+    await enableAi(s);
+    await t.mutation(internal.opsAgentProfile.internalMigrateAgentTexts, { dryRun: false });
+    const fetchMock = stubLlm("Agenda desta semana: entregas na quarta.");
+    const postId = await createPost(s, { content: aiContent() });
+    await activate(s, postId);
+
+    await t.action(internal.groupPostWorker.generate, {
+      groupPostId: postId,
+      slotKey: "2026-09-16T12:00",
+      runAt: SLOT_1,
+    });
+    const body = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body));
+    expect(body.messages[0].content).toContain("Você é o Guardião, sério e acolhedor.");
+    expect(body.messages[0].content).toContain("Entregas às quartas.");
+  });
+
   test("generate grava o pendente e notifica quem aprova", async () => {
     const s = await seed();
     await enableAi(s);
