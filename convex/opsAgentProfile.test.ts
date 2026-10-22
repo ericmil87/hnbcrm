@@ -58,6 +58,38 @@ describe("internalSetAgentProfileText — audit com o texto anterior", () => {
     expect(log.metadata.afterLength).toBe("persona nova".length);
   });
 
+  test("perf I/O onda 2: membro legado migra na escrita; migrado lê e grava pela tabela", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, agentMemberId } = await seed(t, "persona antiga");
+    await t.mutation(internal.opsAgentProfile.internalSetAgentProfileText, {
+      organizationId, agentMemberId, field: "systemPrompt", text: "persona nova", dryRun: false,
+    });
+    const after = await t.run(async (ctx) => ({
+      member: await ctx.db.get(agentMemberId),
+      rows: await ctx.db.query("agentProfileTexts").collect(),
+    }));
+    expect(after.member?.agentProfile?.textsMigratedAt).toBeDefined();
+    expect(after.member?.agentProfile).not.toHaveProperty("systemPrompt");
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0].systemPrompt).toBe("persona nova");
+
+    // Já migrado: a trava otimista mede o texto da TABELA.
+    await expect(
+      t.mutation(internal.opsAgentProfile.internalSetAgentProfileText, {
+        organizationId, agentMemberId, field: "systemPrompt", text: "x",
+        expectedCurrentLength: "persona antiga".length, dryRun: false,
+      })
+    ).rejects.toThrow(/esperado/);
+    const r = await t.mutation(internal.opsAgentProfile.internalSetAgentProfileText, {
+      organizationId, agentMemberId, field: "systemPrompt", text: "persona 3",
+      expectedCurrentLength: "persona nova".length, dryRun: false,
+    });
+    expect(r.applied).toBe(true);
+    const log = await lastAudit(t);
+    expect(log.changes.before).toEqual({ systemPrompt: "persona nova" });
+    expect(log.changes.after).toEqual({ systemPrompt: "persona 3" });
+  });
+
   test("dryRun não grava audit", async () => {
     const t = convexTest(schema, modules);
     const { organizationId, agentMemberId } = await seed(t, "a");

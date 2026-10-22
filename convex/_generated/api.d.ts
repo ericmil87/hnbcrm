@@ -67,6 +67,7 @@ import type * as inboundLeadWelcome from "../inboundLeadWelcome.js";
 import type * as leadSources from "../leadSources.js";
 import type * as leads from "../leads.js";
 import type * as lib_agentPersonas from "../lib/agentPersonas.js";
+import type * as lib_agentProfileTexts from "../lib/agentProfileTexts.js";
 import type * as lib_agentRoutes from "../lib/agentRoutes.js";
 import type * as lib_agentSchedule from "../lib/agentSchedule.js";
 import type * as lib_agentSecurity from "../lib/agentSecurity.js";
@@ -271,6 +272,7 @@ declare const fullApi: ApiFromModules<{
   leadSources: typeof leadSources;
   leads: typeof leads;
   "lib/agentPersonas": typeof lib_agentPersonas;
+  "lib/agentProfileTexts": typeof lib_agentProfileTexts;
   "lib/agentRoutes": typeof lib_agentRoutes;
   "lib/agentSchedule": typeof lib_agentSchedule;
   "lib/agentSecurity": typeof lib_agentSecurity;

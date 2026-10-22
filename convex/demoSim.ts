@@ -28,6 +28,7 @@ import { normalizeCampaignKey } from "./lib/orgModules";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { transferConversationCore } from "./lib/conversationTransfer";
 import { leadCreationStagePatch, moveLeadToStageCore } from "./lib/leadStageMove";
+import { writeAgentTexts } from "./lib/agentProfileTexts";
 import { createHandoffCore, acceptHandoffCore } from "./handoffs";
 import { upsertRow } from "./adSpend";
 import { buildSearchText } from "./lib/searchText";
@@ -405,8 +406,6 @@ export const internalEnsureDemoOrg = internalMutation({
             ...(existing?.agentProfile ?? {}),
             kind: "attendant" as const,
             mode: "suggest" as const,
-            systemPrompt: scenario.attendant.systemPrompt,
-            knowledge: scenario.attendant.knowledge,
             language: "pt-BR",
             ...(defaultBoardId
               ? {
@@ -435,7 +434,21 @@ export const internalEnsureDemoOrg = internalMutation({
         id = await ctx.db.insert("teamMembers", { organizationId: orgId, ...fields, createdAt: now });
       }
       memberIdByKey.set(t.key, id);
-      if (isAttendant) attendantId = id;
+      if (isAttendant) {
+        attendantId = id;
+        // Persona/conhecimento do cenário: tabela `agentProfileTexts` (migra o
+        // membro legado na mesma transação).
+        const fresh = (await ctx.db.get(id))!;
+        await writeAgentTexts(
+          ctx,
+          fresh,
+          {
+            systemPrompt: scenario.attendant.systemPrompt,
+            knowledge: scenario.attendant.knowledge,
+          },
+          { now }
+        );
+      }
     }
 
     // ── Unidades ──

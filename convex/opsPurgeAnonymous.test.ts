@@ -235,6 +235,25 @@ describe("internalPurgeAnonymousOrganizations", () => {
     expect(await snapshot()).toEqual(after);
   });
 
+  test("perf I/O onda 2: apaga o texto do atendente IA (agentProfileTexts) com a org", async () => {
+    const anonOrg = await mkOrg("anon-texts");
+    const anonUser = await mkUser("anon");
+    await addMember(anonOrg, anonUser);
+    const ai = await addMember(anonOrg, undefined, "ai");
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ai, { agentProfile: { kind: "attendant", mode: "suggest", textsMigratedAt: 1 } });
+      await ctx.db.insert("agentProfileTexts", {
+        organizationId: anonOrg, teamMemberId: ai, systemPrompt: "Persona", knowledge: "FAQ", updatedAt: 1,
+      });
+    });
+    await run({ dryRun: false });
+    await drain();
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(anonOrg)).toBeNull();
+      expect(await ctx.db.query("agentProfileTexts").collect()).toEqual([]);
+    });
+  });
+
   test("blob compartilhado com outra org não é apagado", async () => {
     const legit = await mkOrg("real");
     const rm = await addMember(legit, await mkUser("email"));

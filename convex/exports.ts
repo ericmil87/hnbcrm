@@ -61,6 +61,9 @@ const ACTIVE_STATUSES = ["queued", "running"] as const;
 export const BACKUP_TABLES: readonly string[] = [
   "organizations",
   "teamMembers",
+  // Perf I/O onda 2: persona/conhecimento do atendente IA saíram do doc do
+  // membro — o MESMO dado que já ia no backup dentro de `teamMembers`.
+  "agentProfileTexts",
   "boards",
   "stages",
   "leadSources",

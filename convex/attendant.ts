@@ -66,6 +66,7 @@ import {
   upsertRuntime,
 } from "./lib/conversationRuntime";
 import { buildDisclosurePromptLine, resolveDisclosurePolicy } from "./lib/disclosure";
+import { readAgentTexts } from "./lib/agentProfileTexts";
 import { toWhatsAppText } from "./lib/whatsappText";
 import {
   describeLeakedModelMarkup,
@@ -1438,8 +1439,8 @@ export const internalClaimForProcessing = internalMutation({
         providerConfig: providerConfig ?? null,
         maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
         temperature: profile.temperature ?? 0.3,
-        systemPrompt: profile.systemPrompt ?? null,
-        knowledge: profile.knowledge ?? null,
+        // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
+        ...(await readAgentTexts(ctx, agent!)),
         language: profile.language ?? "pt-BR",
         advanceRules: profile.pipelineConfig?.advanceRules ?? null,
         allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,
@@ -5179,8 +5180,7 @@ export const internalGetSimulatorSetup = internalQuery({
       providerConfig: providerConfig ?? null,
       maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
       temperature: profile.temperature ?? 0.3,
-      systemPrompt: profile.systemPrompt ?? null,
-      knowledge: profile.knowledge ?? null,
+      ...(await readAgentTexts(ctx, agent)),
       language: profile.language ?? "pt-BR",
       advanceRules: profile.pipelineConfig?.advanceRules ?? null,
       allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,

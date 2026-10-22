@@ -11,9 +11,16 @@
  * Uso (prod): npx convex run --prod opsAgentProfile:internalSetAgentProfileText "$(cat args.json)"
  */
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, MutationCtx } from "./_generated/server";
+import { Id } from "./_generated/dataModel";
 import { auditTextSnapshot } from "./lib/auditText";
 import { resolveDisclosureMode } from "./lib/disclosure";
+import {
+  migrateMemberTexts,
+  readAgentTexts,
+  restoreMemberTextsToDoc,
+  writeAgentTexts,
+} from "./lib/agentProfileTexts";
 
 const TEXT_FIELDS = ["systemPrompt", "knowledge", "disclosure"] as const;
 
@@ -46,7 +53,12 @@ export const internalSetAgentProfileText = internalMutation({
       throw new Error("Membro não é um agente de IA com perfil");
     }
     if (!TEXT_FIELDS.includes(args.field)) throw new Error("Campo inválido");
-    const current = (member.agentProfile[args.field] ?? "") as string;
+    // persona/conhecimento: tabela `agentProfileTexts` (ou o doc, se legado);
+    // `disclosure` fica no doc (pequeno, lido em todo commit).
+    const current =
+      args.field === "disclosure"
+        ? (member.agentProfile.disclosure ?? "")
+        : ((await readAgentTexts(ctx, member))[args.field] ?? "");
     if (args.expectedCurrentLength !== undefined && current.length !== args.expectedCurrentLength) {
       throw new Error(
         `Texto atual tem ${current.length} caracteres, esperado ${args.expectedCurrentLength} — refaça o dump antes de aplicar`
@@ -63,10 +75,15 @@ export const internalSetAgentProfileText = internalMutation({
       };
     }
     const now = Date.now();
-    await ctx.db.patch(args.agentMemberId, {
-      agentProfile: { ...member.agentProfile, [args.field]: args.text },
-      updatedAt: now,
-    });
+    if (args.field === "disclosure") {
+      await ctx.db.patch(args.agentMemberId, {
+        agentProfile: { ...member.agentProfile, disclosure: args.text },
+        updatedAt: now,
+      });
+    } else {
+      // Grava na tabela e migra o membro legado na mesma transação.
+      await writeAgentTexts(ctx, member, { [args.field]: args.text }, { now });
+    }
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
       entityType: "teamMember",
@@ -320,5 +337,185 @@ export const internalSetPipelineRules = internalMutation({
       createdAt: now,
     });
     return { applied: true, ...report };
+  },
+});
+
+/**
+ * Perf Convex I/O, onda 2 — migra `agentProfile.systemPrompt`/`.knowledge` do
+ * doc do membro IA para a tabela `agentProfileTexts` (ver lib/agentProfileTexts.ts).
+ *
+ * Por membro IA com perfil e SEM `textsMigratedAt`: grava a linha, tira os dois
+ * campos do doc e carimba `textsMigratedAt`, na MESMA transação. Idempotente
+ * (membro já migrado é só contado). dryRun DEFAULT TRUE. Paginado por cursor
+ * sobre `teamMembers` (membros IA são dezenas por deployment: uma página de
+ * 100 costuma bastar; repita com `cursor: continueCursor` enquanto `isDone` for false).
+ *
+ * Ordem em PROD:
+ *   1. deploy (schema aditivo: tabela + `textsMigratedAt`; leitores com dual-read);
+ *   2. npx convex run --prod opsAgentProfile:internalMigrateAgentTexts '{}'   (dryRun: confira `pending`)
+ *   3. npx convex run --prod opsAgentProfile:internalMigrateAgentTexts '{"dryRun":false}'
+ *   4. repita o passo 2 — `pending` precisa vir 0 —, e confira um atendente no
+ *      simulador ("Testar") e no editor (persona/conhecimento carregam).
+ * Rollback: internalRestoreAgentTextsToDoc (mesma forma), ANTES de reverter o código.
+ */
+const migrationArgs = {
+  organizationId: v.optional(v.id("organizations")),
+  dryRun: v.optional(v.boolean()),
+  cursor: v.optional(v.union(v.string(), v.null())),
+  pageSize: v.optional(v.number()),
+};
+const migrationReturns = v.object({
+  dryRun: v.boolean(),
+  scanned: v.number(),
+  pending: v.number(),
+  applied: v.number(),
+  skipped: v.number(),
+  members: v.array(
+    v.object({
+      memberId: v.id("teamMembers"),
+      organizationId: v.id("organizations"),
+      name: v.string(),
+      systemPromptLength: v.number(),
+      knowledgeLength: v.number(),
+    })
+  ),
+  isDone: v.boolean(),
+  continueCursor: v.union(v.string(), v.null()),
+});
+
+type MigrationMember = {
+  memberId: Id<"teamMembers">;
+  organizationId: Id<"organizations">;
+  name: string;
+  systemPromptLength: number;
+  knowledgeLength: number;
+};
+
+async function pageAiMembers(
+  ctx: MutationCtx,
+  args: { organizationId?: Id<"organizations">; cursor?: string | null; pageSize?: number }
+) {
+  const numItems = Math.min(Math.max(Math.floor(args.pageSize ?? 100), 1), 200);
+  const orgId = args.organizationId;
+  const page = orgId
+    ? await ctx.db
+        .query("teamMembers")
+        .withIndex("by_organization_and_type", (q) => q.eq("organizationId", orgId).eq("type", "ai"))
+        .paginate({ cursor: args.cursor ?? null, numItems })
+    : await ctx.db.query("teamMembers").paginate({ cursor: args.cursor ?? null, numItems });
+  return {
+    scanned: page.page.length,
+    members: page.page.filter((m) => m.type === "ai" && m.agentProfile !== undefined),
+    isDone: page.isDone,
+    continueCursor: page.isDone ? null : page.continueCursor,
+  };
+}
+
+export const internalMigrateAgentTexts = internalMutation({
+  args: migrationArgs,
+  returns: migrationReturns,
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const page = await pageAiMembers(ctx, args);
+    const now = Date.now();
+    const members: MigrationMember[] = [];
+    let applied = 0;
+    let skipped = 0;
+    for (const m of page.members) {
+      const profile = m.agentProfile!;
+      if (profile.textsMigratedAt !== undefined) {
+        skipped++;
+        continue;
+      }
+      const systemPromptLength = profile.systemPrompt?.length ?? 0;
+      const knowledgeLength = profile.knowledge?.length ?? 0;
+      members.push({
+        memberId: m._id,
+        organizationId: m.organizationId,
+        name: m.name,
+        systemPromptLength,
+        knowledgeLength,
+      });
+      if (dryRun) continue;
+      if (await migrateMemberTexts(ctx, m, now)) {
+        applied++;
+        await ctx.db.insert("auditLogs", {
+          organizationId: m.organizationId,
+          entityType: "teamMember",
+          entityId: m._id,
+          action: "update",
+          actorType: "system",
+          metadata: { op: "internalMigrateAgentTexts", systemPromptLength, knowledgeLength },
+          description: `Perfil do agente "${m.name}": persona/conhecimento movidos para armazenamento próprio (ops)`,
+          severity: "low",
+          createdAt: now,
+        });
+      }
+    }
+    return {
+      dryRun,
+      scanned: page.scanned,
+      pending: members.length,
+      applied,
+      skipped,
+      members,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
+  },
+});
+
+/** Rollback de `internalMigrateAgentTexts`: devolve o texto ao doc e apaga a linha. dryRun DEFAULT TRUE. */
+export const internalRestoreAgentTextsToDoc = internalMutation({
+  args: migrationArgs,
+  returns: migrationReturns,
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const page = await pageAiMembers(ctx, args);
+    const now = Date.now();
+    const members: MigrationMember[] = [];
+    let applied = 0;
+    let skipped = 0;
+    for (const m of page.members) {
+      if (m.agentProfile!.textsMigratedAt === undefined) {
+        skipped++;
+        continue;
+      }
+      const texts = await readAgentTexts(ctx, m);
+      const systemPromptLength = texts.systemPrompt?.length ?? 0;
+      const knowledgeLength = texts.knowledge?.length ?? 0;
+      members.push({
+        memberId: m._id,
+        organizationId: m.organizationId,
+        name: m.name,
+        systemPromptLength,
+        knowledgeLength,
+      });
+      if (dryRun) continue;
+      if (await restoreMemberTextsToDoc(ctx, m, now)) {
+        applied++;
+        await ctx.db.insert("auditLogs", {
+          organizationId: m.organizationId,
+          entityType: "teamMember",
+          entityId: m._id,
+          action: "update",
+          actorType: "system",
+          metadata: { op: "internalRestoreAgentTextsToDoc", systemPromptLength, knowledgeLength },
+          description: `Perfil do agente "${m.name}": persona/conhecimento devolvidos ao perfil (ops, rollback)`,
+          severity: "low",
+          createdAt: now,
+        });
+      }
+    }
+    return {
+      dryRun,
+      scanned: page.scanned,
+      pending: members.length,
+      applied,
+      skipped,
+      members,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { toast } from "sonner";
@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -1014,8 +1015,8 @@ type Attendant = {
   agentProfile: {
     kind: string;
     mode: "suggest" | "autopilot";
-    systemPrompt?: string;
-    knowledge?: string;
+    // Persona/conhecimento NÃO vêm em `listAttendants` (perf): o editor carrega
+    // `getAttendantTexts` só quando abre.
     schedule?: { timezone: string; startHour: number; endHour: number };
     handoffKeywords?: string[];
     disclosure?: string;
@@ -1353,8 +1354,24 @@ function AttendantConfig({
   const [earlyBusy, setEarlyBusy] = useState(false);
   const profile = attendant.agentProfile;
 
-  const [knowledge, setKnowledge] = useState(profile.knowledge ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(profile.systemPrompt ?? "");
+  const { can } = usePermissions(organizationId);
+  // Textos grandes (persona + conhecimento) só ao abrir "Personalizar" e só para
+  // quem pode salvar (gate `settings:manage` da query). Até carregar, os campos
+  // ficam travados e o salvar NÃO manda os textos — senão gravaria vazio.
+  const attendantTexts = useQuery(
+    api.aiSettings.getAttendantTexts,
+    showCustomize && can("settings", "manage") ? { agentMemberId: attendant._id } : "skip"
+  );
+  const [knowledge, setKnowledge] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [textsLoaded, setTextsLoaded] = useState(false);
+  useEffect(() => {
+    if (attendantTexts && !textsLoaded) {
+      setKnowledge(attendantTexts.knowledge ?? "");
+      setSystemPrompt(attendantTexts.systemPrompt ?? "");
+      setTextsLoaded(true);
+    }
+  }, [attendantTexts, textsLoaded]);
   const [startHour, setStartHour] = useState(profile.schedule?.startHour ?? 9);
   const [endHour, setEndHour] = useState(profile.schedule?.endHour ?? 18);
   const [keywords, setKeywords] = useState((profile.handoffKeywords ?? []).join(", "));
@@ -1565,8 +1582,7 @@ function AttendantConfig({
       await updateProfile({
         agentMemberId: attendant._id,
         patch: {
-          knowledge,
-          systemPrompt,
+          ...(textsLoaded ? { knowledge, systemPrompt } : {}),
           schedule: { timezone: "America/Sao_Paulo", startHour, endHour },
           handoffKeywords: keywords
             .split(",")
@@ -1797,7 +1813,10 @@ function AttendantConfig({
                 value={knowledge}
                 onChange={(e) => setKnowledge(e.target.value)}
                 rows={5}
-                placeholder="Preços, serviços, horários, políticas, diferenciais..."
+                disabled={!textsLoaded}
+                placeholder={
+                  textsLoaded ? "Preços, serviços, horários, políticas, diferenciais..." : "Carregando…"
+                }
                 className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
             </div>
@@ -1809,6 +1828,8 @@ function AttendantConfig({
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
                 rows={4}
+                disabled={!textsLoaded}
+                placeholder={textsLoaded ? undefined : "Carregando…"}
                 className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
             </div>
