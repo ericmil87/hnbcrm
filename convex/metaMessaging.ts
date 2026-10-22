@@ -107,6 +107,7 @@ import {
   pickUsablePages,
   redirectUrlFor,
 } from "./lib/metaOAuth";
+import { safeEqual, parseSignedRequest } from "./lib/metaSignedRequest";
 import { fallbackMetaName, findOrCreateContactByMetaIdentity, maskExternalId } from "./lib/metaIdentity";
 
 // ── Constantes e validators ──
@@ -238,16 +239,6 @@ export const metaEventValidator = v.union(
 );
 
 // ── Helpers ──
-
-/** Comparação em tempo constante (tokens de handshake/assinatura). */
-function safeEqual(a: string, b: string): boolean {
-  const ea = new TextEncoder().encode(a);
-  const eb = new TextEncoder().encode(b);
-  let diff = ea.length ^ eb.length;
-  const n = Math.max(ea.length, eb.length);
-  for (let i = 0; i < n; i++) diff |= (ea[i] ?? 0) ^ (eb[i] ?? 0);
-  return diff === 0;
-}
 
 async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -2070,6 +2061,7 @@ async function finalizeConnection(
 
   let scopes = args.scopes;
   let dataAccessExpiresAt: number | undefined;
+  let metaUserId: string | undefined;
   if (appId && appSecret) {
     try {
       const url = `${base}/debug_token?input_token=${encodeURIComponent(page.pageToken)}&access_token=${encodeURIComponent(`${appId}|${appSecret}`)}`;
@@ -2079,6 +2071,8 @@ async function finalizeConnection(
         if (Array.isArray(data.scopes)) scopes = data.scopes.filter((s): s is string => typeof s === "string");
         const exp = data.data_access_expires_at;
         if (typeof exp === "number" && exp > 0) dataAccessExpiresAt = exp * 1000;
+        // Casa os callbacks de desautorização/exclusão da Meta (nunca logar).
+        if (typeof data.user_id === "string" && data.user_id) metaUserId = data.user_id;
       }
     } catch {
       // debug_token é informativo: falha não bloqueia a conexão
@@ -2109,6 +2103,7 @@ async function finalizeConnection(
       tokenLast4: secretLast4(page.pageToken),
       scopes,
       dataAccessExpiresAt,
+      metaUserId,
       subscribedAt,
       subscribedFields: subscribedAt ? [...SUBSCRIBED_FIELDS] : undefined,
     });
@@ -2479,6 +2474,7 @@ export const internalUpsertMetaConnection = internalMutation({
     tokenLast4: v.string(),
     scopes: v.array(v.string()),
     dataAccessExpiresAt: v.optional(v.number()),
+    metaUserId: v.optional(v.string()),
     subscribedAt: v.optional(v.number()),
     subscribedFields: v.optional(v.array(v.string())),
   },
@@ -2518,6 +2514,8 @@ export const internalUpsertMetaConnection = internalMutation({
       igUsername: args.igUsername,
       scopes: args.scopes,
       dataAccessExpiresAt: args.dataAccessExpiresAt,
+      // Sem valor novo, mantém o que já existe (reconexão com debug_token indisponível).
+      ...(args.metaUserId ? { metaUserId: args.metaUserId } : {}),
       authState: "ok" as const,
       authDetail: undefined,
       authAlertedAt: undefined,
@@ -3094,4 +3092,174 @@ export const disconnectMetaConnection = mutation({
     });
     return null;
   },
+});
+
+// ── F5: callbacks da Meta (desautorizar / exclusão de dados) ──
+
+/**
+ * Revoga TODAS as conexões do `user_id` da Meta: token apagado, configs
+ * `disabled` com ids de roteamento liberados, 1 alerta por conexão. Nada do CRM
+ * (conversas, contatos, leads) é apagado: a organização é a controladora dos dados.
+ * Com `confirmationCode`, grava o pedido de exclusão (só o hash do `user_id`).
+ */
+export const internalRevokeConnectionsForMetaUser = internalMutation({
+  args: { metaUserId: v.string(), confirmationCode: v.optional(v.string()) },
+  returns: v.object({ revoked: v.number() }),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const conns = await ctx.db
+      .query("metaConnections")
+      .withIndex("by_meta_user_id", (q) => q.eq("metaUserId", args.metaUserId))
+      .take(100);
+    let revoked = 0;
+    for (const conn of conns) {
+      if (conn.authState === "revoked" && !conn.tokenEncrypted) continue;
+      const configs = (
+        await ctx.db
+          .query("channelConfigs")
+          .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+          .take(20)
+      ).filter((c) => c.organizationId === conn.organizationId);
+      const pageName = conn.pageName ?? "Página";
+      await emitChannelDegraded(ctx, {
+        connection: conn,
+        configs,
+        state: "revoked",
+        detail: `A autorização da Página ${pageName} foi removida no Facebook; reconecte para voltar a receber.`,
+        now,
+      });
+      await ctx.db.patch(conn._id, { tokenEncrypted: "", tokenLast4: "", updatedAt: now });
+      for (const c of configs) {
+        await ctx.db.patch(c._id, {
+          status: "disabled",
+          messengerPageId: undefined,
+          instagramAccountId: undefined,
+          updatedAt: now,
+        });
+      }
+      await ctx.db.insert("auditLogs", {
+        organizationId: conn.organizationId,
+        entityType: "metaConnection",
+        entityId: conn._id,
+        action: "update",
+        actorType: "system",
+        changes: { before: { authState: conn.authState }, after: { authState: "revoked" } },
+        metadata: {
+          fields: ["authState", "tokenEncrypted", "tokenLast4"],
+          source: args.confirmationCode ? "data_deletion" : "deauthorize",
+          metaUserId: maskExternalId(args.metaUserId),
+          configIds: configs.map((c) => c._id),
+        },
+        description: `A Meta informou ${args.confirmationCode ? "pedido de exclusão de dados" : "remoção da autorização"} da Página "${pageName}"; credenciais removidas`,
+        severity: "high",
+        createdAt: now,
+      });
+      revoked++;
+    }
+    if (args.confirmationCode) {
+      await ctx.db.insert("metaDeletionRequests", {
+        metaUserIdHash: await sha256Hex(args.metaUserId),
+        confirmationCode: args.confirmationCode,
+        status: "done",
+        connectionsRevoked: revoked,
+        createdAt: now,
+        completedAt: now,
+      });
+    }
+    return { revoked };
+  },
+});
+
+export const internalGetDeletionRequest = internalQuery({
+  args: { code: v.string() },
+  returns: v.union(v.null(), v.object({ createdAt: v.number(), connectionsRevoked: v.number() })),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("metaDeletionRequests")
+      .withIndex("by_confirmation_code", (q) => q.eq("confirmationCode", args.code))
+      .first();
+    return row ? { createdAt: row.createdAt, connectionsRevoked: row.connectionsRevoked } : null;
+  },
+});
+
+async function readSignedRequest(request: Request): Promise<{ userId: string } | null> {
+  const appSecret = process.env.META_MESSAGING_APP_SECRET;
+  if (!appSecret) return null;
+  let raw: string | null = null;
+  try {
+    const text = await request.text();
+    const ct = request.headers.get("content-type") ?? "";
+    if (ct.includes("application/json")) {
+      const body: unknown = JSON.parse(text);
+      const sr = body && typeof body === "object" ? (body as Record<string, unknown>).signed_request : null;
+      raw = typeof sr === "string" ? sr : null;
+    } else {
+      raw = new URLSearchParams(text).get("signed_request");
+    }
+  } catch {
+    return null;
+  }
+  const parsed = await parseSignedRequest(raw, appSecret, Date.now());
+  return parsed.ok ? { userId: parsed.userId } : null;
+}
+
+// POST /webhooks/meta-messaging/deauthorize
+export const deauthorizeCallback = httpAction(async (ctx, request) => {
+  const signed = await readSignedRequest(request);
+  if (!signed) return new Response("Invalid signed_request", { status: 400 });
+  try {
+    await ctx.runMutation(internal.metaMessaging.internalRevokeConnectionsForMetaUser, { metaUserId: signed.userId });
+  } catch (e) {
+    console.error(`meta deauthorize: ${e instanceof Error ? e.name : "erro"}`);
+    return new Response("Error", { status: 500 }); // a Meta reenvia
+  }
+  return new Response(null, { status: 200 });
+});
+
+// POST /webhooks/meta-messaging/data-deletion -> { url, confirmation_code }
+export const dataDeletionCallback = httpAction(async (ctx, request) => {
+  const signed = await readSignedRequest(request);
+  if (!signed) return new Response("Invalid signed_request", { status: 400 });
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  const code = Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  try {
+    await ctx.runMutation(internal.metaMessaging.internalRevokeConnectionsForMetaUser, {
+      metaUserId: signed.userId,
+      confirmationCode: code,
+    });
+  } catch (e) {
+    console.error(`meta data-deletion: ${e instanceof Error ? e.name : "erro"}`);
+    return new Response("Error", { status: 500 });
+  }
+  const site = (process.env.CONVEX_SITE_URL ?? "").replace(/\/+$/, "");
+  return new Response(JSON.stringify({ url: `${site}/meta/deletion-status?code=${code}`, confirmation_code: code }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
+const HTML_HEADERS = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
+const htmlPage = (body: string) =>
+  `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Exclusão de dados</title></head><body style="font-family:sans-serif;max-width:560px;margin:48px auto;padding:0 16px"><h1 style="font-size:20px">Exclusão de dados</h1>${body}</body></html>`;
+
+// GET /meta/deletion-status?code=
+export const deletionStatusPage = httpAction(async (ctx, request) => {
+  const code = new URL(request.url).searchParams.get("code") ?? "";
+  const row = /^[0-9a-f]{16}$/.test(code)
+    ? await ctx.runQuery(internal.metaMessaging.internalGetDeletionRequest, { code })
+    : null;
+  if (!row) {
+    return new Response(htmlPage("<p>Solicitação não encontrada.</p>"), { status: 404, headers: HTML_HEADERS });
+  }
+  const date = new Date(row.createdAt).toISOString().slice(0, 10);
+  return new Response(
+    htmlPage(
+      `<p>Solicitação ${code} recebida em ${date}: credenciais da Meta removidas (${row.connectionsRevoked} conexões). ` +
+        `As conversas pertencem à organização que você contatou; para exclusão de mensagens, fale com ela ou com ` +
+        `<a href="mailto:privacidade@hnbcrm.com">privacidade@hnbcrm.com</a> (LGPD).</p>`
+    ),
+    { status: 200, headers: HTML_HEADERS }
+  );
 });

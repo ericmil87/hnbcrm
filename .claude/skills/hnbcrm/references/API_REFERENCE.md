@@ -375,8 +375,9 @@ List conversations with cursor-based pagination, optionally filtered by lead.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | leadId | string | no | Filter by lead |
+| channelConfigId | string | no | Filter by account (WhatsApp number, Facebook Page or Instagram account; `id` from `crm_list_whatsapp_channels`) |
 
-**REST:** `GET /api/v1/conversations?leadId=X&limit=200&cursor=CURSOR`
+**REST:** `GET /api/v1/conversations?leadId=X&channel=instagram&channelConfigId=Y&limit=200&cursor=CURSOR`
 
 **Response:** `{ conversations: [...], nextCursor, hasMore }`
 
@@ -401,7 +402,7 @@ On a group conversation, `metadata.mediaDeferred` on a message means its attachm
 
 ### crm_send_message
 
-Send a message or internal note in a conversation.
+Send a message or internal note in a conversation. On Instagram and Messenger conversations the Meta service window applies: 24 hours after the contact's last message (7 days when the conversation came from an ad); outside it the message is stored as `failed` and nothing is sent. Those channels carry plain text only and have no templates.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
@@ -420,13 +421,15 @@ Send a message or internal note in a conversation.
 
 ### crm_list_whatsapp_channels
 
-List the organization's active WhatsApp numbers that can start conversations. Never exposes tokens or gateway URLs.
+List the organization's active channel accounts: WhatsApp numbers (`canStart: true`) and, when the Meta Messaging module is on, Instagram and Messenger accounts (`canStart: false`: the person must write first, so `crm_start_conversation` and templates do not apply). Never exposes tokens, gateway URLs or Page/Instagram ids.
 
 **MCP Parameters:** none
 
 **REST:** `GET /api/v1/conversations/channels` (permission `inbox: view_own`)
 
-**Response:** `{ channels: [{ id, provider: "meta"|"bridge", displayName, phoneDisplay, connected, sessionState? }] }`
+**Response:** `{ channels: [{ id, channel: "whatsapp"|"instagram"|"messenger", transport: "meta"|"bridge"|"instagram"|"messenger", accountLabel, handle, canStart, displayName, connected, provider?, phoneDisplay?, sessionState? }] }` (`provider`/`phoneDisplay` only on WhatsApp)
+
+**Instagram & Messenger rules:** starting a conversation or sending a template on these channels returns 400 "Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro."; `POST /conversations/receive` with `channel: "instagram"|"messenger"` needs `contactId` plus a `channelConfigId` of the same organization and channel (no `contactPhone`); messages typed outside the CRM arrive as outbound with `metadata.via: "device"` and `metadata.viaApp`; webhooks `message.received`/`message.sent` carry `channel`, and `channel.session_lost` uses `provider: "instagram"|"messenger"` with state `reauth_required` or `revoked`.
 
 ---
 

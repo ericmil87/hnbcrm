@@ -27,6 +27,9 @@ import {
   webhookVerify as metaMessagingWebhookVerify,
   webhookReceive as metaMessagingWebhookReceive,
   oauthCallback as metaOAuthCallback,
+  deauthorizeCallback as metaDeauthorizeCallback,
+  dataDeletionCallback as metaDataDeletionCallback,
+  deletionStatusPage as metaDeletionStatusPage,
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
 
@@ -341,6 +344,12 @@ http.route({
 
       if (!body.title) {
         return errorResponse("Title is required", 400);
+      }
+      if (body.channel === "instagram" || body.channel === "messenger") {
+        return errorResponse(
+          "Instagram e Messenger não permitem iniciar conversa; a pessoa precisa escrever primeiro (a mensagem entra pelo webhook da Meta ou por POST /api/v1/conversations/receive).",
+          400
+        );
       }
       const organizationId = apiKeyRecord.organizationId;
       const tags: string[] = Array.isArray(body.tags)
@@ -939,9 +948,17 @@ http.route({
         return errorResponse("kind deve ser direct, group ou all", 400);
       }
 
+      const channelParam = url.searchParams.get("channel");
+      if (channelParam && !["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"].includes(channelParam)) {
+        return errorResponse("channel inválido", 400);
+      }
+      const channelConfigParam = url.searchParams.get("channelConfigId");
+
       const result = await ctx.runQuery(internal.conversations.internalGetConversations, {
         organizationId: apiKeyRecord.organizationId,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
+        ...(channelParam ? { channel: channelParam as "whatsapp" } : {}),
+        ...(channelConfigParam ? { channelConfigId: channelConfigParam as Id<"channelConfigs"> } : {}),
         limit,
         cursor,
         ...(kindParam ? { kind: kindParam as "direct" | "group" | "all" } : {}),
@@ -1093,24 +1110,21 @@ http.route({
       const apiKeyRecord = await authenticateApiKey(ctx, request);
       const denied = requireRoutePermission(apiKeyRecord, "GET", "/api/v1/conversations/channels");
       if (denied) return denied;
-      const rows = await ctx.runQuery(internal.startConversation.internalListSendableChannelsForMember, {
+      const rows = await ctx.runQuery(internal.startConversation.internalListChannelsForRest, {
         organizationId: apiKeyRecord.organizationId,
         actorMemberId: apiKeyRecord.teamMemberId,
       });
-      // Allowlist: nenhum token, URL de gateway ou id de instância sai daqui.
-      const channels = rows.map((c: {
-        _id: string;
-        provider: "meta" | "bridge";
-        displayName: string;
-        phoneDisplay: string | null;
-        connected: boolean;
-        sessionState: string | null;
-      }) => ({
+      // Allowlist: nenhum token, URL de gateway, id de instância nem id de Página/IG sai daqui.
+      const channels = rows.map((c) => ({
         id: c._id,
-        provider: c.provider,
+        channel: c.channel,
+        transport: c.transport,
+        accountLabel: c.accountLabel,
+        handle: c.handle,
+        canStart: c.canStart,
         displayName: c.displayName,
-        phoneDisplay: c.phoneDisplay,
         connected: c.connected,
+        ...(c.channel === "whatsapp" ? { provider: c.provider, phoneDisplay: c.phoneDisplay } : {}),
         ...(c.sessionState !== null ? { sessionState: c.sessionState } : {}),
       }));
       return jsonResponse({ channels });
@@ -1200,7 +1214,7 @@ http.route({
 
       return jsonResponse({ success: true, messageId }, 201);
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return startConversationError(error);
     }
   }),
 });
@@ -1223,6 +1237,29 @@ http.route({
         return errorResponse("contactId or contactPhone required", 400);
       }
       const channel = body.channel || "whatsapp";
+
+      // Instagram/Messenger: sem telefone; a conta (channelConfigId) é da org e do mesmo canal.
+      let metaConfigId: Id<"channelConfigs"> | undefined;
+      if (channel === "instagram" || channel === "messenger") {
+        if (!body.contactId) {
+          return errorResponse("Instagram e Messenger exigem contactId (sem contactPhone)", 400);
+        }
+        if (typeof body.channelConfigId !== "string" || !body.channelConfigId) {
+          return errorResponse("channelConfigId é obrigatório para instagram/messenger (veja GET /api/v1/conversations/channels)", 400);
+        }
+        let cfg: { organizationId: Id<"organizations">; channel: string } | null = null;
+        try {
+          cfg = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
+            configId: body.channelConfigId as Id<"channelConfigs">,
+          });
+        } catch {
+          cfg = null;
+        }
+        if (!cfg || cfg.organizationId !== apiKeyRecord.organizationId || cfg.channel !== channel) {
+          return errorResponse("channelConfigId não encontrado nesta organização para este canal", 400);
+        }
+        metaConfigId = body.channelConfigId as Id<"channelConfigs">;
+      }
 
       // Resolve contact
       let contactId: Id<"contacts">;
@@ -1256,6 +1293,7 @@ http.route({
         organizationId: apiKeyRecord.organizationId,
         leadId,
         channel,
+        ...(metaConfigId ? { channelConfigId: metaConfigId } : {}),
         content: body.content,
         contentType: body.contentType || "text",
         externalId: body.externalId,
@@ -4207,6 +4245,10 @@ http.route({ path: "/webhooks/bridge", method: "POST", handler: bridgeWebhookRec
 http.route({ path: "/webhooks/meta-messaging", method: "GET", handler: metaMessagingWebhookVerify });
 http.route({ path: "/webhooks/meta-messaging", method: "POST", handler: metaMessagingWebhookReceive });
 http.route({ path: "/oauth/meta/callback", method: "GET", handler: metaOAuthCallback });
+// Callbacks da Meta (F5): assinados com signed_request, fora de /api/v1.
+http.route({ path: "/webhooks/meta-messaging/deauthorize", method: "POST", handler: metaDeauthorizeCallback });
+http.route({ path: "/webhooks/meta-messaging/data-deletion", method: "POST", handler: metaDataDeletionCallback });
+http.route({ path: "/meta/deletion-status", method: "GET", handler: metaDeletionStatusPage });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

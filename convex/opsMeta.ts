@@ -187,3 +187,83 @@ export const internalMetaPurge = internalMutation({
     return { dryRun, ...r };
   },
 });
+
+// ── F5: backfill de `metaUserId` ──
+
+const BACKFILL_PAGE_SIZE = 20;
+
+export const internalListUserIdBackfillTargets = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), numItems: v.number() },
+  returns: v.object({
+    targets: v.array(v.object({ connectionId: v.id("metaConnections"), tokenEncrypted: v.string() })),
+    isDone: v.boolean(),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("metaConnections")
+      .paginate({ cursor: args.cursor, numItems: Math.max(1, Math.min(args.numItems, BACKFILL_PAGE_SIZE)) });
+    const targets = page.page
+      .filter((c) => !c.metaUserId && c.authState !== "revoked" && !!c.tokenEncrypted)
+      .map((c) => ({ connectionId: c._id, tokenEncrypted: c.tokenEncrypted }));
+    return { targets, isDone: page.isDone, nextCursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+export const internalSetMetaUserId = internalMutation({
+  args: { connectionId: v.id("metaConnections"), metaUserId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const conn = await ctx.db.get(args.connectionId);
+    if (conn && !conn.metaUserId) await ctx.db.patch(conn._id, { metaUserId: args.metaUserId });
+    return null;
+  },
+});
+
+/** Preenche `metaUserId` das conexões antigas via `debug_token` do token de Página. */
+export const internalMetaBackfillUserId = internalAction({
+  args: { dryRun: v.optional(v.boolean()), cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    resolved: v.number(),
+    unavailable: v.number(),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const appId = process.env.META_MESSAGING_APP_ID;
+    const appSecret = process.env.META_MESSAGING_APP_SECRET;
+    if (!appId || !appSecret) return { dryRun, scanned: 0, resolved: 0, unavailable: 0, nextCursor: null };
+    const page: {
+      targets: { connectionId: Id<"metaConnections">; tokenEncrypted: string }[];
+      isDone: boolean;
+      nextCursor: string | null;
+    } = await ctx.runQuery(internal.opsMeta.internalListUserIdBackfillTargets, {
+      cursor: args.cursor ?? null,
+      numItems: BACKFILL_PAGE_SIZE,
+    });
+    let resolved = 0;
+    let unavailable = 0;
+    for (const t of page.targets) {
+      try {
+        const result = await fetchDebugToken({ pageToken: await decryptSecret(t.tokenEncrypted), appId, appSecret });
+        const userId = result.kind === "observation" ? result.observation.userId : undefined;
+        if (!userId) {
+          unavailable++;
+          continue;
+        }
+        resolved++;
+        if (!dryRun) {
+          await ctx.runMutation(internal.opsMeta.internalSetMetaUserId, { connectionId: t.connectionId, metaUserId: userId });
+        }
+      } catch {
+        unavailable++;
+      }
+    }
+    if (!dryRun && !page.isDone && page.nextCursor) {
+      await ctx.scheduler.runAfter(0, internal.opsMeta.internalMetaBackfillUserId, { dryRun: false, cursor: page.nextCursor });
+    }
+    return { dryRun, scanned: page.targets.length, resolved, unavailable, nextCursor: page.nextCursor };
+  },
+});

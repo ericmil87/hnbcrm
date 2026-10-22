@@ -36,3 +36,7 @@ Gotchas that change how code must be written. Full reasoning: `docs/architecture
 
 ## Parser (`convex/lib/metaMessagingParse.ts`, pure)
 - Never throws: garbage → `{object:null, events:[]}`, unknown fields → `kind:"unknown"`. Events are sorted by `timestamp` inside a batch (Meta redelivers out of order). Messenger echoes come in `message_echoes` with `app_id`; Instagram echoes come inside `messages` with `is_echo` (and maybe no `app_id`, §13 item 5). `entry[].standby[]` → `standby:true` (another app controls the thread: AI must not answer).
+
+## Meta callbacks and REST (F5)
+- `deauthorize` / `data-deletion` are outside `/api/v1` (no `ROUTE_PERMISSIONS`); the `signed_request` is verified first (`lib/metaSignedRequest.ts`, constant time, `issued_at` ≤ 24 h) and an invalid one is 400. They find connections by `metaConnections.metaUserId` (set from `debug_token.user_id` in `finalizeConnection`; old rows via `opsMeta.internalMetaBackfillUserId`), revoke (`authSource:"deauthorize"`, token wiped, configs `disabled`, routing ids cleared) and NEVER delete conversations/contacts/leads. The `user_id` is only stored as a sha256 (`metaDeletionRequests`) or masked in audit.
+- `GET /conversations/channels` is `internalListChannelsForRest`; the public `listSendableWhatsappChannels` (Nova conversa) stays WhatsApp-only. `/inbound/lead` refuses `instagram`/`messenger` (it would create an outbound with no config).

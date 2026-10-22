@@ -31,7 +31,8 @@ conecta um canal faz login com a própria conta do Facebook; o app é o nosso.
 1. https://developers.facebook.com/apps > **Criar app** > tipo **Business** (casos de uso "Messenger" e "Instagram"). Portfólio:
    o mesmo portfólio verificado do WhatsApp.
 2. Configurações > Básico: anotar **App ID** e **App Secret**; preencher URL da política de privacidade, URL de instruções de
-   exclusão de dados, categoria, ícone 1024×1024 e domínio `hnbcrm.com` (sem isso o app não pode ficar Live).
+   exclusão de dados (pode ser a URL de callback `<CONVEX_SITE_URL>/webhooks/meta-messaging/data-deletion`, ver 2.2; ela devolve
+   o código e a página de status que a Meta exige), categoria, ícone 1024×1024 e domínio `hnbcrm.com` (sem isso o app não pode ficar Live).
 3. Produtos: **Messenger**, **Instagram** (mensagens pela Página, *não* "Instagram API with Instagram Login") e
    **Facebook Login for Business**.
 4. Facebook Login for Business > Configurações: *Valid OAuth Redirect URIs* = o redirect URI do ambiente; Client OAuth login,
@@ -45,6 +46,16 @@ Facebook Login for Business > **Configurations** > Create:
   `public_profile`, `business_management`, `pages_show_list`, `pages_manage_metadata`, `pages_messaging`,
   `pages_read_engagement`, `instagram_basic`, `instagram_manage_messages`.
 - Anotar o **Configuration ID** (`config_id`).
+
+Em Facebook Login for Business > **Configurações** (callbacks assinados com o App Secret, `signed_request`):
+- **Desautorizar** = `<CONVEX_SITE_URL>/webhooks/meta-messaging/deauthorize`. Quando alguém remove o app no Facebook, o
+  HNBCRM apaga o token da Página, desativa os canais e avisa os administradores ("reconecte para voltar a receber").
+- **Exclusão de dados** = `<CONVEX_SITE_URL>/webhooks/meta-messaging/data-deletion`. Faz o mesmo e responde
+  `{ url, confirmation_code }` apontando para `<CONVEX_SITE_URL>/meta/deletion-status?code=...`, página pública sem dados
+  pessoais. Conversas, contatos e leads **não** são apagados: pertencem à organização (controladora); pedidos de exclusão de
+  mensagens vão para ela ou para privacidade@hnbcrm.com (LGPD).
+- `<CONVEX_SITE_URL>` é o `.convex.site` do ambiente (DEV e PROD têm apps e URLs separados). Conexões feitas antes da F5 não
+  têm o `user_id` da Meta gravado: rode o backfill `opsMeta:internalMetaBackfillUserId` (dry run primeiro) ou reconecte a Página.
 
 ### 2.3 Papéis e modo Live
 - Funções do app: administradores e **testers** (quem for conectar canais precisa de papel no app; o tester aceita o convite em

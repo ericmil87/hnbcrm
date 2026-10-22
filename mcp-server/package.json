@@ -1,6 +1,6 @@
 {
   "name": "hnbcrm-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "MCP server for HNBCRM — 68 tools to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns and WhatsApp groups via AI agents",
   "type": "module",
   "bin": {

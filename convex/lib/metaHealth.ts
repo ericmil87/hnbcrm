@@ -25,6 +25,8 @@ export type HealthObservation = {
   /** epoch ms; ausente = a Meta não informou (ou 0 = sem expiração). */
   dataAccessExpiresAt?: number;
   expiresAt?: number;
+  /** `user_id` de quem autorizou (callbacks de desautorização). Nunca logar. */
+  userId?: string;
 };
 
 export type HealthVerdict =
@@ -79,6 +81,7 @@ export function parseDebugToken(status: number, body: unknown): DebugTokenResult
         scopes,
         ...(typeof da === "number" && da > 0 ? { dataAccessExpiresAt: da * 1000 } : {}),
         ...(typeof ex === "number" && ex > 0 ? { expiresAt: ex * 1000 } : {}),
+        ...(typeof data.user_id === "string" && data.user_id ? { userId: data.user_id } : {}),
       },
     };
   }

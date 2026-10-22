@@ -36,6 +36,7 @@ import {
   internalAction,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { getModules } from "./lib/orgModules";
 import { Doc, Id } from "./_generated/dataModel";
 import { isMembershipRevoked, requireAuth, requirePermission } from "./lib/auth";
 import { permissionsValidator } from "./schema";
@@ -249,6 +250,85 @@ export const internalListSendableChannelsForMember = internalQuery({
   },
 });
 
+/** Instagram/Messenger: a janela de atendimento só abre quando a pessoa escreve primeiro. */
+export const META_NO_START_ERROR =
+  "Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.";
+
+const restChannelValidator = v.object({
+  _id: v.id("channelConfigs"),
+  channel: v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger")),
+  transport: v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger")),
+  accountLabel: v.string(),
+  handle: v.union(v.string(), v.null()),
+  canStart: v.boolean(),
+  connected: v.boolean(),
+  provider: v.optional(v.union(v.literal("meta"), v.literal("bridge"))),
+  displayName: v.string(),
+  phoneDisplay: v.union(v.string(), v.null()),
+  sessionState: v.union(v.string(), v.null()),
+});
+
+/**
+ * Lista da REST (`GET /conversations/channels`): WhatsApp (iniciáveis) + contas
+ * Instagram/Messenger ativas (`canStart:false`). Só rótulo e @ da conta; nunca
+ * id de Página/IG, token ou telefone completo. A query pública
+ * `listSendableWhatsappChannels` (seletor "Nova conversa") continua só WhatsApp.
+ */
+export const internalListChannelsForRest = internalQuery({
+  args: { organizationId: v.id("organizations"), actorMemberId: v.id("teamMembers") },
+  returns: v.array(restChannelValidator),
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.actorMemberId);
+    if (!member || member.organizationId !== args.organizationId || isMembershipRevoked(member)) {
+      throw new Error("Membro não encontrado nesta organização");
+    }
+    const out: Infer<typeof restChannelValidator>[] = [];
+    for (const c of await listSendableChannelsCore(ctx, args.organizationId)) {
+      const digits = (c.phoneDisplay ?? "").replace(/\D/g, "");
+      out.push({
+        _id: c._id,
+        channel: "whatsapp",
+        transport: c.provider,
+        accountLabel: c.displayName,
+        handle: digits.length >= 4 ? `····${digits.slice(-4)}` : null,
+        canStart: true,
+        connected: c.connected,
+        provider: c.provider,
+        displayName: c.displayName,
+        phoneDisplay: c.phoneDisplay,
+        sessionState: c.sessionState,
+      });
+    }
+    if (!(await getModules(ctx, args.organizationId)).metaMessaging) return out;
+    const configs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(100);
+    for (const c of configs) {
+      if ((c.channel !== "instagram" && c.channel !== "messenger") || c.status !== "active") continue;
+      if (c.disabledByModuleAt !== undefined) continue;
+      const conn = c.metaConnectionId ? await ctx.db.get(c.metaConnectionId) : null;
+      const label =
+        c.channel === "instagram"
+          ? c.metaAccountHandle || c.metaAccountLabel || c.displayName || "Instagram"
+          : c.metaAccountLabel || c.displayName || "Messenger";
+      out.push({
+        _id: c._id,
+        channel: c.channel,
+        transport: c.channel,
+        accountLabel: label,
+        handle: c.metaAccountHandle ?? null,
+        canStart: false,
+        connected: !!conn && conn.organizationId === c.organizationId && conn.authState === "ok",
+        displayName: label,
+        phoneDisplay: null,
+        sessionState: null,
+      });
+    }
+    return out;
+  },
+});
+
 async function listSendableChannelsCore(ctx: QueryCtx, organizationId: Id<"organizations">) {
   {
     const args = { organizationId }; // mantém o corpo original (que lia args.organizationId)
@@ -345,6 +425,9 @@ export const internalStartContextForMember = internalQuery({
 async function startContextCore(ctx: QueryCtx, args: StartContextArgs): Promise<StartContext> {
   {
     const channel = await ctx.db.get(args.channelConfigId);
+    if (channel && channel.organizationId === args.organizationId && channel.channel !== "whatsapp") {
+      throw new ConvexError(META_NO_START_ERROR);
+    }
     if (!channel || channel.organizationId !== args.organizationId || channel.channel !== "whatsapp") {
       throw new ConvexError("Número de WhatsApp não encontrado nesta organização");
     }
@@ -830,6 +913,9 @@ async function startConversationCore(
 
     // 1. Canal
     const channel = await ctx.db.get(args.channelConfigId);
+    if (channel && channel.organizationId === args.organizationId && channel.channel !== "whatsapp") {
+      throw new ConvexError(META_NO_START_ERROR);
+    }
     if (!channel || channel.organizationId !== args.organizationId || channel.channel !== "whatsapp") {
       throw new ConvexError("Número de WhatsApp não encontrado nesta organização");
     }

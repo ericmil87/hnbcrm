@@ -1161,8 +1161,16 @@ const applicationTables = {
     authAlertedAt: v.optional(v.number()),
     // Quem marcou `reauth_required`: só o que o cron de saúde marcou se recupera sozinho.
     authSource: v.optional(
-      v.union(v.literal("health"), v.literal("send"), v.literal("test"), v.literal("subscribe"))
+      v.union(
+        v.literal("health"),
+        v.literal("send"),
+        v.literal("test"),
+        v.literal("subscribe"),
+        v.literal("deauthorize")
+      )
     ),
+    // `user_id` da Meta (debug_token) de quem autorizou: casa os callbacks de desautorização/exclusão.
+    metaUserId: v.optional(v.string()),
     subscribedAt: v.optional(v.number()),
     subscribedFields: v.optional(v.array(v.string())),
     lastHealthAt: v.optional(v.number()),
@@ -1173,7 +1181,18 @@ const applicationTables = {
     .index("by_organization", ["organizationId"])
     // Deployment-wide de propósito: exclusividade de Página/IG entre organizações.
     .index("by_page_id", ["pageId"])
-    .index("by_ig_account_id", ["igAccountId"]),
+    .index("by_ig_account_id", ["igAccountId"])
+    .index("by_meta_user_id", ["metaUserId"]),
+
+  // Meta Messaging: pedidos de exclusão de dados (callback da Meta). Só hash do user_id.
+  metaDeletionRequests: defineTable({
+    metaUserIdHash: v.string(),
+    confirmationCode: v.string(),
+    status: v.union(v.literal("received"), v.literal("done")),
+    connectionsRevoked: v.number(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_confirmation_code", ["confirmationCode"]),
 
   // Meta Messaging: identidade do cliente por canal (PSID/IGSID), nunca em contacts.phone.
   contactChannelIdentities: defineTable({

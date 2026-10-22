@@ -716,13 +716,16 @@ export function buildChannelSessionLostTemplate(data: {
   if (data.provider === "meta_messaging") {
     const expiring = data.state === "data_access_expiring";
     const name = maskDigitRuns(data.channelName);
+    const revoked = data.state === "revoked";
     return {
-      subject: expiring ? `Reconecte ${name} para manter o acesso` : `${name} precisa ser reconectada`,
+      subject: revoked
+        ? `A autorização de ${name} foi removida`
+        : expiring ? `Reconecte ${name} para manter o acesso` : `${name} precisa ser reconectada`,
       html: baseTemplate({
         preheader: `${escapeHtml(data.orgName)}: ${expiring ? "reconecte" : "a conexão precisa ser refeita"} — ${escapeHtml(name)}.`,
         appUrl,
         content: `
-        ${heading(expiring ? "Reconecte para manter o acesso" : "Conta precisa ser reconectada")}
+        ${heading(expiring ? "Reconecte para manter o acesso" : revoked ? "Autorização removida" : "Conta precisa ser reconectada")}
         ${paragraph(
           expiring
             ? `O acesso de <strong style="color: ${TEXT_PRIMARY};">${escapeHtml(name)}</strong> às mensagens de ${escapeHtml(data.orgName)} está perto de expirar. Reconecte a conta para continuar sem interrupção.`

@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import { insertFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -1334,8 +1334,8 @@ export const internalGetConversations = internalQuery({
     kind: v.optional(
       v.union(v.literal("direct"), v.literal("group"), v.literal("all"))
     ),
-    // Filtro por conta (D11). REST é F5: aqui é pós-filtro para manter o cursor
-    // por `_creationTime` desta rota (o índice da conta ordena por lastMessageAt).
+    // Filtro por conta (D11, REST F5): varre a org até juntar a página da conta, para manter o
+    // cursor por `_creationTime` desta rota (o índice da conta ordena por lastMessageAt).
     channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.any(),
@@ -1356,6 +1356,24 @@ export const internalGetConversations = internalQuery({
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
         .order("desc")
         .take(overRead);
+    } else if (args.channelConfigId) {
+      // Por conta: varre a org do mais novo ao mais antigo até juntar `limit + 1`
+      // da conta (ou o teto de leitura), em vez de filtrar só as últimas N da org.
+      const matched = [];
+      let scanned = 0;
+      for await (const c of ctx.db
+        .query("conversations")
+        .withIndex("by_organization", (q) =>
+          cursor
+            ? q.eq("organizationId", args.organizationId).lte("_creationTime", cursor.ts)
+            : q.eq("organizationId", args.organizationId)
+        )
+        .order("desc")) {
+        if (++scanned > 3000) break;
+        if (c.channelConfigId === args.channelConfigId) matched.push(c);
+        if (matched.length >= overRead) break;
+      }
+      rawConversations = matched;
     } else {
       rawConversations = await ctx.db.query("conversations")
         .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -2512,6 +2530,9 @@ export const internalSendTemplate = internalMutation({
       throw new Error("Membro não pertence à organização da conversa");
     }
     if (conversation.channel !== "whatsapp") {
+      if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+        throw new ConvexError("Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.");
+      }
       throw new Error("Template messages are only supported on the whatsapp channel");
     }
 

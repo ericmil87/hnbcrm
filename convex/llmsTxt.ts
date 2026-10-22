@@ -16,7 +16,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
 - MCP Server: npx hnbcrm-mcp (68 tools for AI agents)
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
-- Channels: whatsapp, telegram, email, webchat, internal
+- Channels: whatsapp, telegram, email, webchat, internal, instagram, messenger (Instagram/Messenger: see "Instagram & Messenger" below)
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
 - Permissions: Granular RBAC with 10 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys, campaigns). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
 
@@ -31,6 +31,22 @@ Outbound sends are paced by an anti-burst queue: per-conversation cursor (Meta p
 On bridge channels the connected number stays a normal phone, so a human can reply straight from the WhatsApp app. Those messages are captured too and stored as regular outbound messages with \`metadata.via: "device"\` and no \`senderId\` (nobody in the CRM sent them). They do not reopen the 24-hour window, do not count as unread, and never trigger the AI attendant. API clients reading messages should treat \`direction: "outbound"\` with an absent \`senderId\` as "sent from the phone", not as a data error.
 
 A bridge phone number can be active in only one organization at a time. Pairing a number that is already connected elsewhere disables the other channel, pauses its running campaigns, records a high-severity audit entry in the displaced organization, and unlinks the previous device from the WhatsApp account.
+
+## Instagram & Messenger (Meta Messaging)
+
+Optional module (\`metaMessaging\`, off by default per organization). Instagram Direct and Facebook Messenger connect through the official Meta Graph API: an admin signs in with Facebook Login for Business in Settings → Canais and picks a Facebook Page; one Page connection serves both the \`messenger\` channel and, when the Page has a linked Instagram professional account, the \`instagram\` channel. Channels, conversations and messages use \`channel: "instagram" | "messenger"\` and a \`channelConfigId\` per account.
+
+Rules that differ from WhatsApp:
+- **Customer must write first.** There is no way to start a conversation and there are no templates: \`POST /conversations/start\` and \`POST /conversations/send-template\` answer 400 "Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.".
+- **Service window:** free-form replies are allowed for 24 hours after the contact's last inbound message (7 days when the conversation was opened by an ad). Outside the window a send is stored as failed with an explanatory message and nothing is sent.
+- **Plain text only** (no markdown, no WhatsApp formatting); the AI attendant converts its replies automatically. Long texts are split (Instagram 1000 bytes, Messenger 1900 characters).
+- **Identities, not phones.** Contacts created from these channels carry a PSID (Messenger) or IGSID (Instagram) in \`contactChannelIdentities\`, never in \`phone\`/\`whatsappNumber\`. The same person on Instagram and on Messenger is two contacts until someone links them. Ids are never returned by the public API.
+- **Sent from the app:** messages typed in the Instagram/Facebook app or by another tool are stored as outbound with \`metadata.via: "device"\` and \`metadata.viaApp\` (nobody in the CRM sent them).
+- **Opt-out:** a contact writing "pare", "parar", "stop" or "sair" stops proactive follow-ups; the attendant keeps answering.
+- **Account listing:** \`GET /api/v1/conversations/channels\` lists the accounts (\`channel\`, \`transport\`, \`accountLabel\`, \`handle\`, \`canStart: false\`). Filter conversations with \`GET /conversations?channelConfigId=\` or \`?channel=instagram\`.
+- **Inbound from external tools:** \`POST /conversations/receive\` with \`channel: "instagram" | "messenger"\` needs \`contactId\` and a \`channelConfigId\` of the same organization and channel.
+- **Health:** a daily check validates each connection. When the authorization is invalid, expired, or removed on Facebook the connection needs reconnecting (Settings → Canais → Reconectar): sends stop, a high-severity audit entry is written, admins (settings:manage) get an in-app and e-mail notice, and the webhook \`channel.session_lost\` fires (states \`reauth_required\`, \`revoked\`). Removing the app on Facebook (or a Meta data-deletion request) revokes the stored credential and disables the channels; conversations, contacts and leads are kept because the organization controls that data.
+- **Access level:** until Meta's App Review approves the app (Advanced Access), only people with a role on the Meta app can exchange messages; new connections work normally for them.
 
 ## Built-in AI (Copilot & Attendant)
 
@@ -703,7 +719,7 @@ Get enrichment gaps for a contact (which fields are missing).
 #### GET /api/v1/conversations
 List conversations with cursor-based pagination.
 
-**Query params:** leadId, limit, cursor, kind (all optional)
+**Query params:** leadId, channel (whatsapp|telegram|email|webchat|internal|instagram|messenger), channelConfigId (one WhatsApp number, Facebook Page or Instagram account, from \`GET /conversations/channels\`), limit, cursor, kind (all optional)
 
 \`kind\` selects which conversations come back: \`direct\` (the DEFAULT — 1:1 only,
 each with lead/contact/assignee), \`group\` (WhatsApp group rooms, which have no
@@ -729,9 +745,9 @@ Send a message to a conversation. Supports file attachments and replying to (quo
 **Response:** \`{ success: true, messageId }\`
 
 #### GET /api/v1/conversations/channels
-List the organization's active WhatsApp numbers that can start conversations (v0.66). Never exposes tokens or gateway URLs. Requires \`inbox: view_own\`.
+List the organization's active channel accounts: WhatsApp numbers that can start conversations (v0.66) and, when the Meta Messaging module is on, Instagram and Messenger accounts. Never exposes tokens, gateway URLs or Page/Instagram ids. Requires \`inbox: view_own\`.
 
-**Response:** \`{ channels: [{ id, provider: "meta" | "bridge", displayName, phoneDisplay, connected, sessionState? }] }\`
+**Response:** \`{ channels: [{ id, channel: "whatsapp" | "instagram" | "messenger", transport: "meta" | "bridge" | "instagram" | "messenger", accountLabel, handle (masked phone tail or @handle, nullable), canStart, displayName, connected, provider?, phoneDisplay?, sessionState? }] }\`. WhatsApp items have \`canStart: true\` plus \`provider\` (meta|bridge), \`phoneDisplay\` and \`sessionState\`. Instagram/Messenger items have \`canStart: false\` and no \`provider\`/\`phoneDisplay\`; \`connected\` reflects a valid authorization.
 
 #### POST /api/v1/conversations/start
 Start a 1:1 WhatsApp conversation from the team side, without waiting for the contact to write (v0.66/v0.67). Requires \`inbox: reply\`, plus \`contacts: edit\` when a contact is created and \`leads: edit_own\` when a lead is created.
@@ -743,6 +759,7 @@ Start a 1:1 WhatsApp conversation from the team side, without waiting for the co
 - On **bridge** channels the number is verified with the gateway first (\`/user/check\` + \`/user/lid\`). A number that is not on WhatsApp → 400 "Este número não tem WhatsApp — confira os dígitos". The canonical spelling WhatsApp uses is adopted (e.g. Brazilian numbers registered without the 9th digit): \`phoneChanged: true\` when it differs from what was sent. \`verified: false\` means the gateway could not be reached — the conversation is still created.
 - Every 1:1 conversation hangs off a lead: the contact's most recent lead (and its WhatsApp conversation, unarchived) is reused; otherwise a lead is created on \`boardId\`/\`stageId\` (default: default board, first stage), assigned to the API key's team member (never to the AI attendant), source "Conversa iniciada pela equipe". An existing conversation is switched to the chosen number (\`channelSwitched\`).
 - \`content\` is accepted only on bridge. On Meta a new conversation is outside the 24h window, so the conversation opens empty and the first message must be a template via \`POST /conversations/send-template\`.
+- Instagram and Messenger accounts cannot be used here: a \`channelConfigId\` of those channels → 400 "Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro." (same for \`POST /conversations/send-template\` on their conversations).
 - Opted-out number → **409** \`{ error, code: 409, optOut: true }\` until the caller resends with \`optOutAck: true\` (explicit human acknowledgement; audited, high severity).
 
 **Response (201):** \`{ success: true, conversationId, leadId, contactId, createdContact, createdLead, createdConversation, unarchived, channelSwitched, messageId?, verified, canonicalPhone, phoneChanged, verifyReason? }\`. **Errors:** 400 validation (PT-BR message), 403 permission, 409 opt-out.
@@ -750,7 +767,7 @@ Start a 1:1 WhatsApp conversation from the team side, without waiting for the co
 #### POST /api/v1/conversations/receive
 Inject an inbound message from a contact — for external bridges on any channel. Creates the contact and lead if they don't exist; idempotent per externalId.
 
-**Body:** content (required), contactPhone or contactId (one required), channel (default: whatsapp), contentType (default: text), contactFirstName/contactLastName (optional, used when creating the contact), leadTitle (optional), externalId (optional, dedupes redeliveries)
+**Body:** content (required), contactPhone or contactId (one required), channel (default: whatsapp; for \`instagram\`/\`messenger\` send \`contactId\` only plus \`channelConfigId\` of the same organization and channel, otherwise 400), contentType (default: text), contactFirstName/contactLastName (optional, used when creating the contact), leadTitle (optional), externalId (optional, dedupes redeliveries)
 
 **Response:** \`{ success: true, messageId, leadId, contactId }\`
 
@@ -1326,7 +1343,7 @@ Submit data to a published form. Creates a lead + contact automatically.
 | dailyDigest | Daily summary of CRM activity |
 | aiDraftPending | In-app: an AI draft is waiting for review on your lead |
 | conversationTransferred | In-app: a conversation was transferred to you or your department (Central module) |
-| channelSessionLost | In-app + e-mail (v0.69.1): a WhatsApp number lost its connection (logged out, banned, or offline) — sent to members with settings:manage |
+| channelSessionLost | In-app + e-mail (v0.69.1): a WhatsApp number lost its connection (logged out, banned, or offline) or an Instagram/Messenger connection needs reconnecting (expired, invalid or removed on Facebook) — sent to members with settings:manage |
 | aiSpendAlert | In-app (\`ai_spend_warning\` / \`ai_spend_reached\`) + e-mail, admins only (settings:manage): the month's approximate AI spend crossed the warning % (default 80) or reached the R$ cap — once per month each (v0.69) |
 
 ---
@@ -1433,11 +1450,12 @@ Search contacts by name, email, company, or other text fields.
 ### Conversations
 
 #### crm_list_conversations
-List conversations, optionally filtered by lead.
+List conversations, optionally filtered by lead or account.
 - **leadId** (string, optional): Filter by lead
+- **channelConfigId** (string, optional): Filter by account (WhatsApp number, Facebook Page or Instagram account)
 
 #### crm_list_whatsapp_channels
-List the organization's active WhatsApp numbers that can start conversations (id, provider meta|bridge, displayName, phoneDisplay, connected, sessionState). Same as \`GET /api/v1/conversations/channels\`.
+List the organization's active channel accounts (WhatsApp numbers with canStart true; Instagram/Messenger accounts with canStart false). Despite the name it also lists Meta accounts so you can pick a \`channelConfigId\` to filter conversations; only WhatsApp entries can start conversations. Same as \`GET /api/v1/conversations/channels\`.
 
 #### crm_start_conversation
 Start a 1:1 WhatsApp conversation (same semantics as \`POST /api/v1/conversations/start\`). Reuses the contact's latest lead or creates one; verifies the number on bridge channels.
@@ -1693,8 +1711,8 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | contact.created | New contact created |
 | contact.updated | Contact fields updated |
 | conversation.created | New conversation started |
-| message.sent | Message sent to a 1:1 conversation (payload includes leadId, senderType + senderId). Group rooms fire group.message.sent instead |
-| message.received | Inbound message received from a contact |
+| message.sent | Message sent to a 1:1 conversation (payload includes leadId, channel [whatsapp|instagram|messenger|...], senderType + senderId). Group rooms fire group.message.sent instead |
+| message.received | Inbound message received from a contact (payload includes channel, including instagram and messenger) |
 | handoff.requested | Handoff requested (payload includes conversationId + origin: human, ai_keyword, ai_tool, ai_failure, bot_suspect, ai_budget — bot_suspect and ai_budget are set only by the internal core) |
 | handoff.accepted | Handoff accepted (payload includes conversationId) |
 | handoff.rejected | Handoff rejected |
@@ -1727,7 +1745,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | campaign.canceled | Campaign canceled (payload: campaignId, name, stats) |
 | campaign.recipient_replied | A campaign recipient replied within 7 days (payload: campaignId, recipientId, conversationId, leadId, phone) |
 | contact.opted_out | A phone entered the suppression list (payload: phone, source, campaignId?, contactId?) |
-| channel.session_lost | A bridge WhatsApp number lost its session — logged out on the phone, temporary ban, outdated gateway, or offline across two 15-min health checks; campaigns and group posts on the channel are paused (payload: channelConfigId, provider [bridge\|instagram\|messenger], state [logged_out\|temporarily_banned\|outdated\|disconnected for bridge; reauth_required for Instagram/Messenger, whose connection needs reconnecting; campaigns are not paused and the near-expiry notice sends no webhook], detail, phoneDisplay [masked, empty on self-hosted] or accountMasked [last 4 digits, Instagram/Messenger]) |
+| channel.session_lost | A bridge WhatsApp number lost its session — logged out on the phone, temporary ban, outdated gateway, or offline across two 15-min health checks; campaigns and group posts on the channel are paused (payload: channelConfigId, provider [bridge\|instagram\|messenger], state [logged_out\|temporarily_banned\|outdated\|disconnected for bridge; reauth_required or revoked for Instagram/Messenger — the connection needs reconnecting, revoked means the authorization was removed on Facebook and the channels are disabled; campaigns are not paused and the near-expiry notice sends no webhook], detail, phoneDisplay [masked, empty on self-hosted] or accountMasked [last 4 digits, Instagram/Messenger]) |
 | group.joined | The connected number joined (or was added to) a WhatsApp group — registered with monitoring OFF (payload: groupChatId, jid, subject, channelConfigId, participantsCount, reason) |
 | group.left | The connected number left the group, or was removed (payload: groupChatId, jid, subject) |
 | group.updated | Group name/topic/admins/participants changed (payload: groupChatId, jid, subject, join, leave, promote, demote) |

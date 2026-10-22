@@ -287,7 +287,7 @@ export type EmitChannelDegradedArgs = {
   connection: Doc<"metaConnections">;
   /** Configs da conexão (messenger e/ou instagram), já lidos por `by_meta_connection`. */
   configs: Doc<"channelConfigs">[];
-  state: "reauth_required" | "data_access_expiring";
+  state: "reauth_required" | "data_access_expiring" | "revoked";
   detail: string;
   /** Quem detectou (só vale para `reauth_required`): decide se o cron pode recuperar sozinho. */
   source?: "health" | "send" | "test" | "subscribe";
@@ -308,7 +308,9 @@ export type EmitChannelDegradedArgs = {
  */
 export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDegradedArgs): Promise<boolean> {
   const { connection: conn, now } = args;
+  // `revoked` (desautorização na Meta) sempre avisa: quem chama já pulou conexões revogadas.
   const repeated =
+    args.state !== "revoked" &&
     conn.authAlertedAt !== undefined &&
     (args.state === "reauth_required" ? conn.authState === "reauth_required" : true);
   if (repeated) {
@@ -323,7 +325,8 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
     ...(args.state === "reauth_required"
       ? { authState: "reauth_required" as const, authSource: args.source ?? ("send" as const) }
       : {}),
-    authDetail: args.state === "reauth_required" ? args.detail : "data_access_expiring",
+    ...(args.state === "revoked" ? { authState: "revoked" as const, authSource: "deauthorize" as const } : {}),
+    authDetail: args.state === "data_access_expiring" ? "data_access_expiring" : args.detail,
     authAlertedAt: now,
     updatedAt: now,
   });
@@ -331,7 +334,9 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
   const pageName = conn.pageName ?? "Página";
   const label = `${pageName}${conn.igUsername ? ` / @${conn.igUsername}` : ""}`;
   const title =
-    args.state === "reauth_required"
+    args.state === "revoked"
+      ? `A autorização da Página ${label} foi removida`
+      : args.state === "reauth_required"
       ? `Página ${label} precisa ser reconectada`
       : `Reconecte ${label} para manter o acesso`;
 
@@ -343,11 +348,15 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
     actorType: "system",
     changes: {
       before: { authState: conn.authState },
-      after: { authState: args.state === "reauth_required" ? "reauth_required" : conn.authState },
+      after: {
+        authState: args.state === "reauth_required" || args.state === "revoked" ? args.state : conn.authState,
+      },
     },
     metadata: { fields: ["authState", "authDetail"], state: args.state, detail: args.detail },
     description:
-      args.state === "reauth_required"
+      args.state === "revoked"
+        ? `A autorização da Página "${pageName}" (Instagram/Messenger) foi removida no Facebook`
+        : args.state === "reauth_required"
         ? `A Página "${pageName}" (Instagram/Messenger) precisa ser reconectada`
         : `O acesso da Página "${pageName}" (Instagram/Messenger) está perto de expirar`,
     severity: "high",
@@ -362,7 +371,7 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
       memberId: m._id,
       type: "channel_session_lost",
       title,
-      body: args.state === "reauth_required" ? args.detail : "Reconecte a conta para manter o acesso às mensagens.",
+      body: args.state !== "data_access_expiring" ? args.detail : "Reconecte a conta para manter o acesso às mensagens.",
       data: { metaConnectionId: conn._id, state: args.state },
     });
     await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
@@ -374,13 +383,13 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
         channelName: label,
         provider: "meta_messaging",
         state: args.state,
-        detail: args.state === "reauth_required" ? args.detail : undefined,
+        detail: args.state !== "data_access_expiring" ? args.detail : undefined,
       },
     });
   }
 
   // "Expirando" é aviso, não perda: sem webhook `channel.session_lost`.
-  if (args.state !== "reauth_required") return true;
+  if (args.state === "data_access_expiring") return true;
   for (const config of args.configs) {
     if (config.channel !== "instagram" && config.channel !== "messenger") continue;
     const accountId = config.channel === "instagram" ? config.instagramAccountId : config.messengerPageId;
