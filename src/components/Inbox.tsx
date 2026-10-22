@@ -17,6 +17,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { useKeepPrevious } from "@/hooks/useKeepPrevious";
+import { useInfiniteSentinel } from "@/hooks/useInfiniteSentinel";
 import {
   CONVERSATIONS_DEFAULT_LIMIT,
   CONVERSATIONS_MAX_LIMIT,
@@ -334,6 +335,19 @@ export function Inbox() {
   })();
 
   const isSearching = debouncedTerm.trim().length >= 2;
+
+  // Scroll infinito: o sentinela no fim da lista chama o MESMO handler do
+  // botão quando o usuário rola até lá (o botão fica como fallback — lista
+  // menor que a tela não carrega sozinha, ver lib/infiniteScroll).
+  const conversationListScrollRef = useRef<HTMLDivElement>(null);
+  const conversationListSentinelRef = useInfiniteSentinel({
+    enabled: canLoadMoreConversations && !loadingMoreConversations && !isSearching,
+    loading: loadingMoreConversations,
+    onReach: handleLoadMoreConversations,
+    root: conversationListScrollRef,
+    resetKey: listFilterKey,
+  });
+
   const searchResults = useQuery(
     api.conversations.searchMessages,
     isSearching
@@ -1744,7 +1758,7 @@ export function Inbox() {
           )}
         </div>
 
-        <div className="overflow-y-auto flex-1">
+        <div ref={conversationListScrollRef} className="overflow-y-auto flex-1">
           {isSearching ? (
             searchResults === undefined ? (
               <div className="p-6 flex justify-center">
@@ -2016,13 +2030,22 @@ export function Inbox() {
           )}
           {!isSearching && canLoadMoreConversations ? (
             <div className="text-center py-3">
+              <div ref={conversationListSentinelRef} aria-hidden="true" className="h-px" />
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleLoadMoreConversations}
                 disabled={loadingMoreConversations}
+                aria-busy={loadingMoreConversations}
               >
-                {loadingMoreConversations ? "Carregando…" : "Carregar mais conversas"}
+                {loadingMoreConversations ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Spinner size="sm" />
+                    Carregando mais conversas…
+                  </span>
+                ) : (
+                  "Carregar mais conversas"
+                )}
               </Button>
             </div>
           ) : !isSearching && conversations && conversations.length >= CONVERSATIONS_MAX_LIMIT ? (
