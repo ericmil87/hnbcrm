@@ -60,7 +60,6 @@ import { GROUP_AGENT_TOOLS } from "./lib/agentTools";
 import { getLeadRef } from "./lib/leadRef";
 import {
   clearOwnedAiTurnLock,
-  effectiveAiTurnLock,
   ownsAiTurnLock,
   getRuntime,
   releaseAiTurnLock,
@@ -1299,7 +1298,7 @@ export const internalClaimForProcessing = internalMutation({
     // a linha — ou a ausência dela, pelo índice — e escreve nela na MESMA
     // transação; claims concorrentes colidem no OCC e só um commita.
     const runtime = await getRuntime(ctx, conversation._id);
-    const lock = effectiveAiTurnLock(runtime, conversation); // TRANSITÓRIO: respeita lock legado vivo (remover com os campos legados)
+    const lock = runtime?.aiTurnLock;
     if (lock && lock.leaseUntil > now) {
       const delayMs = Math.max(lock.leaseUntil - now, 1_000);
       await ctx.db.patch(item._id, { nextAttemptAt: now + delayMs, updatedAt: now });
@@ -2512,7 +2511,7 @@ export const internalCommitAiReply = internalMutation({
     if (!conversation) return { committed: false as const, reason: "conversa_removida" };
 
     // O lease ainda é nosso? (a action pode ter passado do prazo)
-    if (!(await ownsAiTurnLock(ctx, conversation, args.runId))) {
+    if (!(await ownsAiTurnLock(ctx, conversation._id, args.runId))) {
       return { committed: false as const, reason: "lock_perdido" };
     }
 
@@ -2696,7 +2695,7 @@ export const internalCommitAiReply = internalMutation({
     }
 
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
-    await clearOwnedAiTurnLock(ctx, conversation, args.runId);
+    await clearOwnedAiTurnLock(ctx, conversation._id);
     return { committed: true as const, messageId };
   },
 });
@@ -2738,7 +2737,7 @@ export const internalCommitAiSuggestion = internalMutation({
     const now = Date.now();
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) return { committed: false as const, reason: "conversa_removida" };
-    if (!(await ownsAiTurnLock(ctx, conversation, args.runId))) {
+    if (!(await ownsAiTurnLock(ctx, conversation._id, args.runId))) {
       return { committed: false as const, reason: "lock_perdido" };
     }
     // Humano assumiu durante a geração? Rascunho vira ruído — descarta. Exceto
@@ -2750,7 +2749,7 @@ export const internalCommitAiSuggestion = internalMutation({
       conversation.aiPausedUntil > now
     ) {
       await ctx.db.patch(args.queueItemId, { status: "skipped", error: "ia_pausada", updatedAt: now });
-      await clearOwnedAiTurnLock(ctx, conversation, args.runId);
+      await clearOwnedAiTurnLock(ctx, conversation._id);
       await releaseFollowUpFromQueue(ctx, await ctx.db.get(args.queueItemId), "ia_pausada");
       return { committed: false as const, reason: "ia_pausada" };
     }
@@ -2770,7 +2769,7 @@ export const internalCommitAiSuggestion = internalMutation({
           error: "rascunho_ja_revisado",
           updatedAt: now,
         });
-        await clearOwnedAiTurnLock(ctx, conversation, args.runId);
+        await clearOwnedAiTurnLock(ctx, conversation._id);
         await releaseFollowUpFromQueue(
           ctx,
           await ctx.db.get(args.queueItemId),
@@ -2859,7 +2858,7 @@ export const internalCommitAiSuggestion = internalMutation({
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
     // Fase 4b: o lock mora no runtime (já validado como nosso nesta transação).
-    await clearOwnedAiTurnLock(ctx, conversation, args.runId);
+    await clearOwnedAiTurnLock(ctx, conversation._id);
     // Conversa de grupo não tem lead e `activities.leadId` é obrigatório — o
     // agente de grupo (F4) registra em `groupChats.timeline`.
     if (conversation.leadId) await ctx.db.insert("activities", {

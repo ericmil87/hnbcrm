@@ -1409,55 +1409,19 @@ describe("lock do turno de grupo (conversationRuntime)", () => {
     expect((await runtimeLock(t, seed))?.runId).toBe("run-dona");
   });
 
-  test("janela de deploy: commit aceita lock SÓ no campo legado e limpa-o", async () => {
+  test("commit com o lock do runtime commita e solta o lock", async () => {
     const t = setup();
     const seed = await seedGroupOrg(t, { replyMode: "suggest" });
     const item = await claimable(t, seed);
     const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
       queueItemId: item._id,
-      runId: "run-antiga",
+      runId: "run-dona",
     });
     const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
-    // Simula a run do código ANTIGO: lock só no doc da conversa.
-    await t.run(async (ctx) => {
-      const row = (await ctx.db
-        .query("conversationRuntime")
-        .withIndex("by_conversation", (q) => q.eq("conversationId", seed.conversationId))
-        .first())!;
-      await ctx.db.patch(row._id, { aiTurnLock: undefined });
-      await ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
-      });
-    });
+    expect((await runtimeLock(t, seed))?.runId).toBe("run-dona");
 
-    const result = await commitSuggestion(t, seed, item._id, "run-antiga", agentRunId);
+    const result = await commitSuggestion(t, seed, item._id, "run-dona", agentRunId);
     expect(result.committed).toBe(true);
-    const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
-    expect(conversation!.aiTurnLock).toBeUndefined();
-  });
-
-  test("claim: lock legado vivo defere; expirado não segura", async () => {
-    const t = setup();
-    const seed = await seedGroupOrg(t);
-    await t.run(async (ctx) =>
-      ctx.db.patch(seed.conversationId, {
-        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
-      })
-    );
-    const item = await claimable(t, seed);
-    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
-      queueItemId: item._id,
-      runId: "run-nova",
-    });
-    expect(claim.kind).toBe("defer");
-
-    vi.setSystemTime(Date.now() + 61_000);
-    await releaseDebounce(t, item._id);
-    const claim2 = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
-      queueItemId: item._id,
-      runId: "run-nova",
-    });
-    expect(claim2.kind).toBe("run");
-    expect((await runtimeLock(t, seed))?.runId).toBe("run-nova");
+    expect((await runtimeLock(t, seed)) ?? null).toBeNull();
   });
 });
