@@ -159,6 +159,17 @@ async function seedOrg(
       createdAt: now,
       updatedAt: now,
     });
+    // Gate de webhooks (lib/webhookDispatch): sem assinante ATIVO na org nada
+    // é agendado — os testes daqui afirmam os eventos, então a org assina "*".
+    await ctx.db.insert("webhooks", {
+      organizationId,
+      name: "Assinante de teste",
+      url: "https://example.test/hook",
+      events: ["*"],
+      secret: "segredo-de-teste",
+      isActive: true,
+      createdAt: now,
+    });
     return { organizationId, adminUserId, adminId, agentId, leadId, conversationId };
   });
 }

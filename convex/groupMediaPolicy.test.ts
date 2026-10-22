@@ -868,6 +868,13 @@ describe("revisão: trava por token (M1)", () => {
       organizationId,
       messageId: message!._id,
     });
+    // Só avança o relógio DEPOIS que a action chegou ao fetch (e armou o
+    // timeout dele). Sem isso o teste dependia de haver outro timer na fila —
+    // o job de webhook que o gate (lib/webhookDispatch) deixou de agendar em
+    // org sem assinante — para dar à action os ticks até o `setTimeout`.
+    await vi.waitFor(() =>
+      expect(hanging.mock.calls.some(([url]) => String(url).includes("/chat/download"))).toBe(true)
+    );
     await vi.advanceTimersByTimeAsync(DEFERRED_FETCH_TIMEOUT_MS + 1000);
     const result = await pending;
     const download = hanging.mock.calls.find(([url]) => String(url).includes("/chat/download"));
