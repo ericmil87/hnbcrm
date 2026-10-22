@@ -709,4 +709,4 @@ clearTimeout(timeout);
 
 ---
 
-*This document is a research reference for planning future development. Items should be moved to the active roadmap in `docs/PROJECT-STATUS.md` as they are prioritized and scheduled.*
+*This document is a research reference for planning future development. Shipped items are recorded in `CHANGELOG.md`; technical decisions per area live in `docs/architecture/` as they are prioritized and scheduled.*
