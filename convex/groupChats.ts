@@ -16,6 +16,7 @@
  * aceite auditado, não bloquear — é decisão do operador.
  */
 import { v, type ObjectType } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import {
   action,
   internalAction,
@@ -84,11 +85,21 @@ import {
   syncGroupSummaryToConversation,
 } from "./lib/conversationListFields";
 import {
+  memberMatchesSearch,
+  normalizeSearchText,
+  participantSearchName,
+  phonePrefixVariants,
+  phoneSearchDigits,
+} from "./lib/groupMemberSearch";
+import {
   replaceTimelineRows,
   dedupeParticipants,
   deleteGroupSideTables,
+  deleteParticipantRows,
   diffParticipantsTable,
+  findParticipant,
   isGroupMigrated,
+  STORE_PARTICIPANTS_CAP,
   loadParticipantRows,
   loadTimelineRows,
   participantsForWrite,
@@ -191,37 +202,65 @@ export const listGroups = query({
   handler: listGroupsHandler,
 });
 
-/** Um grupo pelo id, com a lista completa de participantes. */
+/**
+ * "Somos nós?" por participante, decidido no SERVIDOR a partir do canal.
+ *
+ * A UI precisa marcar "você" na lista de membros. Antes devolvíamos a CHAVE
+ * crua do nosso número (`bridgeLid ?? bridgePhone`) — o mesmo campo que
+ * `channelConfigs.getChannelConfigs` mascara, entregue sob o gate mais baixo do
+ * produto (review de segurança nº 9). Agora sai só um booleano.
+ * O LID vem antes do telefone pelo mesmo motivo do `findSelfParticipant`: num
+ * canal reprovisionado o `bridgePhone` gravado pode estar defasado.
+ */
+function selfMatcher(
+  config: Pick<Doc<"channelConfigs">, "bridgeLid" | "bridgePhone"> | null
+): (p: { lid?: string; phone?: string }) => boolean {
+  const selfLidUser = config?.bridgeLid ? config.bridgeLid.split("@")[0] : null;
+  return (p) => {
+    if (config?.bridgeLid && (p.lid === config.bridgeLid || p.lid?.split("@")[0] === selfLidUser)) {
+      return true;
+    }
+    return !!config?.bridgePhone && p.phone === config.bridgePhone;
+  };
+}
+
+/**
+ * Um grupo pelo id.
+ *
+ * `includeParticipants` (perf I/O onda 2): a lista inteira (até 1.024 linhas,
+ * ~250 KB numa sala grande) só vem quando pedida. O HANDLER mantém o contrato
+ * antigo por padrão (ausente = inclui) porque é ele que a REST
+ * `GET /api/v1/groups/get` e o MCP `crm_get_group` usam via `groupsInternal`;
+ * a query PÚBLICA `getGroup` (o app) inverte o padrão — o front lê os membros
+ * paginados por `listGroupMembers` e os nomes das menções por
+ * `resolveGroupMemberNames`.
+ */
 export const getGroupArgs = { groupChatId: v.id("groupChats") };
-export type GetGroupArgs = ObjectType<typeof getGroupArgs> & InternalActorArgs;
+export type GetGroupArgs = ObjectType<typeof getGroupArgs> &
+  InternalActorArgs & { includeParticipants?: boolean };
 export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
     const group = await ctx.db.get(args.groupChatId);
     if (!group) return null;
     await authorizeGroups(ctx, group.organizationId, "inbox", "view_own", args.actorMemberId);
-    // A UI precisa marcar "você" na lista de membros. Antes devolvíamos a CHAVE
-    // crua do nosso número (`bridgeLid ?? bridgePhone`) — o mesmo campo que
-    // `channelConfigs.getChannelConfigs` mascara, entregue aqui sob o gate mais
-    // baixo do produto (review de segurança nº 9). Agora quem compara é o
-    // servidor e sai só um booleano por participante.
-    // O LID vem antes do telefone pelo mesmo motivo do `findSelfParticipant`:
-    // num canal reprovisionado o `bridgePhone` gravado pode estar defasado.
     const config = await ctx.db.get(group.channelConfigId);
     const selfKey = config?.bridgeLid ?? config?.bridgePhone ?? null;
-    const selfLidUser = config?.bridgeLid ? config.bridgeLid.split("@")[0] : null;
-    const isSelfParticipant = (p: { lid?: string; phone?: string }): boolean => {
-      if (config?.bridgeLid && (p.lid === config.bridgeLid || p.lid?.split("@")[0] === selfLidUser)) {
-        return true;
-      }
-      return !!config?.bridgePhone && p.phone === config.bridgePhone;
-    };
+    const isSelfParticipant = selfMatcher(config);
+    const includeParticipants = args.includeParticipants !== false;
     // Fase 4d: membros e linha do tempo vêm das tabelas próprias quando a sala
     // já migrou (o shape devolvido — e o contrato da REST/MCP — não muda).
-    const participants = await participantsOf(ctx, group);
+    const participants = includeParticipants ? await participantsOf(ctx, group) : null;
     const timeline = await timelineOf(ctx, group);
-    const { participantsMigratedAt: _migratedAt, ...groupFields } = group;
+    const {
+      participantsMigratedAt: _migratedAt,
+      participants: legacyParticipants,
+      timeline: _legacyTimeline,
+      ...groupFields
+    } = group;
     return {
       ...groupFields,
-      participants: participants.map((p) => ({ ...p, isSelf: isSelfParticipant(p) })),
+      ...(participants
+        ? { participants: participants.map((p) => ({ ...p, isSelf: isSelfParticipant(p) })) }
+        : {}),
       timeline,
       // `selfKey` continua saindo APENAS para quem administra o número, que já
       // enxerga a configuração do canal inteira.
@@ -237,15 +276,261 @@ export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
       // Nosso número é conhecido? A UI usa isto para avisar que o gatilho por
       // menção não funciona em gateway self-hosted (review de correção nº 22).
       selfKnown: selfKey !== null,
-      participantsCount: countParticipants(participants, group.participantsCount),
+      // Sem a lista, a contagem é a mesma de sempre: sala migrada usa o campo
+      // mantido por todo escritor; a legada conta o array do próprio doc.
+      participantsCount: participants
+        ? countParticipants(participants, group.participantsCount)
+        : isGroupMigrated(group)
+          ? (group.participantsCount ?? 0)
+          : countParticipants(legacyParticipants, group.participantsCount),
       mediaPolicy: fillGroupMediaOverride(group.mediaPolicy),
       effectiveMedia: resolveEffectiveGroupMedia(config?.bridgeGroupMedia, group.mediaPolicy),
     };
   }
 export const getGroup = query({
-  args: getGroupArgs,
+  args: { ...getGroupArgs, includeParticipants: v.optional(v.boolean()) },
   returns: v.any(),
-  handler: getGroupHandler,
+  handler: (ctx, args) =>
+    getGroupHandler(ctx, { ...args, includeParticipants: args.includeParticipants === true }),
+});
+
+/**
+ * Os membros da sala podem ser mostrados? Só com a sala ACOMPANHADA e ativa
+ * (LGPD — `participantsForStorage`): parar de acompanhar, remover a sala ou
+ * sairmos dela agenda a purga das linhas, que é assíncrona; até ela terminar
+ * nada pode sair por `listGroupMembers`/`resolveGroupMemberNames`.
+ */
+function groupMembersVisible(
+  group: Pick<Doc<"groupChats">, "monitored" | "removedAt" | "leftAt">
+): boolean {
+  return group.monitored === true && group.removedAt === undefined && group.leftAt === undefined;
+}
+
+/** Página do painel de membros (e teto da busca do "@"). */
+export const GROUP_MEMBERS_PAGE_MAX = 50;
+/** Teto do termo de busca (nome/telefone). */
+const GROUP_MEMBERS_SEARCH_MAX = 60;
+
+const groupMemberValidator = v.object({
+  key: v.string(),
+  lid: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  name: v.optional(v.string()),
+  isAdmin: v.boolean(),
+  isSuperAdmin: v.boolean(),
+  contactId: v.optional(v.id("contacts")),
+  joinedAt: v.optional(v.number()),
+  isSelf: v.boolean(),
+});
+
+const groupMembersPageValidator = v.object({
+  page: v.array(groupMemberValidator),
+  isDone: v.boolean(),
+  continueCursor: v.string(),
+  splitCursor: v.optional(v.union(v.string(), v.null())),
+  pageStatus: v.optional(
+    v.union(v.literal("SplitRecommended"), v.literal("SplitRequired"), v.null())
+  ),
+});
+
+type GroupMember = {
+  key: string;
+  lid?: string;
+  phone?: string;
+  name?: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  contactId?: Id<"contacts">;
+  joinedAt?: number;
+  isSelf: boolean;
+};
+
+const EMPTY_MEMBERS_PAGE = { page: [] as GroupMember[], isDone: true, continueCursor: "" };
+
+function toGroupMember(
+  p: {
+    lid?: string;
+    phone?: string;
+    name?: string;
+    isAdmin: boolean;
+    isSuperAdmin: boolean;
+    contactId?: Id<"contacts">;
+    joinedAt?: number;
+  },
+  isSelf: (p: { lid?: string; phone?: string }) => boolean
+): GroupMember | null {
+  const key = p.lid ?? p.phone;
+  if (!key) return null;
+  return {
+    key,
+    ...(p.lid !== undefined ? { lid: p.lid } : {}),
+    ...(p.phone !== undefined ? { phone: p.phone } : {}),
+    ...(p.name !== undefined ? { name: p.name } : {}),
+    isAdmin: p.isAdmin === true,
+    isSuperAdmin: p.isSuperAdmin === true,
+    ...(p.contactId !== undefined ? { contactId: p.contactId } : {}),
+    ...(p.joinedAt !== undefined ? { joinedAt: p.joinedAt } : {}),
+    isSelf: isSelf(p),
+  };
+}
+
+/**
+ * Membros ATIVOS de uma sala, paginados (perf Convex I/O, onda 2).
+ *
+ * Substitui o `participants[]` que o front recebia inteiro de `getGroup` (até
+ * 1.024 linhas, ~250 KB, reexecutado a cada mudança da sala): agora vem uma
+ * página de até 50 (~12 KB).
+ *
+ * Lê o doc da sala UMA vez — é o mínimo para autorizar (org) e achar o canal
+ * (`isSelf`); desde a fase 4d ele é pequeno, então a reexecução quando a sala
+ * muda custa uma página, não a lista. O canal é lido uma vez por chamada.
+ *
+ * `search`: termo com cara de telefone vai por PREFIXO no `by_group_and_phone`
+ * (variantes de `phonePrefixVariants`: com o DDI 55 na frente, para "85 9…"
+ * achar "5585 9…", e com/sem o 9º dígito BR, 12 ↔ 13 dígitos). Busca pelo FIM
+ * do número (os 4 dígitos visíveis, ••••5729) não existe — o índice só serve
+ * prefixo. O resto vai pelo search index de `searchName` (nome normalizado sem
+ * acento/caixa — o termo é normalizado igual, então "joao" acha "João"; prefixo
+ * por palavra, como toda busca do Convex). Linha antiga sem `searchName` não
+ * aparece na busca por nome até o backfill
+ * `internalBackfillParticipantSearchName`.
+ * Busca devolve UMA página (`isDone: true`), até `numItems` (≤ 50) — é
+ * autocomplete/filtro, não listagem.
+ *
+ * Não-membro (ou sala inexistente) recebe página vazia, sem erro: a query é
+ * reativa e um throw derrubaria a tela. Sala não acompanhada, removida ou de
+ * onde saímos também recebe vazio (LGPD, defesa em profundidade): a purga das
+ * linhas é assíncrona e, até terminar, os membros ainda estariam na tabela.
+ * Sala ainda NÃO migrada (fase 4d): a lista vem do array legado do doc, numa
+ * página só — transitório até o backfill.
+ */
+export const listGroupMembers = query({
+  args: {
+    groupChatId: v.id("groupChats"),
+    paginationOpts: paginationOptsValidator,
+    search: v.optional(v.string()),
+  },
+  returns: groupMembersPageValidator,
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group || !groupMembersVisible(group)) return EMPTY_MEMBERS_PAGE;
+    try {
+      await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
+    } catch {
+      return EMPTY_MEMBERS_PAGE;
+    }
+    const config = await ctx.db.get(group.channelConfigId);
+    const isSelf = selfMatcher(config);
+    const numItems = Math.max(1, Math.min(args.paginationOpts.numItems, GROUP_MEMBERS_PAGE_MAX));
+    const term = (args.search ?? "").trim().slice(0, GROUP_MEMBERS_SEARCH_MAX);
+    const digits = term ? phoneSearchDigits(term) : null;
+
+    if (!isGroupMigrated(group)) {
+      const page = (group.participants ?? [])
+        .filter((p) => p.leftAt === undefined)
+        .filter((p) => memberMatchesSearch(p, term))
+        .slice(0, term ? numItems : STORE_PARTICIPANTS_CAP)
+        .map((p) => toGroupMember(p, isSelf))
+        .filter((p): p is GroupMember => p !== null);
+      return { page, isDone: true, continueCursor: "" };
+    }
+
+    if (!term) {
+      const result = await ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group_and_left", (q) =>
+          q.eq("groupChatId", args.groupChatId).eq("leftAt", undefined)
+        )
+        .paginate({ ...args.paginationOpts, numItems });
+      return {
+        ...result,
+        page: result.page
+          .map((row) => toGroupMember(row, isSelf))
+          .filter((p): p is GroupMember => p !== null),
+      };
+    }
+
+    const rows: Doc<"groupParticipants">[] = [];
+    const seen = new Set<string>();
+    const push = (list: Doc<"groupParticipants">[]) => {
+      for (const row of list) {
+        if (rows.length >= numItems) return;
+        if (row.leftAt !== undefined || seen.has(row._id)) continue;
+        seen.add(row._id);
+        rows.push(row);
+      }
+    };
+    if (digits) {
+      for (const prefix of phonePrefixVariants(digits)) {
+        // `~` vem depois de todo dígito: [prefixo, prefixo~) = "começa com".
+        push(
+          await ctx.db
+            .query("groupParticipants")
+            .withIndex("by_group_and_phone", (q) =>
+              q.eq("groupChatId", args.groupChatId).gte("phone", prefix).lt("phone", `${prefix}~`)
+            )
+            .take(numItems * 2)
+        );
+      }
+    } else {
+      const needle = normalizeSearchText(term);
+      if (needle) {
+        push(
+          await ctx.db
+            .query("groupParticipants")
+            .withSearchIndex("search_name", (q) =>
+              q.search("searchName", needle).eq("groupChatId", args.groupChatId)
+            )
+            .take(numItems * 2)
+        );
+      }
+    }
+    return {
+      page: rows
+        .map((row) => toGroupMember(row, isSelf))
+        .filter((p): p is GroupMember => p !== null),
+      isDone: true,
+      continueCursor: "",
+    };
+  },
+});
+
+/** Teto de JIDs resolvidos por chamada (as menções das mensagens carregadas). */
+const GROUP_MEMBER_NAMES_MAX = 100;
+
+/**
+ * Nome dos membros mencionados nas mensagens da tela (o negrito do "@Fulano"
+ * recebido). Antes o front montava o mapa com a lista inteira de `getGroup`;
+ * agora pede só os JIDs que aparecem — um lookup por índice cada, sem ler a
+ * lista. Não-membro recebe lista vazia.
+ */
+export const resolveGroupMemberNames = query({
+  args: { groupChatId: v.id("groupChats"), jids: v.array(v.string()) },
+  returns: v.array(v.object({ jid: v.string(), name: v.string() })),
+  handler: async (ctx, args) => {
+    if (args.jids.length === 0) return [];
+    const group = await ctx.db.get(args.groupChatId);
+    // LGPD: sala não acompanhada/removida/abandonada não expõe nome de membro.
+    if (!group || !groupMembersVisible(group)) return [];
+    try {
+      await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
+    } catch {
+      return [];
+    }
+    const out: { jid: string; name: string }[] = [];
+    const seen = new Set<string>();
+    for (const jid of args.jids.slice(0, GROUP_MEMBER_NAMES_MAX)) {
+      if (typeof jid !== "string" || !jid || seen.has(jid)) continue;
+      seen.add(jid);
+      const user = jid.split("@")[0].split(":")[0];
+      const who = jid.endsWith("@lid") ? { lid: jid } : /^\d+$/.test(user) ? { phone: user } : null;
+      if (!who) continue;
+      const p = await findParticipant(ctx, group, who);
+      const name = p?.name?.trim();
+      if (name) out.push({ jid, name });
+    }
+    return out;
+  },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -942,10 +1227,54 @@ const gatewayGroupValidator = v.object({
   participantsCount: v.number(),
 });
 
+const gatewayParticipantsValidator = v.array(
+  v.object({
+    lid: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    name: v.optional(v.string()),
+    isAdmin: v.boolean(),
+    isSuperAdmin: v.boolean(),
+  })
+);
+
+/**
+ * Escritas de "apagar membros" que o sync faz INLINE por execução (sala que
+ * sumiu da listagem). O resto vai para `internalPurgeGroupParticipants`, que
+ * se reagenda — 16 salas de 1.024 apagadas numa transação só estourariam.
+ */
+const SYNC_INLINE_DELETE_BUDGET = 2000;
+
+/** Campos do doc da sala que o sync compara antes de regravar. */
+function syncPatchChanges(
+  prev: Doc<"groupChats">,
+  patch: Partial<Doc<"groupChats">>
+): boolean {
+  for (const [key, value] of Object.entries(patch)) {
+    // Carimbos não contam como "mudou": senão todo sync regravaria toda sala
+    // (e reexecutaria toda query que lê o doc), com nada de novo. Consequência:
+    // `groupChats.lastSyncAt` da SALA passou a significar "última mudança vinda
+    // do sync", não "último sync" (o do número inteiro é
+    // `channelConfigs.bridgeGroupsLastSyncAt`). A REST/MCP devolvem o doc cru,
+    // então quem integra vê esse significado novo.
+    if (key === "lastSyncAt" || key === "updatedAt") continue;
+    const before = (prev as Record<string, unknown>)[key];
+    if (JSON.stringify(before ?? null) !== JSON.stringify(value ?? null)) return true;
+  }
+  return false;
+}
+
 /**
  * Aplica o resultado de `/group/list`: upsert dos que vieram e `removedAt` nos
  * que sumiram. NUNCA toca em `monitored`, `conversationId` ou `ai` — essas são
  * decisões do operador, e uma sincronização não pode desfazê-las.
+ *
+ * Perf (Convex I/O, onda 2): esta mutation grava só os METADADOS das salas
+ * (barato) e devolve em `participantJobs` as salas cujos membros precisam do
+ * diff; quem chama (`applyGatewayGroupList`, numa action) roda
+ * `internalApplyGatewayParticipants` UMA vez por sala, em série — cada uma na
+ * sua transação. Antes o diff de todas as salas acompanhadas corria aqui
+ * dentro (até 1.024 leituras/escritas por sala; 16 salas grandes ≈ 16 mil
+ * escritas numa transação só). Sala sem nada novo não é regravada.
  */
 export const internalUpsertGroupsFromSync = internalMutation({
   args: {
@@ -955,7 +1284,12 @@ export const internalUpsertGroupsFromSync = internalMutation({
     // ausentes como removidos — a lista recebida não é a verdade completa.
     full: v.boolean(),
   },
-  returns: v.object({ upserted: v.number(), removed: v.number() }),
+  returns: v.object({
+    upserted: v.number(),
+    removed: v.number(),
+    syncedAt: v.number(),
+    participantJobs: v.array(v.object({ groupChatId: v.id("groupChats"), jid: v.string() })),
+  }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new Error("Canal não encontrado");
@@ -969,51 +1303,49 @@ export const internalUpsertGroupsFromSync = internalMutation({
       .collect();
     const byJid = new Map(existing.map((g) => [g.jid, g]));
 
+    const participantJobs: { groupChatId: Id<"groupChats">; jid: string }[] = [];
     let upserted = 0;
     for (const raw of args.groups) {
       const group = raw as ParsedGroupInfo;
       const fields = groupFieldsFromGateway(group, ourLid, ourPhone, now);
+      // Membros ativos da sala segundo o gateway — o MESMO número que o diff
+      // chega (o merge mantém 1 linha ativa por participante recebido, e quem
+      // sumiu ganha `leftAt`), então dá para gravar a contagem já aqui.
+      const activeCount = mergeParticipantsFromGateway(undefined, group.participants, now).length;
       const prev = byJid.get(group.jid);
       if (prev) {
-        // Limite conhecido (fase 4d): lê até 1.024 linhas por sala acompanhada
-        // — com ~31 salas grandes num canal passa das 32 mil leituras da
-        // transação; e entre o deploy e o backfill, o 1º sync insere a tabela
-        // inteira de cada sala (16 salas de 1.024 ≈ 16 mil escritas). Rodar o
-        // backfill logo após o deploy; canal com >15 salas acompanhadas
-        // grandes pode precisar de sync paginado (follow-up).
-        const current = await participantsForWrite(ctx, prev);
-        const merged = mergeParticipantsFromGateway(current.list, group.participants, now);
-        // Sala NÃO acompanhada guarda só a contagem — nome e telefone de
-        // terceiros ficam fora do banco (review de segurança nº 1).
-        const stored = participantsForStorage(prev.monitored, merged);
-        const participantsPatch = await writeParticipants(
-          ctx,
-          prev,
-          stored.participants,
-          now,
-          current.rows
-        );
+        const migrated = isGroupMigrated(prev);
+        // Diff de membros: sala acompanhada; e a legada (não migrada) sempre,
+        // porque o array dela mora no doc e o diff é quem o mantém (inclusive
+        // esvaziando o de sala NÃO acompanhada — LGPD).
+        if (prev.monitored === true || !migrated) {
+          participantJobs.push({ groupChatId: prev._id, jid: group.jid });
+        }
         const timelinePatch =
           prev.subject !== group.subject
             ? await recordTimeline(ctx, prev, [{ at: now, type: "renamed", data: group.subject }])
             : {};
-        await ctx.db.patch(prev._id, {
+        const patch: Partial<Doc<"groupChats">> = {
           ...fields,
-          ...participantsPatch,
-          participantsCount: stored.participantsCount,
+          participantsCount: activeCount,
           ...timelinePatch,
           // Voltou a aparecer na listagem: não estamos mais fora dele.
           leftAt: undefined,
-        });
-        await syncGroupSummaryToConversation(ctx, {
-          ...prev,
-          ...fields,
-          subject: fields.subject ?? prev.subject,
-          participants: isGroupMigrated(prev) ? undefined : stored.participants,
-          participantsCount: stored.participantsCount,
-        });
+        };
+        if (syncPatchChanges(prev, patch)) {
+          await ctx.db.patch(prev._id, patch);
+        }
+        // Sala legada: o espelho da conversa conta o array, que só o diff
+        // atualiza — ele sincroniza no fim.
+        if (migrated) {
+          await syncGroupSummaryToConversation(ctx, {
+            ...prev,
+            subject: fields.subject ?? prev.subject,
+            participants: undefined,
+            participantsCount: activeCount,
+          });
+        }
       } else {
-        const merged = mergeParticipantsFromGateway(undefined, group.participants, now);
         const groupChatId = await ctx.db.insert("groupChats", {
           organizationId: config.organizationId,
           channelConfigId: args.channelConfigId,
@@ -1024,7 +1356,7 @@ export const internalUpsertGroupsFromSync = internalMutation({
           // populada por `internalRefreshGroup` quando alguém marca
           // "Acompanhar". Fase 4d: já nasce migrado (membros e linha do tempo
           // só nas tabelas próprias).
-          participantsCount: merged.length,
+          participantsCount: activeCount,
           participantsMigratedAt: now,
           // D4: grupo novo NASCE sem acompanhamento.
           monitored: false,
@@ -1043,16 +1375,23 @@ export const internalUpsertGroupsFromSync = internalMutation({
     let removed = 0;
     if (args.full) {
       const seen = new Set(args.groups.map((g) => g.jid));
+      const budget = { left: SYNC_INLINE_DELETE_BUDGET };
       for (const prev of existing) {
         if (seen.has(prev.jid) || prev.removedAt !== undefined) continue;
         const timelinePatch = await recordTimeline(ctx, prev, [{ at: now, type: "removed" }]);
         // LGPD: deixou de ser acompanhada → membros (nome/telefone de
-        // terceiros) saem do banco; a contagem fica.
-        const participantsPatch = await writeParticipants(ctx, prev, [], now);
+        // terceiros) saem do banco; a contagem fica. Dentro de um orçamento:
+        // o que não couber vai para a limpeza auto-reagendada.
+        const cleared = await deleteParticipantRows(ctx, prev._id, budget);
+        if (!cleared) {
+          await ctx.scheduler.runAfter(0, internal.groupChats.internalPurgeGroupParticipants, {
+            groupChatId: prev._id,
+          });
+        }
         await ctx.db.patch(prev._id, {
           removedAt: now,
           monitored: false,
-          ...participantsPatch,
+          ...(isGroupMigrated(prev) ? {} : { participants: [] }),
           ...timelinePatch,
           updatedAt: now,
         });
@@ -1070,9 +1409,169 @@ export const internalUpsertGroupsFromSync = internalMutation({
       bridgeGroupsLastSyncAt: now,
       updatedAt: now,
     });
-    return { upserted, removed };
+    return { upserted, removed, syncedAt: now, participantJobs };
   },
 });
+
+/**
+ * Diff dos membros de UMA sala contra o que o gateway devolveu (o passo 2 do
+ * sync — ver `internalUpsertGroupsFromSync`). Semântica idêntica à de antes:
+ * novos entram, mudados atualizam, quem sumiu ganha `leftAt`; sala NÃO
+ * acompanhada fica sem linhas (LGPD). Atualiza `participantsCount` e o espelho
+ * `groupParticipantsCount` da conversa (fase 4c) só se mudaram.
+ *
+ * Relê a sala: se ela deixou de ser acompanhada (ou foi removida) entre o
+ * passo 1 e este, o diff vira "apagar todos", como faria o sync antigo.
+ */
+export const internalApplyGatewayParticipants = internalMutation({
+  args: {
+    groupChatId: v.id("groupChats"),
+    participants: gatewayParticipantsValidator,
+    syncedAt: v.number(),
+  },
+  returns: v.object({ inserted: v.number(), updated: v.number(), deleted: v.number() }),
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group) return { inserted: 0, updated: 0, deleted: 0 };
+    const current = await participantsForWrite(ctx, group);
+    const merged = mergeParticipantsFromGateway(current.list, args.participants, args.syncedAt);
+    const stored = participantsForStorage(
+      group.monitored === true && group.removedAt === undefined,
+      merged
+    );
+    const counts = await syncParticipantsTable(
+      ctx,
+      group,
+      stored.participants,
+      args.syncedAt,
+      current.rows
+    );
+    const migrated = isGroupMigrated(group);
+    const patch: Partial<Doc<"groupChats">> = {};
+    if (
+      !migrated &&
+      JSON.stringify(group.participants ?? []) !== JSON.stringify(stored.participants)
+    ) {
+      patch.participants = stored.participants;
+    }
+    if (group.participantsCount !== stored.participantsCount) {
+      patch.participantsCount = stored.participantsCount;
+    }
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(group._id, { ...patch, updatedAt: Date.now() });
+    }
+    await syncGroupSummaryToConversation(ctx, {
+      ...group,
+      participants: migrated ? undefined : stored.participants,
+      participantsCount: stored.participantsCount,
+    });
+    return counts;
+  },
+});
+
+/** Lote da limpeza auto-reagendada de membros de uma sala fora de uso. */
+const PURGE_PARTICIPANTS_BATCH = 500;
+
+/**
+ * Apaga as linhas de membros de uma sala que deixou de ser acompanhada (ou
+ * sumiu da listagem) quando o sync não conseguiu fazer tudo inline. Para se a
+ * sala voltou a ser acompanhada nesse meio-tempo — aí quem manda é o diff.
+ */
+export const internalPurgeGroupParticipants = internalMutation({
+  args: { groupChatId: v.id("groupChats") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (group && group.monitored === true && group.removedAt === undefined) return null;
+    const done = await deleteParticipantRows(ctx, args.groupChatId, {
+      left: PURGE_PARTICIPANTS_BATCH,
+    });
+    if (!done) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalPurgeGroupParticipants, {
+        groupChatId: args.groupChatId,
+      });
+    }
+    return null;
+  },
+});
+
+/** Linhas por página do backfill de `searchName`. */
+const BACKFILL_SEARCH_NAME_PAGE = 200;
+
+/**
+ * Backfill de `groupParticipants.searchName` (perf I/O onda 2, busca sem
+ * acento). Linhas gravadas antes do campo existir ficam fora da busca por NOME
+ * até passar por aqui (a listagem e a busca por telefone não dependem dele).
+ * Varre a tabela inteira pelo cursor, 200 linhas por página; `dryRun` (padrão)
+ * só conta uma página. O real se reagenda até o fim. Idempotente.
+ *
+ * `npx convex run --prod groupChats:internalBackfillParticipantSearchName '{"dryRun":false}'`
+ */
+export const internalBackfillParticipantSearchName = internalMutation({
+  args: { dryRun: v.optional(v.boolean()), cursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.object({
+    scanned: v.number(),
+    patched: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const result = await ctx.db
+      .query("groupParticipants")
+      .paginate({ numItems: BACKFILL_SEARCH_NAME_PAGE, cursor: args.cursor ?? null });
+    let patched = 0;
+    for (const row of result.page) {
+      const searchName = participantSearchName(row.name);
+      if (row.searchName === searchName) continue;
+      patched++;
+      if (!dryRun) await ctx.db.patch(row._id, { searchName });
+    }
+    if (!dryRun && !result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalBackfillParticipantSearchName, {
+        dryRun: false,
+        cursor: result.continueCursor,
+      });
+    }
+    return {
+      scanned: result.page.length,
+      patched,
+      isDone: result.isDone,
+      continueCursor: result.continueCursor,
+    };
+  },
+});
+
+/**
+ * Sincroniza uma lista do gateway em DOIS passos (perf I/O, onda 2): os
+ * metadados de todas as salas numa mutation e, depois, o diff de membros de
+ * cada sala acompanhada na sua própria mutation, em série. Se a action cair no
+ * meio, as salas que faltaram ficam com a lista anterior até o próximo sync —
+ * e a CONTAGEM (`participantsCount`, gravada no 1º passo a partir do gateway)
+ * pode divergir da lista de membros da tabela até lá. Nenhuma das duas se
+ * corrompe; o próximo sync reconcilia.
+ */
+async function applyGatewayGroupList(
+  ctx: ActionCtx,
+  args: { channelConfigId: Id<"channelConfigs">; groups: ParsedGroupInfo[]; full: boolean }
+): Promise<{ upserted: number; removed: number }> {
+  const result = await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    channelConfigId: args.channelConfigId,
+    groups: args.groups,
+    full: args.full,
+  });
+  const byJid = new Map(args.groups.map((g) => [g.jid, g]));
+  for (const job of result.participantJobs) {
+    const group = byJid.get(job.jid);
+    if (!group) continue;
+    await ctx.runMutation(internal.groupChats.internalApplyGatewayParticipants, {
+      groupChatId: job.groupChatId,
+      participants: group.participants,
+      syncedAt: result.syncedAt,
+    });
+  }
+  return { upserted: result.upserted, removed: result.removed };
+}
 
 /**
  * Evento `GroupInfo` do whatsmeow: nome/tópico/config mudaram, ou alguém
@@ -1517,10 +2016,11 @@ export async function syncGroupsHandler(
     const parsed = parseGroupListResponse(listRes.ok, listRes.status, listBody);
     if (!parsed.ok) throw new Error(parsed.error);
 
-    const result: { upserted: number; removed: number } = await ctx.runMutation(
-      internal.groupChats.internalUpsertGroupsFromSync,
-      { channelConfigId: args.channelConfigId, groups: parsed.groups, full: true }
-    );
+    const result = await applyGatewayGroupList(ctx, {
+      channelConfigId: args.channelConfigId,
+      groups: parsed.groups,
+      full: true,
+    });
     return {
       ...result,
       detail:
@@ -1712,7 +2212,7 @@ export const joinByInviteLink = action({
     if (!ack.ok) throw new Error(ack.error);
 
     // Cadastra já (o evento `JoinedGroup` pode chegar depois, e é idempotente).
-    await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    await applyGatewayGroupList(ctx, {
       channelConfigId: args.channelConfigId,
       groups: [info.group],
       full: false,
@@ -1762,7 +2262,7 @@ export const internalRefreshGroup = internalAction({
     const body = await res.json().catch(() => ({}));
     const parsed = parseGroupInfoResponse(res.ok, res.status, body);
     if (!parsed.ok) return false;
-    await ctx.runMutation(internal.groupChats.internalUpsertGroupsFromSync, {
+    await applyGatewayGroupList(ctx, {
       channelConfigId: context.channelConfigId,
       groups: [parsed.group],
       full: false,

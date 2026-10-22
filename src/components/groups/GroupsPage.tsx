@@ -353,6 +353,8 @@ export function GroupsPage() {
       )}
       {membersFor && (
         <GroupMembersPanel
+          // Remonta por sala: a seleção/busca de uma sala não vaza na outra.
+          key={membersFor}
           open
           groupChatId={membersFor}
           organizationId={organizationId}
