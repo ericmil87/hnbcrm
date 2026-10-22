@@ -53,6 +53,7 @@ import {
 } from "./lib/campaignHooks";
 import { isPhoneSuppressed } from "./lib/campaignAudience";
 import { buildSearchText } from "./lib/searchText";
+import { channelConfigPatchFor } from "./lib/conversationListFields";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
 const RETRY_SOON_MS = 60 * 1000;
@@ -566,7 +567,10 @@ async function sendCore(
       });
       let conversation = (await ctx.db.get(conversationId))!;
       if (conversation.channelConfigId !== campaign.channelConfigId) {
-        await ctx.db.patch(conversationId, { channelConfigId: campaign.channelConfigId, updatedAt: now });
+        await ctx.db.patch(conversationId, {
+          ...(await channelConfigPatchFor(ctx, conversation, campaign.channelConfigId)),
+          updatedAt: now,
+        });
         conversation = (await ctx.db.get(conversationId))!;
       }
 

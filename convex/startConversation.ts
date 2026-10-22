@@ -64,6 +64,7 @@ import {
 } from "./lib/startConversation";
 import type { CheckedWhatsappUser } from "./lib/startConversation";
 import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
+import { channelConfigPatchFor } from "./lib/conversationListFields";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -1027,7 +1028,7 @@ async function startConversationCore(
     const convPatch: Partial<Doc<"conversations">> = {};
     // Igual às campanhas: a conversa passa a sair pelo número escolhido.
     const channelSwitched = !createdConversation && conversation.channelConfigId !== args.channelConfigId;
-    if (conversation.channelConfigId !== args.channelConfigId) convPatch.channelConfigId = args.channelConfigId;
+    Object.assign(convPatch, await channelConfigPatchFor(ctx, conversation, args.channelConfigId));
     const unarchived = conversation.archivedAt !== undefined;
     if (unarchived) convPatch.archivedAt = undefined;
     if (Object.keys(convPatch).length > 0) {

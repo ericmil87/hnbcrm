@@ -120,6 +120,7 @@ import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGu
 // ── Custo de IA + tetos do mês (v0.69, T04) — a lógica mora fora daqui ──
 import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
+import { lastMessagePatchForId } from "./lib/conversationListFields";
 
 export { isWithinSchedule };
 
@@ -2855,6 +2856,7 @@ export const internalCommitAiSuggestion = internalMutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
     // Fase 4b: o lock mora no runtime (já validado como nosso nesta transação).
     await clearOwnedAiTurnLock(ctx, conversation, args.runId);

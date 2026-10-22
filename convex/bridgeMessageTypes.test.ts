@@ -554,10 +554,19 @@ describe("ingest — apagar para todos e edição no 1 a 1", () => {
     await ingest(t, configId, env(fx.poll, { ID: "3EB0POLL" }));
     let [row] = (await asAdmin.query(api.conversations.getConversations, { organizationId })) as any[];
     expect(row.lastMessageBridgeType).toBe("poll");
-    expect(row.lastMessageBridgeExtra).toMatchObject({ question: "Qual dia é melhor?" });
+    // Fase 4c: o `bridgeExtra` não é desnormalizado — a lista (que não o usa)
+    // recebe `null`; o caminho antigo (kill switch) ainda o devolve.
+    expect(row.lastMessageBridgeExtra).toBeNull();
     expect(row.lastMessageRevoked).toBe(false);
+    vi.stubEnv("INBOX_DENORM_READ", "0");
+    [row] = (await asAdmin.query(api.conversations.getConversations, { organizationId })) as any[];
+    expect(row.lastMessageBridgeExtra).toMatchObject({ question: "Qual dia é melhor?" });
+    vi.stubEnv("INBOX_DENORM_READ", "1");
 
     await post(t, env({ protocolMessage: { key: { ID: "3EB0POLL" }, type: 0 } }, { ID: "RP" }));
+    [row] = (await asAdmin.query(api.conversations.getConversations, { organizationId })) as any[];
+    expect(row.lastMessageRevoked).toBe(true);
+    vi.stubEnv("INBOX_DENORM_READ", "0");
     [row] = (await asAdmin.query(api.conversations.getConversations, { organizationId })) as any[];
     expect(row.lastMessageRevoked).toBe(true);
   });

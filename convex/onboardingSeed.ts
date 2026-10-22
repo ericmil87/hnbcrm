@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
+import { lastMessagePatchForId } from "./lib/conversationListFields";
 
 // Helper: generate a timestamp N hours ago from a reference point
 function hoursAgo(now: number, hours: number): number {
@@ -511,8 +512,9 @@ export const generateSampleData = internalMutation({
         updatedAt: lastMsgAt,
       });
 
+      let lastMessageId: Id<"messages"> | null = null;
       for (const m of msgs) {
-        await ctx.db.insert("messages", {
+        lastMessageId = await ctx.db.insert("messages", {
           organizationId,
           conversationId: convoId,
           leadId: leadIds[leadIdx],
@@ -525,6 +527,11 @@ export const generateSampleData = internalMutation({
           isInternal: false,
           createdAt: convoCreatedAt + m.minutesOffset * 60 * 1000,
         });
+      }
+      // Prévia da lista do inbox (fase 4c) — senão a conversa de exemplo cairia
+      // sempre no fallback que lê a última mensagem.
+      if (lastMessageId) {
+        await ctx.db.patch(convoId, await lastMessagePatchForId(ctx, {}, lastMessageId));
       }
 
       totalConversations++;

@@ -16,6 +16,7 @@ import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { evaluateEligibility, isWithinSchedule } from "./attendant";
 import { getAiTurnLock, upsertRuntime } from "./lib/conversationRuntime";
+import { previewTextOf } from "./lib/conversationListFields";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -478,6 +479,12 @@ describe("commit transacional (TOCTOU)", () => {
     expect(outbound[0].content.startsWith("Você fala com um assistente virtual.")).toBe(true);
     expect((await t.run((ctx) => getAiTurnLock(ctx, seed.conversationId))) ?? null).toBeNull(); // lock liberado
     expect(queueItem!.status).toBe("done");
+    // Fase 4c: a resposta (via applyOutboundMessageSideEffects) é a prévia da lista.
+    expect(conversation).toMatchObject({
+      lastMessageId: outbound[0]._id,
+      lastMessageDirection: "outbound",
+      lastMessagePreview: previewTextOf(outbound[0]),
+    });
   });
 
   test("autopilot: humano respondeu durante a geração → commit aborta", async () => {
@@ -622,6 +629,15 @@ describe("commit transacional (TOCTOU)", () => {
     expect(
       (drafts[0].metadata!.aiDraft as { proposedActions: string[] }).proposedActions
     ).toHaveLength(1);
+    // Fase 4c: o rascunho (nota interna) é a última mensagem da lista.
+    const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
+    expect(conversation).toMatchObject({
+      lastMessageId: drafts[0]._id,
+      lastMessageDirection: "internal",
+    });
+    // A disclosure entra no texto do rascunho; a prévia é a mesma regra da lista.
+    expect(conversation!.lastMessagePreview).toBe(previewTextOf(drafts[0]));
+    expect(conversation!.lastMessagePreview).toMatch(/^Nota: .*Sugestão de resposta/s);
   });
 });
 

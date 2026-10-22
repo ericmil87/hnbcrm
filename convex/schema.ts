@@ -1192,6 +1192,29 @@ const applicationTables = {
     firstInboundAt: v.optional(v.number()),
     firstResponseAt: v.optional(v.number()),
     firstResponderType: v.optional(v.union(v.literal("ai"), v.literal("human"))),
+    // Desnormalização para a LISTA do inbox (perf Convex I/O, fase 4c): a
+    // lista deixa de ler a última mensagem, o doc do grupo (com `participants`)
+    // e o channelConfig por conversa. Gravados por `lib/conversationListFields.ts`
+    // na MESMA transação do insert da mensagem; ausentes = conversa ainda não
+    // backfilled, a leitura cai no caminho antigo só para ela.
+    // `lastMessagePreviewAt` = createdAt da mensagem que gerou a prévia (regra
+    // "não anda para trás": mensagem mais antiga não sobrescreve).
+    lastMessageId: v.optional(v.id("messages")),
+    lastMessagePreview: v.optional(v.string()),
+    lastMessageContentType: v.optional(
+      v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))
+    ),
+    lastMessageDirection: v.optional(
+      v.union(v.literal("inbound"), v.literal("outbound"), v.literal("internal"))
+    ),
+    lastMessageBridgeType: v.optional(v.string()),
+    lastMessageRevoked: v.optional(v.boolean()),
+    lastMessagePreviewAt: v.optional(v.number()),
+    // Grupo: nome da sala e membros ativos (espelho de `groupChats`).
+    groupSubject: v.optional(v.string()),
+    groupParticipantsCount: v.optional(v.number()),
+    // Provider do `channelConfigId` (janela de 24 h só existe no meta).
+    channelProvider: v.optional(v.union(v.literal("meta"), v.literal("bridge"))),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),

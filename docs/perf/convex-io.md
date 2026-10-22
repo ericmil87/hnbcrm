@@ -10,14 +10,23 @@ Como o Convex cobra (premissas usadas aqui): cada leitura conta o documento inte
 
 Dashboard Convex → **Usage** → selecionar o deployment (prod e dev separados) → métrica **Database bandwidth** → quebra por função → mês atual. Colar os números abaixo antes e depois de cada fase.
 
-## Baseline (antes da Fase 1)
+## Medição do painel (colada pelo Eric)
 
-| Deployment | Database bandwidth (mês) | Function calls (mês) | Top funções por bandwidth |
-|---|---|---|---|
-| prod `careful-anaconda-127` | _pendente_ | _pendente_ | _pendente_ |
-| dev `tacit-chicken-195` | _pendente_ | _pendente_ | _pendente_ |
+### Leitura 1 — 22/10/2026 ~00:50 UTC (período corrente do plano; Fases 1–4b já em prod há 2–27 h, então mistura antes e depois)
 
-Chamadas conhecidas (dashboard, out/2026): `/webhooks/bridge` 29K prod; `channelConfigs.internalGetConfigByBridgeInstanceId` 29K prod; `conversations.internalApplyGroupReceipt` 10K prod; `tasks.processOverdueReminders` 5,9K dev + 5,5K prod; `channelHealth.internalGetProbeTarget` 5,1K prod.
+| Métrica (projeto, prod + dev) | Valor |
+|---|---|
+| Function Calls | 181K |
+| **Database I/O** | **1,46 GB** (o estouro relatado em 21/10 era 2,04 GB de 2 GB) |
+| Database Storage | 44,34 MB |
+| Action Compute | 0,51 GB-h |
+| Data Egress | 333,24 MB |
+
+Quebra por **Function Calls** (top; o painel de I/O por função ainda não foi colado): `/webhooks/bridge` 29K prod + 2,2K dev; `channelConfigs.internalGetConfigByBridgeInstanceId` 29K prod; `conversations.internalApplyGroupReceipt` 10K prod + 805 dev; `tasks.processOverdueReminders` 6K dev + 5,5K prod (cron de 5 min até 21/10); `channelHealth.internalGetProbeTarget`/`internalRecordHealthCheck` 5,1K prod; `formPartials.internalMarkAbandoned` 3K dev + 2,7K prod; `getConversations` 2,4K prod + 266 dev; `getMessages` 1K prod; `getInboxUnreadCount` 1,2K prod; `getTaskCounts` 825 prod + 330 dev; `getDashboardStats` 209 prod; crons horários ≈465 prod / ≈505 dev cada.
+
+Leitura: as chamadas de cron no dev (6K lembretes, 3K parciais, 1,7K health, ≈505 por cron horário) somem com `CRONS_DISABLED=1`; os 5,5K + 6K de `processOverdueReminders` viram ≈744/mês cada; `internalGetConfigByBridgeInstanceId` (29K) continua (1 doc de 1–2 KB por webhook, fora do escopo). **Falta a quebra "Database I/O" por função** para fechar o antes/depois em bytes.
+
+### Leitura 2 — _pendente_ (colar ~7 dias depois do último deploy, prod e dev separados, aba "Database I/O" da quebra por função)
 
 ## Fase 1 — crons que rodam sem usuário
 
