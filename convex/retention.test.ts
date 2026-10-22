@@ -202,6 +202,39 @@ describe("retenção por tabela", () => {
     expect(await exists(processing)).toBe(true);
   });
 
+  test("aiReplyQueue: lote que atravessa dois status (150 done + 100 skipped) apaga tudo", async () => {
+    const b = await seedBase();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 250; i++) {
+        const updatedAt = NOW - (91 + i) * DAY;
+        await ctx.db.insert("aiReplyQueue", {
+          organizationId: b.organizationId,
+          conversationId: b.conversationId,
+          triggerMessageId: b.messageId,
+          agentMemberId: b.memberId,
+          status: i < 150 ? "done" : "skipped",
+          attempts: 0,
+          nextAttemptAt: updatedAt,
+          createdAt: updatedAt,
+          updatedAt,
+        });
+      }
+    });
+    const keep = await insertQueue(b, "done", NOW - 10 * DAY);
+    await runCron();
+    const left = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect()).map((d) => d._id));
+    expect(left).toEqual([keep]);
+  });
+
+  test("limite: readAt exatamente no corte FICA (range estrito)", async () => {
+    const b = await seedBase();
+    const atCutoff = await insertNotification(b, NOW - 200 * DAY, NOW - 90 * DAY);
+    const justBefore = await insertNotification(b, NOW - 200 * DAY, NOW - 90 * DAY - 1);
+    await runCron();
+    expect(await exists(atCutoff)).toBe(true);
+    expect(await exists(justBefore)).toBe(false);
+  });
+
   test("agentRuns: terminal velha sai; running velha e terminal recente ficam", async () => {
     const b = await seedBase();
     const done = await insertRun(b, "done", NOW - 91 * DAY);
