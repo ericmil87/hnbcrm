@@ -42,6 +42,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * Fase 4d: sala criada pela sincronização já nasce migrada — os membros moram
+ * em `groupParticipants`. Lê/edita pela tabela (ou pelo array legado, se a
+ * sala de teste foi semeada no formato antigo).
+ */
+async function participantsInDb(t: TestConvex<typeof schema>, groupChatId: Id<"groupChats">) {
+  return await t.run(async (ctx) => {
+    const group = (await ctx.db.get(groupChatId))!;
+    if (group.participantsMigratedAt === undefined) return group.participants ?? [];
+    return await ctx.db
+      .query("groupParticipants")
+      .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+      .collect();
+  });
+}
+
+async function patchParticipantInDb(
+  t: TestConvex<typeof schema>,
+  groupChatId: Id<"groupChats">,
+  lid: string,
+  fields: { name?: string; phone?: string | undefined }
+) {
+  await t.run(async (ctx) => {
+    const group = (await ctx.db.get(groupChatId))!;
+    if (group.participantsMigratedAt === undefined) {
+      await ctx.db.patch(groupChatId, {
+        participants: group.participants!.map((p) => (p.lid === lid ? { ...p, ...fields } : p)),
+      });
+      return;
+    }
+    const row = await ctx.db
+      .query("groupParticipants")
+      .withIndex("by_group_and_key", (q) => q.eq("groupChatId", groupChatId).eq("key", lid))
+      .first();
+    await ctx.db.patch(row!._id, fields);
+  });
+}
+
 function setup() {
   return convexTest(schema, modules);
 }
@@ -309,18 +347,11 @@ describe("syncGroups", () => {
 
     // O gateway devolve DisplayName vazio; o nome só existe porque uma mensagem
     // trouxe o PushName. Uma sincronização não pode apagá-lo.
-    await t.run(async (ctx) => {
-      const group = (await ctx.db.get(groupChatId))!;
-      await ctx.db.patch(groupChatId, {
-        participants: group.participants!.map((p) =>
-          p.lid === ADMIN_LID ? { ...p, name: "Eric Milfont" } : p
-        ),
-      });
-    });
+    await patchParticipantInDb(t, groupChatId, ADMIN_LID, { name: "Eric Milfont" });
     await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
 
-    const group = await t.run(async (ctx) => ctx.db.get(groupChatId));
-    expect(group!.participants!.find((p) => p.lid === ADMIN_LID)!.name).toBe("Eric Milfont");
+    const participants = await participantsInDb(t, groupChatId);
+    expect(participants.find((p) => p.lid === ADMIN_LID)!.name).toBe("Eric Milfont");
   });
 
   test("sincronizar com grupos desligados no número é recusado", async () => {
@@ -866,8 +897,7 @@ describe("createLeadFromMember (D3 — promoção explícita)", () => {
 
     // O participante passa a apontar para o contato: na próxima abertura o
     // painel mostra o chip em vez de oferecer "criar lead" de novo.
-    const group = await t.run(async (ctx) => ctx.db.get(groupChatId));
-    const participant = group!.participants!.find((p) => p.lid === ADMIN_LID);
+    const participant = (await participantsInDb(t, groupChatId)).find((p) => p.lid === ADMIN_LID);
     expect(participant!.contactId).toEqual(result.contactId);
 
     const audits = await t.run(async (ctx) =>
@@ -908,14 +938,7 @@ describe("createLeadFromMember (D3 — promoção explícita)", () => {
     await seedBoard(t, organizationId);
     const groupChatId = await seedSyncedGroup(t, asAdmin, configId);
     // Privacidade fechada: o gateway devolve o LID sem `PhoneNumber`.
-    await t.run(async (ctx) => {
-      const group = (await ctx.db.get(groupChatId))!;
-      await ctx.db.patch(groupChatId, {
-        participants: group.participants!.map((p) =>
-          p.lid === ADMIN_LID ? { ...p, phone: undefined } : p
-        ),
-      });
-    });
+    await patchParticipantInDb(t, groupChatId, ADMIN_LID, { phone: undefined });
 
     await expect(
       asAdmin.mutation(api.groupChats.createLeadFromMember, {

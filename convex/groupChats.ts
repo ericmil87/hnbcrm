@@ -51,7 +51,7 @@ import {
   parseUserLidResponse,
 } from "./lib/bridgeGroups";
 import {
-  appendTimeline,
+  GROUP_TIMELINE_CAP,
   groupFieldsFromGateway,
   membersWithPermission,
   mergeParticipant,
@@ -83,6 +83,23 @@ import {
   groupSummaryFieldsOf,
   syncGroupSummaryToConversation,
 } from "./lib/conversationListFields";
+import {
+  appendTimelineRows,
+  dedupeParticipants,
+  deleteGroupSideTables,
+  diffParticipantsTable,
+  isGroupMigrated,
+  loadParticipantRows,
+  loadTimelineRows,
+  participantsForWrite,
+  participantsOf,
+  recordTimeline,
+  syncParticipantsTable,
+  timelineOf,
+  timelineRowToEntry,
+  timelineSignature,
+  writeParticipants,
+} from "./lib/groupParticipantsStore";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Leitura (app)
@@ -153,7 +170,7 @@ export async function listGroupsHandler(ctx: QueryCtx, args: ListGroupsArgs) {
     return groups
       .filter((g) => (args.includeRemoved ? true : g.removedAt === undefined))
       .sort((a, b) => (b.lastMessageAt ?? b.updatedAt) - (a.lastMessageAt ?? a.updatedAt))
-      .map(({ participants, timeline, ...g }) => ({
+      .map(({ participants, timeline: _timeline, participantsMigratedAt: _migratedAt, ...g }) => ({
         ...g,
         mediaPolicy: fillGroupMediaOverride(g.mediaPolicy),
         effectiveMedia: resolveEffectiveGroupMedia(numberMedia.get(g.channelConfigId), g.mediaPolicy),
@@ -196,9 +213,15 @@ export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
       }
       return !!config?.bridgePhone && p.phone === config.bridgePhone;
     };
+    // Fase 4d: membros e linha do tempo vêm das tabelas próprias quando a sala
+    // já migrou (o shape devolvido — e o contrato da REST/MCP — não muda).
+    const participants = await participantsOf(ctx, group);
+    const timeline = await timelineOf(ctx, group);
+    const { participantsMigratedAt: _migratedAt, ...groupFields } = group;
     return {
-      ...group,
-      participants: (group.participants ?? []).map((p) => ({ ...p, isSelf: isSelfParticipant(p) })),
+      ...groupFields,
+      participants: participants.map((p) => ({ ...p, isSelf: isSelfParticipant(p) })),
+      timeline,
       // `selfKey` continua saindo APENAS para quem administra o número, que já
       // enxerga a configuração do canal inteira.
       selfKey: (await groupsActorHas(
@@ -213,7 +236,7 @@ export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
       // Nosso número é conhecido? A UI usa isto para avisar que o gatilho por
       // menção não funciona em gateway self-hosted (review de correção nº 22).
       selfKnown: selfKey !== null,
-      participantsCount: countParticipants(group.participants, group.participantsCount),
+      participantsCount: countParticipants(participants, group.participantsCount),
       mediaPolicy: fillGroupMediaOverride(group.mediaPolicy),
       effectiveMedia: resolveEffectiveGroupMedia(config?.bridgeGroupMedia, group.mediaPolicy),
     };
@@ -294,28 +317,32 @@ export async function setMonitoredHandler(ctx: MutationCtx, args: SetMonitoredAr
       }
     }
 
+    // Parar de acompanhar APAGA a lista de membros (review de segurança nº 1):
+    // o telefone e o nome de terceiros só podem ficar no banco enquanto a sala
+    // está de fato sendo acompanhada. A contagem permanece — é o que a lista
+    // de grupos mostra. Voltar a acompanhar repopula pelo `/group/info`
+    // agendado logo abaixo. Fase 4d: apaga as linhas de `groupParticipants`.
+    const participantsPatch = args.monitored ? {} : await writeParticipants(ctx, group, [], now);
+    const timelinePatch = await recordTimeline(ctx, group, [
+      {
+        at: now,
+        type: args.monitored ? "monitored_on" : "monitored_off",
+        data: member.name,
+      },
+    ]);
     await ctx.db.patch(group._id, {
       monitored: args.monitored,
       ...(conversationId ? { conversationId } : {}),
       ...(args.monitored ? { monitoredSince: now, monitoredBy: member._id } : {}),
-      // Parar de acompanhar APAGA a lista de membros (review de segurança nº 1):
-      // o telefone e o nome de terceiros só podem ficar no banco enquanto a sala
-      // está de fato sendo acompanhada. A contagem permanece — é o que a lista
-      // de grupos mostra. Voltar a acompanhar repopula pelo `/group/info`
-      // agendado logo abaixo.
-      ...(args.monitored ? {} : { participants: [] }),
-      timeline: appendTimeline(group.timeline, {
-        at: now,
-        type: args.monitored ? "monitored_on" : "monitored_off",
-        data: member.name,
-      }),
+      ...participantsPatch,
+      ...timelinePatch,
       updatedAt: now,
     });
     // Lista do inbox (fase 4c): nome/contagem espelhados na conversa.
     await syncGroupSummaryToConversation(ctx, {
       ...group,
       conversationId,
-      ...(args.monitored ? {} : { participants: [] }),
+      ...(args.monitored ? {} : { participants: isGroupMigrated(group) ? undefined : [] }),
     });
 
     // Passou a acompanhar: busca a lista de membros agora (a sincronização não
@@ -947,23 +974,27 @@ export const internalUpsertGroupsFromSync = internalMutation({
       const fields = groupFieldsFromGateway(group, ourLid, ourPhone, now);
       const prev = byJid.get(group.jid);
       if (prev) {
-        const merged = mergeParticipantsFromGateway(prev.participants, group.participants, now);
+        const current = await participantsForWrite(ctx, prev);
+        const merged = mergeParticipantsFromGateway(current.list, group.participants, now);
         // Sala NÃO acompanhada guarda só a contagem — nome e telefone de
         // terceiros ficam fora do banco (review de segurança nº 1).
         const stored = participantsForStorage(prev.monitored, merged);
+        const participantsPatch = await writeParticipants(
+          ctx,
+          prev,
+          stored.participants,
+          now,
+          current.rows
+        );
+        const timelinePatch =
+          prev.subject !== group.subject
+            ? await recordTimeline(ctx, prev, [{ at: now, type: "renamed", data: group.subject }])
+            : {};
         await ctx.db.patch(prev._id, {
           ...fields,
-          participants: stored.participants,
+          ...participantsPatch,
           participantsCount: stored.participantsCount,
-          ...(prev.subject !== group.subject
-            ? {
-                timeline: appendTimeline(prev.timeline, {
-                  at: now,
-                  type: "renamed",
-                  data: group.subject,
-                }),
-              }
-            : {}),
+          ...timelinePatch,
           // Voltou a aparecer na listagem: não estamos mais fora dele.
           leftAt: undefined,
         });
@@ -971,12 +1002,12 @@ export const internalUpsertGroupsFromSync = internalMutation({
           ...prev,
           ...fields,
           subject: fields.subject ?? prev.subject,
-          participants: stored.participants,
+          participants: isGroupMigrated(prev) ? undefined : stored.participants,
           participantsCount: stored.participantsCount,
         });
       } else {
         const merged = mergeParticipantsFromGateway(undefined, group.participants, now);
-        await ctx.db.insert("groupChats", {
+        const groupChatId = await ctx.db.insert("groupChats", {
           organizationId: config.organizationId,
           channelConfigId: args.channelConfigId,
           jid: group.jid,
@@ -984,15 +1015,20 @@ export const internalUpsertGroupsFromSync = internalMutation({
           ...fields,
           // Grupo novo nasce NÃO acompanhado, logo sem lista de membros. Ela é
           // populada por `internalRefreshGroup` quando alguém marca
-          // "Acompanhar".
-          participants: [],
+          // "Acompanhar". Fase 4d: já nasce migrado (membros e linha do tempo
+          // só nas tabelas próprias).
           participantsCount: merged.length,
+          participantsMigratedAt: now,
           // D4: grupo novo NASCE sem acompanhamento.
           monitored: false,
-          timeline: [{ at: now, type: "discovered" }],
           createdAt: now,
           updatedAt: now,
         } as Doc<"groupChats">);
+        await recordTimeline(
+          ctx,
+          { _id: groupChatId, organizationId: config.organizationId, participantsMigratedAt: now },
+          [{ at: now, type: "discovered" }]
+        );
       }
       upserted++;
     }
@@ -1002,10 +1038,11 @@ export const internalUpsertGroupsFromSync = internalMutation({
       const seen = new Set(args.groups.map((g) => g.jid));
       for (const prev of existing) {
         if (seen.has(prev.jid) || prev.removedAt !== undefined) continue;
+        const timelinePatch = await recordTimeline(ctx, prev, [{ at: now, type: "removed" }]);
         await ctx.db.patch(prev._id, {
           removedAt: now,
           monitored: false,
-          timeline: appendTimeline(prev.timeline, { at: now, type: "removed" }),
+          ...timelinePatch,
           updatedAt: now,
         });
         if (prev.conversationId) {
@@ -1075,8 +1112,13 @@ export const internalApplyGroupInfoEvent = internalMutation({
       return { ...(lid ? { lid } : {}), ...(phone ? { phone } : {}) };
     };
 
-    let participants = group.participants;
-    let timeline = group.timeline;
+    // Fase 4d: a lista atual vem da tabela (sala migrada) ou do array legado.
+    const current = await participantsForWrite(ctx, group);
+    let participants: Doc<"groupChats">["participants"] = current.list;
+    const timelineEntries: { at: number; type: string; actorJid?: string; data?: string }[] = [];
+    const pushTimeline = (entry: { at: number; type: string; actorJid?: string; data?: string }) => {
+      timelineEntries.push(entry);
+    };
 
     // Defesa em profundidade: o parser já corta em `GROUP_EVENT_JID_CAP`, mas
     // esta mutation é `internal` e pode ser chamada de outro caminho amanhã.
@@ -1090,15 +1132,15 @@ export const internalApplyGroupInfoEvent = internalMutation({
         joinedAt: args.at,
         leftAt: undefined,
       });
-      timeline = appendTimeline(timeline, { at: args.at, type: "join", actorJid: jid });
+      pushTimeline({ at: args.at, type: "join", actorJid: jid });
     }
     for (const jid of cap(args.leave)) {
       participants = mergeParticipant(participants, { ...asParticipant(jid), leftAt: args.at });
-      timeline = appendTimeline(timeline, { at: args.at, type: "leave", actorJid: jid });
+      pushTimeline({ at: args.at, type: "leave", actorJid: jid });
     }
     for (const jid of cap(args.promote)) {
       participants = mergeParticipant(participants, { ...asParticipant(jid), isAdmin: true });
-      timeline = appendTimeline(timeline, { at: args.at, type: "promote", actorJid: jid });
+      pushTimeline({ at: args.at, type: "promote", actorJid: jid });
     }
     for (const jid of cap(args.demote)) {
       participants = mergeParticipant(participants, {
@@ -1106,10 +1148,10 @@ export const internalApplyGroupInfoEvent = internalMutation({
         isAdmin: false,
         isSuperAdmin: false,
       });
-      timeline = appendTimeline(timeline, { at: args.at, type: "demote", actorJid: jid });
+      pushTimeline({ at: args.at, type: "demote", actorJid: jid });
     }
     if (args.name !== undefined && args.name !== group.subject) {
-      timeline = appendTimeline(timeline, {
+      pushTimeline({
         at: args.at,
         type: "renamed",
         ...(args.actorJid ? { actorJid: args.actorJid } : {}),
@@ -1117,7 +1159,7 @@ export const internalApplyGroupInfoEvent = internalMutation({
       });
     }
     if (args.topic !== undefined && args.topic !== (group.topic ?? "")) {
-      timeline = appendTimeline(timeline, {
+      pushTimeline({
         at: args.at,
         type: "topic",
         ...(args.actorJid ? { actorJid: args.actorJid } : {}),
@@ -1131,6 +1173,10 @@ export const internalApplyGroupInfoEvent = internalMutation({
     const stored = participants
       ? participantsForStorage(weLeft ? false : group.monitored, participants)
       : null;
+    const participantsPatch = stored
+      ? await writeParticipants(ctx, group, stored.participants, args.at, current.rows)
+      : {};
+    const timelinePatch = await recordTimeline(ctx, group, timelineEntries);
 
     await ctx.db.patch(group._id, {
       // Nome e tópico são escolhidos por um ADMIN DO GRUPO, que é um terceiro,
@@ -1140,12 +1186,8 @@ export const internalApplyGroupInfoEvent = internalMutation({
       ...(args.topic !== undefined ? { topic: args.topic.slice(0, GROUP_TOPIC_CAP) } : {}),
       ...(args.isLocked !== undefined ? { isLocked: args.isLocked } : {}),
       ...(args.isAnnounce !== undefined ? { isAnnounce: args.isAnnounce } : {}),
-      ...(stored
-        ? {
-            participants: stored.participants,
-            participantsCount: stored.participantsCount,
-          }
-        : {}),
+      ...participantsPatch,
+      ...(stored ? { participantsCount: stored.participantsCount } : {}),
       ...(meNow
         ? {
             weAreAdmin: meNow.isAdmin === true || meNow.isSuperAdmin === true,
@@ -1153,14 +1195,17 @@ export const internalApplyGroupInfoEvent = internalMutation({
           }
         : {}),
       ...(weLeft ? { leftAt: args.at, monitored: false } : {}),
-      timeline,
+      ...timelinePatch,
       updatedAt: args.at,
     });
     await syncGroupSummaryToConversation(ctx, {
       ...group,
       ...(args.name !== undefined ? { subject: args.name.slice(0, GROUP_SUBJECT_CAP) } : {}),
       ...(stored
-        ? { participants: stored.participants, participantsCount: stored.participantsCount }
+        ? {
+            participants: isGroupMigrated(group) ? undefined : stored.participants,
+            participantsCount: stored.participantsCount,
+          }
         : {}),
     });
 
@@ -1224,47 +1269,64 @@ export const internalApplyJoinedGroup = internalMutation({
       .first();
 
     let groupChatId: Id<"groupChats">;
+    const joinedEntry = {
+      at: args.at,
+      type: "joined",
+      ...(args.reason ? { data: args.reason } : {}),
+    };
     if (existing) {
-      const participants = mergeParticipantsFromGateway(
-        existing.participants,
-        parsed.participants,
-        args.at
+      const current = await participantsForWrite(ctx, existing);
+      const participants = mergeParticipantsFromGateway(current.list, parsed.participants, args.at);
+      const participantsCount = participants.filter((p) => p.leftAt === undefined).length;
+      // A tabela segue a regra de LGPD (só sala acompanhada guarda membros);
+      // o array legado da sala ainda não migrada mantém o comportamento antigo
+      // e some no `internalFinishGroupParticipantsMigration`.
+      await syncParticipantsTable(
+        ctx,
+        existing,
+        participantsForStorage(existing.monitored, participants).participants,
+        args.at,
+        current.rows
       );
+      const participantsPatch = isGroupMigrated(existing) ? {} : { participants };
       groupChatId = existing._id;
+      const timelinePatch = await recordTimeline(ctx, existing, [joinedEntry]);
       await ctx.db.patch(existing._id, {
         ...fields,
-        participants,
-        participantsCount: participants.filter((p) => p.leftAt === undefined).length,
+        ...participantsPatch,
+        participantsCount,
         leftAt: undefined,
-        timeline: appendTimeline(existing.timeline, {
-          at: args.at,
-          type: "joined",
-          ...(args.reason ? { data: args.reason } : {}),
-        }),
+        ...timelinePatch,
       });
       await syncGroupSummaryToConversation(ctx, {
         ...existing,
         ...fields,
         subject: fields.subject ?? existing.subject,
-        participants,
+        participants: isGroupMigrated(existing) ? undefined : participants,
+        participantsCount,
       });
     } else {
       const participants = mergeParticipantsFromGateway(undefined, parsed.participants, args.at);
+      // Sala nova nasce migrada e NÃO acompanhada (D4): a lista de membros não
+      // é guardada (LGPD) — só a contagem; `internalRefreshGroup` popula ao
+      // marcar "Acompanhar".
       groupChatId = await ctx.db.insert("groupChats", {
         organizationId: config.organizationId,
         channelConfigId: args.channelConfigId,
         jid: parsed.jid,
         subject: parsed.subject,
         ...fields,
-        participants,
         participantsCount: participants.length,
+        participantsMigratedAt: args.at,
         monitored: false,
-        timeline: [
-          { at: args.at, type: "joined", ...(args.reason ? { data: args.reason } : {}) },
-        ],
         createdAt: args.at,
         updatedAt: args.at,
       } as Doc<"groupChats">);
+      await recordTimeline(
+        ctx,
+        { _id: groupChatId, organizationId: config.organizationId, participantsMigratedAt: args.at },
+        [joinedEntry]
+      );
     }
 
     await ctx.db.insert("auditLogs", {
@@ -1319,10 +1381,11 @@ export const internalMarkGroupLeft = internalMutation({
   handler: async (ctx, args) => {
     const group = await ctx.db.get(args.groupChatId);
     if (!group) return null;
+    const timelinePatch = await recordTimeline(ctx, group, [{ at: args.at, type: "left" }]);
     await ctx.db.patch(group._id, {
       leftAt: args.at,
       monitored: false,
-      timeline: appendTimeline(group.timeline, { at: args.at, type: "left" }),
+      ...timelinePatch,
       updatedAt: args.at,
     });
     if (group.conversationId) {
@@ -1716,6 +1779,8 @@ export const internalCascadeDeleteChannelGroups = internalMutation({
           if (!(await deleteConversationCascade(ctx, conversation._id, budget))) break;
         }
       }
+      // Fase 4d: membros e linha do tempo moram em tabelas próprias.
+      await deleteGroupSideTables(ctx, group._id);
       await ctx.db.delete(group._id);
       budget.left -= 1;
     }
@@ -1844,9 +1909,11 @@ export const createLeadFromMember = mutation({
 
 /**
  * Grupos MONITORADOS em que este contato é participante (aba "Grupos" do
- * contato). Sem índice novo: varre os grupos da org (teto de 200, o mesmo da
- * listagem) e casa por `participants[].contactId`, que o ingest preenche
- * quando o telefone do membro já era um contato.
+ * contato). Varre os grupos da org (teto de 200, o mesmo da listagem) e casa
+ * por `contactId` do participante, que o ingest preenche quando o telefone do
+ * membro já era um contato. Fase 4d: em sala migrada o participante vem de
+ * `groupParticipants.by_organization_and_contact` (uma consulta só, não um
+ * array de 1.024 por sala); em sala ainda não migrada, do array legado.
  */
 export const listGroupsForContact = query({
   args: {
@@ -1876,12 +1943,27 @@ export const listGroupsForContact = query({
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .take(GROUP_LIST_CAP);
 
+    const tableRows = await ctx.db
+      .query("groupParticipants")
+      .withIndex("by_organization_and_contact", (q) =>
+        q.eq("organizationId", args.organizationId).eq("contactId", args.contactId)
+      )
+      .take(GROUP_LIST_CAP);
+    const rowByGroup = new Map<string, Doc<"groupParticipants">>();
+    for (const row of tableRows) {
+      if (row.leftAt === undefined && !rowByGroup.has(row.groupChatId)) {
+        rowByGroup.set(row.groupChatId, row);
+      }
+    }
+
     const rows = [];
     for (const group of groups) {
       if (!group.monitored || group.removedAt !== undefined || group.leftAt !== undefined) continue;
-      const participant = (group.participants ?? []).find(
-        (p) => p.contactId === args.contactId && p.leftAt === undefined
-      );
+      const participant = isGroupMigrated(group)
+        ? rowByGroup.get(group._id)
+        : (group.participants ?? []).find(
+            (p) => p.contactId === args.contactId && p.leftAt === undefined
+          );
       if (!participant) continue;
       rows.push({
         _id: group._id,
@@ -1889,10 +1971,7 @@ export const listGroupsForContact = query({
         jid: group.jid,
         channelConfigId: group.channelConfigId,
         conversationId: group.conversationId ?? null,
-        participantsCount:
-          group.participants?.filter((p) => p.leftAt === undefined).length ??
-          group.participantsCount ??
-          0,
+        participantsCount: countParticipants(group.participants, group.participantsCount),
         lastMessageAt: group.lastMessageAt ?? null,
         isAdmin: participant.isAdmin === true || participant.isSuperAdmin === true,
         joinedAt: participant.joinedAt ?? null,
@@ -2029,5 +2108,348 @@ export const summarizeGroup = action({
       groupChatId: args.groupChatId,
       hours,
     });
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fase 4d (perf Convex I/O): migração de `participants`/`timeline` do doc
+// `groupChats` para `groupParticipants`/`groupTimeline`.
+//
+// Ordem em produção: deploy (dual-write liga sozinho) → backfill dryRun → real
+// → finish dryRun → real (é aqui que o doc encolhe). Rollback = restore.
+// Todas com `dryRun` default true, cursor e auto-reagendamento.
+//
+// Página pequena de propósito (default 10, teto 50): cada sala pode ter 1.024
+// linhas, e 200 salas numa transação passariam dos limites de leitura/escrita
+// do Convex (32 mil docs lidos, 16 mil escritos).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MIGRATION_PAGE_DEFAULT = 10;
+const MIGRATION_PAGE_MAX = 50;
+
+const migrationArgs = {
+  dryRun: v.optional(v.boolean()),
+  cursor: v.optional(v.union(v.string(), v.null())),
+  organizationId: v.optional(v.id("organizations")),
+  pageSize: v.optional(v.number()),
+};
+
+async function migrationPage(
+  ctx: MutationCtx,
+  args: { cursor?: string | null; organizationId?: Id<"organizations">; pageSize?: number }
+) {
+  const numItems = Math.max(
+    1,
+    Math.min(MIGRATION_PAGE_MAX, Math.floor(args.pageSize ?? MIGRATION_PAGE_DEFAULT))
+  );
+  const paginationOpts = { numItems, cursor: args.cursor ?? null };
+  return args.organizationId
+    ? await ctx.db
+        .query("groupChats")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId!))
+        .paginate(paginationOpts)
+    : await ctx.db.query("groupChats").paginate(paginationOpts);
+}
+
+/**
+ * Lista que a TABELA deve ter para uma sala ainda não migrada: o array legado
+ * deduplicado por chave, com a regra de LGPD (sala NÃO acompanhada = vazia —
+ * o `internalApplyJoinedGroup` legado chegava a gravar membros de sala não
+ * acompanhada; esses somem na migração).
+ */
+function desiredParticipantsFromLegacy(group: Doc<"groupChats">) {
+  return dedupeParticipants(
+    participantsForStorage(group.monitored, group.participants ?? []).participants
+  );
+}
+
+/** Eventos legados (cap 100) que faltam na tabela, por assinatura. */
+function missingTimelineEntries(group: Doc<"groupChats">, rows: Doc<"groupTimeline">[]) {
+  const have = new Set(rows.map((r) => timelineSignature(timelineRowToEntry(r))));
+  return (group.timeline ?? []).slice(-GROUP_TIMELINE_CAP).filter((e) => !have.has(timelineSignature(e)));
+}
+
+/**
+ * Passo 1: copia `participants`/`timeline` legados para as tabelas (dedupe por
+ * chave / por assinatura do evento). NÃO remove os arrays; idempotente.
+ */
+export const internalBackfillGroupParticipants = internalMutation({
+  args: migrationArgs,
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    pending: v.number(),
+    alreadyMigrated: v.number(),
+    participantsInserted: v.number(),
+    participantsUpdated: v.number(),
+    participantsDeleted: v.number(),
+    timelineInserted: v.number(),
+    lgpdDropped: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const now = Date.now();
+    const page = await migrationPage(ctx, args);
+    let pending = 0;
+    let alreadyMigrated = 0;
+    let participantsInserted = 0;
+    let participantsUpdated = 0;
+    let participantsDeleted = 0;
+    let timelineInserted = 0;
+    let lgpdDropped = 0;
+    for (const group of page.page) {
+      if (isGroupMigrated(group)) {
+        alreadyMigrated++;
+        continue;
+      }
+      const desired = desiredParticipantsFromLegacy(group);
+      if (group.monitored !== true) lgpdDropped += (group.participants ?? []).length;
+      const rows = await loadParticipantRows(ctx, group._id);
+      const timelineRows = await loadTimelineRows(ctx, group._id);
+      const missing = missingTimelineEntries(group, timelineRows);
+      const diff = diffParticipantsTable(rows, desired);
+      if (!diff.ok || missing.length > 0) pending++;
+      if (dryRun) {
+        participantsInserted += diff.missing;
+        participantsUpdated += diff.changed;
+        participantsDeleted += diff.extra;
+        timelineInserted += missing.length;
+        continue;
+      }
+      const res = await syncParticipantsTable(ctx, group, desired, now, rows);
+      participantsInserted += res.inserted;
+      participantsUpdated += res.updated;
+      participantsDeleted += res.deleted;
+      // Ordena por `at` antes de inserir: o corte FIFO da tabela é por `at`.
+      await appendTimelineRows(
+        ctx,
+        group,
+        [...missing].sort((a, b) => a.at - b.at)
+      );
+      timelineInserted += missing.length;
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalBackfillGroupParticipants, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+        ...(args.pageSize ? { pageSize: args.pageSize } : {}),
+      });
+      scheduledNext = true;
+    }
+    console.log(
+      JSON.stringify({
+        op: "groupParticipantsBackfill",
+        dryRun,
+        scanned: page.page.length,
+        pending,
+        participantsInserted,
+        timelineInserted,
+      })
+    );
+    return {
+      dryRun,
+      scanned: page.page.length,
+      pending,
+      alreadyMigrated,
+      participantsInserted,
+      participantsUpdated,
+      participantsDeleted,
+      timelineInserted,
+      lgpdDropped,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
+  },
+});
+
+/**
+ * Passo 2: para cada sala cuja tabela BATE com o array legado (mesmas chaves,
+ * linhas iguais campo a campo, todos os eventos presentes), carimba
+ * `participantsMigratedAt` e apaga `participants`/`timeline` do doc — é aqui
+ * que o doc encolhe. Sala divergente é RECUSADA e reportada (rode o backfill
+ * de novo).
+ */
+export const internalFinishGroupParticipantsMigration = internalMutation({
+  args: migrationArgs,
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    finished: v.number(),
+    alreadyMigrated: v.number(),
+    divergent: v.number(),
+    divergentSample: v.array(
+      v.object({
+        groupChatId: v.id("groupChats"),
+        missing: v.number(),
+        extra: v.number(),
+        changed: v.number(),
+        timelineMissing: v.number(),
+        sample: v.array(v.string()),
+      })
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const now = Date.now();
+    const page = await migrationPage(ctx, args);
+    let finished = 0;
+    let alreadyMigrated = 0;
+    let divergent = 0;
+    const divergentSample: {
+      groupChatId: Id<"groupChats">;
+      missing: number;
+      extra: number;
+      changed: number;
+      timelineMissing: number;
+      sample: string[];
+    }[] = [];
+    for (const group of page.page) {
+      if (isGroupMigrated(group)) {
+        alreadyMigrated++;
+        continue;
+      }
+      const rows = await loadParticipantRows(ctx, group._id);
+      const desired = desiredParticipantsFromLegacy(group);
+      const diff = diffParticipantsTable(rows, desired);
+      const timelineMissing = missingTimelineEntries(group, await loadTimelineRows(ctx, group._id))
+        .length;
+      if (!diff.ok || timelineMissing > 0) {
+        divergent++;
+        if (divergentSample.length < 20) {
+          divergentSample.push({
+            groupChatId: group._id,
+            missing: diff.missing,
+            extra: diff.extra,
+            changed: diff.changed,
+            timelineMissing,
+            sample: diff.sample,
+          });
+        }
+        continue;
+      }
+      finished++;
+      if (!dryRun) {
+        // Sem o array, a contagem passa a vir SÓ de `participantsCount` — doc
+        // antigo pode não ter o campo (ou tê-lo defasado), então ele é
+        // recalculado aqui pela mesma regra de `countParticipants` (lista
+        // não vazia vence; sala sem lista mantém o que estava gravado).
+        const active = desired.filter((p) => p.leftAt === undefined).length;
+        await ctx.db.patch(group._id, {
+          participantsMigratedAt: now,
+          participants: undefined,
+          timeline: undefined,
+          ...(desired.length > 0 ? { participantsCount: active } : {}),
+        });
+        // Contagem espelhada na conversa (fase 4c) — só grava se mudou.
+        await syncGroupSummaryToConversation(ctx, {
+          ...group,
+          participants: undefined,
+          participantsCount: desired.length > 0 ? active : group.participantsCount,
+        });
+      }
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalFinishGroupParticipantsMigration, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+        ...(args.pageSize ? { pageSize: args.pageSize } : {}),
+      });
+      scheduledNext = true;
+    }
+    console.log(
+      JSON.stringify({
+        op: "groupParticipantsFinish",
+        dryRun,
+        scanned: page.page.length,
+        finished,
+        divergent,
+      })
+    );
+    return {
+      dryRun,
+      scanned: page.page.length,
+      finished,
+      alreadyMigrated,
+      divergent,
+      divergentSample,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
+  },
+});
+
+/**
+ * Rollback: recompõe `participants`/`timeline` no doc a partir das tabelas e
+ * limpa `participantsMigratedAt` (a leitura volta ao array; o dual-write
+ * mantém as tabelas em dia). As tabelas NÃO são apagadas.
+ */
+export const internalRestoreGroupArraysFromTable = internalMutation({
+  args: migrationArgs,
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    restored: v.number(),
+    notMigrated: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const page = await migrationPage(ctx, args);
+    let restored = 0;
+    let notMigrated = 0;
+    for (const group of page.page) {
+      if (!isGroupMigrated(group)) {
+        notMigrated++;
+        continue;
+      }
+      restored++;
+      if (dryRun) continue;
+      const participants = await participantsOf(ctx, group);
+      const timeline = await timelineOf(ctx, group);
+      await ctx.db.patch(group._id, {
+        participants,
+        timeline,
+        participantsMigratedAt: undefined,
+      });
+    }
+
+    const continueCursor = page.isDone ? null : page.continueCursor;
+    let scheduledNext = false;
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.groupChats.internalRestoreGroupArraysFromTable, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        ...(args.organizationId ? { organizationId: args.organizationId } : {}),
+        ...(args.pageSize ? { pageSize: args.pageSize } : {}),
+      });
+      scheduledNext = true;
+    }
+    return {
+      dryRun,
+      scanned: page.page.length,
+      restored,
+      notMigrated,
+      isDone: page.isDone,
+      continueCursor,
+      scheduledNext,
+    };
   },
 });

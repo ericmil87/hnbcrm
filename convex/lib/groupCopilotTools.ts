@@ -27,6 +27,7 @@ import { computeNextRun, pausePostCore, scheduleGroupPostTick, scheduleOf, wakeA
 import { createLeadFromGroupMemberCore } from "./groupMemberLead";
 import { assertAgentCan } from "./agentSecurity";
 import { applyOutboundMessageSideEffects } from "./outboundSideEffects";
+import { activeMemberCountOf, participantsOf } from "./groupParticipantsStore";
 
 const GROUP_LIST_CAP = 50;
 const MEMBERS_IN_TOOL = 50;
@@ -46,7 +47,7 @@ function groupRow(group: Doc<"groupChats">) {
   return {
     groupChatId: group._id as string,
     subject: group.subject,
-    membros: group.participants?.filter((p) => p.leftAt === undefined).length ?? 0,
+    membros: activeMemberCountOf(group),
     acompanhado: group.monitored === true,
     somosAdmin: group.weAreAdmin === true,
     ia: group.ai?.mode ?? "off",
@@ -91,7 +92,7 @@ export async function runGroupReadTool(
     case "getGroupDetail": {
       const group = await resolveGroup(ctx, toolArgs.groupChatId, organizationId);
       if (!group) return { error: "Grupo não encontrado" };
-      const active = (group.participants ?? []).filter((p) => p.leftAt === undefined);
+      const active = await participantsOf(ctx, group, { includeLeft: false });
       return {
         group: {
           ...groupRow(group),
@@ -409,7 +410,7 @@ export async function runGroupWriteTool(
       const text = typeof toolArgs.text === "string" ? toolArgs.text.trim() : "";
       if (!text) return { error: "text é obrigatório" };
       if (text.length > 4000) return { error: "Mensagem longa demais (máx. 4000 caracteres)" };
-      const members = group.participants?.filter((p) => p.leftAt === undefined).length ?? 0;
+      const members = activeMemberCountOf(group);
       const preview = `Publicar no grupo «${group.subject}» (${members} membros): "${text.slice(0, 160)}${text.length > 160 ? "…" : ""}"`;
       const pendingActionId = await ctx.db.insert("pendingActions", {
         organizationId,

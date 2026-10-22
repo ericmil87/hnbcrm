@@ -15,6 +15,7 @@ import type { MutationCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { phoneLookupCandidates } from "./phone";
 import { refreshLastMessagePreviewIfLast } from "./conversationListFields";
+import { findParticipant } from "./groupParticipantsStore";
 
 export const EDIT_PREVIOUS_CONTENT_MAX = 2000;
 export const EDIT_CONTENT_MAX = 65536;
@@ -57,13 +58,14 @@ async function isGroupAdmin(
       q.eq("channelConfigId", conversation.channelConfigId!).eq("jid", args.groupJid!)
     )
     .first();
-  for (const p of group?.participants ?? []) {
-    const same =
-      (!!args.senderLid && p.lid === args.senderLid) ||
-      (!!args.senderPhone && p.phone === args.senderPhone);
-    if (same) return p.isAdmin || p.isSuperAdmin;
-  }
-  return false;
+  if (!group) return false;
+  // Fase 4d: lookup por chave (índice) em sala migrada, em vez de varrer a
+  // lista inteira de membros.
+  const p = await findParticipant(ctx, group, {
+    ...(args.senderLid ? { lid: args.senderLid } : {}),
+    ...(args.senderPhone ? { phone: args.senderPhone } : {}),
+  });
+  return p ? p.isAdmin || p.isSuperAdmin : false;
 }
 
 async function resolveTarget(

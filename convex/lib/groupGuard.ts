@@ -19,6 +19,7 @@
  */
 import { Doc } from "../_generated/dataModel";
 import { QueryCtx } from "../_generated/server";
+import { participantsOf } from "./groupParticipantsStore";
 
 /**
  * Lança com mensagem em PT-BR quando a sala não aceita mais envio do CRM.
@@ -109,7 +110,9 @@ export async function resolveGroupMentions(
   const group = await ctx.db.get(conversation.groupChatId);
   if (!group) return undefined;
   // O teto estrutural do WhatsApp (1024 membros) continua valendo — a lista de
-  // participantes já é capada em `GROUP_PARTICIPANTS_CAP`.
-  const filtered = filterMentionsToParticipants(group.participants, mentions).slice(0, 1024);
+  // participantes já é capada em `GROUP_PARTICIPANTS_CAP`. Fase 4d: a lista
+  // vem de `groupParticipants` quando a sala já migrou.
+  const participants = await participantsOf(ctx, group);
+  const filtered = filterMentionsToParticipants(participants, mentions).slice(0, 1024);
   return filtered.length > 0 ? filtered : undefined;
 }

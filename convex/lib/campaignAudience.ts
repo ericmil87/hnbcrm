@@ -304,7 +304,8 @@ export interface GroupAudienceGroup {
   selfKey?: string | null;
   /** Nosso telefone, quando conhecido: o self também é filtrado por telefone. */
   selfPhone?: string | null;
-  participants: GroupParticipantLike[];
+  /** Ausente = não carregada (fase 4d: público `groups` só precisa da contagem). */
+  participants?: GroupParticipantLike[];
   participantsCount?: number;
 }
 

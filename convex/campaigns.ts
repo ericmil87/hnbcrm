@@ -70,6 +70,7 @@ import {
 import { groupsActorHas } from "./lib/groupAuth";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
+import { isGroupMigrated, participantsOf } from "./lib/groupParticipantsStore";
 import { parseCsv } from "./lib/csv";
 import { estimateCampaignCost, loadPricing } from "./lib/whatsappPricing";
 import {
@@ -332,6 +333,13 @@ async function loadAudienceGroups(
     groupChatIds: Id<"groupChats">[];
     channelConfigId?: Id<"channelConfigs">;
     requireMonitored?: boolean;
+    /**
+     * Fase 4d: carregar a lista de membros (`groupParticipants`) de cada sala.
+     * Default `true`. O público `groups` (1 destinatário por SALA) e as
+     * validações só precisam da contagem — sem isto, 50 salas de 1.024
+     * membros seriam 51 mil linhas lidas numa prévia.
+     */
+    withParticipants?: boolean;
   }
 ): Promise<{ docs: Doc<"groupChats">[]; groups: GroupAudienceGroup[] }> {
   if (args.groupChatIds.length === 0) throw new ConvexError("Escolha pelo menos um grupo");
@@ -371,7 +379,11 @@ async function loadAudienceGroups(
       conversationId: group.conversationId,
       selfKey: self.lid ?? self.phone ?? null,
       selfPhone: self.phone ?? null,
-      participants: group.participants ?? [],
+      // Sala ainda não migrada: o array legado já está em memória (custo zero).
+      participants:
+        args.withParticipants !== false || !isGroupMigrated(group)
+          ? await participantsOf(ctx, group)
+          : undefined,
       participantsCount: group.participantsCount,
     });
   }
@@ -564,6 +576,7 @@ async function assertGroupAudienceWritable(
     organizationId,
     groupChatIds: ids,
     channelConfigId: config._id,
+    withParticipants: false,
   });
   // Identidade própria desconhecida: recusa já no RASCUNHO. O snapshot do
   // lançamento também recusa (e pausa a campanha com o motivo), mas descobrir
@@ -588,6 +601,7 @@ async function assertGroupAudienceWritable(
       organizationId,
       groupChatIds: exclude,
       requireMonitored: false,
+      withParticipants: false,
     });
   }
 }
@@ -1011,6 +1025,7 @@ export async function previewAudienceHandler(ctx: QueryCtx, args: PreviewAudienc
         organizationId: args.organizationId,
         groupChatIds: ids,
         channelConfigId: args.channelConfigId,
+        withParticipants: args.source === "group_members",
       });
       if (args.source === "groups") {
         const built = buildGroupsAudience({ groups });
@@ -1886,6 +1901,7 @@ async function validateForLaunch(
       organizationId: campaign.organizationId,
       groupChatIds: campaign.audience.groupChatIds ?? [],
       channelConfigId: config._id,
+      withParticipants: false,
     });
     for (const g of docs) {
       if (g.leftAt !== undefined || g.removedAt !== undefined) {
@@ -2153,6 +2169,7 @@ async function snapshotGroupAudience(
     organizationId: campaign.organizationId,
     groupChatIds: campaign.audience.groupChatIds ?? [],
     channelConfigId: campaign.channelConfigId,
+    withParticipants: campaign.audience.source === "group_members",
   });
 
   let rows: RecipientRow[] = [];
