@@ -2,6 +2,15 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.70.2] - 2026-10-22
+
+### Documentação e ferramental para agentes de código
+
+- **Documentação técnica reorganizada por área:** o histórico de decisões, incidentes e pegadinhas medidas (v0.45 → v0.70) saiu do `CLAUDE.md` da raiz e vive em `docs/architecture/` (20 áreas, com índice "leia quando mexer em…"). Nada foi resumido: um guard no CI (`scripts/claude/check-no-loss.mjs` + `convex/claudeMdNoLoss.test.ts`) confere que todos os 2.137 identificadores do texto antigo continuam na documentação
+- **Claude Code mais leve:** o contexto carregado em toda sessão caiu de ~103 mil para ~36 mil tokens. Regras por caminho em `.claude/rules/` (Convex oficial, invariantes do backend, bridge WhatsApp, pipeline de IA, frontend, testes), agentes `frontend-specialist`, `convex-backend` e `reviewer`, skills `convex-ops` (runbook dev × prod e catálogo de operações) e `release`, e `.claude/settings.json` versionado com hooks (validador de função Convex, codegen do schema, aviso de branch/deployment ao abrir a sessão)
+- Removidos o submódulo `.claude/convex-agent-plugins` (formato Cursor) e as regras não versionadas em `.cursor/`; os scripts dos hooks vivem em `scripts/claude/`. `README.md` e `CONTRIBUTING.md` apontam para a nova estrutura
+- Avaliação do upgrade do Convex (1.31 → 1.47), do `npx convex ai-files` e do plugin oficial feita numa worktree, sem aplicar — registro em `temp/plano-claude-code-config/03-AVALIACAO-CONVEX.md`
+
 ## [0.70.1] - 2026-10-10
 
 ### Campanha: checagem de número não confunde LID com telefone

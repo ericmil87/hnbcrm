@@ -82,7 +82,8 @@ To populate the DEV database with sample data, run the internal mutation from th
 | `npm run dev:frontend` | Start only the Vite dev server |
 | `npm run dev:backend` | Start only the Convex dev server |
 | `npm run build` | Production build (Vite) |
-| `npm run lint` | Full check: TypeScript + Convex deploy + Vite build |
+| `npm run test` | Test suite (vitest + convex-test, ~2.4k tests) |
+| `npm run lint` | Full check: TypeScript + Convex push to the **dev** deployment + Vite build |
 
 ## Project Structure
 
@@ -111,9 +112,17 @@ convex/
   llmsTxt.ts        /llms.txt endpoint content
   seed.ts           Development seed data
 mcp-server/         MCP server package (hnbcrm-mcp)
-.claude/skills/     Agent Skill (workflows, data model, setup)
+docs/architecture/  Decisions, measured gotchas and version history per area (index: README.md)
+.claude/rules/      Path-scoped rules for Claude Code (Convex, backend invariants, bridge, AI, frontend, tests)
+.claude/agents/     Project subagents (frontend-specialist, convex-backend, reviewer)
+.claude/skills/     Skills: hnbcrm (operate the CRM via MCP), convex-ops, release, review-checklist
+scripts/claude/     Hook scripts and the docs no-loss guard
 public/             Logo assets
 ```
+
+### Working with AI coding agents
+
+The root `CLAUDE.md` is intentionally short (stack, commands, dev × prod, invariants). Everything else loads on demand: `convex/CLAUDE.md` and `src/CLAUDE.md` when files in those folders are touched, `.claude/rules/*.md` by path glob, and `docs/architecture/<area>.md` is the place to read before changing an area. `scripts/claude/check-no-loss.mjs` (run in CI) guarantees nothing from the documentation disappears. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## API & Integrations
 
