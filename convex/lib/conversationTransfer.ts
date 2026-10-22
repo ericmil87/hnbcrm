@@ -71,8 +71,10 @@ export async function transferConversationCore(
     createdAt: now,
   });
 
-  // A nota NÃO mexe em `lastMessageAt` (a ordem da lista não muda), mas é a
-  // última mensagem — a prévia da lista mostra "Nota: …" (fase 4c).
+  // A nota NÃO mexe em `lastMessageAt` (a ordem da lista não muda) e também
+  // não vira prévia da lista: nota interna fica fora de `lastMessage*` desde a
+  // onda 2 de I/O (`lastMessagePatchFor` devolve null), então o spread abaixo é
+  // no-op para ela e a prévia segue sendo a última mensagem com o cliente.
   await ctx.db.patch(conversation._id, {
     departmentId: nextDepartmentId,
     assignedTo: nextAssignedTo,

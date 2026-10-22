@@ -10,6 +10,12 @@
  */
 export const CONVERSATIONS_DEFAULT_LIMIT = 50;
 export const CONVERSATIONS_MAX_LIMIT = 500;
+/**
+ * Piso de leitura de `getConversations` quando há pós-filtro em memória
+ * (unidade sobre o ramo de setor, assignedToMe, assignedTo, channel): sem ele
+ * a página viria menor que `limit` com conversas existindo.
+ */
+export const CONVERSATIONS_POST_FILTER_READ_FLOOR = 200;
 /** Thread: as N mensagens mais RECENTES, devolvidas em ordem ASC. */
 export const MESSAGES_DEFAULT_LIMIT = 50;
 export const MESSAGES_MAX_LIMIT = 500;

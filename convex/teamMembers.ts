@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
@@ -490,7 +491,7 @@ export const updateMemberAvatar = mutation({
       const oldFile = await ctx.db.get(teamMember.avatarFileId);
       if (oldFile) {
         await ctx.storage.delete(oldFile.storageId);
-        await ctx.db.delete(oldFile._id);
+        await deleteFileRow(ctx, oldFile);
       }
     }
 

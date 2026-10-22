@@ -161,6 +161,7 @@ import type * as lib_promptEnvelope from "../lib/promptEnvelope.js";
 import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
 import type * as lib_startConversation from "../lib/startConversation.js";
+import type * as lib_storageUsage from "../lib/storageUsage.js";
 import type * as lib_taskOps from "../lib/taskOps.js";
 import type * as lib_taskSearchText from "../lib/taskSearchText.js";
 import type * as lib_whatsappDispatch from "../lib/whatsappDispatch.js";
@@ -366,6 +367,7 @@ declare const fullApi: ApiFromModules<{
   "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;
   "lib/startConversation": typeof lib_startConversation;
+  "lib/storageUsage": typeof lib_storageUsage;
   "lib/taskOps": typeof lib_taskOps;
   "lib/taskSearchText": typeof lib_taskSearchText;
   "lib/whatsappDispatch": typeof lib_whatsappDispatch;

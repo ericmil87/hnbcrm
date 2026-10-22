@@ -18,6 +18,7 @@
  * nenhum lead depois desta exclusão (snapshot em audit log, igual ao lead).
  */
 import { v } from "convex/values";
+import { deleteFileRow } from "./storageUsage";
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -94,7 +95,7 @@ async function deleteFileWithBlob(ctx: MutationCtx, fileId: Id<"files">): Promis
   // O blob só cai quando NENHUMA outra linha de `files` aponta para ele — uma
   // mensagem encaminhada compartilha o `storageId` com a original.
   await deleteBlobIfUnreferenced(ctx, file);
-  await ctx.db.delete(fileId);
+  await deleteFileRow(ctx, file);
   return 1;
 }
 

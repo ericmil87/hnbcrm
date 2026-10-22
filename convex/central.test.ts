@@ -255,12 +255,9 @@ describe("transferência", () => {
     expect(state.messages[0]).toMatchObject({ direction: "internal", isInternal: true });
     expect(state.messages[0].metadata?.kind).toBe("transfer");
     expect(state.messages[0].metadata?.transfer.toDept.name).toBe("Financeiro");
-    // Fase 4c: a nota vira a prévia da lista, sem mexer na ordem (lastMessageAt).
-    expect(state.conversation).toMatchObject({
-      lastMessageId: state.messages[0]._id,
-      lastMessageDirection: "internal",
-    });
-    expect(state.conversation!.lastMessagePreview).toMatch(/^Nota: .*transferiu a conversa/);
+    // Onda 2 de I/O: a nota de transferência NÃO vira prévia da lista.
+    expect(state.conversation!.lastMessageId).not.toBe(state.messages[0]._id);
+    expect(state.conversation!.lastMessagePreview ?? "").not.toMatch(/^Nota: /);
     expect(state.notifications).toHaveLength(1);
     expect(state.notifications[0]).toMatchObject({
       type: "conversation_transferred", memberId: s.admin.memberId, conversationId: s.conversationId,
@@ -380,6 +377,77 @@ describe("getConversations — filtros novos", () => {
     expect(await ids({ unitId, assignedToMe: true })).toEqual([other]);
     expect(await ids({ departmentId: deptId, noDepartment: true })).toEqual([other]);
     expect(await ids({ leadId: s.leadId })).toEqual([s.conversationId]);
+  });
+
+  test("setor/unidade: índice por última mensagem com arquivadas fora (60 conversas, limit 5)", async () => {
+    const s = await seed({ modules: ALL_ON });
+    const unitId = await as(s).mutation(api.units.createUnit, { organizationId: s.organizationId, name: "H1" });
+    const deptId = await as(s).mutation(api.departments.createDepartment, {
+      organizationId: s.organizationId, name: "Reservas",
+    });
+    const base = Date.now();
+    const { active, archived } = await t.run(async (ctx) => {
+      const active: Array<{ id: Id<"conversations">; last: number }> = [];
+      const archived: Id<"conversations">[] = [];
+      for (let i = 0; i < 60; i++) {
+        // Criação em ordem INVERSA da última mensagem: o índice antigo (por
+        // criação) traria as erradas primeiro.
+        const last = base + i * 1000;
+        const isArchived = i >= 57; // as 3 mais recentes estão arquivadas
+        const id = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", status: "active",
+          messageCount: 0, lastMessageAt: last, createdAt: base - i * 1000, updatedAt: base,
+          unitId, departmentId: deptId,
+          ...(isArchived ? { archivedAt: base + 100_000 } : {}),
+        });
+        if (isArchived) archived.push(id);
+        else active.push({ id, last });
+      }
+      return { active, archived };
+    });
+    const expected = active.sort((a, b) => b.last - a.last).slice(0, 5).map((c) => c.id);
+    const run = async (args: Record<string, unknown>) =>
+      ((await as(s, "agent").query(api.conversations.getConversations, {
+        organizationId: s.organizationId, limit: 5, ...args,
+      })) as Array<{ _id: Id<"conversations"> }>).map((c) => c._id);
+
+    expect(await run({ departmentId: deptId })).toEqual(expected);
+    expect(await run({ unitId })).toEqual(expected);
+    expect((await run({ departmentId: deptId, archived: true })).sort()).toEqual([...archived].sort());
+    expect((await run({ unitId, archived: true })).sort()).toEqual([...archived].sort());
+  });
+
+  test("setor + unidade: pós-filtro de unidade não encurta a página (piso de leitura)", async () => {
+    const s = await seed({ modules: ALL_ON });
+    const unitId = await as(s).mutation(api.units.createUnit, { organizationId: s.organizationId, name: "H1" });
+    const deptId = await as(s).mutation(api.departments.createDepartment, {
+      organizationId: s.organizationId, name: "Reservas",
+    });
+    const base = Date.now();
+    const inUnit = await t.run(async (ctx) => {
+      const inUnit: Array<{ id: Id<"conversations">; last: number }> = [];
+      for (let i = 0; i < 60; i++) {
+        // As 30 mais recentes do setor estão FORA da unidade: com take(limit)
+        // seguido do filtro de unidade a página voltava vazia.
+        const last = base + i * 1000;
+        const withUnit = i < 30;
+        const id = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", status: "active",
+          messageCount: 0, lastMessageAt: last, createdAt: base, updatedAt: base,
+          departmentId: deptId, ...(withUnit ? { unitId } : {}),
+        });
+        if (withUnit) inUnit.push({ id, last });
+      }
+      return inUnit;
+    });
+    const sorted = inUnit.sort((a, b) => b.last - a.last).map((c) => c.id);
+    const run = async (limit: number) =>
+      ((await as(s, "agent").query(api.conversations.getConversations, {
+        organizationId: s.organizationId, departmentId: deptId, unitId, limit,
+      })) as Array<{ _id: Id<"conversations"> }>).map((c) => c._id);
+
+    expect(await run(5)).toEqual(sorted.slice(0, 5));
+    expect((await run(40)).sort()).toEqual([...sorted].sort());
   });
 });
 

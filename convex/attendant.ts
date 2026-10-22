@@ -16,6 +16,7 @@
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
+import { insertFileRow } from "./lib/storageUsage";
 import { v } from "convex/values";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import {
@@ -4102,7 +4103,7 @@ export const acceptAiDraft = mutation({
       const file = await ctx.db.get(fileId);
       if (!file || file.organizationId !== conversation.organizationId) continue;
       outboundAttachments.push(
-        await ctx.db.insert("files", {
+        await insertFileRow(ctx, {
           organizationId: file.organizationId,
           storageId: file.storageId,
           name: file.name,

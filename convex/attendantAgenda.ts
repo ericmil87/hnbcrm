@@ -14,6 +14,7 @@
  * Nunca logar a chave nem a URL (pode ter query string com segredo).
  */
 import { v } from "convex/values";
+import { deleteFileRow, insertFileRow } from "./lib/storageUsage";
 import { ActionCtx, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -199,7 +200,7 @@ export const internalReuseAgendaImageFile = internalMutation({
       // O blob ainda existe? (a cascata de lead pode ter levado o último dono)
       const blob = await ctx.db.system.get(row.storageId as Id<"_storage">);
       if (!blob) continue;
-      return await ctx.db.insert("files", {
+      return await insertFileRow(ctx, {
         organizationId: args.organizationId,
         storageId: row.storageId,
         name: row.name,
@@ -227,7 +228,7 @@ export const internalInsertAgendaImageFile = internalMutation({
   },
   returns: v.id("files"),
   handler: async (ctx, args) => {
-    return await ctx.db.insert("files", {
+    return await insertFileRow(ctx, {
       organizationId: args.organizationId,
       storageId: args.storageId,
       name: args.name,
@@ -253,7 +254,7 @@ export const internalDiscardUnlinkedFiles = internalMutation({
     for (const fileId of args.fileIds) {
       const file = await ctx.db.get(fileId);
       if (!file || file.messageId) continue;
-      await ctx.db.delete(file._id);
+      await deleteFileRow(ctx, file);
       await deleteBlobIfUnreferenced(ctx, file);
     }
     return null;

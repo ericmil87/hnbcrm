@@ -226,9 +226,69 @@ describe("prévia gravada na conversa", () => {
       content: "ligar amanhã",
       isInternal: true,
     });
+    // Onda 2 de I/O: nota interna não é prévia — a lista segue com a saída.
     const [row] = await expectEquivalent(s);
-    expect(row.lastMessagePreview).toBe("Nota: ligar amanhã");
-    expect(row.lastMessageDirection).toBe("internal");
+    expect(row.lastMessagePreview).toBe("Recebido!");
+    expect(row.lastMessageDirection).toBe("outbound");
+  });
+
+  test("nota interna depois de inbound mantém a prévia do inbound (denorm, fallback e kill switch)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    vi.setSystemTime(2_000_000);
+    const inboundId = await receive(t, s, "quero reservar", "EXT1");
+    const before = await conversationOf(t, s);
+
+    vi.setSystemTime(2_010_000);
+    await s.asAdmin.mutation(api.conversations.sendMessage, {
+      conversationId: before!._id,
+      content: "cliente VIP",
+      isInternal: true,
+    });
+    const after = await conversationOf(t, s);
+    // A prévia não foi regravada; `lastMessageAt` continua andando.
+    expect(after).toMatchObject({
+      lastMessageId: inboundId,
+      lastMessagePreview: "quero reservar",
+      lastMessageDirection: "inbound",
+      lastMessagePreviewAt: before!.lastMessagePreviewAt,
+      lastMessageAt: 2_010_000,
+    });
+    const [row] = await expectEquivalent(s);
+    expect(row.lastMessagePreview).toBe("quero reservar");
+
+    // Fallback (conversa sem os campos) pula a nota e acha o inbound.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(after!._id, { lastMessageId: undefined, lastMessagePreview: undefined, lastMessagePreviewAt: undefined });
+    });
+    const [fallbackRow] = await listRows(s);
+    expect(fallbackRow.lastMessagePreview).toBe("quero reservar");
+    expect(fallbackRow.lastMessageDirection).toBe("inbound");
+  });
+
+  test("backfill re-deriva a prévia antiga \"Nota: …\" para a última não interna", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    vi.setSystemTime(3_000_000);
+    const inboundId = await receive(t, s, "oi", "EXT1");
+    vi.setSystemTime(3_010_000);
+    const conversation = await conversationOf(t, s);
+    await s.asAdmin.mutation(api.conversations.sendMessage, {
+      conversationId: conversation!._id, content: "nota", isInternal: true,
+    });
+    // Estado gravado pela regra antiga (fase 4c): a nota era a prévia.
+    const note = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).find((m) => m.isInternal)!
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(conversation!._id, lastMessageFieldsPatch(note._id, note));
+    });
+    expect((await conversationOf(t, s))!.lastMessagePreview).toBe("Nota: nota");
+
+    const real = await t.mutation(internal.conversations.internalBackfillListFields, { dryRun: false });
+    expect(real).toMatchObject({ patched: 1, lastMessageFixed: 1 });
+    expect(await conversationOf(t, s)).toMatchObject({ lastMessageId: inboundId, lastMessagePreview: "oi" });
+    await expectEquivalent(s);
   });
 
   test("mensagem do aparelho antiga (histórico) não anda a prévia para trás", async () => {
