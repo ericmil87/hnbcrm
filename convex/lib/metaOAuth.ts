@@ -106,7 +106,7 @@ export function redirectUrlFor(
   appUrl: string,
   result: MetaOAuthErrorCode | "ok" | { selecionar: true; pendenteId: string }
 ): string {
-  const base = `${appUrl.replace(/\/+$/, "")}/configuracoes?secao=canais`;
+  const base = `${appUrl.replace(/\/+$/, "")}/app/configuracoes?secao=channels`;
   if (typeof result === "string") return `${base}&meta=${result}`;
   return `${base}&meta=selecionar&pendente=${encodeURIComponent(result.pendenteId)}`;
 }

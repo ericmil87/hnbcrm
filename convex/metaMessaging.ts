@@ -47,13 +47,13 @@ import {
   pickUsablePages,
   redirectUrlFor,
 } from "./lib/metaOAuth";
-import { fallbackMetaName, findOrCreateContactByMetaIdentity } from "./lib/metaIdentity";
+import { fallbackMetaName, findOrCreateContactByMetaIdentity, maskExternalId } from "./lib/metaIdentity";
 
 // ── Constantes e validators ──
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const PENDING_TTL_MS = 15 * 60 * 1000;
-const RETURN_PATH = "/configuracoes?secao=canais";
+const RETURN_PATH = "/app/configuracoes?secao=channels";
 const SUBSCRIBED_FIELDS = [
   "messages",
   "message_echoes",
@@ -308,16 +308,21 @@ export const internalGetConfigForMetaAccount = internalQuery({
   args: { surface: surfaceValidator, accountId: v.string() },
   returns: v.any(),
   handler: async (ctx, args) => {
-    if (args.surface === "messenger") {
-      return await ctx.db
-        .query("channelConfigs")
-        .withIndex("by_messenger_page_id", (q) => q.eq("messengerPageId", args.accountId))
-        .first();
+    const rows =
+      args.surface === "messenger"
+        ? await ctx.db
+            .query("channelConfigs")
+            .withIndex("by_messenger_page_id", (q) => q.eq("messengerPageId", args.accountId))
+            .take(10)
+        : await ctx.db
+            .query("channelConfigs")
+            .withIndex("by_instagram_account_id", (q) => q.eq("instagramAccountId", args.accountId))
+            .take(10);
+    // Defesa: se sobrou config velho (desativado) com o mesmo id, o ATIVO vence.
+    if (rows.length > 1) {
+      console.warn(`meta-messaging: ${rows.length} configs para a conta ${maskExternalId(args.accountId)}`);
     }
-    return await ctx.db
-      .query("channelConfigs")
-      .withIndex("by_instagram_account_id", (q) => q.eq("instagramAccountId", args.accountId))
-      .first();
+    return rows.find((c) => c.status === "active") ?? rows[0] ?? null;
   },
 });
 
@@ -675,7 +680,9 @@ export const startMetaConnect = action({
 
 // ── OAuth: callback ──
 
-type FinalizeResult = { ok: true; configIds: Id<"channelConfigs">[] } | { ok: false; code: MetaOAuthErrorCode };
+type FinalizeResult =
+  | { ok: true; configIds: Id<"channelConfigs">[] }
+  | { ok: false; code: MetaOAuthErrorCode; configIds?: Id<"channelConfigs">[] };
 
 /** Por Página: debug_token → subscribed_apps → conexão cifrada → configs. */
 async function finalizeConnection(
@@ -930,9 +937,10 @@ export const getPendingSelection = query({
     })
   ),
   handler: async (ctx, args) => {
-    await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
     const pending = await ctx.db.get(args.pendingId);
     if (!pending || pending.organizationId !== args.organizationId) return null;
+    if (pending.memberId !== member._id) throw new ConvexError("Esta seleção pertence a outro usuário.");
     return {
       // Sem `Date.now()` em query: o cliente decide pelo `expiresAt`; a finalização revalida.
       pages: pending.pages.map((p) => ({
@@ -976,6 +984,8 @@ const finalizeReturn = v.union(
       v.literal("modulo_off"),
       v.literal("falha_meta")
     ),
+    // O que já foi conectado antes da falha (falha no meio do lote).
+    configIds: v.optional(v.array(v.id("channelConfigs"))),
   })
 );
 
@@ -999,17 +1009,34 @@ export const finalizeMetaSelection = action({
     }
     if (pending.memberId !== memberId) return { ok: false, code: "sem_papel" };
 
-    const configIds: Id<"channelConfigs">[] = [];
-    for (const pick of args.picks) {
-      if (!pick.messenger && !pick.instagram) continue;
-      const page = pending.pages.find((p) => p.pageId === pick.pageId);
-      if (!page) continue;
+    // 1) Valida TODAS as escolhas antes de conectar a primeira (nada pela metade).
+    const chosen = args.picks
+      .filter((p) => p.messenger || p.instagram)
+      .map((pick) => ({ pick, page: pending.pages.find((p) => p.pageId === pick.pageId) }))
+      .filter((c): c is { pick: (typeof args.picks)[number]; page: Doc<"metaOAuthPending">["pages"][number] } => !!c.page);
+    for (const { pick, page } of chosen) {
       if (!page.tasksOk) return { ok: false, code: "sem_papel" };
+      const blocked: MetaOAuthErrorCode | null = await ctx.runQuery(internal.metaMessaging.internalCheckMetaAccountFree, {
+        organizationId: args.organizationId,
+        pageId: page.pageId,
+        igAccountId: pick.instagram ? page.igAccountId : undefined,
+      });
+      if (blocked) return { ok: false, code: blocked };
+    }
+
+    // 2) Conecta. Falha no meio (ex.: corrida com outra org): devolve o que já conectou e
+    // apaga a pendência (os tokens cifrados não ficam órfãos).
+    const configIds: Id<"channelConfigs">[] = [];
+    const failMidway = async (code: MetaOAuthErrorCode): Promise<FinalizeResult> => {
+      await ctx.runMutation(internal.metaMessaging.internalDeletePending, { pendingId: args.pendingId });
+      return { ok: false, code, configIds };
+    };
+    for (const { pick, page } of chosen) {
       let token: string;
       try {
         token = await decryptSecret(page.tokenEncrypted);
       } catch {
-        return { ok: false, code: "falha_meta" };
+        return await failMidway("falha_meta");
       }
       const result = await finalizeConnection(ctx, {
         organizationId: args.organizationId,
@@ -1026,7 +1053,7 @@ export const finalizeMetaSelection = action({
         instagram: pick.instagram,
         scopes: pending.scopes,
       });
-      if (!result.ok) return result;
+      if (!result.ok) return await failMidway(result.code);
       configIds.push(...result.configIds);
     }
     await ctx.runMutation(internal.metaMessaging.internalDeletePending, { pendingId: args.pendingId });
@@ -1200,7 +1227,15 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
               .query("channelConfigs")
               .withIndex("by_instagram_account_id", (q) => q.eq("instagramAccountId", accountId))
               .take(10);
-      const existing = found.find((c) => c.organizationId === args.organizationId);
+      let existing = found.find((c) => c.organizationId === args.organizationId);
+      if (!existing) {
+        // Config desconectado antes (ids de roteamento liberados): reaproveita pela conexão.
+        const byConn = await ctx.db
+          .query("channelConfigs")
+          .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+          .take(20);
+        existing = byConn.find((c) => c.organizationId === args.organizationId && c.channel === channel);
+      }
       const handle = channel === "instagram" && conn.igUsername ? `@${conn.igUsername}` : undefined;
       const label = channel === "messenger" ? conn.pageName : handle ?? conn.pageName;
       const display = label ?? (channel === "messenger" ? "Messenger" : "Instagram");
@@ -1209,6 +1244,7 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
         await ctx.db.patch(existing._id, {
           status: "active",
           disabledByModuleAt: undefined,
+          ...(channel === "messenger" ? { messengerPageId: accountId } : { instagramAccountId: accountId }),
           metaConnectionId: conn._id,
           displayName: display,
           metaAccountLabel: label,
@@ -1277,7 +1313,14 @@ export const disconnectMetaConnection = mutation({
     const disabled: string[] = [];
     for (const c of configs) {
       if (c.organizationId !== args.organizationId) continue;
-      await ctx.db.patch(c._id, { status: "disabled", updatedAt: now });
+      // Libera os ids de roteamento: a Página/conta IG pode ser conectada por outra org e o
+      // índice deve devolver só o config novo. O rótulo e o @ continuam para exibição.
+      await ctx.db.patch(c._id, {
+        status: "disabled",
+        messengerPageId: undefined,
+        instagramAccountId: undefined,
+        updatedAt: now,
+      });
       disabled.push(c._id);
     }
     await ctx.db.insert("auditLogs", {

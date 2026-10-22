@@ -27,6 +27,7 @@ import { deleteBlobIfUnreferenced } from "./fileRefs";
 import { purgeFollowUpsOfConversation } from "./followUpOps";
 import { deleteRuntime } from "./conversationRuntime";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { deleteMetaIdentitiesForContact } from "./metaIdentity";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -440,6 +441,7 @@ export async function hardDeleteLead(
     severity: "high",
     createdAt: now,
   });
+  await deleteMetaIdentitiesForContact(ctx, contact._id);
   await ctx.db.delete(contact._id);
 
   return { deletedContactId: contact._id };

@@ -114,6 +114,7 @@ export function rowLimitMessage(rows: number): string {
 export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importKeys";
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
+import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 /** Cabeçalho legível a partir da chave (só para mensagens de erro). */
@@ -1295,6 +1296,7 @@ export const internalRollbackBatch = internalMutation({
         .withIndex("by_contact", (q) => q.eq("contactId", contactId))
         .first();
       if (stillLinked) continue; // outro lead passou a usar o contato — preserva
+      await deleteMetaIdentitiesForContact(ctx, contactId);
       await ctx.db.delete(contactId);
       deleted++;
     }

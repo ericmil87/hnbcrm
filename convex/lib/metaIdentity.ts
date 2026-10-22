@@ -45,7 +45,30 @@ export async function findOrCreateContactByMetaIdentity(
 
   if (identity && identity.organizationId === args.organizationId) {
     const contact = await ctx.db.get(identity.contactId);
-    if (contact && contact.organizationId === args.organizationId) {
+    if (!contact) {
+      // Contato apagado (as identidades também são apagadas, mas linhas antigas
+      // podem ter sobrado): reaproveita a MESMA identidade com um contato novo, em vez
+      // de inserir uma segunda com a mesma chave.
+      const displayName =
+        name ?? (username ? `@${username}` : fallbackMetaName(args.kind, args.externalId));
+      const contactId = await ctx.db.insert("contacts", {
+        organizationId: args.organizationId,
+        firstName: displayName,
+        ...(args.kind === "instagram" && username ? { instagramUsername: username } : {}),
+        tags: [],
+        searchText: [buildSearchText({ firstName: displayName }), username].filter(Boolean).join(" ") || undefined,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.patch(identity._id, {
+        contactId,
+        ...(username ? { username } : {}),
+        ...(name ? { displayName: name } : {}),
+        profileFetchedAt: name || username ? now : undefined,
+      });
+      return { contactId, identityId: identity._id, created: true };
+    }
+    if (contact.organizationId === args.organizationId) {
       // Backfill: perfil que chegou depois do primeiro contato.
       const placeholder = fallbackMetaName(args.kind, args.externalId);
       const currentName = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
@@ -99,4 +122,19 @@ export async function findOrCreateContactByMetaIdentity(
     createdAt: now,
   });
   return { contactId, identityId, created: true };
+}
+
+/**
+ * Apaga as identidades Instagram/Messenger de um contato. Todo caminho que apaga
+ * contato chama isto (contacts.ts, lib/leadCascade.ts, imports.ts).
+ */
+export async function deleteMetaIdentitiesForContact(
+  ctx: { db: MutationCtx["db"] },
+  contactId: Id<"contacts">
+): Promise<void> {
+  const rows = await ctx.db
+    .query("contactChannelIdentities")
+    .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+    .take(100);
+  for (const row of rows) await ctx.db.delete(row._id);
 }

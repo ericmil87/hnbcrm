@@ -173,7 +173,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
   );
   const metaConfigs = metaEnabled ? (allMetaConfigs ?? []) : [];
 
-  // Volta do OAuth da Meta: /configuracoes?secao=canais&meta=<code>[&pendente=<id>].
+  // Volta do OAuth da Meta: /app/configuracoes?secao=channels&meta=<code>[&pendente=<id>].
   const [searchParams, setSearchParams] = useSearchParams();
   const metaCode = searchParams.get("meta");
   const pendingId = searchParams.get("pendente");

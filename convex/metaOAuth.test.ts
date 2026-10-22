@@ -66,10 +66,10 @@ describe("lib/metaOAuth", () => {
 
   test("redirectUrlFor", () => {
     expect(META_OAUTH_ERROR_CODES).toContain("conta_em_uso");
-    expect(redirectUrlFor("https://a.test/", "ok")).toBe("https://a.test/configuracoes?secao=canais&meta=ok");
-    expect(redirectUrlFor("https://a.test", "sem_pagina")).toBe("https://a.test/configuracoes?secao=canais&meta=sem_pagina");
+    expect(redirectUrlFor("https://a.test/", "ok")).toBe("https://a.test/app/configuracoes?secao=channels&meta=ok");
+    expect(redirectUrlFor("https://a.test", "sem_pagina")).toBe("https://a.test/app/configuracoes?secao=channels&meta=sem_pagina");
     expect(redirectUrlFor("https://a.test", { selecionar: true, pendenteId: "abc" })).toBe(
-      "https://a.test/configuracoes?secao=canais&meta=selecionar&pendente=abc"
+      "https://a.test/app/configuracoes?secao=channels&meta=selecionar&pendente=abc"
     );
   });
 });
@@ -169,8 +169,8 @@ async function callback(t: TestConvex<typeof schema>, state: string, extra = "co
   return { status: res.status, location: res.headers.get("Location") ?? "" };
 }
 
-const OK = "https://app.example.test/configuracoes?secao=canais&meta=ok";
-const metaUrl = (code: string) => `https://app.example.test/configuracoes?secao=canais&meta=${code}`;
+const OK = "https://app.example.test/app/configuracoes?secao=channels&meta=ok";
+const metaUrl = (code: string) => `https://app.example.test/app/configuracoes?secao=channels&meta=${code}`;
 
 describe("startMetaConnect e state", () => {
   test("monta a URL, grava só o hash do nonce e exige permissão", async () => {
@@ -181,7 +181,7 @@ describe("startMetaConnect e state", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].nonceHash).toMatch(/^[0-9a-f]{64}$/);
     expect(rows[0].nonceHash).not.toBe(state);
-    expect(rows[0].returnPath).toBe("/configuracoes?secao=canais");
+    expect(rows[0].returnPath).toBe("/app/configuracoes?secao=channels");
     expect(rows[0].expiresAt - rows[0].createdAt).toBe(10 * 60 * 1000);
 
     const asManager = t.withIdentity({ subject: `${s.managerUserId}|s1` });
@@ -504,5 +504,105 @@ describe("desconectar e apagar", () => {
     const { conn, cfg } = await t.run(async (ctx) => ({ conn: (await ctx.db.query("metaConnections").collect())[0], cfg: (await ctx.db.query("channelConfigs").collect())[0] }));
     await asAdmin.mutation(api.metaMessaging.disconnectMetaConnection, { organizationId: s.organizationId, connectionId: conn._id });
     await expect(asAdmin.mutation(api.channelConfigs.setChannelConfigStatus, { configId: cfg._id, status: "active" })).rejects.toThrow(/Reconecte/);
+  });
+});
+
+describe("seleção de Páginas: robustez", () => {
+  async function toPending(t: TestConvex<typeof schema>, s: Awaited<ReturnType<typeof seedOrg>>, pages: FakePage[]) {
+    stubMeta({ pages });
+    const { location } = await callback(t, await startState(t, s));
+    return decodeURIComponent(location.match(/meta=selecionar&pendente=([^&]+)/)![1]) as Id<"metaOAuthPending">;
+  }
+
+  test("valida todas as Páginas antes de conectar a primeira", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const b = await seedOrg(t, "b");
+    stubMeta({ pages: [page2] });
+    await callback(t, await startState(t, a)); // org A fica com a Página 2
+    const pendingId = await toPending(t, b, [page1, page2]);
+    const asB = t.withIdentity({ subject: `${b.adminUserId}|s1` });
+    const res = await asB.action(api.metaMessaging.finalizeMetaSelection, {
+      organizationId: b.organizationId,
+      pendingId,
+      picks: [
+        { pageId: page1.id, messenger: true, instagram: true }, // livre
+        { pageId: page2.id, messenger: true, instagram: false }, // da org A
+      ],
+    });
+    expect(res).toEqual({ ok: false, code: "conta_em_uso" });
+    const conns = await t.run(async (ctx) => await ctx.db.query("metaConnections").collect());
+    expect(conns.map((c) => c.organizationId)).toEqual([a.organizationId]); // nada foi conectado na B
+  });
+
+  test("falha no meio devolve o que já conectou e apaga a pendência", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const b = await seedOrg(t, "b");
+    const pendingId = await toPending(t, b, [page1, page2]);
+    // Corrida: enquanto a Página 1 é inscrita, a org A conecta a Página 2.
+    const inner = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes(`/${page1.id}/subscribed_apps`)) {
+        await t.run(async (ctx) => {
+          const now = Date.now();
+          await ctx.db.insert("metaConnections", {
+            organizationId: a.organizationId,
+            authMethod: "facebook_login",
+            tokenKind: "page",
+            tokenEncrypted: "v1:x:y",
+            tokenLast4: "0000",
+            pageId: page2.id,
+            scopes: [],
+            authState: "ok",
+            connectedByMemberId: a.adminId,
+            createdAt: now,
+            updatedAt: now,
+          });
+        });
+      }
+      return await inner(input, init);
+    });
+    const asB = t.withIdentity({ subject: `${b.adminUserId}|s1` });
+    const res = await asB.action(api.metaMessaging.finalizeMetaSelection, {
+      organizationId: b.organizationId,
+      pendingId,
+      picks: [
+        { pageId: page1.id, messenger: true, instagram: false },
+        { pageId: page2.id, messenger: true, instagram: false },
+      ],
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.code).toBe("conta_em_uso");
+      expect(res.configIds).toHaveLength(1);
+    }
+    expect(await t.run(async (ctx) => await ctx.db.get(pendingId))).toBeNull();
+  });
+
+  test("getPendingSelection só atende o membro que iniciou a conexão", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    const pendingId = await toPending(t, s, [page1, page2]);
+    const otherAdminUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { email: "outro-admin@example.test" });
+      await ctx.db.insert("teamMembers", {
+        organizationId: s.organizationId,
+        userId,
+        name: "Outro Admin",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return userId;
+    });
+    const asOther = t.withIdentity({ subject: `${otherAdminUserId}|s1` });
+    await expect(
+      asOther.query(api.metaMessaging.getPendingSelection, { organizationId: s.organizationId, pendingId })
+    ).rejects.toThrow(/pertence a outro usuário/);
+    const asOwner = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    expect(await asOwner.query(api.metaMessaging.getPendingSelection, { organizationId: s.organizationId, pendingId })).not.toBeNull();
   });
 });

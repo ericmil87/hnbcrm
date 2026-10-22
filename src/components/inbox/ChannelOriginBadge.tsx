@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/Badge";
-import { channelBadgeVariant, channelIcon } from "@/lib/channelAccounts";
+import { channelBadgeVariant, channelIcon, channelLabel } from "@/lib/channelAccounts";
 
 interface ChannelOriginBadgeProps {
   channel: string;
@@ -17,7 +17,7 @@ export function ChannelOriginBadge({ channel, transport, className }: ChannelOri
     <Badge variant={channelBadgeVariant(channel)} className={className}>
       <span className="inline-flex items-center gap-1">
         <Icon size={11} aria-hidden="true" />
-        {channel}
+        {channelLabel(channel)}
       </span>
     </Badge>
   );

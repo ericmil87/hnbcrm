@@ -120,13 +120,13 @@ export function MetaPageSelectionModal({ organizationId, pendingId, onClose }: M
         </ul>
 
         <div className="flex gap-2 pt-1">
-          <Button variant="secondary" onClick={onClose} disabled={saving} className="flex-1">
+          <Button variant="secondary" onClick={onClose} disabled={saving} className="flex-1 min-h-[44px]">
             Cancelar
           </Button>
           <Button
             onClick={() => void handleConfirm()}
             disabled={saving || chosen.length === 0}
-            className="flex-1"
+            className="flex-1 min-h-[44px]"
           >
             {saving && <Spinner size="sm" />}
             Conectar selecionadas

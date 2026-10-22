@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { encryptSecret } from "./lib/secretCrypto";
@@ -469,5 +469,92 @@ describe("internalGetConfigForMetaAccount", () => {
     expect(m!._id).toEqual(a.messengerId);
     expect(i!._id).toEqual(a.instagramId);
     expect(await t.query(internal.metaMessaging.internalGetConfigForMetaAccount, { surface: "instagram", accountId: PAGE_A })).toBeNull();
+  });
+});
+
+describe("Página que muda de organização", () => {
+  test("A desconecta, B conecta a mesma Página: o webhook entrega na B e nada na A", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a", PAGE_A, IG_A);
+    const asA = t.withIdentity({ subject: `${a.userId}|s1` });
+    await asA.mutation(api.metaMessaging.disconnectMetaConnection, {
+      organizationId: a.organizationId,
+      connectionId: a.connectionId,
+    });
+    const aConfigs = await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect());
+    expect(aConfigs.every((c) => c.status === "disabled")).toBe(true);
+    expect(aConfigs.every((c) => c.messengerPageId === undefined && c.instagramAccountId === undefined)).toBe(true);
+    expect(aConfigs.map((c) => c.displayName).sort()).toEqual(["@conta", "Página"]); // rótulo continua
+
+    const b = await seedOrg(t, "b", PAGE_A, IG_A);
+    profileFetch({ first_name: "Marina" });
+    expect((await post(t, pageText)).status).toBe(200);
+    const ing = await scheduledIngests(t);
+    expect(ing).toHaveLength(1);
+    expect(ing[0].configId).toEqual(b.messengerId);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const counts = await t.run(async (ctx) => ({
+      a: (await ctx.db.query("messages").withIndex("by_organization", (q) => q.eq("organizationId", a.organizationId)).collect()).length,
+      b: (await ctx.db.query("messages").withIndex("by_organization", (q) => q.eq("organizationId", b.organizationId)).collect()).length,
+    }));
+    expect(counts).toEqual({ a: 0, b: 1 });
+  });
+
+  test("com 2 configs para o mesmo id (linha antiga), o ativo vence", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a", PAGE_A, null);
+    const old = await t.run(async (ctx) => {
+      const now = Date.now();
+      // criado DEPOIS e desativado: um `.first()` cru poderia devolvê-lo dependendo da ordem
+      return await ctx.db.insert("channelConfigs", {
+        organizationId: a.organizationId,
+        channel: "messenger",
+        displayName: "velho",
+        status: "disabled",
+        messengerPageId: PAGE_A,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const cfg = await t.query(internal.metaMessaging.internalGetConfigForMetaAccount, { surface: "messenger", accountId: PAGE_A });
+      expect(cfg._id).toEqual(a.messengerId);
+      expect(cfg._id).not.toEqual(old);
+      expect(warn).toHaveBeenCalled();
+      expect(warn.mock.calls.join(" ")).not.toContain(PAGE_A);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("reconectar na mesma org reaproveita os configs desconectados", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a", PAGE_A, IG_A);
+    const asA = t.withIdentity({ subject: `${a.userId}|s1` });
+    await asA.mutation(api.metaMessaging.disconnectMetaConnection, { organizationId: a.organizationId, connectionId: a.connectionId });
+    await t.mutation(internal.metaMessaging.internalUpsertMetaConnection, {
+      organizationId: a.organizationId,
+      memberId: a.memberId,
+      connectionId: a.connectionId,
+      pageId: PAGE_A,
+      pageName: "Página",
+      igAccountId: IG_A,
+      tokenEncrypted: await encryptSecret("fake-page-token"),
+      tokenLast4: "oken",
+      scopes: [],
+    });
+    const ids = await t.mutation(internal.metaMessaging.internalUpsertMetaChannelConfigs, {
+      organizationId: a.organizationId,
+      memberId: a.memberId,
+      connectionId: a.connectionId,
+      messenger: true,
+      instagram: true,
+    });
+    expect(ids.sort()).toEqual([a.messengerId, a.instagramId!].sort());
+    const configs = await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect());
+    expect(configs).toHaveLength(2);
+    expect(configs.find((c) => c.channel === "messenger")).toMatchObject({ status: "active", messengerPageId: PAGE_A });
+    expect(configs.find((c) => c.channel === "instagram")).toMatchObject({ status: "active", instagramAccountId: IG_A });
   });
 });

@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { findOrCreateContactByMetaIdentity } from "./lib/metaIdentity";
 
@@ -223,5 +224,80 @@ describe("internalRouteMetaInbound", () => {
         userId: "1000000000004444",
       })
     ).toBeNull();
+  });
+});
+
+describe("contato apagado", () => {
+  async function ingestTwice(t: TestConvex<typeof schema>, configId: Id<"channelConfigs">) {
+    for (let i = 0; i < 2; i++) {
+      await t.mutation(internal.metaMessaging.internalRouteMetaInbound, {
+        configId,
+        surface: "messenger",
+        userId: "1000000000005678",
+      });
+    }
+  }
+
+  test("identidade órfã (linha antiga): 2 mensagens → 1 contato, 1 identidade, 1 lead", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const first = await t.mutation(internal.metaMessaging.internalRouteMetaInbound, {
+      configId: s.messengerId,
+      surface: "messenger",
+      userId: "1000000000005678",
+    });
+    // Simula contato e lead apagados SEM limpar a identidade (estado deixado pelo bug antigo).
+    await t.run(async (ctx) => {
+      await ctx.db.delete(first!.leadId);
+      await ctx.db.delete(first!.contactId);
+    });
+    await ingestTwice(t, s.messengerId);
+    const data = await t.run(async (ctx) => ({
+      contacts: await ctx.db.query("contacts").collect(),
+      identities: await ctx.db.query("contactChannelIdentities").collect(),
+      leads: await ctx.db.query("leads").collect(),
+    }));
+    expect(data.contacts).toHaveLength(1);
+    expect(data.identities).toHaveLength(1);
+    expect(data.identities[0].contactId).toEqual(data.contacts[0]._id);
+    expect(data.leads).toHaveLength(1);
+  });
+
+  test("deleteContact apaga as identidades; a próxima mensagem cria 1 contato e 1 lead", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const adminUserId = await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { email: "a@example.test" });
+      await ctx.db.insert("teamMembers", {
+        organizationId: s.organizationId,
+        userId,
+        name: "Admin",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return userId;
+    });
+    const first = await t.mutation(internal.metaMessaging.internalRouteMetaInbound, {
+      configId: s.messengerId,
+      surface: "messenger",
+      userId: "1000000000005678",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.delete(first!.leadId);
+    });
+    const asAdmin = t.withIdentity({ subject: `${adminUserId}|s1` });
+    await asAdmin.mutation(api.contacts.deleteContact, { contactId: first!.contactId });
+    expect(await t.run(async (ctx) => (await ctx.db.query("contactChannelIdentities").collect()).length)).toBe(0);
+
+    await ingestTwice(t, s.messengerId);
+    const data = await t.run(async (ctx) => ({
+      contacts: await ctx.db.query("contacts").collect(),
+      identities: await ctx.db.query("contactChannelIdentities").collect(),
+      leads: await ctx.db.query("leads").collect(),
+    }));
+    expect([data.contacts.length, data.identities.length, data.leads.length]).toEqual([1, 1, 1]);
   });
 });
