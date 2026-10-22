@@ -116,7 +116,7 @@ Branch: `perf/convex-io-fase2` → PR #6, mergeado em `main` (79fd1ba) e PUBLICA
 
 ### Mudanças de comportamento visíveis
 
-- Inbox começa com 50 conversas e 50 mensagens recentes; botões "Carregar mais conversas" / "Carregar mensagens anteriores". Conversa com >500 mensagens passa a mostrar as mais RECENTES (antes mostrava as 500 mais antigas).
+- Inbox começa com 50 conversas e 50 mensagens recentes; desde o PR #13 (22/10/2026) rolar até o fim da lista ou até o topo da thread carrega o próximo lote automaticamente (scroll infinito, `useInfiniteSentinel`), e os botões "Carregar mais conversas" / "Carregar mensagens anteriores" ficam como fallback. Conversa com >500 mensagens passa a mostrar as mais RECENTES (antes mostrava as 500 mais antigas).
 - Desarquivar uma conversa não restaura o contador de não lidas (foi zerado ao arquivar).
 - Contadores "atrasadas"/"vence hoje" avançam a cada 15 min (na fronteira do relógio) e na hora quando uma tarefa muda; uma tarefa vencida há poucos minutos só conta na próxima fronteira.
 - Widget do painel mostra tarefas abertas por prazo (futuras e as atrasadas mais recentes), não as 600 criadas mais recentemente.
