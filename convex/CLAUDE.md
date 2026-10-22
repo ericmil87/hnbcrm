@@ -140,7 +140,7 @@ When writing mutations that create/update/delete entities, include all three:
 
 1. **Activity log** — `ctx.db.insert("activities", { organizationId, leadId, type, actorId, actorType, content, metadata, createdAt })`
 2. **Audit log** — `ctx.db.insert("auditLogs", { organizationId, entityType, entityId, action, actorId, actorType, changes: { before, after }, description: buildAuditDescription({...}), severity, createdAt })`
-3. **Webhook trigger** — `ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, { organizationId, event: "entity.action", payload })`
+3. **Webhook trigger** — `await scheduleWebhookEvent(ctx, { organizationId, event: "entity.action", payload })` (`lib/webhookDispatch.ts`; só agenda `nodeActions.triggerWebhooks` se a org tiver webhook ativo que case — nunca agende a action direto, `webhookDispatchPort.test.ts` quebra)
 4. **Email notification** — `ctx.scheduler.runAfter(0, internal.email.dispatchNotification, { organizationId, recipientMemberId, eventType, templateData })`
 
 ## Key Indexes

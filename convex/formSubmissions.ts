@@ -8,6 +8,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { LAYOUT_FIELD_TYPES } from "./lib/formFieldTypes";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { applyFirstTouchToLead, buildAttributionFromInput, sanitizeAttributionInput } from "./lib/leadAttribution";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // ── Phase 6: Server-side validation helper ──
 
@@ -476,7 +477,7 @@ export const internalProcessSubmission = internalMutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: form.organizationId,
       event: "form.submitted",
       payload: { formId: args.formId, formName: form.name, leadId, contactId },

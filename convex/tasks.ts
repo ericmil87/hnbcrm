@@ -28,6 +28,7 @@ import {
   resolveFollowUpForDeletedTask,
   syncFollowUpForTask,
 } from "./lib/followUpOps";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Caminho indexado por responsável primário: cobre TODAS as tasks onde o membro
 // é o assignedTo. A membership secundária (`assigneeIds`) não tem índice — vem
@@ -1071,7 +1072,7 @@ export const createTask = mutation({
     }
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "task.created",
       payload: { taskId, title: args.title, type: args.type, priority: args.priority, dueDate: args.dueDate, assignedTo, assigneeIds, projectId, columnId },
@@ -1340,7 +1341,7 @@ export const updateTask = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.updated",
       payload: { taskId: args.taskId, changes },
@@ -1446,7 +1447,7 @@ export const moveTaskToColumn = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.moved",
       payload: {
@@ -1522,7 +1523,7 @@ export const setAssignees = mutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.assigned",
       payload: {
@@ -1580,7 +1581,7 @@ export const cancelTask = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.cancelled",
       payload: { taskId: args.taskId, title: task.title },
@@ -1640,7 +1641,7 @@ export const assignTask = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.assigned",
       payload: { taskId: args.taskId, oldAssignedTo, newAssignedTo: args.assignedTo, assigneeIds: assignees },
@@ -1703,7 +1704,7 @@ export const snoozeTask = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.snoozed",
       payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
@@ -1742,7 +1743,7 @@ export const deleteTask = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.deleted",
       payload: { taskId: args.taskId, title: task.title },
@@ -1901,7 +1902,7 @@ export const bulkUpdateTasks = mutation({
     });
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId,
       event: `task.bulk_${args.action}`,
       payload: { taskIds: processedIds, action: args.action },
@@ -2262,7 +2263,7 @@ export const internalCreateTask = internalMutation({
     }
 
     // Trigger webhooks
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "task.created",
       payload: { taskId, title: args.title, type: args.type, priority: args.priority, dueDate: args.dueDate, assignedTo: args.assignedTo },
@@ -2355,7 +2356,7 @@ export const internalUpdateTask = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.updated",
       payload: { taskId: args.taskId, changes },
@@ -2414,7 +2415,7 @@ export const internalDeleteTask = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.deleted",
       payload: { taskId: args.taskId, title: task.title },
@@ -2479,7 +2480,7 @@ export const internalAssignTask = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.assigned",
       payload: { taskId: args.taskId, oldAssignedTo, newAssignedTo: args.assignedTo },
@@ -2542,7 +2543,7 @@ export const internalSnoozeTask = internalMutation({
       createdAt: now,
     });
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.snoozed",
       payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
@@ -2631,7 +2632,7 @@ export const internalBulkUpdate = internalMutation({
         createdAt: now,
       });
 
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId,
         event: `task.bulk_${args.action}`,
         payload: { taskIds: processedIds, action: args.action },
@@ -2685,7 +2686,7 @@ export const triggerReminder = internalMutation({
     }
 
     // Fire webhook
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.reminder_triggered",
       payload: { taskId: args.taskId, title: task.title, dueDate: task.dueDate, assignedTo: task.assignedTo },
@@ -2750,7 +2751,7 @@ export const triggerPreDueReminder = internalMutation({
       });
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: task.organizationId,
       event: "task.due_soon",
       payload: {
@@ -2846,7 +2847,7 @@ export const processOverdueReminders = internalMutation({
         updatedAt: now,
       });
 
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: task.organizationId,
         event: "task.reminder_triggered",
         payload: { taskId: task._id, title: task.title, dueDate: task.dueDate, assignedTo: task.assignedTo },

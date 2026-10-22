@@ -15,6 +15,7 @@ import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { getLeadRef } from "./leadRef";
 import { firstResponsePatch } from "./conversationTiming";
 import { lastMessagePatchForId } from "./conversationListFields";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 export async function applyOutboundMessageSideEffects(
   ctx: MutationCtx,
@@ -74,7 +75,7 @@ export async function applyOutboundMessageSideEffects(
   // do ingest. `message.sent` sempre carregou `leadId`; um consumidor que o usa
   // como chave estrangeira não pode começar a receber eventos sem lead por
   // causa de uma publicação programada (review de correção nº 23).
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
     payload: {

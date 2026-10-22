@@ -14,6 +14,7 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 const APP_URL = () => resolveAppUrl();
 
@@ -264,7 +265,7 @@ export async function createHandoffCore(
   }
 
   // Trigger webhooks
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId,
     event: "handoff.requested",
     payload: {
@@ -477,7 +478,7 @@ export async function acceptHandoffCore(
   }
 
   // Trigger webhooks
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: handoff.organizationId,
     event: "handoff.accepted",
     payload: {
@@ -634,7 +635,7 @@ async function rejectHandoffCore(
   }
 
   // Trigger webhooks
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: handoff.organizationId,
     event: "handoff.rejected",
     payload: { handoffId: handoff._id, leadId: handoff.leadId, rejectedBy: member._id },

@@ -12,6 +12,7 @@ import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { appendPostTimeline } from "./groupPostCore";
 import { describeSchedule, nextRun, type GroupPostSchedule } from "./groupPostSchedule";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 /** A agenda gravada no doc já passou por `validateGroupPostSchedule`. */
 export function scheduleOf(post: Doc<"groupPosts">): GroupPostSchedule {
@@ -131,7 +132,7 @@ export async function postWebhook(
   event: string,
   payload: Record<string, unknown>
 ): Promise<void> {
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId,
     event,
     payload,

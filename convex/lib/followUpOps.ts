@@ -20,6 +20,7 @@ import { internal } from "../_generated/api";
 import { applyTaskCompletion, addTaskCommentCore, taskDeepLink } from "./taskOps";
 import { createNotification, inboxRepliers } from "./notify";
 import { appUrl as resolveAppUrl } from "./appUrl";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 /** Estados em que o follow-up ainda "pertence" à IA. */
 export const ACTIVE_FOLLOW_UP_STATUSES = ["scheduled", "queued", "drafted"] as const;
@@ -372,7 +373,7 @@ export async function resolveFollowUpOutcome(
       });
     }
 
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: followUp.organizationId,
       event: "task.followup_executed",
       payload: {
@@ -467,7 +468,7 @@ export async function resolveFollowUpOutcome(
     }
   }
 
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: followUp.organizationId,
     event: "task.followup_needs_human",
     payload: {

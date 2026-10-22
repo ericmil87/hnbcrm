@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // ── Bayesian Stats Helper (pure TS) ────────────────────────────────────────
 
@@ -359,7 +359,7 @@ export const concludeExperiment = mutation({
     });
 
     // Trigger webhook
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: experiment.organizationId,
       event: "experiment.concluded",
       payload: { experimentId: args.experimentId, name: experiment.name, winnerVariantKey: args.winnerVariantKey },

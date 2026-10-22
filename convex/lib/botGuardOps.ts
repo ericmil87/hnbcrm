@@ -8,8 +8,8 @@
  */
 import type { MutationCtx } from "../_generated/server";
 import type { Doc } from "../_generated/dataModel";
-import { internal } from "../_generated/api";
 import { resolveBotGuardSettings } from "./botGuard";
+import { scheduleWebhookEvent } from "./webhookDispatch";
 
 /** Suspeita ATIVA = marcada e ainda não limpa por um humano. */
 export function hasActiveBotSuspicion(conversation: Pick<Doc<"conversations">, "botSuspicion">): boolean {
@@ -94,7 +94,7 @@ export async function clearBotSuspicion(
     severity: "medium",
     createdAt: now,
   });
-  await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+  await scheduleWebhookEvent(ctx, {
     organizationId: conversation.organizationId,
     event: "conversation.bot_cleared",
     payload: {

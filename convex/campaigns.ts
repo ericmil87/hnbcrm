@@ -79,6 +79,7 @@ import {
   scheduleCampaignTick,
   transitionRecipient,
 } from "./lib/campaignHooks";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 const SNAPSHOT_BATCH_LEADS = 400;
 const MANUAL_CHUNK = 500;
@@ -1228,7 +1229,7 @@ export async function createCampaignHandler(ctx: MutationCtx, args: CreateCampai
       { actorId: member._id, action: "create", description: `Criou a campanha «${name}» (rascunho)`, severity: "medium", metadata: viaMeta(args.via) },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: args.organizationId,
       event: "campaign.created",
       payload: { campaignId, name, provider, channelConfigId: config._id },
@@ -2127,7 +2128,7 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
       },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: campaign.organizationId,
       event: "campaign.started",
       payload: { campaignId: campaign._id, name: campaign.name, provider, recipients, startAt },
@@ -2357,7 +2358,7 @@ export async function resumeCampaignHandler(ctx: MutationCtx, args: ResumeCampai
     await addTimeline(ctx, fresh, { kind: "resumed", actorId: member._id }, now);
     fresh = (await ctx.db.get(campaign._id))!;
     await audit(ctx, fresh, { actorId: member._id, action: "update", description: `Retomou a campanha «${campaign.name}»`, severity: "medium", metadata: viaMeta(args.via) }, now);
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: campaign.organizationId,
       event: "campaign.resumed",
       payload: { campaignId: campaign._id, name: campaign.name },
@@ -2402,7 +2403,7 @@ export async function cancelCampaignHandler(ctx: MutationCtx, args: CancelCampai
       { actorId: member._id, action: "update", description: `Cancelou a campanha «${campaign.name}»`, severity: "high", changes: { before: { status: campaign.status, stats: campaign.stats }, after: { status: "canceled" } }, metadata: viaMeta(args.via) },
       now
     );
-    await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+    await scheduleWebhookEvent(ctx, {
       organizationId: campaign.organizationId,
       event: "campaign.canceled",
       payload: { campaignId: campaign._id, name: campaign.name, stats: campaign.stats },

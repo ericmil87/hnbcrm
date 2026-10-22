@@ -65,6 +65,7 @@ import {
 import type { CheckedWhatsappUser } from "./lib/startConversation";
 import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -1008,7 +1009,7 @@ async function startConversationCore(
         metadata: { contactId: contact._id, via: "start_conversation" },
         createdAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: args.organizationId,
         event: "lead.created",
         payload: { leadId, title, contactId: contact._id, boardId: board._id, stageId: stage._id },

@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
 import { query, internalMutation } from "./_generated/server";
-import { internal } from "./_generated/api";
 import { requireAuth } from "./lib/auth";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 // Save or update a partial submission (upsert by formId + sessionId)
 export const internalSavePartial = internalMutation({
@@ -145,7 +145,7 @@ export const internalMarkAbandoned = internalMutation({
       });
 
       // Trigger webhook for each abandoned partial
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId: partial.organizationId,
         event: "form.abandoned",
         payload: {

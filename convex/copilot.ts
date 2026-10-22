@@ -56,6 +56,7 @@ import {
   runGroupWriteTool,
 } from "./lib/groupCopilotTools";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -1156,7 +1157,7 @@ async function runWriteTool(
         metadata: { via: "copilot" },
         createdAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId,
         event: "lead.created",
         payload: { leadId, title, boardId: board._id, stageId: stage._id },
@@ -1202,7 +1203,7 @@ async function runWriteTool(
         description: `Atualizou o lead '${lead.title}'`,
         severity: "low",
       });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId,
         event: "lead.updated",
         payload: { leadId: lead._id, changes },
@@ -1282,7 +1283,7 @@ async function runWriteTool(
         metadata: { via: "copilot" },
         createdAt: now,
       });
-      await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
+      await scheduleWebhookEvent(ctx, {
         organizationId,
         event: "lead.assigned",
         payload: { leadId: lead._id, oldAssignedTo: lead.assignedTo, newAssignedTo: target._id },
