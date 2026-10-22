@@ -46,7 +46,19 @@ export async function upsertRuntime(
   patch: RuntimePatch,
   existing?: ConversationRuntime | null
 ): Promise<void> {
-  const row = existing !== undefined ? existing : await getRuntime(ctx, ref.conversationId);
+  let row: ConversationRuntime | null;
+  if (existing !== undefined) {
+    row = existing;
+  } else {
+    // `take(2)` em vez de `.first()`: defesa contra linha duplicada (não deve
+    // acontecer — o OCC serializa o 1º insert —, mas se houver, a extra sai).
+    const rows = await ctx.db
+      .query("conversationRuntime")
+      .withIndex("by_conversation", (q) => q.eq("conversationId", ref.conversationId))
+      .take(2);
+    row = rows[0] ?? null;
+    if (rows[1]) await ctx.db.delete(rows[1]._id);
+  }
   const now = Date.now();
   if (row) {
     await ctx.db.patch(row._id, { ...patch, updatedAt: now });
@@ -107,4 +119,58 @@ export async function deleteRuntime(
     .take(10);
   for (const row of rows) await ctx.db.delete(row._id);
   return rows.length;
+}
+
+// ---------------------------------------------------------------------------
+// TRANSITÓRIO (fase 4b) — remover no PR que tira os campos legados de
+// `conversations` (contactPresence/aiTurnLock/nextDispatchAt) do schema.
+//
+// Janela de deploy: uma action do atendente que começou com o código ANTIGO
+// gravou o lock em `conversations.aiTurnLock`; o deploy acontece durante a
+// inferência e o commit do código NOVO não acharia lock no runtime → turno
+// PERDIDO (`lock_perdido`, cliente sem resposta). Por isso o commit aceita o
+// lock legado quando NÃO há lock no runtime, e o claim respeita um lock legado
+// vivo (no máximo 1 defer, até o lease expirar).
+// ---------------------------------------------------------------------------
+
+type LegacyLockHolder = Pick<Doc<"conversations">, "_id" | "aiTurnLock">;
+
+/** Lock vigente: o do runtime; sem ele, o legado do doc da conversa (TRANSITÓRIO). */
+export function effectiveAiTurnLock(
+  runtime: ConversationRuntime | null,
+  conversation: LegacyLockHolder
+): ConversationRuntime["aiTurnLock"] {
+  return runtime?.aiTurnLock ?? conversation.aiTurnLock;
+}
+
+/**
+ * O lock da conversa é deste `runId`? Runtime primeiro; o campo legado só vale
+ * quando o runtime NÃO tem lock (TRANSITÓRIO — ver acima).
+ */
+export async function ownsAiTurnLock(
+  ctx: QueryCtx | MutationCtx,
+  conversation: LegacyLockHolder,
+  runId: string
+): Promise<boolean> {
+  const runtimeLock = await getAiTurnLock(ctx, conversation._id);
+  return (
+    runtimeLock?.runId === runId ||
+    (!runtimeLock && conversation.aiTurnLock?.runId === runId)
+  );
+}
+
+/**
+ * Solta o lock no fim de um commit que já validou a posse: limpa o runtime e,
+ * se o lock legado do doc for deste `runId`, limpa-o também (senão o próximo
+ * claim deferiria até o lease expirar). O ramo legado é TRANSITÓRIO.
+ */
+export async function clearOwnedAiTurnLock(
+  ctx: MutationCtx,
+  conversation: LegacyLockHolder,
+  runId: string
+): Promise<void> {
+  await clearRuntimeField(ctx, conversation._id, "aiTurnLock");
+  if (conversation.aiTurnLock?.runId === runId) {
+    await ctx.db.patch(conversation._id, { aiTurnLock: undefined });
+  }
 }

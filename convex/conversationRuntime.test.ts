@@ -412,6 +412,112 @@ describe("lock do turno de IA no runtime", () => {
     expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock ?? null).toBeNull();
   });
 
+  // TRANSITÓRIO (janela de deploy): remover junto com os campos legados.
+  async function moveLockToLegacy(
+    t: TestConvex<typeof schema>,
+    conversationId: Id<"conversations">,
+    runId: string,
+    leaseUntil: number
+  ) {
+    await t.run(async (ctx) => {
+      const row = (await getRuntime(ctx, conversationId))!;
+      await ctx.db.patch(row._id, { aiTurnLock: undefined });
+      await ctx.db.patch(conversationId, { aiTurnLock: { runId, leaseUntil } });
+    });
+  }
+
+  async function commitSuggestion(
+    t: TestConvex<typeof schema>,
+    seed: Seed & { agentId: Id<"teamMembers"> },
+    itemId: Id<"aiReplyQueue">,
+    runId: string,
+    agentRunId: Id<"agentRuns">
+  ) {
+    return await t.mutation(internal.attendant.internalCommitAiSuggestion, {
+      queueItemId: itemId,
+      conversationId: seed.conversationId,
+      agentMemberId: seed.agentId,
+      runId,
+      agentRunId,
+      text: "Claro! Me conta o que você precisa.",
+      proposedActions: [],
+      needsDisclosure: false,
+      disclosure: "",
+    });
+  }
+
+  test("janela de deploy: commit aceita lock SÓ no campo legado da conversa e limpa-o", async () => {
+    const t = setup();
+    const seed = await seedAttendant(t);
+    const itemId = await enqueue(t, seed);
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: itemId,
+      runId: "run-antiga",
+    });
+    expect(claim.kind).toBe("run");
+    const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
+    // Simula a run que começou no código ANTIGO: lock só no doc da conversa.
+    await moveLockToLegacy(t, seed.conversationId, "run-antiga", Date.now() + 60_000);
+    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock).toBeUndefined();
+
+    const result = await commitSuggestion(t, seed, itemId, "run-antiga", agentRunId);
+    expect(result.committed).toBe(true);
+    // O lock legado deste runId é limpo (o próximo claim não defere à toa).
+    expect((await conversationDoc(t, seed.conversationId))!.aiTurnLock).toBeUndefined();
+  });
+
+  test("commit: runId diferente do lock (runtime ou legado) → lock_perdido", async () => {
+    const t = setup();
+    const seed = await seedAttendant(t);
+    const itemId = await enqueue(t, seed);
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: itemId,
+      runId: "run-dona",
+    });
+    const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
+    expect(await commitSuggestion(t, seed, itemId, "run-intrusa", agentRunId)).toEqual({
+      committed: false,
+      reason: "lock_perdido",
+    });
+
+    // Lock no runtime vence o legado: legado com o runId da intrusa não vale.
+    await t.run(async (ctx) =>
+      ctx.db.patch(seed.conversationId, {
+        aiTurnLock: { runId: "run-intrusa", leaseUntil: Date.now() + 60_000 },
+      })
+    );
+    expect(await commitSuggestion(t, seed, itemId, "run-intrusa", agentRunId)).toEqual({
+      committed: false,
+      reason: "lock_perdido",
+    });
+  });
+
+  test("claim: lock legado vivo defere; lock legado expirado não segura o claim", async () => {
+    const t = setup();
+    const seed = await seedAttendant(t);
+    await t.run(async (ctx) =>
+      ctx.db.patch(seed.conversationId, {
+        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
+      })
+    );
+    const itemId = await enqueue(t, seed);
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: itemId,
+      runId: "run-nova",
+    });
+    expect(claim).toMatchObject({ kind: "defer" });
+    expect(await runtimeOf(t, seed.conversationId)).toBeNull();
+
+    vi.setSystemTime(Date.now() + 61_000);
+    await t.run(async (ctx) => ctx.db.patch(itemId, { nextAttemptAt: Date.now() }));
+    const claim2 = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: itemId,
+      runId: "run-nova",
+    });
+    expect(claim2.kind).toBe("run");
+    expect((await runtimeOf(t, seed.conversationId))?.aiTurnLock?.runId).toBe("run-nova");
+  });
+
   test("release sem linha de runtime é no-op (não cria linha)", async () => {
     const t = setup();
     const seed = await seedOrg(t);
@@ -528,6 +634,32 @@ describe("internalClearLegacyRuntimeFields", () => {
       dryRun: false,
     });
     expect(again.cleared).toBe(0);
+  });
+});
+
+describe("upsertRuntime", () => {
+  test("linha duplicada (não deveria existir) é apagada no próximo upsert", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 2; i++) {
+        await ctx.db.insert("conversationRuntime", {
+          organizationId: seed.organizationId,
+          conversationId: seed.conversationId,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    await t.run(async (ctx) =>
+      upsertRuntime(
+        ctx,
+        { organizationId: seed.organizationId, conversationId: seed.conversationId },
+        { nextDispatchAt: Date.now() + 6_500 }
+      )
+    );
+    const rows = await t.run(async (ctx) => ctx.db.query("conversationRuntime").collect());
+    expect(rows).toHaveLength(1);
+    expect(rows[0].nextDispatchAt).toBe(Date.now() + 6_500);
   });
 });
 

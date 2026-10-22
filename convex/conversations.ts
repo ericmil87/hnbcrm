@@ -2988,10 +2988,16 @@ const LEGACY_RUNTIME_PAGE_SIZE = 200;
  * `conversationRuntime`. NÃO migra valor nenhum: presença é efêmera (TTL de
  * 12 s no cliente), o lock expira sozinho e o pacing recomeça do `now`.
  *
- * Nenhum código lê mais esses campos: um lock "vivo" no doc já é ignorado
- * desde o deploy (é ali, não aqui, que um turno em voo pode perder a
- * exclusão — no máximo 1 defer/turno duplicado; faça o deploy com a IA
- * quieta). Rodar isto não muda comportamento, só limpa.
+ * Presença e pacing legados não são mais lidos. O `aiTurnLock` legado ainda é
+ * lido por um fallback TRANSITÓRIO (`lib/conversationRuntime.ts`
+ * `ownsAiTurnLock`/`effectiveAiTurnLock`): sem ele, um turno que começou com o
+ * código antigo e commitou com o novo era PERDIDO (`lock_perdido`, cliente
+ * sem resposta — não duplicado). Com o fallback, rode a limpeza DEPOIS de o
+ * último turno antigo terminar (≥ 5 min após o deploy; o lease é 3 min).
+ * Antes disso, limpar um lock legado VIVO tira a posse do turno em voo (o
+ * commit dele volta a cair em `lock_perdido`); um lock legado vivo que fica
+ * custa no máximo 1 defer ao próximo claim, até o lease expirar. Depois da
+ * janela, rodar isto não muda comportamento, só limpa.
  *
  * `dryRun` (default TRUE) lê UMA página e não escreve — repita com o `cursor`
  * devolvido para ver o resto; o real se reagenda sozinho até o fim. A REMOÇÃO

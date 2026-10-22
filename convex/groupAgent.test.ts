@@ -1310,3 +1310,154 @@ describe("F8 — tetos, repasse e menção perdida", () => {
     expect(opportunity.body).toContain("••••");
   });
 });
+
+// Fase 4b (perf Convex I/O): o lock do turno mora em `conversationRuntime`.
+// Os casos de lock legado são TRANSITÓRIOS (janela de deploy) — remover junto
+// com os campos legados de `conversations`.
+describe("lock do turno de grupo (conversationRuntime)", () => {
+  async function claimable(t: TestConvex<typeof schema>, seed: Seed) {
+    const messageId = await memberMessage(t, seed, { content: "@nós oi", mentions: [OUR_LID] });
+    await t.mutation(internal.groupAgent.internalEnqueueFromGroup, { messageId });
+    const item = (await queueItems(t))[0];
+    await releaseDebounce(t, item._id);
+    return item;
+  }
+
+  async function runtimeLock(t: TestConvex<typeof schema>, seed: Seed) {
+    return await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("conversationRuntime")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", seed.conversationId))
+        .first();
+      return row?.aiTurnLock;
+    });
+  }
+
+  function commitSuggestion(
+    t: TestConvex<typeof schema>,
+    seed: Seed,
+    itemId: Id<"aiReplyQueue">,
+    runId: string,
+    agentRunId: Id<"agentRuns">
+  ) {
+    return t.mutation(internal.groupAgent.internalCommitGroupAiSuggestion, {
+      queueItemId: itemId,
+      conversationId: seed.conversationId,
+      groupChatId: seed.groupChatId,
+      agentMemberId: seed.agentId,
+      runId,
+      agentRunId,
+      text: "Sábado abrimos das 9h às 13h!",
+    });
+  }
+
+  test("claim defere com lease vivo no runtime; lease vencida deixa rodar", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    await t.run(async (ctx) =>
+      ctx.db.insert("conversationRuntime", {
+        organizationId: seed.organizationId,
+        conversationId: seed.conversationId,
+        aiTurnLock: { runId: "run-outra", leaseUntil: Date.now() + 60_000 },
+        updatedAt: Date.now(),
+      })
+    );
+    const item = await claimable(t, seed);
+    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-nova",
+    });
+    expect(claim.kind).toBe("defer");
+    expect((await runtimeLock(t, seed))?.runId).toBe("run-outra");
+
+    vi.setSystemTime(Date.now() + 61_000);
+    await releaseDebounce(t, item._id);
+    const claim2 = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-nova",
+    });
+    expect(claim2.kind).toBe("run");
+    expect((await runtimeLock(t, seed))?.runId).toBe("run-nova");
+  });
+
+  test("commit com runId que não é o do lock → lock_perdido", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t, { replyMode: "suggest" });
+    const item = await claimable(t, seed);
+    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-dona",
+    });
+    expect(claim.kind).toBe("run");
+    const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
+    expect(await commitSuggestion(t, seed, item._id, "run-intrusa", agentRunId)).toEqual({
+      committed: false,
+      reason: "lock_perdido",
+    });
+    const reply = await t.mutation(internal.groupAgent.internalCommitGroupAiReply, {
+      queueItemId: item._id,
+      conversationId: seed.conversationId,
+      groupChatId: seed.groupChatId,
+      agentMemberId: seed.agentId,
+      runId: "run-intrusa",
+      agentRunId,
+      runStartedAt: Date.now(),
+      text: "oi",
+      allowPendingHandoff: false,
+    });
+    expect(reply).toEqual({ committed: false, reason: "lock_perdido" });
+    expect((await runtimeLock(t, seed))?.runId).toBe("run-dona");
+  });
+
+  test("janela de deploy: commit aceita lock SÓ no campo legado e limpa-o", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t, { replyMode: "suggest" });
+    const item = await claimable(t, seed);
+    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-antiga",
+    });
+    const agentRunId = (claim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId;
+    // Simula a run do código ANTIGO: lock só no doc da conversa.
+    await t.run(async (ctx) => {
+      const row = (await ctx.db
+        .query("conversationRuntime")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", seed.conversationId))
+        .first())!;
+      await ctx.db.patch(row._id, { aiTurnLock: undefined });
+      await ctx.db.patch(seed.conversationId, {
+        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
+      });
+    });
+
+    const result = await commitSuggestion(t, seed, item._id, "run-antiga", agentRunId);
+    expect(result.committed).toBe(true);
+    const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
+    expect(conversation!.aiTurnLock).toBeUndefined();
+  });
+
+  test("claim: lock legado vivo defere; expirado não segura", async () => {
+    const t = setup();
+    const seed = await seedGroupOrg(t);
+    await t.run(async (ctx) =>
+      ctx.db.patch(seed.conversationId, {
+        aiTurnLock: { runId: "run-antiga", leaseUntil: Date.now() + 60_000 },
+      })
+    );
+    const item = await claimable(t, seed);
+    const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-nova",
+    });
+    expect(claim.kind).toBe("defer");
+
+    vi.setSystemTime(Date.now() + 61_000);
+    await releaseDebounce(t, item._id);
+    const claim2 = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+      queueItemId: item._id,
+      runId: "run-nova",
+    });
+    expect(claim2.kind).toBe("run");
+    expect((await runtimeLock(t, seed))?.runId).toBe("run-nova");
+  });
+});
