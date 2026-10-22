@@ -215,8 +215,14 @@ const agentProfileValidator = v.object({
   kind: v.union(v.literal("copilot"), v.literal("attendant")),
   // Todo atendente começa em "suggest" (gera rascunho, não auto-envia).
   mode: v.union(v.literal("suggest"), v.literal("autopilot")),
+  // LEGADO (perf Convex I/O, onda 2): o texto grande mora em `agentProfileTexts`
+  // depois da migração; aqui só enquanto `textsMigratedAt` está ausente. Ler e
+  // gravar SÓ por `lib/agentProfileTexts.ts` (teste agentTextsPort.test.ts).
   systemPrompt: v.optional(v.string()),
   knowledge: v.optional(v.string()),
+  // Instante em que systemPrompt/knowledge saíram do doc para `agentProfileTexts`.
+  // Ausente = texto ainda no doc (dual-read por membro).
+  textsMigratedAt: v.optional(v.number()),
   language: v.optional(v.string()), // default "pt-BR"
   // Escopo de atuação: canais (só Meta até HMAC por-tenant no bridge) e boards.
   channelConfigIds: v.optional(v.array(v.id("channelConfigs"))),
@@ -727,6 +733,20 @@ const applicationTables = {
     .index("by_email", ["email"])
     .index("by_organization_and_type", ["organizationId", "type"])
     .index("by_organization_and_user", ["organizationId", "userId"]),
+
+  // Textos grandes do agente IA (persona + conhecimento, 30–40 KB), fora do doc
+  // do membro para que os leitores de metadados (assignee de Inbox/Kanban,
+  // roteamento, elegibilidade, commit) não paguem por eles. Uma linha por membro.
+  // Acesso SÓ por lib/agentProfileTexts.ts.
+  agentProfileTexts: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    systemPrompt: v.optional(v.string()),
+    knowledge: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_member", ["teamMemberId"])
+    .index("by_organization", ["organizationId"]),
 
   // API Keys for AI agents
   apiKeys: defineTable({
