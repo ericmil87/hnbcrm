@@ -184,8 +184,14 @@ export const internalChannelHealthTick = internalAction({
     for (const target of page.targets) {
       const configId = target.configId;
       try {
-        // O alvo veio da página (lida há milissegundos): sem releitura por canal.
-        // As mutations abaixo releem o doc e re-checam provider/`disabled`.
+        // O alvo veio da página: sem releitura por canal. A página pode ter
+        // sido lida há um tick inteiro (até 50 × 8 s), então quem resolve um
+        // canal desativado nesse meio-tempo são as MUTATIONS, que releem o doc:
+        // `internalApplyUnhealthyObservation` sai sem nada com `disabled`, e
+        // `internalRecordHealthCheck` sai sem gravar com `skipIfDisabled` (e,
+        // em qualquer caminho, canal desativado nunca chama `claimBridgePhone`
+        // — senão a sonda de um canal recém-deslocado, antes do logout,
+        // desativaria o rival legítimo).
         const token = await decryptSecret(target.tokenEncrypted);
         const probe = await bridgeFetchJson(
           buildBridgeStatusRequest({ baseUrl: target.baseUrl, token }),
@@ -208,6 +214,7 @@ export const internalChannelHealthTick = internalAction({
             ok: true,
             healthDetail: mapped.healthDetail,
             bridgeSessionState: "connected",
+            skipIfDisabled: true,
             ...(mapped.phone ? { bridgePhone: mapped.phone, displayPhoneNumber: `+${mapped.phone}` } : {}),
           });
         } else {

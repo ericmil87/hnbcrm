@@ -571,3 +571,128 @@ describe("cron: tick sonda só os bridge elegíveis", () => {
     await cancelPendingJobs(t);
   });
 });
+
+describe("cron: canal desativado entre a página e a sonda não reivindica o número", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function seedRival(t: TestConvex<typeof schema>) {
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const orgY = await ctx.db.insert("organizations", {
+        name: "Org Y",
+        slug: "org-y",
+        settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
+        createdAt: now,
+        updatedAt: now,
+      });
+      return await ctx.db.insert("channelConfigs", {
+        organizationId: orgY,
+        channel: "whatsapp",
+        provider: "bridge",
+        displayName: "WhatsApp Y",
+        bridgeBaseUrl: "https://wa-gw.example.test",
+        bridgeInstanceId: "inst_y",
+        bridgeTokenEncrypted: "cifrado-y",
+        bridgeTokenLast4: "bbbb",
+        bridgePhone: "5511944998753",
+        bridgeSessionState: "connected",
+        bridgeConnectedAt: now,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+  }
+
+  async function logoutJobs(t: TestConvex<typeof schema>) {
+    return await t.run(async (ctx) => {
+      const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+      return jobs.filter((j) => j.name.includes("internalLogoutBridgeInstance"));
+    });
+  }
+
+  test("gateway ainda diz connected: o rival segue active e nenhum logout é agendado", async () => {
+    vi.stubEnv("CHANNEL_ENCRYPTION_KEY", btoa("A".repeat(32)));
+    const { encryptSecret } = await import("./lib/secretCrypto");
+    const t = convexTest(schema, modules);
+    const { configId } = await seed(t);
+    const tokenEncrypted = await encryptSecret("tok-loja");
+    // A (org X) ainda não estava "connected" no doc — o pior caso: sem a guarda,
+    // a sonda veria a TRANSIÇÃO e chamaria claimBridgePhone(A).
+    await t.run(async (ctx) => {
+      await ctx.db.patch(configId, { bridgeTokenEncrypted: tokenEncrypted, bridgeSessionState: "disconnected" });
+    });
+    const rivalId = await seedRival(t);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        // Entre a leitura da página e a resposta da sonda, A é desativado
+        // (pelo claim da org Y ao parear o mesmo número).
+        await t.run(async (ctx) => {
+          await ctx.db.patch(configId, { status: "disabled" });
+        });
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { Connected: true, LoggedIn: true, Jid: "5511944998753.0:1@s.whatsapp.net" },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      })
+    );
+
+    await t.action(internal.channelHealth.internalChannelHealthTick, {});
+
+    const [a, rival] = await t.run(async (ctx) => [await ctx.db.get(configId), await ctx.db.get(rivalId)]);
+    expect(rival?.status).toBe("active");
+    expect(a?.status).toBe("disabled");
+    // `skipIfDisabled`: o canal desativado não recebe nem o estado sondado.
+    expect(a?.bridgeSessionState).toBe("disconnected");
+    expect(await logoutJobs(t)).toHaveLength(0);
+    await cancelPendingJobs(t);
+  });
+
+  test("'Testar conexão' (forceStamp) num canal desativado também não reivindica", async () => {
+    const t = convexTest(schema, modules);
+    const { configId } = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(configId, { status: "disabled" });
+    });
+    const rivalId = await seedRival(t);
+
+    const displaced = await t.mutation(internal.channelConfigs.internalRecordHealthCheck, {
+      configId,
+      ok: true,
+      healthDetail: "Conectado",
+      bridgeSessionState: "connected",
+      bridgePhone: "5511944998753",
+      forceStamp: true,
+    });
+    expect(displaced).toEqual([]);
+    const rival = await t.run(async (ctx) => await ctx.db.get(rivalId));
+    expect(rival?.status).toBe("active");
+    expect(await logoutJobs(t)).toHaveLength(0);
+    await cancelPendingJobs(t);
+  });
+
+  test("bridge sem bridgeInstanceId fica fora da sonda (todo bridge criado tem instância)", async () => {
+    const t = convexTest(schema, modules);
+    const { configId } = await seed(t);
+    // `createChannelConfig` recusa bridge sem `bridgeInstanceId` (channelConfigs.ts,
+    // ramo "provider === bridge"), então o índice `by_bridge_instance` cobre
+    // todo canal bridge real; um doc legado/anômalo sem instância nem é lido.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(configId, { bridgeInstanceId: undefined });
+    });
+    const page = await t.query(internal.channelHealth.internalListBridgeChannelsPage, {
+      cursor: null,
+      numItems: 50,
+    });
+    expect(page.targets).toHaveLength(0);
+    await cancelPendingJobs(t);
+  });
+});
