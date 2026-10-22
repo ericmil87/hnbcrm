@@ -13,6 +13,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { toInboundRouteChannel } from "./lib/bridgeSnapshot";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -25,6 +26,12 @@ afterEach(() => {
 
 function setup() {
   return convexTest(schema, modules);
+}
+
+/** Recorte da config que o ingest passa ao roteamento (lib/bridgeSnapshot.ts). */
+async function routeChannel(t: TestConvex<typeof schema>, configId: Id<"channelConfigs">) {
+  const config = await t.run(async (ctx) => ctx.db.get(configId));
+  return toInboundRouteChannel(config!);
 }
 
 type PipelineOpts = {
@@ -174,7 +181,7 @@ describe("roteamento inbound com pipelineConfig", () => {
     const t = setup();
     const seed = await seedOrg(t);
     const { leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911112222",
       profileName: "Novo Cliente",
     });
@@ -189,7 +196,7 @@ describe("roteamento inbound com pipelineConfig", () => {
     const t = setup();
     const seed = await seedOrg(t);
     const first = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911117777",
     });
     await t.run(async (ctx) => {
@@ -202,7 +209,7 @@ describe("roteamento inbound com pipelineConfig", () => {
       });
     });
     const second = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911117777",
     });
     expect(second.leadId).toBe(first.leadId);
@@ -214,7 +221,7 @@ describe("roteamento inbound com pipelineConfig", () => {
     const t = setup();
     const seed = await seedOrg(t);
     const { contactId, leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911118888",
     });
     const { ensureLeadForContact } = await import("./lib/inboundRouting");
@@ -259,7 +266,7 @@ describe("roteamento inbound com pipelineConfig", () => {
     const t = setup();
     const seed = await seedOrg(t, { boardConfig: false });
     const { leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911113333",
     });
     const lead = await t.run(async (ctx) => ctx.db.get(leadId));
@@ -274,7 +281,7 @@ describe("roteamento inbound com pipelineConfig", () => {
       await ctx.db.delete(seed.salesEntryStageId);
     });
     const { leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911114444",
     });
     const { lead, activities } = await t.run(async (ctx) => ({
@@ -299,7 +306,7 @@ describe("roteamento inbound com pipelineConfig", () => {
       await ctx.db.patch(seed.agentId, { status: "inactive" });
     });
     const { leadId } = await t.mutation(internal.whatsapp.internalRouteInbound, {
-      configId: seed.configId,
+      channel: await routeChannel(t, seed.configId),
       waId: "5511911115555",
     });
     const lead = await t.run(async (ctx) => ctx.db.get(leadId));

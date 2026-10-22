@@ -1280,6 +1280,10 @@ export const internalRecordHealthCheck = internalMutation({
     // "Testar conexão" (ação do usuário): carimba `lastHealthCheckAt` mesmo sem
     // mudança, para o "testado em" do card refletir o clique.
     forceStamp: v.optional(v.boolean()),
+    // Cron de saúde: o alvo foi lido na PÁGINA, e entre a leitura e a sonda
+    // passa o tick inteiro (até 50 × 8 s). Se o canal foi desativado nesse
+    // meio-tempo, não grava nada — igual a `internalApplyUnhealthyObservation`.
+    skipIfDisabled: v.optional(v.boolean()),
   },
   // Nomes das contas que perderam este número para esta conexão (vazio é o
   // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
@@ -1287,6 +1291,7 @@ export const internalRecordHealthCheck = internalMutation({
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) return [];
+    if (args.skipIfDisabled && config.status === "disabled") return [];
 
     const now = Date.now();
 
@@ -1303,8 +1308,14 @@ export const internalRecordHealthCheck = internalMutation({
     // `forceStamp` ("Testar conexão" e a op `internalResolveBridgePhone`)
     // reivindica SEMPRE: é a porta para limpar dois canais ativos com o mesmo
     // número que nasceram sem claim (legado pré-v0.56, `internalBackfillBridgePhone`).
+    // Canal DESATIVADO nunca reivindica número, em caminho nenhum: foi
+    // justamente um claim que o desativou (ou o admin), e a sonda dele pode
+    // chegar antes do logout agendado com o gateway ainda dizendo "connected" —
+    // reivindicar ali desativaria o canal LEGÍTIMO que acabou de parear
+    // (cron com alvo lido na página, ou "Testar conexão" num canal desativado).
     const displaced =
       connected &&
+      config.status !== "disabled" &&
       args.bridgePhone &&
       (args.bridgePhone !== config.bridgePhone || !wasConnected || args.forceStamp === true)
         ? await claimBridgePhone(ctx, { config, phone: args.bridgePhone, now })
