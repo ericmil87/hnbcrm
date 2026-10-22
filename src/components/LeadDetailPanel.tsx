@@ -65,6 +65,7 @@ import { MessageBubble } from "@/components/inbox/MessageBubble";
 import { LeadCentralSection } from "@/components/inbox/central/LeadCentralSection";
 import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { ForwardModal } from "@/components/inbox/ForwardModal";
+import { channelSupports } from "@/lib/channelCapabilities";
 import {
   getReactions,
   isMediaPlaceholder,
@@ -345,7 +346,11 @@ function ConversationTab({
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
   const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
 
-  const channelIsWhatsapp = firstConversation?.channel === "whatsapp";
+  const convChannel: string | undefined = firstConversation?.channel;
+  const convTransport: string | undefined = (
+    firstConversation as { channelProvider?: string } | null
+  )?.channelProvider;
+  const canSendTyping = channelSupports(convChannel, convTransport, "typingIndicator");
   const contactName =
     `${firstConversation?.contact?.firstName ?? ""} ${firstConversation?.contact?.lastName ?? ""}`.trim();
 
@@ -383,7 +388,7 @@ function ConversationTab({
       window.clearTimeout(typingPauseTimerRef.current);
       typingPauseTimerRef.current = null;
     }
-    if (typingLastSentRef.current !== 0 && firstConversation && channelIsWhatsapp) {
+    if (typingLastSentRef.current !== 0 && firstConversation && canSendTyping) {
       typingLastSentRef.current = 0;
       sendTypingState({
         conversationId: firstConversation._id as Id<"conversations">,
@@ -393,7 +398,7 @@ function ConversationTab({
   };
 
   const handleComposerActivity = () => {
-    if (!firstConversation || !channelIsWhatsapp || isInternal) return;
+    if (!firstConversation || !canSendTyping || isInternal) return;
     const ts = Date.now();
     if (ts - typingLastSentRef.current > 4000) {
       typingLastSentRef.current = ts;
@@ -744,7 +749,8 @@ function ConversationTab({
               <MessageBubble
                 key={message._id}
                 message={message}
-                channelIsWhatsapp={!!channelIsWhatsapp}
+                channel={convChannel}
+                transport={convTransport}
                 canInteract={canInteract}
                 currentMemberId={currentMemberId}
                 contactName={contactName}

@@ -21,6 +21,8 @@ import { SpecialMessageCard } from "./SpecialMessageCard";
 import { describeSpecialMessage, isEdited, isRevoked, isViewOnce } from "@/lib/bridgeSpecialMessage";
 import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatMessageTimestamp } from "@/lib/messageTime";
+import { channelSupports, deliveryTicksMode } from "@/lib/channelCapabilities";
+import { deviceViaLabel } from "@/lib/serviceWindow";
 import {
   InboxMessage,
   getQuoted,
@@ -37,8 +39,9 @@ import {
 
 interface MessageBubbleProps {
   message: InboxMessage;
-  /** Delivery ticks + reply/react/forward only apply to the WhatsApp channel. */
-  channelIsWhatsapp: boolean;
+  /** Canal + transporte da conversa: a matriz de capacidades decide ticks/reply/react/forward. */
+  channel: string | null | undefined;
+  transport?: string | null;
   /** Whether the current user can reply/react/forward. */
   canInteract: boolean;
   /** Current team member id — highlights the user's own reactions. */
@@ -146,9 +149,11 @@ const DELIVERY_LABELS: Record<string, string> = {
   failed: "Falhou",
 };
 
-function DeliveryTick({ message }: { message: InboxMessage }) {
+function DeliveryTick({ message, readOnly = false }: { message: InboxMessage; readOnly?: boolean }) {
   const status = message.deliveryStatus;
   if (!status) return null;
+  // Instagram só informa "lida": sem tique de enviada/entregue (seria promessa falsa).
+  if (readOnly && status !== "read" && status !== "failed") return null;
   // Em grupo o recibo é por MEMBRO (`Receipt.MessageSender`): o tique mostra o
   // primeiro que entregou/leu, e o tooltip conta quantos já leram — que é a
   // única leitura honesta de "lido" numa sala de N pessoas.
@@ -171,7 +176,8 @@ function DeliveryTick({ message }: { message: InboxMessage }) {
 
 export function MessageBubble({
   message,
-  channelIsWhatsapp,
+  channel,
+  transport,
   canInteract,
   currentMemberId,
   contactName,
@@ -216,7 +222,11 @@ export function MessageBubble({
 
   // Reactions/reply/forward are whatsapp-channel actions; internal notes and
   // other channels don't push to a provider, so keep the bar off there.
-  const actionsEnabled = channelIsWhatsapp && !message.isInternal;
+  // Reply/react/forward vêm da matriz de capacidades (WhatsApp, Instagram, Messenger).
+  const canReplyQuote = channelSupports(channel, transport, "replyQuote");
+  const canForward = channelSupports(channel, transport, "forward");
+  const canReactSend = channelSupports(channel, transport, "reactionsSend");
+  const actionsEnabled = (canReplyQuote || canForward || canReactSend) && !message.isInternal;
   const activeEmoji =
     currentMemberId != null
       ? reactions.find((r) => r.sender === currentMemberId)?.emoji ?? null
@@ -236,8 +246,10 @@ export function MessageBubble({
   const needsVision =
     canDescribeImage && (!vision || (vision.status !== "done" && vision.status !== "pending"));
 
+  const ticksMode = deliveryTicksMode(channel, transport);
   const showDeliveryTick =
-    !message.isInternal && message.direction === "outbound" && channelIsWhatsapp;
+    !message.isInternal && message.direction === "outbound" && ticksMode !== false;
+  const viaDevice = !message.isInternal && message.metadata?.via === "device";
   const isFailed = showDeliveryTick && message.deliveryStatus === "failed";
 
   // Suppress server-side placeholders like "[imagem]" when the real media is
@@ -321,18 +333,26 @@ export function MessageBubble({
             canInteract={canInteract}
             activeEmoji={activeEmoji}
             align={style.side}
-            onReply={() => {
-              setMenuOpen(false);
-              onReply(message);
-            }}
-            onReact={(emoji) => {
-              setMenuOpen(false);
-              onReact(message, emoji);
-            }}
+            onReply={
+              canReplyQuote
+                ? () => {
+                    setMenuOpen(false);
+                    onReply(message);
+                  }
+                : undefined
+            }
+            onReact={
+              canReactSend
+                ? (emoji) => {
+                    setMenuOpen(false);
+                    onReact(message, emoji);
+                  }
+                : undefined
+            }
             onForward={
               // Numa sala de grupo não há encaminhar: o conteúdo é de dezenas
               // de terceiros e o servidor recusa (review de correção nº 1).
-              group
+              group || !canForward
                 ? undefined
                 : () => {
                     setMenuOpen(false);
@@ -382,7 +402,12 @@ export function MessageBubble({
           className="inline-flex items-center"
           title={readCount > 0 ? `Lido por ${readCount}` : undefined}
         >
-          <DeliveryTick message={message} />
+          <DeliveryTick message={message} readOnly={ticksMode === "read"} />
+        </span>
+      )}
+      {viaDevice && (
+        <span className="text-[10px]" title="Enviada fora do HNBCRM">
+          {deviceViaLabel(message.metadata?.viaApp)}
         </span>
       )}
     </div>
