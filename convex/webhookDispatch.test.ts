@@ -10,6 +10,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { scheduleWebhookEvent, webhookMatches, WEBHOOK_SCAN_LIMIT } from "./lib/webhookDispatch";
+import { WEBHOOK_TRIGGERED_STAMP_MS } from "./webhookTrigger";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -164,5 +165,82 @@ describe("scheduleWebhookEvent", () => {
       event: "lead.created",
     });
     expect(matching).toHaveLength(1);
+  });
+});
+
+describe("memo por transação", () => {
+  test("3 eventos na mesma org/transação leem `webhooks` uma vez só", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t);
+    await addWebhook(t, org, ["*"]);
+    const queried = await t.run(async (ctx) => {
+      const spy = vi.spyOn(ctx.db, "query");
+      for (const event of ["lead.created", "lead.updated", "message.received"]) {
+        expect(await scheduleWebhookEvent(ctx, { organizationId: org, event, payload: {} })).toBe(true);
+      }
+      const calls = spy.mock.calls.filter(([table]) => table === "webhooks").length;
+      spy.mockRestore();
+      return calls;
+    });
+    expect(queried).toBe(1);
+    expect(await webhookJobs(t)).toHaveLength(3);
+  });
+
+  test("o memo não atravessa transações nem orgs", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t);
+    const other = await seedOrg(t);
+    await addWebhook(t, other, ["*"]);
+    // 1ª transação: org sem webhook
+    expect(await emit(t, org, "lead.created")).toBe(false);
+    // na mesma transação, a OUTRA org tem a própria leitura
+    await t.run(async (ctx) => {
+      expect(await scheduleWebhookEvent(ctx, { organizationId: org, event: "x", payload: {} })).toBe(false);
+      expect(await scheduleWebhookEvent(ctx, { organizationId: other, event: "x", payload: {} })).toBe(true);
+    });
+    // webhook criado depois: a transação seguinte enxerga
+    await addWebhook(t, org, ["*"]);
+    expect(await emit(t, org, "lead.created")).toBe(true);
+  });
+});
+
+describe("updateWebhookTriggered (carimbo de 5 min)", () => {
+  async function stampOf(t: T, id: Id<"webhooks">) {
+    return await t.run(async (ctx) => (await ctx.db.get(id))?.lastTriggered);
+  }
+
+  test("duas entregas seguidas gravam uma vez; depois de 5 min grava de novo", async () => {
+    vi.setSystemTime(new Date("2026-10-22T12:00:00Z"));
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t);
+    await addWebhook(t, org, ["*"]);
+    const id = await t.run(async (ctx) => (await ctx.db.query("webhooks").first())!._id);
+    expect(await stampOf(t, id) ?? undefined).toBeUndefined();
+
+    await t.mutation(internal.webhookTrigger.updateWebhookTriggered, { webhookId: id });
+    const first = await stampOf(t, id);
+    expect(first).toBe(Date.parse("2026-10-22T12:00:00Z"));
+
+    vi.setSystemTime(new Date(first! + 60_000));
+    await t.mutation(internal.webhookTrigger.updateWebhookTriggered, { webhookId: id });
+    expect(await stampOf(t, id)).toBe(first);
+
+    vi.setSystemTime(new Date(first! + WEBHOOK_TRIGGERED_STAMP_MS));
+    await t.mutation(internal.webhookTrigger.updateWebhookTriggered, { webhookId: id });
+    expect(await stampOf(t, id)).toBe(first! + WEBHOOK_TRIGGERED_STAMP_MS);
+  });
+
+  test("webhook apagado → no-op", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t);
+    await addWebhook(t, org, ["*"]);
+    const id = await t.run(async (ctx) => {
+      const w = (await ctx.db.query("webhooks").first())!;
+      await ctx.db.delete(w._id);
+      return w._id;
+    });
+    await expect(
+      t.mutation(internal.webhookTrigger.updateWebhookTriggered, { webhookId: id })
+    ).resolves.toBeNull();
   });
 });

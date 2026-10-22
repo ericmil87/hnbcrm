@@ -165,6 +165,7 @@ import type * as lib_startConversation from "../lib/startConversation.js";
 import type * as lib_storageUsage from "../lib/storageUsage.js";
 import type * as lib_taskOps from "../lib/taskOps.js";
 import type * as lib_taskSearchText from "../lib/taskSearchText.js";
+import type * as lib_webhookDispatch from "../lib/webhookDispatch.js";
 import type * as lib_whatsappDispatch from "../lib/whatsappDispatch.js";
 import type * as lib_whatsappParse from "../lib/whatsappParse.js";
 import type * as lib_whatsappPricing from "../lib/whatsappPricing.js";
@@ -372,6 +373,7 @@ declare const fullApi: ApiFromModules<{
   "lib/storageUsage": typeof lib_storageUsage;
   "lib/taskOps": typeof lib_taskOps;
   "lib/taskSearchText": typeof lib_taskSearchText;
+  "lib/webhookDispatch": typeof lib_webhookDispatch;
   "lib/whatsappDispatch": typeof lib_whatsappDispatch;
   "lib/whatsappParse": typeof lib_whatsappParse;
   "lib/whatsappPricing": typeof lib_whatsappPricing;

@@ -36,6 +36,36 @@ export function webhookMatches(
 }
 
 /**
+ * Memo POR TRANSAÇÃO da lista de webhooks da org: uma mutation que emite N
+ * eventos na mesma org (ex.: mensagem + lead + conversa) lê `webhooks` uma vez
+ * só. A chave é o objeto `ctx.db` — único por execução de função, então o memo
+ * morre com a transação (WeakMap) e nunca vaza entre transações. Seguro porque
+ * nenhum caminho de emissão de evento escreve em `webhooks` na mesma transação
+ * (o CRUD de `webhooks.ts` não emite eventos pela porta); se um dia escrever,
+ * o memo serviria uma lista velha dentro daquela transação.
+ */
+const webhooksByDb = new WeakMap<object, Map<string, Doc<"webhooks">[]>>();
+
+async function orgWebhooks(
+  db: GenericDatabaseReader<DataModel>,
+  organizationId: Id<"organizations">
+): Promise<Doc<"webhooks">[]> {
+  let perOrg = webhooksByDb.get(db);
+  if (!perOrg) {
+    perOrg = new Map();
+    webhooksByDb.set(db, perOrg);
+  }
+  const cached = perOrg.get(organizationId);
+  if (cached) return cached;
+  const rows = await db
+    .query("webhooks")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(WEBHOOK_SCAN_LIMIT);
+  perOrg.set(organizationId, rows);
+  return rows;
+}
+
+/**
  * Agenda o disparo do evento SÓ se a org tiver ao menos um webhook ativo que
  * case com ele. Devolve `true` quando agendou.
  */
@@ -43,10 +73,7 @@ export async function scheduleWebhookEvent(
   ctx: { db: GenericDatabaseReader<DataModel>; scheduler: Scheduler },
   args: { organizationId: Id<"organizations">; event: string; payload: unknown }
 ): Promise<boolean> {
-  const webhooks = await ctx.db
-    .query("webhooks")
-    .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-    .take(WEBHOOK_SCAN_LIMIT);
+  const webhooks = await orgWebhooks(ctx.db, args.organizationId);
   if (!webhooks.some((w) => webhookMatches(w, args.event))) return false;
   await ctx.scheduler.runAfter(0, internal.nodeActions.triggerWebhooks, {
     organizationId: args.organizationId,
