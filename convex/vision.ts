@@ -769,6 +769,10 @@ async function findAiRunMemberId(
  * (A transcrição de áudio tem a mesma corrida e não a fecha — lá é de graça, o
  * Whisper é self-hosted. Aqui cada imagem tem preço.)
  */
+function isGone(message: { metadata?: Record<string, unknown> }): boolean {
+  return message.metadata?.deletedByCustomer === true;
+}
+
 export const internalClaimVisionPending = internalMutation({
   args: { messageId: v.id("messages") },
   returns: v.object({
@@ -783,7 +787,7 @@ export const internalClaimVisionPending = internalMutation({
   }),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
-    if (!message) return { claimed: false };
+    if (!message || isGone(message)) return { claimed: false };
     const existing = message.metadata?.vision as VisionMeta | undefined;
     if (existing?.status === "done") {
       return {
@@ -817,8 +821,10 @@ export const internalSetVisionResult = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    // Apagada pelo cliente (Meta Messaging F2): resultado tardio não pode
+    // devolver a descrição do que o cliente mandou apagar.
     const message = await ctx.db.get(args.messageId);
-    if (!message) return null;
+    if (!message || isGone(message)) return null;
     const vision: VisionMeta = {
       status: args.status,
       at: Date.now(),

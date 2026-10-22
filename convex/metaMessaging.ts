@@ -61,8 +61,7 @@ import {
 import {
   DELETED_BY_CUSTOMER_COPY,
   EDIT_CONTENT_MAX_CHARS,
-  MEDIA_EXPIRED,
-  MEDIA_TOO_LARGE,
+  MEDIA_TOO_LARGE_DETAIL,
   META_MAX_ATTACHMENTS,
   META_MEDIA_MAX_BYTES,
   META_MEDIA_TIMEOUT_MS,
@@ -460,32 +459,37 @@ async function fetchMetaProfile(
   }
 }
 
-/** Lê o corpo até `max` bytes; passou do teto = null (cancela o stream). */
-async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
+/** Timeout/abort = URL expirada ou lenta; qualquer outra exceção = erro. */
+function expiredOrError(e: unknown): "expired" | "error" {
+  const name = e instanceof Error ? e.name : "";
+  return name === "TimeoutError" || name === "AbortError" ? "expired" : "error";
+}
+
+/**
+ * Lê o corpo até `max` bytes e devolve os pedaços SEM juntá-los (juntar
+ * custaria uma 2ª cópia de até 25 MB no runtime de 64 MiB); passou do teto =
+ * null (cancela o stream). O chamador monta o Blob direto dos pedaços.
+ */
+async function readCapped(res: Response, max: number): Promise<{ chunks: Uint8Array[]; size: number } | null> {
   if (!res.body) {
     const buf = new Uint8Array(await res.arrayBuffer());
-    return buf.byteLength > max ? null : buf;
+    return buf.byteLength > max ? null : { chunks: [buf], size: buf.byteLength };
   }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
-  let total = 0;
+  let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    total += value.byteLength;
-    if (total > max) {
+    size += value.byteLength;
+    if (size > max) {
+      chunks.length = 0;
       await reader.cancel().catch(() => {});
       return null;
     }
     chunks.push(value);
   }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const c of chunks) {
-    out.set(c, offset);
-    offset += c.byteLength;
-  }
-  return out;
+  return { chunks, size };
 }
 
 /**
@@ -509,44 +513,44 @@ async function downloadMetaAttachments(
       continue;
     }
     if (!isDownloadable(att)) {
-      outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+      outcomes.push({ kind: "unavailable", code: "expired" });
       continue;
     }
     try {
       const res = await fetch(att.url!, { signal: AbortSignal.timeout(META_MEDIA_TIMEOUT_MS) });
       if (!res.ok) {
-        outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+        outcomes.push({ kind: "unavailable", code: "expired" });
         continue;
       }
       const declared = Number(res.headers.get("content-length"));
       if (Number.isFinite(declared) && declared > META_MEDIA_MAX_BYTES) {
         await res.body?.cancel().catch(() => {});
-        outcomes.push({ kind: "unavailable", reason: MEDIA_TOO_LARGE });
+        outcomes.push({ kind: "unavailable", code: "too_large", detail: MEDIA_TOO_LARGE_DETAIL });
         continue;
       }
-      const bytes = await readCapped(res, META_MEDIA_MAX_BYTES);
-      if (!bytes) {
-        outcomes.push({ kind: "unavailable", reason: MEDIA_TOO_LARGE });
+      const body = await readCapped(res, META_MEDIA_MAX_BYTES);
+      if (!body) {
+        outcomes.push({ kind: "unavailable", code: "too_large", detail: MEDIA_TOO_LARGE_DETAIL });
         continue;
       }
       const mime = resolveMime(res.headers.get("content-type"), att);
-      const storageId = await ctx.storage.store(new Blob([bytes as BlobPart], { type: mime }));
+      const storageId = await ctx.storage.store(new Blob(body.chunks as BlobPart[], { type: mime }));
       const saved = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
         organizationId,
         storageId,
         name: fileNameFor(surface, att, mime, i),
         mimeType: mime,
-        size: bytes.byteLength,
+        size: body.size,
       });
       if (saved.ok) {
         outcomes.push({ kind: "saved", fileId: saved.fileId, mime });
         fileIds.push(saved.fileId);
       } else {
-        outcomes.push({ kind: "unavailable", reason: saved.reason });
+        outcomes.push({ kind: "unavailable", code: saved.code === "quota" ? "quota" : "mime", detail: saved.reason });
       }
     } catch (e) {
       console.warn(`meta-messaging: download de mídia falhou (${surface}): ${e instanceof Error ? e.name : "erro"}`);
-      outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+      outcomes.push({ kind: "unavailable", code: expiredOrError(e) });
     }
   }
   return { outcomes, fileIds };

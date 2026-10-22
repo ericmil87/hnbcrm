@@ -25,6 +25,7 @@ import {
   describeStoryReply,
   editHistoryOf,
   isDeletedByCustomer,
+  mediaUnavailableDetail,
   mediaUnavailableLabel,
   metaTypeOf,
   reactionNoteOf,
@@ -281,7 +282,7 @@ export function MessageBubble({
   const visibleText =
     !message.isInternal && !revoked && message.content && !suppressPlaceholder
       && !(special && special.kind !== "interactive_reply")
-      && !(metaCard && ["like_heart", "sticker", "ig_post", "ig_reel"].includes(metaCard.kind))
+      && !(metaCard && ["like_heart", "sticker", "ig_post", "ig_reel"].includes(metaCard.kind) && isMediaPlaceholder(message.content))
       ? message.content
       : null;
 
@@ -480,7 +481,12 @@ export function MessageBubble({
             >
               {editHistory.map((v, i) => (
                 <li key={i} className="break-words">
-                  {v.slice(0, 500)}
+                  {v.at ? (
+                    <span className="mr-1 tabular-nums opacity-75">
+                      {new Date(v.at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                    </span>
+                  ) : null}
+                  {v.content.slice(0, 500)}
                 </li>
               ))}
             </ol>
@@ -575,7 +581,7 @@ export function MessageBubble({
           )}
 
           {unavailableLabel && !hasAttachments && (
-            <MediaUnavailablePlaceholder label={unavailableLabel} variant={style.variant} />
+            <MediaUnavailablePlaceholder label={unavailableLabel} detail={mediaUnavailableDetail(message.metadata)} variant={style.variant} />
           )}
 
           {!revoked && mediaProblem && !unavailableLabel && (

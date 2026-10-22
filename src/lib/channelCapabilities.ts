@@ -1,3 +1,5 @@
+import { ALLOWED_MIME_TYPES, getMaxFileSize } from "../../convex/lib/fileValidation";
+
 /**
  * Matriz de capacidades por canal/transporte (Meta Messaging, plano §8).
  * Pura: substitui o antigo `channelIsWhatsapp` espalhado pelo inbox.
@@ -143,34 +145,47 @@ export const INSTAGRAM_REACTION_HINT = "O Instagram aceita só ❤️";
 
 const MB = 1024 * 1024;
 
+// O upload passa por `files.saveFile` (convex/lib/fileValidation.ts): vale a
+// INTERSEÇÃO entre a allowlist humana e o que a Meta aceita, com o MENOR teto.
+const HUMAN_MIMES: string[] = [
+  ...Object.keys(ALLOWED_MIME_TYPES.images),
+  ...Object.keys(ALLOWED_MIME_TYPES.documents),
+  ...Object.keys(ALLOWED_MIME_TYPES.text),
+  ...Object.keys(ALLOWED_MIME_TYPES.audio),
+  ...Object.keys(ALLOWED_MIME_TYPES.video),
+];
+
+// Instagram: imagem png/jpeg, áudio aac/m4a/wav/mp4, vídeo mp4/mov/webm/avi/ogg, PDF.
+const INSTAGRAM_META_MIMES = [
+  "image/png",
+  "image/jpeg",
+  "audio/aac",
+  "audio/x-m4a",
+  "audio/m4a",
+  "audio/mp4",
+  "audio/wav",
+  "audio/x-wav",
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/x-msvideo",
+  "video/avi",
+  "video/ogg",
+  "application/pdf",
+];
+
+function baseMime(mime: string): string {
+  return mime.split(";")[0].trim().toLowerCase();
+}
+
 /** Mimes que o canal aceita no anexo; null = sem filtro próprio (lista padrão do botão). */
 export function acceptedUploadMimes(
   channel: string | null | undefined,
   _transport?: string | null
 ): string[] | null {
-  if (channel === "instagram") {
-    return [
-      "image/png",
-      "image/jpeg",
-      "audio/aac",
-      "audio/x-m4a",
-      "audio/m4a",
-      "audio/mp4",
-      "audio/wav",
-      "audio/x-wav",
-      "video/mp4",
-      "video/quicktime",
-      "video/webm",
-      "video/x-msvideo",
-      "video/avi",
-      "video/ogg",
-      "application/pdf",
-    ];
-  }
-  if (channel === "messenger") {
-    // Messenger aceita imagem, áudio, vídeo e arquivo em geral.
-    return null;
-  }
+  if (channel === "instagram") return INSTAGRAM_META_MIMES.filter((m) => HUMAN_MIMES.includes(m));
+  // Messenger aceita imagem, áudio, vídeo e arquivo: vale a allowlist humana.
+  if (channel === "messenger") return HUMAN_MIMES;
   return null;
 }
 
@@ -180,14 +195,19 @@ export function maxUploadBytes(
   _transport: string | null | undefined,
   mime: string
 ): number | null {
-  if (channel === "instagram") return mime === "image/png" || mime === "image/jpeg" ? 8 * MB : 25 * MB;
-  if (channel === "messenger") return 25 * MB;
-  return null;
+  const metaCap = channel === "instagram" ? (isImage(mime) ? 8 * MB : 25 * MB) : channel === "messenger" ? 25 * MB : null;
+  if (metaCap === null) return null;
+  const human = getMaxFileSize(mime);
+  return human === null ? metaCap : Math.min(metaCap, human);
+}
+
+function isImage(mime: string): boolean {
+  return baseMime(mime).startsWith("image/");
 }
 
 export const UPLOAD_RULES_HINT: Record<string, string> = {
-  instagram: "O Instagram aceita imagens PNG/JPEG até 8 MB, áudio, vídeo e PDF até 25 MB",
-  messenger: "O Messenger aceita imagem, áudio, vídeo e arquivo até 25 MB",
+  instagram: "Instagram: PNG/JPEG até 8 MB, áudio MP4/WAV até 10 MB, vídeo MP4 até 16 MB, PDF até 20 MB",
+  messenger: "Messenger: imagem, áudio, vídeo e arquivo nos formatos do CRM, com os mesmos tetos (10 a 20 MB, vídeo 16 MB)",
 };
 
 /** Valida um arquivo contra as regras do canal. Retorna a mensagem de erro (PT-BR) ou null. */
@@ -198,7 +218,7 @@ export function validateUpload(
 ): string | null {
   const accepted = acceptedUploadMimes(channel, transport);
   const hint = UPLOAD_RULES_HINT[channel ?? ""] ?? "";
-  if (accepted && !accepted.includes(file.type)) {
+  if (accepted && !accepted.includes(baseMime(file.type))) {
     return `${file.name}: formato não aceito. ${hint}`;
   }
   const max = maxUploadBytes(channel, transport, file.type);

@@ -90,9 +90,10 @@ export function StoryReplyStrip({ href, variant }: { href: string | null; varian
   );
 }
 
-export function MediaUnavailablePlaceholder({ label, variant }: { label: string; variant: "inbound" | "outbound" }) {
+export function MediaUnavailablePlaceholder({ label, detail, variant }: { label: string; detail?: string | null; variant: "inbound" | "outbound" }) {
   return (
     <div
+      title={detail ?? undefined}
       className={cn(
         "flex items-center gap-1.5 text-xs italic",
         variant === "outbound" ? "text-white/80" : "text-text-muted"

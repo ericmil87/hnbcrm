@@ -2,6 +2,18 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado] — Instagram e Facebook Messenger: fotos, áudios, stories, reações (F2)
+
+### Mídia e tipos ricos nos dois canais
+
+- **Fotos, vídeos, áudios e arquivos recebidos** pelo Instagram e pelo Messenger entram na conversa como anexos (baixados na hora, porque os links da Meta expiram). Áudio é transcrito e imagem é descrita pelo atendente IA como no WhatsApp. Se o link já tiver expirado ou o arquivo passar do limite, a mensagem aparece mesmo assim, com "Mídia indisponível" e o motivo
+- **Story, post e reel:** menção em story (com a imagem, enquanto a Meta a entrega), resposta ao seu story ("Respondeu ao seu story" acima do texto), post ou reel compartilhado (card com título e "Abrir no Instagram"), "curtiu" e sticker aparecem como cards próprios
+- **Mensagem apagada pelo cliente** some do inbox (texto, descrição, transcrição e arquivo são removidos, como a Meta exige; fica só o registro de auditoria sem o conteúdo). **Mensagem editada** mostra o selo "editada" e o histórico
+- **Reações:** as do cliente aparecem nas bolhas; no Instagram você pode reagir com ❤️ (o único que a Meta aceita); no Messenger a reação fica só no HNBCRM, com aviso
+- **Enviar anexos** pelo inbox nos dois canais, com validação antes do upload (Instagram: PNG/JPEG até 8 MB, áudio, vídeo e PDF até 25 MB; Messenger: até 25 MB). O texto sai antes das mídias (o Instagram não tem legenda)
+- **"Lida" e "digitando"** enviados para o cliente ao abrir a conversa e ao digitar, como no WhatsApp via gateway
+- Interno: `convex/lib/metaInbound.ts` (download-primeiro com teto de 25 MB), `isSticker` cobre curtidas/stickers, `conversationRuntime.metaTypingAt` (aditivo), `MetaSpecialCard`, matriz de capacidades com `mediaSend`/reações/typing ligados para Instagram e Messenger
+
 ## [Não lançado] — Instagram e Facebook Messenger: responder pelo inbox (F1)
 
 ### Responder no Instagram e no Messenger, e saber de onde cada conversa veio

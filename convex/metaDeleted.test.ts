@@ -260,6 +260,33 @@ describe("mensagem apagada pelo cliente", () => {
     await drain(t);
   });
 
+  test("resultado tardio de visão/transcrição não ressuscita o conteúdo apagado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    stubFetch({ "https://cdn.example.test/": reply("image/jpeg", bytes(50)) });
+    await ingest(t, s, igImage, "instagram");
+    await ingest(t, s, deletedPayload(IMAGE_MID), "instagram");
+    const id = (await messages(t))[0]._id;
+
+    await t.mutation(internal.vision.internalSetVisionResult, { messageId: id, status: "done", text: "RG de Fulano" });
+    await t.mutation(internal.transcription.internalSetTranscriptionResult, {
+      messageId: id,
+      status: "done",
+      text: "meu cpf é 123",
+    });
+    await t.mutation(internal.transcription.internalSetTranscriptionPending, { messageId: id });
+    const claim = await t.mutation(internal.vision.internalClaimVisionPending, { messageId: id });
+
+    expect(claim.claimed).toBe(false);
+    const m = (await messages(t))[0];
+    expect(m.imageDescription).toBeUndefined();
+    expect(m.transcriptText).toBeUndefined();
+    expect(m.metadata?.vision).toBeUndefined();
+    expect(m.metadata?.transcription).toBeUndefined();
+    expect(m.metadata?.deletedByCustomer).toBe(true);
+    await drain(t);
+  });
+
   test("blob compartilhado por encaminhamento NÃO é apagado", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

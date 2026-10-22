@@ -91,10 +91,16 @@ export function describeStoryReply(metadata: Meta): StoryReplyInfo | null {
 
 const UNAVAILABLE_REASONS: Record<string, string> = {
   expired: "expirou antes de baixar",
+  too_large: "arquivo grande demais",
   mime: "formato não suportado",
   quota: "limite de armazenamento atingido",
-  too_large: "arquivo grande demais",
+  error: "falha ao baixar",
 };
+
+/** Frase detalhada do backend, para tooltip. */
+export function mediaUnavailableDetail(metadata: Meta): string | null {
+  return text(metadata?.mediaUnavailableDetail, 300) ?? null;
+}
 
 /** Texto do placeholder, ou null se a mídia está disponível. */
 export function mediaUnavailableLabel(metadata: Meta): string | null {
@@ -110,11 +116,24 @@ export function isDeletedByCustomer(metadata: Meta): boolean {
 
 export const DELETED_BY_CUSTOMER_LABEL = "Mensagem apagada pelo cliente";
 
-/** Até 5 versões anteriores, na ordem em que o backend grava. */
-export function editHistoryOf(metadata: Meta): string[] {
+export interface EditVersion {
+  content: string;
+  at?: number;
+}
+
+/** Até 5 versões anteriores; o backend grava `{content, at}` (string solta também é aceita). */
+export function editHistoryOf(metadata: Meta): EditVersion[] {
   const h = metadata?.editHistory;
   if (!Array.isArray(h)) return [];
-  return h.filter((x): x is string => typeof x === "string" && x.length > 0).slice(-MAX_HISTORY);
+  const out: EditVersion[] = [];
+  for (const x of h) {
+    if (typeof x === "string") {
+      if (x) out.push({ content: x });
+    } else if (x && typeof x.content === "string" && x.content) {
+      out.push({ content: x.content, at: typeof x.at === "number" ? x.at : undefined });
+    }
+  }
+  return out.slice(-MAX_HISTORY);
 }
 
 export function reactionNoteOf(metadata: Meta): string | null {

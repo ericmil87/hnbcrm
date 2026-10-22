@@ -10,6 +10,7 @@ import schema from "./schema";
 import { encryptSecret } from "./lib/secretCrypto";
 import { parseMetaMessagingWebhook } from "./lib/metaMessagingParse";
 import { FILE_QUOTAS } from "./lib/fileQuotas";
+import { readStorageUsage } from "./lib/storageUsage";
 import { validateInboundMimeType } from "./lib/fileValidation";
 import { isSticker } from "./lib/mediaEnrichment";
 import igImage from "./__fixtures__/meta/instagram-message-image.json";
@@ -242,7 +243,9 @@ describe("mídia recebida: baixa primeiro", () => {
         ),
     });
     await ingest(t, s, igImage, "instagram");
-    expect(await messages(t)).toHaveLength(1);
+    const all = await messages(t);
+    expect(all).toHaveLength(1);
+    expect(all[0].metadata?.mediaUnavailable).toBe("error");
     await drain(t);
   });
 
@@ -253,7 +256,8 @@ describe("mídia recebida: baixa primeiro", () => {
     await ingest(t, s, pageFile, "messenger");
     const [m] = await messages(t);
     expect(m.attachments).toBeUndefined();
-    expect(m.metadata?.mediaUnavailable).toContain("tipo de mídia não permitido");
+    expect(m.metadata?.mediaUnavailable).toBe("mime");
+    expect(m.metadata?.mediaUnavailableDetail).toContain("tipo de mídia não permitido");
     expect(await t.run(async (ctx) => await ctx.db.query("files").collect())).toHaveLength(0);
     expect(await t.run(async (ctx) => await ctx.db.system.query("_storage").collect())).toHaveLength(0);
     await drain(t);
@@ -277,7 +281,8 @@ describe("mídia recebida: baixa primeiro", () => {
     await ingest(t, s, igImage, "instagram");
     const [m] = await messages(t);
     expect(m.attachments).toBeUndefined();
-    expect(m.metadata?.mediaUnavailable).toContain("cota de armazenamento");
+    expect(m.metadata?.mediaUnavailable).toBe("quota");
+    expect(m.metadata?.mediaUnavailableDetail).toContain("cota de armazenamento");
     await drain(t);
   });
 
@@ -288,7 +293,8 @@ describe("mídia recebida: baixa primeiro", () => {
     await ingest(t, s, igImage, "instagram");
     const [m] = await messages(t);
     expect(m.attachments).toBeUndefined();
-    expect(m.metadata?.mediaUnavailable).toBe("arquivo grande demais");
+    expect(m.metadata?.mediaUnavailable).toBe("too_large");
+    expect(m.metadata?.mediaUnavailableDetail).toContain("25 MB");
     await drain(t);
   });
 
@@ -469,6 +475,67 @@ describe("tipos ricos sem download", () => {
     await ingest(t, s, igImage, "instagram");
     expect(await messages(t)).toHaveLength(1);
     expect(await t.run(async (ctx) => await ctx.db.query("files").collect())).toHaveLength(1);
+    await drain(t);
+  });
+});
+
+describe("entrega repetida em paralelo", () => {
+  test("segundo ingest do mesmo mid descarta o arquivo e o blob que baixou: 1 mensagem, 1 files, cota certa", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const save = async (size: number) => {
+      const storageId = await t.run(async (ctx) => await ctx.storage.store(new Blob([new Uint8Array(size)])));
+      const saved = await t.mutation(internal.whatsapp.internalSaveInboundAttachment, {
+        organizationId: s.organizationId,
+        storageId,
+        name: "a.jpg",
+        mimeType: "image/jpeg",
+        size,
+      });
+      if (!saved.ok) throw new Error("falhou");
+      return saved.fileId;
+    };
+    const lead = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("leads", {
+        organizationId: s.organizationId,
+        title: "L",
+        boardId: (await ctx.db.query("boards").first())!._id,
+        stageId: (await ctx.db.query("stages").first())!._id,
+        value: 0,
+        currency: "BRL",
+        priority: "medium",
+        temperature: "cold",
+        tags: [],
+        customFields: {},
+        conversationStatus: "new",
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const receive = async (fileId: Awaited<ReturnType<typeof save>>) =>
+      await t.mutation(internal.conversations.internalReceiveMessage, {
+        organizationId: s.organizationId,
+        leadId: lead,
+        channel: "instagram",
+        channelConfigId: s.instagramId,
+        content: "[imagem]",
+        contentType: "image",
+        attachments: [fileId],
+        externalId: "ig_dup_mid",
+      });
+    const f1 = await save(100);
+    const f2 = await save(200);
+    const m1 = await receive(f1);
+    const m2 = await receive(f2);
+
+    expect(m2).toBe(m1);
+    expect(await messages(t)).toHaveLength(1);
+    const files = await t.run(async (ctx) => await ctx.db.query("files").collect());
+    expect(files.map((f) => f._id)).toEqual([f1]);
+    expect(await t.run(async (ctx) => await ctx.db.system.query("_storage").collect())).toHaveLength(1);
+    expect(await t.run(async (ctx) => await readStorageUsage(ctx, s.organizationId))).toEqual({ bytes: 100, count: 1 });
     await drain(t);
   });
 });

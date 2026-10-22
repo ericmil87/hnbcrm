@@ -12,8 +12,9 @@ import type { MetaAttachment } from "./metaMessagingParse";
 export const META_MEDIA_MAX_BYTES = 25 * 1024 * 1024; // mesmo teto do WhatsApp
 export const META_MEDIA_TIMEOUT_MS = 15_000;
 export const META_MAX_ATTACHMENTS = 10;
-export const MEDIA_EXPIRED = "expired";
-export const MEDIA_TOO_LARGE = "arquivo grande demais";
+/** Códigos estáveis de `metadata.mediaUnavailable` (a frase humana vai em `mediaUnavailableDetail`). */
+export type MediaUnavailableCode = "expired" | "too_large" | "mime" | "quota" | "error";
+export const MEDIA_TOO_LARGE_DETAIL = "arquivo grande demais (limite de 25 MB)";
 export const DELETED_BY_CUSTOMER_COPY = "Mensagem apagada pelo cliente";
 export const EDIT_HISTORY_MAX = 5;
 export const EDIT_PREVIOUS_MAX_CHARS = 2000;
@@ -109,7 +110,7 @@ export function fileNameFor(surface: string, att: MetaAttachment, mime: string, 
 
 export type MediaOutcome =
   | { kind: "saved"; fileId: string; mime: string }
-  | { kind: "unavailable"; reason: string };
+  | { kind: "unavailable"; code: MediaUnavailableCode; detail?: string };
 
 export type ComposedInbound = {
   content: string;
@@ -140,7 +141,7 @@ export function composeInbound(
   const metadata: Record<string, unknown> = {};
   const savedIndexes: number[] = [];
   const unavailable: MetaAttachment[] = [];
-  let unavailableReason: string | undefined;
+  let unavailable1: Extract<MediaOutcome, { kind: "unavailable" }> | undefined;
   let contentType: ComposedInbound["contentType"] = "text";
 
   attachments.forEach((att, i) => {
@@ -150,7 +151,7 @@ export function composeInbound(
       if (contentType === "text") contentType = contentTypeFor(att, out.mime);
     } else if (out?.kind === "unavailable") {
       unavailable.push(att);
-      unavailableReason ??= out.reason;
+      unavailable1 ??= out;
     }
   });
 
@@ -161,8 +162,9 @@ export function composeInbound(
   if (link) {
     metadata.metaLink = { ...(link.url ? { url: link.url } : {}), ...(link.title ? { title: link.title } : {}) };
   }
-  if (unavailableReason) {
-    metadata.mediaUnavailable = unavailableReason;
+  if (unavailable1) {
+    metadata.mediaUnavailable = unavailable1.code;
+    if (unavailable1.detail) metadata.mediaUnavailableDetail = unavailable1.detail;
     // Para o reprocessamento (F4/ops): só o que não foi baixado.
     metadata.metaAttachments = unavailable;
   }

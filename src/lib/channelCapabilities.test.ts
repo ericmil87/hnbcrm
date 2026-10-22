@@ -127,20 +127,28 @@ describe("F2 reactions and uploads", () => {
     expect(validateUpload(undefined, null, { name: "a", type: "x/y", size: 1e9 })).toBeNull();
   });
 
-  it("instagram limits", () => {
+  it("instagram limits are the intersection with the human allowlist", () => {
     const MB = 1024 * 1024;
     expect(maxUploadBytes("instagram", "instagram", "image/jpeg")).toBe(8 * MB);
-    expect(maxUploadBytes("instagram", "instagram", "video/mp4")).toBe(25 * MB);
-    expect(acceptedUploadMimes("instagram", "instagram")).toContain("application/pdf");
+    expect(maxUploadBytes("instagram", "instagram", "video/mp4")).toBe(16 * MB);
+    expect(maxUploadBytes("instagram", "instagram", "audio/wav")).toBe(10 * MB);
+    expect(maxUploadBytes("instagram", "instagram", "application/pdf")).toBe(20 * MB);
+    const accepted = acceptedUploadMimes("instagram", "instagram")!;
+    expect(accepted).toContain("application/pdf");
+    expect(accepted).not.toContain("video/quicktime");
+    expect(accepted).not.toContain("image/gif");
     expect(validateUpload("instagram", "instagram", { name: "a.gif", type: "image/gif", size: 10 })).toMatch(/formato/);
+    expect(validateUpload("instagram", "instagram", { name: "a.mov", type: "video/quicktime", size: 10 })).toMatch(/formato/);
     expect(validateUpload("instagram", "instagram", { name: "a.png", type: "image/png", size: 9 * MB })).toMatch(/8 MB/);
-    expect(validateUpload("instagram", "instagram", { name: "a.mp4", type: "video/mp4", size: 20 * MB })).toBeNull();
+    expect(validateUpload("instagram", "instagram", { name: "a.mp4", type: "video/mp4", size: 17 * MB })).toMatch(/16 MB/);
+    expect(validateUpload("instagram", "instagram", { name: "a.mp4", type: "video/mp4", size: 15 * MB })).toBeNull();
   });
 
-  it("messenger limits", () => {
+  it("messenger follows the human allowlist", () => {
     const MB = 1024 * 1024;
-    expect(acceptedUploadMimes("messenger", "messenger")).toBeNull();
-    expect(validateUpload("messenger", "messenger", { name: "a.zip", type: "application/zip", size: 24 * MB })).toBeNull();
-    expect(validateUpload("messenger", "messenger", { name: "a.mp4", type: "video/mp4", size: 26 * MB })).toMatch(/25 MB/);
+    expect(acceptedUploadMimes("messenger", "messenger")).toContain("application/pdf");
+    expect(validateUpload("messenger", "messenger", { name: "a.zip", type: "application/zip", size: 1 })).toMatch(/formato/);
+    expect(validateUpload("messenger", "messenger", { name: "a.pdf", type: "application/pdf", size: 19 * MB })).toBeNull();
+    expect(validateUpload("messenger", "messenger", { name: "a.mp4", type: "video/mp4", size: 17 * MB })).toMatch(/16 MB/);
   });
 });

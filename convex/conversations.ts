@@ -31,6 +31,7 @@ import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
+import { discardDuplicateAttachments } from "./lib/fileRefs";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
@@ -1680,7 +1681,10 @@ export const internalReceiveMessage = internalMutation({
           q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
         )
         .first();
-      if (existing) return existing._id;
+      if (existing) {
+        await discardDuplicateAttachments(ctx, existing, args.attachments);
+        return existing._id;
+      }
     }
 
     const lead = await ctx.db.get(args.leadId);
@@ -1888,7 +1892,10 @@ export const internalReceiveDeviceMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
@@ -2120,7 +2127,10 @@ export const internalReceiveGroupMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const group = await ctx.db.get(args.groupChatId);
     if (!group || group.organizationId !== args.organizationId) return null;
@@ -2302,7 +2312,10 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const group = await ctx.db.get(args.groupChatId);
     if (!group || group.organizationId !== args.organizationId) return null;
