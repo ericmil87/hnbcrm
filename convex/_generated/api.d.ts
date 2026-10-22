@@ -126,6 +126,7 @@ import type * as lib_groupCopilotTools from "../lib/groupCopilotTools.js";
 import type * as lib_groupGuard from "../lib/groupGuard.js";
 import type * as lib_groupMediaPolicy from "../lib/groupMediaPolicy.js";
 import type * as lib_groupMemberLead from "../lib/groupMemberLead.js";
+import type * as lib_groupMemberSearch from "../lib/groupMemberSearch.js";
 import type * as lib_groupParticipantsStore from "../lib/groupParticipantsStore.js";
 import type * as lib_groupPostCore from "../lib/groupPostCore.js";
 import type * as lib_groupPostOps from "../lib/groupPostOps.js";
@@ -332,6 +333,7 @@ declare const fullApi: ApiFromModules<{
   "lib/groupGuard": typeof lib_groupGuard;
   "lib/groupMediaPolicy": typeof lib_groupMediaPolicy;
   "lib/groupMemberLead": typeof lib_groupMemberLead;
+  "lib/groupMemberSearch": typeof lib_groupMemberSearch;
   "lib/groupParticipantsStore": typeof lib_groupParticipantsStore;
   "lib/groupPostCore": typeof lib_groupPostCore;
   "lib/groupPostOps": typeof lib_groupPostOps;

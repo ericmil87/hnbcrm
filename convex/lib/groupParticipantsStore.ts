@@ -25,6 +25,7 @@
  */
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
+import { participantSearchName } from "./groupMemberSearch";
 
 /** Mesmos tetos de `lib/groupChatCore.ts` (sem import de valor: evita ciclo). */
 export const STORE_PARTICIPANTS_CAP = 1024;
@@ -76,6 +77,16 @@ function sameRow(row: Doc<"groupParticipants">, p: GroupParticipantRow, key: str
   );
 }
 
+/**
+ * A linha precisa ser regravada? Diferente do shape legado (`sameRow`) OU com
+ * `searchName` desatualizado. `sameRow` fica só com os campos legados porque é
+ * também a comparação do `finish` da migração (`diffParticipantsTable`) — uma
+ * linha sem `searchName` não é "divergente" do array.
+ */
+function needsWrite(row: Doc<"groupParticipants">, p: GroupParticipantRow, key: string): boolean {
+  return !sameRow(row, p, key) || row.searchName !== participantSearchName(p.name);
+}
+
 /** Campos gravados a partir do shape legado (ausente = `undefined` no patch). */
 function rowFields(p: GroupParticipantRow, key: string, now: number) {
   return {
@@ -89,6 +100,7 @@ function rowFields(p: GroupParticipantRow, key: string, now: number) {
     joinedAt: p.joinedAt,
     leftAt: p.leftAt,
     updatedAt: now,
+    searchName: participantSearchName(p.name),
   };
 }
 
@@ -186,7 +198,7 @@ export async function upsertParticipant(
   const key = rowKey(next);
   if (!key) return { changed: false, inserted: false, row: prev };
   if (existing) {
-    if (sameRow(existing, next, key)) return { changed: false, inserted: false, row: prev };
+    if (!needsWrite(existing, next, key)) return { changed: false, inserted: false, row: prev };
     await ctx.db.patch(existing._id, rowFields(next, key, now));
     return { changed: true, inserted: false, row: next };
   }
@@ -233,7 +245,7 @@ export async function syncParticipantsTable(
     kept.add(key);
     const row = byKey.get(key);
     if (row) {
-      if (!sameRow(row, p, key)) {
+      if (needsWrite(row, p, key)) {
         await ctx.db.patch(row._id, rowFields(p, key, now));
         updated++;
       }
@@ -300,6 +312,20 @@ async function deleteSideRows(
   for (const row of batch) await ctx.db.delete(row._id);
   budget.left -= batch.length;
   return rows.length <= limit;
+}
+
+/**
+ * Apaga as linhas de MEMBROS da sala (só `groupParticipants`) até
+ * `budget.left` escritas. Devolve `true` quando não sobrou nenhuma — com
+ * `false`, quem chama agenda a continuação (perf I/O onda 2: o sync não apaga
+ * mais 1.024 linhas por sala numa transação só).
+ */
+export async function deleteParticipantRows(
+  ctx: MutationCtx,
+  groupChatId: Id<"groupChats">,
+  budget: { left: number }
+): Promise<boolean> {
+  return await deleteSideRows(ctx, "groupParticipants", groupChatId, budget);
 }
 
 /**
@@ -566,7 +592,7 @@ export async function patchParticipantByKey(
     .first();
   if (row) {
     const next = { ...rowToParticipant(row), ...fields };
-    if (!sameRow(row, next, key)) await ctx.db.patch(row._id, rowFields(next, key, now));
+    if (needsWrite(row, next, key)) await ctx.db.patch(row._id, rowFields(next, key, now));
   }
   if (isGroupMigrated(group)) return {};
   return {

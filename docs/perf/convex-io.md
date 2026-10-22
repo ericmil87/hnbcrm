@@ -217,6 +217,12 @@ Kill switches `RETENTION_DISABLED=1` (sempre) e `CRONS_DISABLED=1` (só o cron);
 
 Tabelas `groupParticipants` (`by_group`, `by_group_and_key`, `by_group_and_phone`, `by_organization_and_contact`, `by_organization`) e `groupTimeline` (`by_group_and_at`, cap 100), store único `lib/groupParticipantsStore.ts`. Migração em 2 passos: dual-write + leitura pelo array enquanto `groupChats.participantsMigratedAt` não existe; `internalBackfillGroupParticipants` copia; `internalFinishGroupParticipantsMigration` confere membros, grava `participantsMigratedAt`, remove `participants`/`timeline` (o doc encolhe de 60–90 KB para ~1–2 KB) e recalcula `participantsCount`; `internalRestoreGroupArraysFromTable` é o rollback. ~25 leitores trocados; shape de `getGroup`/REST/MCP idêntico. Trade-off: `getGroup` de sala com 1.024 membros lê ~250 KB em linhas (follow-up: query de membros separada). Limites: ops com 10 salas/página (máx. 12); `syncGroups` de canal com >15 salas acompanhadas grandes pode precisar de paginação (follow-up).
 
+### Onda 2 — membros de grupo paginados (`perf/io2-groups-members`)
+
+`groupChats.listGroupMembers` (página de até 50, busca por nome ou começo do telefone) e `resolveGroupMemberNames` substituem a lista inteira no `getGroup` público. Busca por nome usa `groupParticipants.searchName` (nome sem acento/minúsculas, `lib/groupMemberSearch.ts`, gravado pelo store em todo upsert; o search index `search_name` é sobre ele — o Convex não ignora acento). Telefone: prefixo com/sem 55 e com/sem o 9º dígito BR; busca pelo FIM do número (••••5729) não existe. Sala não acompanhada/removida/abandonada devolve vazio nas duas queries (LGPD, até a purga assíncrona terminar). `groupChats.lastSyncAt` da sala passou a significar "última mudança vinda do sync" (a REST/MCP devolvem o doc cru).
+
+**Ordem em prod (e dev):** (1) deploy; (2) `npx convex run --prod groupChats:internalBackfillParticipantSearchName '{}'` (dryRun, 1 página) e depois `'{"dryRun":false}'` (200 linhas/página, se reagenda; idempotente). Até o backfill, linha antiga sem `searchName` não aparece na busca por NOME (listagem e telefone não dependem dele).
+
 ## Follow-ups menores (fora das fases)
 
 - Índice `[organizationId, departmentId|unitId, archivedAt, lastMessageAt]` para os ramos da Central em `getConversations` (hoje `max(limit, 200)`).

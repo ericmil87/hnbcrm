@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "convex/react";
 import { AtSign } from "lucide-react";
+import { api } from "../../../convex/_generated/api";
+import { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
+import { filterMentionCandidates, mentionResultsPending } from "@/lib/groupMentionFilter";
 import {
   groupSenderColor,
   initialsOf,
@@ -21,7 +26,16 @@ import type { GroupParticipant } from "./types";
  * A consequência prática é que apagar o "@Fulano" do texto precisa apagar o
  * JID junto — `syncMentions` faz essa reconciliação a cada envio, comparando
  * o que sobrou no texto com o que foi escolhido no dropdown.
+ *
+ * Perf (Convex I/O, onda 2): a lista de candidatos NÃO vem mais da sala
+ * inteira (até 1.024 membros via `getGroup`). Depois do "@" + 1 caractere, o
+ * hook busca no servidor (`groupChats.listGroupMembers` com `search`, página de
+ * 20). A menção continua saindo pelo `lid`/`phone` da linha, e o servidor
+ * revalida contra a tabela no envio (`lib/groupGuard.ts resolveGroupMentions`).
  */
+
+/** Quantos candidatos a busca do "@" pede ao servidor (mostra 8). */
+const MENTION_SEARCH_PAGE = 20;
 
 export interface GroupMentionChoice {
   /** JID que vai em `ContextInfo.MentionedJID` (LID ou telefone@s.whatsapp.net). */
@@ -31,7 +45,8 @@ export interface GroupMentionChoice {
 }
 
 interface UseGroupMentionsArgs {
-  participants: GroupParticipant[];
+  /** Sala da conversa; ausente = sem busca (conversa 1 a 1). */
+  groupChatId?: Id<"groupChats">;
   value: string;
   /** Aplica o texto novo (com a menção inserida) e reposiciona o cursor. */
   onChange: (value: string, cursorPosition: number) => void;
@@ -50,7 +65,7 @@ export function participantJid(p: GroupParticipant): string | null {
 }
 
 export function useGroupMentions({
-  participants,
+  groupChatId,
   value,
   onChange,
   enabled = true,
@@ -73,31 +88,49 @@ export function useGroupMentions({
     return { at, query, pos };
   }, [enabled, value, cursor]);
 
+  // Busca sob demanda: só com "@" + ≥ 1 caractere (debounce curto para não
+  // disparar uma query por tecla).
+  const searchTerm = useDebouncedValue(trigger?.query ?? "", 200);
+  const searchArgs =
+    groupChatId && trigger && trigger.query.length >= 1 && searchTerm.length >= 1
+      ? {
+          groupChatId,
+          search: searchTerm,
+          paginationOpts: { numItems: MENTION_SEARCH_PAGE, cursor: null },
+        }
+      : "skip";
+  const found = useQuery(api.groupChats.listGroupMembers, searchArgs);
+  // Enquanto a próxima busca carrega, mantém os candidatos da anterior (sem
+  // piscar o dropdown a cada tecla) — mas REFILTRADOS pelo termo atual: o
+  // resultado de "@Ma" não pode deixar "@Mari"+Enter mencionar o "Marcos".
+  const lastFound = useRef<GroupParticipant[]>([]);
+  if (found !== undefined) lastFound.current = found.page as GroupParticipant[];
+  const candidates: GroupParticipant[] =
+    searchArgs === "skip" ? [] : ((found?.page as GroupParticipant[] | undefined) ?? lastFound.current);
+  // A lista exibida ainda não é a do termo digitado agora (debounce ou servidor).
+  const pending =
+    searchArgs !== "skip" &&
+    mentionResultsPending({
+      query: trigger?.query ?? "",
+      searchedTerm: searchTerm,
+      loaded: found !== undefined,
+    });
+
   const items = useMemo(() => {
     if (!trigger) return [];
-    const term = trigger.query
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "");
-    return participants
-      .filter((p) => p.leftAt === undefined && participantJid(p) !== null)
+    return filterMentionCandidates(
+      candidates.filter((p) => p.leftAt === undefined && participantJid(p) !== null),
+      trigger.query
+    )
       .map((p) => ({
         participant: p,
         key: participantKeyOf(p),
         label: participantDisplayName(p),
       }))
-      .filter(({ participant, label }) => {
-        if (!term) return true;
-        const name = label
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[̀-ͯ]/g, "");
-        return name.includes(term) || (participant.phone ?? "").includes(term);
-      })
       .slice(0, 8);
-  }, [trigger, participants]);
+  }, [trigger, candidates]);
 
-  const open = trigger !== null && items.length > 0;
+  const open = trigger !== null && (items.length > 0 || pending);
 
   useEffect(() => setActiveIndex(0), [trigger?.query, open]);
 
@@ -138,16 +171,19 @@ export function useGroupMentions({
     if (!open) return false;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActiveIndex((i) => (i + 1) % items.length);
+      if (items.length > 0) setActiveIndex((i) => (i + 1) % items.length);
       return true;
     }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActiveIndex((i) => (i - 1 + items.length) % items.length);
+      if (items.length > 0) setActiveIndex((i) => (i - 1 + items.length) % items.length);
       return true;
     }
     if (e.key === "Enter" || e.key === "Tab") {
       e.preventDefault();
+      // Lista ainda do termo anterior: não escolhe ninguém (o dropdown mostra
+      // "buscando…"); a tecla é consumida para não enviar a mensagem no meio.
+      if (pending || !items[activeIndex]) return true;
       pick(items[activeIndex]);
       return true;
     }
@@ -186,6 +222,8 @@ export function useGroupMentions({
   return {
     open,
     items,
+    /** A lista exibida ainda não corresponde ao termo atual (Enter bloqueado). */
+    pending,
     activeIndex,
     pick,
     handleKeyDown,
@@ -201,6 +239,8 @@ interface GroupMentionDropdownProps {
   items: { participant: GroupParticipant; key: string; label: string }[];
   activeIndex: number;
   onPick: (row: { participant: GroupParticipant; key: string; label: string }) => void;
+  /** Busca do termo atual em andamento: mostra "buscando…" no rodapé. */
+  pending?: boolean;
 }
 
 /** Dropdown ancorado acima do composer — o pai precisa de um container relative. */
@@ -209,6 +249,7 @@ export function GroupMentionDropdown({
   items,
   activeIndex,
   onPick,
+  pending = false,
 }: GroupMentionDropdownProps) {
   if (!open) return null;
   return (
@@ -245,6 +286,11 @@ export function GroupMentionDropdown({
           <AtSign size={13} className="shrink-0 text-text-muted" />
         </button>
       ))}
+      {pending && (
+        <div className="px-3 py-2 text-xs text-text-muted" role="status">
+          Buscando…
+        </div>
+      )}
     </div>
   );
 }

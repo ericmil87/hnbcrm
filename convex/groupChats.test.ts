@@ -462,7 +462,7 @@ describe("setMonitored", () => {
     expect((groups[0] as any).participants).toBeUndefined();
     expect(groups[0].participantsCount).toBe(2);
     // Grupo NÃO acompanhado: a contagem existe, a lista não (segurança nº 1).
-    const detail = await asAgent.query(api.groupChats.getGroup, { groupChatId: groups[0]._id });
+    const detail = await asAgent.query(api.groupChats.getGroup, { groupChatId: groups[0]._id, includeParticipants: true });
     expect(detail!.participants).toHaveLength(0);
     expect(detail!.participantsCount).toBe(2);
     // E a CHAVE do nosso número não desce para quem só tem inbox:view_own.
@@ -479,11 +479,11 @@ describe("setMonitored", () => {
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
     await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
     expect(
-      (await asAgent.query(api.groupChats.getGroup, { groupChatId }))!.participants
+      (await asAgent.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true }))!.participants
     ).toHaveLength(2);
 
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: false });
-    const after = await asAgent.query(api.groupChats.getGroup, { groupChatId });
+    const after = await asAgent.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     expect(after!.participants).toHaveLength(0);
     // A contagem sobrevive — é o que a lista de grupos mostra.
     expect(after!.participantsCount).toBe(2);
@@ -496,10 +496,10 @@ describe("setMonitored", () => {
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
     await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
 
-    const detail = await asAdmin.query(api.groupChats.getGroup, { groupChatId });
+    const detail = await asAdmin.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     expect(detail!.selfKey).toBe(OUR_LID);
     expect(detail!.selfKnown).toBe(true);
-    expect(detail!.participants.filter((p: { isSelf?: boolean }) => p.isSelf)).toHaveLength(1);
+    expect(detail!.participants!.filter((p: { isSelf?: boolean }) => p.isSelf)).toHaveLength(1);
   });
 });
 
@@ -1167,5 +1167,136 @@ describe("F8 — nome e tópico da sala têm teto (review de segurança nº 8)",
     const after = await t.run(async (ctx) => ctx.db.get(groupChatId));
     expect(after!.subject).toHaveLength(200);
     expect(after!.topic).toHaveLength(512);
+  });
+});
+
+describe("syncGroups em dois passos (perf I/O, onda 2)", () => {
+  const baseGroup = (groupListFixture as any).data.Groups[0];
+  const member = (n: number, admin = false) => ({
+    AddRequest: null,
+    DisplayName: "",
+    Error: 0,
+    IsAdmin: admin,
+    IsSuperAdmin: false,
+    JID: `7000000000${n}@lid`,
+    LID: `7000000000${n}@lid`,
+    PhoneNumber: `55859999${String(n).padStart(4, "0")}@s.whatsapp.net`,
+  });
+  /** Lista do gateway com 4 salas; `members[i]` = membros da sala i. */
+  function listOf(members: number[][], adminOf: Record<string, number> = {}) {
+    return {
+      code: 200,
+      data: {
+        Groups: members.map((ids, i) => ({
+          ...baseGroup,
+          JID: `12036300000000000${i}@g.us`,
+          Name: `Sala ${i}`,
+          Participants: [
+            baseGroup.Participants[0], // nós
+            ...ids.map((n) => member(n, adminOf[`${i}:${n}`] === 1)),
+          ],
+        })),
+      },
+    };
+  }
+  async function rowsOf(t: TestConvex<typeof schema>, groupChatId: Id<"groupChats">) {
+    return await t.run(async (ctx) =>
+      ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+        .collect()
+    );
+  }
+
+  test("3 salas acompanhadas e 1 não: membros mudam só nas acompanhadas; sala igual não é regravada", async () => {
+    const t = setup();
+    const { asAdmin, configId } = await seed(t);
+    await enableGroups(asAdmin, configId);
+
+    vi.stubGlobal("fetch", gatewayMock({ list: listOf([[1, 2], [3], [4, 5, 6], [7, 8]]) }));
+    await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
+    const groups = await t.run(async (ctx) => ctx.db.query("groupChats").collect());
+    const byJid = new Map(groups.map((g) => [g.jid, g._id]));
+    const ids = [0, 1, 2, 3].map((i) => byJid.get(`12036300000000000${i}@g.us`)!);
+    // Acompanha 0, 1 e 2; a 3 fica de fora. (O `setMonitored` agenda o
+    // refresh pelo `/group/info`, que este gateway falso não responde.)
+    for (const id of ids.slice(0, 3)) {
+      await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId: id, monitored: true });
+    }
+
+    await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
+    expect((await rowsOf(t, ids[0])).length).toBe(3);
+    expect((await rowsOf(t, ids[1])).length).toBe(2);
+    expect((await rowsOf(t, ids[2])).length).toBe(4);
+    expect((await rowsOf(t, ids[3])).length).toBe(0); // não acompanhada: sem linhas (LGPD)
+
+    const before = await t.run(async (ctx) => Promise.all(ids.map((id) => ctx.db.get(id))));
+    const rowsBefore = await rowsOf(t, ids[1]);
+
+    // Muda: sala 0 ganha o 9 e perde o 2; sala 2 promove o 4; sala 3 (não
+    // acompanhada) muda e continua sem linhas. Sala 1 idêntica.
+    vi.setSystemTime(Date.now() + 60_000);
+    vi.stubGlobal(
+      "fetch",
+      gatewayMock({ list: listOf([[1, 9], [3], [4, 5, 6], [7, 8, 10]], { "2:4": 1 }) })
+    );
+    await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
+
+    const sala0 = await rowsOf(t, ids[0]);
+    const byLid0 = new Map(sala0.map((r) => [r.lid, r]));
+    expect(byLid0.get("70000000009@lid")!.leftAt).toBeUndefined();
+    expect(byLid0.get("70000000002@lid")!.leftAt).toBeGreaterThan(0); // saiu, linha fica
+    const sala2 = await rowsOf(t, ids[2]);
+    expect(sala2.find((r) => r.lid === "70000000004@lid")!.isAdmin).toBe(true);
+    expect((await rowsOf(t, ids[3])).length).toBe(0);
+
+    // Sala 1 não mudou: nem o doc nem as linhas foram regravados.
+    const after = await t.run(async (ctx) => Promise.all(ids.map((id) => ctx.db.get(id))));
+    expect(after[1]).toEqual(before[1]);
+    expect(await rowsOf(t, ids[1])).toEqual(rowsBefore);
+    // As outras salas mudaram de contagem e foram gravadas.
+    expect(after[3]!.participantsCount).toBe(4);
+    expect(after[0]!.participantsCount).toBe(3);
+    // O espelho da conversa (fase 4c) acompanha a contagem.
+    const conv0 = await t.run(async (ctx) => ctx.db.get(after[0]!.conversationId!));
+    expect(conv0!.groupParticipantsCount).toBe(3);
+  });
+
+  test("a mutation de metadados não toca em membros; o diff roda por sala", async () => {
+    const t = setup();
+    const { asAdmin, configId } = await seed(t);
+    await enableGroups(asAdmin, configId);
+    vi.stubGlobal("fetch", gatewayMock({ list: listOf([[1, 2]]) }));
+    await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
+    const groupChatId = (await t.run(async (ctx) => ctx.db.query("groupChats").first()))!._id;
+    await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
+
+    const res = await t.mutation(internal.groupChats.internalUpsertGroupsFromSync, {
+      channelConfigId: configId,
+      groups: [
+        {
+          jid: "120363000000000000@g.us",
+          subject: "Sala 0",
+          isAnnounce: false,
+          isLocked: false,
+          isEphemeral: true,
+          isCommunityParent: false,
+          participants: [{ lid: "70000000001@lid", isAdmin: false, isSuperAdmin: false }],
+          participantsCount: 0,
+        },
+      ],
+      full: false,
+    });
+    expect(res.participantJobs).toEqual([{ groupChatId, jid: "120363000000000000@g.us" }]);
+    expect((await rowsOf(t, groupChatId)).length).toBe(0); // ainda não aplicou
+
+    const counts = await t.mutation(internal.groupChats.internalApplyGatewayParticipants, {
+      groupChatId,
+      participants: [{ lid: "70000000001@lid", isAdmin: false, isSuperAdmin: false }],
+      syncedAt: res.syncedAt,
+    });
+    expect(counts).toEqual({ inserted: 1, updated: 0, deleted: 0 });
+    const group = await t.run(async (ctx) => ctx.db.get(groupChatId));
+    expect(group!.participantsCount).toBe(1);
   });
 });
