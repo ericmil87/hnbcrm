@@ -416,6 +416,39 @@ describe("getConversations — filtros novos", () => {
     expect((await run({ departmentId: deptId, archived: true })).sort()).toEqual([...archived].sort());
     expect((await run({ unitId, archived: true })).sort()).toEqual([...archived].sort());
   });
+
+  test("setor + unidade: pós-filtro de unidade não encurta a página (piso de leitura)", async () => {
+    const s = await seed({ modules: ALL_ON });
+    const unitId = await as(s).mutation(api.units.createUnit, { organizationId: s.organizationId, name: "H1" });
+    const deptId = await as(s).mutation(api.departments.createDepartment, {
+      organizationId: s.organizationId, name: "Reservas",
+    });
+    const base = Date.now();
+    const inUnit = await t.run(async (ctx) => {
+      const inUnit: Array<{ id: Id<"conversations">; last: number }> = [];
+      for (let i = 0; i < 60; i++) {
+        // As 30 mais recentes do setor estão FORA da unidade: com take(limit)
+        // seguido do filtro de unidade a página voltava vazia.
+        const last = base + i * 1000;
+        const withUnit = i < 30;
+        const id = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", status: "active",
+          messageCount: 0, lastMessageAt: last, createdAt: base, updatedAt: base,
+          departmentId: deptId, ...(withUnit ? { unitId } : {}),
+        });
+        if (withUnit) inUnit.push({ id, last });
+      }
+      return inUnit;
+    });
+    const sorted = inUnit.sort((a, b) => b.last - a.last).map((c) => c.id);
+    const run = async (limit: number) =>
+      ((await as(s, "agent").query(api.conversations.getConversations, {
+        organizationId: s.organizationId, departmentId: deptId, unitId, limit,
+      })) as Array<{ _id: Id<"conversations"> }>).map((c) => c._id);
+
+    expect(await run(5)).toEqual(sorted.slice(0, 5));
+    expect((await run(40)).sort()).toEqual([...sorted].sort());
+  });
 });
 
 describe("primeira resposta e origem de anúncio (ingest)", () => {

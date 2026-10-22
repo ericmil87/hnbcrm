@@ -51,6 +51,7 @@ import {
   INBOX_UNREAD_SCAN_CAP,
   CONVERSATIONS_DEFAULT_LIMIT,
   CONVERSATIONS_MAX_LIMIT,
+  CONVERSATIONS_POST_FILTER_READ_FLOOR,
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
@@ -328,6 +329,16 @@ export const getConversations = query({
     // archivedAt, lastMessageAt] — ativas = eq(archivedAt, undefined),
     // arquivadas = gt(archivedAt, undefined), mais recentes primeiro, igual ao
     // ramo padrão (perf Convex I/O, onda 2). `noDepartment` = departmentId ausente.
+    // Pós-filtros em memória (abaixo) rodam DEPOIS do take: unidade quando o
+    // ramo escolhido foi o de setor, assignedToMe, assignedTo (lead) e channel.
+    // Com algum deles, ler só `limit` devolveria menos que `limit` com
+    // conversas existindo, e o front entende "acabou" (o "Carregar mais" some).
+    // Piso de 200 linhas nesses casos; sem pós-filtro, `limit` exato.
+    const hasPostFilter = !args.leadId && (
+      ((args.departmentId || args.noDepartment) && !!args.unitId) ||
+      !!args.assignedToMe || !!args.assignedTo || !!args.channel
+    );
+    const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
     let conversations;
     if (!args.leadId && (args.departmentId || args.noDepartment)) {
       const departmentId = args.departmentId ?? undefined;
@@ -337,7 +348,7 @@ export const getConversations = query({
           return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
         })
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     } else if (!args.leadId && args.unitId) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_unit_and_archived_and_last_message", (q) => {
@@ -345,7 +356,7 @@ export const getConversations = query({
           return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
         })
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
@@ -363,7 +374,7 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).gt("archivedAt", undefined)
         )
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     } else {
       // Ativas: `archivedAt` ausente (`eq(undefined)` casa doc SEM o campo),
       // por última mensagem desc. O filtro de arquivadas sai do índice: antes
@@ -373,7 +384,7 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).eq("archivedAt", undefined)
         )
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     }
 
     // Only filter by channel if we used the org-level index and channel was specified
