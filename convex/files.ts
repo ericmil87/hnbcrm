@@ -477,7 +477,10 @@ export const internalDeleteFile = internalMutation({
 
 // ===== Contador agregado de armazenamento (perf Convex I/O, onda 2) =====
 
-const REBUILD_ORGS_PER_PAGE = 20;
+// Cada org da página faz `.collect()` de TODAS as suas linhas de `files` na
+// MESMA mutation — página pequena para não estourar o limite de leitura. Org
+// grande (dezenas de milhares de arquivos): rode com `organizationId`, uma por vez.
+const REBUILD_ORGS_PER_PAGE = 5;
 
 const rebuildRowValidator = v.object({
   organizationId: v.id("organizations"),
@@ -510,10 +513,13 @@ async function rebuildOrgUsage(
  * linhas). Não é obrigatório: sem linha, a 1ª checagem de quota inicializa
  * sozinha. Serve para corrigir divergência e para pré-aquecer o contador.
  *
- * `organizationId` → só aquela org. Sem ele, varre `organizations` em páginas de
- * 20: dryRun devolve UMA página (e o cursor); o real grava e se reagenda.
+ * `organizationId` → só aquela org (use assim para org grande: a varredura
+ * soma as linhas de `files` de cada org da página numa transação só). Sem ele,
+ * varre `organizations` em páginas de REBUILD_ORGS_PER_PAGE (5): dryRun devolve
+ * UMA página (e o cursor); o real grava e se reagenda.
  *
  *   npx convex run files:internalRebuildStorageUsage '{"dryRun":true}'
+ *   npx convex run files:internalRebuildStorageUsage '{"organizationId":"<id>","dryRun":false}'
  */
 export const internalRebuildStorageUsage = internalMutation({
   args: {

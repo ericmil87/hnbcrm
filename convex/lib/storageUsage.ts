@@ -7,7 +7,7 @@
  *
  * Regras:
  *  - Toda linha de `files` inserida ou apagada passa por `insertFileRow` /
- *    `deleteFileRow` (ou chama `bumpStorageUsage` direto). `fileRowWrites.test.ts`
+ *    `deleteFileRow` (ou chama `bumpStorageUsage` direto). `storageUsage.test.ts`
  *    quebra o build se aparecer um `insert("files"` fora daqui.
  *  - O contador conta LINHAS de `files` (o mesmo que a soma antiga fazia): uma
  *    mensagem encaminhada duplica a linha com o mesmo blob e conta duas vezes.
