@@ -1,6 +1,6 @@
 # Meta Messaging: Instagram + Facebook Messenger (API oficial)
 
-> Criado em 22/10/2026 na F0 do plano "Meta Messaging v2". Plano completo, pesquisa e status por fase são documentos locais (gitignorados): `docs/META-MESSAGING-PLAN.md`, `docs/META-MESSAGING-STATUS.md`, `temp/instagram/pesquisa/`. Este arquivo é o registro público: **Estado atual** + decisões e pegadinhas por fase.
+> Criado em 22/10/2026 na F0 do plano "Meta Messaging v2". Plano completo, pesquisa e status por fase são documentos locais (gitignorados): `docs/META-MESSAGING-PLAN.md`, `docs/META-MESSAGING-STATUS.md`, `temp/instagram/pesquisa/`. Este arquivo é o registro público: **Estado atual** + decisões e pegadinhas por fase. Passo a passo de configuração e uso (app Meta, envs, webhooks, conectar, testar, diagnosticar): `docs/META-MESSAGING-SETUP.md`.
 
 ## Estado atual
 

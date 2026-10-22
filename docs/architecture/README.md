@@ -28,4 +28,4 @@ Cada arquivo tem **Estado atual** (curto) e **Decisões, pegadinhas medidas e hi
 | [`central.md`](central.md) | Central de atendimento (unidades, setores, desfecho, atribuição, painel) | `conversationRouting.ts`, `centralAnalytics.ts`, `adSpend.ts`, `demoSim.ts`, `lib/orgModules.ts` |
 | [`frontend.md`](frontend.md) | Frontend — arquitetura, build e SEO | `vite.config.ts`, `src/main.tsx`, rotas, SEO, chunks |
 
-Outros documentos vivos: `docs/perf/convex-io.md` (I/O do Convex), `docs/OPS-SEPARAR-DEV-PROD.md` (runbook dev×prod), `docs/GRUPOS-WHATSAPP-STATUS.md`, `docs/*-PLAN.md` (planos originais).
+Outros documentos vivos: `docs/META-MESSAGING-SETUP.md` (guia versionado: app Meta, envs, webhooks, conectar e testar Instagram/Messenger), `docs/perf/convex-io.md` (I/O do Convex), `docs/OPS-SEPARAR-DEV-PROD.md` (runbook dev×prod), `docs/GRUPOS-WHATSAPP-STATUS.md`, `docs/*-PLAN.md` (planos originais).

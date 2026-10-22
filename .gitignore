@@ -40,4 +40,5 @@ temp/
 docs/*
 !docs/architecture/
 !docs/AI-WHATSAPP-LIMITS.md
+!docs/META-MESSAGING-SETUP.md
 CLAUDE.local.md
