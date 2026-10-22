@@ -203,17 +203,17 @@ Cron diário `data retention` (07:30 UTC) em `convex/retention.ts`: lotes de 200
 
 Kill switches `RETENTION_DISABLED=1` (sempre) e `CRONS_DISABLED=1` (só o cron); janelas por env `RETENTION_<TABELA>_DAYS` (piso 7). Ops: `retention:internalRetentionPreview` (só leitura) e `retention:internalRunRetentionNow {dryRun default true, table?, maxDocs?}`. `aiSpend:internalBackfillMonthlyUsage` recusa `dryRun:false` para mês anterior à janela de `agentRuns` e nunca reduz o agregado. Revisado: o gate do autopilot só vale na transição (sem rebaixamento automático); a taxa de parciais de formulário passa a refletir os abandonos dos últimos 30 d (efeito aceito).
 
-### 4b — `conversationRuntime` (branch `perf/convex-io-fase4b`, em revisão)
+### 4b — `conversationRuntime` (PR #9, mergeado em `main` 2ca9b3c e publicado em prod 22/10/2026 ~00:20 UTC; limpeza dos campos legados rodada em prod e dev; PR #11 removeu os 3 campos do schema e o fallback transitório, publicado ~01:05 UTC)
 
 `contactPresence`, `aiTurnLock` e `nextDispatchAt` saem do doc `conversations` para `conversationRuntime` (1 doc por conversa, índices `by_conversation`/`by_organization`; helper único `lib/conversationRuntime.ts`). Cada patch neles reexecutava ~9 queries que leem a conversa (lista do Inbox, `getConversationById`, `getMessages`, chip da IA, follow-ups, roteamento, repasse pendente, agendadas, lista do painel do lead) em toda aba. Presença: query nova `getConversationPresence` assinada só pela conversa aberta. Lock: claim lê a linha pelo índice e grava na mesma transação (OCC preservado). Pacing por conversa lido/gravado no runtime. Limpeza `conversations:internalClearLegacyRuntimeFields {dryRun, cursor}`; rodada em prod e dev em 22/10/2026; os 3 campos e o fallback transitório do lock foram removidos depois (fase 4b — limpeza), junto com a própria op de limpeza. Tabela fora do backup; apagada na cascata/purga.
 
-### 4c — desnormalizar em `conversations` (não iniciada)
+### 4c — desnormalizar em `conversations` (PR #10, mergeado em `main` ae5cd9a e publicado em prod 22/10/2026 ~00:57 UTC; backfill `internalBackfillListFields` rodado em prod e dev — 1ª página: 200 prévias, 42 providers, 6 grupos; 2ª passagem: 0)
 
 `lastMessagePreview`/`Direction`/`ContentType`/`BridgeType`/`Revoked` + `lastMessageId` (helper único nos ~14 pontos de insert + revoke/edit + nota de transferência), `groupSubject`/`groupParticipantsCount` (6 escritores) e `channelProvider` (4 escritores), para `getConversations` deixar de fazer `batchGet` de `groupChats` (60–90 KB cada) e `channelConfigs` e o `first()` em `messages` por conversa. Nome do contato fica FORA (≈10 escritores, drift por PushName/IA/import; o `batchGet` de contatos/leads é barato). Leitura com fallback por campo ausente + kill switch por env; backfill paginado.
 
-### 4d — `groupParticipants`/`groupTimeline` (não iniciada)
+### 4d — `groupParticipants`/`groupTimeline` (branch `perf/convex-io-fase4d`, em revisão)
 
-Maior risco (~25 leitores: menções, agente de grupo, campanhas de membros, admin check, REST/MCP shape, backup, purga, cascata). Só depois de medir 4b/4c.
+Tabelas `groupParticipants` (`by_group`, `by_group_and_key`, `by_group_and_phone`, `by_organization_and_contact`, `by_organization`) e `groupTimeline` (`by_group_and_at`, cap 100), store único `lib/groupParticipantsStore.ts`. Migração em 2 passos: dual-write + leitura pelo array enquanto `groupChats.participantsMigratedAt` não existe; `internalBackfillGroupParticipants` copia; `internalFinishGroupParticipantsMigration` confere membros, grava `participantsMigratedAt`, remove `participants`/`timeline` (o doc encolhe de 60–90 KB para ~1–2 KB) e recalcula `participantsCount`; `internalRestoreGroupArraysFromTable` é o rollback. ~25 leitores trocados; shape de `getGroup`/REST/MCP idêntico. Trade-off: `getGroup` de sala com 1.024 membros lê ~250 KB em linhas (follow-up: query de membros separada). Limites: ops com 10 salas/página (máx. 12); `syncGroups` de canal com >15 salas acompanhadas grandes pode precisar de paginação (follow-up).
 
 ## Follow-ups menores (fora das fases)
 
