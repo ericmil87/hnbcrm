@@ -16,6 +16,7 @@
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
+import { insertFileRow } from "./lib/storageUsage";
 import { v } from "convex/values";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import {
@@ -66,6 +67,7 @@ import {
   upsertRuntime,
 } from "./lib/conversationRuntime";
 import { buildDisclosurePromptLine, resolveDisclosurePolicy } from "./lib/disclosure";
+import { readAgentTexts } from "./lib/agentProfileTexts";
 import { toWhatsAppText } from "./lib/whatsappText";
 import {
   describeLeakedModelMarkup,
@@ -1438,8 +1440,8 @@ export const internalClaimForProcessing = internalMutation({
         providerConfig: providerConfig ?? null,
         maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
         temperature: profile.temperature ?? 0.3,
-        systemPrompt: profile.systemPrompt ?? null,
-        knowledge: profile.knowledge ?? null,
+        // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
+        ...(await readAgentTexts(ctx, agent!)),
         language: profile.language ?? "pt-BR",
         advanceRules: profile.pipelineConfig?.advanceRules ?? null,
         allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,
@@ -4101,7 +4103,7 @@ export const acceptAiDraft = mutation({
       const file = await ctx.db.get(fileId);
       if (!file || file.organizationId !== conversation.organizationId) continue;
       outboundAttachments.push(
-        await ctx.db.insert("files", {
+        await insertFileRow(ctx, {
           organizationId: file.organizationId,
           storageId: file.storageId,
           name: file.name,
@@ -5179,8 +5181,7 @@ export const internalGetSimulatorSetup = internalQuery({
       providerConfig: providerConfig ?? null,
       maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
       temperature: profile.temperature ?? 0.3,
-      systemPrompt: profile.systemPrompt ?? null,
-      knowledge: profile.knowledge ?? null,
+      ...(await readAgentTexts(ctx, agent)),
       language: profile.language ?? "pt-BR",
       advanceRules: profile.pipelineConfig?.advanceRules ?? null,
       allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,

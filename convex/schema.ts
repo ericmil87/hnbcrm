@@ -215,8 +215,14 @@ const agentProfileValidator = v.object({
   kind: v.union(v.literal("copilot"), v.literal("attendant")),
   // Todo atendente começa em "suggest" (gera rascunho, não auto-envia).
   mode: v.union(v.literal("suggest"), v.literal("autopilot")),
+  // LEGADO (perf Convex I/O, onda 2): o texto grande mora em `agentProfileTexts`
+  // depois da migração; aqui só enquanto `textsMigratedAt` está ausente. Ler e
+  // gravar SÓ por `lib/agentProfileTexts.ts` (teste agentTextsPort.test.ts).
   systemPrompt: v.optional(v.string()),
   knowledge: v.optional(v.string()),
+  // Instante em que systemPrompt/knowledge saíram do doc para `agentProfileTexts`.
+  // Ausente = texto ainda no doc (dual-read por membro).
+  textsMigratedAt: v.optional(v.number()),
   language: v.optional(v.string()), // default "pt-BR"
   // Escopo de atuação: canais (só Meta até HMAC por-tenant no bridge) e boards.
   channelConfigIds: v.optional(v.array(v.id("channelConfigs"))),
@@ -728,6 +734,20 @@ const applicationTables = {
     .index("by_organization_and_type", ["organizationId", "type"])
     .index("by_organization_and_user", ["organizationId", "userId"]),
 
+  // Textos grandes do agente IA (persona + conhecimento, 30–40 KB), fora do doc
+  // do membro para que os leitores de metadados (assignee de Inbox/Kanban,
+  // roteamento, elegibilidade, commit) não paguem por eles. Uma linha por membro.
+  // Acesso SÓ por lib/agentProfileTexts.ts.
+  agentProfileTexts: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    systemPrompt: v.optional(v.string()),
+    knowledge: v.optional(v.string()),
+    updatedAt: v.number(),
+  })
+    .index("by_member", ["teamMemberId"])
+    .index("by_organization", ["organizationId"]),
+
   // API Keys for AI agents
   apiKeys: defineTable({
     organizationId: v.id("organizations"),
@@ -1226,7 +1246,11 @@ const applicationTables = {
     .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"])
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
-    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
+    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"])
+    // Filas da Central (setor/unidade) por última mensagem, com o filtro de
+    // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
+    .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
+    .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
@@ -2430,7 +2454,24 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
     .index("by_storage_id", ["storageId"])
-    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"]),
+    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"])
+    // Teto diário de uploads da quota: range createdAt > agora-24h, com take
+    // limitado ao teto (perf Convex I/O, onda 2).
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  /**
+   * Contador agregado de armazenamento por org (perf Convex I/O, onda 2): soma
+   * de `files.size` e nº de linhas, mantido por `lib/storageUsage.ts` em todo
+   * insert/delete de `files`. A quota lê 1 doc em vez de `.collect()` da org.
+   * Ausente = não inicializado (a 1ª checagem de quota calcula e grava).
+   * Recomputável: fora do backup; `files:internalRebuildStorageUsage` corrige.
+   */
+  orgStorageUsage: defineTable({
+    organizationId: v.id("organizations"),
+    bytes: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   /**
    * Mídia de grupo que a política NÃO baixou (v0.62) — o suficiente para baixar

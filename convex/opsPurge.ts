@@ -52,6 +52,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "webhooks", index: "by_organization" },
   { table: "agentRuns", index: "by_organization_and_started" },
   { table: "aiUsageMonthly", index: "by_organization_and_month" },
+  { table: "orgStorageUsage", index: "by_organization" },
   { table: "aiReplyQueue", index: "by_organization_and_status" },
   { table: "aiFollowUps", index: "by_organization_and_status" },
   { table: "aiPacing", index: "by_organization" },
@@ -77,6 +78,8 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "adSpend", index: "by_organization_and_date" },
   { table: "departments", index: "by_organization" },
   { table: "units", index: "by_organization" },
+  // Perf I/O onda 2: texto do atendente IA, filho de `teamMembers` — antes do pai.
+  { table: "agentProfileTexts", index: "by_organization" },
   { table: "teamMembers", index: "by_organization" },
 ];
 

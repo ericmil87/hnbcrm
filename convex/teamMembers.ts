@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
@@ -21,6 +22,7 @@ import {
   type PermissionCategory,
 } from "./lib/permissions";
 import { normalizeEmail } from "./lib/emailAddress";
+import { stripAgentTexts } from "./lib/agentProfileTexts";
 
 // Role hierarchy for elevation checks: admin > manager > agent/ai
 const ROLE_RANK: Record<string, number> = { admin: 3, manager: 2, agent: 1, ai: 0 };
@@ -107,6 +109,11 @@ async function membersByEmailInOrg(
   return rows;
 }
 
+/** Membro sem os textos grandes do agente (lib/agentProfileTexts.ts). */
+function withoutAgentTexts(m: Doc<"teamMembers">): Doc<"teamMembers"> {
+  return m.agentProfile ? { ...m, agentProfile: stripAgentTexts(m.agentProfile) } : m;
+}
+
 // Get team members for organization
 export const getTeamMembers = query({
   args: { organizationId: v.id("organizations") },
@@ -128,7 +135,7 @@ export const getTeamMembers = query({
             avatarUrl = await ctx.storage.getUrl(file.storageId);
           }
         }
-        return { ...m, avatarUrl, ...membershipFlags(m) };
+        return { ...withoutAgentTexts(m), avatarUrl, ...membershipFlags(m) };
       })
     );
   },
@@ -484,7 +491,7 @@ export const updateMemberAvatar = mutation({
       const oldFile = await ctx.db.get(teamMember.avatarFileId);
       if (oldFile) {
         await ctx.storage.delete(oldFile.storageId);
-        await ctx.db.delete(oldFile._id);
+        await deleteFileRow(ctx, oldFile);
       }
     }
 
@@ -566,7 +573,9 @@ export const internalGetTeamMembers = internalQuery({
       .query("teamMembers")
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .take(200);
-    return members.map((m) => ({ ...m, ...membershipFlags(m) }));
+    // Sem persona/conhecimento do atendente IA (membro ainda não migrado os tem
+    // no doc): a REST/MCP de equipe nunca prometeu esse texto.
+    return members.map((m) => ({ ...withoutAgentTexts(m), ...membershipFlags(m) }));
   },
 });
 

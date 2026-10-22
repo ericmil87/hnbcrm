@@ -271,6 +271,29 @@ describe("deleteLead", () => {
     expect(sobreviventes.event?.leadId).toBeUndefined();
   });
 
+  test("cascata desconta o arquivo do contador de armazenamento (orgStorageUsage)", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const leadId = await insertLead(t, s, "Lead com anexo");
+    await insertLeadHistory(t, s, leadId);
+    const before = await t.mutation(internal.files.internalRebuildStorageUsage, {
+      organizationId: s.organizationId,
+      dryRun: false,
+    });
+    expect(before.orgs[0].actual.count).toBe(1);
+
+    await asAdmin.mutation(api.leads.deleteLead, { leadId });
+    await drainScheduler(t);
+
+    const row = await t.run(async (ctx) =>
+      await ctx.db
+        .query("orgStorageUsage")
+        .withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId))
+        .unique()
+    );
+    expect(row).toMatchObject({ bytes: 0, count: 0 });
+  });
+
   test("audit log guarda o snapshot completo do lead excluído", async () => {
     const s = await seed(t);
     const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });

@@ -9,6 +9,7 @@
  * um deles chega a baixar — nunca dois arquivos para a mesma mensagem.
  */
 import { v } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { cronsDisabled } from "./lib/cronGuard";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -218,7 +219,7 @@ export const internalCompleteDeferredMedia = internalMutation({
     const discard = async () => {
       if (!file) return;
       await deleteBlobIfUnreferenced(ctx, file);
-      await ctx.db.delete(file._id);
+      await deleteFileRow(ctx, file);
     };
 
     if (!message) {

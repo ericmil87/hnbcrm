@@ -26,6 +26,7 @@
  */
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
+import { readAgentTexts } from "./lib/agentProfileTexts";
 import {
   internalAction,
   internalMutation,
@@ -518,6 +519,8 @@ export const internalClaimGroupTurn = internalMutation({
     await ctx.db.patch(item._id, { status: "processing", updatedAt: now });
 
     const profile = agent.agentProfile!;
+    // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
+    const agentTexts = await readAgentTexts(ctx, agent);
     const providerConfig = org.settings.aiConfig?.providerConfig;
     const model =
       providerConfig?.products?.groupAgent?.model ??
@@ -585,8 +588,8 @@ export const internalClaimGroupTurn = internalMutation({
           agentName: agent.name,
           orgName: org.name,
           language: profile.language ?? "pt-BR",
-          persona: profile.systemPrompt ?? null,
-          knowledge: profile.knowledge ?? null,
+          persona: agentTexts.systemPrompt,
+          knowledge: agentTexts.knowledge,
           groupSubject: group.subject,
           participantsCount: participants.length,
           extraInstructions: group.ai?.extraInstructions ?? null,

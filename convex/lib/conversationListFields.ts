@@ -11,8 +11,11 @@
  *    `messages`, dentro do patch que já existe na conversa na mesma transação.
  *    Regra "não anda para trás": só grava se o `createdAt` da mensagem é ≥ o
  *    da prévia atual — exatamente o que o `first()` desc por
- *    `by_conversation_and_created` devolveria. Notas internas ENTRAM (prefixo
- *    "Nota: "), como sempre entraram na lista.
+ *    `by_conversation_and_created` devolveria. Desde a onda 2 de I/O a prévia
+ *    é a da última mensagem NÃO interna (inbound/outbound): nota interna e
+ *    rascunho da IA (`isInternal`/`direction:"internal"`) não gravam prévia —
+ *    toda sugestão da IA regravava os campos da lista. `lastMessageAt` não
+ *    mudou de semântica (continua andando com qualquer mensagem).
  *  - grupo: `syncGroupSummaryToConversation` onde `subject`/`participants`/
  *    `participantsCount` mudam.
  *  - canal: `channelProviderPatch` onde `channelConfigId` é gravado.
@@ -24,7 +27,7 @@
  * `lastMessageBridgeExtra` NÃO é desnormalizado (enquete/contato/evento podem
  * ser grandes e a lista não usa): no caminho novo a query devolve `null`.
  */
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 
 export const LIST_PREVIEW_MAX = 80;
@@ -59,9 +62,10 @@ export function mediaPlaceholder(contentType: ContentType, bridgeType: string | 
   }
 }
 
-// The list-row summary of a conversation's most recent message: a short preview
-// plus the few fields the inbox list needs to render an icon/state without
-// loading the message. Internal notes are INCLUDED but prefixed with "Nota: ".
+// The list-row summary of a conversation's most recent NON-internal message: a
+// short preview plus the few fields the inbox list needs to render an icon/state
+// without loading the message. Internal notes / AI drafts never become the
+// preview (onda 2 de I/O); `previewTextOf` still prefixes "Nota: " defensively.
 export type LastMessageFields = {
   lastMessagePreview: string | null;
   lastMessageContentType: ContentType | null;
@@ -96,6 +100,33 @@ export function previewTextOf(message: PreviewMessage): string {
     body = `${body.slice(0, LIST_PREVIEW_MAX - 1)}…`;
   }
   return message.isInternal ? `Nota: ${body}` : body;
+}
+
+/** A mensagem pode ser a prévia da lista? Nota interna e rascunho da IA, não. */
+export function isPreviewMessage(message: Pick<PreviewMessage, "isInternal" | "direction">): boolean {
+  return !message.isInternal && message.direction !== "internal";
+}
+
+/** Quantas mensagens recentes o fallback/backfill varre atrás da última não interna. */
+export const PREVIEW_SCAN_LIMIT = 20;
+
+/**
+ * Última mensagem NÃO interna da conversa, varrendo no máximo
+ * `PREVIEW_SCAN_LIMIT` mensagens (desc por criação). `unknown: true` quando as
+ * 20 mais recentes são todas internas e há mais atrás — o chamador não sabe a
+ * resposta (o backfill então não mexe na prévia).
+ */
+export async function findLastPreviewMessage(
+  ctx: { db: QueryCtx["db"] | MutationCtx["db"] },
+  conversationId: Id<"conversations">
+): Promise<{ message: Doc<"messages"> | null; unknown: boolean }> {
+  const recent = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversationId))
+    .order("desc")
+    .take(PREVIEW_SCAN_LIMIT);
+  const message = recent.find((m) => isPreviewMessage(m)) ?? null;
+  return { message, unknown: message === null && recent.length === PREVIEW_SCAN_LIMIT };
 }
 
 /** Caminho antigo (lido da mensagem): inclui `lastMessageBridgeExtra`. */
@@ -167,6 +198,8 @@ export function lastMessagePatchFor(
   messageId: Id<"messages">,
   message: PreviewMessage
 ): LastMessagePatch | null {
+  // Nota interna / rascunho da IA não viram prévia (onda 2 de I/O).
+  if (!isPreviewMessage(message)) return null;
   const floor =
     conversation.lastMessagePreviewAt !== undefined
       ? conversation.lastMessagePreviewAt
@@ -383,7 +416,9 @@ const LAST_MESSAGE_KEYS = [
 export function listFieldsBackfillPatch(
   conversation: Doc<"conversations">,
   source: {
-    lastMessage: (PreviewMessage & { _id: Id<"messages"> }) | null;
+    // Última mensagem NÃO interna (`findLastPreviewMessage`); `undefined` =
+    // desconhecida (só notas nas 20 mais recentes) → a prévia não é tocada.
+    lastMessage: (PreviewMessage & { _id: Id<"messages"> }) | null | undefined;
     group: (GroupLike & { _id: Id<"groupChats"> }) | null;
     config: { provider?: "meta" | "bridge" | null } | null;
   }
@@ -395,13 +430,16 @@ export function listFieldsBackfillPatch(
 } {
   const patch: Record<string, unknown> = {};
   let lastMessage = false;
-  const desired: Record<string, unknown> = source.lastMessage
-    ? lastMessageFieldsPatch(source.lastMessage._id, source.lastMessage)
-    : CLEARED_LAST_MESSAGE_PATCH;
-  for (const key of LAST_MESSAGE_KEYS) {
-    if ((conversation as Record<string, unknown>)[key] !== desired[key]) {
-      patch[key] = desired[key];
-      lastMessage = true;
+  if (source.lastMessage !== undefined) {
+    const desired: Record<string, unknown> =
+      source.lastMessage && isPreviewMessage(source.lastMessage)
+        ? lastMessageFieldsPatch(source.lastMessage._id, source.lastMessage)
+        : CLEARED_LAST_MESSAGE_PATCH;
+    for (const key of LAST_MESSAGE_KEYS) {
+      if ((conversation as Record<string, unknown>)[key] !== desired[key]) {
+        patch[key] = desired[key];
+        lastMessage = true;
+      }
     }
   }
   let group = false;

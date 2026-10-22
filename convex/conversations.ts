@@ -1,4 +1,5 @@
 import { v, type Infer } from "convex/values";
+import { insertFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -38,6 +39,7 @@ import {
   hasDenormLastMessage,
   inboxDenormReadEnabled,
   lastMessageFieldsFor,
+  findLastPreviewMessage,
   lastMessageFieldsFromConversation,
   channelConfigPatchFor,
   lastMessagePatchForId,
@@ -49,6 +51,7 @@ import {
   INBOX_UNREAD_SCAN_CAP,
   CONVERSATIONS_DEFAULT_LIMIT,
   CONVERSATIONS_MAX_LIMIT,
+  CONVERSATIONS_POST_FILTER_READ_FLOOR,
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
@@ -109,24 +112,19 @@ function groupChatSummary(
 
 const lastMessageFields = lastMessageFieldsFor;
 
-// Fetch the newest message of each conversation (one indexed `.first()` per
-// conversation) and index the preview fields by conversation id.
+// Fetch the newest NON-internal message of each conversation (até 20 por
+// conversa — notas internas e rascunhos da IA não são prévia, onda 2 de I/O) and
+// index the preview fields by conversation id.
 async function lastMessageFieldsByConversation(
   ctx: { db: MutationCtx["db"] | QueryCtx["db"] },
   conversationIds: Id<"conversations">[]
 ): Promise<Map<string, LastMessageFields>> {
-  const messages = await Promise.all(
-    conversationIds.map((id) =>
-      ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", id))
-        .order("desc")
-        .first()
-    )
+  const found = await Promise.all(
+    conversationIds.map((id) => findLastPreviewMessage(ctx, id))
   );
   const map = new Map<string, LastMessageFields>();
   conversationIds.forEach((id, i) => {
-    map.set(id, lastMessageFields(messages[i]));
+    map.set(id, lastMessageFields(found[i].message));
   });
   return map;
 }
@@ -315,7 +313,7 @@ export const getConversations = query({
     archived: v.optional(v.boolean()),
     // MVP Central (filas do inbox) — opcionais; ausentes = comportamento antigo.
     // unitId/departmentId/noDepartment usam índice próprio (mais recentes por
-    // criação, até `limit`); assignedToMe filtra `conversations.assignedTo`
+    // última mensagem, até `limit`); assignedToMe filtra `conversations.assignedTo`
     // (responsável da CONVERSA, não do lead).
     unitId: v.optional(v.id("units")),
     departmentId: v.optional(v.id("departments")),
@@ -327,35 +325,38 @@ export const getConversations = query({
     const me = await requireAuth(ctx, args.organizationId);
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
 
-    // Ramos da Central (setor/unidade): os índices ordenam por CRIAÇÃO, não por
-    // última mensagem, e as arquivadas só saem depois do take — com o default
-    // de 50 a lista perderia conversas ativas recentes. Mantém o take antigo de
-    // 200 como piso; o índice certo ([organizationId, departmentId|unitId,
-    // archivedAt, lastMessageAt]) fica para um follow-up.
-    const centralTake = Math.max(limit, 200);
-
+    // Ramos da Central (setor/unidade): índices por [org, setor|unidade,
+    // archivedAt, lastMessageAt] — ativas = eq(archivedAt, undefined),
+    // arquivadas = gt(archivedAt, undefined), mais recentes primeiro, igual ao
+    // ramo padrão (perf Convex I/O, onda 2). `noDepartment` = departmentId ausente.
+    // Pós-filtros em memória (abaixo) rodam DEPOIS do take: unidade quando o
+    // ramo escolhido foi o de setor, assignedToMe, assignedTo (lead) e channel.
+    // Com algum deles, ler só `limit` devolveria menos que `limit` com
+    // conversas existindo, e o front entende "acabou" (o "Carregar mais" some).
+    // Piso de 200 linhas nesses casos; sem pós-filtro, `limit` exato.
+    const hasPostFilter = !args.leadId && (
+      ((args.departmentId || args.noDepartment) && !!args.unitId) ||
+      !!args.assignedToMe || !!args.assignedTo || !!args.channel
+    );
+    const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
     let conversations;
-    if (!args.leadId && args.departmentId) {
+    if (!args.leadId && (args.departmentId || args.noDepartment)) {
+      const departmentId = args.departmentId ?? undefined;
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_department", (q) =>
-          q.eq("organizationId", args.organizationId).eq("departmentId", args.departmentId!)
-        )
+        .withIndex("by_organization_and_department_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("departmentId", departmentId);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
         .order("desc")
-        .take(centralTake);
-    } else if (!args.leadId && args.noDepartment) {
-      conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_department", (q) =>
-          q.eq("organizationId", args.organizationId).eq("departmentId", undefined)
-        )
-        .order("desc")
-        .take(centralTake);
+        .take(readLimit);
     } else if (!args.leadId && args.unitId) {
       conversations = await ctx.db.query("conversations")
-        .withIndex("by_organization_and_unit", (q) =>
-          q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!)
-        )
+        .withIndex("by_organization_and_unit_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("unitId", args.unitId!);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
         .order("desc")
-        .take(centralTake);
+        .take(readLimit);
     } else if (args.leadId && args.channel) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!).eq("channel", args.channel!))
@@ -373,7 +374,7 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).gt("archivedAt", undefined)
         )
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     } else {
       // Ativas: `archivedAt` ausente (`eq(undefined)` casa doc SEM o campo),
       // por última mensagem desc. O filtro de arquivadas sai do índice: antes
@@ -383,7 +384,7 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).eq("archivedAt", undefined)
         )
         .order("desc")
-        .take(limit);
+        .take(readLimit);
     }
 
     // Only filter by channel if we used the org-level index and channel was specified
@@ -440,8 +441,8 @@ export const getConversations = query({
       return (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt);
     });
 
-    // Os ramos da Central leem até `centralTake` (> limit): devolve só `limit`,
-    // senão o "Carregar mais" do front (lote cheio = há mais) nunca terminaria.
+    // Nenhum ramo lê mais que `limit`; o slice fica como garantia do contrato
+    // do "Carregar mais" do front (lote cheio = há mais).
     return conversationsWithData.slice(0, limit);
   },
 });
@@ -1177,7 +1178,7 @@ export const forwardMessage = mutation({
       for (const fileId of source.attachments) {
         const file = sourceFileMap.get(fileId);
         if (!file) continue;
-        const copyId = await ctx.db.insert("files", {
+        const copyId = await insertFileRow(ctx, {
           organizationId: target.organizationId,
           storageId: file.storageId,
           name: file.name,
@@ -2971,7 +2972,9 @@ const LIST_FIELDS_BACKFILL_PAGE_SIZE = 200;
 
 /**
  * Backfill da desnormalização da lista do inbox (perf Convex I/O, fase 4c):
- * prévia da última mensagem, nome/contagem do grupo e provider do canal.
+ * prévia da última mensagem NÃO interna (onda 2: nota interna/rascunho da IA
+ * deixaram de ser prévia — rodar de novo re-deriva as prévias "Nota: …"),
+ * nome/contagem do grupo e provider do canal.
  * Grava só o que falta/difere (idempotente); `dryRun` (default) só conta.
  * Em `dryRun:false` se re-agenda pelo cursor até o fim.
  *
@@ -3014,11 +3017,9 @@ export const internalBackfillListFields = internalMutation({
     let groupFixed = 0;
     let providerFixed = 0;
     for (const conversation of page.page) {
-      const lastMessage = await ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
-        .order("desc")
-        .first();
+      // Última NÃO interna (onda 2 de I/O); desconhecida = não mexe na prévia.
+      const found = await findLastPreviewMessage(ctx, conversation._id);
+      const lastMessage = found.unknown ? undefined : found.message;
       const group =
         conversation.kind === "group" && conversation.groupChatId
           ? await ctx.db.get(conversation.groupChatId)
