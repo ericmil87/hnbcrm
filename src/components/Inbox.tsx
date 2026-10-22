@@ -507,6 +507,20 @@ export function Inbox() {
     setMessagePage({ key: selectedConversation, limit });
   };
 
+  // Scroll infinito no TOPO da thread: rolar até lá chama o mesmo handler do
+  // botão (que tira o snapshot da rolagem ANTES de mudar o limite). A thread
+  // abre no fim, então o sentinela nasce fora de vista e não dispara no mount;
+  // depois do lote a rolagem é compensada e ele sai de vista de novo.
+  const canLoadOlderMessages =
+    !!messages && canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT);
+  const olderMessagesSentinelRef = useInfiniteSentinel({
+    enabled: canLoadOlderMessages && !loadingOlderMessages,
+    loading: loadingOlderMessages,
+    onReach: handleLoadOlderMessages,
+    root: messagesScrollRef,
+    resetKey: selectedConversation,
+  });
+
   // On conversation switch: force-scroll to the newest message. On new messages:
   // only stick to the bottom if the user was already near it (reading history stays put).
   useLayoutEffect(() => {
@@ -2394,13 +2408,22 @@ export function Inbox() {
                 (loadingOlderMessages ||
                   canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
                   <div className="text-center py-2 mb-2">
+                    <div ref={olderMessagesSentinelRef} aria-hidden="true" className="h-px" />
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={handleLoadOlderMessages}
                       disabled={loadingOlderMessages}
+                      aria-busy={loadingOlderMessages}
                     >
-                      {loadingOlderMessages ? "Carregando…" : "Carregar mensagens anteriores"}
+                      {loadingOlderMessages ? (
+                        <span className="inline-flex items-center gap-2">
+                          <Spinner size="sm" />
+                          Carregando mensagens anteriores…
+                        </span>
+                      ) : (
+                        "Carregar mensagens anteriores"
+                      )}
                     </Button>
                   </div>
                 ) : messages && messages.length >= MESSAGES_MAX_LIMIT ? (
