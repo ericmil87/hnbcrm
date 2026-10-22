@@ -33,6 +33,17 @@ import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
 import { applyBridgeEdit, applyBridgeRevoke } from "./lib/bridgeMessageMutations";
 import {
+  groupChatFromConversation,
+  groupParticipantsCountOf,
+  hasDenormLastMessage,
+  inboxDenormReadEnabled,
+  lastMessageFieldsFor,
+  lastMessageFieldsFromConversation,
+  channelConfigPatchFor,
+  lastMessagePatchForId,
+  type LastMessageFields,
+} from "./lib/conversationListFields";
+import {
   clampLimit,
   INBOX_UNREAD_SCAN_CAP,
   CONVERSATIONS_DEFAULT_LIMIT,
@@ -76,12 +87,9 @@ function previewOf(content: string | undefined): string | undefined {
   return trimmed.length > 140 ? `${trimmed.slice(0, 139)}…` : trimmed;
 }
 
-const LIST_PREVIEW_MAX = 80;
-
 // Cabeçalho de uma conversa de grupo para a lista do inbox: nome da sala e
 // quantos membros. Sem isto a linha apareceria sem nome (não há contato).
-// `participantsCount` é sempre recontado da lista — o `/group/list` do wuzapi
-// devolve o campo dele zerado.
+// Lê o doc do grupo — caminho antigo; o novo lê `groupSubject` da conversa.
 function groupChatSummary(
   conversation: Doc<"conversations">,
   groupMap: Map<string, any>
@@ -93,85 +101,12 @@ function groupChatSummary(
     groupChat: {
       subject: group.subject,
       jid: group.jid,
-      participantsCount:
-        group.participants?.filter((p: { leftAt?: number }) => p.leftAt === undefined).length ??
-        group.participantsCount ??
-        0,
+      participantsCount: groupParticipantsCountOf(group),
     },
   };
 }
 
-// Fallback label when a media message carries no caption of its own — mirrors the
-// bracketed placeholders the ingress uses (see MEDIA_PLACEHOLDERS in whatsapp.ts).
-function mediaPlaceholder(
-  contentType: "text" | "image" | "file" | "audio",
-  bridgeType: string | undefined
-): string {
-  if (bridgeType === "sticker") return "[figurinha]";
-  if (bridgeType === "video") return "[vídeo]";
-  switch (contentType) {
-    case "image":
-      return "[imagem]";
-    case "audio":
-      return "[mensagem de voz]";
-    case "file":
-      return "[arquivo]";
-    default:
-      return "";
-  }
-}
-
-// The list-row summary of a conversation's most recent message: a short preview
-// plus the few fields the inbox list needs to render an icon/state without
-// loading the message. Internal notes are INCLUDED but prefixed with "Nota: ".
-type LastMessageFields = {
-  lastMessagePreview: string | null;
-  lastMessageContentType: "text" | "image" | "file" | "audio" | null;
-  lastMessageDirection: "inbound" | "outbound" | "internal" | null;
-  lastMessageBridgeType: string | null;
-  // "Apagar para todos" (metadata.revoked) e o `bridgeExtra` da última
-  // mensagem — a prévia da lista diz "Mensagem apagada" / usa a enquete/álbum.
-  lastMessageRevoked: boolean;
-  lastMessageBridgeExtra: Record<string, unknown> | null;
-};
-
-function lastMessageFields(message: Doc<"messages"> | null): LastMessageFields {
-  if (!message) {
-    return {
-      lastMessagePreview: null,
-      lastMessageContentType: null,
-      lastMessageDirection: null,
-      lastMessageBridgeType: null,
-      lastMessageRevoked: false,
-      lastMessageBridgeExtra: null,
-    };
-  }
-  const bridgeType =
-    typeof message.metadata?.bridgeType === "string"
-      ? (message.metadata.bridgeType as string)
-      : null;
-
-  const raw = (message.content ?? "").trim();
-  let body = raw.length > 0 ? raw : mediaPlaceholder(message.contentType, bridgeType ?? undefined);
-  if (body.length > LIST_PREVIEW_MAX) {
-    body = `${body.slice(0, LIST_PREVIEW_MAX - 1)}…`;
-  }
-  const preview = message.isInternal ? `Nota: ${body}` : body;
-
-  return {
-    lastMessagePreview: preview,
-    lastMessageContentType: message.contentType,
-    lastMessageDirection: message.direction,
-    lastMessageBridgeType: bridgeType,
-    lastMessageRevoked: message.metadata?.revoked === true,
-    lastMessageBridgeExtra:
-      message.metadata?.bridgeExtra &&
-      typeof message.metadata.bridgeExtra === "object" &&
-      !Array.isArray(message.metadata.bridgeExtra)
-        ? (message.metadata.bridgeExtra as Record<string, unknown>)
-        : null,
-  };
-}
+const lastMessageFields = lastMessageFieldsFor;
 
 // Fetch the newest message of each conversation (one indexed `.first()` per
 // conversation) and index the preview fields by conversation id.
@@ -193,6 +128,64 @@ async function lastMessageFieldsByConversation(
     map.set(id, lastMessageFields(messages[i]));
   });
   return map;
+}
+
+type InboxRowExtras = LastMessageFields & {
+  groupChat: { subject: string; participantsCount: number; jid: string } | null;
+  serviceWindowExpiresAt: number | null;
+  serviceWindowApplies: boolean;
+};
+
+/**
+ * Os campos da LINHA do inbox (prévia da última mensagem, cabeçalho do grupo,
+ * janela de serviço) para um lote de conversas.
+ *
+ * Fase 4c: lê os campos desnormalizados da própria conversa e só cai no
+ * caminho antigo — `first()` em `messages`, doc do grupo, channelConfig —
+ * POR CAMPO, para a conversa que ainda não o tem (não backfilled).
+ * `INBOX_DENORM_READ=0` força o caminho antigo inteiro (kill switch).
+ * No caminho novo `lastMessageBridgeExtra` é sempre `null`.
+ */
+async function inboxRowExtras(
+  ctx: { db: QueryCtx["db"] },
+  conversations: Doc<"conversations">[]
+): Promise<Map<string, InboxRowExtras>> {
+  const denorm = inboxDenormReadEnabled();
+  const needMessage = conversations.filter((c) => !denorm || !hasDenormLastMessage(c));
+  const needGroup = conversations.filter(
+    (c) => c.kind === "group" && c.groupChatId && (!denorm || c.groupSubject === undefined)
+  );
+  const needConfig = conversations.filter(
+    (c) => c.channelConfigId && (!denorm || c.channelProvider === undefined)
+  );
+  const [configMap, groupMap, lastMessageMap] = await Promise.all([
+    batchGet(ctx.db, needConfig.map((c) => c.channelConfigId)),
+    batchGet(ctx.db, needGroup.map((c) => c.groupChatId)),
+    lastMessageFieldsByConversation(ctx, needMessage.map((c) => c._id)),
+  ]);
+
+  const out = new Map<string, InboxRowExtras>();
+  for (const conversation of conversations) {
+    const lastMessage =
+      lastMessageMap.get(conversation._id) ??
+      (denorm ? lastMessageFieldsFromConversation(conversation) : lastMessageFields(null));
+    const groupChat =
+      denorm && conversation.groupSubject !== undefined
+        ? groupChatFromConversation(conversation)
+        : groupChatSummary(conversation, groupMap).groupChat;
+    const config =
+      denorm && conversation.channelProvider !== undefined
+        ? { provider: conversation.channelProvider }
+        : conversation.channelConfigId
+          ? configMap.get(conversation.channelConfigId) ?? null
+          : null;
+    out.set(conversation._id, {
+      ...lastMessage,
+      groupChat,
+      ...serviceWindowFields(conversation, config),
+    });
+  }
+  return out;
 }
 
 // Guard that every attachment belongs to `organizationId`. REST callers pass file
@@ -293,7 +286,7 @@ export async function getOrCreateConversation(
     organizationId: args.organizationId,
     leadId: args.leadId,
     channel: args.channel,
-    ...(args.channelConfigId ? { channelConfigId: args.channelConfigId } : {}),
+    ...(await channelConfigPatchFor(ctx, {}, args.channelConfigId)),
     status: "active",
     messageCount: 0,
     createdAt: now,
@@ -414,19 +407,16 @@ export const getConversations = query({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap, configMap, groupMap, lastMessageMap] = await Promise.all([
+    const [contactMap, assigneeMap, extrasMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
-      batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
-      batchGet(ctx.db, conversations.map(c => c.groupChatId)),
-      lastMessageFieldsByConversation(ctx, conversations.map(c => c._id)),
+      inboxRowExtras(ctx, conversations),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
       const lead = conversation.leadId ? leadMap.get(conversation.leadId) ?? null : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
-      const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
       // Filtro por responsável é do LEAD: uma conversa de grupo não tem lead e
       // portanto nunca casa — sai da lista filtrada, como qualquer conversa sem
       // aquele responsável.
@@ -437,9 +427,7 @@ export const getConversations = query({
         lead,
         contact,
         assignee,
-        ...groupChatSummary(conversation, groupMap),
-        ...serviceWindowFields(conversation, config),
-        ...(lastMessageMap.get(conversation._id) ?? lastMessageFields(null)),
+        ...extrasMap.get(conversation._id)!,
       };
     }).filter(Boolean);
 
@@ -507,22 +495,11 @@ export const getConversationById = query({
     await requireAuth(ctx, conversation.organizationId);
 
     const lead = await getLeadRef(ctx.db, conversation.leadId);
-    const [contact, assignee, config, group, lastMessage] = await Promise.all([
+    const [contact, assignee, extrasMap] = await Promise.all([
       lead?.contactId ? ctx.db.get(lead.contactId) : null,
       lead?.assignedTo ? ctx.db.get(lead.assignedTo) : null,
-      conversation.channelConfigId ? ctx.db.get(conversation.channelConfigId) : null,
-      conversation.groupChatId ? ctx.db.get(conversation.groupChatId) : null,
-      ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) =>
-          q.eq("conversationId", conversation._id)
-        )
-        .order("desc")
-        .first(),
+      inboxRowExtras(ctx, [conversation]),
     ]);
-
-    const groupMap = new Map<string, any>();
-    if (group) groupMap.set(group._id, group);
 
     return {
       ...conversation,
@@ -530,9 +507,7 @@ export const getConversationById = query({
       lead,
       contact,
       assignee,
-      ...groupChatSummary(conversation, groupMap),
-      ...serviceWindowFields(conversation, config),
-      ...lastMessageFields(lastMessage),
+      ...extrasMap.get(conversation._id)!,
     };
   },
 });
@@ -733,16 +708,29 @@ export const searchMessages = query({
     const contactMap = await batchGet(ctx.db, leadsFound.map((l: any) => l?.contactId));
     // Conversa de grupo não tem contato: a coluna "de quem" mostra o nome da
     // SALA, senão a linha do resultado apareceria em branco.
-    const groupMap = await batchGet(ctx.db, conversationsFound.map((c: any) => c?.groupChatId));
+    // Fase 4c: o nome da sala vem da conversa (`groupSubject`); o doc do grupo
+    // (com `participants`) só é lido para conversa ainda sem o campo.
+    const denormRead = inboxDenormReadEnabled();
+    const groupMap = await batchGet(
+      ctx.db,
+      conversationsFound.map((c: any) =>
+        c && (!denormRead || c.groupSubject === undefined) ? c.groupChatId : undefined
+      )
+    );
 
     return top.map((m) => {
       const conv = convMap.get(m.conversationId);
       const lead = conv?.leadId ? leadMap.get(conv.leadId) : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) : null;
-      const group = conv?.groupChatId ? groupMap.get(conv.groupChatId) : null;
+      const groupSubject =
+        denormRead && conv?.groupSubject !== undefined
+          ? conv.groupSubject
+          : conv?.groupChatId
+            ? groupMap.get(conv.groupChatId)?.subject
+            : undefined;
       const contactName = contact
         ? `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim()
-        : group?.subject ?? "";
+        : groupSubject ?? "";
       const termLower = term.toLowerCase();
       const contentMatches = m.content.toLowerCase().includes(termLower);
       const matchedTranscript =
@@ -1057,6 +1045,7 @@ export const sendMessage = mutation({
       ...(args.isInternal
         ? {}
         : firstResponsePatch(conversation, userMember.type === "ai" ? "ai" : "human", now)),
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     // Update lead activity
@@ -1328,19 +1317,16 @@ export const internalGetConversations = internalQuery({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap, configMap, groupMap, lastMessageMap] = await Promise.all([
+    const [contactMap, assigneeMap, extrasMap] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
-      batchGet(ctx.db, conversations.map(c => c.channelConfigId)),
-      batchGet(ctx.db, conversations.map(c => c.groupChatId)),
-      lastMessageFieldsByConversation(ctx, conversations.map(c => c._id)),
+      inboxRowExtras(ctx, conversations),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
       const lead = conversation.leadId ? leadMap.get(conversation.leadId) ?? null : null;
       const contact = lead?.contactId ? contactMap.get(lead.contactId) ?? null : null;
       const assignee = lead?.assignedTo ? assigneeMap.get(lead.assignedTo) ?? null : null;
-      const config = conversation.channelConfigId ? configMap.get(conversation.channelConfigId) ?? null : null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
@@ -1349,9 +1335,7 @@ export const internalGetConversations = internalQuery({
         lead,
         contact,
         assignee,
-        ...groupChatSummary(conversation, groupMap),
-        ...serviceWindowFields(conversation, config),
-        ...(lastMessageMap.get(conversation._id) ?? lastMessageFields(null)),
+        ...extrasMap.get(conversation._id)!,
       };
     }).filter(Boolean);
 
@@ -1484,6 +1468,7 @@ export const internalSendMessage = internalMutation({
       ...(args.isInternal
         ? {}
         : firstResponsePatch(conversation, teamMember.type === "ai" ? "ai" : "human", now)),
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     // Update lead activity
@@ -1696,9 +1681,8 @@ export const internalReceiveMessage = internalMutation({
       unreadCount: (conversation.unreadCount ?? 0) + 1, // zerado por markConversationRead
       updatedAt: now,
       ...firstInboundPatch(conversation, now),
-      ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
-        ? { channelConfigId: args.channelConfigId }
-        : {}),
+      ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     // Origem do anúncio (Meta Click-to-WhatsApp): primeiro toque, só com o
@@ -1861,9 +1845,8 @@ export const internalReceiveDeviceMessage = internalMutation({
       updatedAt: now,
       // Humano respondendo pelo app do celular também é primeira resposta.
       ...firstResponsePatch(conversation, "human", sentAt),
-      ...(args.channelConfigId && conversation.channelConfigId !== args.channelConfigId
-        ? { channelConfigId: args.channelConfigId }
-        : {}),
+      ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     await ctx.db.patch(args.leadId, {
@@ -2099,6 +2082,7 @@ export const internalReceiveGroupMessage = internalMutation({
       messageCount: conversation.messageCount + 1,
       unreadCount: (conversation.unreadCount ?? 0) + 1,
       updatedAt: now,
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     // `activities` exige leadId e a timeline é do lead — num grupo o rastro da
@@ -2268,6 +2252,7 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
       lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, sentAt),
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
     // Mesma granularidade de 1 min do ingest inbound (perf Convex I/O, fase 3):
     // "ativo há X" não precisa de mais, e cada patch reexecuta quem leu a sala.
@@ -2467,6 +2452,7 @@ export const internalSendTemplate = internalMutation({
       lastMessageAt: now,
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     const lead = await getLeadRef(ctx.db, conversation.leadId);
