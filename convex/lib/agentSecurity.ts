@@ -1,6 +1,6 @@
 /**
  * Enforcement server-side das ações de IA — as 4 camadas de defesa do plano
- * (docs/AI-AGENT-CONFIG-PLAN-v2.md §3.2). Nenhuma função chamável por IA pode
+ * (docs/archive/AI-AGENT-CONFIG-PLAN-v2.md §3.2). Nenhuma função chamável por IA pode
  * confiar no runtime do modelo: TODA leitura/escrita agentada passa por aqui.
  *
  * Camada 1: assertAgentCan — permissão RBAC + org do ator == org da entidade.

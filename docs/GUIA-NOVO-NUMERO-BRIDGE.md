@@ -2,7 +2,7 @@
 
 **Última atualização:** 2026-09-16
 **Vale para:** provider `bridge` (gateway wuzapi/whatsmeow, protocolo do WhatsApp Web).
-Para o canal oficial (Cloud API da Meta) o caminho é outro — ver `docs/WHATSAPP-CLOUD-API-PLAN.md`.
+Para o canal oficial (Cloud API da Meta) o caminho é outro — ver `docs/archive/WHATSAPP-CLOUD-API-PLAN.md`.
 
 ---
 
@@ -11,7 +11,7 @@ Para o canal oficial (Cloud API da Meta) o caminho é outro — ver `docs/WHATSA
 O canal bridge fala o protocolo do WhatsApp Web **sem contrato com a Meta**. Isso significa, na prática:
 
 - Viola os Termos de Uso do WhatsApp. O número pode ser **banido em definitivo, sem aviso e sem recurso**.
-- Perder a sessão e ter que reler o QR **faz parte** do funcionamento normal (ver `docs/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md`).
+- Perder a sessão e ter que reler o QR **faz parte** do funcionamento normal (ver `docs/archive/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md`).
 - Use um número **dedicado e descartável**. Nunca o número principal do negócio.
 - O gatilho nº 1 de banimento é disparo para quem não te chamou primeiro. Só responda.
 
@@ -262,4 +262,4 @@ curl -X DELETE -H "Authorization: $WA_BRIDGE_ADMIN_TOKEN" \
 | `convex/lib/bridgeSend.ts` / `bridgeMedia.ts` | Envio de texto e mídia |
 | `convex/lib/bridgeHistory.ts` | Histórico do aparelho: `/session/history` e `/chat/history` |
 | `convex/lib/whatsappDispatch.ts` | Pacing por conversa e por número |
-| `docs/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md` | Post-mortem da queda + análise do bug de HMAC |
+| `docs/archive/RELATORIO-DESCONEXAO-BRIDGE-2026-08-14.md` | Post-mortem da queda + análise do bug de HMAC |

@@ -285,14 +285,14 @@ Se for preciso cortar escopo: F9/F10/F11 caem primeiro; F4/F5 podem escorregar p
 ## 11. Prompt de kickoff (colar numa sessão nova)
 
 ```
-Implemente o plano docs/EXPORT-IMPORT-PLAN-v2.md (export/import de dados do HNBCRM).
+Implemente o plano docs/archive/EXPORT-IMPORT-PLAN-v2.md (export/import de dados do HNBCRM).
 
 1. Leia o doc INTEIRO antes de qualquer código — ele é o contrato (schema literal na seção 3,
    regras normativas na seção 4, propriedade de arquivos na seção 5).
 2. Execute em ondas:
    - Onda 0 (serial): Agente S — schema + convex/lib/csv.ts + convex/lib/importMapping.ts + testes.
    - Onda 1 (paralelo): lance Agente A (export) e Agente B (import) JUNTOS, cada um com o prompt:
-     "Você é o Agente <X> do docs/EXPORT-IMPORT-PLAN-v2.md do repo. Leia o doc inteiro, depois
+     "Você é o Agente <X> do docs/archive/EXPORT-IMPORT-PLAN-v2.md do repo. Leia o doc inteiro, depois
       implemente SOMENTE os entregáveis da sua seção, tocando SOMENTE nos seus arquivos da tabela
       de propriedade. Siga as regras da seção 4 à risca. Rode seus testes antes de reportar."
    - Onda 2 (paralelo): Agente C (REST/OpenAPI/llms.txt/MCP) e Agente D (frontend — use o

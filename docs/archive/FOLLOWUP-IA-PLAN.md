@@ -26,7 +26,7 @@ Venceu. **Nada aconteceu.**
 | No vencimento nada disparava: os crons só tratam `type:"reminder"`; notificação in-app e e-mail **pulam membro `type:"ai"`**. | `tasks.ts`, `lib/notify.ts`, `email.ts` |
 | O atendente **nunca lia `tasks`** — nem no turno seguinte ele sabia que tinha prometido algo. O prompt não mencionava follow-up. | v1 |
 | Sem audit log, sem webhook, **sem nenhum teste** da tool. | — |
-| Já estava diagnosticado como P0.2: "atribuir tarefa a membro IA é puramente cosmético". | `docs/VIKUNJA-GAP-ANALYSIS.md` |
+| Já estava diagnosticado como P0.2: "atribuir tarefa a membro IA é puramente cosmético". | `docs/archive/VIKUNJA-GAP-ANALYSIS.md` |
 
 ## 2. A ideia central
 
