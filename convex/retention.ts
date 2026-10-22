@@ -27,10 +27,14 @@
  *   atendente sem janela de tempo: numa org de pouco volume, runs com mais de
  *   90 dias deixam de contar — a métrica passa a olhar só os últimos 90 dias.
  * - `aiSpend:internalBackfillMonthlyUsage` recalcula um mês a partir das runs:
- *   para mês com mais de 90 dias não sobra run, então NÃO rodar backfill de mês
- *   antigo (o `aiUsageMonthly` já agregado continua lá — nada aqui o apaga).
- * - `formPartials.getPartialStats` conta abandonos por formulário: abandonos
- *   com mais de 30 dias saem da contagem.
+ *   para mês com mais de 90 dias não sobra run. O backfill RECUSA (`dryRun:false`)
+ *   mês que começa antes de `agentRunsRetentionCutoff(now)` e nunca reduz um
+ *   número já gravado (o `aiUsageMonthly` agregado continua lá — nada aqui o apaga).
+ * - `formPartials.getPartialStats` calcula a taxa de conversão sobre o TOTAL de
+ *   parciais do formulário. Como só os `abandoned` com mais de 30 dias saem (os
+ *   `converted` ficam para sempre), o denominador perde os abandonos antigos e a
+ *   taxa passa a refletir "convertidos de sempre × abandonos dos últimos 30
+ *   dias" — tende a subir com o tempo. Efeito aceito, não corrigido.
  * - Nenhuma das cinco tabelas aponta para `_storage` (verificado no schema);
  *   todas já estão em `EXCLUDED_BACKUP_TABLES`, então o backup JSON não muda.
  * - Ponteiros para item de fila/run apagado (`aiFollowUps.queueItemId`,
@@ -40,7 +44,12 @@
  * Operação: kill switch `RETENTION_DISABLED=1` (vale também para a execução
  * manual) e `CRONS_DISABLED=1` (só a do cron, como os demais crons). Janelas
  * ajustáveis por env `RETENTION_<TABELA>_DAYS` (inteiro ≥ 7; inválido = padrão).
- * Teto de 20.000 linhas por dia: o que sobrar fica para o dia seguinte.
+ * Teto de 20.000 linhas por dia: o que sobrar fica para o dia seguinte. O teto
+ * é POR CADEIA: cron e execução manual simultâneos formam duas cadeias, cada uma
+ * com seus 20.000 — não é inseguro (os ranges só pegam linha histórica e o OCC
+ * serializa os lotes que disputam as mesmas linhas; um delete de linha já
+ * apagada pela outra cadeia é refeito no retry com o range atualizado), só
+ * dobra o teto do dia.
  *
  *   npx convex run --prod retention:internalRetentionPreview '{}'
  *   npx convex run --prod retention:internalRunRetentionNow '{}'                 # dryRun
@@ -132,6 +141,14 @@ export function retentionDays(table: RetentionTable, overrides?: Overrides): num
     console.warn(JSON.stringify({ event: "retentionInvalidEnv", env: RETENTION_ENV_DAYS[table] }));
   }
   return RETENTION_DEFAULT_DAYS[table];
+}
+
+/**
+ * Instante antes do qual `agentRuns` terminais podem já ter sido apagadas pela
+ * retenção (janela efetiva: env > padrão). Usado pelo backfill do `aiSpend`.
+ */
+export function agentRunsRetentionCutoff(now: number): number {
+  return now - retentionDays("agentRuns") * DAY_MS;
 }
 
 type Row = { id: Id<RetentionTable>; ts: number };
