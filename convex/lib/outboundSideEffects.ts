@@ -1,6 +1,6 @@
 /**
  * Side effects compartilhados de mensagem outbound (forwardMessage e o commit
- * transacional do atendente IA): bump de conversa + lead, audit + activity,
+ * transacional do atendente IA): bump de conversa + lead, activity,
  * webhook message.sent e agendamento do dispatch WhatsApp. A row da mensagem
  * (e o link de anexos) é inserida pelo chamador antes.
  *
@@ -11,7 +11,6 @@
 import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
-import { buildAuditDescription } from "./auditDescription";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { getLeadRef } from "./leadRef";
 import { firstResponsePatch } from "./conversationTiming";
@@ -40,8 +39,8 @@ export async function applyOutboundMessageSideEffects(
   });
 
   // Conversa de GRUPO não tem lead (v0.57): o bump de atividade e a activity
-  // mais abaixo simplesmente não acontecem. Tudo o mais — audit, webhook,
-  // dispatch — é idêntico ao 1:1.
+  // mais abaixo simplesmente não acontecem. Tudo o mais — webhook, dispatch —
+  // é idêntico ao 1:1.
   const lead = await getLeadRef(ctx.db, conversation.leadId);
   if (lead) {
     await ctx.db.patch(lead._id, {
@@ -51,26 +50,13 @@ export async function applyOutboundMessageSideEffects(
     });
   }
 
-  await ctx.db.insert("auditLogs", {
-    organizationId: conversation.organizationId,
-    entityType: "message",
-    entityId: messageId,
-    action: "create",
-    actorId: member._id,
-    actorType,
-    metadata: { conversationId: conversation._id, leadId: conversation.leadId },
-    description: buildAuditDescription({
-      action: "create",
-      entityType: "message",
-      metadata: { conversationId: conversation._id, leadId: conversation.leadId },
-    }),
-    severity: "low",
-    createdAt: now,
-  });
-
+  // Sem auditLog de "message create" (perf Convex I/O, onda 2): era uma linha
+  // `severity:"low"` por mensagem enviada, duplicando a `activities` abaixo.
+  // A trilha do envio fica na `activities` (1 a 1), na própria `messages` e no
+  // webhook `message.sent`/`group.message.sent`.
   // `activities.leadId` é obrigatório e a timeline é do LEAD — numa sala de
   // grupo não há onde pendurar o evento (a linha do tempo do grupo vive em
-  // `groupChats.timeline`). O audit acima já registra o envio.
+  // `groupChats.timeline`). A própria linha de `messages` (+ webhook) registra o envio.
   if (lead) {
     await ctx.db.insert("activities", {
       organizationId: conversation.organizationId,
