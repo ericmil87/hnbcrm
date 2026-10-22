@@ -1,107 +1,54 @@
 # CLAUDE.md — Convex Backend
 
-> **Dois deployments desde 02/10/2026:** PROD `careful-anaconda-127` (hnbcrm.com, clientes reais) e DEV `tacit-chicken-195`
-> (desenvolvimento/demos, neutralizado). `npx convex dev|run|data|logs` sem flag = DEV; prod = `npm run deploy:prod` /
-> `--prod`. `convex data`/`convex logs` ignoram a deploy key — use `--prod`. Detalhes na seção "Deployments" do CLAUDE.md
-> da raiz e em `docs/OPS-SEPARAR-DEV-PROD.md`.
+Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-dev-prod.md`. Per-area decisions and history: `docs/architecture/README.md`.
 
 ## File Layout
 
 | File | Purpose |
 |------|---------|
 | `schema.ts` | All table definitions, indexes, validators |
-| `auth.ts` / `auth.config.ts` | Auth providers (só Password; `Anonymous` removido na v0.68.1) |
-| `convex.config.ts` | Convex component registration (Resend email) |
-| `crons.ts` | Scheduled jobs (overdue reminders, recurring tasks, daily digest, group posts watchdog, group daily digests, export cleanup, AI follow-ups watchdog — v0.60, hourly) |
-| `http.ts` | Wires HTTP routes from `router.ts` |
-| `router.ts` | RESTful API endpoints (`/api/v1/*`), API key auth; RBAC em TODAS as rotas via `ROUTE_PERMISSIONS` + `requireRoutePermission` (fail-closed, 403 "Permissão insuficiente"; níveis espelham o app; `"authenticated"` só p/ self-scoped) — completude garantida por `routerPermissions.test.ts` |
-| `leads.ts` | Lead CRUD, stage moves, assignment, qualification |
-| `contacts.ts` | Contact CRUD |
-| `conversations.ts` | Multi-channel conversations + messages, full-text search, archiving, labels, contact presence |
-| `transcription.ts` | Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest); gate compartilhado em `lib/mediaEnrichment.ts` |
-| `vision.ts` | Passe de VISÃO: descreve imagem recebida UMA VEZ por imagem (`describeImage` user action + `autoDescribe` post-ingest) e grava o texto em `messages.imageDescription` + `metadata.vision`; cadeia de modelos POR ROTA com loop de fallover próprio (qualquer erro = próximo elo), data URI base64 montada na action, timeout 45s, parse tolerante a ```json/`<think>`; runs em `agentRuns` com `kind:"vision"` |
-| `lib/mediaEnrichment.ts` | Gates puros dos dois pipelines de mídia: `shouldTranscribeAudio` (DISJUNÇÃO — toggle do canal OU atendente ativo; Whisper é grátis) vs `visionEnabledForOrg`/`shouldDescribeImage` (UM interruptor: `aiConfig.visionEnabled`, opt-in, default false — a v0.51 tinha um AND com um toggle por canal, removido na v0.52), `attendantActive`, `isSticker` |
-| `quickReplies.ts` | Quick replies CRUD — "/" shortcuts in the inbox composer |
-| `scheduledMessages.ts` | Scheduled messages: schedule/cancel + delivery via `ctx.scheduler.runAt` |
-| `channelConfigs.ts` | Per-org WhatsApp channel configs (provider meta\|bridge), encrypted credentials, health checks, bridge provisioning; exclusividade do número (`claimBridgePhone` dentro de `internalRecordHealthCheck` — um número ativo em UMA conta só, desloca as demais com audit+pausa de campanha+logout no gateway) e logout do gateway ao excluir canal |
-| `whatsapp.ts` | WhatsApp ingress (`/webhooks/whatsapp`, Meta handshake) + outbound dispatch branched by provider; retry pacing-aware (backoff oficial 4^X p/ 131056/130429/80007) e congelamento de canal em 131048 (spam-flag) |
-| `bridge.ts` | Unofficial bridge ingress (`POST /webhooks/bridge`, wuzapi/whatsmeow), HMAC-verified via `WA_BRIDGE_HMAC_SECRET`; roteia `fromMe` (mensagem digitada no app do celular) para `conversations.internalReceiveDeviceMessage`; ações do histórico do aparelho (`setBridgeHistoryConfig`/`syncBridgeHistory`/`internalImportBridgeHistory`, importação só de `fromMe`) |
-| `lib/bridgeParse.ts` | Pure parser for wuzapi webhook payloads + HMAC verification (no ctx); `fromMe` vira flag em vez de descarte (o telefone sai do `Chat`, e o `PushName` — que é NOSSO — é descartado); reação nossa e grupo seguem ignorados |
-| `lib/bridgeSend.ts` | Pure adapter for the wuzapi REST send API (text + media request builders / response parser) |
-| `lib/bridgeMedia.ts` | Bidirectional bridge media helpers (download/decrypt + outbound encode) + sanitização do descriptor: `sanitizeBridgeMediaMeta` (allowlist do que fica) e `stripMediaKeyMaterial` (denylist recursiva) — `MediaKey`/`FileEncSHA256` NUNCA vão para `messages.metadata` |
-| `lib/bridgeSession.ts` | Bridge session lifecycle: QR pairing, status, gateway provisioning (`POST /admin/users`), logout (`POST /session/logout`, desvincula o aparelho) e leitura do JID pela listagem admin (`/session/status` devolve `jid: ""` mesmo logado). `BRIDGE_WEBHOOK_EVENTS` é a lista ÚNICA de eventos — connect e provisionamento divergirem foi o que matou os recibos |
-| `lib/bridgeHistory.ts` | Adapter PURO do histórico do wuzapi (`POST/GET /session/history`, `GET /chat/history`) + janela/teto. Campo da resposta é `data_json` e a hora real sai de `data_json.Info.Timestamp` (a coluna `timestamp` é o instante da gravação); conversa vazia devolve `data: null` |
-| `handoffs.ts` | Repasse IA→humano: caminho ÚNICO de criação `createHandoffCore` (todos os gatilhos — humano, palavra-chave, tool, falha) que resolve `conversationId` de origem, notifica in-app (destinatário ou broadcast p/ `inbox >= reply`) e dispara webhook; criar NÃO pausa a conversa; accept = assumir (pausa IA + atribui lead + desarquiva → UI navega p/ a conversa), reject devolve à IA, status `canceled` p/ repasse cancelado pelo returnToAi |
-| `attendant.ts` | Atendente IA: fila (aiReplyQueue), elegibilidade (11 condições), lock/lease OCC, commits transacionais, runtime, simulador, rascunhos com AÇÕES APROVÁVEIS (acceptAiDraft+actionIndexes → executor compartilhado), captura de dados (updateThisContact/updateThisLeadInfo com whitelist captureFields), estado por conversa (getConversationAiState — ignora itens `origin:"follow_up"`), skip com rastro; loop de coaching `requestAiDraft`/`returnToAi` (SÓ app UI) — itens `humanInitiated` (`origin` coach\|return_to_ai) têm bypass RESTRITO no claim e commitam SEMPRE como sugestão, e a regeneração supersede o rascunho de origem p/ status `revised` (encadeado previousDraftId/nextDraftId); turno `origin:"follow_up"` (v0.60) tem os mesmos bypasses proibidos + 3 desligamentos próprios (texto puro NUNCA vira mensagem, recuperação não força texto puro, "sem resposta" não é `throw`) — ver `attendantFollowUp.ts` |
-| `attendantFollowUp.ts` | Follow-up que o PRÓPRIO atendente executa (v0.60): `fire` (a cadeia de guardas do disparo — idempotência, tarefa, guarda de disparo antecipado via `nextFireAt` contra job zumbi, conversa/lead arquivado, elegibilidade, janela de silêncio ∩ horário, fila ocupada, cadeia máxima, teto diário), `internalWatchdog` (cron horário — resgata `scheduled` com `runAt` perdido; escala `queued` parado em 30min, ou 6h quando já tem `resultMessageId` — mensagem comprometida, só falta confirmação de entrega), `adoptTask`/`internalAdoptTask` (adota uma tarefa já atribuída a um atendente IA como follow-up — foi assim que a tarefa real da Rejane, o caso que originou a feature, ganhou disparo; ambas `runNow` e `adoptTask` exigem `tasks:edit_own` E `inbox:reply` — armam envio automático ao cliente, não só editam tarefa), `runNow` ("Executar agora" — mesma cadeia de guardas do `fire`, só pula a janela de silêncio), `cancelAuto` ("Não executar automaticamente") |
-| `lib/followUpOps.ts` | Núcleo compartilhado do follow-up da IA (v0.60): `resolveFollowUpOutcome` (ponto ÚNICO de desfecho — done/not_needed/reschedule/drafted/needs_human/canceled, chamado por todo caminho terminal da fila; `done` aceita `force:true` pra reabrir um `needs_human` terminal quando a entrega chega depois do watchdog escalar por demora), `syncFollowUpForTask` (tarefa → follow-up, chamada por todo escritor de `tasks.ts`), `armFollowUp`/`cancelArmedFollowUp` (agenda/cancela o `fire`, grava `nextFireAt` — zerar `schedulerFnId` sem cancelar o `runAt` deixa um job órfão: foi assim que "Executar agora" mandava a mensagem dias antes do combinado), `yieldFollowUpItemToReactiveTurn` (coalescing — o turno reativo/instruído sempre sequestra um item `follow_up` pendente e devolve o follow-up a `scheduled`), `applyFollowUpDeliveryUpdate` (gancho de ENTREGA — commit ≠ entregue), `escalateFollowUpsOfConversation` (assumir conversa/repasse — `actorId` opcional evita notificar quem assumiu sobre a própria ação), `cancelFollowUpsOfLead` (lead arquivado — `bulkArchiveLeads`), `purgeFollowUpsOfConversation` (cascata de exclusão — cancela E marca a TAREFA como `cancelled`, não só perde o `leadId`), `describeFollowUpReason`/`FOLLOW_UP_REASON_CODES` (49 motivos estáveis, exportados pra UI e testados por build) |
-| `lib/followUpSettings.ts` | Puro: `resolveFollowUpSettings(profile, provider)` — resolve `agentProfile.followUps` efetivo (mode/maxChain/quietStartHour/quietEndHour/dailyCap; ausente = `mode:"draft"`) — fonte ÚNICA compartilhada por backend e UI |
-| `lib/agentSchedule.ts` | Puro: `isWithinSchedule` (movida de `attendant.ts`, que re-exporta), `localToEpoch` (hora local → epoch, com DST), `nextOpening` (próxima abertura do horário), `followUpWindow` (janela de follow-up = horário ∩ silêncio, SEMPRE intersectada), `formatLocalShort` |
-| `lib/followUpNote.ts` | Puro: `sanitizeFollowUpNote` — remove URL/e-mail/domínio curto/UUID/CPF-CNPJ/telefone da nota que a IA deixa para si mesma antes de gravar (vetor de injeção persistente — a nota é relida num turno futuro sem a mensagem original ao lado) |
-| `lib/channelResolve.ts` | Resolução ÚNICA do channelConfig de uma conversa (fallback determinístico, prefere Meta) — usada por atendente E dispatch |
-| `lib/inboundRouting.ts` | Roteamento inbound → contato/lead; aplica o pipelineConfig do atendente do canal (board/estágio inicial) com fallback auditado |
-| `lib/whatsappDispatch.ts` | Pacing de envio em 2 níveis: cursor por conversa (pair rate 6,5s) + cursor por número (`channelPacing`; Meta 1-3s, bridge reativo 4-10s / frio 8-15s), typing humanizado no bridge, claim OCC |
-| `copilot.ts` | Copiloto: threads/mensagens + executores de tools (leitura via query, escrita via mutation com via:"copilot", destrutivo → pendingActions) |
-| `copilotHttp.ts` | Streaming SSE autenticado do copiloto (`POST /api/copilot/stream`) com loop de tool_calls |
-| `aiSettings.ts` | Config de IA da org: ativação + LGPD ack, atendente 1-toque, perfil/modo (gate do autopilot), modelos/ZDR, budget, métricas — contadores `revised` (rascunho substituído por instrução humana), `coached` (turnos pedidos por humano) e `proactive` (turnos de follow-up, v0.60) ficam FORA do cálculo de aceitação que libera o autopilot; `setProductRouting` (rota por produto + modelo de visão, validado contra a allowlist) e `getVisionModelOptions`; `updateAgentProfile` valida `agentProfile.followUps` no servidor (faixas de `maxChain`/janela/`dailyCap`); `internalSetFollowUpMode` (ops, sem sessão de usuário) troca só o modo |
-| `aiDiagnostics.ts` | Ops: `pingProvider` — smoke de conectividade LLM a partir do deployment |
-| `testReset.ts` | Comandos de teste via WhatsApp — `/resetme` (hard delete do próprio remetente), `/resetlist` (10 leads mais recentes, numerados) e `/resetother <nº\|sufixo do telefone>` (hard delete de outro lead, com confirmação no WhatsApp) — só com env `WA_TEST_RESET_PHONES` (allowlist de telefones; ausente = desligado) |
-| `agentRuns.ts` | Registro de operações de IA (tokens/custo/tools — sem PII) |
-| `agentEvals.ts` | Golden conversations + replay (regressão de persona via simulador); 5 goldens curadas em `CURATED_GOLDENS` (áudio, comprovante por imagem protegendo o D13, PDF, e as 2 de follow-up da v0.60 — "comprovante já chegou → não cobra" e "cliente sumiu → retoma com leveza"), instaladas por `internalSeedCuratedGoldens`; `transcript`/`followUp`/`simulatedNow` no schema alimentam o turno proativo do replay |
-| `orgSecrets.ts` | BYO API keys por org (cifradas; leitura sempre mascarada) |
-| `lib/agentSecurity.ts` | 4 camadas: assertAgentCan, escopo por registro, TOOL_DENYLIST + SECRET_FIELD_PATTERN, orgAiActive |
-| `lib/agentTools.ts` | Registry ESTÁTICO de tools de IA (specs + projeção de resultado por whitelist) |
-| `lib/agentRoutes.ts` | Resolve rotas LLM da org (platform chain ou BYO + strictZdr) + rota POR PRODUCT (`effectivePlatformOrder`: produto > org > env > auto); BYO permanece org-wide (não tem fallback) |
-| `lib/agentPersonas.ts` | Personas de atendente por indústria (sementes do 1-toque) |
-| `lib/promptEnvelope.ts` | Envelope de dado não-confiável (`<crm_data untrusted>`) |
-| `lib/outboundSideEffects.ts` | Side effects compartilhados de outbound (usado por conversations + attendant; evita ciclo de módulos) |
-| `lib/llm/` | Camada LLM pura: types, registry (modelos/ZDR/capacidades), openaiCompatible (chat/stream/retry), index (chains/fallback), sanitize |
-| `boards.ts` | Kanban boards and stages |
-| `organizations.ts` | Organization CRUD + settings |
-| `teamMembers.ts` | Human + AI team member management |
-| `calendar.ts` | Calendar events CRUD (time-ranged events with recurrence) |
-| `tasks.ts` | Task CRUD (projects/columns, labels, multi-assignee `assigneeIds`, real subtasks via `parentTaskId` + `getSubtasks`, informative `blockedBy` deps, manual kanban order, pre-due reminders, recurrence via `recurrenceSourceId`); `updateTask` aceita `null` p/ limpar `projectId`/`parentTaskId`/`assignedTo`/`leadId`/`contactId` (vínculos novos validados contra a org da task); `internal*` variants power the REST API + MCP (write params unchanged by P1; todas escopadas por org da API key — see `router.ts`); todo escritor de prazo/estado/responsável chama `syncFollowUpForTask` (v0.60 — mantém `aiFollowUps` casado com a tarefa) e `deleteTask`/`internalDeleteTask`/bulk deletes chamam `resolveFollowUpForDeletedTask` ANTES do delete; recorrência recusa tarefa com follow-up de IA ativo; `internalGetTask` (REST `GET /api/v1/tasks/get` + MCP `crm_get_task`) devolve `aiFollowUp` (resumo do estado) |
-| `lib/taskOps.ts` | Núcleo compartilhado de TAREFAS (conclusão + comentário): `applyTaskCompletion` e `addTaskCommentCore`, usados por `tasks.ts`/`taskComments.ts` E pelo follow-up da IA (`lib/followUpOps.ts`) — vive em `lib/` para não fechar ciclo de módulos (o follow-up precisa concluir/comentar a tarefa que ele mesmo criou) |
-| `taskComments.ts` | Task comments, `authorType` human\|ai, `@mention` → in-app + e-mail notification via `lib/notify.ts`; núcleo em `lib/taskOps.ts:addTaskCommentCore` |
-| `taskProjects.ts` | Task projects (CRUD, archive/reorder) + kanban columns per project (CRUD/reorder, done column, WIP limit) — admin/manager only for management |
-| `taskLabels.ts` | Org-wide task labels with color (CRUD) — any member |
-| `notifications.ts` | In-app notifications: list/unreadCount/markRead/markAllRead (bell in `AppShell`); tipos de tarefa + `handoff_requested`/`handoff_resolved`/`ai_draft_pending`/`ai_followup_needs_human` (v0.60 — a IA não conseguiu executar um follow-up que ela mesma agendou), com ponteiros `handoffId`/`conversationId`/`taskId` p/ o deep-link do item |
-| `lib/notify.ts` | `createNotification()` — inserts an in-app notification in the same transaction as the triggering mutation; skips AI members and self-notification; `PREFERENCE_FLAG` mapeia cada tipo para o flag de opt-out, incluindo os novos de handoff, `ai_draft_pending` → `aiDraftPending` e `ai_followup_needs_human` → `aiFollowupNeedsHuman` (só sino, sem template de e-mail); `inboxRepliers` (humanos ativos com `inbox >= reply` — o público de um aviso sem destinatário) mora aqui, movida de `handoffs.ts`, porque o follow-up da IA usa a MESMA regra de destinatário e importar `handoffs.ts` de `lib/` fecharia um ciclo de módulos |
-| `activities.ts` | Activity timeline events on leads |
-| `auditLogs.ts` | Audit trail queries |
-| `dashboard.ts` | Aggregation queries for dashboard |
-| `email.ts` | Resend instance (envio REAL por padrão — `RESEND_TEST_MODE=true` liga o sandbox; o default do componente é testMode e LANÇA p/ destinatário real), porta de saída única `sendTransactionalEmail` (valida endereço, checa `emailSuppressions`, NUNCA lança), `dispatchNotification` (gates: mesma org, membro com `userId`, preferência, template conhecido → devolve boolean), `handleEmailEvent` (hard bounce/denúncia → supressão), daily digest (só quem tem conta; pula dia zerado) |
-| `authEmails.ts` | E-mails de autenticação fora de `notificationPreferences`: `sendPasswordResetCode` (teto 5/h por endereço em `authEmailThrottle`) e `sendWelcomeEmail` (agendado por `createOrganization`) |
-| `authEmailTemplates.ts` | Templates puros de reset de senha e boas-vindas (reusam o layout de `emailTemplates.ts`, tudo escapado) |
-| `passwordReset.ts` | Provider OTP do flow `reset` do Convex Auth: 8 dígitos sem viés, 15 min, envia via `ctx.runMutation` (o 2º arg de `sendVerificationRequest` é um ctx de action real) |
-| `lib/appUrl.ts` | `appUrl()` — fonte ÚNICA de link em e-mail/notificação (env `APP_URL`, fallback `https://hnbcrm.com`) |
-| `lib/emailAddress.ts` | Puro: `normalizeEmail`, `hasEmailShape` (só formato — convite), `isDeliverableEmail` (formato + veto a domínio reservado/de seed), `maskEmailForLog` |
-| `emailTemplates.ts` | Pure TS email template builders (14 templates, PT-BR); `buildTemplate` é fail-closed (eventType desconhecido lança) e entrada de formulário público sai escapada |
-| `webhooks.ts` | Webhook CRUD |
-| `webhookTrigger.ts` | Internal action that fires webhooks |
-| `exports.ts` | Jobs de export (CSV por entidade + backup JSON `hnbcrm-backup` v1 sanitizado): criação gated por `settings:manage`, 1 ativo/org, paginação 500 via `lib/cursor.ts`, blob no File Storage (expira em 7 dias, cron horário `internalCleanupExpired`), download por URL assinada; internals `internal*` p/ REST |
-| `imports.ts` | Superfície do wizard de import (contatos/leads): createImportJob/updateMapping/runPreview/confirmImport/rollbackImport/cancelImport + `getFailedRowsCsv` (ACTION — lê storage); chaves do `mapping` = `encodeHeaderKey(header)` (Convex rejeita acento em field name); trilha de rollback em `importJobBatches` (`before` só dos campos alterados, `null` = não existia) |
-| `importRun.ts` | Actions do import: `internalDetectHeaders` (parse + sugestão de mapeamento), `internalRunDryRun` (caps 50 erros/10 preview/10k linhas), `internalRunImport` (lotes de 50, claim por `startedAt`), `internalRunRollback` |
-| `lib/csv.ts` | Parser/serializador CSV RFC 4180 (BOM, auto-detect `,`/`;`) — referência ÚNICA de CSV no produto |
-| `lib/importMapping.ts` | Puro: aliases PT-BR/EN → campos, `suggestMapping`, `coerceAndValidateRow` (datas ISO+dd/mm/aaaa, vírgula decimal, sim/não, tags por `;`, `cf:<key>` validado contra fieldDefinitions) |
-| `lib/importKeys.ts` | Puro: `encodeHeaderKey`/`invalidHeader`/`mappingForHeaders` — compartilhado com front e REST |
-| `lib/exportColumns.ts` | Colunas de export por entidade com desnormalização (contato/board/estágio/responsável, `cf_<key>`, datas ISO) |
-| `lib/exportSanitize.ts` | Denylist central de segredos (`*token*`/`*secret*`/`*keyHash*` + caminhos) aplicada a todo doc do backup; verificada por `exportSecurity.test.ts` |
-| `lib/auth.ts` | Shared `requireAuth()` + `requirePermission()` helpers |
-| `lib/permissions.ts` | Shared permission types, defaults, hierarchy comparison |
-| `lib/batchGet.ts` | Utility for batch-fetching documents by IDs |
-| `lib/fileRefs.ts` | Contagem de referências do blob antes do delete (`isStorageShared`/`deleteBlobIfUnreferenced`) — encaminhamento duplica a linha de `files` com o mesmo `storageId`; na dúvida o blob FICA |
-| `authHelpers.ts` | Internal queries/mutations for auth table operations (user/authAccount CRUD) |
-| `nodeActions.ts` | Node.js actions: API key hashing, webhook dispatch, invite, password change |
-| `forms.ts` | Form builder CRUD: create, update, publish, archive, duplicate, slug check |
-| `formSubmissions.ts` | Form submission processing, stats, spam detection |
-| `notificationPreferences.ts` | Per-member notification preferences CRUD |
-| `apiKeys.ts` | API key generation, validation, revocation, permission scoping |
-| `leadSources.ts` / `fieldDefinitions.ts` | Lead sources + custom fields |
-| `llmsTxt.ts` | `/llms.txt` and `/llms-full.txt` endpoint content |
-| `onboarding.ts` / `onboardingSeed.ts` | Onboarding wizard + checklist state |
-| `seed.ts` | Dev seed data |
-| `opsMigration.ts` | Ops internas de separação dev/prod e pós-restore (re-apontar webhooks do bridge — `webhookurl`! —, reaplicar HMAC nas instâncias, desarmar canais do deployment-cópia, cancelar/re-armar agendadas, re-armar publicações de grupo, reenviar saídas travadas); todas com `dryRun` default true |
+| `auth.ts` / `auth.config.ts` | Auth providers (Password only; `Anonymous` removed in v0.68.1); `convex.config.ts` registers components (Resend) |
+| `crons.ts` | Scheduled jobs (reminders, recurring tasks, digests, group posts, export cleanup, channel health, AI follow-ups watchdog) |
+| `http.ts` / `router.ts` | Route wiring / REST `/api/v1/*`, API-key auth, RBAC on every route via `ROUTE_PERMISSIONS` + `requireRoutePermission` (fail-closed) |
+| `leads.ts` / `contacts.ts` | Lead CRUD, stage moves (via `lib/leadStageMove.ts`), assignment, qualification / Contact CRUD |
+| `conversations.ts` | Multi-channel conversations + messages, search, archiving, labels, presence, ingest (`internalReceive*`) |
+| `transcription.ts` / `vision.ts` | Whisper voice-note transcription / image description pass (once per image: `messages.imageDescription` + `metadata.vision`) |
+| `lib/mediaEnrichment.ts` | Pure gates: `shouldTranscribeAudio`, `visionEnabledForOrg`, `shouldDescribeImage`, `attendantActive`, `isSticker` |
+| `quickReplies.ts` / `scheduledMessages.ts` | "/" shortcuts in the composer / scheduled sends via `ctx.scheduler.runAt` |
+| `channelConfigs.ts` | Per-org WhatsApp channels (meta\|bridge), encrypted creds, health checks, provisioning, number exclusivity (`claimBridgePhone`) |
+| `whatsapp.ts` | Meta ingress (`/webhooks/whatsapp`) + outbound dispatch by provider; pacing-aware retry; channel freeze on 131048 |
+| `bridge.ts` | Bridge ingress (`POST /webhooks/bridge`, HMAC via `WA_BRIDGE_HMAC_SECRET`); `fromMe` → `internalReceiveDeviceMessage`; device history actions |
+| `lib/bridgeParse.ts` / `bridgeSend.ts` / `bridgeMedia.ts` | Pure wuzapi adapters: parser+HMAC, send, media (`sanitizeBridgeMediaMeta`, `stripMediaKeyMaterial`) |
+| `lib/bridgeSession.ts` / `bridgeHistory.ts` | QR/status/provisioning/logout, `BRIDGE_WEBHOOK_EVENTS` (single event list) / pure `data_json` history adapter |
+| `handoffs.ts` | AI→human handoffs; single creation path `createHandoffCore`; accept = take over, reject = back to AI, `canceled` via `returnToAi` |
+| `attendant.ts` | AI attendant: `aiReplyQueue`, eligibility, OCC lock, transactional commits, runtime, simulator, drafts, coaching, `getConversationAiState` |
+| `attendantFollowUp.ts` | Follow-up the AI executes itself: `fire` guard chain, `internalWatchdog`, `adoptTask`/`internalAdoptTask`, `runNow`, `cancelAuto` |
+| `lib/followUpOps.ts` | Follow-up core: `resolveFollowUpOutcome` (single outcome), `syncFollowUpForTask`, `armFollowUp`/`cancelArmedFollowUp`, delivery hook |
+| `lib/followUpSettings.ts` / `agentSchedule.ts` / `followUpNote.ts` | Pure: `resolveFollowUpSettings` / `isWithinSchedule`, `followUpWindow` / `sanitizeFollowUpNote` |
+| `lib/channelResolve.ts` / `inboundRouting.ts` / `whatsappDispatch.ts` | Channel resolution / inbound routing / 2-level pacing (`channelPacing`) |
+| `copilot.ts` / `copilotHttp.ts` | Copilot threads + tool executors (destructive → `pendingActions`) / SSE `POST /api/copilot/stream` with tool_calls loop |
+| `aiSettings.ts` | Org AI config: activation + LGPD ack, profile/mode, models/ZDR, `setProductRouting`, `internalSetFollowUpMode`, metrics |
+| `aiDiagnostics.ts` / `agentRuns.ts` / `orgSecrets.ts` | `pingProvider` smoke test / AI run log (no PII) / BYO keys (encrypted, always masked) |
+| `agentEvals.ts` | Golden conversations + replay; `CURATED_GOLDENS` installed by `internalSeedCuratedGoldens` |
+| `testReset.ts` | WhatsApp test commands `/resetme`, `/resetlist`, `/resetother <nº>`; only with env `WA_TEST_RESET_PHONES` (absent = off) |
+| `lib/agentSecurity.ts` / `agentTools.ts` | 4 security layers (`assertAgentCan`, `TOOL_DENYLIST`, `SECRET_FIELD_PATTERN`, `orgAiActive`) / STATIC AI tool registry |
+| `lib/agentRoutes.ts` / `agentPersonas.ts` | LLM route resolution (platform chain or BYO + `strictZdr`; `effectivePlatformOrder`) / industry personas |
+| `lib/promptEnvelope.ts` / `outboundSideEffects.ts` / `llm/` | `<crm_data untrusted>` envelope / outbound side effects shared by conversations+attendant / pure LLM layer |
+| `boards.ts` / `organizations.ts` / `teamMembers.ts` / `calendar.ts` | Kanban boards+stages / org CRUD + settings / human+AI members / calendar events |
+| `tasks.ts` | Task CRUD (projects, labels, `assigneeIds`, subtasks, `blockedBy`); writers call `syncFollowUpForTask`; `internal*` variants serve REST/MCP |
+| `taskComments.ts` / `taskProjects.ts` / `taskLabels.ts` / `lib/taskOps.ts` | Comments / projects + columns / labels / shared cores `applyTaskCompletion`, `addTaskCommentCore` |
+| `notifications.ts` / `lib/notify.ts` | In-app notifications (bell) / `createNotification()`, `PREFERENCE_FLAG`, `inboxRepliers`; skips AI members and self |
+| `activities.ts` / `auditLogs.ts` / `dashboard.ts` / `webhooks.ts` / `webhookTrigger.ts` | Timeline / audit / dashboard / webhook CRUD + firing action |
+| `email.ts` | Resend; single exit `sendTransactionalEmail` (never throws), `dispatchNotification` (gates), `handleEmailEvent` (suppression), digest |
+| `authEmails.ts` / `authEmailTemplates.ts` / `passwordReset.ts` | Reset-code + welcome emails (outside `notificationPreferences`) / templates / OTP provider |
+| `emailTemplates.ts` / `lib/emailAddress.ts` / `lib/appUrl.ts` | PT-BR templates (`buildTemplate` fail-closed) / `isDeliverableEmail` / `appUrl()` single link source |
+| `exports.ts` / `imports.ts` / `importRun.ts` | Export jobs (CSV, `hnbcrm-backup` v1) / import wizard (`importJobBatches` rollback) / import actions |
+| `lib/csv.ts` / `importMapping.ts` / `importKeys.ts` / `exportColumns.ts` / `exportSanitize.ts` | RFC 4180 CSV / `suggestMapping`, `coerceAndValidateRow` / `encodeHeaderKey` / columns / denylist |
+| `lib/auth.ts` / `permissions.ts` / `batchGet.ts` / `fileRefs.ts` | `requireAuth()`, `requirePermission()` / defaults / batch get / `isStorageShared`, `deleteBlobIfUnreferenced` |
+| `authHelpers.ts` / `nodeActions.ts` / `forms.ts` / `formSubmissions.ts` | Auth-table ops / Node actions (API key hash, webhooks, invite) / form builder / submissions |
+| `notificationPreferences.ts` / `apiKeys.ts` / `leadSources.ts` / `fieldDefinitions.ts` / `llmsTxt.ts` | Prefs / API keys / sources + custom fields / `/llms.txt` |
+| `onboarding.ts` / `onboardingSeed.ts` / `seed.ts` | Onboarding wizard + checklist / dev seed (`seed:seedMockData` is internal) |
+| `opsMigration.ts` | Dev/prod split and post-restore ops (bridge webhooks, HMAC, disarm channels, re-arm scheduled), all `dryRun` default true |
 
 ## Auth Pattern (copy this for every public function)
 
@@ -116,71 +63,48 @@ const entity = await ctx.db.get(args.entityId);
 const userMember = await requireAuth(ctx, entity.organizationId);
 ```
 
-Note: `getAuthUserId` is still used directly in functions without org context (e.g. `getUserOrganizations`).
+`getAuthUserId` is used directly only in functions without org context (e.g. `getUserOrganizations`).
 
 ### Permissions Pattern
 
-For functions requiring specific permission levels, use `requirePermission`:
+`const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");` (from `./lib/auth`; admin-only e.g. `"team", "manage"`).
 
-```typescript
-import { requirePermission } from "./lib/auth";
-
-// Requires at least "edit_own" level for the "leads" category:
-const userMember = await requirePermission(ctx, args.organizationId, "leads", "edit_own");
-
-// For admin-only operations:
-const userMember = await requirePermission(ctx, args.organizationId, "team", "manage");
-```
-
-Permission categories: `leads`, `contacts`, `inbox`, `tasks`, `reports`, `team`, `settings`, `auditLogs`, `apiKeys`. Each has hierarchical levels — `resolvePermissions(role, explicitPermissions?)` falls back to role defaults when no explicit override exists. See `convex/lib/permissions.ts` for full type definitions and `DEFAULT_PERMISSIONS`.
+Categories: `leads`, `contacts`, `inbox`, `tasks`, `reports`, `team`, `settings`, `auditLogs`, `apiKeys`, `campaigns`. Levels are hierarchical;
+`resolvePermissions(role, explicitPermissions?)` falls back to role defaults. Types and `DEFAULT_PERMISSIONS`: `lib/permissions.ts`.
 
 ## Mutation Side Effects Checklist
 
-When writing mutations that create/update/delete entities, include all three:
+Every mutation that creates/updates/deletes an entity:
 
 1. **Activity log** — `ctx.db.insert("activities", { organizationId, leadId, type, actorId, actorType, content, metadata, createdAt })`
 2. **Audit log** — `ctx.db.insert("auditLogs", { organizationId, entityType, entityId, action, actorId, actorType, changes: { before, after }, description: buildAuditDescription({...}), severity, createdAt })`
-3. **Webhook trigger** — `await scheduleWebhookEvent(ctx, { organizationId, event: "entity.action", payload })` (`lib/webhookDispatch.ts`; só agenda `nodeActions.triggerWebhooks` se a org tiver webhook ativo que case — nunca agende a action direto, `webhookDispatchPort.test.ts` quebra)
-4. **Email notification** — `ctx.scheduler.runAfter(0, internal.email.dispatchNotification, { organizationId, recipientMemberId, eventType, templateData })`
+3. **Webhook** — `await scheduleWebhookEvent(ctx, { organizationId, event: "entity.action", payload })` (`lib/webhookDispatch.ts`; never schedule the action directly)
+4. **Email** — `ctx.scheduler.runAfter(0, internal.email.dispatchNotification, { organizationId, recipientMemberId, eventType, templateData })`
 
 ## Key Indexes
 
-All tables use `by_organization` as the primary access pattern. Important compound indexes:
+All tables use `by_organization` first. Compound indexes:
 - `leads`: `by_organization_and_stage`, `by_organization_and_assigned`, `by_organization_and_board`
-- `conversations`: `by_lead_and_channel`, `by_organization_and_status`
-- `messages`: `by_conversation_and_created`
-- `stages`: `by_board_and_order`
-- `auditLogs`: `by_organization_and_created`, `by_entity`, `by_organization_and_entity_type_and_created`, `by_organization_and_action_and_created`, `by_organization_and_severity_and_created`, `by_organization_and_actor_and_created`
-- `activities`: `by_lead_and_created`
-- `apiKeys`: `by_key_hash_and_active`
+- `conversations`: `by_lead_and_channel`, `by_organization_and_status`; `messages`: `by_conversation_and_created`; `stages`: `by_board_and_order`
+- `auditLogs`: `by_organization_and_created`, `by_entity`, and `by_organization_and_{entity_type,action,severity,actor}_and_created`
+- `activities`: `by_lead_and_created`; `apiKeys`: `by_key_hash_and_active`
 
 ## HTTP API Pattern (router.ts)
 
-All endpoints use `httpAction` and follow this structure:
 ```typescript
-http.route({
-  path: "/api/v1/endpoint",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    if (request.method === "OPTIONS") return handleOptions();
-    try {
-      const auth = await authenticateApiKey(ctx, request);
-      const denied = requireRoutePermission(auth, "POST", "/api/v1/endpoint"); // rota NOVA exige entrada em ROUTE_PERMISSIONS (fail-closed)
-      if (denied) return denied;
-      // call ctx.runMutation / ctx.runQuery
-      return jsonResponse(result);
-    } catch (e: any) {
-      return errorResponse(e.message, 400);
-    }
-  }),
-});
+http.route({ path: "/api/v1/endpoint", method: "POST", handler: httpAction(async (ctx, request) => {
+  if (request.method === "OPTIONS") return handleOptions();
+  try {
+    const auth = await authenticateApiKey(ctx, request);
+    const denied = requireRoutePermission(auth, "POST", "/api/v1/endpoint"); // NEW routes need a ROUTE_PERMISSIONS entry (fail-closed)
+    if (denied) return denied;
+    return jsonResponse(await ctx.runMutation(/* or runQuery */));
+  } catch (e: any) { return errorResponse(e.message, 400); }
+}) });
 ```
 
 ## Rules
 
-- Every exported function needs `args` + `returns` validators
-- Use `v.null()` for functions that return nothing
-- Never use `Date.now()` in queries (breaks Convex reactivity) — pass timestamps as arguments or use them only in mutations
-- Only schedule `internal.*` functions, never `api.*`
-- Put `"use node";` at the top of any file using Node.js APIs (only valid in actions)
-- Use `ctx.db.patch` for partial updates
+General Convex rules (validators, no `.filter()`, no `Date.now()` in queries, only `internal.*` scheduled, `"use node"`): root `CLAUDE.md` and
+`.claude/rules/convex-official.md`. Specific to `convex/`: shared cores go in `lib/` (a cycle between modules breaks the build); user-facing errors are
+`ConvexError` with PT-BR text; build tests guard the invariants (`routerPermissions.test.ts`, `agentToolSecurity.test.ts`, `webhookDispatchPort.test.ts`).
