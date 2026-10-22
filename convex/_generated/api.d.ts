@@ -89,6 +89,7 @@ import type * as lib_bridgeNumberCheck from "../lib/bridgeNumberCheck.js";
 import type * as lib_bridgeParse from "../lib/bridgeParse.js";
 import type * as lib_bridgeSend from "../lib/bridgeSend.js";
 import type * as lib_bridgeSession from "../lib/bridgeSession.js";
+import type * as lib_bridgeSnapshot from "../lib/bridgeSnapshot.js";
 import type * as lib_campaignAudience from "../lib/campaignAudience.js";
 import type * as lib_campaignAuth from "../lib/campaignAuth.js";
 import type * as lib_campaignContext from "../lib/campaignContext.js";
@@ -293,6 +294,7 @@ declare const fullApi: ApiFromModules<{
   "lib/bridgeParse": typeof lib_bridgeParse;
   "lib/bridgeSend": typeof lib_bridgeSend;
   "lib/bridgeSession": typeof lib_bridgeSession;
+  "lib/bridgeSnapshot": typeof lib_bridgeSnapshot;
   "lib/campaignAudience": typeof lib_campaignAudience;
   "lib/campaignAuth": typeof lib_campaignAuth;
   "lib/campaignContext": typeof lib_campaignContext;
