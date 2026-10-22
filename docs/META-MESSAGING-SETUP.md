@@ -75,6 +75,26 @@ Produto **Webhooks** > escolher o objeto > Callback URL e Verify token do ambien
   `message_edit`, `standby`.
 O botão "Testar" do Dashboard envia um payload de teste que o backend aceita com 200 e descarta.
 
+**Pegadinha medida (22/10/2026):** "Verificar e salvar" registra só a URL. Os campos precisam ser inscritos **no nível do app**
+(botão "Editar assinaturas" ao lado da URL, em cada objeto); sem isso a Meta não envia nada, mesmo com a Página inscrita.
+Conferir e, se preciso, corrigir pela API (token `APP_ID|APP_SECRET`):
+```bash
+curl -s "https://graph.facebook.com/v26.0/<APP_ID>/subscriptions?access_token=<APP_ID>|<APP_SECRET>"   # cada objeto deve listar "fields"
+curl -s -X POST "https://graph.facebook.com/v26.0/<APP_ID>/subscriptions" -d object=page -d callback_url=<CALLBACK> \
+  -d verify_token=<VERIFY_TOKEN> -d fields=messages,message_echoes,message_deliveries,message_reads,messaging_postbacks,message_reactions,message_edits,messaging_referrals,standby \
+  -d "access_token=<APP_ID>|<APP_SECRET>"
+curl -s -X POST "https://graph.facebook.com/v26.0/<APP_ID>/subscriptions" -d object=instagram -d callback_url=<CALLBACK> \
+  -d verify_token=<VERIFY_TOKEN> -d fields=messages,messaging_seen,message_reactions,messaging_postbacks,messaging_referral,message_edit,standby \
+  -d "access_token=<APP_ID>|<APP_SECRET>"
+```
+A inscrição da Página (`POST /{page-id}/subscribed_apps`, feita pelo HNBCRM ao conectar) cobre também o Instagram vinculado;
+não é preciso inscrever a conta IG separadamente.
+
+**Acesso padrão (Standard Access), medido:** mesmo com o app publicado, a Meta só entrega mensagens de pessoas com papel no
+app (administrador, desenvolvedor, testador, ou "Testador do Instagram" em Funções do app, com o convite aceito). Uma DM de
+um perfil sem papel não gera webhook, e a API responde erro 2534084 pedindo acesso avançado a `instagram_manage_messages`.
+Para clientes reais é preciso App Review.
+
 ## 3. Lado do cliente: o que a conta precisa ter
 - Uma **Página do Facebook publicada** (o Messenger é da Página).
 - Uma **conta profissional do Instagram** (Business ou Creator) **vinculada à Página** (Instagram > Configurações > Centro de
