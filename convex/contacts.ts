@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
@@ -781,7 +782,7 @@ export const updateContactPhoto = mutation({
       const oldFile = await ctx.db.get(contact.photoFileId);
       if (oldFile) {
         await ctx.storage.delete(oldFile.storageId);
-        await ctx.db.delete(oldFile._id);
+        await deleteFileRow(ctx, oldFile);
       }
     }
 

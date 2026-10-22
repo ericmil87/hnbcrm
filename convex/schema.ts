@@ -1226,7 +1226,11 @@ const applicationTables = {
     .index("by_channel_config_and_external_chat", ["channelConfigId", "externalChatId"])
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
-    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"]),
+    .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"])
+    // Filas da Central (setor/unidade) por última mensagem, com o filtro de
+    // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
+    .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
+    .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
@@ -2418,7 +2422,24 @@ const applicationTables = {
     .index("by_contact", ["contactId"])
     .index("by_lead", ["leadId"])
     .index("by_storage_id", ["storageId"])
-    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"]),
+    .index("by_organization_and_source_url", ["organizationId", "sourceUrl"])
+    // Teto diário de uploads da quota: range createdAt > agora-24h, com take
+    // limitado ao teto (perf Convex I/O, onda 2).
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  /**
+   * Contador agregado de armazenamento por org (perf Convex I/O, onda 2): soma
+   * de `files.size` e nº de linhas, mantido por `lib/storageUsage.ts` em todo
+   * insert/delete de `files`. A quota lê 1 doc em vez de `.collect()` da org.
+   * Ausente = não inicializado (a 1ª checagem de quota calcula e grava).
+   * Recomputável: fora do backup; `files:internalRebuildStorageUsage` corrige.
+   */
+  orgStorageUsage: defineTable({
+    organizationId: v.id("organizations"),
+    bytes: v.number(),
+    count: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   /**
    * Mídia de grupo que a política NÃO baixou (v0.62) — o suficiente para baixar

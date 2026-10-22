@@ -9,6 +9,7 @@ import {
   lastMessageFieldsPatch,
   lastMessagePatchFor,
   listFieldsBackfillPatch,
+  isPreviewMessage,
   previewTextOf,
 } from "./conversationListFields";
 
@@ -59,6 +60,19 @@ describe("prévia da última mensagem", () => {
     expect(previewTextOf(msg({ content: "ligar amanhã", isInternal: true, direction: "internal" }))).toBe(
       "Nota: ligar amanhã"
     );
+  });
+
+  test("nota interna e rascunho da IA não viram prévia (onda 2 de I/O)", () => {
+    expect(isPreviewMessage(msg())).toBe(true);
+    expect(isPreviewMessage(msg({ direction: "outbound" }))).toBe(true);
+    expect(isPreviewMessage(msg({ isInternal: true, direction: "internal" }))).toBe(false);
+    expect(isPreviewMessage(msg({ isInternal: false, direction: "internal" }))).toBe(false);
+    expect(
+      lastMessagePatchFor({}, MSG_ID, msg({ isInternal: true, direction: "internal", createdAt: 9999 }))
+    ).toBeNull();
+    // Backfill: última "mensagem" interna = sem prévia; desconhecida = não mexe.
+    const c = conv({ lastMessagePreview: "Oi", lastMessagePreviewAt: 1, lastMessageId: MSG_ID });
+    expect(listFieldsBackfillPatch(c, { lastMessage: undefined, group: null, config: null }).lastMessage).toBe(false);
   });
 
   test("trunca em 80 com reticências", () => {

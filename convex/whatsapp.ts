@@ -7,6 +7,7 @@
  * scheduled; status updates run inline as plain mutations.
  */
 import { v } from "convex/values";
+import { insertFileRow } from "./lib/storageUsage";
 import {
   ActionCtx,
   httpAction,
@@ -1318,7 +1319,7 @@ export const internalSaveInboundAttachment = internalMutation({
     });
     if (!quota.ok) return await discard(quota.reason, "quota");
 
-    const fileId = await ctx.db.insert("files", {
+    const fileId = await insertFileRow(ctx, {
       organizationId: args.organizationId,
       storageId: args.storageId,
       name: args.name,

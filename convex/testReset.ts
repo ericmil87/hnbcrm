@@ -19,6 +19,7 @@
  * a mensagem de comando NÃO é persistida e o trabalho roda agendado em seguida.
  */
 import { v } from "convex/values";
+import { deleteFileRow } from "./lib/storageUsage";
 import { internalMutation, MutationCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
@@ -122,7 +123,7 @@ async function hardResetByPhone(
               } catch {
                 // blob já removido — segue
               }
-              await ctx.db.delete(fileId);
+              await deleteFileRow(ctx, file);
               deleted.files++;
             }
           }

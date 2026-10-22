@@ -4,7 +4,8 @@
  * Defines storage limits by organization tier and validates upload quotas.
  */
 
-import { QueryCtx } from "../_generated/server";
+import { MutationCtx, QueryCtx } from "../_generated/server";
+import { readStorageUsage, readStorageUsageForWrite } from "./storageUsage";
 import { Id } from "../_generated/dataModel";
 import { formatFileSize, InboundMediaCheck } from "./fileValidation";
 
@@ -29,24 +30,38 @@ function getOrganizationTier(_organizationId: Id<"organizations">): "free" | "pr
   return "free";
 }
 
+/** Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `cap` docs. */
+async function countUploadsLast24h(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  cap: number
+): Promise<number> {
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const recent = await ctx.db
+    .query("files")
+    .withIndex("by_organization_and_created", (q) =>
+      q.eq("organizationId", organizationId).gt("createdAt", oneDayAgo)
+    )
+    .take(cap);
+  return recent.length;
+}
+
 /**
- * Uso atual da org (uma única varredura de `files`), compartilhado por todas as
- * checagens de quota e pelas estatísticas.
+ * Uso atual da org: total pelo contador agregado (`lib/storageUsage.ts` — 1 doc,
+ * lazy init em mutation) + uploads das últimas 24 h por range de índice, com
+ * leitura limitada ao teto diário (perf Convex I/O, onda 2 — antes era um
+ * `.collect()` de todos os `files` da org a cada upload/mídia recebida).
  */
 async function readOrgUsage(
-  ctx: QueryCtx,
-  organizationId: Id<"organizations">
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  opts: { persist: boolean; dailyCap: number }
 ): Promise<{ totalUsed: number; filesCount: number; uploadsLast24h: number }> {
-  const orgFiles = await ctx.db
-    .query("files")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .collect();
-
-  const totalUsed = orgFiles.reduce((sum, file) => sum + file.size, 0);
-  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  const uploadsLast24h = orgFiles.filter((file) => file.createdAt > oneDayAgo).length;
-
-  return { totalUsed, filesCount: orgFiles.length, uploadsLast24h };
+  const usage = opts.persist
+    ? await readStorageUsageForWrite(ctx as MutationCtx, organizationId)
+    : await readStorageUsage(ctx, organizationId);
+  const uploadsLast24h = await countUploadsLast24h(ctx, organizationId, opts.dailyCap);
+  return { totalUsed: usage.bytes, filesCount: usage.count, uploadsLast24h };
 }
 
 /**
@@ -55,7 +70,7 @@ async function readOrgUsage(
  * Throws error if quota exceeded
  */
 export async function checkUploadQuota(
-  ctx: QueryCtx,
+  ctx: MutationCtx,
   args: {
     organizationId: Id<"organizations">;
     fileSize: number;
@@ -71,7 +86,10 @@ export async function checkUploadQuota(
     );
   }
 
-  const usage = await readOrgUsage(ctx, args.organizationId);
+  const usage = await readOrgUsage(ctx, args.organizationId, {
+    persist: true,
+    dailyCap: quota.uploadsPerDay,
+  });
 
   // Check if adding this file would exceed total storage quota
   if (usage.totalUsed + args.fileSize > quota.totalStorage) {
@@ -101,7 +119,7 @@ export async function checkUploadQuota(
  * O anexo continua CONTANDO na quota — o total e o teto diário valem.
  */
 export async function checkInboundMediaQuota(
-  ctx: QueryCtx,
+  ctx: MutationCtx,
   args: {
     organizationId: Id<"organizations">;
     fileSize: number;
@@ -109,7 +127,10 @@ export async function checkInboundMediaQuota(
 ): Promise<InboundMediaCheck> {
   const tier = getOrganizationTier(args.organizationId);
   const quota = FILE_QUOTAS[tier];
-  const usage = await readOrgUsage(ctx, args.organizationId);
+  const usage = await readOrgUsage(ctx, args.organizationId, {
+    persist: true,
+    dailyCap: quota.uploadsPerDay,
+  });
 
   if (usage.totalUsed + args.fileSize > quota.totalStorage) {
     return {
@@ -144,7 +165,10 @@ export async function getStorageStats(
 }> {
   const tier = getOrganizationTier(organizationId);
   const quota = FILE_QUOTAS[tier];
-  const usage = await readOrgUsage(ctx, organizationId);
+  const usage = await readOrgUsage(ctx, organizationId, {
+    persist: false,
+    dailyCap: quota.uploadsPerDay,
+  });
 
   return {
     tier,
