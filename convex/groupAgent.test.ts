@@ -473,6 +473,31 @@ describe("turno: prompt, tools e commit", () => {
     expect(envelope.historico.at(-1).texto).toBe("[imagem não baixada]");
   });
 
+  test("fase 4d: o contexto do turno lista os mesmos membros antes e depois da migração", async () => {
+    const claimMembers = async (migrate: boolean) => {
+      const t = setup();
+      const seed = await seedGroupOrg(t);
+      if (migrate) {
+        await t.mutation(internal.groupChats.internalBackfillGroupParticipants, { dryRun: false });
+        await t.mutation(internal.groupChats.internalFinishGroupParticipantsMigration, {
+          dryRun: false,
+        });
+      }
+      const item = await runTurn(t, seed);
+      const claim = await t.mutation(internal.groupAgent.internalClaimGroupTurn, {
+        queueItemId: item._id,
+        runId: `run-4d-${migrate}`,
+      });
+      expect(claim.kind).toBe("run");
+      const context = (claim as { context: { envelope: any; participants: unknown[] } }).context;
+      return { membros: context.envelope.membros, participants: context.participants };
+    };
+    const before = await claimMembers(false);
+    const after = await claimMembers(true);
+    expect(before.membros.length).toBeGreaterThan(0);
+    expect(after).toEqual(before);
+  });
+
   test("modo sugestão cria RASCUNHO (nada sai para o grupo) e notifica quem revisa", async () => {
     const t = setup();
     const seed = await seedGroupOrg(t, { replyMode: "suggest" });
