@@ -132,6 +132,7 @@ export const INBOUND_EXTRA_MIME_TYPES: readonly string[] = [
   "video/webm",
   // Áudio de celular (nota de voz é audio/ogg, já coberto pelo upload humano)
   "audio/aac",
+  "audio/x-m4a", // áudio do Instagram (m4a); audio/mp4 já está no upload humano
   "audio/amr",
   "audio/opus",
   // Documentos que o app humano não oferece mas o WhatsApp anexa

@@ -345,7 +345,7 @@ describe("internalIngestEvent", () => {
     expect(data.leads).toHaveLength(1);
   });
 
-  test("anexo sem texto vira placeholder com mediaPending; não suportada vira placeholder", async () => {
+  test("anexo sem texto vira placeholder (download falho = mediaUnavailable); não suportada vira placeholder", async () => {
     const t = convexTest(schema, modules);
     await seedOrg(t, "a", PAGE_A, IG_A);
     profileFetch({}, false);
@@ -359,7 +359,8 @@ describe("internalIngestEvent", () => {
     const messages = await t.run(async (ctx) => await ctx.db.query("messages").collect());
     const story = messages.find((m) => m.externalId === "ig_fake_mid_000003")!;
     expect(story.content).toBe("[menção em story]");
-    expect(story.metadata).toMatchObject({ metaType: "story_mention", mediaPending: true });
+    expect(story.metadata).toMatchObject({ metaType: "story_mention", mediaUnavailable: "expired" });
+    expect(story.metadata?.mediaPending).toBeUndefined();
     const uns = messages.find((m) => m.externalId === "ig_u")!;
     expect(uns.content).toBe("[mensagem não suportada]");
     expect(uns.metadata).toMatchObject({ metaType: "unsupported" });

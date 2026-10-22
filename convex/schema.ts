@@ -1393,6 +1393,9 @@ const applicationTables = {
     // Cursor de pacing do dispatch por destinatário (~1 msg/6,5 s).
     // NÃO confundir com `channelPacing.nextDispatchAt` (cursor por número).
     nextDispatchAt: v.optional(v.number()),
+    // Meta Messaging F2: último `typing_on` enviado ao Instagram/Messenger
+    // (throttle de 5 s por conversa; ausente = nada em andamento).
+    metaTypingAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])

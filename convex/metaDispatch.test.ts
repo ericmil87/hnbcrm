@@ -376,43 +376,173 @@ describe("envio pela porta", () => {
     expect(m.externalId).toBeUndefined();
     expect(m.metadata?.dispatchNote).toBe("Enviada, mas a Meta não devolveu o id da mensagem.");
   });
+});
 
-  test("mensagem só com anexo falha com cópia clara, sem rede (mídia é F2)", async () => {
-    const t = convexTest(schema, modules);
-    const s = await seed(t);
-    const g = graph([ok("nunca")]);
-    const id = await t.run(async (ctx) => {
-      const fileId = await ctx.db.insert("files", {
-        organizationId: s.organizationId,
-        name: "foto.jpg",
-        mimeType: "image/jpeg",
-        size: 10,
-        storageId: "kg2fake",
-        fileType: "message_attachment",
-        uploadedBy: s.memberId,
-        createdAt: Date.now(),
-      });
+describe("mídia de saída (F2)", () => {
+  type FileSpec = { name: string; mimeType: string; size?: number };
+
+  async function sendWithFiles(
+    t: TestConvex<typeof schema>,
+    s: Seed,
+    conversationId: Id<"conversations">,
+    content: string,
+    specs: FileSpec[]
+  ) {
+    return await t.run(async (ctx) => {
+      const fileIds: Id<"files">[] = [];
+      for (const spec of specs) {
+        const storageId = await ctx.storage.store(new Blob(["bytes"], { type: spec.mimeType }));
+        fileIds.push(
+          await ctx.db.insert("files", {
+            organizationId: s.organizationId,
+            name: spec.name,
+            mimeType: spec.mimeType,
+            size: spec.size ?? 10,
+            storageId,
+            fileType: "message_attachment",
+            uploadedBy: s.memberId,
+            createdAt: Date.now(),
+          })
+        );
+      }
       const mid = await ctx.db.insert("messages", {
         organizationId: s.organizationId,
-        conversationId: s.igConv,
+        conversationId,
         leadId: s.leadId,
         direction: "outbound",
         senderType: "human",
         senderId: s.memberId,
-        content: "[imagem]",
+        content,
         contentType: "image",
-        attachments: [fileId],
+        attachments: fileIds,
         isInternal: false,
         createdAt: Date.now(),
       });
-      await scheduleOutboundDispatch(ctx, (await ctx.db.get(s.igConv))!, mid);
+      await scheduleOutboundDispatch(ctx, (await ctx.db.get(conversationId))!, mid);
       return mid;
     });
+  }
+
+  test("texto sai primeiro, depois a imagem por URL do storage (IG)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("ig_t"), ok("ig_img")]);
+    const id = await sendWithFiles(t, s, s.igConv, "Segue a foto", [{ name: "foto.png", mimeType: "image/png" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls).toHaveLength(2);
+    expect(g.calls[0].body.message.text).toBe("Segue a foto");
+    const media = g.calls[1].body;
+    expect(media.recipient).toEqual({ id: IGSID });
+    expect(media.message.attachment.type).toBe("image");
+    expect(media.message.attachment.payload.url).toMatch(/^https?:\/\//);
+    expect(media.message.attachment.payload.is_reusable).toBe(false);
+    expect(media.message.metadata).toBe(`hnb:${id}`);
+    const m = await getMessage(t, id);
+    expect(m).toMatchObject({ externalId: "ig_t", deliveryStatus: "sent" });
+    expect(m.metadata?.metaMids).toEqual(["ig_t", "ig_img"]);
+  });
+
+  test("só anexo com placeholder: nenhuma parte de texto, só a mídia", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("m_img")]);
+    const id = await sendWithFiles(t, s, s.msConv, "[imagem]", [{ name: "foto.jpg", mimeType: "image/jpeg" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls).toHaveLength(1);
+    expect(g.calls[0].body.message.attachment.type).toBe("image");
+    expect(g.calls[0].body.messaging_type).toBe("RESPONSE");
+    expect((await getMessage(t, id)).externalId).toBe("m_img");
+  });
+
+  test("Messenger aceita PDF como file; IG também", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("a"), ok("b")]);
+    await sendWithFiles(t, s, s.msConv, "[arquivo]", [{ name: "a.pdf", mimeType: "application/pdf" }]);
+    await sendWithFiles(t, s, s.igConv, "[arquivo]", [{ name: "b.pdf", mimeType: "application/pdf" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls.map((c) => c.body.message.attachment.type)).toEqual(["file", "file"]);
+  });
+
+  test("mime não suportado no IG falha SÓ aquela parte; a outra sai e a nota diz o motivo", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("ig_ok")]);
+    const id = await sendWithFiles(t, s, s.igConv, "[imagem]", [
+      { name: "animacao.gif", mimeType: "image/gif" },
+      { name: "foto.png", mimeType: "image/png" },
+    ]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls).toHaveLength(1);
+    expect(g.calls[0].body.message.attachment.type).toBe("image");
+    const m = await getMessage(t, id);
+    expect(m.deliveryStatus).toBe("sent");
+    expect(m.metadata?.dispatchNote).toContain("animacao.gif");
+    expect(m.metadata?.dispatchNote).toContain("Instagram");
+  });
+
+  test("só anexo não suportado: failed com o motivo, sem rede", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("nunca")]);
+    const id = await sendWithFiles(t, s, s.igConv, "[arquivo]", [{ name: "dados.zip", mimeType: "application/zip" }]);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     expect(g.fn).not.toHaveBeenCalled();
     const m = await getMessage(t, id);
     expect(m.deliveryStatus).toBe("failed");
-    expect(m.metadata?.deliveryError).toBe("Mídia por Instagram/Messenger chega na próxima versão.");
+    expect(m.metadata?.deliveryError).toContain("dados.zip");
+  });
+
+  test("imagem do IG acima de 8 MB falha; no Messenger (25 MB) sai", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("m_big")]);
+    const big = 9 * 1024 * 1024;
+    const igId = await sendWithFiles(t, s, s.igConv, "[imagem]", [{ name: "grande.png", mimeType: "image/png", size: big }]);
+    const msId = await sendWithFiles(t, s, s.msConv, "[imagem]", [{ name: "grande.png", mimeType: "image/png", size: big }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls).toHaveLength(1);
+    expect(g.calls[0].body.recipient).toEqual({ id: PSID });
+    const ig = await getMessage(t, igId);
+    expect(ig.deliveryStatus).toBe("failed");
+    expect(ig.metadata?.deliveryError).toContain("8 MB");
+    expect((await getMessage(t, msId)).deliveryStatus).toBe("sent");
+  });
+
+  test("áudio e vídeo (pesados) usam o tipo certo e empurram o cursor do canal", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("a1"), ok("v1")]);
+    await sendWithFiles(t, s, s.igConv, "[áudio]", [{ name: "voz.m4a", mimeType: "audio/mp4" }]);
+    await sendWithFiles(t, s, s.igConv, "[vídeo]", [{ name: "clipe.mp4", mimeType: "video/mp4" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.calls.map((c) => c.body.message.attachment.type)).toEqual(["audio", "video"]);
+  });
+
+  test("áudio/vídeo empurram o cursor do canal mais que uma imagem", async () => {
+    const cursorAfter = async (spec: FileSpec) => {
+      const t = convexTest(schema, modules);
+      const s = await seed(t);
+      graph([ok("x")]);
+      const before = Date.now();
+      await sendWithFiles(t, s, s.igConv, "[arquivo]", [spec]);
+      const row = await t.run(async (ctx) => (await ctx.db.query("channelPacing").collect())[0]);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      return row.nextDispatchAt - before;
+    };
+    const light = await cursorAfter({ name: "a.png", mimeType: "image/png" });
+    const heavy = await cursorAfter({ name: "a.mp4", mimeType: "video/mp4" });
+    expect(heavy - light).toBeGreaterThanOrEqual(900);
+  });
+
+  test("áudio webm gravado no navegador não é aceito pelo IG (falha clara)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const g = graph([ok("nunca")]);
+    const id = await sendWithFiles(t, s, s.igConv, "[áudio]", [{ name: "nota.webm", mimeType: "audio/webm" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(g.fn).not.toHaveBeenCalled();
+    expect((await getMessage(t, id)).deliveryStatus).toBe("failed");
   });
 });
 

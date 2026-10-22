@@ -23,6 +23,7 @@ import {
   internalQuery,
   ActionCtx,
   MutationCtx,
+  QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -40,10 +41,16 @@ import {
   CLEARED_LAST_MESSAGE_PATCH,
   findLastPreviewMessage,
   lastMessageFieldsPatch,
+  refreshLastMessagePreviewIfLast,
 } from "./lib/conversationListFields";
 import {
   OUTSIDE_WINDOW_COPY,
+  buildMediaPayload,
+  buildReactionPayload,
+  buildSenderActionPayload,
   buildTextPayload,
+  checkMetaOutboundMedia,
+  type MetaMediaKind,
   classifyMetaError,
   last4,
   metaConversationWindow,
@@ -51,6 +58,26 @@ import {
   splitMetaText,
   viaAppFor,
 } from "./lib/metaSend";
+import {
+  DELETED_BY_CUSTOMER_COPY,
+  EDIT_CONTENT_MAX_CHARS,
+  MEDIA_EXPIRED,
+  MEDIA_TOO_LARGE,
+  META_MAX_ATTACHMENTS,
+  META_MEDIA_MAX_BYTES,
+  META_MEDIA_TIMEOUT_MS,
+  MediaOutcome,
+  appendEditHistory,
+  composeInbound,
+  fileNameFor,
+  isDownloadable,
+  nextReactions,
+  reactionEmoji,
+  resolveMime,
+  scrubbedDeletedMetadata,
+} from "./lib/metaInbound";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deleteFileRow } from "./lib/storageUsage";
 import {
   MetaAttachment,
   MetaEvent,
@@ -228,19 +255,6 @@ function redirect(url: string): Response {
   return new Response(null, { status: 302, headers: { Location: url } });
 }
 
-const PLACEHOLDER_BY_TYPE: Record<MetaAttachment["type"], string> = {
-  image: "[imagem]",
-  video: "[vídeo]",
-  audio: "[áudio]",
-  file: "[arquivo]",
-  story_mention: "[menção em story]",
-  ig_post: "[post]",
-  ig_reel: "[reel]",
-  like_heart: "[curtiu]",
-  sticker: "[sticker]",
-  fallback: "[anexo]",
-  other: "[anexo]",
-};
 
 type GraphResult = { ok: boolean; status: number; body: Record<string, unknown> };
 
@@ -446,6 +460,98 @@ async function fetchMetaProfile(
   }
 }
 
+/** Lê o corpo até `max` bytes; passou do teto = null (cancela o stream). */
+async function readCapped(res: Response, max: number): Promise<Uint8Array | null> {
+  if (!res.body) {
+    const buf = new Uint8Array(await res.arrayBuffer());
+    return buf.byteLength > max ? null : buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Baixa os anexos de mídia (máx. 10) e grava pelo porto único
+ * `internalSaveInboundAttachment` (allowlist de mime + cota). Sem token da Meta
+ * na requisição: a URL do CDN já vem assinada. Nunca lança nem loga URL/mid.
+ * `outcomes[i]` fica `undefined` para o que não se baixa (post, reel, curtida…).
+ */
+async function downloadMetaAttachments(
+  ctx: ActionCtx,
+  organizationId: Id<"organizations">,
+  surface: MetaSurface,
+  attachments: MetaAttachment[]
+): Promise<{ outcomes: Array<MediaOutcome | undefined>; fileIds: Id<"files">[] }> {
+  const outcomes: Array<MediaOutcome | undefined> = [];
+  const fileIds: Id<"files">[] = [];
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i];
+    if (att.type !== "image" && att.type !== "video" && att.type !== "audio" && att.type !== "file" && att.type !== "story_mention") {
+      outcomes.push(undefined);
+      continue;
+    }
+    if (!isDownloadable(att)) {
+      outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+      continue;
+    }
+    try {
+      const res = await fetch(att.url!, { signal: AbortSignal.timeout(META_MEDIA_TIMEOUT_MS) });
+      if (!res.ok) {
+        outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+        continue;
+      }
+      const declared = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > META_MEDIA_MAX_BYTES) {
+        await res.body?.cancel().catch(() => {});
+        outcomes.push({ kind: "unavailable", reason: MEDIA_TOO_LARGE });
+        continue;
+      }
+      const bytes = await readCapped(res, META_MEDIA_MAX_BYTES);
+      if (!bytes) {
+        outcomes.push({ kind: "unavailable", reason: MEDIA_TOO_LARGE });
+        continue;
+      }
+      const mime = resolveMime(res.headers.get("content-type"), att);
+      const storageId = await ctx.storage.store(new Blob([bytes as BlobPart], { type: mime }));
+      const saved = await ctx.runMutation(internal.whatsapp.internalSaveInboundAttachment, {
+        organizationId,
+        storageId,
+        name: fileNameFor(surface, att, mime, i),
+        mimeType: mime,
+        size: bytes.byteLength,
+      });
+      if (saved.ok) {
+        outcomes.push({ kind: "saved", fileId: saved.fileId, mime });
+        fileIds.push(saved.fileId);
+      } else {
+        outcomes.push({ kind: "unavailable", reason: saved.reason });
+      }
+    } catch (e) {
+      console.warn(`meta-messaging: download de mídia falhou (${surface}): ${e instanceof Error ? e.name : "erro"}`);
+      outcomes.push({ kind: "unavailable", reason: MEDIA_EXPIRED });
+    }
+  }
+  return { outcomes, fileIds };
+}
+
 export const internalIngestEvent = internalAction({
   args: { configId: v.id("channelConfigs"), event: metaEventValidator },
   returns: v.null(),
@@ -464,8 +570,33 @@ export const internalIngestEvent = internalAction({
       await handleReceipt(ctx, config, event);
       return null;
     }
+    if (event.kind === "deleted") {
+      await ctx.runMutation(internal.metaMessaging.internalApplyMetaDeleted, { configId: args.configId, mid: event.mid });
+      return null;
+    }
+    if (event.kind === "edited") {
+      const edited = event.text?.trim() ?? "";
+      if (edited) {
+        await ctx.runMutation(internal.metaMessaging.internalApplyMetaEdited, {
+          configId: args.configId,
+          mid: event.mid,
+          text: edited,
+        });
+      }
+      return null;
+    }
+    if (event.kind === "reaction") {
+      await ctx.runMutation(internal.metaMessaging.internalApplyMetaReaction, {
+        configId: args.configId,
+        mid: event.mid,
+        action: event.action,
+        ...(event.emoji ? { emoji: event.emoji } : {}),
+        ...(event.reaction ? { reaction: event.reaction } : {}),
+      });
+      return null;
+    }
     if (event.kind !== "message" && event.kind !== "unsupported") {
-      // F2 (reação, edição, apagada, postback) trata; aqui só registro curto.
+      // Postback e referral ficam para a F3/F4; aqui só registro curto.
       console.log(`meta-messaging: ${event.kind} (${event.surface}) ignorado nesta fase`);
       return null;
     }
@@ -479,23 +610,17 @@ export const internalIngestEvent = internalAction({
 
     let content: string;
     const metadata: Record<string, unknown> = {};
+    const text = event.kind === "message" ? (event.text?.trim() ?? "") : "";
+    const atts = event.kind === "message" ? event.attachments.slice(0, META_MAX_ATTACHMENTS) : [];
     if (event.kind === "unsupported") {
       content = "[mensagem não suportada]";
       metadata.metaType = "unsupported";
     } else {
-      const text = event.text?.trim() ?? "";
-      const first = event.attachments[0];
-      if (!text && !first) {
+      if (!text && atts.length === 0) {
         console.log(`meta-messaging: mensagem vazia (${event.surface}) ignorada`);
         return null;
       }
-      content = text || PLACEHOLDER_BY_TYPE[first.type];
-      metadata.metaType = text ? "text" : first.type;
-      if (event.attachments.length > 0) {
-        // F2 baixa a mídia (as URLs da Meta expiram). Nada é baixado nesta fase.
-        metadata.mediaPending = true;
-        metadata.metaAttachments = event.attachments.slice(0, 10);
-      }
+      content = text; // o conteúdo final sai de composeInbound, depois do download
       if (event.replyToMid) metadata.replyToMid = event.replyToMid;
       if (event.referral) metadata.referral = event.referral;
       if (event.storyReply) metadata.storyReply = event.storyReply;
@@ -526,13 +651,27 @@ export const internalIngestEvent = internalAction({
       }
     }
 
+    // D7: baixa a mídia ANTES de gravar (as URLs da Meta expiram). Nada aqui
+    // lança: o pior caso é a mensagem sem anexo, com `mediaUnavailable`.
+    let contentType: "text" | "image" | "file" | "audio" = "text";
+    let fileIds: Id<"files">[] = [];
+    if (event.kind === "message") {
+      const media = await downloadMetaAttachments(ctx, config.organizationId, event.surface, atts);
+      const composed = composeInbound(text, atts, media.outcomes);
+      content = composed.content;
+      contentType = composed.contentType;
+      fileIds = media.fileIds;
+      Object.assign(metadata, composed.metadata);
+    }
+
     await ctx.runMutation(internal.conversations.internalReceiveMessage, {
       organizationId: routed.organizationId,
       leadId: routed.leadId,
       channel: event.surface,
       channelConfigId: args.configId,
       content,
-      contentType: "text",
+      contentType,
+      ...(fileIds.length > 0 ? { attachments: fileIds } : {}),
       externalId: event.mid,
       metadata,
     });
@@ -542,7 +681,6 @@ export const internalIngestEvent = internalAction({
 
 // ── Envio (F1, D4) ──
 
-const OUTBOUND_MEDIA_COPY = "Mídia por Instagram/Messenger chega na próxima versão.";
 const CHANNEL_DISABLED_COPY = "Canal desativado. Reative em Configurações > Canais.";
 const RECONNECT_COPY = "Este canal precisa ser reconectado. Reconecte em Configurações > Canais.";
 const NO_RECIPIENT_COPY = "Não encontramos o destinatário desta conversa neste canal.";
@@ -555,6 +693,36 @@ const ECHO_RECONCILE_DELAY_MS = 15000;
 // Reavaliações do eco em corrida antes de decidir "device" (1ª + UMA a mais).
 const ECHO_MAX_RECONCILES = 2;
 const NO_MID_NOTE = "Enviada, mas a Meta não devolveu o id da mensagem.";
+
+/**
+ * Destino de uma conversa Meta: config estrito, conexão da mesma org e o
+ * destinatário (identidade do contato PARA o config da conversa).
+ */
+async function loadMetaTarget(
+  ctx: QueryCtx,
+  conversation: Doc<"conversations">
+): Promise<{
+  config: Doc<"channelConfigs"> | null;
+  connection: Doc<"metaConnections"> | null;
+  recipientId: string | null;
+}> {
+  const config = await resolveConversationChannelConfig(ctx, conversation);
+  const conn = config?.metaConnectionId ? await ctx.db.get(config.metaConnectionId) : null;
+  const connection = conn && conn.organizationId === conversation.organizationId ? conn : null;
+  let recipientId: string | null = null;
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  const contactId = lead?.contactId;
+  if (config && contactId) {
+    const identities = await ctx.db
+      .query("contactChannelIdentities")
+      .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+      .take(50);
+    recipientId =
+      identities.find((i) => i.channelConfigId === config._id && i.organizationId === conversation.organizationId)
+        ?.externalId ?? null;
+  }
+  return { config, connection, recipientId };
+}
 
 /**
  * Tudo que o dispatcher precisa numa leitura. O destino é a identidade do
@@ -577,6 +745,15 @@ export const internalGetMetaDispatchContext = internalQuery({
       demoMode: v.boolean(),
       openedByAd: v.boolean(),
       hasAttachments: v.boolean(),
+      files: v.array(
+        v.object({
+          fileId: v.id("files"),
+          name: v.string(),
+          mimeType: v.string(),
+          size: v.number(),
+          storageId: v.string(),
+        })
+      ),
     })
   ),
   handler: async (ctx, args) => {
@@ -586,21 +763,14 @@ export const internalGetMetaDispatchContext = internalQuery({
     if (!conversation || conversation.organizationId !== message.organizationId) return null;
     if (conversation.channel !== "instagram" && conversation.channel !== "messenger") return null;
 
-    const config = await resolveConversationChannelConfig(ctx, conversation);
-    const connection = config?.metaConnectionId ? await ctx.db.get(config.metaConnectionId) : null;
+    const { config, connection, recipientId } = await loadMetaTarget(ctx, conversation);
 
-    let recipientId: string | null = null;
-    const lead = await getLeadRef(ctx.db, conversation.leadId);
-    const contactId = lead?.contactId;
-    if (config && contactId) {
-      const identities = await ctx.db
-        .query("contactChannelIdentities")
-        .withIndex("by_contact", (q) => q.eq("contactId", contactId))
-        .take(50);
-      recipientId =
-        identities.find(
-          (i) => i.channelConfigId === config._id && i.organizationId === conversation.organizationId
-        )?.externalId ?? null;
+    const files: Array<{ fileId: Id<"files">; name: string; mimeType: string; size: number; storageId: string }> = [];
+    for (const fileId of (message.attachments ?? []).slice(0, META_MAX_ATTACHMENTS)) {
+      const f = await ctx.db.get(fileId);
+      if (f && f.organizationId === message.organizationId) {
+        files.push({ fileId: f._id, name: f.name, mimeType: f.mimeType, size: f.size, storageId: f.storageId });
+      }
     }
 
     const quoted = message.metadata?.quoted as { externalId?: unknown } | undefined;
@@ -611,12 +781,13 @@ export const internalGetMetaDispatchContext = internalQuery({
       conversation,
       surface: conversation.channel,
       config,
-      connection: connection && connection.organizationId === conversation.organizationId ? connection : null,
+      connection,
       recipientId,
       replyToMid,
       demoMode: await isDemoOrg(ctx, message.organizationId),
       openedByAd: conversation.windowOpenedByAdAt !== undefined,
       hasAttachments: (message.attachments?.length ?? 0) > 0,
+      files,
     };
   },
 });
@@ -671,6 +842,8 @@ function midOf(body: unknown): string | null {
   return typeof mid === "string" && mid ? mid : null;
 }
 
+type OutboundFile = { fileId: Id<"files">; name: string; mimeType: string; size: number; storageId: string };
+
 async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): Promise<void> {
   const context = await ctx.runQuery(internal.metaMessaging.internalGetMetaDispatchContext, { messageId });
   if (!context) return;
@@ -707,9 +880,21 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
   if (!recipientId) return await fail(NO_RECIPIENT_COPY);
 
   const text = (message.content ?? "").trim();
-  if (context.hasAttachments && isPlaceholderText(text)) return await fail(OUTBOUND_MEDIA_COPY);
-  const parts = splitMetaText(text, surface);
-  if (parts.length === 0) return await fail("Mensagem vazia.");
+  const files = context.files as OutboundFile[];
+  // Texto com anexo: o texto sai primeiro; só o placeholder ("[imagem]") não sai.
+  const parts = context.hasAttachments && isPlaceholderText(text) ? [] : splitMetaText(text, surface);
+
+  // Cada anexo vira uma parte própria (o Instagram não tem legenda). Tipo não
+  // suportado ou acima do limite falha SÓ aquela parte, com motivo claro.
+  const skipped: string[] = [];
+  const mediaJobs: Array<{ file: OutboundFile; kind: MetaMediaKind }> = [];
+  for (const file of files) {
+    const check = checkMetaOutboundMedia(surface, file);
+    if (check.ok) mediaJobs.push({ file, kind: check.kind });
+    else skipped.push(check.reason);
+  }
+  if (context.hasAttachments && files.length === 0) skipped.push("Anexo não encontrado.");
+  if (parts.length === 0 && mediaJobs.length === 0) return await fail(skipped.join(" ") || "Mensagem vazia.");
 
   const started: boolean = await ctx.runMutation(internal.metaMessaging.internalStampMetaDispatchStarted, {
     messageId,
@@ -723,16 +908,33 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
     pageId: connection.pageId,
     igAccountId: connection.igAccountId,
   });
-  // Texto com anexo: sai só o texto nesta fase (mídia de saída é F2).
-  const note = context.hasAttachments ? `${OUTBOUND_MEDIA_COPY} Só o texto foi enviado.` : undefined;
+
+  type Job = { kind: "text"; text: string } | { kind: "media"; file: OutboundFile; mediaKind: MetaMediaKind };
+  const jobs: Job[] = [
+    ...parts.map((t): Job => ({ kind: "text", text: t })),
+    ...mediaJobs.map((m): Job => ({ kind: "media", file: m.file, mediaKind: m.kind })),
+  ];
 
   const mids: string[] = [];
   let acceptedWithoutMid = false;
-  for (const part of parts) {
-    const payload = buildTextPayload(surface, recipientId, part, {
+  let attempted = 0;
+  for (const job of jobs) {
+    const replyOpts = {
       messageId,
-      ...(replyToMid && mids.length === 0 && !acceptedWithoutMid ? { replyToMid } : {}),
-    });
+      ...(replyToMid && attempted === 0 ? { replyToMid } : {}),
+    };
+    let payload: Record<string, unknown>;
+    if (job.kind === "text") {
+      payload = buildTextPayload(surface, recipientId, job.text, replyOpts);
+    } else {
+      const fileUrl = await ctx.storage.getUrl(job.file.storageId as Id<"_storage">);
+      if (!fileUrl) {
+        skipped.push(`Anexo "${job.file.name}" não enviado: arquivo indisponível.`);
+        continue;
+      }
+      payload = buildMediaPayload(surface, recipientId, job.mediaKind, fileUrl, replyOpts);
+    }
+    attempted++;
     const res = await postSend(url, token, payload);
     if (res.ok) {
       const mid = midOf(res.body);
@@ -758,8 +960,8 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
       });
     }
     if (mids.length > 0 || acceptedWithoutMid) {
-      // Parte do texto já saiu: reenviar duplicaria. Registra o que saiu + o motivo.
-      const partial = `Só ${mids.length} de ${parts.length} partes foram enviadas. ${cls.userMessage}`;
+      // Parte já saiu: reenviar duplicaria. Registra o que saiu + o motivo.
+      const partial = [`Só ${mids.length} de ${jobs.length} partes foram enviadas. ${cls.userMessage}`, ...skipped].join(" ");
       if (mids.length > 0) {
         await ctx.runMutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId, mids, note: partial });
       } else {
@@ -775,11 +977,12 @@ async function dispatchMetaMessage(ctx: ActionCtx, messageId: Id<"messages">): P
       if (rescheduled) return;
       return await fail(`${cls.userMessage} (tentativas esgotadas)`, cls.code);
     }
-    return await fail(cls.userMessage, cls.code);
+    return await fail([cls.userMessage, ...skipped].join(" "), cls.code);
   }
 
-  const finalNote = [note, acceptedWithoutMid ? NO_MID_NOTE : undefined].filter(Boolean).join(" ") || undefined;
+  const finalNote = [...skipped, acceptedWithoutMid ? NO_MID_NOTE : undefined].filter(Boolean).join(" ") || undefined;
   if (mids.length === 0) {
+    if (!acceptedWithoutMid) return await fail(skipped.join(" ") || "Mensagem vazia.");
     await ctx.runMutation(internal.metaMessaging.internalMarkMetaSentWithoutMid, {
       messageId,
       note: finalNote ?? NO_MID_NOTE,
@@ -1142,6 +1345,273 @@ export const internalFindMessageByMid = internalQuery({
   },
 });
 
+// ── F2: apagada, editada e reação de entrada ──
+
+/**
+ * Mensagem pelo mid (externalId ou parte em `metaSentMids`), só se pertence a
+ * uma conversa DESTE config (mesma org e canal): o mid vem do payload do cliente.
+ */
+async function findMetaMessage(
+  ctx: MutationCtx,
+  config: Doc<"channelConfigs">,
+  mid: string
+): Promise<Doc<"messages"> | null> {
+  let message = await ctx.db
+    .query("messages")
+    .withIndex("by_organization_and_external_id", (q) =>
+      q.eq("organizationId", config.organizationId).eq("externalId", mid)
+    )
+    .first();
+  if (!message) {
+    const sent = await ctx.db
+      .query("metaSentMids")
+      .withIndex("by_organization_and_mid", (q) => q.eq("organizationId", config.organizationId).eq("mid", mid))
+      .first();
+    message = sent ? await ctx.db.get(sent.messageId) : null;
+  }
+  if (!message || message.organizationId !== config.organizationId) return null;
+  const conversation = await ctx.db.get(message.conversationId);
+  if (!conversation || conversation.organizationId !== config.organizationId) return null;
+  if (conversation.channel !== config.channel) return null;
+  if (conversation.channelConfigId && conversation.channelConfigId !== config._id) return null;
+  return message;
+}
+
+/**
+ * O cliente apagou a mensagem (§11): some o conteúdo, a descrição da imagem, a
+ * transcrição e o blob (salvo se outro `files` o compartilha, ex. encaminhamento).
+ * Só mensagens recebidas. Audit `high` SEM texto: só contagens e o fim do mid.
+ */
+export const internalApplyMetaDeleted = internalMutation({
+  args: { configId: v.id("channelConfigs"), mid: v.string() },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) return null;
+    const message = await findMetaMessage(ctx, config, args.mid);
+    if (!message || message.direction !== "inbound") return null;
+    if (message.metadata?.deletedByCustomer === true) return message._id;
+
+    const now = Date.now();
+    let filesRemoved = 0;
+    let blobsRemoved = 0;
+    for (const fileId of message.attachments ?? []) {
+      const file = await ctx.db.get(fileId);
+      if (!file || file.organizationId !== message.organizationId) continue;
+      if (await deleteBlobIfUnreferenced(ctx, file)) blobsRemoved++;
+      await deleteFileRow(ctx, file);
+      filesRemoved++;
+    }
+
+    const metadata = scrubbedDeletedMetadata(message.metadata, now);
+    await ctx.db.patch(message._id, {
+      content: DELETED_BY_CUSTOMER_COPY,
+      contentType: "text",
+      attachments: undefined,
+      imageDescription: undefined,
+      transcriptText: undefined,
+      metadata,
+    });
+    await refreshLastMessagePreviewIfLast(ctx, {
+      ...message,
+      content: DELETED_BY_CUSTOMER_COPY,
+      contentType: "text",
+      metadata,
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: message.organizationId,
+      entityType: "message",
+      entityId: message._id,
+      action: "delete",
+      actorType: "system",
+      changes: {
+        before: { contentType: message.contentType, attachments: filesRemoved },
+        after: { deletedByCustomer: true },
+      },
+      metadata: { channel: config.channel, midLast4: last4(args.mid), filesRemoved, blobsRemoved },
+      description: "O cliente apagou uma mensagem: conteúdo e anexos removidos",
+      severity: "high",
+      createdAt: now,
+    });
+    return message._id;
+  },
+});
+
+/** O cliente editou a mensagem: troca o texto e guarda até 5 versões anteriores. */
+export const internalApplyMetaEdited = internalMutation({
+  args: { configId: v.id("channelConfigs"), mid: v.string(), text: v.string() },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) return null;
+    const text = args.text.trim().slice(0, EDIT_CONTENT_MAX_CHARS);
+    if (!text) return null;
+    const message = await findMetaMessage(ctx, config, args.mid);
+    if (!message || message.direction !== "inbound") return null;
+    if (message.metadata?.deletedByCustomer === true) return null;
+    if (message.content === text) return message._id;
+
+    const now = Date.now();
+    const metadata = {
+      ...(message.metadata ?? {}),
+      edited: true,
+      editedAt: now,
+      editHistory: appendEditHistory(message.metadata?.editHistory, message.content, now),
+    };
+    await ctx.db.patch(message._id, { content: text, metadata });
+    await refreshLastMessagePreviewIfLast(ctx, { ...message, content: text, metadata });
+    return message._id;
+  },
+});
+
+/**
+ * Reação do cliente (`metadata.reactions`, mesmo formato do WhatsApp; o cliente
+ * é o remetente "contact"). `unreact` remove. Reação não é mensagem: não mexe
+ * em contadores nem acorda a IA.
+ */
+export const internalApplyMetaReaction = internalMutation({
+  args: {
+    configId: v.id("channelConfigs"),
+    mid: v.string(),
+    action: v.union(v.literal("react"), v.literal("unreact")),
+    emoji: v.optional(v.string()),
+    reaction: v.optional(v.string()),
+  },
+  returns: v.union(v.id("messages"), v.null()),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) return null;
+    const emoji = args.action === "unreact" ? "" : reactionEmoji(args);
+    if (emoji === null) return null; // reação desconhecida: ignora
+    const message = await findMetaMessage(ctx, config, args.mid);
+    if (!message) return null;
+    const reactions = nextReactions(message.metadata?.reactions, { sender: "contact", emoji, at: Date.now() });
+    await ctx.db.patch(message._id, { metadata: { ...(message.metadata ?? {}), reactions } });
+    return message._id;
+  },
+});
+
+// ── F2: reação de saída, mark_seen e typing ──
+
+const senderActionValidator = v.union(v.literal("mark_seen"), v.literal("typing_on"), v.literal("typing_off"));
+
+async function handleBestEffortFailure(
+  ctx: ActionCtx,
+  connectionId: Id<"metaConnections">,
+  res: { status: number; body: unknown },
+  what: string
+): Promise<void> {
+  const cls = classifyMetaError(res.status, res.body);
+  console.warn(`meta-messaging: ${what} recusada (${cls.kind}${cls.code !== undefined ? ` ${cls.code}` : ""})`);
+  if (cls.kind === "token_invalid") {
+    await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+      connectionId,
+      detail: `Erro ${cls.code ?? 190} em ${what}`,
+    });
+  }
+}
+
+/**
+ * Reação do atendente no Instagram: `sender_action` react/unreact com `love`
+ * (a Graph só documenta essa; qualquer emoji vira `love`, a nota já foi gravada
+ * por `reactToMessage`). Messenger não tem API de reação de saída: no-op. Sem
+ * mid da Meta também. Best-effort: erro só é logado (190 marca a conexão).
+ */
+export const internalDispatchReaction = internalAction({
+  args: { messageId: v.id("messages"), emoji: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    try {
+      const context = await ctx.runQuery(internal.metaMessaging.internalGetMetaDispatchContext, {
+        messageId: args.messageId,
+      });
+      if (!context || context.demoMode === true || context.surface !== "instagram") return null;
+      const message = context.message as Doc<"messages">;
+      const connection = context.connection as Doc<"metaConnections"> | null;
+      const config = context.config as Doc<"channelConfigs"> | null;
+      const recipientId = context.recipientId as string | null;
+      const metaMids = message.metadata?.metaMids;
+      const mid =
+        message.externalId ?? (Array.isArray(metaMids) && typeof metaMids[0] === "string" ? metaMids[0] : null);
+      if (!mid || !recipientId || !config || config.status !== "active") return null;
+      if (!connection || connection.authState !== "ok" || !connection.tokenEncrypted) return null;
+
+      const token = await decryptSecret(connection.tokenEncrypted);
+      const url = sendEndpoint({
+        authMethod: connection.authMethod,
+        surface: "instagram",
+        pageId: connection.pageId,
+        igAccountId: connection.igAccountId,
+      });
+      const res = await postSend(url, token, buildReactionPayload(recipientId, mid, args.emoji ? "react" : "unreact"));
+      if (!res.ok) await handleBestEffortFailure(ctx, connection._id, res, "reação");
+    } catch (e) {
+      console.warn(`meta-messaging: reação falhou: ${e instanceof Error ? e.name : "erro"}`);
+    }
+    return null;
+  },
+});
+
+/** Destino de uma conversa Meta para ações que não são mensagem (mark_seen, typing). */
+export const internalGetMetaConversationTarget = internalQuery({
+  args: { conversationId: v.id("conversations") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      surface: surfaceValidator,
+      recipientId: v.union(v.string(), v.null()),
+      connection: v.any(),
+      configActive: v.boolean(),
+      demoMode: v.boolean(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) return null;
+    if (conversation.channel !== "instagram" && conversation.channel !== "messenger") return null;
+    const { config, connection, recipientId } = await loadMetaTarget(ctx, conversation);
+    return {
+      surface: conversation.channel,
+      recipientId,
+      connection,
+      configActive: config?.status === "active",
+      demoMode: await isDemoOrg(ctx, conversation.organizationId),
+    };
+  },
+});
+
+/**
+ * `mark_seen` ao marcar a conversa como lida e `typing_on`/`typing_off` ao
+ * digitar. Best-effort: não falha a mutation que agendou; erro só é logado
+ * (190 marca a conexão como `reauth_required`, como no envio).
+ */
+export const internalSenderAction = internalAction({
+  args: { conversationId: v.id("conversations"), action: senderActionValidator },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    try {
+      const target = await ctx.runQuery(internal.metaMessaging.internalGetMetaConversationTarget, {
+        conversationId: args.conversationId,
+      });
+      if (!target || target.demoMode || !target.configActive || !target.recipientId) return null;
+      const connection = target.connection as Doc<"metaConnections"> | null;
+      if (!connection || connection.authState !== "ok" || !connection.tokenEncrypted) return null;
+      const token = await decryptSecret(connection.tokenEncrypted);
+      const url = sendEndpoint({
+        authMethod: connection.authMethod,
+        surface: target.surface,
+        pageId: connection.pageId,
+        igAccountId: connection.igAccountId,
+      });
+      const res = await postSend(url, token, buildSenderActionPayload(target.recipientId, args.action));
+      if (!res.ok) await handleBestEffortFailure(ctx, connection._id, res, args.action);
+    } catch (e) {
+      console.warn(`meta-messaging: ${args.action} falhou: ${e instanceof Error ? e.name : "erro"}`);
+    }
+    return null;
+  },
+});
+
 type EchoEvent = Extract<MetaEvent, { kind: "echo" }>;
 
 /**
@@ -1197,30 +1667,27 @@ async function handleEcho(
 
   // Enviada por alguém fora do CRM (Business Suite, app do celular, outro app).
   const text = event.text?.trim() ?? "";
-  const first = event.attachments[0];
-  if (!text && !first) return;
+  const atts = event.attachments.slice(0, META_MAX_ATTACHMENTS);
+  if (!text && atts.length === 0) return;
   const routed = await ctx.runMutation(internal.metaMessaging.internalRouteMetaInbound, {
     configId: config._id,
     surface: event.surface,
     userId: event.userId,
   });
   if (!routed) return;
+  const media = await downloadMetaAttachments(ctx, config.organizationId, event.surface, atts);
+  const composed = composeInbound(text, atts, media.outcomes);
   await ctx.runMutation(internal.conversations.internalReceiveDeviceMessage, {
     organizationId: routed.organizationId,
     leadId: routed.leadId,
     channel: event.surface,
     channelConfigId: config._id,
-    content: text || PLACEHOLDER_BY_TYPE[first.type],
-    contentType: "text",
+    content: composed.content,
+    contentType: composed.contentType,
+    ...(media.fileIds.length > 0 ? { attachments: media.fileIds } : {}),
     externalId: event.mid,
     sentAt: event.timestamp,
-    metadata: {
-      viaApp: viaAppFor(event.appId),
-      metaType: text ? "text" : first.type,
-      ...(event.attachments.length > 0
-        ? { mediaPending: true, metaAttachments: event.attachments.slice(0, 10) }
-        : {}),
-    },
+    metadata: { viaApp: viaAppFor(event.appId), ...composed.metadata },
   });
 }
 

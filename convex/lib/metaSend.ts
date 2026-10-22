@@ -127,7 +127,7 @@ export function buildTextPayload(
 
 export type MetaMediaKind = "image" | "audio" | "video" | "file";
 
-/** Mídia de saída é F2; aqui só o formato da Send API por URL. */
+/** Formato da Send API para mídia por URL (F2). */
 export function buildMediaPayload(
   surface: MetaSurface,
   userId: string,
@@ -161,6 +161,97 @@ export function mediaKindForMime(surface: MetaSurface, mime: string): MetaMediaK
   if (surface === "messenger") return m ? "file" : null;
   // Instagram aceita arquivo só como PDF.
   return m === "application/pdf" ? "file" : null;
+}
+
+// ── Reação de saída (Instagram) ──
+
+/** A Graph só documenta `love` para reagir no Instagram: qualquer emoji vira `love`. */
+export function buildReactionPayload(
+  userId: string,
+  mid: string,
+  action: "react" | "unreact"
+): MetaSendPayload {
+  return {
+    recipient: { id: userId },
+    sender_action: action,
+    payload: action === "react" ? { message_id: mid, reaction: "love" } : { message_id: mid },
+  };
+}
+
+export const REACTION_NOTE_LOCAL_ONLY = "Reação visível só no HNBCRM";
+export const REACTION_NOTE_AS_LOVE = "Enviada como ❤️ (o Instagram só aceita essa reação pela API)";
+export const REACTION_NOTE_NO_MID = "Reação visível só no HNBCRM (mensagem sem id da Meta)";
+
+const LOVE_EMOJIS = new Set(["❤️", "❤", "♥️", "♥"]);
+
+/** Nota a gravar em `metadata.reactionNote` (ausente = nada a avisar). `emoji` vazio = remoção. */
+export function reactionNoteFor(surface: MetaSurface, emoji: string, hasMid: boolean): string | undefined {
+  if (!emoji) return undefined;
+  if (surface === "messenger") return REACTION_NOTE_LOCAL_ONLY;
+  if (!hasMid) return REACTION_NOTE_NO_MID;
+  return LOVE_EMOJIS.has(emoji) ? undefined : REACTION_NOTE_AS_LOVE;
+}
+
+// ── Mídia de saída: o que cada superfície aceita ──
+
+const MB = 1024 * 1024;
+const IG_IMAGE = new Set(["image/png", "image/jpeg", "image/jpg"]);
+const IG_AUDIO = new Set(["audio/aac", "audio/mp4", "audio/x-m4a", "audio/m4a", "audio/wav", "audio/x-wav", "audio/wave"]);
+const IG_VIDEO = new Set([
+  "video/mp4",
+  "video/ogg",
+  "video/avi",
+  "video/x-msvideo",
+  "video/quicktime",
+  "video/webm",
+]);
+
+export type MetaMediaCheck =
+  | { ok: true; kind: MetaMediaKind; heavy: boolean }
+  | { ok: false; reason: string };
+
+const surfaceName = (s: MetaSurface) => (s === "instagram" ? "Instagram" : "Messenger");
+
+/** Áudio e vídeo contam como envio "pesado" no ritmo do canal (10/s no Instagram). */
+export function isHeavyMime(mime: string): boolean {
+  const m = mime.toLowerCase();
+  return m.startsWith("audio/") || m.startsWith("video/");
+}
+
+/**
+ * Valida um anexo de saída: tipo aceito pela superfície e tamanho no teto
+ * (Instagram: imagem png/jpeg 8 MB; áudio/vídeo/PDF 25 MB; Messenger: 25 MB).
+ * Recusa devolve a frase para `dispatchNote`.
+ */
+export function checkMetaOutboundMedia(
+  surface: MetaSurface,
+  file: { name: string; mimeType: string; size: number }
+): MetaMediaCheck {
+  const mime = file.mimeType.toLowerCase().split(";")[0].trim();
+  const label = `"${file.name}"`;
+  let kind: MetaMediaKind | null = null;
+  let max = 25 * MB;
+  if (surface === "instagram") {
+    if (IG_IMAGE.has(mime)) {
+      kind = "image";
+      max = 8 * MB;
+    } else if (IG_AUDIO.has(mime)) kind = "audio";
+    else if (IG_VIDEO.has(mime)) kind = "video";
+    else if (mime === "application/pdf") kind = "file";
+  } else if (mime.startsWith("image/")) kind = "image";
+  else if (mime.startsWith("audio/")) kind = "audio";
+  else if (mime.startsWith("video/")) kind = "video";
+  else if (mime) kind = "file";
+  if (!kind) {
+    return { ok: false, reason: `Anexo ${label} não enviado: o ${surfaceName(surface)} não aceita este tipo de arquivo.` };
+  }
+  if (file.size > max) {
+    return {
+      ok: false,
+      reason: `Anexo ${label} não enviado: passa do limite de ${max / MB} MB do ${surfaceName(surface)}.`,
+    };
+  }
+  return { ok: true, kind, heavy: kind === "audio" || kind === "video" };
 }
 
 // ── Erros ──

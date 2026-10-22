@@ -20,7 +20,7 @@ import { Doc, Id } from "../_generated/dataModel";
 
 export type ConversationRuntime = Doc<"conversationRuntime">;
 
-type RuntimeField = "contactPresence" | "aiTurnLock" | "nextDispatchAt";
+type RuntimeField = "contactPresence" | "aiTurnLock" | "nextDispatchAt" | "metaTypingAt";
 
 export type RuntimePatch = Partial<Pick<ConversationRuntime, RuntimeField>>;
 

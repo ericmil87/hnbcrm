@@ -14,10 +14,22 @@ import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { resolveConversationChannelConfig } from "./channelResolve";
 import { claimChannelSlot } from "./whatsappDispatch";
-import { metaConversationWindow, OUTSIDE_WINDOW_COPY } from "./metaSend";
+import { isHeavyMime, metaConversationWindow, OUTSIDE_WINDOW_COPY } from "./metaSend";
 
 export const NO_META_CHANNEL_COPY =
   "Esta conversa não tem um canal do Instagram/Messenger conectado. Verifique em Configurações > Canais.";
+
+/** Áudio/vídeo contam como envio "pesado": a Meta limita a ~10/s (texto ~100/s). */
+export const HEAVY_MEDIA_EXTRA_GAP_MS = 1000;
+
+async function hasHeavyAttachment(ctx: MutationCtx, messageId: Id<"messages">): Promise<boolean> {
+  const message = await ctx.db.get(messageId);
+  for (const fileId of (message?.attachments ?? []).slice(0, 10)) {
+    const file = await ctx.db.get(fileId);
+    if (file && isHeavyMime(file.mimeType)) return true;
+  }
+  return false;
+}
 
 export async function scheduleMetaMessagingDispatch(
   ctx: MutationCtx,
@@ -47,6 +59,7 @@ export async function scheduleMetaMessagingDispatch(
     earliestAt: now,
     now,
     countSend: true,
+    ...((await hasHeavyAttachment(ctx, messageId)) ? { extraAdvanceMs: HEAVY_MEDIA_EXTRA_GAP_MS } : {}),
   });
   await ctx.scheduler.runAfter(slot - now, internal.metaMessaging.internalDispatchMessage, { messageId });
 }

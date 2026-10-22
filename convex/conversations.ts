@@ -16,7 +16,7 @@ import {
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
 import { ChannelTransport, configTransport } from "./lib/channelTransport";
-import { metaWindowClosesAt } from "./lib/metaSend";
+import { metaConversationWindow, metaWindowClosesAt, reactionNoteFor } from "./lib/metaSend";
 import {
   appendReadBy,
   GROUP_ACTIVITY_GRANULARITY_MS,
@@ -2866,15 +2866,28 @@ export const reactToMessage = mutation({
       args.emoji.length > 0
         ? [...withoutSender, { emoji: args.emoji, sender: member._id, senderName: member.name, at: now }]
         : withoutSender;
-    await ctx.db.patch(message._id, {
-      metadata: { ...(message.metadata ?? {}), reactions: next },
-    });
+    // Instagram/Messenger: o que a Meta não reproduz fica dito na própria mensagem
+    // (`reactionNote`): Messenger não tem reação de saída; Instagram só aceita ❤️.
+    const metaSurface =
+      conversation.channel === "instagram" || conversation.channel === "messenger" ? conversation.channel : null;
+    const nextMetadata: Record<string, unknown> = { ...(message.metadata ?? {}), reactions: next };
+    if (metaSurface) {
+      const note = reactionNoteFor(metaSurface, args.emoji, !!message.externalId);
+      if (note) nextMetadata.reactionNote = note;
+      else delete nextMetadata.reactionNote;
+    }
+    await ctx.db.patch(message._id, { metadata: nextMetadata });
 
-    // Provider push only for the whatsapp channel; other channels stay local-only.
+    // Provider push: WhatsApp (bridge/Meta) e Instagram/Messenger; o resto fica local.
     if (conversation.channel === "whatsapp") {
       await ctx.scheduler.runAfter(0, internal.whatsapp.internalDispatchReaction, {
         messageId: message._id,
         emoji: args.emoji,
+      });
+    } else if (metaSurface) {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalDispatchReaction, {
+        messageId: message._id,
+        emoji: args.emoji.length > 0 ? args.emoji : null,
       });
     }
     return null;
@@ -2924,6 +2937,15 @@ export const markConversationRead = mutation({
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
     await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+
+    // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).
+    if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalSenderAction, {
+        conversationId: args.conversationId,
+        action: "mark_seen",
+      });
+      return null;
+    }
 
     // Recibo só para quem tem id do provedor. `metadata.readAt` legado (antes da
     // fase 2) continua respeitado, para não reenviar recibo de mensagem antiga
@@ -3087,6 +3109,26 @@ export const sendTypingState = mutation({
 
     await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
 
+    if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+      // Meta Messaging F2: typing_on/typing_off, só dentro da janela de serviço.
+      // `typing_on` com throttle de 5 s por conversa; `typing_off` só se houve `on`.
+      const now = Date.now();
+      if (!metaConversationWindow(conversation.channel, conversation, now).open) return null;
+      const runtime = await getRuntime(ctx, conversation._id);
+      const ref = { organizationId: conversation.organizationId, conversationId: conversation._id };
+      if (args.state === "composing") {
+        if (runtime?.metaTypingAt !== undefined && now - runtime.metaTypingAt < 5000) return null;
+        await upsertRuntime(ctx, ref, { metaTypingAt: now }, runtime);
+      } else {
+        if (runtime?.metaTypingAt === undefined) return null;
+        await upsertRuntime(ctx, ref, { metaTypingAt: undefined }, runtime);
+      }
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalSenderAction, {
+        conversationId: conversation._id,
+        action: args.state === "composing" ? "typing_on" : "typing_off",
+      });
+      return null;
+    }
     if (conversation.channel !== "whatsapp") return null;
     const { config, toPhone } = await resolveWhatsappTarget(ctx, conversation);
     if (config && configProvider(config) === "bridge" && toPhone) {

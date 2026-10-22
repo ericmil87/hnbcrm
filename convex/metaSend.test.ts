@@ -4,6 +4,10 @@ import {
   META_WINDOW_MS,
   TEXT_LIMIT,
   buildMediaPayload,
+  buildReactionPayload,
+  checkMetaOutboundMedia,
+  isHeavyMime,
+  reactionNoteFor,
   buildSenderActionPayload,
   buildTextPayload,
   classifyMetaError,
@@ -175,5 +179,69 @@ describe("janela de serviço", () => {
     expect(metaConversationWindow("instagram", { lastInboundAt: now - 2 * META_WINDOW_MS }, now).open).toBe(false);
     expect(metaWindowClosesAt({})).toBeNull();
     expect(metaWindowClosesAt({ lastInboundAt: 10 })).toBe(10 + META_WINDOW_MS);
+  });
+});
+
+describe("F2: reação, mídia de saída e notas", () => {
+  const MB = 1024 * 1024;
+  const f = (mimeType: string, size = 1000, name = "arq") => ({ name, mimeType, size });
+
+  test("buildReactionPayload: react leva love; unreact só o mid", () => {
+    expect(buildReactionPayload("1", "mid", "react")).toEqual({
+      recipient: { id: "1" },
+      sender_action: "react",
+      payload: { message_id: "mid", reaction: "love" },
+    });
+    expect(buildReactionPayload("1", "mid", "unreact")).toEqual({
+      recipient: { id: "1" },
+      sender_action: "unreact",
+      payload: { message_id: "mid" },
+    });
+  });
+
+  test("Instagram: imagem só png/jpeg até 8 MB; áudio, vídeo e PDF até 25 MB", () => {
+    expect(checkMetaOutboundMedia("instagram", f("image/png", 8 * MB))).toEqual({ ok: true, kind: "image", heavy: false });
+    expect(checkMetaOutboundMedia("instagram", f("image/jpeg", 8 * MB + 1)).ok).toBe(false);
+    expect(checkMetaOutboundMedia("instagram", f("image/gif")).ok).toBe(false);
+    expect(checkMetaOutboundMedia("instagram", f("image/webp")).ok).toBe(false);
+    for (const a of ["audio/aac", "audio/mp4", "audio/x-m4a", "audio/wav"]) {
+      expect(checkMetaOutboundMedia("instagram", f(a, 25 * MB))).toEqual({ ok: true, kind: "audio", heavy: true });
+    }
+    expect(checkMetaOutboundMedia("instagram", f("audio/webm")).ok).toBe(false);
+    expect(checkMetaOutboundMedia("instagram", f("audio/ogg")).ok).toBe(false);
+    for (const v of ["video/mp4", "video/ogg", "video/avi", "video/quicktime", "video/webm"]) {
+      expect(checkMetaOutboundMedia("instagram", f(v, 25 * MB)).ok, v).toBe(true);
+    }
+    expect(checkMetaOutboundMedia("instagram", f("video/mp4", 25 * MB + 1)).ok).toBe(false);
+    expect(checkMetaOutboundMedia("instagram", f("application/pdf", 25 * MB))).toEqual({ ok: true, kind: "file", heavy: false });
+    expect(checkMetaOutboundMedia("instagram", f("application/zip")).ok).toBe(false);
+  });
+
+  test("Messenger: image/audio/video/file até 25 MB; motivo cita nome, superfície e limite", () => {
+    expect(checkMetaOutboundMedia("messenger", f("image/gif", 20 * MB))).toMatchObject({ ok: true, kind: "image" });
+    expect(checkMetaOutboundMedia("messenger", f("audio/webm"))).toMatchObject({ ok: true, kind: "audio" });
+    expect(checkMetaOutboundMedia("messenger", f("application/zip"))).toMatchObject({ ok: true, kind: "file" });
+    const big = checkMetaOutboundMedia("messenger", f("video/mp4", 26 * MB, "filme.mp4"));
+    expect(big.ok).toBe(false);
+    if (!big.ok) {
+      expect(big.reason).toContain("filme.mp4");
+      expect(big.reason).toContain("25 MB");
+      expect(big.reason).toContain("Messenger");
+    }
+  });
+
+  test("isHeavyMime: áudio e vídeo", () => {
+    expect(isHeavyMime("audio/mp4")).toBe(true);
+    expect(isHeavyMime("video/mp4")).toBe(true);
+    expect(isHeavyMime("image/png")).toBe(false);
+    expect(isHeavyMime("application/pdf")).toBe(false);
+  });
+
+  test("reactionNoteFor", () => {
+    expect(reactionNoteFor("messenger", "👍", true)).toBe("Reação visível só no HNBCRM");
+    expect(reactionNoteFor("instagram", "❤️", true)).toBeUndefined();
+    expect(reactionNoteFor("instagram", "👍", true)).toContain("❤️");
+    expect(reactionNoteFor("instagram", "👍", false)).toContain("só no HNBCRM");
+    expect(reactionNoteFor("instagram", "", true)).toBeUndefined();
   });
 });
