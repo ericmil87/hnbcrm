@@ -24,6 +24,9 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "conversationRuntime", index: "by_organization" },
   { table: "conversations", index: "by_organization" },
   { table: "conversationLabels", index: "by_organization" },
+  // Fase 4d: filhos de `groupChats` antes do pai.
+  { table: "groupParticipants", index: "by_organization" },
+  { table: "groupTimeline", index: "by_organization" },
   { table: "groupChats", index: "by_organization" },
   { table: "groupPosts", index: "by_organization" },
   { table: "scheduledMessages", index: "by_organization" },

@@ -16,6 +16,12 @@ import {
   resolvePermissions,
 } from "./permissions";
 import { groupParticipantsCountOf, syncGroupSummaryToConversation } from "./conversationListFields";
+import {
+  GroupParticipantRow,
+  GroupTimelineEntry,
+  isGroupMigrated,
+  upsertParticipant,
+} from "./groupParticipantsStore";
 
 /** Teto da linha do tempo da sala (FIFO, mesmo padrão de `campaigns.timeline`). */
 export const GROUP_TIMELINE_CAP = 100;
@@ -38,8 +44,7 @@ export const GROUP_ACTIVITY_GRANULARITY_MS = 60_000;
 export const GROUP_SUBJECT_CAP = 200;
 export const GROUP_TOPIC_CAP = 512;
 
-export type GroupParticipantRow = NonNullable<Doc<"groupChats">["participants"]>[number];
-export type GroupTimelineEntry = NonNullable<Doc<"groupChats">["timeline"]>[number];
+export type { GroupParticipantRow, GroupTimelineEntry } from "./groupParticipantsStore";
 
 /** Acrescenta um evento à linha do tempo da sala, respeitando o cap FIFO. */
 export function appendTimeline(
@@ -264,12 +269,47 @@ export async function recordParticipantFromMessage(
     }
     return contactId;
   }
-  const { list: participants, changed } = mergeParticipantWithFlag(group.participants, {
+  const incoming = {
     ...(sender.lid ? { lid: sender.lid } : {}),
     ...(sender.phone ? { phone: sender.phone } : {}),
     ...(sender.name ? { name: sender.name } : {}),
     ...(contactId ? { contactId } : {}),
-  });
+  };
+
+  // Fase 4d: a tabela `groupParticipants` recebe UM lookup por chave + patch
+  // só da linha (antes: merge linear em até 1.024 itens e o doc inteiro
+  // regravado). A regra de merge é a MESMA de `mergeParticipantWithFlag`.
+  const upsert = await upsertParticipant(
+    ctx,
+    group,
+    incoming,
+    (prev) => {
+      const { list, changed } = mergeParticipantWithFlag(prev ? [prev] : [], incoming);
+      return changed ? list[list.length - 1] : null;
+    },
+    now
+  );
+
+  if (isGroupMigrated(group)) {
+    // Membro NOVO e ativo muda a contagem (o que a lista e a conversa mostram);
+    // nome/LID de membro conhecido não toca no doc da sala.
+    const countDelta = upsert.inserted && upsert.row?.leftAt === undefined ? 1 : 0;
+    if (countDelta === 0 && activityPatch.lastMessageAt === undefined) return contactId;
+    const participantsCount = (group.participantsCount ?? 0) + countDelta;
+    await ctx.db.patch(group._id, {
+      ...(countDelta ? { participantsCount } : {}),
+      ...activityPatch,
+      updatedAt: now,
+    });
+    if (countDelta) {
+      await syncGroupSummaryToConversation(ctx, { ...group, participantsCount });
+    }
+    return contactId;
+  }
+
+  // Sala ainda NÃO migrada: o array legado segue sendo a fonte de leitura e é
+  // gravado junto (dual-write) até o `internalFinishGroupParticipantsMigration`.
+  const { list: participants, changed } = mergeParticipantWithFlag(group.participants, incoming);
   // Mesma mensagem do mesmo membro em < 1 min = patch vazio, nada é gravado.
   if (!changed && activityPatch.lastMessageAt === undefined) return contactId;
   await ctx.db.patch(group._id, {

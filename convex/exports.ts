@@ -89,6 +89,11 @@ export const BACKUP_TABLES: readonly string[] = [
   // Grupos de WhatsApp (v0.57): depende de channelConfigs/conversations acima.
   // Sem segredo no doc — `exportSanitize` não precisou de regra nova.
   "groupChats",
+  // Fase 4d (perf Convex I/O): membros e linha do tempo das salas saíram do doc
+  // `groupChats` para tabelas próprias — o MESMO dado que já ia no backup
+  // dentro do grupo (só sala acompanhada guarda membros).
+  "groupParticipants",
+  "groupTimeline",
   // Publicações programadas em grupo (F3): dependem de groupChats acima.
   "groupPosts",
 ];

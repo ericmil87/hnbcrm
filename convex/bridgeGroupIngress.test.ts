@@ -20,6 +20,9 @@ import groupMessageFixture from "./__fixtures__/bridgeGroupMessage.json";
 import groupInfoEventFixture from "./__fixtures__/bridgeGroupInfoEvent.json";
 import joinedGroupFixture from "./__fixtures__/bridgeJoinedGroup.json";
 
+// Sob carga (suíte inteira em paralelo) alguns casos passam dos 5 s padrão; isolados passam.
+vi.setConfig({ testTimeout: 20_000 });
+
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
 const TEST_KEY = btoa("A".repeat(32));

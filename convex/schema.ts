@@ -1483,6 +1483,11 @@ const applicationTables = {
         })
       )
     ),
+    // Fase 4d (perf Convex I/O): quando definido, `participants`/`timeline`
+    // moram SÓ em `groupParticipants`/`groupTimeline` e os arrays acima viram
+    // legado (ausentes). Ausente = arrays legados ainda são a fonte de leitura
+    // (e os escritores gravam nos dois lugares).
+    participantsMigratedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1494,6 +1499,47 @@ const applicationTables = {
     // Cron horário do digest: só salas acompanhadas COM horário de digest
     // (perf Convex I/O, fase 1 — antes lia toda a tabela sem índice).
     .index("by_monitored_and_digest_at", ["monitored", "ai.dailyDigestAt"]),
+
+  /**
+   * Participantes de uma sala de grupo (perf Convex I/O, fase 4d). Antes
+   * moravam em `groupChats.participants` (até 1.024 itens, 60–90 KB), lido
+   * inteiro a cada mensagem de grupo. Uma linha por membro; chave estável
+   * `key = lid ?? phone`. Mesma regra de LGPD do array: só sala ACOMPANHADA
+   * guarda participantes (`participantsForStorage`).
+   */
+  groupParticipants: defineTable({
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    key: v.string(),
+    lid: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    name: v.optional(v.string()),
+    isAdmin: v.boolean(),
+    isSuperAdmin: v.boolean(),
+    contactId: v.optional(v.id("contacts")),
+    joinedAt: v.optional(v.number()),
+    leftAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_group", ["groupChatId"])
+    .index("by_group_and_key", ["groupChatId", "key"])
+    .index("by_group_and_phone", ["groupChatId", "phone"])
+    // Aba "Grupos" do contato (`listGroupsForContact`): casa por `contactId`,
+    // a mesma regra do array legado.
+    .index("by_organization_and_contact", ["organizationId", "contactId"])
+    .index("by_organization", ["organizationId"]),
+
+  /** Linha do tempo da sala (fase 4d; ex-`groupChats.timeline`, cap 100 FIFO). */
+  groupTimeline: defineTable({
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    at: v.number(),
+    type: v.string(),
+    actorJid: v.optional(v.string()),
+    data: v.optional(v.string()),
+  })
+    .index("by_group_and_at", ["groupChatId", "at"])
+    .index("by_organization", ["organizationId"]),
 
   /**
    * Publicações programadas em grupos (v0.57, F3 — D7/D8 do plano).

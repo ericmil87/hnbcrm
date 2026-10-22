@@ -21,6 +21,7 @@ import {
   findContactsByPhoneCandidates,
 } from "./inboundRouting";
 import { channelConfigPatchFor } from "./conversationListFields";
+import { findParticipantByKey, patchParticipantByKey } from "./groupParticipantsStore";
 
 export interface GroupMemberLeadResult {
   contactId: Id<"contacts">;
@@ -42,9 +43,7 @@ export async function createLeadFromGroupMemberCore(
   }
 ): Promise<GroupMemberLeadResult> {
   const { group } = args;
-  const participant = (group.participants ?? []).find(
-    (p) => (p.lid ?? p.phone) === args.participantKey
-  );
+  const participant = await findParticipantByKey(ctx, group, args.participantKey);
   if (!participant) throw new Error("Membro não encontrado neste grupo");
   // Sem telefone não há contato possível: no modo LID o número só aparece em
   // `PhoneNumber` do `/group/info`, e quem fecha a privacidade não o expõe.
@@ -95,13 +94,17 @@ export async function createLeadFromGroupMemberCore(
 
   // Marca o vínculo no grupo: da próxima vez o painel mostra o chip do contato
   // em vez de oferecer "criar lead" de novo.
+  // Fase 4d: patch só da linha do membro (e do array legado se a sala ainda
+  // não migrou).
   if (participant.contactId !== contactId) {
-    await ctx.db.patch(group._id, {
-      participants: (group.participants ?? []).map((p) =>
-        (p.lid ?? p.phone) === args.participantKey ? { ...p, contactId } : p
-      ),
-      updatedAt: now,
-    });
+    const legacyPatch = await patchParticipantByKey(
+      ctx,
+      group,
+      args.participantKey,
+      { contactId },
+      now
+    );
+    await ctx.db.patch(group._id, { ...legacyPatch, updatedAt: now });
   }
 
   const memberName = participant.name ?? phone;

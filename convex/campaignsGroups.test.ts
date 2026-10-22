@@ -277,6 +277,30 @@ describe("prévia do público", () => {
     expect(sampleRows(preview)[0].phone).toMatch(/•/); // LGPD: terceiro, telefone mascarado
   });
 
+  test("fase 4d: group_members e groups dão a mesma prévia antes e depois da migração", async () => {
+    const t = setup();
+    const s = await seed(t);
+    const g = await makeGroup(t, s, {
+      subject: "Turma", jid: "1@g.us",
+      members: [{ phone: "5511988887777", name: "Ana" }, { phone: "5511988886666", name: "Bruno" }],
+    });
+    const preview = (source: "groups" | "group_members") =>
+      asUser(t, s.adminUserId).query(api.campaigns.previewAudience, {
+        organizationId: s.organizationId, filters: {}, now: 1_800_000_000_000,
+        source, groupChatIds: [g.groupChatId],
+      });
+    const beforeMembers = await preview("group_members");
+    const beforeGroups = await preview("groups");
+    await t.mutation(internal.groupChats.internalBackfillGroupParticipants, { dryRun: false });
+    const finish = await t.mutation(internal.groupChats.internalFinishGroupParticipantsMigration, {
+      dryRun: false,
+    });
+    expect(finish.finished).toBeGreaterThan(0);
+    expect(await preview("group_members")).toEqual(beforeMembers);
+    expect(await preview("groups")).toEqual(beforeGroups);
+    expect(beforeMembers.count).toBe(2);
+  });
+
   test("group_members: opt-out da org some do público", async () => {
     const t = setup();
     const s = await seed(t);
