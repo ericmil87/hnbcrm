@@ -16,6 +16,7 @@
  * aceite auditado, não bloquear — é decisão do operador.
  */
 import { v, type ObjectType } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import {
   action,
   internalAction,
@@ -88,7 +89,9 @@ import {
   dedupeParticipants,
   deleteGroupSideTables,
   diffParticipantsTable,
+  findParticipant,
   isGroupMigrated,
+  STORE_PARTICIPANTS_CAP,
   loadParticipantRows,
   loadTimelineRows,
   participantsForWrite,
@@ -190,37 +193,65 @@ export const listGroups = query({
   handler: listGroupsHandler,
 });
 
-/** Um grupo pelo id, com a lista completa de participantes. */
+/**
+ * "Somos nós?" por participante, decidido no SERVIDOR a partir do canal.
+ *
+ * A UI precisa marcar "você" na lista de membros. Antes devolvíamos a CHAVE
+ * crua do nosso número (`bridgeLid ?? bridgePhone`) — o mesmo campo que
+ * `channelConfigs.getChannelConfigs` mascara, entregue sob o gate mais baixo do
+ * produto (review de segurança nº 9). Agora sai só um booleano.
+ * O LID vem antes do telefone pelo mesmo motivo do `findSelfParticipant`: num
+ * canal reprovisionado o `bridgePhone` gravado pode estar defasado.
+ */
+function selfMatcher(
+  config: Pick<Doc<"channelConfigs">, "bridgeLid" | "bridgePhone"> | null
+): (p: { lid?: string; phone?: string }) => boolean {
+  const selfLidUser = config?.bridgeLid ? config.bridgeLid.split("@")[0] : null;
+  return (p) => {
+    if (config?.bridgeLid && (p.lid === config.bridgeLid || p.lid?.split("@")[0] === selfLidUser)) {
+      return true;
+    }
+    return !!config?.bridgePhone && p.phone === config.bridgePhone;
+  };
+}
+
+/**
+ * Um grupo pelo id.
+ *
+ * `includeParticipants` (perf I/O onda 2): a lista inteira (até 1.024 linhas,
+ * ~250 KB numa sala grande) só vem quando pedida. O HANDLER mantém o contrato
+ * antigo por padrão (ausente = inclui) porque é ele que a REST
+ * `GET /api/v1/groups/get` e o MCP `crm_get_group` usam via `groupsInternal`;
+ * a query PÚBLICA `getGroup` (o app) inverte o padrão — o front lê os membros
+ * paginados por `listGroupMembers` e os nomes das menções por
+ * `resolveGroupMemberNames`.
+ */
 export const getGroupArgs = { groupChatId: v.id("groupChats") };
-export type GetGroupArgs = ObjectType<typeof getGroupArgs> & InternalActorArgs;
+export type GetGroupArgs = ObjectType<typeof getGroupArgs> &
+  InternalActorArgs & { includeParticipants?: boolean };
 export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
     const group = await ctx.db.get(args.groupChatId);
     if (!group) return null;
     await authorizeGroups(ctx, group.organizationId, "inbox", "view_own", args.actorMemberId);
-    // A UI precisa marcar "você" na lista de membros. Antes devolvíamos a CHAVE
-    // crua do nosso número (`bridgeLid ?? bridgePhone`) — o mesmo campo que
-    // `channelConfigs.getChannelConfigs` mascara, entregue aqui sob o gate mais
-    // baixo do produto (review de segurança nº 9). Agora quem compara é o
-    // servidor e sai só um booleano por participante.
-    // O LID vem antes do telefone pelo mesmo motivo do `findSelfParticipant`:
-    // num canal reprovisionado o `bridgePhone` gravado pode estar defasado.
     const config = await ctx.db.get(group.channelConfigId);
     const selfKey = config?.bridgeLid ?? config?.bridgePhone ?? null;
-    const selfLidUser = config?.bridgeLid ? config.bridgeLid.split("@")[0] : null;
-    const isSelfParticipant = (p: { lid?: string; phone?: string }): boolean => {
-      if (config?.bridgeLid && (p.lid === config.bridgeLid || p.lid?.split("@")[0] === selfLidUser)) {
-        return true;
-      }
-      return !!config?.bridgePhone && p.phone === config.bridgePhone;
-    };
+    const isSelfParticipant = selfMatcher(config);
+    const includeParticipants = args.includeParticipants !== false;
     // Fase 4d: membros e linha do tempo vêm das tabelas próprias quando a sala
     // já migrou (o shape devolvido — e o contrato da REST/MCP — não muda).
-    const participants = await participantsOf(ctx, group);
+    const participants = includeParticipants ? await participantsOf(ctx, group) : null;
     const timeline = await timelineOf(ctx, group);
-    const { participantsMigratedAt: _migratedAt, ...groupFields } = group;
+    const {
+      participantsMigratedAt: _migratedAt,
+      participants: legacyParticipants,
+      timeline: _legacyTimeline,
+      ...groupFields
+    } = group;
     return {
       ...groupFields,
-      participants: participants.map((p) => ({ ...p, isSelf: isSelfParticipant(p) })),
+      ...(participants
+        ? { participants: participants.map((p) => ({ ...p, isSelf: isSelfParticipant(p) })) }
+        : {}),
       timeline,
       // `selfKey` continua saindo APENAS para quem administra o número, que já
       // enxerga a configuração do canal inteira.
@@ -236,15 +267,262 @@ export async function getGroupHandler(ctx: QueryCtx, args: GetGroupArgs) {
       // Nosso número é conhecido? A UI usa isto para avisar que o gatilho por
       // menção não funciona em gateway self-hosted (review de correção nº 22).
       selfKnown: selfKey !== null,
-      participantsCount: countParticipants(participants, group.participantsCount),
+      // Sem a lista, a contagem é a mesma de sempre: sala migrada usa o campo
+      // mantido por todo escritor; a legada conta o array do próprio doc.
+      participantsCount: participants
+        ? countParticipants(participants, group.participantsCount)
+        : isGroupMigrated(group)
+          ? (group.participantsCount ?? 0)
+          : countParticipants(legacyParticipants, group.participantsCount),
       mediaPolicy: fillGroupMediaOverride(group.mediaPolicy),
       effectiveMedia: resolveEffectiveGroupMedia(config?.bridgeGroupMedia, group.mediaPolicy),
     };
   }
 export const getGroup = query({
-  args: getGroupArgs,
+  args: { ...getGroupArgs, includeParticipants: v.optional(v.boolean()) },
   returns: v.any(),
-  handler: getGroupHandler,
+  handler: (ctx, args) =>
+    getGroupHandler(ctx, { ...args, includeParticipants: args.includeParticipants === true }),
+});
+
+/** Página do painel de membros (e teto da busca do "@"). */
+export const GROUP_MEMBERS_PAGE_MAX = 50;
+/** Teto do termo de busca (nome/telefone). */
+const GROUP_MEMBERS_SEARCH_MAX = 60;
+
+const groupMemberValidator = v.object({
+  key: v.string(),
+  lid: v.optional(v.string()),
+  phone: v.optional(v.string()),
+  name: v.optional(v.string()),
+  isAdmin: v.boolean(),
+  isSuperAdmin: v.boolean(),
+  contactId: v.optional(v.id("contacts")),
+  joinedAt: v.optional(v.number()),
+  isSelf: v.boolean(),
+});
+
+const groupMembersPageValidator = v.object({
+  page: v.array(groupMemberValidator),
+  isDone: v.boolean(),
+  continueCursor: v.string(),
+  splitCursor: v.optional(v.union(v.string(), v.null())),
+  pageStatus: v.optional(
+    v.union(v.literal("SplitRecommended"), v.literal("SplitRequired"), v.null())
+  ),
+});
+
+type GroupMember = {
+  key: string;
+  lid?: string;
+  phone?: string;
+  name?: string;
+  isAdmin: boolean;
+  isSuperAdmin: boolean;
+  contactId?: Id<"contacts">;
+  joinedAt?: number;
+  isSelf: boolean;
+};
+
+const EMPTY_MEMBERS_PAGE = { page: [] as GroupMember[], isDone: true, continueCursor: "" };
+
+function toGroupMember(
+  p: {
+    lid?: string;
+    phone?: string;
+    name?: string;
+    isAdmin: boolean;
+    isSuperAdmin: boolean;
+    contactId?: Id<"contacts">;
+    joinedAt?: number;
+  },
+  isSelf: (p: { lid?: string; phone?: string }) => boolean
+): GroupMember | null {
+  const key = p.lid ?? p.phone;
+  if (!key) return null;
+  return {
+    key,
+    ...(p.lid !== undefined ? { lid: p.lid } : {}),
+    ...(p.phone !== undefined ? { phone: p.phone } : {}),
+    ...(p.name !== undefined ? { name: p.name } : {}),
+    isAdmin: p.isAdmin === true,
+    isSuperAdmin: p.isSuperAdmin === true,
+    ...(p.contactId !== undefined ? { contactId: p.contactId } : {}),
+    ...(p.joinedAt !== undefined ? { joinedAt: p.joinedAt } : {}),
+    isSelf: isSelf(p),
+  };
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "");
+}
+
+/**
+ * Termo "parece telefone"? Só dígitos e pontuação de telefone, com ≥ 1 dígito.
+ * Aí a busca vai pelo índice de telefone (prefixo), não pelo de nome.
+ */
+function phoneSearchDigits(term: string): string | null {
+  if (!/^[\d\s()+\-.]+$/.test(term)) return null;
+  const digits = term.replace(/\D/g, "");
+  return digits.length > 0 ? digits : null;
+}
+
+/**
+ * Membros ATIVOS de uma sala, paginados (perf Convex I/O, onda 2).
+ *
+ * Substitui o `participants[]` que o front recebia inteiro de `getGroup` (até
+ * 1.024 linhas, ~250 KB, reexecutado a cada mudança da sala): agora vem uma
+ * página de até 50 (~12 KB).
+ *
+ * Lê o doc da sala UMA vez — é o mínimo para autorizar (org) e achar o canal
+ * (`isSelf`); desde a fase 4d ele é pequeno, então a reexecução quando a sala
+ * muda custa uma página, não a lista. O canal é lido uma vez por chamada.
+ *
+ * `search`: termo com cara de telefone vai por PREFIXO no `by_group_and_phone`
+ * (também com o DDI 55 na frente, para "85 9…" achar "5585 9…"); o resto vai
+ * pelo search index de nome (prefixo por palavra, como toda busca do Convex).
+ * Busca devolve UMA página (`isDone: true`), até `numItems` (≤ 50) — é
+ * autocomplete/filtro, não listagem.
+ *
+ * Não-membro (ou sala inexistente) recebe página vazia, sem erro: a query é
+ * reativa e um throw derrubaria a tela.
+ * Sala ainda NÃO migrada (fase 4d): a lista vem do array legado do doc, numa
+ * página só — transitório até o backfill.
+ */
+export const listGroupMembers = query({
+  args: {
+    groupChatId: v.id("groupChats"),
+    paginationOpts: paginationOptsValidator,
+    search: v.optional(v.string()),
+  },
+  returns: groupMembersPageValidator,
+  handler: async (ctx, args) => {
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group) return EMPTY_MEMBERS_PAGE;
+    try {
+      await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
+    } catch {
+      return EMPTY_MEMBERS_PAGE;
+    }
+    const config = await ctx.db.get(group.channelConfigId);
+    const isSelf = selfMatcher(config);
+    const numItems = Math.max(1, Math.min(args.paginationOpts.numItems, GROUP_MEMBERS_PAGE_MAX));
+    const term = (args.search ?? "").trim().slice(0, GROUP_MEMBERS_SEARCH_MAX);
+    const digits = term ? phoneSearchDigits(term) : null;
+
+    if (!isGroupMigrated(group)) {
+      const needle = normalizeSearchText(term);
+      const page = (group.participants ?? [])
+        .filter((p) => p.leftAt === undefined)
+        .filter((p) => {
+          if (!needle) return true;
+          if (digits && (p.phone ?? "").includes(digits)) return true;
+          return (
+            normalizeSearchText(p.name ?? "").includes(needle) || (p.phone ?? "").includes(needle)
+          );
+        })
+        .slice(0, term ? numItems : STORE_PARTICIPANTS_CAP)
+        .map((p) => toGroupMember(p, isSelf))
+        .filter((p): p is GroupMember => p !== null);
+      return { page, isDone: true, continueCursor: "" };
+    }
+
+    if (!term) {
+      const result = await ctx.db
+        .query("groupParticipants")
+        .withIndex("by_group_and_left", (q) =>
+          q.eq("groupChatId", args.groupChatId).eq("leftAt", undefined)
+        )
+        .paginate({ ...args.paginationOpts, numItems });
+      return {
+        ...result,
+        page: result.page
+          .map((row) => toGroupMember(row, isSelf))
+          .filter((p): p is GroupMember => p !== null),
+      };
+    }
+
+    const rows: Doc<"groupParticipants">[] = [];
+    const seen = new Set<string>();
+    const push = (list: Doc<"groupParticipants">[]) => {
+      for (const row of list) {
+        if (rows.length >= numItems) return;
+        if (row.leftAt !== undefined || seen.has(row._id)) continue;
+        seen.add(row._id);
+        rows.push(row);
+      }
+    };
+    if (digits) {
+      const prefixes = digits.startsWith("55") ? [digits] : [digits, `55${digits}`];
+      for (const prefix of prefixes) {
+        // `~` vem depois de todo dígito: [prefixo, prefixo~) = "começa com".
+        push(
+          await ctx.db
+            .query("groupParticipants")
+            .withIndex("by_group_and_phone", (q) =>
+              q.eq("groupChatId", args.groupChatId).gte("phone", prefix).lt("phone", `${prefix}~`)
+            )
+            .take(numItems * 2)
+        );
+      }
+    } else {
+      push(
+        await ctx.db
+          .query("groupParticipants")
+          .withSearchIndex("search_name", (q) =>
+            q.search("name", term).eq("groupChatId", args.groupChatId)
+          )
+          .take(numItems * 2)
+      );
+    }
+    return {
+      page: rows
+        .map((row) => toGroupMember(row, isSelf))
+        .filter((p): p is GroupMember => p !== null),
+      isDone: true,
+      continueCursor: "",
+    };
+  },
+});
+
+/** Teto de JIDs resolvidos por chamada (as menções das mensagens carregadas). */
+const GROUP_MEMBER_NAMES_MAX = 100;
+
+/**
+ * Nome dos membros mencionados nas mensagens da tela (o negrito do "@Fulano"
+ * recebido). Antes o front montava o mapa com a lista inteira de `getGroup`;
+ * agora pede só os JIDs que aparecem — um lookup por índice cada, sem ler a
+ * lista. Não-membro recebe lista vazia.
+ */
+export const resolveGroupMemberNames = query({
+  args: { groupChatId: v.id("groupChats"), jids: v.array(v.string()) },
+  returns: v.array(v.object({ jid: v.string(), name: v.string() })),
+  handler: async (ctx, args) => {
+    if (args.jids.length === 0) return [];
+    const group = await ctx.db.get(args.groupChatId);
+    if (!group) return [];
+    try {
+      await authorizeGroups(ctx, group.organizationId, "inbox", "view_own");
+    } catch {
+      return [];
+    }
+    const out: { jid: string; name: string }[] = [];
+    const seen = new Set<string>();
+    for (const jid of args.jids.slice(0, GROUP_MEMBER_NAMES_MAX)) {
+      if (typeof jid !== "string" || !jid || seen.has(jid)) continue;
+      seen.add(jid);
+      const user = jid.split("@")[0].split(":")[0];
+      const who = jid.endsWith("@lid") ? { lid: jid } : /^\d+$/.test(user) ? { phone: user } : null;
+      if (!who) continue;
+      const p = await findParticipant(ctx, group, who);
+      const name = p?.name?.trim();
+      if (name) out.push({ jid, name });
+    }
+    return out;
+  },
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

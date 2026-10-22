@@ -369,11 +369,11 @@ describe("leitores — mesmo resultado antes e depois da migração", () => {
     const t = setup();
     const { groupChatId, userId } = await seed(t);
     const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
-    const before = await asAdmin.query(api.groupChats.getGroup, { groupChatId });
+    const before = await asAdmin.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     await migrate(t);
-    const after = await asAdmin.query(api.groupChats.getGroup, { groupChatId });
+    const after = await asAdmin.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     expect(stripSystem(after!)).toEqual(stripSystem(before!));
-    expect(after!.participants.filter((p: { isSelf: boolean }) => p.isSelf)).toHaveLength(1);
+    expect(after!.participants!.filter((p: { isSelf: boolean }) => p.isSelf)).toHaveLength(1);
     expect(after!.timeline).toHaveLength(2);
     expect((after as any).participantsMigratedAt).toBeUndefined();
   });
@@ -710,5 +710,189 @@ describe("correções pós-revisão da fase 4d", () => {
     const renamed = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!;
     expect(renamed.subject).toBe("Novo nome");
     expect(renamed.participantsCount).toBe(3);
+  });
+});
+
+describe("listGroupMembers / getGroup sem lista (perf I/O, onda 2)", () => {
+  function many(n: number): Participant[] {
+    // Todo mundo com nome: o search index do convex-test quebra em linha sem o
+    // campo de busca (o Convex real só a ignora).
+    const list: Participant[] = [
+      { lid: OUR_LID, phone: OUR_PHONE, name: "Empresa", isAdmin: false, isSuperAdmin: false },
+    ];
+    for (let i = 1; i < n; i++) {
+      const id = String(i).padStart(3, "0");
+      list.push({
+        lid: `900000000000${id}@lid`,
+        phone: `5585999990${id}`,
+        name: i === 7 ? "Mariana Souza" : `Membro ${id}`,
+        isAdmin: false,
+        isSuperAdmin: false,
+      });
+    }
+    return list;
+  }
+
+  test("pagina 60 membros em 50 + 10, com isSelf vindo do servidor", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t, { participants: many(60) });
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const first = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(first.page).toHaveLength(50);
+    expect(first.isDone).toBe(false);
+    const second = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 50, cursor: first.continueCursor },
+    });
+    expect(second.page).toHaveLength(10);
+    expect(second.isDone).toBe(true);
+    const all = [...first.page, ...second.page];
+    expect(new Set(all.map((p) => p.key)).size).toBe(60);
+    expect(all.filter((p) => p.isSelf).map((p) => p.lid)).toEqual([OUR_LID]);
+  });
+
+  test("teto de 50 por página mesmo pedindo mais; quem saiu não aparece", async () => {
+    const t = setup();
+    const list = many(60);
+    list[5] = { ...list[5], leftAt: 123 };
+    const { groupChatId, userId } = await seed(t, { participants: list });
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const page = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 500, cursor: null },
+    });
+    expect(page.page).toHaveLength(50);
+    const rest = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 500, cursor: page.continueCursor },
+    });
+    expect(rest.page).toHaveLength(9);
+    expect([...page.page, ...rest.page].some((p) => p.key === list[5].lid)).toBe(false);
+  });
+
+  test("search por nome (search index) e por começo do telefone (com e sem DDI)", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t, { participants: many(60) });
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const q = (search: string) =>
+      asAdmin.query(api.groupChats.listGroupMembers, {
+        groupChatId,
+        search,
+        paginationOpts: { numItems: 20, cursor: null },
+      });
+    const byName = await q("Mariana");
+    expect(byName.page.map((p) => p.name)).toEqual(["Mariana Souza"]);
+    expect(byName.isDone).toBe(true);
+    const byPhone = await q("5585999990007");
+    expect(byPhone.page.map((p) => p.phone)).toEqual(["5585999990007"]);
+    // Sem o DDI, com pontuação: o servidor tenta também "55" + dígitos.
+    const withoutDdi = await q("85 99999-0007");
+    expect(withoutDdi.page.map((p) => p.phone)).toEqual(["5585999990007"]);
+    // Prefixo comum a 001..009.
+    expect((await q("558599999000")).page).toHaveLength(9);
+    expect((await q("zzzz")).page).toHaveLength(0);
+  });
+
+  test("sala legada (não migrada) devolve o array numa página só", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const res = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(res.page).toHaveLength(3);
+    expect(res.isDone).toBe(true);
+    expect(res.page.filter((p) => p.isSelf)).toHaveLength(1);
+    const ana = await asAdmin.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      search: "ana",
+      paginationOpts: { numItems: 20, cursor: null },
+    });
+    expect(ana.page.map((p) => p.lid)).toEqual([ANA_LID]);
+  });
+
+  test("não-membro recebe página vazia (sem erro) e nenhum nome", async () => {
+    const t = setup();
+    const { groupChatId } = await seed(t);
+    await migrate(t);
+    const strangerId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const orgId = await ctx.db.insert("organizations", {
+        name: "Outra",
+        slug: "outra",
+        settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
+        createdAt: now,
+        updatedAt: now,
+      });
+      const uid = await ctx.db.insert("users", { email: "x@test.hnbcrm.com" });
+      await ctx.db.insert("teamMembers", {
+        organizationId: orgId,
+        userId: uid,
+        name: "X",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      return uid;
+    });
+    const asStranger = t.withIdentity({ subject: `${strangerId}|s9` });
+    const res = await asStranger.query(api.groupChats.listGroupMembers, {
+      groupChatId,
+      paginationOpts: { numItems: 50, cursor: null },
+    });
+    expect(res).toEqual({ page: [], isDone: true, continueCursor: "" });
+    expect(
+      await asStranger.query(api.groupChats.resolveGroupMemberNames, {
+        groupChatId,
+        jids: [ERIC_LID],
+      })
+    ).toEqual([]);
+  });
+
+  test("resolveGroupMemberNames casa LID e telefone@s.whatsapp.net", async () => {
+    const t = setup();
+    const { groupChatId, userId } = await seed(t);
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const names = await asAdmin.query(api.groupChats.resolveGroupMemberNames, {
+      groupChatId,
+      jids: [ERIC_LID, `${ANA_PHONE}@s.whatsapp.net`, "999@lid", OUR_LID],
+    });
+    expect(names).toEqual([
+      { jid: ERIC_LID, name: "Eric" },
+      { jid: `${ANA_PHONE}@s.whatsapp.net`, name: "Ana" },
+    ]);
+  });
+
+  test("getGroup público NÃO traz participants; o handler da REST/MCP traz igual a antes", async () => {
+    const t = setup();
+    const { groupChatId, userId, adminId } = await seed(t);
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    const pub = await asAdmin.query(api.groupChats.getGroup, { groupChatId });
+    expect(pub!.participants).toBeUndefined();
+    expect(pub!.participantsCount).toBe(3);
+    expect(pub!.timeline).toHaveLength(2);
+    const full = await asAdmin.query(api.groupChats.getGroup, {
+      groupChatId,
+      includeParticipants: true,
+    });
+    const viaApi = await t.query(internal.groupsInternal.internalGetGroup, {
+      groupChatId,
+      actorMemberId: adminId,
+    });
+    expect(viaApi!.participants).toHaveLength(3);
+    expect(stripSystem(viaApi!)).toEqual(stripSystem(full!));
+    const { participants: _p, ...rest } = stripSystem(full!);
+    expect(stripSystem(pub!)).toEqual(rest);
   });
 });

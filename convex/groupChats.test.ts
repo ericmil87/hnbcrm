@@ -462,7 +462,7 @@ describe("setMonitored", () => {
     expect((groups[0] as any).participants).toBeUndefined();
     expect(groups[0].participantsCount).toBe(2);
     // Grupo NÃO acompanhado: a contagem existe, a lista não (segurança nº 1).
-    const detail = await asAgent.query(api.groupChats.getGroup, { groupChatId: groups[0]._id });
+    const detail = await asAgent.query(api.groupChats.getGroup, { groupChatId: groups[0]._id, includeParticipants: true });
     expect(detail!.participants).toHaveLength(0);
     expect(detail!.participantsCount).toBe(2);
     // E a CHAVE do nosso número não desce para quem só tem inbox:view_own.
@@ -479,11 +479,11 @@ describe("setMonitored", () => {
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
     await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
     expect(
-      (await asAgent.query(api.groupChats.getGroup, { groupChatId }))!.participants
+      (await asAgent.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true }))!.participants
     ).toHaveLength(2);
 
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: false });
-    const after = await asAgent.query(api.groupChats.getGroup, { groupChatId });
+    const after = await asAgent.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     expect(after!.participants).toHaveLength(0);
     // A contagem sobrevive — é o que a lista de grupos mostra.
     expect(after!.participantsCount).toBe(2);
@@ -496,10 +496,10 @@ describe("setMonitored", () => {
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: true });
     await asAdmin.action(api.groupChats.syncGroups, { channelConfigId: configId });
 
-    const detail = await asAdmin.query(api.groupChats.getGroup, { groupChatId });
+    const detail = await asAdmin.query(api.groupChats.getGroup, { groupChatId, includeParticipants: true });
     expect(detail!.selfKey).toBe(OUR_LID);
     expect(detail!.selfKnown).toBe(true);
-    expect(detail!.participants.filter((p: { isSelf?: boolean }) => p.isSelf)).toHaveLength(1);
+    expect(detail!.participants!.filter((p: { isSelf?: boolean }) => p.isSelf)).toHaveLength(1);
   });
 });
 

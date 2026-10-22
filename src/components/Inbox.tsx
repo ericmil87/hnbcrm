@@ -612,7 +612,6 @@ export function Inbox() {
   const groupSubject = groupChat?.subject ?? groupSummary?.subject ?? "Grupo";
   const groupParticipantsCount =
     groupChat?.participantsCount ?? groupSummary?.participantsCount ?? 0;
-  const groupParticipants = groupChat?.participants ?? [];
 
   const setGroupMonitored = useMutation(api.groupChats.setMonitored);
   const leaveGroup = useAction(api.groupChats.leaveGroup);
@@ -631,29 +630,39 @@ export function Inbox() {
     navigate(`${TAB_ROUTES.campaigns}?novo=1&${params}`);
   };
 
-  // Nome por chave de participante — alimenta o negrito das menções recebidas
-  // (o corpo traz "@558…" ou "@Fulano", e os dois precisam casar).
+  // Nome por JID mencionado — alimenta o negrito das menções recebidas (o
+  // corpo traz "@558…" ou "@Fulano", e os dois precisam casar). Perf (onda 2):
+  // resolve só os JIDs que aparecem nas mensagens carregadas, em vez de baixar
+  // a sala inteira (até 1.024 membros) pelo `getGroup`.
+  const mentionedJids = React.useMemo(() => {
+    if (!isGroupConversation || !messages) return [];
+    const set = new Set<string>();
+    for (const m of messages as { mentions?: string[] }[]) {
+      for (const jid of m.mentions ?? []) if (typeof jid === "string" && jid) set.add(jid);
+    }
+    return Array.from(set).sort().slice(0, 100);
+  }, [isGroupConversation, messages]);
+  const mentionNames = useQuery(
+    api.groupChats.resolveGroupMemberNames,
+    isGroupConversation && groupChatId && mentionedJids.length > 0
+      ? { groupChatId, jids: mentionedJids }
+      : "skip"
+  );
+  const lastMentionNames = useRef<{ jid: string; name: string }[]>([]);
+  if (mentionNames !== undefined) lastMentionNames.current = mentionNames;
   const groupNameByKey = React.useMemo(() => {
     const map = new Map<string, string>();
-    for (const p of groupParticipants) {
-      const name = p.name?.trim();
-      if (!name) continue;
-      if (p.lid) {
-        map.set(p.lid, name);
-        map.set(p.lid.split("@")[0], name);
-      }
-      if (p.phone) {
-        map.set(p.phone, name);
-        map.set(`${p.phone}@s.whatsapp.net`, name);
-      }
+    for (const { jid, name } of mentionNames ?? lastMentionNames.current) {
+      map.set(jid, name);
+      map.set(jid.split("@")[0], name);
     }
     return map;
-  }, [groupParticipants]);
+  }, [mentionNames]);
 
-  // Menção a membro no grupo: o "@" abre a lista de participantes, o texto
+  // Menção a membro no grupo: o "@" busca os membros no servidor, o texto
   // recebe "@<nome>" e os JIDs escolhidos viajam em `mentions[]` no envio.
   const groupMentions = useGroupMentions({
-    participants: groupParticipants,
+    groupChatId: isGroupConversation ? groupChatId : undefined,
     value: newMessage,
     enabled: isGroupConversation && !isInternal,
     onChange: (next, cursorPosition) => {

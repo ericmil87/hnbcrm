@@ -1527,7 +1527,13 @@ const applicationTables = {
     // Aba "Grupos" do contato (`listGroupsForContact`): casa por `contactId`,
     // a mesma regra do array legado.
     .index("by_organization_and_contact", ["organizationId", "contactId"])
-    .index("by_organization", ["organizationId"]),
+    .index("by_organization", ["organizationId"])
+    // Painel de membros paginado (`listGroupMembers`, perf I/O onda 2): só os
+    // ATIVOS (`leftAt` ausente), sem ler quem saiu.
+    .index("by_group_and_left", ["groupChatId", "leftAt"])
+    // Busca por nome no painel e no autocomplete de "@" (telefone usa o
+    // `by_group_and_phone` por prefixo).
+    .searchIndex("search_name", { searchField: "name", filterFields: ["groupChatId"] }),
 
   /** Linha do tempo da sala (fase 4d; ex-`groupChats.timeline`, cap 100 FIFO). */
   groupTimeline: defineTable({

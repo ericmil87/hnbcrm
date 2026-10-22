@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Crown, Search, Send, ShieldCheck, UserPlus, UserRound, Users } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useInfiniteSentinel } from "@/hooks/useInfiniteSentinel";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { TAB_ROUTES } from "@/lib/routes";
@@ -39,12 +41,8 @@ interface GroupMembersPanelProps {
   onDispatchSelected?: (phones: string[], groupChatId: Id<"groupChats">) => void;
 }
 
-function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "");
-}
+/** Página do painel (a query corta em 50 no servidor). */
+const MEMBERS_PAGE_SIZE = 50;
 
 /**
  * Slide-over com os membros de um grupo.
@@ -54,6 +52,11 @@ function normalize(value: string): string {
  *    telefone já era conhecido, e virar lead é um clique explícito.
  *  - **LGPD:** são terceiros. O telefone aparece mascarado; inteiro só para
  *    quem tem `inbox:view_all`.
+ *
+ * Perf (Convex I/O, onda 2): os membros vêm PAGINADOS de
+ * `groupChats.listGroupMembers` (50 por vez, scroll infinito + "Carregar
+ * mais"), e a busca é no servidor (nome ou começo do telefone). O `getGroup`
+ * aqui só traz o cabeçalho (assunto e contagem), sem a lista.
  */
 export function GroupMembersPanel({
   open,
@@ -76,33 +79,48 @@ export function GroupMembersPanel({
   const createLeadFromMember = useMutation(api.groupChats.createLeadFromMember);
 
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const debouncedSearch = useDebouncedValue(search.trim(), 300);
+  // A seleção guarda o PARTICIPANTE, não só a chave: com paginação/busca, quem
+  // foi marcado pode não estar mais na página carregada.
+  const [selected, setSelected] = useState<Map<string, GroupParticipant>>(() => new Map());
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
-  const participants: GroupParticipant[] = useMemo(
-    () => (group?.participants ?? []).filter((p) => p.leftAt === undefined),
-    [group]
+  const {
+    results: members,
+    status: membersStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.groupChats.listGroupMembers,
+    open
+      ? { groupChatId, ...(debouncedSearch ? { search: debouncedSearch } : {}) }
+      : "skip",
+    { initialNumItems: MEMBERS_PAGE_SIZE }
+  );
+  const canLoadMore = membersStatus === "CanLoadMore";
+  const loadingMore = membersStatus === "LoadingMore";
+  const loadingFirstPage = membersStatus === "LoadingFirstPage";
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useInfiniteSentinel({
+    enabled: canLoadMore,
+    loading: loadingMore,
+    onReach: () => loadMore(MEMBERS_PAGE_SIZE),
+    root: scrollRef,
+    resetKey: debouncedSearch,
+  });
+
+  const filtered = useMemo(
+    () =>
+      (members as GroupParticipant[]).map((p) => ({
+        participant: p,
+        key: participantKeyOf(p),
+        label: participantDisplayName(p, canSeeFullPhone),
+      })),
+    [members, canSeeFullPhone]
   );
 
-  const filtered = useMemo(() => {
-    const term = normalize(search.trim());
-    const rows = participants.map((p) => ({
-      participant: p,
-      key: participantKeyOf(p),
-      label: participantDisplayName(p, canSeeFullPhone),
-    }));
-    if (!term) return rows;
-    return rows.filter(
-      ({ participant, label }) =>
-        normalize(label).includes(term) || (participant.phone ?? "").includes(term)
-    );
-  }, [participants, search, canSeeFullPhone]);
-
-  const selectedRows = useMemo(
-    () => participants.filter((p) => selected.has(participantKeyOf(p))),
-    [participants, selected]
-  );
+  const selectedRows = useMemo(() => Array.from(selected.values()), [selected]);
   const selectedPhones = useMemo(
     () => selectedRows.map((p) => p.phone).filter((p): p is string => !!p),
     [selectedRows]
@@ -112,11 +130,11 @@ export function GroupMembersPanel({
     [selectedRows]
   );
 
-  const toggle = (key: string) => {
+  const toggle = (key: string, participant: GroupParticipant) => {
     setSelected((prev) => {
-      const next = new Set(prev);
+      const next = new Map(prev);
       if (next.has(key)) next.delete(key);
-      else next.add(key);
+      else next.set(key, participant);
       return next;
     });
   };
@@ -162,7 +180,7 @@ export function GroupMembersPanel({
       setBulkProgress({ done: created + failed, total: targets.length });
     }
     setBulkProgress(null);
-    setSelected(new Set());
+    setSelected(new Map());
     if (failed === 0) toast.success(`${created} lead(s) criado(s)`);
     else toast.warning(`${created} lead(s) criado(s), ${failed} falharam`);
   };
@@ -170,7 +188,7 @@ export function GroupMembersPanel({
   // Quem é "você" na sala é decidido no SERVIDOR (`isSelf` por participante):
   // a chave crua do nosso número não desce mais para o cliente sob o gate de
   // inbox (review de segurança nº 9).
-  const withoutPhone = participants.filter((p) => !p.phone).length;
+  const totalMembers = group?.participantsCount ?? 0;
 
   return (
     <SlideOver
@@ -191,10 +209,13 @@ export function GroupMembersPanel({
           <div className="shrink-0 border-b border-border px-4 md:px-6 py-3 space-y-2">
             <div className="flex items-center gap-2 text-xs text-text-muted">
               <span className="tabular-nums">
-                {participants.length} membro{participants.length === 1 ? "" : "s"}
+                {totalMembers} membro{totalMembers === 1 ? "" : "s"}
               </span>
-              {withoutPhone > 0 && (
-                <span className="tabular-nums">· {withoutPhone} sem telefone visível</span>
+              {debouncedSearch && !loadingFirstPage && (
+                <span className="tabular-nums">
+                  · {filtered.length}
+                  {canLoadMore ? "+" : ""} encontrado{filtered.length === 1 ? "" : "s"}
+                </span>
               )}
             </div>
             <div className="relative">
@@ -206,21 +227,26 @@ export function GroupMembersPanel({
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Buscar membro..."
+                placeholder="Buscar por nome ou telefone..."
                 aria-label="Buscar membro"
                 className="h-9 w-full rounded-full border border-border-strong bg-surface-sunken pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 [&::-webkit-search-cancel-button]:hidden"
               />
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            {filtered.length === 0 ? (
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
+            {loadingFirstPage ? (
+              <div className="flex items-center justify-center p-6">
+                <Spinner size="md" />
+              </div>
+            ) : filtered.length === 0 ? (
               <p className="p-6 text-center text-sm text-text-muted">
-                {participants.length === 0
-                  ? "Nenhum participante conhecido ainda — atualize a lista de grupos."
-                  : "Nenhum membro com esse termo."}
+                {debouncedSearch
+                  ? "Nenhum membro com esse nome ou telefone."
+                  : "Nenhum participante conhecido ainda — atualize a lista de grupos."}
               </p>
             ) : (
+              <>
               <ul className="divide-y divide-border">
                 {filtered.map(({ participant, key, label }) => {
                   const isSelf = participant.isSelf === true;
@@ -235,7 +261,7 @@ export function GroupMembersPanel({
                       <input
                         type="checkbox"
                         checked={selected.has(key)}
-                        onChange={() => toggle(key)}
+                        onChange={() => toggle(key, participant)}
                         aria-label={`Selecionar ${label}`}
                         className="mt-1.5 h-4 w-4 shrink-0 rounded border-border-strong bg-surface-sunken accent-brand-600"
                       />
@@ -299,6 +325,23 @@ export function GroupMembersPanel({
                   );
                 })}
               </ul>
+              {/* Scroll infinito: o sentinela chama o mesmo handler do botão,
+                  que fica como fallback (lista menor que a tela não rola). */}
+              <div ref={sentinelRef} aria-hidden="true" className="h-px" />
+              {(canLoadMore || loadingMore) && (
+                <div className="flex justify-center px-4 py-3">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={loadingMore}
+                    onClick={() => loadMore(MEMBERS_PAGE_SIZE)}
+                  >
+                    {loadingMore ? <Spinner size="sm" /> : null}
+                    Carregar mais
+                  </Button>
+                </div>
+              )}
+              </>
             )}
           </div>
 
@@ -309,7 +352,7 @@ export function GroupMembersPanel({
                   {selected.size} selecionado{selected.size === 1 ? "" : "s"}
                   {bulkProgress && ` · ${bulkProgress.done}/${bulkProgress.total}`}
                 </span>
-                <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+                <Button variant="ghost" size="sm" onClick={() => setSelected(new Map())}>
                   Limpar
                 </Button>
                 {canCreateLead && (

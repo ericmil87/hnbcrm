@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "convex/react";
 import { AtSign } from "lucide-react";
+import { api } from "../../../convex/_generated/api";
+import { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
   groupSenderColor,
   initialsOf,
@@ -21,7 +25,16 @@ import type { GroupParticipant } from "./types";
  * A consequência prática é que apagar o "@Fulano" do texto precisa apagar o
  * JID junto — `syncMentions` faz essa reconciliação a cada envio, comparando
  * o que sobrou no texto com o que foi escolhido no dropdown.
+ *
+ * Perf (Convex I/O, onda 2): a lista de candidatos NÃO vem mais da sala
+ * inteira (até 1.024 membros via `getGroup`). Depois do "@" + 1 caractere, o
+ * hook busca no servidor (`groupChats.listGroupMembers` com `search`, página de
+ * 20). A menção continua saindo pelo `lid`/`phone` da linha, e o servidor
+ * revalida contra a tabela no envio (`lib/groupGuard.ts resolveGroupMentions`).
  */
+
+/** Quantos candidatos a busca do "@" pede ao servidor (mostra 8). */
+const MENTION_SEARCH_PAGE = 20;
 
 export interface GroupMentionChoice {
   /** JID que vai em `ContextInfo.MentionedJID` (LID ou telefone@s.whatsapp.net). */
@@ -31,7 +44,8 @@ export interface GroupMentionChoice {
 }
 
 interface UseGroupMentionsArgs {
-  participants: GroupParticipant[];
+  /** Sala da conversa; ausente = sem busca (conversa 1 a 1). */
+  groupChatId?: Id<"groupChats">;
   value: string;
   /** Aplica o texto novo (com a menção inserida) e reposiciona o cursor. */
   onChange: (value: string, cursorPosition: number) => void;
@@ -50,7 +64,7 @@ export function participantJid(p: GroupParticipant): string | null {
 }
 
 export function useGroupMentions({
-  participants,
+  groupChatId,
   value,
   onChange,
   enabled = true,
@@ -73,29 +87,36 @@ export function useGroupMentions({
     return { at, query, pos };
   }, [enabled, value, cursor]);
 
+  // Busca sob demanda: só com "@" + ≥ 1 caractere (debounce curto para não
+  // disparar uma query por tecla).
+  const searchTerm = useDebouncedValue(trigger?.query ?? "", 200);
+  const searchArgs =
+    groupChatId && trigger && trigger.query.length >= 1 && searchTerm.length >= 1
+      ? {
+          groupChatId,
+          search: searchTerm,
+          paginationOpts: { numItems: MENTION_SEARCH_PAGE, cursor: null },
+        }
+      : "skip";
+  const found = useQuery(api.groupChats.listGroupMembers, searchArgs);
+  // Enquanto a próxima busca carrega, mantém os candidatos da anterior (sem
+  // piscar o dropdown a cada tecla).
+  const lastFound = useRef<GroupParticipant[]>([]);
+  if (found !== undefined) lastFound.current = found.page as GroupParticipant[];
+  const candidates: GroupParticipant[] =
+    searchArgs === "skip" ? [] : ((found?.page as GroupParticipant[] | undefined) ?? lastFound.current);
+
   const items = useMemo(() => {
     if (!trigger) return [];
-    const term = trigger.query
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "");
-    return participants
+    return candidates
       .filter((p) => p.leftAt === undefined && participantJid(p) !== null)
       .map((p) => ({
         participant: p,
         key: participantKeyOf(p),
         label: participantDisplayName(p),
       }))
-      .filter(({ participant, label }) => {
-        if (!term) return true;
-        const name = label
-          .toLowerCase()
-          .normalize("NFD")
-          .replace(/[̀-ͯ]/g, "");
-        return name.includes(term) || (participant.phone ?? "").includes(term);
-      })
       .slice(0, 8);
-  }, [trigger, participants]);
+  }, [trigger, candidates]);
 
   const open = trigger !== null && items.length > 0;
 
