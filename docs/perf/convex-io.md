@@ -1,6 +1,6 @@
 # Database I/O do Convex — registro de medição (out/2026)
 
-**Estado em 22/10/2026 ~01:50 UTC: todas as fases (1, 2, 3, 4a, 4b+limpeza, 4c, 4d) publicadas em `main` (PRs #5–#12), prod e dev; migrações de dados concluídas em prod. Próximo passo: leitura 2 do painel (~29/10) para fechar o antes/depois em bytes.**
+**Estado em 22/10/2026 ~03:35 UTC: fases 1–4d e a onda 2 de otimizações (10 itens) publicadas em `main` (PRs #5–#18), prod e dev; todas as migrações de dados concluídas em prod (legado do runtime, prévia da lista, 6 salas de grupo, 7 atendentes, contador de storage, searchName). Próximo passo: leitura 2 do painel (~29/10) para fechar o antes/depois em bytes; PR de limpeza do validator de `agentProfile` depois.**
 
 Contexto: plano Free estourou **Database bandwidth** (2,04 GB de 2 GB) com Function Calls em 249K de 2M. O gargalo é bytes lidos/escritos, não número de chamadas. Dev (`tacit-chicken-195`) e prod (`careful-anaconda-127`) consomem a mesma cota.
 
