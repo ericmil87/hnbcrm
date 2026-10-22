@@ -795,6 +795,65 @@ describe("backfill do contador", () => {
     expect(doc.byKind.copilot).toEqual({ runs: 1, costUsdMicros: 950_000 });
   });
 
+  test("mês anterior à janela de retenção de agentRuns: real é recusado, dryRun avisa; mês corrente passa", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    // Agora = 03/10/2026; janela padrão de 90 dias → corte em 05/07/2026.
+    await expect(
+      t.mutation(internal.aiSpend.internalBackfillMonthlyUsage, {
+        organizationId: seed.organizationId,
+        month: "2026-06",
+        dryRun: false,
+      })
+    ).rejects.toThrow(/retenção/);
+    await expect(
+      t.mutation(internal.aiSpend.internalBackfillMonthlyUsage, { month: "2026-06", dryRun: false })
+    ).rejects.toThrow(/retenção/);
+    const dry = await t.mutation(internal.aiSpend.internalBackfillMonthlyUsage, {
+      organizationId: seed.organizationId,
+      month: "2026-06",
+    });
+    expect(dry.written).toBe(false);
+    expect(dry.warning).toMatch(/retenção/);
+
+    const current = await t.mutation(internal.aiSpend.internalBackfillMonthlyUsage, {
+      organizationId: seed.organizationId,
+      month: MONTH,
+      dryRun: false,
+    });
+    expect(current.written).toBe(true);
+    expect(current.warning).toBeNull();
+  });
+
+  test("backfill nunca reduz o agregado já gravado", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    await seedRuns(t, seed);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("aiUsageMonthly", {
+        organizationId: seed.organizationId,
+        month: MONTH,
+        costUsdMicros: 5_000_000,
+        runs: 10,
+        conversations: 3,
+        byKind: { attendant: { runs: 9, costUsdMicros: 4_900_000 } },
+        updatedAt: Date.now(),
+      });
+    });
+    await t.mutation(internal.aiSpend.internalBackfillMonthlyUsage, {
+      organizationId: seed.organizationId,
+      month: MONTH,
+      dryRun: false,
+    });
+    const doc = (await usageDoc(t, seed.organizationId))!;
+    expect(doc.costUsdMicros).toBe(5_000_000);
+    expect(doc.runs).toBe(10);
+    expect(doc.conversations).toBe(3);
+    expect(doc.byKind.attendant).toEqual({ runs: 9, costUsdMicros: 4_900_000 });
+    // Kind que só o recálculo conhece entra.
+    expect(doc.byKind.copilot).toEqual({ runs: 1, costUsdMicros: 950_000 });
+  });
+
   test("mês inválido é recusado", async () => {
     const t = setup();
     await expect(

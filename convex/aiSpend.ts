@@ -20,6 +20,7 @@ import { internal } from "./_generated/api";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import { isMembershipRevoked } from "./lib/auth";
+import { agentRunsRetentionCutoff } from "./retention";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
 import {
   SPEND_CAP_BLOCKED_MESSAGE,
@@ -469,6 +470,14 @@ const BACKFILL_MAX_RUNS = 8000;
  *
  * Sem `organizationId`: com dryRun lista as orgs; sem dryRun agenda uma
  * execução por org.
+ *
+ * Retenção (perf Convex I/O, fase 4a): `retention.ts` apaga `agentRuns`
+ * terminais além da janela (`RETENTION_AGENT_RUNS_DAYS`, default 90). Mês que
+ * começa antes do corte é RECUSADO com `dryRun:false` (as runs dele podem já
+ * ter sido apagadas e o recálculo sairia menor que o agregado) — o dryRun
+ * continua devolvendo o plano, com `warning`. E o backfill NUNCA reduz um doc
+ * existente: cada número gravado fica com o maior entre o gravado e o
+ * recalculado.
  */
 export const internalBackfillMonthlyUsage = internalMutation({
   args: {
@@ -481,6 +490,17 @@ export const internalBackfillMonthlyUsage = internalMutation({
     const dryRun = args.dryRun !== false;
     if (!isValidMonthKey(args.month)) throw new Error("Mês inválido (use AAAA-MM)");
 
+    const start = monthStartUtcMs(args.month);
+    const end = nextMonthStartUtcMs(args.month);
+    const retentionCutoff = agentRunsRetentionCutoff(Date.now());
+    const warning =
+      start < retentionCutoff
+        ? `As runs de ${args.month} podem já ter sido apagadas pela retenção de agentRuns (janela de ${Math.round((Date.now() - retentionCutoff) / 86_400_000)} dias) — o recálculo sairia MENOR que o agregado gravado.`
+        : null;
+    if (warning && !dryRun) {
+      throw new Error(`Backfill recusado: ${warning} Não rode backfill de mês anterior à janela de retenção.`);
+    }
+
     if (!args.organizationId) {
       const orgs = await ctx.db.query("organizations").collect();
       if (!dryRun) {
@@ -492,12 +512,16 @@ export const internalBackfillMonthlyUsage = internalMutation({
           });
         }
       }
-      return { dryRun, month: args.month, scheduled: dryRun ? 0 : orgs.length, organizationIds: orgs.map((o) => o._id) };
+      return {
+        dryRun,
+        month: args.month,
+        scheduled: dryRun ? 0 : orgs.length,
+        organizationIds: orgs.map((o) => o._id),
+        warning,
+      };
     }
 
     const organizationId = args.organizationId;
-    const start = monthStartUtcMs(args.month);
-    const end = nextMonthStartUtcMs(args.month);
     const runs = await ctx.db
       .query("agentRuns")
       .withIndex("by_organization_and_started", (q) =>
@@ -553,7 +577,7 @@ export const internalBackfillMonthlyUsage = internalMutation({
     if (!dryRun) {
       const now = Date.now();
       if (existing) {
-        await ctx.db.patch(existing._id, { ...computed, updatedAt: now });
+        await ctx.db.patch(existing._id, { ...neverReduce(existing, computed), updatedAt: now });
       } else {
         await ctx.db.insert("aiUsageMonthly", {
           organizationId,
@@ -577,6 +601,39 @@ export const internalBackfillMonthlyUsage = internalMutation({
           }
         : null,
       written: !dryRun,
+      warning,
     };
   },
 });
+
+type BackfillComputed = {
+  costUsdMicros: number;
+  runs: number;
+  estimatedRuns: number;
+  conversations: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedPromptTokens: number;
+  byKind: Record<string, { runs: number; costUsdMicros: number }>;
+};
+
+/** Mescla o recalculado no doc existente sem nunca baixar um número já gravado. */
+function neverReduce(existing: Doc<"aiUsageMonthly">, computed: BackfillComputed): BackfillComputed {
+  const byKind: BackfillComputed["byKind"] = { ...(existing.byKind ?? {}) };
+  for (const [kind, c] of Object.entries(computed.byKind)) {
+    const e = byKind[kind];
+    byKind[kind] = e
+      ? { runs: Math.max(e.runs, c.runs), costUsdMicros: Math.max(e.costUsdMicros, c.costUsdMicros) }
+      : c;
+  }
+  return {
+    costUsdMicros: Math.max(existing.costUsdMicros, computed.costUsdMicros),
+    runs: Math.max(existing.runs, computed.runs),
+    estimatedRuns: Math.max(existing.estimatedRuns ?? 0, computed.estimatedRuns),
+    conversations: Math.max(existing.conversations ?? 0, computed.conversations),
+    promptTokens: Math.max(existing.promptTokens ?? 0, computed.promptTokens),
+    completionTokens: Math.max(existing.completionTokens ?? 0, computed.completionTokens),
+    cachedPromptTokens: Math.max(existing.cachedPromptTokens ?? 0, computed.cachedPromptTokens),
+    byKind,
+  };
+}
