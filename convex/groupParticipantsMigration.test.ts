@@ -527,3 +527,188 @@ describe("leitores — mesmo resultado antes e depois da migração", () => {
     expect(left.timeline).toHaveLength(0);
   });
 });
+
+describe("correções pós-revisão da fase 4d", () => {
+  async function countRows(t: TestConvex<typeof schema>, groupChatId: Id<"groupChats">) {
+    return await t.run(async (ctx) => ({
+      participants: (
+        await ctx.db
+          .query("groupParticipants")
+          .withIndex("by_group", (q) => q.eq("groupChatId", groupChatId))
+          .collect()
+      ).length,
+      timeline: (
+        await ctx.db
+          .query("groupTimeline")
+          .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
+          .collect()
+      ).length,
+    }));
+  }
+
+  test("cascata do canal respeita o orçamento: várias rodadas, sala só some sem linhas", async () => {
+    const t = setup();
+    const { groupChatId, configId, organizationId } = await seed(t);
+    await migrate(t);
+    const secondId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const id = await ctx.db.insert("groupChats", {
+        organizationId,
+        channelConfigId: configId,
+        jid: "120363000000000002@g.us",
+        subject: "Sala 2",
+        monitored: true,
+        participantsCount: 300,
+        participantsMigratedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      } as Doc<"groupChats">);
+      for (const gid of [groupChatId, id]) {
+        for (let i = 0; i < 300; i++) {
+          await ctx.db.insert("groupParticipants", {
+            organizationId,
+            groupChatId: gid,
+            key: `${gid}-${i}@lid`,
+            lid: `${gid}-${i}@lid`,
+            isAdmin: false,
+            isSuperAdmin: false,
+            updatedAt: now,
+          });
+        }
+        await ctx.db.insert("groupTimeline", {
+          organizationId,
+          groupChatId: gid,
+          at: now,
+          type: "discovered",
+        });
+      }
+      return id;
+    });
+
+    let rounds = 0;
+    for (; rounds < 50; rounds++) {
+      await t.mutation(internal.groupChats.internalCascadeDeleteChannelGroups, {
+        channelConfigId: configId as Id<"channelConfigs">,
+        budget: 100,
+      });
+      for (const gid of [groupChatId, secondId]) {
+        const group = await t.run(async (ctx) => ctx.db.get(gid));
+        if (group === null) expect(await countRows(t, gid)).toEqual({ participants: 0, timeline: 0 });
+      }
+      const remaining = await t.run(async (ctx) =>
+        ctx.db
+          .query("groupChats")
+          .withIndex("by_channel_config", (q) => q.eq("channelConfigId", configId))
+          .first()
+      );
+      if (!remaining) break;
+    }
+    expect(rounds).toBeGreaterThan(1);
+    expect(rounds).toBeLessThan(50);
+    expect(await countRows(t, groupChatId)).toEqual({ participants: 0, timeline: 0 });
+    expect(await countRows(t, secondId)).toEqual({ participants: 0, timeline: 0 });
+  });
+
+  test("linha do tempo divergente não trava o finish (só reporta); backfill substitui", async () => {
+    const t = setup();
+    const { groupChatId } = await seed(t);
+    await t.mutation(internal.groupChats.internalBackfillGroupParticipants, { dryRun: false });
+    // Um evento do array some da tabela e um evento atrasado só existe nela.
+    await t.run(async (ctx) => {
+      const rows = await ctx.db
+        .query("groupTimeline")
+        .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
+        .collect();
+      await ctx.db.delete(rows[0]._id);
+      await ctx.db.insert("groupTimeline", {
+        organizationId: rows[0].organizationId,
+        groupChatId,
+        at: 1,
+        type: "join",
+      });
+    });
+    // Backfill de novo: a tabela vira a cópia do array (não só "insere o que falta").
+    const again = await t.mutation(internal.groupChats.internalBackfillGroupParticipants, {
+      dryRun: false,
+    });
+    expect(again.timelineInserted).toBe(2);
+    const synced = await t.run(async (ctx) => {
+      const group = (await ctx.db.get(groupChatId))!;
+      const rows = await ctx.db
+        .query("groupTimeline")
+        .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
+        .collect();
+      return { legacy: group.timeline!, rows };
+    });
+    expect(synced.rows.map((r) => r.type)).toEqual(synced.legacy.map((e) => e.type));
+
+    // Diverge de novo antes do finish: ele carimba mesmo assim e só reporta.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("groupTimeline")
+        .withIndex("by_group_and_at", (q) => q.eq("groupChatId", groupChatId))
+        .first();
+      await ctx.db.delete(row!._id);
+    });
+    const res = await t.mutation(internal.groupChats.internalFinishGroupParticipantsMigration, {
+      dryRun: false,
+    });
+    expect(res.finished).toBe(1);
+    expect(res.divergent).toBe(0);
+    expect(res.timelineDivergent).toBe(1);
+    expect(res.timelineDivergentSample).toEqual([groupChatId]);
+    expect((await t.run(async (ctx) => ctx.db.get(groupChatId)))!.participantsMigratedAt).toBeDefined();
+  });
+
+  test("sair da sala apaga os membros (LGPD), migrada ou não", async () => {
+    for (const migrated of [true, false]) {
+      const t = setup();
+      const { groupChatId } = await seed(t);
+      if (migrated) await migrate(t);
+      else await t.mutation(internal.groupChats.internalBackfillGroupParticipants, { dryRun: false });
+      await t.mutation(internal.groupChats.internalMarkGroupLeft, { groupChatId, at: Date.now() });
+      expect((await countRows(t, groupChatId)).participants).toBe(0);
+      const group = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!;
+      expect(group.monitored).toBe(false);
+      expect(group.participantsCount).toBe(3);
+      if (!migrated) expect(group.participants).toEqual([]);
+    }
+  });
+
+  test("sala removida da listagem apaga os membros (LGPD)", async () => {
+    const t = setup();
+    const { groupChatId, configId } = await seed(t);
+    await migrate(t);
+    await t.mutation(internal.groupChats.internalUpsertGroupsFromSync, {
+      channelConfigId: configId as Id<"channelConfigs">,
+      groups: [],
+      full: true,
+    });
+    const group = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!;
+    expect(group.removedAt).toBeDefined();
+    expect(group.monitored).toBe(false);
+    expect((await countRows(t, groupChatId)).participants).toBe(0);
+  });
+
+  test("rename em sala NÃO acompanhada não zera a contagem", async () => {
+    const t = setup();
+    const { groupChatId, configId, userId } = await seed(t);
+    await migrate(t);
+    const asAdmin = t.withIdentity({ subject: `${userId}|s1` });
+    await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: false });
+    expect((await t.run(async (ctx) => ctx.db.get(groupChatId)))!.participantsCount).toBe(3);
+    await t.mutation(internal.groupChats.internalApplyGroupInfoEvent, {
+      channelConfigId: configId as Id<"channelConfigs">,
+      jid: GROUP_JID,
+      at: Date.now(),
+      name: "Novo nome",
+      join: [],
+      leave: [],
+      promote: [],
+      demote: [],
+    });
+    const renamed = (await t.run(async (ctx) => ctx.db.get(groupChatId)))!;
+    expect(renamed.subject).toBe("Novo nome");
+    expect(renamed.participantsCount).toBe(3);
+  });
+});
