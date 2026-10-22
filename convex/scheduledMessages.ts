@@ -8,6 +8,7 @@ import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 import { getLeadRef } from "./lib/leadRef";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { firstResponsePatch } from "./lib/conversationTiming";
+import { lastMessagePatchForId } from "./lib/conversationListFields";
 
 // Mensagens agendadas: o composer agenda um texto para uma conversa; a entrega
 // roda via ctx.scheduler.runAt e reaproveita o mesmo caminho de dispatch do
@@ -178,6 +179,7 @@ export const deliver = internalMutation({
       messageCount: conversation.messageCount + 1,
       updatedAt: now,
       ...firstResponsePatch(conversation, actorType, now),
+      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
     const lead = await getLeadRef(ctx.db, conversation.leadId);
