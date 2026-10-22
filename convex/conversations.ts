@@ -39,6 +39,7 @@ import {
   hasDenormLastMessage,
   inboxDenormReadEnabled,
   lastMessageFieldsFor,
+  findLastPreviewMessage,
   lastMessageFieldsFromConversation,
   channelConfigPatchFor,
   lastMessagePatchForId,
@@ -110,24 +111,19 @@ function groupChatSummary(
 
 const lastMessageFields = lastMessageFieldsFor;
 
-// Fetch the newest message of each conversation (one indexed `.first()` per
-// conversation) and index the preview fields by conversation id.
+// Fetch the newest NON-internal message of each conversation (até 20 por
+// conversa — notas internas e rascunhos da IA não são prévia, onda 2 de I/O) and
+// index the preview fields by conversation id.
 async function lastMessageFieldsByConversation(
   ctx: { db: MutationCtx["db"] | QueryCtx["db"] },
   conversationIds: Id<"conversations">[]
 ): Promise<Map<string, LastMessageFields>> {
-  const messages = await Promise.all(
-    conversationIds.map((id) =>
-      ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", id))
-        .order("desc")
-        .first()
-    )
+  const found = await Promise.all(
+    conversationIds.map((id) => findLastPreviewMessage(ctx, id))
   );
   const map = new Map<string, LastMessageFields>();
   conversationIds.forEach((id, i) => {
-    map.set(id, lastMessageFields(messages[i]));
+    map.set(id, lastMessageFields(found[i].message));
   });
   return map;
 }
@@ -2965,7 +2961,9 @@ const LIST_FIELDS_BACKFILL_PAGE_SIZE = 200;
 
 /**
  * Backfill da desnormalização da lista do inbox (perf Convex I/O, fase 4c):
- * prévia da última mensagem, nome/contagem do grupo e provider do canal.
+ * prévia da última mensagem NÃO interna (onda 2: nota interna/rascunho da IA
+ * deixaram de ser prévia — rodar de novo re-deriva as prévias "Nota: …"),
+ * nome/contagem do grupo e provider do canal.
  * Grava só o que falta/difere (idempotente); `dryRun` (default) só conta.
  * Em `dryRun:false` se re-agenda pelo cursor até o fim.
  *
@@ -3008,11 +3006,9 @@ export const internalBackfillListFields = internalMutation({
     let groupFixed = 0;
     let providerFixed = 0;
     for (const conversation of page.page) {
-      const lastMessage = await ctx.db
-        .query("messages")
-        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
-        .order("desc")
-        .first();
+      // Última NÃO interna (onda 2 de I/O); desconhecida = não mexe na prévia.
+      const found = await findLastPreviewMessage(ctx, conversation._id);
+      const lastMessage = found.unknown ? undefined : found.message;
       const group =
         conversation.kind === "group" && conversation.groupChatId
           ? await ctx.db.get(conversation.groupChatId)

@@ -255,12 +255,9 @@ describe("transferência", () => {
     expect(state.messages[0]).toMatchObject({ direction: "internal", isInternal: true });
     expect(state.messages[0].metadata?.kind).toBe("transfer");
     expect(state.messages[0].metadata?.transfer.toDept.name).toBe("Financeiro");
-    // Fase 4c: a nota vira a prévia da lista, sem mexer na ordem (lastMessageAt).
-    expect(state.conversation).toMatchObject({
-      lastMessageId: state.messages[0]._id,
-      lastMessageDirection: "internal",
-    });
-    expect(state.conversation!.lastMessagePreview).toMatch(/^Nota: .*transferiu a conversa/);
+    // Onda 2 de I/O: a nota de transferência NÃO vira prévia da lista.
+    expect(state.conversation!.lastMessageId).not.toBe(state.messages[0]._id);
+    expect(state.conversation!.lastMessagePreview ?? "").not.toMatch(/^Nota: /);
     expect(state.notifications).toHaveLength(1);
     expect(state.notifications[0]).toMatchObject({
       type: "conversation_transferred", memberId: s.admin.memberId, conversationId: s.conversationId,

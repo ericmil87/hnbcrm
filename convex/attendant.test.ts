@@ -629,15 +629,11 @@ describe("commit transacional (TOCTOU)", () => {
     expect(
       (drafts[0].metadata!.aiDraft as { proposedActions: string[] }).proposedActions
     ).toHaveLength(1);
-    // Fase 4c: o rascunho (nota interna) é a última mensagem da lista.
+    // Onda 2 de I/O: o rascunho (nota interna) NÃO vira a prévia da lista.
     const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
-    expect(conversation).toMatchObject({
-      lastMessageId: drafts[0]._id,
-      lastMessageDirection: "internal",
-    });
-    // A disclosure entra no texto do rascunho; a prévia é a mesma regra da lista.
-    expect(conversation!.lastMessagePreview).toBe(previewTextOf(drafts[0]));
-    expect(conversation!.lastMessagePreview).toMatch(/^Nota: .*Sugestão de resposta/s);
+    expect(conversation!.lastMessageId).not.toBe(drafts[0]._id);
+    expect(conversation!.lastMessageDirection).not.toBe("internal");
+    expect(conversation!.lastMessagePreview ?? "").not.toMatch(/^Nota: /);
   });
 });
 
