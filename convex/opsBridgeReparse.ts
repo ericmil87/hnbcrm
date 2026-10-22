@@ -29,6 +29,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { boundRawForStorage, classifyBridgeMessage } from "./lib/bridgeParse";
 import { sanitizeBridgeMediaMeta, stripMediaKeyMaterial } from "./lib/bridgeMedia";
 import { EDIT_PREVIOUS_CONTENT_MAX } from "./lib/bridgeMessageMutations";
+import { CLEARED_LAST_MESSAGE_PATCH } from "./lib/conversationListFields";
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 200;
@@ -126,6 +127,16 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
 
     const conversations = new Map<string, Doc<"conversations"> | null>();
     const unreadDelta = new Map<Id<"conversations">, number>();
+    // Conversas cuja ÚLTIMA mensagem foi apagada/retipada/alterada aqui: a
+    // prévia desnormalizada (fase 4c) é limpa e a lista cai no fallback, que
+    // relê a mensagem certa (o backfill volta a preencher).
+    const clearPreview = new Set<Id<"conversations">>();
+    const markIfLast = async (message: Doc<"messages">) => {
+      const conversation = await getConversation(message.conversationId);
+      if (conversation && conversation.lastMessageId === message._id) {
+        clearPreview.add(message.conversationId);
+      }
+    };
     const getConversation = async (id: Id<"conversations">) => {
       if (!conversations.has(id)) conversations.set(id, await ctx.db.get(id));
       return conversations.get(id)!;
@@ -139,6 +150,7 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
         out.unreadDecremented++;
       }
       if (!dryRun) await ctx.db.delete(message._id);
+      await markIfLast(message);
       out.ignoredDeleted++;
       pushSample(out.samples.deleted, message._id);
       return true;
@@ -167,6 +179,7 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
           )
           .first();
         if (target && target.conversationId === message.conversationId && sameAuthor(target, message)) {
+          await markIfLast(target);
           if (classified.kind === "revoke") {
             if (!dryRun && target.metadata?.revoked !== true) {
               await ctx.db.patch(target._id, {
@@ -226,6 +239,7 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
         contentType: extracted.contentType,
         metadata: stripMediaKeyMaterial(nextMeta) as Record<string, unknown>,
       });
+      await markIfLast(message);
     }
 
     if (!dryRun) {
@@ -234,7 +248,12 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
         if (!conversation) continue;
         await ctx.db.patch(conversationId, {
           unreadCount: Math.max(0, (conversation.unreadCount ?? 0) - delta),
+          ...(clearPreview.has(conversationId) ? CLEARED_LAST_MESSAGE_PATCH : {}),
         });
+        clearPreview.delete(conversationId);
+      }
+      for (const conversationId of clearPreview) {
+        await ctx.db.patch(conversationId, CLEARED_LAST_MESSAGE_PATCH);
       }
     }
 
