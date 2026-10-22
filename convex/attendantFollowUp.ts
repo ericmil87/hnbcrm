@@ -27,6 +27,7 @@ import { requirePermission } from "./lib/auth";
 import { isSessionLostState } from "./lib/channelHealthSignals";
 import { orgAiActive } from "./lib/agentSecurity";
 import { resolveConversationChannelConfig, transportOf } from "./lib/channelResolve";
+import { channelDisplayName } from "./lib/channelTransport";
 import { evaluateEligibility, findAttendantForConversation, lastInboundIsStandby } from "./attendant";
 import { getLeadRef } from "./lib/leadRef";
 import { releaseAiTurnLock } from "./lib/conversationRuntime";
@@ -741,6 +742,11 @@ const followUpSummaryValidator = v.object({
   agentName: v.union(v.string(), v.null()),
   /** Modo EFETIVO do atendente desta conversa ("off" | "draft" | "send"). */
   effectiveMode: v.string(),
+  /**
+   * Canal da conversa ("WhatsApp" | "Instagram" | "Messenger") para as cópias
+   * da tela (F3). Ausente quando a conversa do follow-up não existe mais.
+   */
+  channelLabel: v.optional(v.string()),
 });
 
 async function summarizeFollowUp(
@@ -769,6 +775,7 @@ async function summarizeFollowUp(
     conversationId: followUp.conversationId,
     agentName: agent?.name ?? null,
     effectiveMode: settings.mode,
+    ...(conversation ? { channelLabel: channelDisplayName(transportOf(channelConfig), conversation.channel) } : {}),
   };
 }
 
@@ -854,12 +861,16 @@ export const runNow = mutation({
       return { ok: false, reason: "A IA já está processando este follow-up" };
     }
     const result = await fireCore(ctx, args.followUpId, { manual: true });
+    const conversation = await ctx.db.get(followUp.conversationId);
     return {
       ok: result.ok,
       // "adiado_fila_ocupada" → "a conversa ficou ocupada…": o prefixo é
       // controle interno e não pode vazar para a tela.
       reason: result.reason
-        ? describeFollowUpReason(result.reason.replace(/^adiad[oa]_/, ""))
+        ? describeFollowUpReason(
+            result.reason.replace(/^adiad[oa]_/, ""),
+            channelDisplayName(null, conversation?.channel)
+          )
         : null,
     };
   },

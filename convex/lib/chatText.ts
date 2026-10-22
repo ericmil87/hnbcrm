@@ -8,7 +8,8 @@
  * convertê-la (o WhatsApp continua em `toWhatsAppText`).
  *
  * O que faz:
- *  - cerca de código e crases somem (o conteúdo fica);
+ *  - cerca de código (``` ou ~~~) e crases somem (o conteúdo fica);
+ *  - escape do markdown (`\*x\*`) perde a barra e vira texto puro;
  *  - link `[t](u)` vira `t (u)` (rótulo vazio ou igual à URL vira só a URL);
  *  - títulos `# X` viram `X`; citação `> X` vira `X`; régua `---` some;
  *  - marcador de lista `*`/`+`/`-`/`•` vira `- ` (lista numerada fica);
@@ -64,9 +65,14 @@ export function toPlainChatText(text: string): string {
   if (!text) return text;
   let out = text.replace(new RegExp(ATOM, "g"), "");
 
-  // 1. Código: cerca some (conteúdo fica), crase inline some.
-  out = out.replace(/```[\w-]*[ \t]*\r?\n?([\s\S]*?)```/g, "$1");
-  out = out.replace(/```/g, "");
+  // 0. Escape do markdown (`\*isso\*`): a barra some e o marcador vira
+  // ênfase comum, que o passo 5 remove — nunca sobra barra para o cliente.
+  out = out.replace(/\\([*_~`#>])/g, "$1");
+
+  // 1. Código: cerca de crases OU de tis (3+, mesmo tamanho para fechar) some
+  // inteira, o conteúdo fica; crase inline some.
+  out = out.replace(/(`{3,}|~{3,})[\w-]*[ \t]*\r?\n?([\s\S]*?)\1/g, "$2");
+  out = out.replace(/`{3,}/g, "");
   out = out.replace(/`([^`\n]+)`/g, "$1");
   out = out.replace(/`/g, "");
 

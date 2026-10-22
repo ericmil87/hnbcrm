@@ -34,7 +34,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
-import { ChannelTransport, configTransport } from "./lib/channelTransport";
+import { ChannelTransport, channelDisplayName, configTransport } from "./lib/channelTransport";
 import { resolveConversationChannelConfig, transportOf } from "./lib/channelResolve";
 import {
   ATTENDANT_TOOLS,
@@ -275,9 +275,14 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
  */
 export function aiWindowClosed(
   transport: ChannelTransport | null,
-  conversation: { lastInboundAt?: number; windowOpenedByAdAt?: number },
+  conversation: { channel?: string; lastInboundAt?: number; windowOpenedByAdAt?: number },
   now: number
 ): boolean {
+  // Conversa do Instagram/Messenger cujo config não resolve mais (sumiu entre
+  // o claim e o commit): FECHADA. Nunca cai na régua do WhatsApp.
+  if (transport === null && (conversation.channel === "instagram" || conversation.channel === "messenger")) {
+    return true;
+  }
   if (transport === "bridge") return false;
   if (transport === "instagram" || transport === "messenger") {
     const w = metaConversationWindow(transport, conversation, now);
@@ -320,10 +325,8 @@ export function formatReplyForTransport(text: string, transport: ChannelTranspor
 }
 
 /** Nome do canal para cópias da IA (planner, persona padrão). */
-export function channelLabelFor(transport: ChannelTransport | null): string {
-  if (transport === "instagram") return "Instagram";
-  if (transport === "messenger") return "Messenger";
-  return "WhatsApp";
+export function channelLabelFor(transport: ChannelTransport | null, channel?: string | null): string {
+  return channelDisplayName(transport, channel);
 }
 
 // Campos a capturar (v4.2): resolve as fieldDefinitions da whitelist do perfil
@@ -1888,7 +1891,7 @@ async function planFollowUpSchedule(
   if (aiExecutes && (provider === "instagram" || provider === "messenger")) {
     if (aiWindowClosed(provider, conversation, dueAt)) {
       avisos.push(
-        `nesse horário a janela de 24 h do ${channelLabelFor(provider)} estará fechada (a IA só envia se o cliente escrever de novo): vou preparar o texto e a equipe envia`
+        `nesse horário a janela da Meta (24 h, ou 7 dias por anúncio) do ${channelLabelFor(provider)} estará fechada (a IA só envia se o cliente escrever de novo): vou preparar o texto e a equipe envia`
       );
     }
   } else if (
@@ -2799,9 +2802,7 @@ export const internalCommitAiReply = internalMutation({
       member: agent!,
       messageId,
       now,
-      activityContent: queueItem?.followUpId
-        ? "Follow-up enviado pelo atendente IA via whatsapp"
-        : "Resposta enviada pelo atendente IA via whatsapp",
+      activityContent: `${queueItem?.followUpId ? "Follow-up enviado" : "Resposta enviada"} pelo atendente IA via ${channelLabelFor(transportOf(channelConfig), conversation.channel)}`,
     });
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
@@ -3298,6 +3299,10 @@ function attendantToolsFor(
 
 function buildAttendantSystemPrompt(context: PromptContext): string {
   const canal = context.channelLabel ?? "WhatsApp";
+  // Persona de INDÚSTRIA (`lib/agentPersonas.ts`) e persona própria costumam
+  // dizer "no WhatsApp" no texto, e vencem a padrão. Fora do WhatsApp o canal
+  // real entra como linha fixa da plataforma, fora da persona.
+  const channelLine = canal !== "WhatsApp" ? `Canal desta conversa: ${canal}.` : null;
   const persona =
     context.systemPrompt ??
     [
@@ -3310,6 +3315,7 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
 
   return [
     persona,
+    channelLine ?? "",
     `Responda sempre em ${context.language}.`,
     "REGRAS OBRIGATÓRIAS:",
     "1. Use a ferramenta replyToCustomer UMA única vez por turno, com a resposta ao cliente. Se também for usar outras ferramentas (mover lead, qualificar, agendar, salvar dados), chame TODAS JUNTAS no mesmo turno, com replyToCustomer por último — não espere o resultado de uma ferramenta para só então responder. EXCEÇÃO: ferramentas de CONSULTA (consultarAgenda) são chamadas SOZINHAS, primeiro, e o replyToCustomer vem na rodada seguinte, já com os dados que ela devolveu.",

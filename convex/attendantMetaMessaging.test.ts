@@ -20,6 +20,7 @@ import { CURATED_GOLDENS, goldenTransport } from "./agentEvals";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { aiWindowClosed, evaluateEligibility, formatReplyForTransport } from "./attendant";
+import { personaForIndustry } from "./lib/agentPersonas";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -46,7 +47,12 @@ type Surface = "instagram" | "messenger";
 
 async function seed(
   t: TestConvex<typeof schema>,
-  opts: { module?: boolean; authState?: "ok" | "reauth_required"; mode?: "suggest" | "autopilot" } = {}
+  opts: {
+    module?: boolean;
+    authState?: "ok" | "reauth_required";
+    mode?: "suggest" | "autopilot";
+    systemPrompt?: string;
+  } = {}
 ) {
   return await t.run(async (ctx) => {
     const now = Date.now();
@@ -86,7 +92,11 @@ async function seed(
       role: "ai",
       type: "ai",
       status: "active",
-      agentProfile: { kind: "attendant", mode: opts.mode ?? "autopilot" },
+      agentProfile: {
+        kind: "attendant",
+        mode: opts.mode ?? "autopilot",
+        ...(opts.systemPrompt ? { systemPrompt: opts.systemPrompt } : {}),
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -325,6 +335,17 @@ describe("janela da Meta com margem de 15 min (elegibilidade pura)", () => {
     });
   });
 
+  test("transporte null numa conversa Instagram/Messenger: janela FECHADA (fail-closed)", () => {
+    const fresca = { lastInboundAt: now - MIN };
+    expect(aiWindowClosed(null, { ...fresca, channel: "instagram" }, now)).toBe(true);
+    expect(aiWindowClosed(null, { ...fresca, channel: "messenger" }, now)).toBe(true);
+    // WhatsApp sem config resolvido continua na régua do oficial (aberta aqui).
+    expect(aiWindowClosed(null, { ...fresca, channel: "whatsapp" }, now)).toBe(false);
+    expect(
+      evaluateEligibility({ ...base, channelProvider: null, conversation: conv({ ...fresca, channel: "instagram" }) })
+    ).toEqual({ ok: false, reason: "janela_24h" });
+  });
+
   test("WhatsApp oficial não ganha margem; bridge não tem janela", () => {
     const quase = conv({ lastInboundAt: now - (DAY - 10 * MIN) });
     expect(evaluateEligibility({ ...base, channelProvider: "meta", conversation: quase })).toEqual({ ok: true });
@@ -536,6 +557,45 @@ describe("WhatsApp intacto", () => {
     expect(formatReplyForTransport("**x** e _y_", "bridge")).toBe("*x* e _y_");
     expect(formatReplyForTransport("**x** e _y_", null)).toBe("*x* e _y_");
     expect(formatReplyForTransport("**x** e _y_", "instagram")).toBe("x e y");
+  });
+});
+
+describe("persona de indústria e timeline", () => {
+  const persona = personaForIndustry("geral").systemPrompt;
+
+  test("persona de indústria ('no WhatsApp') + Instagram: prompt ganha a linha fixa do canal", async () => {
+    expect(persona).toContain("no WhatsApp");
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { systemPrompt: persona });
+    await enqueue(t, await inbound(t, s, "instagram", "Oi"));
+    const itemId = await readyItem(t, s.conversations.instagram);
+    const fetchMock = stubLlmReply("Oi! Como posso ajudar?");
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    const system = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body).messages[0].content as string;
+    expect(system).toContain(persona);
+    expect(system).toContain("Canal desta conversa: Instagram.");
+
+    // Timeline do lead fala o canal real.
+    const activities = await t.run(async (ctx) => ctx.db.query("activities").collect());
+    expect(activities.map((a) => a.content)).toContain("Resposta enviada pelo atendente IA via Instagram");
+  });
+
+  test("persona de indústria + WhatsApp: sem linha de canal", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { systemPrompt: persona });
+    const asAdmin = t.withIdentity({ subject: `${s.userId}|s1` });
+    for (const transport of [undefined, "meta", "messenger"] as const) {
+      const fetchMock = stubLlmReply("Oi!");
+      await asAdmin.action(api.attendant.simulateAttendant, {
+        organizationId: s.organizationId,
+        agentMemberId: s.agentId,
+        transcript: [{ role: "customer", content: "Oi" }],
+        ...(transport ? { transport } : {}),
+      });
+      const system = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body).messages[0].content as string;
+      if (transport === "messenger") expect(system).toContain("Canal desta conversa: Messenger.");
+      else expect(system).not.toContain("Canal desta conversa");
+    }
   });
 });
 

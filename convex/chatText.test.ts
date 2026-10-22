@@ -36,6 +36,12 @@ describe("toPlainChatText", () => {
     ["emojis e acentos preservados", "Olá, *João*! 😊🎉 Até já", "Olá, João! 😊🎉 Até já"],
     ["quebras preservadas", "linha 1\n\nlinha 2\n", "linha 1\n\nlinha 2\n"],
     ["itálico em palavra acentuada", "é _ótimo_ mesmo", "é ótimo mesmo"],
+    ["escape de asterisco", "Isso \\*isso\\* aqui", "Isso isso aqui"],
+    ["escape de sublinhado e hashtag", "\\_nota\\_ e \\#promo", "nota e #promo"],
+    ["cerca de tis", "~~~\ncódigo\n~~~", "código\n"],
+    ["cerca de 4 crases", "````md\ncódigo\n````", "código\n"],
+    ["crases dentro de cerca maior somem", "````md\n```x```\n````", "x\n"],
+    ["cerca sem fechamento some", "```\nsolto", "\nsolto"],
   ])("%s", (_name, input, expected) => {
     expect(toPlainChatText(input)).toBe(expected);
   });

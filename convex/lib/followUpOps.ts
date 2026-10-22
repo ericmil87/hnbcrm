@@ -21,6 +21,7 @@ import { applyTaskCompletion, addTaskCommentCore, taskDeepLink } from "./taskOps
 import { createNotification, inboxRepliers } from "./notify";
 import { appUrl as resolveAppUrl } from "./appUrl";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { channelDisplayName } from "./channelTransport";
 
 /** Estados em que o follow-up ainda "pertence" à IA. */
 export const ACTIVE_FOLLOW_UP_STATUSES = ["scheduled", "queued", "drafted"] as const;
@@ -300,9 +301,13 @@ export async function resolveFollowUpOutcome(
           ? outcome.detail
           : undefined;
   const reasonCode = rawReason && isFollowUpReasonCode(rawReason) ? rawReason : undefined;
+  // Cópia por canal (F3): a frase grava no follow-up, no comentário da tarefa
+  // e na notificação — "janela do Instagram", não "do WhatsApp".
+  const reasonConversation = reasonCode === "janela_24h" ? await ctx.db.get(followUp.conversationId) : null;
+  const channelName = reasonConversation ? channelDisplayName(null, reasonConversation.channel) : null;
   const reasonText = rawReason
     ? reasonCode
-      ? describeFollowUpReason(reasonCode)
+      ? describeFollowUpReason(reasonCode, channelName)
       : rawReason
     : undefined;
 
@@ -657,7 +662,14 @@ export function isFollowUpReasonCode(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(FOLLOW_UP_REASONS, value);
 }
 
-export function describeFollowUpReason(reason: string): string {
+/**
+ * `channelName` (F3): conversa do Instagram/Messenger troca a cópia da janela
+ * ("a janela de 24 h do Instagram está fechada"); WhatsApp/ausente não muda.
+ */
+export function describeFollowUpReason(reason: string, channelName?: string | null): string {
+  if (reason === "janela_24h" && channelName && channelName !== "WhatsApp") {
+    return `a janela de 24 h do ${channelName} está fechada`;
+  }
   return FOLLOW_UP_REASONS[reason] ?? "a IA não conseguiu concluir este follow-up";
 }
 

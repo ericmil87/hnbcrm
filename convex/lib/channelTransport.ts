@@ -48,3 +48,17 @@ export function configTransport(config: {
 export function isWhatsappTransport(t: ChannelTransport): t is "meta" | "bridge" {
   return t === "meta" || t === "bridge";
 }
+
+/**
+ * Nome do canal para cópias ao cliente/equipe (F3). Transporte resolvido
+ * vence; sem ele, o `channel` da conversa (config sumiu) ainda diz se é Meta.
+ */
+export function channelDisplayName(
+  transport: ChannelTransport | null | undefined,
+  channel?: string | null
+): "WhatsApp" | "Instagram" | "Messenger" {
+  const key = transport ?? channel;
+  if (key === "instagram") return "Instagram";
+  if (key === "messenger") return "Messenger";
+  return "WhatsApp";
+}

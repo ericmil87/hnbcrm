@@ -128,6 +128,9 @@ Para clientes reais é preciso App Review.
    | `falha_meta` | erro de rede/Meta | repetir; se persistir, ver logs (seção 5) |
 4. Os canais aparecem como cards agrupados por Página ("Página X: Messenger + Instagram"), com estado **Conectado**, quem
    conectou, e os botões **Desconectar** e **Excluir**.
+   **Atenção com o atendente IA:** um atendente configurado para "todos os canais" (sem canais específicos) passa a
+   responder no Instagram e no Messenger **no momento em que o canal é conectado**, inclusive em autopilot, com a mesma
+   persona do WhatsApp. Se não for isso que você quer, restrinja os canais do atendente ou pause a IA antes de conectar.
 5. **Teste:** de outro perfil, mande uma DM para a Página (pelo Messenger) e outra para o Instagram. Cada uma vira uma
    conversa no inbox com o selo do canal; o contato recebe o nome do perfil (ou `@usuário`), **sem telefone**, e um lead
    entra no funil padrão. A mesma pessoa no Instagram e no Messenger vira **dois contatos** (vínculo manual fica para depois).
