@@ -228,3 +228,110 @@ describe("GET /api/v1/conversations?channelConfigId=", () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe("filtro por conta/canal: paginação sem perda", () => {
+  async function insertMixed(t: TestConvex<typeof schema>, s: Awaited<ReturnType<typeof seed>>) {
+    // 7 da conta Messenger intercaladas com 9 de outras contas e mais recentes no fim.
+    const ids: { messenger: string[]; instagram: string[] } = { messenger: [], instagram: [] };
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 16; i++) {
+        const isMsg = i % 3 !== 2 && ids.messenger.length < 7;
+        const [channel, channelConfigId] = isMsg
+          ? (["messenger", s.messengerId] as const)
+          : i % 2
+            ? (["instagram", s.instagramId] as const)
+            : (["whatsapp", s.waId] as const);
+        const id = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, channel, channelConfigId, status: "active", messageCount: 0, createdAt: now, updatedAt: now,
+        } as any);
+        if (channel === "messenger") ids.messenger.push(id);
+        if (channel === "instagram") ids.instagram.push(id);
+      }
+      // mais recentes, de outras contas: o filtro não pode depender de "as últimas N".
+      for (let i = 0; i < 10; i++) {
+        await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, channel: "whatsapp", channelConfigId: s.waId, status: "active", messageCount: 0, createdAt: now, updatedAt: now,
+        } as any);
+      }
+    });
+    return ids;
+  }
+
+  async function pageAll(t: TestConvex<typeof schema>, query: string, limit: number) {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (;;) {
+      const res = await call(t, "GET", `/api/v1/conversations?${query}&limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+      expect(res.status).toBe(200);
+      seen.push(...res.json.conversations.map((c: any) => c._id));
+      pages++;
+      if (!res.json.hasMore) break;
+      cursor = res.json.nextCursor;
+      expect(cursor).toBeTruthy();
+      expect(pages).toBeLessThan(20);
+    }
+    return { seen, pages };
+  }
+
+  test("channelConfigId: todas da conta, sem repetir nem perder, hasMore correto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ids = await insertMixed(t, s);
+    const { seen, pages } = await pageAll(t, `channelConfigId=${s.messengerId}`, 3);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect([...seen].sort()).toEqual([...ids.messenger].sort());
+    expect(pages).toBe(3);
+    const single = await call(t, "GET", `/api/v1/conversations?channelConfigId=${s.messengerId}&limit=7`);
+    expect(single.json.hasMore).toBe(false);
+    expect(single.json.conversations).toHaveLength(7);
+  });
+
+  test("channel: todas do canal, paginadas", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ids = await insertMixed(t, s);
+    const { seen } = await pageAll(t, "channel=instagram", 2);
+    expect([...seen].sort()).toEqual([...ids.instagram].sort());
+  });
+
+  test("channelConfigId inválido: 400", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    expect((await call(t, "GET", "/api/v1/conversations?channelConfigId=nao-e-um-id")).status).toBe(400);
+    expect((await call(t, "GET", "/api/v1/conversations?leadId=nao-e-um-id")).status).toBe(400);
+  });
+});
+
+describe("outras regras Meta na REST", () => {
+  test("/inbound/lead recusa instagram e messenger", async () => {
+    const t = convexTest(schema, modules);
+    await seed(t);
+    for (const channel of ["instagram", "messenger"]) {
+      const res = await call(t, "POST", "/api/v1/inbound/lead", { title: "Lead", message: "oi", channel });
+      expect(res.status).toBe(400);
+      expect(res.json.error).toContain("precisa escrever primeiro");
+    }
+  });
+
+  test("/receive Meta recusa conta desativada ou módulo desligado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const body = { channel: "messenger", channelConfigId: s.messengerId, contactId: s.contactId, content: "Oi!" };
+    await t.run(async (ctx) => await ctx.db.patch(s.messengerId, { status: "disabled" }));
+    expect((await call(t, "POST", "/api/v1/conversations/receive", body)).status).toBe(400);
+    await t.run(async (ctx) => await ctx.db.patch(s.messengerId, { status: "active", disabledByModuleAt: Date.now() }));
+    expect((await call(t, "POST", "/api/v1/conversations/receive", body)).status).toBe(400);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.messengerId, { disabledByModuleAt: undefined });
+      const org = await ctx.db.get(s.organizationId);
+      await ctx.db.patch(s.organizationId, { settings: { ...org!.settings, modules: { metaMessaging: false } } });
+    });
+    const off = await call(t, "POST", "/api/v1/conversations/receive", body);
+    expect(off.status).toBe(400);
+    expect(off.json.error).toContain("módulo");
+    const n = await t.run(async (ctx) => (await ctx.db.query("conversations").collect()).length);
+    expect(n).toBe(0);
+  });
+});

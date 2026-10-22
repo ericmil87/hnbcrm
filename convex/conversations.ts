@@ -1357,23 +1357,22 @@ export const internalGetConversations = internalQuery({
         .order("desc")
         .take(overRead);
     } else if (args.channelConfigId) {
-      // Por conta: varre a org do mais novo ao mais antigo até juntar `limit + 1`
-      // da conta (ou o teto de leitura), em vez de filtrar só as últimas N da org.
-      const matched = [];
-      let scanned = 0;
-      for await (const c of ctx.db
-        .query("conversations")
-        .withIndex("by_organization", (q) =>
-          cursor
-            ? q.eq("organizationId", args.organizationId).lte("_creationTime", cursor.ts)
-            : q.eq("organizationId", args.organizationId)
-        )
-        .order("desc")) {
-        if (++scanned > 3000) break;
-        if (c.channelConfigId === args.channelConfigId) matched.push(c);
-        if (matched.length >= overRead) break;
-      }
-      rawConversations = matched;
+      // Por conta: índice próprio (o `_creationTime` implícito mantém o cursor desta rota).
+      rawConversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel_config", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channelConfigId", args.channelConfigId!);
+          return cursor ? base.lte("_creationTime", cursor.ts) : base;
+        })
+        .order("desc")
+        .take(overRead);
+    } else if (args.channel) {
+      rawConversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channel", args.channel!);
+          return cursor ? base.lte("_creationTime", cursor.ts) : base;
+        })
+        .order("desc")
+        .take(overRead);
     } else {
       rawConversations = await ctx.db.query("conversations")
         .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))

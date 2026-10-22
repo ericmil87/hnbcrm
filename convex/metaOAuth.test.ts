@@ -150,7 +150,8 @@ function stubMeta(opts: {
         })),
       });
     }
-    if (url.includes("/debug_token")) return json({ data: { is_valid: true, scopes: [...REQUIRED_SCOPES], data_access_expires_at: 1900000000 } });
+    if (url.includes("/me?fields=id")) return json({ id: "7000000000000009" });
+    if (url.includes("/debug_token")) return json({ data: { is_valid: true, scopes: [...REQUIRED_SCOPES], data_access_expires_at: 1900000000, user_id: "7000000000000008" } });
     if (url.includes("/subscribed_apps")) return opts.subscribeOk === false ? json({ error: { code: 200 } }, 400) : json({ success: true });
     return json({}, 404);
   });
@@ -302,6 +303,22 @@ describe("callback: troca de token e Páginas", () => {
     expect(JSON.stringify(data)).not.toContain("fake-user-short");
   });
 
+  test("metaUserId: /me é a fonte preferida; debug_token.user_id é o fallback", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    expect((await callback(t, await startState(t, s))).location).toBe(OK);
+    const first = await t.run(async (ctx) => (await ctx.db.query("metaConnections").collect())[0]);
+    expect(first.metaUserId).toBe("7000000000000009");
+
+    const t2 = convexTest(schema, modules);
+    const s2 = await seedOrg(t2, "a");
+    stubMeta({ pages: [page1], failAt: "/me?fields=id" });
+    expect((await callback(t2, await startState(t2, s2))).location).toBe(OK);
+    const second = await t2.run(async (ctx) => (await ctx.db.query("metaConnections").collect())[0]);
+    expect(second.metaUserId).toBe("7000000000000008");
+  });
+
   test("falha no subscribed_apps grava a conexão sem subscribedAt", async () => {
     const t = convexTest(schema, modules);
     const s = await seedOrg(t, "a");
@@ -410,6 +427,22 @@ describe("N Páginas: seleção", () => {
     const asOther = t.withIdentity({ subject: `${other.adminUserId}|s1` });
     expect(await asOther.query(api.metaMessaging.getPendingSelection, { organizationId: other.organizationId, pendingId })).toBeNull();
     await expect(asOther.query(api.metaMessaging.getPendingSelection, { organizationId: s.organizationId, pendingId })).rejects.toThrow();
+  });
+
+  test("N Páginas: o metaUserId viaja no pending e chega às conexões", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    const pendingId = await toPending(t, s, [page1, page2]);
+    const pending = await t.run(async (ctx) => await ctx.db.get(pendingId));
+    expect(pending?.metaUserId).toBe("7000000000000009");
+    const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    await asAdmin.action(api.metaMessaging.finalizeMetaSelection, {
+      organizationId: s.organizationId,
+      pendingId,
+      picks: [{ pageId: page2.id, messenger: true, instagram: false }],
+    });
+    const conns = await t.run(async (ctx) => await ctx.db.query("metaConnections").collect());
+    expect(conns.map((c) => c.metaUserId)).toEqual(["7000000000000009"]);
   });
 
   test("finalizeMetaSelection cria só o que foi marcado e apaga o pending", async () => {

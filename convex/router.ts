@@ -966,7 +966,7 @@ http.route({
 
       return jsonResponse(result as any);
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return startConversationError(error);
     }
   }),
 });
@@ -1247,7 +1247,7 @@ http.route({
         if (typeof body.channelConfigId !== "string" || !body.channelConfigId) {
           return errorResponse("channelConfigId é obrigatório para instagram/messenger (veja GET /api/v1/conversations/channels)", 400);
         }
-        let cfg: { organizationId: Id<"organizations">; channel: string } | null = null;
+        let cfg: { organizationId: Id<"organizations">; channel: string; status: string; disabledByModuleAt?: number } | null = null;
         try {
           cfg = await ctx.runQuery(internal.channelConfigs.internalGetConfig, {
             configId: body.channelConfigId as Id<"channelConfigs">,
@@ -1258,6 +1258,13 @@ http.route({
         if (!cfg || cfg.organizationId !== apiKeyRecord.organizationId || cfg.channel !== channel) {
           return errorResponse("channelConfigId não encontrado nesta organização para este canal", 400);
         }
+        if (cfg.status !== "active" || cfg.disabledByModuleAt !== undefined) {
+          return errorResponse("Esta conta está desativada; reconecte em Configurações → Canais antes de registrar mensagens.", 400);
+        }
+        const metaOn: boolean = await ctx.runQuery(internal.metaMessaging.internalMetaModuleEnabled, {
+          organizationId: apiKeyRecord.organizationId,
+        });
+        if (!metaOn) return errorResponse("O módulo Instagram/Messenger está desligado nesta organização.", 400);
         metaConfigId = body.channelConfigId as Id<"channelConfigs">;
       }
 

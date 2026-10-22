@@ -155,19 +155,25 @@ export function PrivacyPage() {
               <p className="text-text-primary font-medium">Como pedir a exclusão dos seus dados</p>
               <ul className="list-disc pl-5 space-y-1.5">
                 <li>
-                  Remova o HNBCRM em facebook.com, em Configurações &gt; Integrações comerciais. A Meta nos
-                  avisa, as credenciais são removidas e os canais são desativados. As conversas, contatos e
-                  leads permanecem com a organização, pois pertencem a ela.
+                  <span className="text-text-primary font-medium">
+                    Se você administra a Página ou a conta do Instagram conectada:
+                  </span>{" "}
+                  remova o HNBCRM em facebook.com &gt; Configurações &gt; Integrações comerciais. Recebemos
+                  o aviso da Meta, removemos as credenciais e os canais ficam desconectados. As conversas
+                  permanecem com a organização.
                 </li>
                 <li>
-                  Escreva para a organização com quem você conversou, ou para{" "}
+                  <span className="text-text-primary font-medium">
+                    Se você conversou com uma empresa pelo Instagram ou Messenger:
+                  </span>{" "}
+                  peça a exclusão à própria empresa (a controladora) ou escreva para{" "}
                   <a
                     href="mailto:privacidade@hnbcrm.com"
                     className="text-brand-400 hover:text-brand-300 transition-colors"
                   >
                     privacidade@hnbcrm.com
-                  </a>
-                  , pedindo a exclusão das suas mensagens.
+                  </a>{" "}
+                  informando a conta e a empresa. Respondemos em até 15 dias.
                 </li>
               </ul>
               <p>

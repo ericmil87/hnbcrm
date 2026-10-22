@@ -2041,6 +2041,8 @@ async function finalizeConnection(
     messenger: boolean;
     instagram: boolean;
     scopes: string[];
+    /** `GET /me?fields=id` do token de usuário (fonte preferida); senão o `user_id` do debug_token. */
+    metaUserId?: string;
   }
 ): Promise<FinalizeResult> {
   const { page } = args;
@@ -2061,7 +2063,7 @@ async function finalizeConnection(
 
   let scopes = args.scopes;
   let dataAccessExpiresAt: number | undefined;
-  let metaUserId: string | undefined;
+  let metaUserId: string | undefined = args.metaUserId;
   if (appId && appSecret) {
     try {
       const url = `${base}/debug_token?input_token=${encodeURIComponent(page.pageToken)}&access_token=${encodeURIComponent(`${appId}|${appSecret}`)}`;
@@ -2072,7 +2074,7 @@ async function finalizeConnection(
         const exp = data.data_access_expires_at;
         if (typeof exp === "number" && exp > 0) dataAccessExpiresAt = exp * 1000;
         // Casa os callbacks de desautorização/exclusão da Meta (nunca logar).
-        if (typeof data.user_id === "string" && data.user_id) metaUserId = data.user_id;
+        if (!metaUserId && typeof data.user_id === "string" && data.user_id) metaUserId = data.user_id;
       }
     } catch {
       // debug_token é informativo: falha não bloqueia a conexão
@@ -2180,6 +2182,11 @@ export const oauthCallback = httpAction(async (ctx, request) => {
       .map((p) => p.permission as string);
     if (missingScopes(granted).length > 0) return to("sem_permissao");
 
+    // O `id` do usuário casa os callbacks de desautorização/exclusão. Best-effort: sem ele, o
+    // `debug_token` da Página é o fallback em `finalizeConnection`.
+    const me = await graphCall(`${base}/me?fields=id`, { token: userToken });
+    const metaUserId = me.ok && typeof me.body.id === "string" && me.body.id ? me.body.id : undefined;
+
     // 6. Páginas (o token de usuário morre aqui, nunca é persistido)
     const accountsRes = await graphCall(
       `${base}/me/accounts?${new URLSearchParams({
@@ -2211,6 +2218,7 @@ export const oauthCallback = httpAction(async (ctx, request) => {
         messenger: true,
         instagram: true,
         scopes,
+        metaUserId,
       });
       return to(result.ok ? "ok" : result.code);
     }
@@ -2221,6 +2229,7 @@ export const oauthCallback = httpAction(async (ctx, request) => {
       memberId: consumed.memberId,
       stateId: consumed.stateId,
       scopes,
+      ...(metaUserId ? { metaUserId } : {}),
       pages: await Promise.all(
         pages.map(async (p) => ({
           pageId: p.pageId,
@@ -2247,6 +2256,7 @@ export const internalCreatePending = internalMutation({
     memberId: v.id("teamMembers"),
     stateId: v.id("oauthStates"),
     scopes: v.array(v.string()),
+    metaUserId: v.optional(v.string()),
     pages: v.array(
       v.object({
         pageId: v.string(),
@@ -2267,6 +2277,7 @@ export const internalCreatePending = internalMutation({
       stateId: args.stateId,
       pages: args.pages,
       scopes: args.scopes,
+      ...(args.metaUserId ? { metaUserId: args.metaUserId } : {}),
       expiresAt: now + PENDING_TTL_MS,
       createdAt: now,
     });
@@ -2407,6 +2418,7 @@ export const finalizeMetaSelection = action({
         messenger: pick.messenger,
         instagram: pick.instagram,
         scopes: pending.scopes,
+        metaUserId: pending.metaUserId,
       });
       if (!result.ok) return await failMidway(result.code);
       configIds.push(...result.configIds);
@@ -2655,6 +2667,7 @@ const healthObservationValidator = v.object({
   scopes: v.array(v.string()),
   dataAccessExpiresAt: v.optional(v.number()),
   expiresAt: v.optional(v.number()),
+  userId: v.optional(v.string()),
 });
 
 /** Uma página de conexões a sondar (sem revogadas, sem org demo, sem token vazio). */
@@ -2734,6 +2747,8 @@ export const internalApplyHealthObservation = internalMutation({
     const verdict = evaluateHealth({ observation: obs, channels, now });
     const seen = {
       lastHealthAt: now,
+      // Conexões antigas ganham o `user_id` da Meta aqui (callbacks de desautorização).
+      ...(obs.userId && !conn.metaUserId ? { metaUserId: obs.userId } : {}),
       ...(obs.dataAccessExpiresAt !== undefined ? { dataAccessExpiresAt: obs.dataAccessExpiresAt } : {}),
     };
 
@@ -3126,9 +3141,20 @@ export const internalRevokeConnectionsForMetaUser = internalMutation({
         configs,
         state: "revoked",
         detail: `A autorização da Página ${pageName} foi removida no Facebook; reconecte para voltar a receber.`,
+        auditExtra: {
+          source: args.confirmationCode ? "data_deletion" : "deauthorize",
+          metaUserId: maskExternalId(args.metaUserId),
+          configIds: configs.map((c) => c._id),
+        },
         now,
       });
-      await ctx.db.patch(conn._id, { tokenEncrypted: "", tokenLast4: "", updatedAt: now });
+      await ctx.db.patch(conn._id, {
+        tokenEncrypted: "",
+        tokenLast4: "",
+        // Exclusão de dados: o id da Meta não fica guardado (a reconexão regrava).
+        ...(args.confirmationCode ? { metaUserId: undefined } : {}),
+        updatedAt: now,
+      });
       for (const c of configs) {
         await ctx.db.patch(c._id, {
           status: "disabled",
@@ -3137,23 +3163,6 @@ export const internalRevokeConnectionsForMetaUser = internalMutation({
           updatedAt: now,
         });
       }
-      await ctx.db.insert("auditLogs", {
-        organizationId: conn.organizationId,
-        entityType: "metaConnection",
-        entityId: conn._id,
-        action: "update",
-        actorType: "system",
-        changes: { before: { authState: conn.authState }, after: { authState: "revoked" } },
-        metadata: {
-          fields: ["authState", "tokenEncrypted", "tokenLast4"],
-          source: args.confirmationCode ? "data_deletion" : "deauthorize",
-          metaUserId: maskExternalId(args.metaUserId),
-          configIds: configs.map((c) => c._id),
-        },
-        description: `A Meta informou ${args.confirmationCode ? "pedido de exclusão de dados" : "remoção da autorização"} da Página "${pageName}"; credenciais removidas`,
-        severity: "high",
-        createdAt: now,
-      });
       revoked++;
     }
     if (args.confirmationCode) {
@@ -3256,7 +3265,10 @@ export const deletionStatusPage = httpAction(async (ctx, request) => {
   const date = new Date(row.createdAt).toISOString().slice(0, 10);
   return new Response(
     htmlPage(
-      `<p>Solicitação ${code} recebida em ${date}: credenciais da Meta removidas (${row.connectionsRevoked} conexões). ` +
+      `<p>Solicitação ${code} recebida em ${date}: ` +
+        (row.connectionsRevoked > 0
+          ? `credenciais da Meta removidas (${row.connectionsRevoked} conexões). `
+          : `nenhuma credencial ativa estava associada. `) +
         `As conversas pertencem à organização que você contatou; para exclusão de mensagens, fale com ela ou com ` +
         `<a href="mailto:privacidade@hnbcrm.com">privacidade@hnbcrm.com</a> (LGPD).</p>`
     ),

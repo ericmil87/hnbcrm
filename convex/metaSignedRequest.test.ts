@@ -218,8 +218,10 @@ describe("POST /webhooks/meta-messaging/deauthorize", () => {
     expect(state.contact).not.toBeNull();
     expect(state.notes.filter((n) => n.type === "channel_session_lost")).toHaveLength(1);
     const audit = state.audits.filter((a) => a.entityType === "metaConnection");
-    expect(audit.length).toBeGreaterThanOrEqual(1);
-    expect(audit.every((a) => a.severity === "high")).toBe(true);
+    expect(audit).toHaveLength(1);
+    expect(audit[0].severity).toBe("high");
+    expect(audit[0].metadata).toMatchObject({ state: "revoked", source: "deauthorize", metaUserId: "····0001" });
+    expect(state.target).toMatchObject({ metaUserId: USER_A }); // só a exclusão de dados limpa o id
     expect(JSON.stringify(state.audits)).not.toContain(USER_A);
 
     // Repetir não notifica de novo.
@@ -272,6 +274,19 @@ describe("POST /webhooks/meta-messaging/data-deletion e GET /meta/deletion-statu
     expect(JSON.stringify(rows[0])).not.toContain(USER_A);
     const conn = await t.run(async (ctx) => await ctx.db.get(s.target.connectionId));
     expect(conn).toMatchObject({ authState: "revoked", tokenEncrypted: "" });
+    expect((conn as any).metaUserId).toBeUndefined();
+    const audits = await t.run(async (ctx) => await ctx.db.query("auditLogs").collect());
+    expect(audits.filter((a) => a.entityType === "metaConnection")).toHaveLength(1);
+    expect(JSON.stringify(audits)).not.toContain(USER_A);
+
+    // Repetir: o id já foi limpo, então nada a revogar e a página não diz "removidas".
+    const again = (await (await post(t, "/webhooks/meta-messaging/data-deletion", await signRequestPayload(payload(), SECRET))).json()) as {
+      confirmation_code: string;
+    };
+    const emptyPage = await (await t.fetch(`/meta/deletion-status?code=${again.confirmation_code}`, { method: "GET" })).text();
+    expect(emptyPage).toContain("nenhuma credencial ativa estava associada");
+    expect(emptyPage).not.toContain("removidas");
+    await cancelPendingJobs(t);
 
     const page = await t.fetch(`/meta/deletion-status?code=${json.confirmation_code}`, { method: "GET" });
     expect(page.status).toBe(200);
@@ -292,5 +307,25 @@ describe("POST /webhooks/meta-messaging/data-deletion e GET /meta/deletion-statu
     expect((await post(t, "/webhooks/meta-messaging/data-deletion", null)).status).toBe(400);
     const n = await t.run(async (ctx) => (await ctx.db.query("metaDeletionRequests").collect()).length);
     expect(n).toBe(0);
+  });
+});
+
+describe("saúde preenche o metaUserId ausente", () => {
+  test("internalApplyHealthObservation grava userId só quando a conexão não tem", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { internal } = await import("./_generated/api");
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.target.connectionId, { metaUserId: undefined });
+    });
+    const obs = { isValid: true, scopes: ["pages_messaging"], userId: "7000000000000077" };
+    await t.mutation(internal.metaMessaging.internalApplyHealthObservation, { connectionId: s.target.connectionId, observation: obs });
+    expect((await t.run(async (ctx) => await ctx.db.get(s.target.connectionId)))?.metaUserId).toBe("7000000000000077");
+    await t.mutation(internal.metaMessaging.internalApplyHealthObservation, {
+      connectionId: s.target.connectionId,
+      observation: { ...obs, userId: "7000000000000088" },
+    });
+    expect((await t.run(async (ctx) => await ctx.db.get(s.target.connectionId)))?.metaUserId).toBe("7000000000000077");
+    await cancelPendingJobs(t);
   });
 });

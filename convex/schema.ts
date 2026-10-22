@@ -1242,6 +1242,8 @@ const applicationTables = {
     organizationId: v.id("organizations"),
     memberId: v.id("teamMembers"),
     stateId: v.id("oauthStates"),
+    // `GET /me?fields=id` do token de usuário (callbacks de desautorização); nunca logar.
+    metaUserId: v.optional(v.string()),
     pages: v.array(
       v.object({
         pageId: v.string(),
@@ -1391,7 +1393,11 @@ const applicationTables = {
     .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
     .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"])
     // Meta Messaging (D11): filtro por conta no inbox. O arg de getConversations entra na F1.
-    .index("by_organization_and_channel_config_and_archived_and_last_message", ["organizationId", "channelConfigId", "archivedAt", "lastMessageAt"]),
+    .index("by_organization_and_channel_config_and_archived_and_last_message", ["organizationId", "channelConfigId", "archivedAt", "lastMessageAt"])
+    // REST (F5): `GET /conversations?channelConfigId=` e `?channel=` paginam por `_creationTime`
+    // sem pós-filtro (o cursor da rota é por criação; os índices acima ordenam por última mensagem).
+    .index("by_organization_and_channel_config", ["organizationId", "channelConfigId"])
+    .index("by_organization_and_channel", ["organizationId", "channel"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa

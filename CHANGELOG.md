@@ -2,9 +2,25 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
-## [Não lançado] — Instagram e Facebook Messenger: saúde da conexão e reconexão (F4)
+## [0.71.0] - 2026-10-22
 
-### A conexão com a Meta é vigiada todo dia, e reconectar é um clique
+### Instagram Direct e Facebook Messenger chegam ao HNBCRM pela API oficial da Meta
+
+Um módulo opcional por organização (desligado por padrão; quem não liga não vê nada e nada muda no WhatsApp) conecta uma Página do Facebook e a conta do Instagram vinculada num único login oficial, e traz as duas caixas para o inbox: receber e responder (texto e mídia), origem visível por canal e conta, atendente IA dentro das regras da Meta, saúde da credencial com reconexão, API REST/MCP e páginas legais. Até a aprovação do app pela Meta (App Review, próxima entrega), os canais funcionam só para contas com papel no app da Meta. Entregue em seis fases, cada uma revisada antes do merge:
+
+### F5 — API, integrações e privacidade
+
+#### Os canais da Meta na API REST, no MCP e nas páginas legais
+
+- **Desautorização e exclusão de dados pela Meta:** se alguém remover o HNBCRM nas Integrações comerciais do Facebook, a Meta nos avisa e as credenciais daquela pessoa são removidas na hora (canais ficam "Desconectado", com alerta aos administradores). O pedido de exclusão de dados recebe um código de confirmação e uma página de acompanhamento. Conversas, contatos e leads ficam com a organização, que é a controladora dos dados; a exclusão de mensagens é pedida a ela ou a privacidade@hnbcrm.com
+- **API REST:** `GET /api/v1/conversations/channels` lista também as contas de Instagram e Messenger (com `channel`, `transport`, `accountLabel`, `handle` e `canStart: false`); `GET /api/v1/conversations` filtra por `channelConfigId`; `POST /conversations/receive` aceita `instagram` e `messenger` (só com `contactId`); `/start`, `/send-template` e `/inbound/lead` recusam esses canais com erro claro (a pessoa precisa escrever primeiro). Eventos `message.received`/`message.sent` trazem `channel` `instagram` ou `messenger`; `channel.session_lost` traz `provider` `instagram` ou `messenger`
+- **OpenAPI, llms.txt e MCP (0.3.1)** documentam os canais, a janela de atendimento e as regras; referências da skill `hnbcrm` atualizadas. `POST /api/v1/conversations/send-template` passa a responder 400/401/429 com mensagem clara (antes alguns erros saíam como 500), também no WhatsApp; `GET /api/v1/conversations` passa a honrar `?channel=` (antes era ignorado), servido por índice
+- **Privacidade e Termos:** seções próprias para Instagram e Facebook Messenger (dados tratados, base legal, como pedir exclusão, Políticas da Plataforma Meta); `https://hnbcrm.com/privacidade#instagram-messenger` serve de instruções de exclusão no app da Meta. Página de desenvolvedores com o card "Instagram e Messenger na API REST"
+- Interno: `convex/lib/metaSignedRequest.ts`, `metaConnections.metaUserId` (aditivo, com backfill `opsMeta:internalMetaBackfillUserId`), tabela `metaDeletionRequests`, `startConversation.internalListChannelsForRest`
+
+### F4 — saúde da conexão e reconexão
+
+#### A conexão com a Meta é vigiada todo dia, e reconectar é um clique
 
 - **Verificação diária da credencial** de cada Página conectada (`debug_token` da Meta): credencial inválida ou sem a permissão de mensagens marca o canal como **"Precisa reconectar"**, avisa os administradores no sino e por e-mail (mesma preferência "Canal desconectado" do WhatsApp) e dispara o webhook `channel.session_lost` com `provider` `instagram` ou `messenger`. Um alerta por ocorrência, sem repetir todo dia. As mensagens continuam entrando enquanto a Meta entregar; só o envio para
 - **Acesso expirando**: quando o prazo de acesso aos dados (~90 dias) estiver a menos de 14 dias, o card avisa "Acesso expira em N dias, reconecte para manter"
@@ -13,9 +29,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Operação: `opsMeta:internalMetaConnectionsReport`, `internalMetaHealthNow`, `internalMetaPurge` (simulação por padrão, ids mascarados, nunca o token)
 - Interno: `convex/lib/metaHealth.ts`, `internalApplyHealthObservation` (porta única da observação), `emitChannelDegraded` ao lado de `emitChannelSessionLost`, cron `meta messaging health` 09:30 UTC, purga de `metaSentMids`/states expirados, `keepStatus` em `internalRecordHealthCheck`
 
-## [Não lançado] — Instagram e Facebook Messenger: atendente de IA (F3)
+### F3 — atendente de IA
 
-### O atendente IA responde no Instagram e no Messenger, dentro das regras da Meta
+#### O atendente IA responde no Instagram e no Messenger, dentro das regras da Meta
 
 - **Mesmo atendente, mesmas configurações:** com o módulo ligado e o canal conectado, o atendente IA da organização passa a responder também pelo Instagram Direct e pelo Messenger, com a mesma persona, funil, horário, repasses e guardrails do WhatsApp. O texto sai **sem formatação de WhatsApp** (nada de `*negrito*` ou `_itálico_`): a Meta mostra tudo como texto puro
 - **Só dentro da janela da Meta, com 15 minutos de margem:** a IA responde até 24 horas após a última mensagem do cliente (até 7 dias quando a conversa veio de anúncio) e para 15 minutos antes de a janela fechar. Fora disso ela não responde (o motivo "janela de 24h fechada" aparece no estado da IA), e um follow-up que cairia fora da janela vira rascunho para a equipe, como já acontecia com a Cloud API
@@ -24,9 +40,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Simulador** com seletor de canal (WhatsApp oficial, gateway, Instagram, Messenger) e duas conversas de referência novas para Instagram e Messenger; aviso sobre a divulgação "sob demanda" nesses canais
 - Interno: `convex/lib/chatText.ts` (`toPlainChatText`), janela da IA por transporte (`aiWindowClosed`), condição 13 de elegibilidade (standby), opt-out por identidade no `fire`, `followUpSettings` com cap próprio, goldens por tag de canal; guard de fiação da saída estendido
 
-## [Não lançado] — Instagram e Facebook Messenger: fotos, áudios, stories, reações (F2)
+### F2 — fotos, áudios, stories, reações
 
-### Mídia e tipos ricos nos dois canais
+#### Mídia e tipos ricos nos dois canais
 
 - **Fotos, vídeos, áudios e arquivos recebidos** pelo Instagram e pelo Messenger entram na conversa como anexos (baixados na hora, porque os links da Meta expiram). Áudio é transcrito e imagem é descrita pelo atendente IA como no WhatsApp. Se o link já tiver expirado ou o arquivo passar do limite, a mensagem aparece mesmo assim, com "Mídia indisponível" e o motivo
 - **Story, post e reel:** menção em story (com a imagem, enquanto a Meta a entrega), resposta ao seu story ("Respondeu ao seu story" acima do texto), post ou reel compartilhado (card com título e "Abrir no Instagram"), "curtiu" e sticker aparecem como cards próprios
@@ -36,9 +52,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **"Lida" e "digitando"** enviados para o cliente ao abrir a conversa e ao digitar, como no WhatsApp via gateway
 - Interno: `convex/lib/metaInbound.ts` (download-primeiro com teto de 25 MB), `isSticker` cobre curtidas/stickers, `conversationRuntime.metaTypingAt` (aditivo), `MetaSpecialCard`, matriz de capacidades com `mediaSend`/reações/typing ligados para Instagram e Messenger
 
-## [Não lançado] — Instagram e Facebook Messenger: responder pelo inbox (F1)
+### F1 — responder pelo inbox
 
-### Responder no Instagram e no Messenger, e saber de onde cada conversa veio
+#### Responder no Instagram e no Messenger, e saber de onde cada conversa veio
 
 - **Responder pelo inbox chega no Instagram Direct e no Messenger** da pessoa, dentro da janela da Meta: 24 horas após a última mensagem dela (até 7 dias quando a conversa começou por um anúncio). Com a janela fechada o composer fica bloqueado e explica: "aguarde o cliente escrever de novo" (não há templates nesses canais). Textos longos são divididos automaticamente (1.000 bytes no Instagram, 2.000 caracteres no Messenger); o composer mostra o contador e em quantas partes vai sair
 - **Entregue e lida:** no Messenger os dois ticks; no Instagram só "lida" (a Meta não informa entrega)
@@ -48,9 +64,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Credencial que morre** (senha trocada, app revogado, papel perdido): o envio falha com aviso claro e a conexão fica marcada para reconectar; alerta e botão Reconectar chegam na próxima fase
 - Interno: envio pela porta única (`scheduleOutboundDispatch` → `lib/metaDispatch.ts` → `metaMessaging.internalDispatchMessage`), janela verificada no servidor na porta e no dispatcher, eco por `app_id` (Messenger) e em camadas (Instagram), `conversations.windowOpenedByAdAt` (aditivo), `channelConfigs.getInboxChannelAccounts`, filtro `channelConfigId` por índice, matriz `src/lib/channelCapabilities.ts` no lugar de `channelIsWhatsapp`
 
-## [Não lançado] — Instagram e Facebook Messenger, fundação (F0)
+### F0 — fundação
 
-### Novos canais pela API oficial da Meta: mensagens do Instagram e do Messenger entrando na Caixa de Entrada
+#### Novos canais pela API oficial da Meta: mensagens do Instagram e do Messenger entrando na Caixa de Entrada
 
 - **Módulo opcional "Mais canais: Instagram e Facebook Messenger"** em Configurações > Canais, desligado por padrão. Quem não liga não vê nada e nada muda no WhatsApp. Desligar com canais conectados desativa os canais (as mensagens recebidas nesse período não entram no HNBCRM; a tela avisa antes) e religar reativa só o que foi desativado pelo módulo
 - **Conectar pela conta da Meta, sem senha nem intermediário:** a opção "Instagram / Facebook Messenger (oficial)" abre o login do Facebook para empresas; o administrador escolhe a Página e a conta do Instagram vinculada, e o HNBCRM recebe uma credencial de Página que serve aos dois canais e não expira. Com mais de uma Página, uma tela deixa escolher "Messenger da Página X" e "Instagram @y" separadamente. A mesma Página ou conta do Instagram não pode ser conectada em duas organizações ("Esta conta já está conectada a outra organização")

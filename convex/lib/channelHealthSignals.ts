@@ -291,6 +291,8 @@ export type EmitChannelDegradedArgs = {
   detail: string;
   /** Quem detectou (só vale para `reauth_required`): decide se o cron pode recuperar sozinho. */
   source?: "health" | "send" | "test" | "subscribe";
+  /** Campos extras do audit (ex.: origem do callback, ids mascarados). Nunca segredos. */
+  auditExtra?: Record<string, unknown>;
   now: number;
 };
 
@@ -352,7 +354,7 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
         authState: args.state === "reauth_required" || args.state === "revoked" ? args.state : conn.authState,
       },
     },
-    metadata: { fields: ["authState", "authDetail"], state: args.state, detail: args.detail },
+    metadata: { fields: ["authState", "authDetail"], state: args.state, detail: args.detail, ...(args.auditExtra ?? {}) },
     description:
       args.state === "revoked"
         ? `A autorização da Página "${pageName}" (Instagram/Messenger) foi removida no Facebook`
