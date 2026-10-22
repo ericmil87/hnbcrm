@@ -20,8 +20,8 @@ export function PrivacyPage() {
     <>
       <SEO
         title="Política de Privacidade"
-        description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp, os grupos de WhatsApp e seus direitos sob a LGPD."
-        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade, grupos de whatsapp"
+        description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp, Instagram e Facebook Messenger, os grupos de WhatsApp e seus direitos sob a LGPD."
+        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade, grupos de whatsapp, instagram, messenger, exclusão de dados"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
@@ -131,6 +131,48 @@ export function PrivacyPage() {
                   Termos de Uso
                 </Link>
                 .
+              </p>
+            </LegalSection>
+
+            <LegalSection id="instagram-messenger" title="4-A. Instagram e Facebook Messenger">
+              <p>
+                Quando uma organização conecta uma conta do Instagram ou uma Página do Facebook, o HNBCRM
+                trata, em nome dela, os seguintes dados:{" "}
+                <span className="text-text-primary font-medium">
+                  identificadores da Meta (PSID e IGSID), nome e @ do perfil, mensagens, anexos e reações
+                </span>
+                . A base é a execução do contrato com a organização cliente, que é a controladora; o HNBCRM
+                atua como operador.
+              </p>
+              <p>
+                A conexão é feita pelo fluxo oficial da Meta (Facebook Login for Business). O token da Página
+                é armazenado cifrado e sua validade é verificada diariamente. Mídias recebidas são baixadas
+                para o armazenamento da plataforma. Mensagens apagadas pelo cliente na Meta também são
+                apagadas aqui. No Instagram, a conversa só funciona com a opção{" "}
+                <span className="text-text-primary font-medium">"Permitir acesso às mensagens"</span>{" "}
+                ativada na conta.
+              </p>
+              <p className="text-text-primary font-medium">Como pedir a exclusão dos seus dados</p>
+              <ul className="list-disc pl-5 space-y-1.5">
+                <li>
+                  Remova o HNBCRM em facebook.com, em Configurações &gt; Integrações comerciais. A Meta nos
+                  avisa, as credenciais são removidas e os canais são desativados. As conversas, contatos e
+                  leads permanecem com a organização, pois pertencem a ela.
+                </li>
+                <li>
+                  Escreva para a organização com quem você conversou, ou para{" "}
+                  <a
+                    href="mailto:privacidade@hnbcrm.com"
+                    className="text-brand-400 hover:text-brand-300 transition-colors"
+                  >
+                    privacidade@hnbcrm.com
+                  </a>
+                  , pedindo a exclusão das suas mensagens.
+                </li>
+              </ul>
+              <p>
+                Se você iniciou a exclusão pela Meta, pode acompanhar o andamento pelo código de
+                confirmação recebido na página de status indicada por ela.
               </p>
             </LegalSection>
 

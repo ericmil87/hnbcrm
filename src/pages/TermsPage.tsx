@@ -181,6 +181,27 @@ export function TermsPage() {
               </div>
             </section>
 
+            <LegalSection id="instagram-messenger" title="5-A. Instagram e Facebook Messenger">
+              <p>
+                Os canais Instagram e Messenger usam as APIs oficiais da Meta e dependem das{" "}
+                <a
+                  href="https://developers.facebook.com/terms/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  Políticas da Plataforma Meta
+                </a>
+                . Só é possível responder dentro da janela de atendimento de 24 horas após a última mensagem
+                da pessoa (7 dias quando a conversa vem de um anúncio). Não é permitido enviar mensagens
+                frias nem iniciar conversas por esses canais.
+              </p>
+              <p>
+                Enquanto o aplicativo não for aprovado pela Meta (App Review), a disponibilidade fica
+                restrita a contas que tenham papel no aplicativo.
+              </p>
+            </LegalSection>
+
             <LegalSection id="grupos-whatsapp" title="6. Grupos de WhatsApp">
               <p>
                 O HNBCRM permite acompanhar grupos de WhatsApp do número conectado pelo canal bridge. O
