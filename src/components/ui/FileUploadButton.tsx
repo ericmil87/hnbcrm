@@ -5,6 +5,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { Paperclip, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { acceptedUploadMimes, UPLOAD_RULES_HINT, validateUpload } from "@/lib/channelCapabilities";
 
 const ACCEPTED_TYPES = [
   "image/jpeg",
@@ -43,6 +44,9 @@ interface FileUploadButtonProps {
   disabled?: boolean;
   /** Tooltip explicando por que o botão está desligado (sobrepõe "Anexar arquivo"). */
   disabledHint?: string;
+  /** Canal/transporte da conversa: filtra o seletor e valida tipo/tamanho antes de subir. */
+  channel?: string | null;
+  transport?: string | null;
   className?: string;
 }
 
@@ -53,6 +57,8 @@ export function FileUploadButton({
   uploadedFiles,
   disabled,
   disabledHint,
+  channel,
+  transport,
   className,
 }: FileUploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -72,6 +78,16 @@ export function FileUploadButton({
     if (!selectedFiles || selectedFiles.length === 0) return;
 
     const filesToUpload = Array.from(selectedFiles);
+
+    // Regras do canal (Instagram/Messenger): tipo e tamanho antes de gastar upload.
+    for (const f of filesToUpload) {
+      const problem = validateUpload(channel, transport, f);
+      if (problem) {
+        toast.error(problem);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        return;
+      }
+    }
 
     // Validate count
     if (uploadedFiles.length + filesToUpload.length > MAX_FILES) {
@@ -186,7 +202,7 @@ export function FileUploadButton({
             ? `Enviando... ${progress}%`
             : uploadedFiles.length >= MAX_FILES
             ? `Máximo de ${MAX_FILES} arquivos`
-            : "Anexar arquivo"
+            : (channel && UPLOAD_RULES_HINT[channel]) || "Anexar arquivo"
         }
         aria-label="Anexar arquivo"
       >
@@ -200,7 +216,7 @@ export function FileUploadButton({
       <input
         ref={fileInputRef}
         type="file"
-        accept={ACCEPTED_TYPES}
+        accept={acceptedUploadMimes(channel, transport)?.join(",") ?? ACCEPTED_TYPES}
         multiple
         onChange={handleFileChange}
         className="hidden"

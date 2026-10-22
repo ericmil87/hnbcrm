@@ -5,6 +5,10 @@ import {
   formatTextCounter,
   textLimitFor,
   mediaSendBlocked,
+  allowedReactionEmojis,
+  acceptedUploadMimes,
+  maxUploadBytes,
+  validateUpload,
   textNeedsSplit,
   textPartsCount,
 } from "./channelCapabilities";
@@ -45,7 +49,7 @@ describe("channelSupports", () => {
     expect(deliveryTicksMode("instagram", "instagram")).toBe("read");
     expect(deliveryTicksMode("messenger", "messenger")).toBe("full");
     expect(deliveryTicksMode("telegram")).toBe(false);
-    expect(channelSupports("instagram", "instagram", "reactionsSend")).toBe(false);
+    expect(channelSupports("instagram", "instagram", "reactionsSend")).toBe(true);
     expect(channelSupports("instagram", "instagram", "reactionsReceive")).toBe(true);
     expect(channelSupports("instagram", "instagram", "replyQuote")).toBe(true);
     expect(channelSupports("messenger", "messenger", "replyQuote")).toBe(false);
@@ -57,8 +61,8 @@ describe("channelSupports", () => {
       expect(channelSupports(c, c, "serviceWindow")).toBe(true);
       // F3: IA ainda não responde nesses canais
       expect(channelSupports(c, c, "aiAttendant")).toBe(false);
-      expect(channelSupports(c, c, "mediaSend")).toBe(false);
-      expect(channelSupports(c, c, "typingIndicator")).toBe(false);
+      expect(channelSupports(c, c, "mediaSend")).toBe(true);
+      expect(channelSupports(c, c, "typingIndicator")).toBe(true);
     }
   });
 });
@@ -88,11 +92,11 @@ describe("text counter", () => {
     expect(textNeedsSplit("a".repeat(1001), textLimitFor("instagram")!)).toBe(true);
   });
 
-  it("whatsapp supports media send, instagram/messenger do not yet", () => {
+  it("whatsapp, instagram and messenger send media", () => {
     expect(channelSupports("whatsapp", "bridge", "mediaSend")).toBe(true);
     expect(channelSupports("whatsapp", "meta", "mediaSend")).toBe(true);
-    expect(mediaSendBlocked("instagram", "instagram")).toBe(true);
-    expect(mediaSendBlocked("messenger", "messenger")).toBe(true);
+    expect(mediaSendBlocked("instagram", "instagram")).toBe(false);
+    expect(mediaSendBlocked("messenger", "messenger")).toBe(false);
     // canais fora da matriz mantêm o comportamento de antes
     expect(mediaSendBlocked("telegram", null)).toBe(false);
     expect(mediaSendBlocked("email", null)).toBe(false);
@@ -103,5 +107,40 @@ describe("text counter", () => {
   it("formats", () => {
     expect(formatTextCounter(812, textLimitFor("instagram")!)).toBe("812 / 1000 bytes");
     expect(formatTextCounter(1230, textLimitFor("messenger")!)).toBe("1.230 / 2000");
+  });
+});
+
+describe("F2 reactions and uploads", () => {
+  it("reaction emojis per channel", () => {
+    expect(allowedReactionEmojis("instagram", "instagram")).toEqual(["❤️"]);
+    expect(allowedReactionEmojis("messenger", "messenger")).toEqual([]);
+    expect(allowedReactionEmojis("whatsapp", "bridge")).toBeNull();
+    expect(allowedReactionEmojis("whatsapp", "meta")).toBeNull();
+    expect(channelSupports("messenger", "messenger", "reactionsSend")).toBe(false);
+    expect(channelSupports("instagram", "instagram", "reactionsSend")).toBe(true);
+  });
+
+  it("whatsapp is untouched", () => {
+    expect(acceptedUploadMimes("whatsapp", "bridge")).toBeNull();
+    expect(maxUploadBytes("whatsapp", "meta", "image/png")).toBeNull();
+    expect(validateUpload("whatsapp", "bridge", { name: "a.gif", type: "image/gif", size: 99e6 })).toBeNull();
+    expect(validateUpload(undefined, null, { name: "a", type: "x/y", size: 1e9 })).toBeNull();
+  });
+
+  it("instagram limits", () => {
+    const MB = 1024 * 1024;
+    expect(maxUploadBytes("instagram", "instagram", "image/jpeg")).toBe(8 * MB);
+    expect(maxUploadBytes("instagram", "instagram", "video/mp4")).toBe(25 * MB);
+    expect(acceptedUploadMimes("instagram", "instagram")).toContain("application/pdf");
+    expect(validateUpload("instagram", "instagram", { name: "a.gif", type: "image/gif", size: 10 })).toMatch(/formato/);
+    expect(validateUpload("instagram", "instagram", { name: "a.png", type: "image/png", size: 9 * MB })).toMatch(/8 MB/);
+    expect(validateUpload("instagram", "instagram", { name: "a.mp4", type: "video/mp4", size: 20 * MB })).toBeNull();
+  });
+
+  it("messenger limits", () => {
+    const MB = 1024 * 1024;
+    expect(acceptedUploadMimes("messenger", "messenger")).toBeNull();
+    expect(validateUpload("messenger", "messenger", { name: "a.zip", type: "application/zip", size: 24 * MB })).toBeNull();
+    expect(validateUpload("messenger", "messenger", { name: "a.mp4", type: "video/mp4", size: 26 * MB })).toMatch(/25 MB/);
   });
 });

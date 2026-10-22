@@ -2753,6 +2753,8 @@ export function Inbox() {
                         className="shrink-0"
                         disabled={composerBlocked || mediaBlocked}
                         disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
+                        channel={convChannel}
+                        transport={convTransport}
                       />
                       <EmojiPickerButton onPick={insertEmoji} />
                       <MentionTextarea

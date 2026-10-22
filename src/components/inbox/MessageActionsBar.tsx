@@ -23,6 +23,8 @@ interface MessageActionsBarProps {
   onDescribeImage?: () => void;
   /** Which side the bubble sits on — drives picker alignment. */
   align?: "start" | "end";
+  /** Emojis oferecidos no picker (Instagram: só o coração); null = todos. */
+  reactionEmojis?: string[] | null;
   className?: string;
 }
 
@@ -38,6 +40,7 @@ export function MessageActionsBar({
   onTranscribe,
   onDescribeImage,
   align = "start",
+  reactionEmojis = null,
   className,
 }: MessageActionsBarProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -112,6 +115,7 @@ export function MessageActionsBar({
           onClose={() => setPickerOpen(false)}
           placement="top"
           align={align}
+          emojis={reactionEmojis}
         />
       )}
     </div>

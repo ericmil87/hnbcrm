@@ -896,6 +896,8 @@ function ConversationTab({
             onFilesRemoved={(fileId) => setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))}
             disabled={sending || composerBlocked || mediaBlocked}
             disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
+            channel={convChannel}
+            transport={convTransport}
             className="shrink-0"
           />
           <EmojiPickerButton onPick={insertEmoji} disabled={sending} />

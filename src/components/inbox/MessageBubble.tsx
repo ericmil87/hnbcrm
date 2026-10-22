@@ -18,10 +18,21 @@ import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
 import { DeferredMedia } from "./DeferredMedia";
 import { SpecialMessageCard } from "./SpecialMessageCard";
+import { MediaUnavailablePlaceholder, MetaSpecialCard, StoryReplyStrip } from "./MetaSpecialCard";
+import {
+  DELETED_BY_CUSTOMER_LABEL,
+  describeMetaCard,
+  describeStoryReply,
+  editHistoryOf,
+  isDeletedByCustomer,
+  mediaUnavailableLabel,
+  metaTypeOf,
+  reactionNoteOf,
+} from "@/lib/metaSpecialMessage";
 import { describeSpecialMessage, isEdited, isRevoked, isViewOnce } from "@/lib/bridgeSpecialMessage";
 import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatMessageTimestamp } from "@/lib/messageTime";
-import { channelSupports, deliveryTicksMode } from "@/lib/channelCapabilities";
+import { allowedReactionEmojis, channelSupports, deliveryTicksMode } from "@/lib/channelCapabilities";
 import { deviceViaLabel } from "@/lib/serviceWindow";
 import {
   InboxMessage,
@@ -199,7 +210,7 @@ export function MessageBubble({
   const style = getBubbleStyle(message);
   const attachments = message.attachmentFiles ?? [];
   const hasAttachments = attachments.length > 0;
-  const sticker = isSticker(message);
+  const sticker = isSticker(message) || (metaTypeOf(message.metadata) === "sticker" && hasAttachments);
   const voiceNote = isVoiceNote(message);
   const imageMessage = isImageMessage(message);
   const mediaProblem = hasMediaProblem(message);
@@ -210,7 +221,17 @@ export function MessageBubble({
   // sido lida antes, e o texto (transcrição/descrição) continua valendo.
   const mediaPurged = mediaState.state === "purged";
 
-  const revoked = isRevoked(message.metadata) && !message.isInternal;
+  const deletedByCustomer = isDeletedByCustomer(message.metadata) && !message.isInternal;
+  const revoked = (isRevoked(message.metadata) || deletedByCustomer) && !message.isInternal;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const metaCard = message.isInternal || revoked ? null : describeMetaCard(message.metadata);
+  // Sticker com imagem vira figurinha; o card só aparece quando não há anexo.
+  const showMetaCard = !!metaCard && !(metaCard.kind === "sticker" && hasAttachments);
+  const storyReply = message.isInternal || revoked ? null : describeStoryReply(message.metadata);
+  const unavailableLabel = message.isInternal || revoked ? null : mediaUnavailableLabel(message.metadata);
+  const editHistory = editHistoryOf(message.metadata);
+  const reactionNote = reactionNoteOf(message.metadata);
+  const reactionEmojis = allowedReactionEmojis(channel, transport);
   const edited = isEdited(message.metadata) && !revoked;
   const viewOnce = isViewOnce(message.metadata) && !revoked;
   const special = message.isInternal || revoked ? null : describeSpecialMessage(message.metadata, message.content);
@@ -260,6 +281,7 @@ export function MessageBubble({
   const visibleText =
     !message.isInternal && !revoked && message.content && !suppressPlaceholder
       && !(special && special.kind !== "interactive_reply")
+      && !(metaCard && ["like_heart", "sticker", "ig_post", "ig_reel"].includes(metaCard.kind))
       ? message.content
       : null;
 
@@ -333,6 +355,7 @@ export function MessageBubble({
             canInteract={canInteract}
             activeEmoji={activeEmoji}
             align={style.side}
+            reactionEmojis={reactionEmojis}
             onReply={
               canReplyQuote
                 ? () => {
@@ -396,6 +419,16 @@ export function MessageBubble({
           editada
         </span>
       )}
+      {edited && editHistory.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((v) => !v)}
+          aria-expanded={historyOpen}
+          className="inline-flex min-h-11 items-center text-[10px] underline md:min-h-5"
+        >
+          {historyOpen ? "ocultar histórico" : "ver histórico"}
+        </button>
+      )}
       <span className="text-[10px] tabular-nums">{timestamp}</span>
       {showDeliveryTick && (
         <span
@@ -418,7 +451,14 @@ export function MessageBubble({
       reactions={reactions}
       currentMemberId={currentMemberId}
       align={style.side}
-      onToggle={canInteract && actionsEnabled ? handleReactToggle : undefined}
+      onToggle={
+        canInteract && actionsEnabled && canReactSend
+          ? (emoji) => {
+              if (reactionEmojis && !reactionEmojis.includes(emoji)) return;
+              handleReactToggle(emoji);
+            }
+          : undefined
+      }
     />
   );
 
@@ -429,6 +469,22 @@ export function MessageBubble({
           {actions}
           <MessageAttachments files={attachments} variant={style.variant} sticker />
           {footer}
+
+          {edited && historyOpen && editHistory.length > 0 && (
+            <ol
+              aria-label="Versões anteriores"
+              className={cn(
+                "flex flex-col gap-1 rounded-md px-2 py-1.5 text-[11px]",
+                style.variant === "outbound" ? "bg-white/10 text-white/85" : "bg-surface-sunken/60 text-text-secondary"
+              )}
+            >
+              {editHistory.map((v, i) => (
+                <li key={i} className="break-words">
+                  {v.slice(0, 500)}
+                </li>
+              ))}
+            </ol>
+          )}
           {reactionChips}
         </div>
       </div>
@@ -512,7 +568,17 @@ export function MessageBubble({
             />
           )}
 
-          {!revoked && mediaProblem && (
+          {storyReply && <StoryReplyStrip href={storyReply.href} variant={style.variant} />}
+
+          {showMetaCard && metaCard && (
+            <MetaSpecialCard info={metaCard} variant={style.variant} hasMedia={hasAttachments} />
+          )}
+
+          {unavailableLabel && !hasAttachments && (
+            <MediaUnavailablePlaceholder label={unavailableLabel} variant={style.variant} />
+          )}
+
+          {!revoked && mediaProblem && !unavailableLabel && (
             <div
               className={cn(
                 "flex items-center gap-1.5 text-xs italic",
@@ -583,7 +649,7 @@ export function MessageBubble({
               )}
             >
               <Ban size={14} className="shrink-0" aria-hidden />
-              Mensagem apagada
+              {deletedByCustomer ? DELETED_BY_CUSTOMER_LABEL : "Mensagem apagada"}
             </div>
           )}
 
@@ -623,6 +689,9 @@ export function MessageBubble({
           )}
         </div>
         {reactionChips}
+        {reactionNote && reactions.length > 0 && (
+          <p className="px-1 text-[10px] text-text-muted">{reactionNote}</p>
+        )}
       </div>
     </div>
   );

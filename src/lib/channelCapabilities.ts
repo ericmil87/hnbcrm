@@ -69,7 +69,8 @@ const WHATSAPP_META: Row = {
 const INSTAGRAM: Row = {
   deliveryTicks: "read",
   reactionsReceive: true,
-  reactionsSend: false,
+  // Instagram aceita só o coração; Messenger sobrescreve para false.
+  reactionsSend: true,
   replyQuote: true,
   forward: true,
   voiceRecorder: false,
@@ -78,15 +79,17 @@ const INSTAGRAM: Row = {
   newConversation: false,
   // F3: o atendente de IA ainda não responde por Instagram/Messenger.
   aiAttendant: false,
-  typingIndicator: false,
+  typingIndicator: true,
   // F2: envio de anexo por Instagram/Messenger.
-  mediaSend: false,
+  mediaSend: true,
 };
 
 const MESSENGER: Row = {
   ...INSTAGRAM,
   deliveryTicks: "full",
   replyQuote: false,
+  // Messenger não tem API de reação: só chips locais com a nota do backend.
+  reactionsSend: false,
 };
 
 function rowFor(channel: string | null | undefined, transport?: string | null): Row {
@@ -124,7 +127,86 @@ export function mediaSendBlocked(
   return (channel === "instagram" || channel === "messenger") && !channelSupports(channel, transport, "mediaSend");
 }
 
-export const MEDIA_BLOCKED_HINT = "Anexos por Instagram/Messenger chegam na próxima versão";
+export const MEDIA_BLOCKED_HINT = "Este canal ainda não aceita anexos";
+
+/** Emojis que o picker oferece neste canal; null = todos (WhatsApp). Vazio = sem envio. */
+export function allowedReactionEmojis(
+  channel: string | null | undefined,
+  transport?: string | null
+): string[] | null {
+  if (!channelSupports(channel, transport, "reactionsSend")) return [];
+  if (channel === "instagram") return ["❤️"];
+  return null;
+}
+
+export const INSTAGRAM_REACTION_HINT = "O Instagram aceita só ❤️";
+
+const MB = 1024 * 1024;
+
+/** Mimes que o canal aceita no anexo; null = sem filtro próprio (lista padrão do botão). */
+export function acceptedUploadMimes(
+  channel: string | null | undefined,
+  _transport?: string | null
+): string[] | null {
+  if (channel === "instagram") {
+    return [
+      "image/png",
+      "image/jpeg",
+      "audio/aac",
+      "audio/x-m4a",
+      "audio/m4a",
+      "audio/mp4",
+      "audio/wav",
+      "audio/x-wav",
+      "video/mp4",
+      "video/quicktime",
+      "video/webm",
+      "video/x-msvideo",
+      "video/avi",
+      "video/ogg",
+      "application/pdf",
+    ];
+  }
+  if (channel === "messenger") {
+    // Messenger aceita imagem, áudio, vídeo e arquivo em geral.
+    return null;
+  }
+  return null;
+}
+
+/** Limite de bytes do anexo neste canal, ou null quando não há limite próprio. */
+export function maxUploadBytes(
+  channel: string | null | undefined,
+  _transport: string | null | undefined,
+  mime: string
+): number | null {
+  if (channel === "instagram") return mime === "image/png" || mime === "image/jpeg" ? 8 * MB : 25 * MB;
+  if (channel === "messenger") return 25 * MB;
+  return null;
+}
+
+export const UPLOAD_RULES_HINT: Record<string, string> = {
+  instagram: "O Instagram aceita imagens PNG/JPEG até 8 MB, áudio, vídeo e PDF até 25 MB",
+  messenger: "O Messenger aceita imagem, áudio, vídeo e arquivo até 25 MB",
+};
+
+/** Valida um arquivo contra as regras do canal. Retorna a mensagem de erro (PT-BR) ou null. */
+export function validateUpload(
+  channel: string | null | undefined,
+  transport: string | null | undefined,
+  file: { name: string; type: string; size: number }
+): string | null {
+  const accepted = acceptedUploadMimes(channel, transport);
+  const hint = UPLOAD_RULES_HINT[channel ?? ""] ?? "";
+  if (accepted && !accepted.includes(file.type)) {
+    return `${file.name}: formato não aceito. ${hint}`;
+  }
+  const max = maxUploadBytes(channel, transport, file.type);
+  if (max !== null && file.size > max) {
+    return `${file.name}: passa do limite de ${Math.round(max / MB)} MB. ${hint}`;
+  }
+  return null;
+}
 
 export function deliveryTicksMode(
   channel: string | null | undefined,
