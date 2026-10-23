@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { memberLabel } from "@/lib/teamMembers";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { toast } from "sonner";
 
 interface CreateViewModalProps {
@@ -24,6 +25,7 @@ export function CreateViewModal({
   onClose,
   onCreated,
 }: CreateViewModalProps) {
+  const { modules } = useOrgModules(organizationId);
   const [name, setName] = useState("");
   const [isShared, setIsShared] = useState(false);
   const [selectedBoardId, setSelectedBoardId] = useState<
@@ -40,7 +42,7 @@ export function CreateViewModal({
     "cold" | "warm" | "hot" | undefined
   >();
   const [selectedChannel, setSelectedChannel] = useState<
-    "whatsapp" | "telegram" | "email" | "webchat" | "internal" | undefined
+    "whatsapp" | "telegram" | "email" | "webchat" | "internal" | "instagram" | "messenger" | undefined
   >();
   const [hasContact, setHasContact] = useState<boolean | undefined>();
   const [company, setCompany] = useState("");
@@ -317,6 +319,8 @@ export function CreateViewModal({
                         | "email"
                         | "webchat"
                         | "internal"
+                        | "instagram"
+                        | "messenger"
                         | undefined
                     )
                   }
@@ -330,6 +334,8 @@ export function CreateViewModal({
                 >
                   <option value="">Todos os canais</option>
                   <option value="whatsapp">WhatsApp</option>
+                  {modules.metaMessaging && <option value="instagram">Instagram</option>}
+                  {modules.metaMessaging && <option value="messenger">Messenger</option>}
                   <option value="telegram">Telegram</option>
                   <option value="email">E-mail</option>
                   <option value="webchat">Chat do site</option>

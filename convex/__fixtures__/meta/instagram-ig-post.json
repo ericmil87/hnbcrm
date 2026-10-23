@@ -1,0 +1,34 @@
+{
+  "_note": "sintética",
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "1000000000000003",
+      "time": 1760000000000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "1000000000000004"
+          },
+          "recipient": {
+            "id": "1000000000000003"
+          },
+          "timestamp": 1760000010000,
+          "message": {
+            "mid": "ig_fake_mid_000012",
+            "attachments": [
+              {
+                "type": "ig_post",
+                "payload": {
+                  "url": "https://www.instagram.example.test/p/fake/",
+                  "title": "Legenda do post",
+                  "ig_post_media_id": "1000000000000098"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

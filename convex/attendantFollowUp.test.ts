@@ -25,7 +25,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { FOLLOW_UP_REASON_CODES, describeFollowUpReason } from "./lib/followUpOps";
+import { FOLLOW_UP_REASON_CODES, describeFollowUpReason, resolveFollowUpOutcome } from "./lib/followUpOps";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -1808,6 +1808,8 @@ describe("API pública (a tela consome só isto)", () => {
       agentName: "Ana (IA)",
       effectiveMode: "send",
     });
+    // F3: nome do canal para as cópias da tela da tarefa.
+    expect(summary?.channelLabel).toBe("WhatsApp");
 
     const list = await asAdmin.query(api.attendantFollowUp.listForConversation, {
       conversationId: seed.conversationId,
@@ -2244,5 +2246,466 @@ describe("modo sugestão: moveThisLead para etapa de perda", () => {
     expect(move?.label).toBe('Mover o lead para "Perdido" — motivo: achou caro');
     // Proposta não move nada: quem move é a aprovação humana.
     expect(lead!.stageId).toBe(seed.stageId);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Meta Messaging F3: follow-up no Instagram/Messenger — janela com margem,
+// cap próprio (50), opt-out por IDENTIDADE e "pare" que não silencia o
+// atendente.
+describe("follow-up no Instagram/Messenger (F3)", () => {
+  const IG_ID = "1000000000000003";
+  const IGSID = "1000000000000004";
+  const PAGE_ID = "1000000000000001";
+
+  /** Converte a conversa do seed padrão para Instagram (contato SEM telefone). */
+  async function seedInstagram(
+    t: TestConvex<typeof schema>,
+    opts?: Parameters<typeof seedFollowUpOrg>[1] & { withIdentity?: boolean }
+  ) {
+    const seed = await seedFollowUpOrg(t, opts);
+    const extra = await t.run(async (ctx) => {
+      const now = Date.now();
+      const org = (await ctx.db.get(seed.organizationId))!;
+      await ctx.db.patch(seed.organizationId, {
+        settings: { ...org.settings, modules: { metaMessaging: true } },
+      });
+      const connectionId = await ctx.db.insert("metaConnections", {
+        organizationId: seed.organizationId,
+        authMethod: "facebook_login",
+        tokenKind: "page",
+        tokenEncrypted: "fake-ciphertext",
+        tokenLast4: "oken",
+        pageId: PAGE_ID,
+        pageName: "Página",
+        igAccountId: IG_ID,
+        scopes: [],
+        authState: "ok",
+        connectedByMemberId: seed.adminId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const instagramId = await ctx.db.insert("channelConfigs", {
+        organizationId: seed.organizationId,
+        channel: "instagram",
+        displayName: "@conta",
+        status: "active",
+        metaConnectionId: connectionId,
+        instagramAccountId: IG_ID,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.patch(seed.contactId, { phone: undefined });
+      const identityId =
+        opts?.withIdentity === false
+          ? null
+          : await ctx.db.insert("contactChannelIdentities", {
+              organizationId: seed.organizationId,
+              contactId: seed.contactId,
+              channelConfigId: instagramId,
+              kind: "instagram",
+              externalId: IGSID,
+              profileFetchedAt: now,
+              createdAt: now,
+            });
+      await ctx.db.patch(seed.conversationId, {
+        channel: "instagram",
+        channelConfigId: instagramId,
+        channelProvider: "instagram",
+      });
+      return { instagramId, identityId, connectionId };
+    });
+    return {
+      ...seed,
+      configId: extra.instagramId,
+      identityId: extra.identityId,
+      connectionId: extra.connectionId,
+    };
+  }
+
+  const PSID = "1000000000000002";
+
+  /** Mesmo contato também no Messenger da mesma Página: 2ª identidade e 2ª conversa. */
+  async function addMessenger(t: TestConvex<typeof schema>, seed: Awaited<ReturnType<typeof seedInstagram>>) {
+    const extra = await t.run(async (ctx) => {
+      const now = Date.now();
+      const messengerId = await ctx.db.insert("channelConfigs", {
+        organizationId: seed.organizationId,
+        channel: "messenger",
+        displayName: "Página",
+        status: "active",
+        metaConnectionId: seed.connectionId,
+        messengerPageId: PAGE_ID,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const messengerIdentityId = await ctx.db.insert("contactChannelIdentities", {
+        organizationId: seed.organizationId,
+        contactId: seed.contactId,
+        channelConfigId: messengerId,
+        kind: "messenger",
+        externalId: PSID,
+        profileFetchedAt: now,
+        createdAt: now,
+      });
+      const messengerConversationId = await ctx.db.insert("conversations", {
+        organizationId: seed.organizationId,
+        leadId: seed.leadId,
+        channel: "messenger",
+        channelConfigId: messengerId,
+        channelProvider: "messenger",
+        status: "active",
+        lastInboundAt: now,
+        messageCount: 1,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("messages", {
+        organizationId: seed.organizationId,
+        conversationId: messengerConversationId,
+        leadId: seed.leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "oi pelo messenger",
+        contentType: "text",
+        isInternal: false,
+        createdAt: now,
+      });
+      return { messengerId, messengerIdentityId, messengerConversationId };
+    });
+    return extra;
+  }
+
+  async function followUpOfConversation(t: TestConvex<typeof schema>, conversationId: Id<"conversations">) {
+    const rows = (await followUpsOf(t)).filter((f) => f.conversationId === conversationId);
+    expect(rows).toHaveLength(1);
+    return rows[0];
+  }
+
+  test("cap diário próprio: 50 no Instagram/Messenger, WhatsApp intacto", async () => {
+    const { resolveFollowUpSettings, DEFAULT_DAILY_CAP_META_MESSAGING } = await import("./lib/followUpSettings");
+    expect(DEFAULT_DAILY_CAP_META_MESSAGING).toBe(50);
+    expect(resolveFollowUpSettings(undefined, "instagram").dailyCap).toBe(50);
+    expect(resolveFollowUpSettings(undefined, "messenger").dailyCap).toBe(50);
+    expect(resolveFollowUpSettings(undefined, "meta").dailyCap).toBe(100);
+    expect(resolveFollowUpSettings(undefined, "bridge").dailyCap).toBe(30);
+    expect(resolveFollowUpSettings({ followUps: { mode: "send", dailyCap: 7 } }, "instagram").dailyCap).toBe(7);
+  });
+
+  test("cap 50 é aplicado no fire do Instagram", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" }, mode: "autopilot" });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    await t.run(async (ctx) =>
+      ctx.db.insert("channelPacing", {
+        organizationId: seed.organizationId,
+        channelConfigId: seed.configId,
+        nextDispatchAt: Date.now(),
+        followUpDaily: { day: new Date(Date.now()).toISOString().slice(0, 10), sent: 50 },
+      })
+    );
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result.reason).toBe("teto_diario");
+    expect(await queueItems(t)).toHaveLength(0);
+  });
+
+  test("fire fora da janela: degrada para RASCUNHO (nada sai)", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await t.run(async (ctx) => ctx.db.patch(seed.conversationId, { lastInboundAt: Date.now() - 2 * DAY_MS }));
+    await advanceToFireTime(t, followUp);
+
+    const fired = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(fired.ok).toBe(true);
+    await runQueuedTurn(t, [
+      { kind: "tool", name: "replyToCustomer", args: { text: "Oi! **Conseguiu** fazer o pix?" } },
+    ]);
+    const all = await t.run(async (ctx) => ctx.db.query("messages").collect());
+    const draft = all.find((m) => m.isInternal && m.metadata?.aiDraft);
+    expect(draft).toBeTruthy();
+    expect(draft!.content).toContain("Oi! Conseguiu fazer o pix?");
+    expect(all.filter((m) => m.direction === "outbound" && !m.isInternal)).toHaveLength(0);
+  });
+
+  test("fire dentro da margem de 15 min também vira rascunho", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    // Janela da Meta ainda aberta por 10 min — mas dentro da margem da IA.
+    await t.run(async (ctx) =>
+      ctx.db.patch(seed.conversationId, { lastInboundAt: Date.now() - (DAY_MS - 10 * 60 * 1000) })
+    );
+    const fired = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(fired.ok).toBe(true);
+    await runQueuedTurn(t, [{ kind: "tool", name: "replyToCustomer", args: { text: "Oi! Tudo certo?" } }]);
+    const all = await t.run(async (ctx) => ctx.db.query("messages").collect());
+    expect(all.find((m) => m.isInternal && m.metadata?.aiDraft)).toBeTruthy();
+    expect(all.filter((m) => m.direction === "outbound" && !m.isInternal)).toHaveLength(0);
+  });
+
+  test("planner avisa com a cópia do canal quando o prazo cai fora da janela", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" } });
+    const result = await armDefault(t, seed, { dueAtLocal: "2026-09-24T09:00" });
+    expect(String(result.aviso)).toContain("janela da Meta (24 h, ou 7 dias por anúncio) do Instagram");
+    expect(String(result.aviso)).toContain("a IA só envia se o cliente escrever de novo");
+  });
+
+  test("contato SEM telefone e identidade com opt-out: cancela, não pula em silêncio", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await t.run(async (ctx) => ctx.db.patch(seed.identityId!, { optedOutAt: Date.now(), optOutSource: "keyword" }));
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result).toEqual({ ok: false, reason: "opt_out" });
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated).toMatchObject({ status: "canceled", reasonCode: "opt_out" });
+    expect(await queueItems(t)).toHaveLength(0);
+  });
+
+  test("contato SEM telefone e sem opt-out: segue a cadeia normalmente", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    // A conversa precisa estar dentro da janela da Meta no disparo.
+    await t.run(async (ctx) => ctx.db.patch(seed.conversationId, { lastInboundAt: Date.now() - HOUR_MS }));
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result).toEqual({ ok: true, reason: null });
+  });
+
+  test("sem identidade no config da conversa: falha fechado (needs_human)", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" }, withIdentity: false });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await advanceToFireTime(t, followUp);
+    const result = await t.mutation(internal.attendantFollowUp.fire, { followUpId: followUp._id });
+    expect(result).toEqual({ ok: false, reason: "sem_identidade" });
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated!.status).toBe("needs_human");
+    expect(describeFollowUpReason("sem_identidade")).not.toBe("sem_identidade");
+  });
+
+  test('"pare" no Instagram: marca a identidade, cancela o follow-up e NÃO silencia o atendente', async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    expect(followUp.schedulerFnId).toBeTruthy();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        throw new Error(`fetch inesperado: ${String(input)}`);
+      })
+    );
+
+    await t.action(internal.metaMessaging.internalIngestEvent, {
+      configId: seed.configId,
+      event: {
+        surface: "instagram",
+        accountId: IG_ID,
+        kind: "message",
+        userId: IGSID,
+        mid: "mid_pare_0001",
+        timestamp: Date.now(),
+        text: "Pare",
+        attachments: [],
+      },
+    });
+
+    const identity = await t.run(async (ctx) => ctx.db.get(seed.identityId!));
+    expect(identity).toMatchObject({ optOutSource: "keyword" });
+    expect(identity!.optedOutAt).toBeTypeOf("number");
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated).toMatchObject({ status: "canceled", reasonCode: "opt_out" });
+    // O runAt armado foi cancelado junto (desfecho único).
+    const fireJobs = await scheduledNamed(t, "attendantFollowUp");
+    expect(fireJobs.filter((j) => j._id === followUp.schedulerFnId)).toHaveLength(0);
+
+    // O atendente NÃO foi silenciado: o contato não ganhou aiOptOut e o
+    // próprio "pare" ainda entra na fila do turno reativo.
+    const contact = await t.run(async (ctx) => ctx.db.get(seed.contactId));
+    expect(contact!.aiOptOut).toBeUndefined();
+    const pare = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).find((m) => m.externalId === "mid_pare_0001")
+    );
+    await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId: pare!._id });
+    expect((await queueItems(t)).filter((i) => i.status === "pending" && i.origin !== "follow_up")).toHaveLength(1);
+
+    // Audit sem o id inteiro do cliente.
+    const audit = await t.run(async (ctx) =>
+      (await ctx.db.query("auditLogs").collect()).find((a) => a.entityType === "contact")
+    );
+    expect(audit).toBeTruthy();
+    expect(JSON.stringify(audit)).not.toContain(IGSID);
+
+    // Inbound posterior NÃO reverte; só o caminho manual.
+    await t.action(internal.metaMessaging.internalIngestEvent, {
+      configId: seed.configId,
+      event: {
+        surface: "instagram", accountId: IG_ID, kind: "message", userId: IGSID,
+        mid: "mid_depois_0002", timestamp: Date.now(), text: "na verdade quero saber o preço", attachments: [],
+      },
+    });
+    expect((await t.run(async (ctx) => ctx.db.get(seed.identityId!)))!.optedOutAt).toBeTypeOf("number");
+    const cleared = await t.mutation(internal.metaMessaging.internalClearIdentityOptOut, {
+      identityId: seed.identityId!,
+    });
+    expect(cleared).toEqual({ cleared: true });
+    expect((await t.run(async (ctx) => ctx.db.get(seed.identityId!)))!.optedOutAt).toBeUndefined();
+  });
+
+  test("palavra de opt-out só vale sozinha na mensagem", async () => {
+    const { isMetaOptOutKeyword } = await import("./metaMessaging");
+    expect(isMetaOptOutKeyword("PARE")).toBe(true);
+    expect(isMetaOptOutKeyword(" parar! ")).toBe(true);
+    expect(isMetaOptOutKeyword("Stop")).toBe(true);
+    expect(isMetaOptOutKeyword("sair")).toBe(true);
+    expect(isMetaOptOutKeyword("pare de me mandar promoção amanhã? não, pode mandar")).toBe(false);
+    expect(isMetaOptOutKeyword("quero sair às 18h")).toBe(false);
+  });
+
+  test("duas identidades do mesmo contato: opt-out no Instagram não afeta o Messenger no fire", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { mode: "autopilot", followUps: { mode: "send" } });
+    const ms = await addMessenger(t, seed);
+    await armDefault(t, seed);
+    await armDefault(t, { ...seed, conversationId: ms.messengerConversationId });
+    const igFollowUp = await followUpOfConversation(t, seed.conversationId);
+    const msFollowUp = await followUpOfConversation(t, ms.messengerConversationId);
+    await t.run(async (ctx) => ctx.db.patch(seed.identityId!, { optedOutAt: Date.now(), optOutSource: "keyword" }));
+
+    await advanceToFireTime(t, msFollowUp);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(ms.messengerConversationId, { lastInboundAt: Date.now() - HOUR_MS });
+      await ctx.db.patch(seed.conversationId, { lastInboundAt: Date.now() - HOUR_MS });
+    });
+    const msResult = await t.mutation(internal.attendantFollowUp.fire, { followUpId: msFollowUp._id });
+    expect(msResult).toEqual({ ok: true, reason: null });
+
+    await advanceToFireTime(t, igFollowUp);
+    const igResult = await t.mutation(internal.attendantFollowUp.fire, { followUpId: igFollowUp._id });
+    expect(igResult).toEqual({ ok: false, reason: "opt_out" });
+  });
+
+  test("duas identidades: internalMarkIdentityOptOut cancela só o follow-up do config daquela identidade", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" } });
+    const ms = await addMessenger(t, seed);
+    await armDefault(t, seed);
+    await armDefault(t, { ...seed, conversationId: ms.messengerConversationId });
+
+    const result = await t.mutation(internal.metaMessaging.internalMarkIdentityOptOut, {
+      identityId: seed.identityId!,
+      source: "keyword",
+    });
+    expect(result).toEqual({ marked: true, canceledFollowUps: 1 });
+    expect((await followUpOfConversation(t, seed.conversationId)).status).toBe("canceled");
+    expect((await followUpOfConversation(t, ms.messengerConversationId)).status).toBe("scheduled");
+    const msIdentity = await t.run(async (ctx) => ctx.db.get(ms.messengerIdentityId));
+    expect(msIdentity!.optedOutAt).toBeUndefined();
+
+    // Idempotente: marcar de novo não duplica audit nem acha mais nada.
+    const again = await t.mutation(internal.metaMessaging.internalMarkIdentityOptOut, {
+      identityId: seed.identityId!,
+      source: "keyword",
+    });
+    expect(again).toEqual({ marked: false, canceledFollowUps: 0 });
+    const audits = await t.run(async (ctx) =>
+      (await ctx.db.query("auditLogs").collect()).filter((a) => a.entityType === "contact")
+    );
+    expect(audits).toHaveLength(1);
+  });
+
+  test('"pare" no Messenger: marca a identidade do Messenger e não toca a do Instagram', async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" } });
+    const ms = await addMessenger(t, seed);
+    await armDefault(t, seed);
+    await armDefault(t, { ...seed, conversationId: ms.messengerConversationId });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        throw new Error(`fetch inesperado: ${String(input)}`);
+      })
+    );
+
+    await t.action(internal.metaMessaging.internalIngestEvent, {
+      configId: ms.messengerId,
+      event: {
+        surface: "messenger",
+        accountId: PAGE_ID,
+        kind: "message",
+        userId: PSID,
+        mid: "mid_pare_ms_0001",
+        timestamp: Date.now(),
+        text: "PARAR",
+        attachments: [],
+      },
+    });
+
+    const msIdentity = await t.run(async (ctx) => ctx.db.get(ms.messengerIdentityId));
+    expect(msIdentity).toMatchObject({ optOutSource: "keyword" });
+    expect(msIdentity!.optedOutAt).toBeTypeOf("number");
+    const igIdentity = await t.run(async (ctx) => ctx.db.get(seed.identityId!));
+    expect(igIdentity!.optedOutAt).toBeUndefined();
+    expect((await followUpOfConversation(t, ms.messengerConversationId))).toMatchObject({
+      status: "canceled",
+      reasonCode: "opt_out",
+    });
+    expect((await followUpOfConversation(t, seed.conversationId)).status).toBe("scheduled");
+  });
+
+  test("cópia por canal: janela_24h do Instagram no follow-up, no comentário e na notificação", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" } });
+    await armDefault(t, seed);
+    const followUp = await onlyFollowUp(t);
+    await t.run(async (ctx) => {
+      await resolveFollowUpOutcome(ctx as never, followUp._id, { kind: "needs_human", reason: "janela_24h" });
+    });
+    const updated = await t.run(async (ctx) => ctx.db.get(followUp._id));
+    expect(updated).toMatchObject({
+      status: "needs_human",
+      reasonCode: "janela_24h",
+      reason: "a janela de atendimento do Instagram está fechada",
+    });
+    const comments = await t.run(async (ctx) => ctx.db.query("taskComments").collect());
+    expect(comments.some((c) => c.content.includes("janela de atendimento do Instagram"))).toBe(true);
+    expect(comments.some((c) => c.content.includes("WhatsApp"))).toBe(false);
+    const notes = await notificationsOf(t);
+    expect(notes.length).toBeGreaterThan(0);
+    expect(notes.every((n) => (n.body ?? "").includes("janela de atendimento do Instagram"))).toBe(true);
+
+    // A tela da tarefa recebe o nome do canal.
+    const summary = await asUser(t, seed.adminUserId).query(api.attendantFollowUp.getForTask, {
+      taskId: followUp.taskId,
+    });
+    expect(summary?.channelLabel).toBe("Instagram");
+
+    // WhatsApp mantém a cópia de sempre.
+    expect(describeFollowUpReason("janela_24h")).toBe("a janela de 24h do WhatsApp está fechada");
+    expect(describeFollowUpReason("janela_24h", "WhatsApp")).toBe("a janela de 24h do WhatsApp está fechada");
+    expect(describeFollowUpReason("janela_24h", "Messenger")).toBe("a janela de atendimento do Messenger está fechada");
+  });
+
+  test("planner do Messenger cita a janela da Meta (24 h, ou 7 dias por anúncio)", async () => {
+    const t = setup();
+    const seed = await seedInstagram(t, { followUps: { mode: "send" } });
+    const ms = await addMessenger(t, seed);
+    const result = await armDefault(t, { ...seed, conversationId: ms.messengerConversationId }, {
+      dueAtLocal: "2026-09-24T09:00",
+    });
+    expect(String(result.aviso)).toContain("janela da Meta (24 h, ou 7 dias por anúncio) do Messenger");
   });
 });

@@ -16,6 +16,7 @@ export const AI_STATE_REASON_LABELS: Record<AiStateReasonCode, string> = {
   teto_hora: "limite de respostas por hora atingido",
   bridge_sem_aceite: "canal não-oficial sem aceite de risco",
   janela_24h: "janela de 24h fechada",
+  outro_app_controla: "outro app controla a conversa",
   conversa_removida: "conversa removida",
   budget_mensal: "limite mensal de conversas atingido — repasse aberto para a equipe",
   teto_de_gastos: "teto de gastos de IA do mês atingido — suspensa até o próximo mês",

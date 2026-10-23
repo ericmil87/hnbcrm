@@ -602,6 +602,50 @@ npm run dev`}</CodeBlock>
               </div>
             </Card>
 
+            {/* Instagram e Messenger */}
+            <Card className="p-4 space-y-3">
+              <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                Instagram e Messenger na API REST
+                <Badge variant="brand">novo</Badge>
+              </h3>
+              <ul className="list-disc pl-5 space-y-1.5 text-sm text-text-secondary">
+                <li>
+                  <code className="font-mono text-brand-400">GET /api/v1/conversations/channels</code> lista
+                  também os canais <code className="font-mono text-brand-400">instagram</code> e{" "}
+                  <code className="font-mono text-brand-400">messenger</code>, com os campos{" "}
+                  <code className="font-mono text-brand-400">channel</code>,{" "}
+                  <code className="font-mono text-brand-400">transport</code>,{" "}
+                  <code className="font-mono text-brand-400">accountLabel</code>,{" "}
+                  <code className="font-mono text-brand-400">handle</code> e{" "}
+                  <code className="font-mono text-brand-400">canStart</code> (sempre{" "}
+                  <code className="font-mono text-brand-400">false</code> nesses canais).
+                </li>
+                <li>
+                  Instagram e Messenger não permitem iniciar conversa nem templates:{" "}
+                  <code className="font-mono text-brand-400">/start</code> e{" "}
+                  <code className="font-mono text-brand-400">/send-template</code> respondem 400.
+                </li>
+                <li>
+                  <code className="font-mono text-brand-400">/receive</code> aceita{" "}
+                  <code className="font-mono text-brand-400">channel: "instagram" | "messenger"</code>{" "}
+                  apenas com <code className="font-mono text-brand-400">contactId</code>.
+                </li>
+                <li>
+                  <code className="font-mono text-brand-400">GET /api/v1/conversations?channelConfigId=</code>{" "}
+                  filtra as conversas por conta conectada.
+                </li>
+                <li>
+                  Os webhooks <code className="font-mono text-brand-400">message.received</code> e{" "}
+                  <code className="font-mono text-brand-400">message.sent</code> trazem{" "}
+                  <code className="font-mono text-brand-400">channel</code> igual a{" "}
+                  <code className="font-mono text-brand-400">instagram</code> ou{" "}
+                  <code className="font-mono text-brand-400">messenger</code>;{" "}
+                  <code className="font-mono text-brand-400">channel.session_lost</code> traz{" "}
+                  <code className="font-mono text-brand-400">provider</code> com esses mesmos valores.
+                </li>
+              </ul>
+            </Card>
+
             {/* Handoffs */}
             <Card className="p-0 overflow-hidden">
               <div className="px-4 py-3 bg-surface-overlay border-b border-border">

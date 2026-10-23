@@ -13,6 +13,38 @@ import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
+import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
+import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
+import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
+import {
+  INBOX_FILTER_STORAGE_KEY,
+  accountFullLabel,
+  accountChipOptions,
+  type InboxFilterState,
+  channelIcon,
+  channelLabel,
+  parseStoredInboxFilter,
+  sanitizeInboxFilter,
+  shouldShowAccount,
+  showChannelChip,
+  viaLabel,
+} from "@/lib/channelAccounts";
+import {
+  channelSupports,
+  formatTextCounter,
+  measureText,
+  textLimitFor,
+  textNeedsSplit,
+  textPartsCount,
+  mediaSendBlocked,
+  MEDIA_BLOCKED_HINT,
+} from "@/lib/channelCapabilities";
+import {
+  STANDBY_BANNER_TEXT,
+  type ServiceWindowKind,
+  getServiceWindowInfo,
+  isComposerBlockedByWindow,
+} from "@/lib/serviceWindow";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
@@ -194,6 +226,35 @@ export function Inbox() {
     }
   }, [kindFilter]);
 
+  // Chips Canal e Conta (D11; valem para WhatsApp com 2+ números, sem módulo
+  // Meta). Persistidos com try/catch, como o filtro acima. O valor salvo é
+  // validado contra as contas atuais antes de virar arg da query.
+  const { accounts: channelAccounts, byId: accountById } = useInboxChannelAccounts(organizationId);
+  const [storedChannelFilter, setStoredChannelFilter] = useState<InboxFilterState>(() => {
+    try {
+      return parseStoredInboxFilter(window.localStorage.getItem(INBOX_FILTER_STORAGE_KEY));
+    } catch {
+      return { channel: null, configId: null };
+    }
+  });
+  const sanitizedFilter = sanitizeInboxFilter(channelAccounts, storedChannelFilter);
+  const channelChipVisible = showChannelChip(channelAccounts);
+  const accountChoices = accountChipOptions(channelAccounts, sanitizedFilter.channel);
+  // Filtro escondido (chip invisível) nunca fica ativo às cegas.
+  const channelFilter: InboxFilterState = {
+    channel: channelChipVisible ? sanitizedFilter.channel : null,
+    configId: accountChoices.length > 0 ? sanitizedFilter.configId : null,
+  };
+  const updateChannelFilter = (next: InboxFilterState) => {
+    setStoredChannelFilter(next);
+    try {
+      window.localStorage.setItem(INBOX_FILTER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* sem persistência é só perder a preferência */
+    }
+  };
+  const channelOptions = Array.from(new Set(channelAccounts.map((a) => a.channel)));
+
   // Conversa alcançada por deep-link que não está na lista carregada — o
   // resolver abaixo mantém este estado em dia (o documento continua reativo).
   const [linkedConversation, setLinkedConversation] = useState<Record<string, any> | null>(null);
@@ -279,7 +340,15 @@ export function Inbox() {
   // I/O, fase 2). O limite vale para a combinação de filtros do SERVIDOR
   // (arquivadas + fila); trocar o filtro volta a 50. Os filtros só de tela
   // (Diretas/Grupos, etiqueta) não mudam a query e mantêm o limite.
-  const listFilterKey = `${showArchived ? "archived" : "active"}|${JSON.stringify(queueArgs)}`;
+  const channelArgs = {
+    ...(channelFilter.channel
+      ? { channel: channelFilter.channel as "whatsapp" | "instagram" | "messenger" }
+      : {}),
+    ...(channelFilter.configId
+      ? { channelConfigId: channelFilter.configId as Id<"channelConfigs"> }
+      : {}),
+  };
+  const listFilterKey = `${showArchived ? "archived" : "active"}|${JSON.stringify(queueArgs)}|${JSON.stringify(channelArgs)}`;
   const [listPage, setListPage] = useState<{ key: string | null; limit: number }>(() => ({
     key: null,
     limit: CONVERSATIONS_DEFAULT_LIMIT,
@@ -289,6 +358,7 @@ export function Inbox() {
     organizationId,
     ...(showArchived ? { archived: true } : {}),
     ...queueArgs,
+    ...channelArgs,
     limit: listLimit,
   });
   // Mantém a lista na tela enquanto o lote maior carrega.
@@ -591,7 +661,15 @@ export function Inbox() {
   const currentConversation =
     validConversations.find((c) => c._id === selectedConversation) ??
     (linkedConversation?._id === selectedConversation ? linkedConversation : undefined);
-  const channelIsWhatsapp = currentConversation?.channel === "whatsapp";
+  // Capacidades do canal da conversa aberta (matriz em lib/channelCapabilities).
+  const convChannel: string | undefined = currentConversation?.channel;
+  const convTransport: string | undefined = currentConversation?.channelProvider;
+  const canSendTyping = channelSupports(convChannel, convTransport, "typingIndicator");
+  const canUseAiAttendant = channelSupports(convChannel, convTransport, "aiAttendant");
+  const canRecordVoice = channelSupports(convChannel, convTransport, "voiceRecorder");
+  const isWhatsappConversation = convChannel === "whatsapp";
+  const mediaBlocked = mediaSendBlocked(convChannel, convTransport) && !isInternal;
+  const textLimit = textLimitFor(convChannel, convTransport);
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
 
@@ -1013,7 +1091,7 @@ export function Inbox() {
       window.clearTimeout(typingPauseTimerRef.current);
       typingPauseTimerRef.current = null;
     }
-    if (typingLastSentRef.current !== 0 && selectedConversation && channelIsWhatsapp) {
+    if (typingLastSentRef.current !== 0 && selectedConversation && canSendTyping) {
       typingLastSentRef.current = 0;
       sendTypingState({
         conversationId: selectedConversation as Id<"conversations">,
@@ -1024,7 +1102,7 @@ export function Inbox() {
 
   // Throttled "composing" on keystroke; "paused" after 3s idle. WhatsApp only.
   const handleComposerActivity = () => {
-    if (!selectedConversation || !channelIsWhatsapp || isInternal) return;
+    if (!selectedConversation || !canSendTyping || isInternal) return;
     const ts = Date.now();
     if (ts - typingLastSentRef.current > 4000) {
       typingLastSentRef.current = ts;
@@ -1080,6 +1158,7 @@ export function Inbox() {
     e.preventDefault();
     const trimmed = newMessage.trim();
     if ((!trimmed && stagedFiles.length === 0) || !selectedConversation) return;
+    if (composerBlocked) return;
 
     try {
       const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
@@ -1510,19 +1589,6 @@ export function Inbox() {
     );
   }
 
-  const getChannelBadgeVariant = (channel: string) => {
-    switch (channel) {
-      case "whatsapp":
-        return "success";
-      case "telegram":
-        return "info";
-      case "email":
-        return "brand";
-      default:
-        return "default";
-    }
-  };
-
   // Media icon for the last-message preview in the conversation list
   const getPreviewIcon = (contentType: string | null, bridgeType: string | null) => {
     if (contentType === "audio" || bridgeType === "audio") return Mic;
@@ -1544,29 +1610,76 @@ export function Inbox() {
     return null;
   };
 
-  // 24h WhatsApp service window label for the conversation header
-  const getServiceWindowInfo = (serviceWindowExpiresAt: number | null) => {
-    if (!serviceWindowExpiresAt || serviceWindowExpiresAt <= now) {
-      return {
-        text: "Janela fechada — requer template",
-        tone: "text-semantic-warning" as const,
-      };
-    }
-    const remainingMs = serviceWindowExpiresAt - now;
-    const remainingMinutes = Math.max(1, Math.round(remainingMs / 60_000));
-    const label =
-      remainingMinutes < 60
-        ? `Janela fecha em ${remainingMinutes}min`
-        : `Janela fecha em ${Math.round(remainingMinutes / 60)}h`;
-    return { text: label, tone: "text-text-secondary" as const };
-  };
+  // Janela de serviço por canal. `template` = WhatsApp Cloud API (24h, requer
+  // template); `wait` = Instagram/Messenger (só o cliente reabre). Bridge
+  // (não oficial) reporta serviceWindowApplies === false — sem janela. Sem o
+  // campo novo do backend, WhatsApp com janela cai em `template` como antes.
+  const windowKind: ServiceWindowKind =
+    !currentConversation || currentConversation.serviceWindowApplies === false
+      ? null
+      : (currentConversation as { serviceWindowKind?: ServiceWindowKind }).serviceWindowKind ??
+        (convChannel === "whatsapp" ? "template" : null);
+  const windowExpiresAt: number | null = currentConversation?.serviceWindowExpiresAt ?? null;
+  const windowResult = getServiceWindowInfo(windowKind, windowExpiresAt, now);
+  const windowInfo = windowResult
+    ? {
+        text: windowResult.text,
+        tone: windowResult.closed ? ("text-semantic-warning" as const) : ("text-text-secondary" as const),
+      }
+    : null;
+  // Origem no cabeçalho: ícone + conta completa + "via <canal>".
+  const currentAccount = currentConversation?.channelConfigId
+    ? accountById.get(currentConversation.channelConfigId as string)
+    : undefined;
+  const originShown =
+    !!currentConversation &&
+    !!convChannel &&
+    (convChannel === "instagram" ||
+      convChannel === "messenger" ||
+      (!!currentAccount && shouldShowAccount(channelAccounts, convChannel)));
+  const originFullLabel = accountFullLabel(currentAccount);
+  const originText = originFullLabel
+    ? originFullLabel.toLowerCase().startsWith(channelLabel(convChannel ?? "").toLowerCase())
+      ? originFullLabel
+      : `${originFullLabel} · ${viaLabel(convChannel ?? "")}`
+    : viaLabel(convChannel ?? "");
+  const OriginIcon = channelIcon(convChannel ?? "", convTransport);
+  const originLine = originShown ? (
+    <span className="inline-flex items-center gap-1 min-w-0 text-xs text-text-muted">
+      {currentAccount?.avatarUrl ? (
+        <ChannelAvatar
+          channel={convChannel ?? ""}
+          transport={convTransport}
+          avatarUrl={currentAccount.avatarUrl}
+          size={28}
+        />
+      ) : (
+        <OriginIcon size={12} aria-hidden="true" className="shrink-0" />
+      )}
+      <span className="truncate">{originText}</span>
+    </span>
+  ) : null;
 
-  // The 24h window + template CTA only apply to the official Cloud API. Bridge
-  // (unofficial) conversations report serviceWindowApplies === false — hide it.
-  const windowInfo =
-    currentConversation?.channel === "whatsapp" &&
-    currentConversation.serviceWindowApplies !== false
-      ? getServiceWindowInfo(currentConversation.serviceWindowExpiresAt)
+  // Instagram/Messenger com janela fechada: o composer fica bloqueado (nota interna segue livre).
+  const composerBlocked = isComposerBlockedByWindow(windowKind, windowExpiresAt, now) && !isInternal;
+
+  // Outro app (ex.: Caixa de entrada do Business Suite) controla a conversa
+  // quando a última mensagem recebida veio em standby.
+  const lastInboundMessage = (messages ?? []).reduce<any>(
+    (acc, m: any) =>
+      m.direction === "inbound" && !m.isInternal && (!acc || m.createdAt >= acc.createdAt) ? m : acc,
+    null
+  );
+  const standbyActive = lastInboundMessage?.metadata?.standby === true;
+
+  // Contador de texto (Instagram: bytes; Messenger: caracteres). Não bloqueia.
+  const textCounter =
+    textLimit && !isInternal && newMessage.length > 0
+      ? {
+          label: formatTextCounter(measureText(newMessage, textLimit.unit), textLimit),
+          parts: textPartsCount(newMessage, textLimit),
+          over: textNeedsSplit(newMessage, textLimit),
+        }
       : null;
 
   // Controles de IA (pausar/retomar) aparecem em canais oficiais sempre, e em
@@ -1579,7 +1692,7 @@ export function Inbox() {
   // Voice recorder / mic replaces the send button when there's nothing typed.
   const composerEmpty = newMessage.trim() === "" && stagedFiles.length === 0;
   const showVoice =
-    channelIsWhatsapp && !isInternal && canReply && (recorderActive || composerEmpty);
+    canRecordVoice && !isInternal && canReply && (recorderActive || composerEmpty);
 
   // Compact preview for the composer reply citation bar.
   const replyPreview = replyTo
@@ -1709,6 +1822,59 @@ export function Inbox() {
                     </button>
                   ))}
                 </>
+              )}
+              {/* Canal e Conta (D11): valem também para WhatsApp com 2+ números. */}
+              {(channelChipVisible || accountChoices.length > 0) && (
+                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
+              )}
+              {channelChipVisible && (
+                <select
+                  value={channelFilter.channel ?? ""}
+                  onChange={(e) =>
+                    updateChannelFilter({ channel: e.target.value || null, configId: null })
+                  }
+                  aria-label="Filtrar por canal"
+                  className={cn(
+                    "shrink-0 h-7 max-w-[10rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
+                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
+                    channelFilter.channel
+                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                      : "border-border-strong text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  <option value="">Canal</option>
+                  {channelOptions.map((ch) => (
+                    <option key={ch} value={ch}>
+                      {channelLabel(ch)}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {accountChoices.length > 0 && (
+                <select
+                  value={channelFilter.configId ?? ""}
+                  onChange={(e) =>
+                    updateChannelFilter({
+                      channel: channelFilter.channel,
+                      configId: e.target.value || null,
+                    })
+                  }
+                  aria-label="Filtrar por conta"
+                  className={cn(
+                    "shrink-0 h-7 max-w-[11rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
+                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
+                    channelFilter.configId
+                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
+                      : "border-border-strong text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  <option value="">Conta</option>
+                  {accountChoices.map((a) => (
+                    <option key={a._id} value={a._id}>
+                      {accountFullLabel(a)}
+                    </option>
+                  ))}
+                </select>
               )}
               {conversationLabels && conversationLabels.length > 0 && (
                 <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
@@ -1937,9 +2103,16 @@ export function Inbox() {
                       ) : null;
                     })}
                   </h3>
-                  <Badge variant={getChannelBadgeVariant(conversation.channel)}>
-                    {conversation.channel}
-                  </Badge>
+                  <ChannelOriginBadge
+                    channel={conversation.channel}
+                    transport={conversation.channelProvider}
+                    account={
+                      conversation.channelConfigId
+                        ? accountById.get(conversation.channelConfigId as string)
+                        : null
+                    }
+                    showAccount={shouldShowAccount(channelAccounts, conversation.channel)}
+                  />
                 </div>
 
                 {conversation.kind === "group" && (
@@ -2190,12 +2363,13 @@ export function Inbox() {
                   />
                 </div>
               )}
+              {originLine && <div className="pl-11 flex">{originLine}</div>}
               {contactTyping && (
                 <span className="pl-11 text-xs text-brand-500 animate-pulse">
                   {isGroupConversation ? "alguém está digitando…" : "digitando…"}
                 </span>
               )}
-              {aiStatus?.active && currentConversation && channelIsWhatsapp &&
+              {aiStatus?.active && currentConversation && canUseAiAttendant &&
                 aiControlsAllowed && !isGroupConversation && (
                 <div className="pl-11 flex flex-wrap items-center gap-2">
                   <AiConversationControls
@@ -2237,6 +2411,7 @@ export function Inbox() {
                     onClick={() => setShowMembersPanel(true)}
                   />
                 )}
+                {originLine && <div className="flex">{originLine}</div>}
                 {contactTyping && (
                   <span className="text-xs text-brand-500 animate-pulse">
                     {isGroupConversation ? "alguém está digitando…" : "digitando…"}
@@ -2244,7 +2419,7 @@ export function Inbox() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {aiStatus?.active && currentConversation && channelIsWhatsapp &&
+                {aiStatus?.active && currentConversation && canUseAiAttendant &&
                 aiControlsAllowed && !isGroupConversation && (
                   <>
                     <AiConversationControls
@@ -2317,6 +2492,16 @@ export function Inbox() {
                 canEditLead={can("leads", "edit_own")}
                 teamMembers={assignableMembers(teamMembers ?? [])}
               />
+            )}
+
+            {/* Outro app controla a conversa (standby): só recebemos, composer livre */}
+            {standbyActive && !isGroupConversation && (
+              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
+                <p className="max-w-4xl mx-auto w-full flex items-start gap-2 text-sm text-text-secondary">
+                  <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
+                  <span className="min-w-0">{STANDBY_BANNER_TEXT}</span>
+                </p>
+              </div>
             )}
 
             {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
@@ -2465,7 +2650,8 @@ export function Inbox() {
                     <MessageBubble
                       key={message._id}
                       message={message}
-                      channelIsWhatsapp={channelIsWhatsapp}
+                      channel={convChannel}
+                      transport={convTransport}
                       canInteract={canReply}
                       currentMemberId={currentMemberId}
                       contactName={contactName}
@@ -2545,7 +2731,7 @@ export function Inbox() {
                     ))}
                   </div>
                 )}
-                {stagedFiles.length > 1 && channelIsWhatsapp && (
+                {stagedFiles.length > 1 && isWhatsappConversation && (
                   <p className="text-xs text-text-muted mb-2">
                     WhatsApp: apenas o primeiro anexo será enviado
                   </p>
@@ -2575,6 +2761,10 @@ export function Inbox() {
                           setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))
                         }
                         className="shrink-0"
+                        disabled={composerBlocked || mediaBlocked}
+                        disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
+                        channel={convChannel}
+                        transport={convTransport}
                       />
                       <EmojiPickerButton onPick={insertEmoji} />
                       <MentionTextarea
@@ -2603,10 +2793,13 @@ export function Inbox() {
                         }}
                         teamMembers={assignableMembers(teamMembers)}
                         mentionEnabled={isInternal}
+                        disabled={composerBlocked}
                         placeholder={
                           isInternal
                             ? "Escreva uma nota interna... Use @ para mencionar"
-                            : isGroupConversation
+                            : composerBlocked
+                              ? "Janela fechada — aguarde o cliente escrever de novo"
+                              : isGroupConversation
                               ? "Mensagem para o grupo... Use @ para mencionar um membro"
                               : "Digite uma mensagem..."
                         }
@@ -2621,7 +2814,7 @@ export function Inbox() {
                     </>
                   )}
 
-                  {!showVoice && !isInternal && newMessage.trim() && (
+                  {!showVoice && !isInternal && !composerBlocked && newMessage.trim() && (
                     <div className="relative shrink-0">
                       <button
                         type="button"
@@ -2667,7 +2860,7 @@ export function Inbox() {
                   ) : (
                     <Button
                       type="submit"
-                      disabled={!newMessage.trim() && stagedFiles.length === 0}
+                      disabled={composerBlocked || (!newMessage.trim() && stagedFiles.length === 0)}
                       variant={isInternal ? "secondary" : "primary"}
                       size="md"
                       className={cn(
@@ -2681,6 +2874,18 @@ export function Inbox() {
                     </Button>
                   )}
                 </div>
+                {textCounter && (
+                  <p
+                    className={cn(
+                      "mt-1 text-right text-xs tabular-nums",
+                      textCounter.over ? "text-semantic-warning" : "text-text-muted"
+                    )}
+                    aria-live="polite"
+                  >
+                    {textCounter.label}
+                    {textCounter.over && ` — a mensagem será enviada em cerca de ${textCounter.parts} partes`}
+                  </p>
+                )}
                 </div>
               </form>
             ) : (

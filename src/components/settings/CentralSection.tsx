@@ -113,7 +113,7 @@ export function CentralSection({ organizationId }: { organizationId: Id<"organiz
 
 // --- Módulos ---------------------------------------------------------------
 
-function Switch({
+export function Switch({
   checked,
   onChange,
   label,

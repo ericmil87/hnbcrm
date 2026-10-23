@@ -3,6 +3,7 @@ import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
+import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { buildSearchText } from "./lib/searchText";
@@ -415,6 +416,7 @@ export const deleteContact = mutation({
       createdAt: now,
     });
 
+    await deleteMetaIdentitiesForContact(ctx, args.contactId);
     await ctx.db.delete(args.contactId);
     return null;
   },

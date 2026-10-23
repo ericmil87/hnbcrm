@@ -36,7 +36,10 @@ export function StepChannel({ organizationId, draft, setDraft, locked, now }: St
   const channels = useQuery(api.channelConfigs.getChannelConfigs, { organizationId }) as
     | ChannelConfigItem[]
     | undefined;
-  const whatsappChannels = (channels ?? []).filter((c) => c.status !== "disabled");
+  // Campanhas são só WhatsApp: canais Instagram/Messenger não entram.
+  const whatsappChannels = (channels ?? []).filter(
+    (c) => c.status !== "disabled" && (c.channel ?? "whatsapp") === "whatsapp"
+  );
 
   return (
     <div className="space-y-6">

@@ -28,6 +28,7 @@
  * ser grandes e a lista não usa): no caminho novo a query devolve `null`.
  */
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { configTransport, type ChannelTransport } from "./channelTransport";
 import type { Doc, Id } from "../_generated/dataModel";
 
 export const LIST_PREVIEW_MAX = 80;
@@ -338,11 +339,21 @@ export function groupChatFromConversation(
 
 // ── Canal ──
 
+type ChannelConfigLike = { channel?: string; provider?: "meta" | "bridge" | null };
+
+/**
+ * Decide por `configTransport` (channel antes do provider; sem `channel` =
+ * linha legada de WhatsApp). Os 4 transportes (meta|bridge|instagram|messenger)
+ * são gravados em `conversations.channelProvider`.
+ */
 export function channelProviderOf(
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
-): "meta" | "bridge" | undefined {
+  config: ChannelConfigLike | null | undefined
+): ChannelTransport | undefined {
   if (!config) return undefined;
-  return config.provider === "bridge" ? "bridge" : "meta";
+  return configTransport({
+    channel: config.channel ?? "whatsapp",
+    provider: config.provider,
+  });
 }
 
 /**
@@ -350,8 +361,8 @@ export function channelProviderOf(
  * `undefined` (remove o campo; a leitura cai no fallback e trata como hoje).
  */
 export function channelProviderPatch(
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
-): { channelProvider: "meta" | "bridge" | undefined } {
+  config: ChannelConfigLike | null | undefined
+): { channelProvider: ChannelTransport | undefined } {
   return { channelProvider: channelProviderOf(config) };
 }
 
@@ -361,9 +372,9 @@ export function channelProviderPatch(
  */
 export async function channelConfigPatchFor(
   ctx: { db: MutationCtx["db"] },
-  conversation: { channelConfigId?: Id<"channelConfigs">; channelProvider?: "meta" | "bridge" },
+  conversation: { channelConfigId?: Id<"channelConfigs">; channelProvider?: ChannelTransport },
   channelConfigId: Id<"channelConfigs"> | undefined
-): Promise<{ channelConfigId?: Id<"channelConfigs">; channelProvider?: "meta" | "bridge" }> {
+): Promise<{ channelConfigId?: Id<"channelConfigs">; channelProvider?: ChannelTransport }> {
   if (!channelConfigId) return {};
   if (conversation.channelConfigId === channelConfigId && conversation.channelProvider !== undefined) {
     return {};
@@ -420,7 +431,7 @@ export function listFieldsBackfillPatch(
     // desconhecida (só notas nas 20 mais recentes) → a prévia não é tocada.
     lastMessage: (PreviewMessage & { _id: Id<"messages"> }) | null | undefined;
     group: (GroupLike & { _id: Id<"groupChats"> }) | null;
-    config: { provider?: "meta" | "bridge" | null } | null;
+    config: ChannelConfigLike | null;
   }
 ): {
   patch: Record<string, unknown>;

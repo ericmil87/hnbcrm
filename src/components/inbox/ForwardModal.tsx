@@ -6,10 +6,13 @@ import { Search, Forward, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
-import { Badge } from "@/components/ui/Badge";
+import { ChannelOriginBadge } from "./ChannelOriginBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import type { InboxMessage } from "./types";
+import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
+import { shouldShowAccount } from "@/lib/channelAccounts";
+import { isComposerBlockedByWindow } from "@/lib/serviceWindow";
 
 interface ForwardModalProps {
   open: boolean;
@@ -18,19 +21,6 @@ interface ForwardModalProps {
   /** Exclude the source conversation from the target list. */
   currentConversationId?: string | null;
   onClose: () => void;
-}
-
-function channelBadgeVariant(channel: string) {
-  switch (channel) {
-    case "whatsapp":
-      return "success" as const;
-    case "telegram":
-      return "info" as const;
-    case "email":
-      return "brand" as const;
-    default:
-      return "default" as const;
-  }
 }
 
 export function ForwardModal({
@@ -42,6 +32,9 @@ export function ForwardModal({
 }: ForwardModalProps) {
   const [search, setSearch] = useState("");
   const [sendingTo, setSendingTo] = useState<string | null>(null);
+  // Só alimenta um rótulo derivado; o modal re-renderiza ao abrir/buscar.
+  const now = Date.now();
+  const { accounts, byId } = useInboxChannelAccounts(open ? organizationId : null);
 
   const forwardMessage = useMutation(api.conversations.forwardMessage);
   const conversations = useQuery(
@@ -116,12 +109,17 @@ export function ForwardModal({
             <ul className="flex flex-col gap-1">
               {valid.map((c: any) => {
                 const sending = sendingTo === c._id;
+                // Instagram/Messenger: destino com a janela fechada não recebe (só o cliente reabre).
+                const windowClosed =
+                  c.serviceWindowApplies !== false &&
+                  isComposerBlockedByWindow(c.serviceWindowKind, c.serviceWindowExpiresAt, now);
                 return (
                   <li key={c._id}>
                     <button
                       type="button"
                       onClick={() => handleForward(c._id)}
-                      disabled={!!sendingTo}
+                      disabled={!!sendingTo || windowClosed}
+                      title={windowClosed ? "Janela fechada — aguarde o cliente escrever de novo" : undefined}
                       className={cn(
                         "w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors",
                         "hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500",
@@ -139,8 +137,16 @@ export function ForwardModal({
                         {c.lead?.title && (
                           <p className="text-xs text-text-muted truncate">{c.lead.title}</p>
                         )}
+                        {windowClosed && (
+                          <p className="text-xs text-semantic-warning truncate">Janela fechada</p>
+                        )}
                       </div>
-                      <Badge variant={channelBadgeVariant(c.channel)}>{c.channel}</Badge>
+                      <ChannelOriginBadge
+                        channel={c.channel}
+                        transport={c.channelProvider}
+                        account={c.channelConfigId ? byId.get(c.channelConfigId as string) : null}
+                        showAccount={shouldShowAccount(accounts, c.channel)}
+                      />
                       {sending ? (
                         <Loader2 size={16} className="animate-spin text-brand-500 shrink-0" />
                       ) : (

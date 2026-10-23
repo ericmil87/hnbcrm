@@ -44,6 +44,12 @@ crons.daily(
 // execuções). Teto de 50 canais por execução, o resto segue por cursor.
 crons.interval("channel health", { minutes: 15 }, internal.channelHealth.internalChannelHealthTick, {});
 
+// Instagram/Messenger (Meta Messaging, D8): token de Página não expira, então não há
+// refresh; em vez disso `debug_token` diário (válido? escopo de mensagens? acesso a
+// dados perto de expirar?) + purga de `metaSentMids`/states/pending antigos.
+// 09:30 UTC = 06:30 BRT. Paginado por cursor; ver metaMessaging.internalHealthTick.
+crons.daily("meta messaging health", { hourUTC: 9, minuteUTC: 30 }, internal.metaMessaging.internalHealthTick, {});
+
 // Retenção (perf Convex I/O, fase 4a): apaga notificações lidas, fila/runs de
 // IA terminais, parciais abandonados e auditoria `low` além da janela.
 // 07:30 UTC = 04:30 BRT, depois do "expire deferred group media" (06:00 UTC).

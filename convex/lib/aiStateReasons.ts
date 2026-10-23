@@ -24,6 +24,8 @@ export const AI_STATE_REASON_CODES = [
   "teto_hora",
   "bridge_sem_aceite",
   "janela_24h",
+  // Meta Messaging F3: última inbound em standby (outro app é dono da thread)
+  "outro_app_controla",
   // claim / commit do turno
   "conversa_removida",
   "budget_mensal",

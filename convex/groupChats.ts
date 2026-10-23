@@ -810,7 +810,7 @@ export const acceptGroupsAck = mutation({
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new Error("Canal não encontrado");
     const member = await requirePermission(ctx, config.organizationId, "settings", "manage");
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("Grupos só estão disponíveis no canal bridge");
     }
 
@@ -844,7 +844,7 @@ export const setGroupsEnabled = mutation({
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new Error("Canal não encontrado");
     const member = await requirePermission(ctx, config.organizationId, "settings", "manage");
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("Grupos só estão disponíveis no canal bridge");
     }
     if (args.enabled && !config.bridgeGroupsAck) {
@@ -930,7 +930,7 @@ export const setGroupMediaDefaults = mutation({
     if (!config || config.organizationId !== args.organizationId) {
       throw new Error("Canal não encontrado");
     }
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("Grupos só estão disponíveis no canal bridge");
     }
 
@@ -1061,6 +1061,7 @@ export const downloadDeferredMedia = action({
       !config ||
       config.organizationId !== args.organizationId ||
       config.status !== "active" ||
+      config.channel !== "whatsapp" ||
       configProvider(config) !== "bridge"
     ) {
       await release();
@@ -1152,7 +1153,8 @@ export const internalGetChannelGroupContext = internalQuery({
     if (!config) return null;
     return {
       organizationId: config.organizationId,
-      provider: configProvider(config),
+      // channelConfigId vem de fora: canal não-WhatsApp vira null (quem lê exige "bridge").
+      provider: config.channel === "whatsapp" ? configProvider(config) : null,
       status: config.status,
       displayName: config.displayName,
       baseUrl: config.bridgeBaseUrl ?? null,
@@ -1179,7 +1181,7 @@ export const internalGetGroupActionContext = internalQuery({
       jid: group.jid,
       subject: group.subject,
       channelConfigId: group.channelConfigId,
-      provider: configProvider(config),
+      provider: config.channel === "whatsapp" ? configProvider(config) : null,
       status: config.status,
       baseUrl: config.bridgeBaseUrl ?? null,
       tokenEncrypted: config.bridgeTokenEncrypted ?? null,
@@ -1931,7 +1933,7 @@ export const internalMarkGroupLeft = internalMutation({
 
 type GroupContext = {
   organizationId: Id<"organizations">;
-  provider: "meta" | "bridge";
+  provider: "meta" | "bridge" | null; // null = config não-WhatsApp
   status: string;
   baseUrl: string | null;
   tokenEncrypted: string | null;
@@ -2380,7 +2382,7 @@ export const listChannelGroupSettings = query({
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .collect();
     return configs
-      .filter((c) => configProvider(c) === "bridge")
+      .filter((c) => c.channel === "whatsapp" && configProvider(c) === "bridge")
       .map((c) => ({
         channelConfigId: c._id,
         displayName: c.displayName,

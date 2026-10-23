@@ -43,6 +43,7 @@ import {
   Phone,
   Mail,
   CalendarClock,
+  Clock,
   Users,
   Microscope,
   ClipboardList,
@@ -65,6 +66,21 @@ import { MessageBubble } from "@/components/inbox/MessageBubble";
 import { LeadCentralSection } from "@/components/inbox/central/LeadCentralSection";
 import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { ForwardModal } from "@/components/inbox/ForwardModal";
+import {
+  MEDIA_BLOCKED_HINT,
+  channelSupports,
+  formatTextCounter,
+  measureText,
+  mediaSendBlocked,
+  textLimitFor,
+  textNeedsSplit,
+  textPartsCount,
+} from "@/lib/channelCapabilities";
+import {
+  type ServiceWindowKind,
+  getServiceWindowInfo,
+  isComposerBlockedByWindow,
+} from "@/lib/serviceWindow";
 import {
   getReactions,
   isMediaPlaceholder,
@@ -345,7 +361,11 @@ function ConversationTab({
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
   const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
 
-  const channelIsWhatsapp = firstConversation?.channel === "whatsapp";
+  const convChannel: string | undefined = firstConversation?.channel;
+  const convTransport: string | undefined = (
+    firstConversation as { channelProvider?: string } | null
+  )?.channelProvider;
+  const canSendTyping = channelSupports(convChannel, convTransport, "typingIndicator");
   const contactName =
     `${firstConversation?.contact?.firstName ?? ""} ${firstConversation?.contact?.lastName ?? ""}`.trim();
 
@@ -383,7 +403,7 @@ function ConversationTab({
       window.clearTimeout(typingPauseTimerRef.current);
       typingPauseTimerRef.current = null;
     }
-    if (typingLastSentRef.current !== 0 && firstConversation && channelIsWhatsapp) {
+    if (typingLastSentRef.current !== 0 && firstConversation && canSendTyping) {
       typingLastSentRef.current = 0;
       sendTypingState({
         conversationId: firstConversation._id as Id<"conversations">,
@@ -393,7 +413,7 @@ function ConversationTab({
   };
 
   const handleComposerActivity = () => {
-    if (!firstConversation || !channelIsWhatsapp || isInternal) return;
+    if (!firstConversation || !canSendTyping || isInternal) return;
     const ts = Date.now();
     if (ts - typingLastSentRef.current > 4000) {
       typingLastSentRef.current = ts;
@@ -437,6 +457,36 @@ function ConversationTab({
   }, [contactPresence?.state, contactPresence?.at]);
   const contactTyping =
     contactPresence?.state === "composing" && presenceNow - contactPresence.at < 12_000;
+
+  // Janela de serviço + contador de texto (paridade com o Inbox).
+  const convWindow = firstConversation as
+    | { serviceWindowApplies?: boolean; serviceWindowKind?: ServiceWindowKind; serviceWindowExpiresAt?: number | null }
+    | null;
+  const windowKind: ServiceWindowKind =
+    !convWindow || convWindow.serviceWindowApplies === false
+      ? null
+      : convWindow.serviceWindowKind ?? (convChannel === "whatsapp" ? "template" : null);
+  const [windowNow, setWindowNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!windowKind) return;
+    setWindowNow(Date.now());
+    const interval = setInterval(() => setWindowNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, [windowKind]);
+  const windowExpiresAt = convWindow?.serviceWindowExpiresAt ?? null;
+  const windowInfo = getServiceWindowInfo(windowKind, windowExpiresAt, windowNow);
+  const composerBlocked =
+    isComposerBlockedByWindow(windowKind, windowExpiresAt, windowNow) && !isInternal;
+  const mediaBlocked = mediaSendBlocked(convChannel, convTransport) && !isInternal;
+  const textLimit = textLimitFor(convChannel, convTransport);
+  const textCounter =
+    textLimit && !isInternal && messageText.length > 0
+      ? {
+          label: formatTextCounter(measureText(messageText, textLimit.unit), textLimit),
+          parts: textPartsCount(messageText, textLimit),
+          over: textNeedsSplit(messageText, textLimit),
+        }
+      : null;
 
   // Auto-scroll bookkeeping mirroring the Inbox thread (WhatsApp-style anchoring).
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -547,6 +597,7 @@ function ConversationTab({
 
   const handleSend = async () => {
     if ((!messageText.trim() && stagedFiles.length === 0) || sending) return;
+    if (composerBlocked) return;
     setSending(true);
 
     try {
@@ -744,7 +795,8 @@ function ConversationTab({
               <MessageBubble
                 key={message._id}
                 message={message}
-                channelIsWhatsapp={!!channelIsWhatsapp}
+                channel={convChannel}
+                transport={convTransport}
                 canInteract={canInteract}
                 currentMemberId={currentMemberId}
                 contactName={contactName}
@@ -766,6 +818,17 @@ function ConversationTab({
 
       {/* Composer */}
       <div className="shrink-0 border-t border-border p-4 bg-surface-raised">
+        {windowInfo && (
+          <p
+            className={cn(
+              "flex items-center gap-1 mb-2 text-xs",
+              windowInfo.closed ? "text-semantic-warning" : "text-text-secondary"
+            )}
+          >
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            {windowInfo.text}
+          </p>
+        )}
         <div className="flex items-center gap-2 mb-2">
           <Checkbox
             checked={isInternal}
@@ -831,7 +894,10 @@ function ConversationTab({
             uploadedFiles={stagedFiles}
             onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
             onFilesRemoved={(fileId) => setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))}
-            disabled={sending}
+            disabled={sending || composerBlocked || mediaBlocked}
+            disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
+            channel={convChannel}
+            transport={convTransport}
             className="shrink-0"
           />
           <EmojiPickerButton onPick={insertEmoji} disabled={sending} />
@@ -845,7 +911,14 @@ function ConversationTab({
             onKeyDown={handleKeyDown}
             teamMembers={assignableMembers(teamMembers)}
             mentionEnabled={isInternal}
-            placeholder={isInternal ? "Escreva uma nota interna... Use @ para mencionar" : "Digite uma mensagem..."}
+            disabled={composerBlocked}
+            placeholder={
+              isInternal
+                ? "Escreva uma nota interna... Use @ para mencionar"
+                : composerBlocked
+                  ? "Janela fechada — aguarde o cliente escrever de novo"
+                  : "Digite uma mensagem..."
+            }
             rows={1}
             className={cn(
               "bg-surface-sunken",
@@ -856,7 +929,7 @@ function ConversationTab({
           />
           <Button
             onClick={handleSend}
-            disabled={(!messageText.trim() && stagedFiles.length === 0) || sending}
+            disabled={(!messageText.trim() && stagedFiles.length === 0) || sending || composerBlocked}
             variant={isInternal ? "secondary" : "primary"}
             size="md"
             className={cn("shrink-0", isInternal && "bg-semantic-warning hover:bg-amber-600 text-white")}
@@ -866,6 +939,18 @@ function ConversationTab({
             <span className="hidden sm:inline">{isInternal ? "Adicionar Nota" : "Enviar"}</span>
           </Button>
         </div>
+        {textCounter && (
+          <p
+            className={cn(
+              "mt-1 text-right text-xs tabular-nums",
+              textCounter.over ? "text-semantic-warning" : "text-text-muted"
+            )}
+            aria-live="polite"
+          >
+            {textCounter.label}
+            {textCounter.over && ` — a mensagem será enviada em cerca de ${textCounter.parts} partes`}
+          </p>
+        )}
       </div>
 
       <ForwardModal

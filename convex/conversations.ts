@@ -1,4 +1,4 @@
-import { v, type Infer } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import { insertFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -7,7 +7,7 @@ import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
-import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 import {
   applyCampaignDeliveryUpdate,
   applyCampaignInboundHooks,
@@ -15,6 +15,8 @@ import {
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { configProvider } from "./channelConfigs";
+import { ChannelTransport, configTransport } from "./lib/channelTransport";
+import { metaConversationWindow, metaWindowClosesAt, reactionNoteFor } from "./lib/metaSend";
 import {
   appendReadBy,
   GROUP_ACTIVITY_GRANULARITY_MS,
@@ -29,6 +31,7 @@ import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
+import { discardDuplicateAttachments } from "./lib/fileRefs";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
 import { attributionFromReferral } from "./lib/leadAttribution";
 import { getModules } from "./lib/orgModules";
@@ -57,7 +60,14 @@ import {
 } from "./lib/inboxLimits";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
-type ConversationChannel = "whatsapp" | "telegram" | "email" | "webchat" | "internal";
+type ConversationChannel =
+  | "whatsapp"
+  | "telegram"
+  | "email"
+  | "webchat"
+  | "internal"
+  | "instagram"
+  | "messenger";
 
 // 24h Meta customer-service window. Clients compare against the clock — queries
 // must stay Date.now()-free for reactivity, so we expose the expiry timestamp.
@@ -67,19 +77,43 @@ function serviceWindowExpiresAt(conversation: { lastInboundAt?: number }): numbe
   return conversation.lastInboundAt ? conversation.lastInboundAt + SERVICE_WINDOW_MS : null;
 }
 
+// Tipo de janela para a cópia da UI: `template` = WhatsApp Cloud API (fora da
+// janela só com template aprovado); `wait` = Instagram/Messenger (fora da
+// janela só resta esperar o cliente escrever); `null` = sem janela (bridge).
+export type ServiceWindowKind = "template" | "wait" | null;
+
 // The 24h window + templates are exclusive to the official Cloud API. The bridge
 // (unofficial wuzapi) has no such window, so bridge conversations are ALWAYS free
 // to message: `serviceWindowApplies` is false and no expiry is exposed. A meta
 // config, or a conversation with no channelConfigId, keeps the original behavior.
+// Instagram/Messenger (F1): janela de 24 h, ou 7 dias quando a conversa abriu
+// por anúncio (`windowOpenedByAdAt`), decidida pelo CANAL da conversa.
 // (The U5 UI reads `serviceWindowApplies` to hide the window/template controls.)
 function serviceWindowFields(
-  conversation: { lastInboundAt?: number },
-  config: { provider?: "meta" | "bridge" | null } | null | undefined
-): { serviceWindowExpiresAt: number | null; serviceWindowApplies: boolean } {
-  const applies = !config || configProvider(config) !== "bridge";
+  conversation: { channel: string; lastInboundAt?: number; windowOpenedByAdAt?: number },
+  transport: ChannelTransport | null
+): {
+  serviceWindowExpiresAt: number | null;
+  serviceWindowApplies: boolean;
+  serviceWindowKind: ServiceWindowKind;
+} {
+  if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+    return {
+      serviceWindowExpiresAt: metaWindowClosesAt(conversation),
+      serviceWindowApplies: true,
+      serviceWindowKind: "wait",
+    };
+  }
+  // E-mail, webchat, telegram, interno: não existe janela (o onboarding cria
+  // conversas de exemplo nesses canais; antes mostravam "requer template").
+  if (conversation.channel !== "whatsapp") {
+    return { serviceWindowExpiresAt: null, serviceWindowApplies: false, serviceWindowKind: null };
+  }
+  const applies = transport !== "bridge";
   return {
     serviceWindowExpiresAt: applies ? serviceWindowExpiresAt(conversation) : null,
     serviceWindowApplies: applies,
+    serviceWindowKind: applies ? "template" : null,
   };
 }
 
@@ -134,6 +168,7 @@ type InboxRowExtras = LastMessageFields & {
   groupChat: { subject: string; participantsCount: number; jid: string } | null;
   serviceWindowExpiresAt: number | null;
   serviceWindowApplies: boolean;
+  serviceWindowKind: ServiceWindowKind;
 };
 
 /**
@@ -173,16 +208,21 @@ async function inboxRowExtras(
       denorm && conversation.groupSubject !== undefined
         ? groupChatFromConversation(conversation)
         : groupChatSummary(conversation, groupMap).groupChat;
+    // Espelho `channelProvider` (D11): o transporte sem ler o channelConfig.
     const config =
+      conversation.channelConfigId && !(denorm && conversation.channelProvider !== undefined)
+        ? configMap.get(conversation.channelConfigId) ?? null
+        : null;
+    const transport: ChannelTransport | null =
       denorm && conversation.channelProvider !== undefined
-        ? { provider: conversation.channelProvider }
-        : conversation.channelConfigId
-          ? configMap.get(conversation.channelConfigId) ?? null
+        ? conversation.channelProvider
+        : config
+          ? configTransport(config)
           : null;
     out.set(conversation._id, {
       ...lastMessage,
       groupChat,
-      ...serviceWindowFields(conversation, config),
+      ...serviceWindowFields(conversation, transport),
     });
   }
   return out;
@@ -232,13 +272,18 @@ async function resolveReplyMeta(
 // Resolve the WhatsApp config + destination phone for a conversation, mirroring
 // the dispatch context resolution (per-conversation config, falling back to the
 // org's default active whatsapp config). Used by mark-read / typing / reaction.
+// WhatsApp-only and strict (Meta Messaging F0.2): a conversation of another
+// channel never reaches the "first active WhatsApp" fallback, and the returned
+// config is always a WhatsApp one (callers feed it to the WA-only `configProvider`).
 async function resolveWhatsappTarget(
   ctx: MutationCtx,
   conversation: Doc<"conversations">
 ): Promise<{ config: Doc<"channelConfigs"> | null; toPhone: string | null }> {
+  if (conversation.channel !== "whatsapp") return { config: null, toPhone: null };
   let config = conversation.channelConfigId
     ? await ctx.db.get(conversation.channelConfigId)
     : null;
+  if (config && config.channel !== "whatsapp") config = null;
   if (!config) {
     const configs = await ctx.db
       .query("channelConfigs")
@@ -304,7 +349,9 @@ export const getConversations = query({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     )),
     assignedTo: v.optional(v.id("teamMembers")),
     // Default 50, teto 500 (validado no servidor).
@@ -320,6 +367,9 @@ export const getConversations = query({
     departmentId: v.optional(v.id("departments")),
     assignedToMe: v.optional(v.boolean()),
     noDepartment: v.optional(v.boolean()),
+    // Filtro por CONTA (D11): índice próprio [org, channelConfigId, archivedAt,
+    // lastMessageAt], sem pós-filtro. Combinável com `channel` (pós-filtro).
+    channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -337,11 +387,22 @@ export const getConversations = query({
     // Piso de 200 linhas nesses casos; sem pós-filtro, `limit` exato.
     const hasPostFilter = !args.leadId && (
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
+      (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
       !!args.assignedToMe || !!args.assignedTo || !!args.channel
     );
     const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
     let conversations;
-    if (!args.leadId && (args.departmentId || args.noDepartment)) {
+    if (!args.leadId && args.channelConfigId) {
+      // Conta: o índice já devolve só as conversas daquele config e da org.
+      // Setor/unidade/responsável ficam como pós-filtros abaixo.
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel_config_and_archived_and_last_message", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channelConfigId", args.channelConfigId!);
+          return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+        })
+        .order("desc")
+        .take(readLimit);
+    } else if (!args.leadId && (args.departmentId || args.noDepartment)) {
       const departmentId = args.departmentId ?? undefined;
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_department_and_archived_and_last_message", (q) => {
@@ -391,6 +452,10 @@ export const getConversations = query({
     // Only filter by channel if we used the org-level index and channel was specified
     if (!args.leadId && args.channel) {
       conversations = conversations.filter(c => c.channel === args.channel);
+    }
+    // Painel do lead com conta: poucas conversas por lead, pós-filtro basta.
+    if (args.leadId && args.channelConfigId) {
+      conversations = conversations.filter(c => c.channelConfigId === args.channelConfigId);
     }
 
     if (!args.leadId) {
@@ -1113,9 +1178,9 @@ export const sendMessage = mutation({
       });
     }
 
-    // Real channel dispatch (paced per conversation)
-    if (!args.isInternal && conversation.channel === "whatsapp") {
-      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    // Real channel dispatch (paced per conversation); channel gate lives in the port
+    if (!args.isInternal) {
+      await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
     return messageId;
@@ -1229,7 +1294,9 @@ export const createConversation = mutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
   },
   returns: v.id("conversations"),
@@ -1252,7 +1319,9 @@ export const internalGetConversations = internalQuery({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     )),
     assignedTo: v.optional(v.id("teamMembers")),
     limit: v.optional(v.number()),
@@ -1265,6 +1334,9 @@ export const internalGetConversations = internalQuery({
     kind: v.optional(
       v.union(v.literal("direct"), v.literal("group"), v.literal("all"))
     ),
+    // Filtro por conta (D11, REST F5): varre a org até juntar a página da conta, para manter o
+    // cursor por `_creationTime` desta rota (o índice da conta ordena por lastMessageAt).
+    channelConfigId: v.optional(v.id("channelConfigs")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1284,6 +1356,23 @@ export const internalGetConversations = internalQuery({
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
         .order("desc")
         .take(overRead);
+    } else if (args.channelConfigId) {
+      // Por conta: índice próprio (o `_creationTime` implícito mantém o cursor desta rota).
+      rawConversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel_config", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channelConfigId", args.channelConfigId!);
+          return cursor ? base.lte("_creationTime", cursor.ts) : base;
+        })
+        .order("desc")
+        .take(overRead);
+    } else if (args.channel) {
+      rawConversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_channel", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("channel", args.channel!);
+          return cursor ? base.lte("_creationTime", cursor.ts) : base;
+        })
+        .order("desc")
+        .take(overRead);
     } else {
       rawConversations = await ctx.db.query("conversations")
         .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
@@ -1295,6 +1384,9 @@ export const internalGetConversations = internalQuery({
     const jsFilters: ((c: any) => boolean)[] = [];
     if (!args.leadId && args.channel) {
       jsFilters.push(c => c.channel === args.channel);
+    }
+    if (args.channelConfigId) {
+      jsFilters.push((c) => c.channelConfigId === args.channelConfigId);
     }
     if (kind !== "all") {
       // `kind` ausente no doc = conversa antiga, que é sempre 1 a 1.
@@ -1536,9 +1628,9 @@ export const internalSendMessage = internalMutation({
       });
     }
 
-    // Real channel dispatch (paced per conversation)
-    if (!args.isInternal && conversation.channel === "whatsapp") {
-      await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    // Real channel dispatch (paced per conversation); channel gate lives in the port
+    if (!args.isInternal) {
+      await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
     return messageId;
@@ -1555,7 +1647,9 @@ export const internalCreateConversation = internalMutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
     // v0.64 (inbound/lead): carimba o número do WhatsApp ao criar. Só aceita
     // canal da MESMA org (senão é ignorado).
@@ -1583,7 +1677,9 @@ export const internalReceiveMessage = internalMutation({
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
     channelConfigId: v.optional(v.id("channelConfigs")),
     content: v.string(),
@@ -1591,6 +1687,9 @@ export const internalReceiveMessage = internalMutation({
     attachments: v.optional(v.array(v.id("files"))),
     externalId: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
+    // REST `/receive` em Instagram/Messenger para contato sem identidade na conta: grava, mas não
+    // acorda o atendente (a resposta não teria destinatário).
+    skipAiEnqueue: v.optional(v.boolean()),
   },
   returns: v.union(v.id("messages"), v.null()),
   handler: async (ctx, args) => {
@@ -1602,7 +1701,10 @@ export const internalReceiveMessage = internalMutation({
           q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
         )
         .first();
-      if (existing) return existing._id;
+      if (existing) {
+        await discardDuplicateAttachments(ctx, existing, args.attachments);
+        return existing._id;
+      }
     }
 
     const lead = await ctx.db.get(args.leadId);
@@ -1674,9 +1776,18 @@ export const internalReceiveMessage = internalMutation({
       );
     }
 
+    // Instagram/Messenger: primeira inbound vinda de anúncio abre a janela de
+    // 7 dias (Click-to-Messenger / Click-to-Direct). WhatsApp não passa aqui.
+    const openedByAd =
+      (args.channel === "instagram" || args.channel === "messenger") &&
+      conversation.firstInboundAt === undefined &&
+      conversation.windowOpenedByAdAt === undefined &&
+      (args.metadata?.referral as { source?: unknown } | undefined)?.source === "ADS";
+
     // Update conversation (reopen if closed — an inbound message revives it);
     // stamp which connected number it belongs to so egress uses the right credentials
     await ctx.db.patch(conversationId, {
+      ...(openedByAd ? { windowOpenedByAdAt: now } : {}),
       status: "active",
       lastMessageAt: now,
       lastInboundAt: now, // (re)opens the 24h customer-service window
@@ -1754,9 +1865,11 @@ export const internalReceiveMessage = internalMutation({
     // Atendente IA: ENFILEIRA (aiReplyQueue) — nunca inferência direta daqui.
     // O enqueue re-checa elegibilidade (org opt-in, agente, pausa, opt-out…)
     // e é um no-op barato quando a IA está desligada.
-    await ctx.scheduler.runAfter(0, internal.attendant.internalEnqueueFromInbound, {
-      messageId,
-    });
+    if (!args.skipAiEnqueue) {
+      await ctx.scheduler.runAfter(0, internal.attendant.internalEnqueueFromInbound, {
+        messageId,
+      });
+    }
 
     return messageId;
   },
@@ -1782,6 +1895,9 @@ export const internalReceiveDeviceMessage = internalMutation({
   args: {
     organizationId: v.id("organizations"),
     leadId: v.id("leads"),
+    // Meta Messaging F1 (D6): eco do Instagram/Messenger enviado fora do CRM
+    // (Business Suite, app do celular). Ausente = WhatsApp (bridge), como antes.
+    channel: v.optional(v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"))),
     channelConfigId: v.optional(v.id("channelConfigs")),
     content: v.string(),
     contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("file"), v.literal("audio"))),
@@ -1798,16 +1914,20 @@ export const internalReceiveDeviceMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
     if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
 
+    const channel = args.channel ?? "whatsapp";
     const conversationId = await getOrCreateConversation(ctx, {
       organizationId: args.organizationId,
       leadId: args.leadId,
-      channel: "whatsapp",
+      channel,
     });
     const conversation = (await ctx.db.get(conversationId))!;
 
@@ -1863,7 +1983,10 @@ export const internalReceiveDeviceMessage = internalMutation({
       leadId: args.leadId,
       type: "message_sent",
       actorType: "human",
-      content: "Mensagem enviada pelo aparelho (fora do CRM)",
+      content:
+        channel === "whatsapp"
+          ? "Mensagem enviada pelo aparelho (fora do CRM)"
+          : "Mensagem enviada fora do CRM",
       metadata: { conversationId, externalId: args.externalId, via: "device" },
       createdAt: sentAt,
     });
@@ -1875,7 +1998,7 @@ export const internalReceiveDeviceMessage = internalMutation({
         messageId,
         conversationId,
         leadId: args.leadId,
-        channel: "whatsapp",
+        channel,
         senderType: "human",
         via: "device",
         externalId: args.externalId,
@@ -2026,7 +2149,10 @@ export const internalReceiveGroupMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const group = await ctx.db.get(args.groupChatId);
     if (!group || group.organizationId !== args.organizationId) return null;
@@ -2208,7 +2334,10 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
         q.eq("organizationId", args.organizationId).eq("externalId", args.externalId)
       )
       .first();
-    if (existing) return existing._id;
+    if (existing) {
+      await discardDuplicateAttachments(ctx, existing, args.attachments);
+      return existing._id;
+    }
 
     const group = await ctx.db.get(args.groupChatId);
     if (!group || group.organizationId !== args.organizationId) return null;
@@ -2405,6 +2534,9 @@ export const internalSendTemplate = internalMutation({
       throw new Error("Membro não pertence à organização da conversa");
     }
     if (conversation.channel !== "whatsapp") {
+      if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+        throw new ConvexError("Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.");
+      }
       throw new Error("Template messages are only supported on the whatsapp channel");
     }
 
@@ -2412,9 +2544,13 @@ export const internalSendTemplate = internalMutation({
     // bridge config before scheduling any dispatch — never call a template on the
     // gateway. Resolve the provider the same way dispatch does: the conversation's
     // config, falling back to the org's default active whatsapp config.
+    // A conversa já é WhatsApp (guard acima), então o fallback "primeiro
+    // WhatsApp ativo" nunca roda para outro canal; um channelConfigId de outro
+    // canal é ignorado antes do `configProvider` (WA-only, fail-closed).
     let config = conversation.channelConfigId
       ? await ctx.db.get(conversation.channelConfigId)
       : null;
+    if (config && config.channel !== "whatsapp") config = null;
     if (!config) {
       const configs = await ctx.db
         .query("channelConfigs")
@@ -2510,7 +2646,7 @@ export const internalSendTemplate = internalMutation({
       },
     });
 
-    await scheduleWhatsappDispatch(ctx, conversation, messageId);
+    await scheduleOutboundDispatch(ctx, conversation, messageId);
 
     return messageId;
   },
@@ -2557,7 +2693,7 @@ export const internalUpdateDeliveryStatus = internalMutation({
       .first();
 
     if (!message) {
-      console.warn(`Delivery status for unknown externalId: ${args.externalId}`);
+      console.warn(`Delivery status for unknown externalId: ····${args.externalId.slice(-4)}`);
       return null;
     }
 
@@ -2611,6 +2747,39 @@ export const internalUpdateDeliveryStatus = internalMutation({
     }
 
     return message._id;
+  },
+});
+
+/**
+ * Recibo por watermark (Meta Messaging F1, §4): toda outbound da conversa com
+ * `createdAt <= watermark` sobe para `status` (nunca rebaixa, nunca toca
+ * `failed`). Messenger manda watermark em delivery/read; o read do Instagram
+ * vem por mid e chega aqui com o `createdAt` daquela mensagem. Limitado às
+ * 200 mais recentes até a marca.
+ */
+export const internalMarkDeliveredUpToWatermark = internalMutation({
+  args: {
+    conversationId: v.id("conversations"),
+    watermark: v.number(),
+    status: v.union(v.literal("delivered"), v.literal("read")),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) =>
+        q.eq("conversationId", args.conversationId).lte("createdAt", args.watermark)
+      )
+      .order("desc")
+      .take(200);
+    let updated = 0;
+    for (const m of rows) {
+      if (m.direction !== "outbound" || !m.deliveryStatus || m.deliveryStatus === "failed") continue;
+      if (DELIVERY_RANK[args.status] <= DELIVERY_RANK[m.deliveryStatus]) continue;
+      await ctx.db.patch(m._id, { deliveryStatus: args.status });
+      updated++;
+    }
+    return updated;
   },
 });
 
@@ -2735,15 +2904,28 @@ export const reactToMessage = mutation({
       args.emoji.length > 0
         ? [...withoutSender, { emoji: args.emoji, sender: member._id, senderName: member.name, at: now }]
         : withoutSender;
-    await ctx.db.patch(message._id, {
-      metadata: { ...(message.metadata ?? {}), reactions: next },
-    });
+    // Instagram/Messenger: o que a Meta não reproduz fica dito na própria mensagem
+    // (`reactionNote`): Messenger não tem reação de saída; Instagram só aceita ❤️.
+    const metaSurface =
+      conversation.channel === "instagram" || conversation.channel === "messenger" ? conversation.channel : null;
+    const nextMetadata: Record<string, unknown> = { ...(message.metadata ?? {}), reactions: next };
+    if (metaSurface) {
+      const note = reactionNoteFor(metaSurface, args.emoji, !!message.externalId);
+      if (note) nextMetadata.reactionNote = note;
+      else delete nextMetadata.reactionNote;
+    }
+    await ctx.db.patch(message._id, { metadata: nextMetadata });
 
-    // Provider push only for the whatsapp channel; other channels stay local-only.
+    // Provider push: WhatsApp (bridge/Meta) e Instagram/Messenger; o resto fica local.
     if (conversation.channel === "whatsapp") {
       await ctx.scheduler.runAfter(0, internal.whatsapp.internalDispatchReaction, {
         messageId: message._id,
         emoji: args.emoji,
+      });
+    } else if (metaSurface) {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalDispatchReaction, {
+        messageId: message._id,
+        emoji: args.emoji.length > 0 ? args.emoji : null,
       });
     }
     return null;
@@ -2793,6 +2975,15 @@ export const markConversationRead = mutation({
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
     await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+
+    // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).
+    if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalSenderAction, {
+        conversationId: args.conversationId,
+        action: "mark_seen",
+      });
+      return null;
+    }
 
     // Recibo só para quem tem id do provedor. `metadata.readAt` legado (antes da
     // fase 2) continua respeitado, para não reenviar recibo de mensagem antiga
@@ -2956,6 +3147,26 @@ export const sendTypingState = mutation({
 
     await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
 
+    if (conversation.channel === "instagram" || conversation.channel === "messenger") {
+      // Meta Messaging F2: typing_on/typing_off, só dentro da janela de serviço.
+      // `typing_on` com throttle de 5 s por conversa; `typing_off` só se houve `on`.
+      const now = Date.now();
+      if (!metaConversationWindow(conversation.channel, conversation, now).open) return null;
+      const runtime = await getRuntime(ctx, conversation._id);
+      const ref = { organizationId: conversation.organizationId, conversationId: conversation._id };
+      if (args.state === "composing") {
+        if (runtime?.metaTypingAt !== undefined && now - runtime.metaTypingAt < 5000) return null;
+        await upsertRuntime(ctx, ref, { metaTypingAt: now }, runtime);
+      } else {
+        if (runtime?.metaTypingAt === undefined) return null;
+        await upsertRuntime(ctx, ref, { metaTypingAt: undefined }, runtime);
+      }
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalSenderAction, {
+        conversationId: conversation._id,
+        action: args.state === "composing" ? "typing_on" : "typing_off",
+      });
+      return null;
+    }
     if (conversation.channel !== "whatsapp") return null;
     const { config, toPhone } = await resolveWhatsappTarget(ctx, conversation);
     if (config && configProvider(config) === "bridge" && toPhone) {

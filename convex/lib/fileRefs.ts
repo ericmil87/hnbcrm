@@ -17,7 +17,8 @@
  * espaço; um blob apagado cedo demais é anexo perdido.
  */
 import { MutationCtx } from "../_generated/server";
-import { Doc } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
+import { deleteFileRow } from "./storageUsage";
 
 /**
  * `true` se alguma OUTRA linha de `files` aponta para o mesmo blob.
@@ -55,4 +56,26 @@ export async function deleteBlobIfUnreferenced(
     return false;
   }
   return true;
+}
+
+/**
+ * Ingest repetido (o provedor reentrega, ou duas entregas em paralelo): o
+ * download já gravou blob + linha de `files` para uma mensagem que JÁ existe.
+ * Descarta o que não pertence a ela — blob (se ninguém mais o referencia) e a
+ * linha, devolvendo a cota. Só toca em arquivo da mesma org que não está nos
+ * anexos da mensagem existente.
+ */
+export async function discardDuplicateAttachments(
+  ctx: MutationCtx,
+  existing: Pick<Doc<"messages">, "organizationId" | "attachments">,
+  fileIds: Id<"files">[] | undefined
+): Promise<void> {
+  const keep = new Set<string>(existing.attachments ?? []);
+  for (const fileId of fileIds ?? []) {
+    if (keep.has(fileId)) continue;
+    const file = await ctx.db.get(fileId);
+    if (!file || file.organizationId !== existing.organizationId || file.messageId) continue;
+    await deleteBlobIfUnreferenced(ctx, file);
+    await deleteFileRow(ctx, file);
+  }
 }

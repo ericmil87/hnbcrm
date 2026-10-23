@@ -448,6 +448,8 @@ export interface ImportDryRunSummary extends ImportDryRunHeaders {
 
 export interface ChannelConfigItem {
   _id: Id<"channelConfigs">;
+  /** Ausente em respostas antigas; tratado como WhatsApp. */
+  channel?: "whatsapp" | "instagram" | "messenger";
   provider: CampaignProvider;
   displayName: string;
   displayPhoneNumber: string | null;

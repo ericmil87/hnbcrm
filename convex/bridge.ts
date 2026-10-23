@@ -156,7 +156,7 @@ export const webhookReceive = httpAction(async (ctx, request) => {
   });
   // Unknown instance, wrong provider, or inactive → 200 + drop: don't make the
   // gateway retry, don't leak tenant existence.
-  if (!config || configProvider(config) !== "bridge" || config.status !== "active") {
+  if (!config || config.channel !== "whatsapp" || configProvider(config) !== "bridge" || config.status !== "active") {
     console.warn(`Bridge webhook for unknown/inactive instance ${instanceId} — dropped`);
     return new Response("OK", { status: 200 });
   }
@@ -728,7 +728,8 @@ export const internalGetHistorySyncContext = internalQuery({
 
     return {
       organizationId: config.organizationId,
-      provider: configProvider(config),
+      // configId vem de fora: canal não-WhatsApp vira null (quem lê exige "bridge").
+      provider: config.channel === "whatsapp" ? configProvider(config) : null,
       status: config.status,
       baseUrl: config.bridgeBaseUrl ?? null,
       tokenEncrypted: config.bridgeTokenEncrypted ?? null,
@@ -789,7 +790,7 @@ export const internalPatchBridgeHistory = internalMutation({
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) throw new Error("Canal não encontrado");
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("Histórico do aparelho só existe no canal bridge");
     }
     await ctx.db.patch(args.configId, {

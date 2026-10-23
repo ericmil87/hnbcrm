@@ -10,13 +10,15 @@ import { ConvexError } from "convex/values";
 import { QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 
-export type OrgModuleKey = "units" | "departments" | "attribution" | "central";
+export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging";
 
 export type OrgModules = {
   units: boolean;
   departments: boolean;
   attribution: boolean;
   central: boolean;
+  /** Instagram + Messenger. NÃO é da Central: fora de `assertAnyModule`. */
+  metaMessaging: boolean;
   demoMode: boolean;
 };
 
@@ -25,6 +27,7 @@ export const MODULE_LABELS: Record<OrgModuleKey, string> = {
   departments: "Setores",
   attribution: "Atribuição de mídia",
   central: "Painel da Central",
+  metaMessaging: "Instagram e Messenger",
 };
 
 /** Leitura pura do doc (serve a quem já carregou a org). */
@@ -35,6 +38,7 @@ export function modulesOf(org: Pick<Doc<"organizations">, "settings"> | null | u
     departments: m?.departments === true,
     attribution: m?.attribution === true,
     central: m?.central === true,
+    metaMessaging: m?.metaMessaging === true,
     demoMode: org?.settings?.demoMode === true,
   };
 }

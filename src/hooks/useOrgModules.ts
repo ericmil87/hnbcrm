@@ -8,6 +8,8 @@ export interface OrgModules {
   attribution: boolean;
   central: boolean;
   demoMode: boolean;
+  /** Instagram e Messenger (Meta Messaging). NÃO acende a Central. */
+  metaMessaging: boolean;
 }
 
 const ALL_OFF: OrgModules = {
@@ -16,7 +18,13 @@ const ALL_OFF: OrgModules = {
   attribution: false,
   central: false,
   demoMode: false,
+  metaMessaging: false,
 };
+
+/** Gate da Central: `metaMessaging` e `demoMode` ficam de fora de propósito. */
+export function computeAnyEnabled(m: OrgModules): boolean {
+  return m.units || m.departments || m.attribution || m.central;
+}
 
 /**
  * Módulos opcionais da org (MVP "Central"). Enquanto carrega — ou sem org —
@@ -36,6 +44,6 @@ export function useOrgModules(organizationId: Id<"organizations"> | undefined | 
   return {
     modules,
     isLoading: organizationId ? data === undefined : false,
-    anyEnabled: modules.units || modules.departments || modules.attribution || modules.central,
+    anyEnabled: computeAnyEnabled(modules),
   };
 }

@@ -149,7 +149,7 @@ export const tick = internalMutation({
     const campaign = (await ctx.db.get(guarded._id))!;
 
     const config = await ctx.db.get(campaign.channelConfigId);
-    if (!config || config.status !== "active") {
+    if (!config || config.status !== "active" || config.channel !== "whatsapp") {
       await pauseCampaignCore(ctx, campaign, { reason: "Canal indisponível ou desativado", automatic: true, now });
       return null;
     }

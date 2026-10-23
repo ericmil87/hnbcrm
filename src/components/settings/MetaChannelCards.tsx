@@ -1,0 +1,358 @@
+import { useState } from "react";
+import { useAction, useMutation } from "convex/react";
+import { toast } from "sonner";
+import { Activity, AlertTriangle, CheckCircle2, Link2Off, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
+import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Modal } from "@/components/ui/Modal";
+import { PermissionGate } from "@/components/guards/PermissionGate";
+import { channelIcon, channelLabel } from "@/lib/channelAccounts";
+import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
+import { mutationErrorMessage } from "@/lib/errors";
+import {
+  DEFAULT_APP_HINT,
+  RECONNECT_FLAG_KEY,
+  STANDARD_ACCESS_NOTICE,
+  groupMetaConfigs,
+  metaCardView,
+  metaConnectionState,
+  completeConnectionMessage,
+  deleteWithHistoryText,
+  hasConversationsCount,
+  safeSession,
+  verifiedAgoLabel,
+  type MetaAuthState,
+} from "@/lib/metaConnect";
+
+/** Campos de getChannelConfigs usados pelos canais Instagram / Messenger. */
+export interface MetaChannelConfig {
+  _id: Id<"channelConfigs">;
+  channel: "instagram" | "messenger";
+  displayName: string;
+  status: "active" | "disabled" | "error";
+  metaConnectionId: Id<"metaConnections"> | null;
+  metaAccountLabel: string | null;
+  metaAccountHandle: string | null;
+  metaAuthState: MetaAuthState | null;
+  metaSubscribed: boolean | null;
+  metaConnectedBy: { memberId: string; name: string } | null;
+  metaAuthDetail?: string | null;
+  metaDataAccessExpiresAt?: number | null;
+  metaLastHealthAt?: number | null;
+  metaAvatarUrl?: string | null;
+  healthDetail?: string | null;
+  disabledByModuleAt: number | null;
+}
+
+type Pending =
+  | { kind: "disconnect"; connectionId: Id<"metaConnections"> }
+  | { kind: "delete"; configId: Id<"channelConfigs"> }
+  | null;
+
+interface MetaChannelCardsProps {
+  organizationId: Id<"organizations">;
+  configs: MetaChannelConfig[];
+}
+
+/** Canais Instagram / Messenger, agrupados por Página. */
+export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsProps) {
+  const disconnect = useMutation(api.metaMessaging.disconnectMetaConnection);
+  const deleteConfig = useMutation(api.channelConfigs.deleteChannelConfig);
+  const [pending, setPending] = useState<Pending>(null);
+  const [withHistory, setWithHistory] = useState<{
+    configId: Id<"channelConfigs">;
+    conversations: number;
+  } | null>(null);
+
+  const groups = groupMetaConfigs(configs);
+
+  const runPending = () => {
+    if (!pending) return;
+    if (pending.kind === "disconnect") {
+      toast.promise(disconnect({ organizationId, connectionId: pending.connectionId }), {
+        loading: "Desconectando...",
+        success: "Página desconectada",
+        error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
+      });
+    } else {
+      void deleteChannel(pending.configId);
+    }
+  };
+
+  const deleteChannel = async (configId: Id<"channelConfigs">, force = false) => {
+    const toastId = toast.loading("Excluindo canal...");
+    try {
+      await deleteConfig(force ? { configId, force: true } : { configId });
+      toast.success("Canal excluído", { id: toastId });
+    } catch (error) {
+      const conversations = hasConversationsCount(error);
+      if (conversations !== null && !force) {
+        toast.dismiss(toastId);
+        setWithHistory({ configId, conversations });
+      } else {
+        toast.error(mutationErrorMessage(error, "Não foi possível excluir o canal"), { id: toastId });
+      }
+    }
+  };
+
+  const historyConnectionId =
+    (withHistory && configs.find((c) => c._id === withHistory.configId)?.metaConnectionId) || null;
+
+  const disconnectInstead = () => {
+    if (!historyConnectionId) return;
+    toast.promise(disconnect({ organizationId, connectionId: historyConnectionId }), {
+      loading: "Desconectando...",
+      success: "Página desconectada",
+      error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
+    });
+    setWithHistory(null);
+  };
+
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <div key={group.key} className="space-y-2">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-text-muted">{group.title}</h4>
+          {group.configs.map((config) => (
+            <MetaChannelCard
+              key={config._id}
+              organizationId={organizationId}
+              config={config}
+              onDisconnect={() =>
+                config.metaConnectionId &&
+                setPending({ kind: "disconnect", connectionId: config.metaConnectionId })
+              }
+              onDelete={() => setPending({ kind: "delete", configId: config._id })}
+            />
+          ))}
+        </div>
+      ))}
+
+      <ConfirmDialog
+        open={pending !== null}
+        onClose={() => setPending(null)}
+        onConfirm={runPending}
+        title={pending?.kind === "disconnect" ? "Desconectar Página" : "Excluir canal"}
+        description={
+          pending?.kind === "disconnect"
+            ? "A Página será desconectada do HNBCRM e os canais Messenger e Instagram dela deixam de receber e enviar mensagens. Você pode conectar de novo depois."
+            : "Tem certeza que deseja excluir este canal? As mensagens deixam de chegar ao HNBCRM e esta ação não pode ser desfeita."
+        }
+        confirmLabel={pending?.kind === "disconnect" ? "Desconectar" : "Excluir"}
+        variant="danger"
+      />
+
+      <Modal
+        open={withHistory !== null}
+        onClose={() => setWithHistory(null)}
+        title="Excluir canal com histórico?"
+      >
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-semantic-error/10">
+              <AlertTriangle size={20} className="text-semantic-error" aria-hidden="true" />
+            </div>
+            <p className="pt-2 text-sm leading-relaxed text-text-secondary">
+              {deleteWithHistoryText(withHistory?.conversations ?? 0)}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 pt-2">
+            {historyConnectionId && (
+              <Button variant="secondary" onClick={disconnectInstead} className="min-h-[44px] w-full">
+                <Link2Off size={14} />
+                Desconectar em vez disso
+              </Button>
+            )}
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (withHistory) void deleteChannel(withHistory.configId, true);
+                setWithHistory(null);
+              }}
+              className="min-h-[44px] w-full"
+            >
+              <Trash2 size={14} />
+              Excluir mesmo assim
+            </Button>
+            <Button variant="ghost" onClick={() => setWithHistory(null)} className="min-h-[44px] w-full">
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function MetaChannelCard({
+  organizationId,
+  config,
+  onDisconnect,
+  onDelete,
+}: {
+  organizationId: Id<"organizations">;
+  config: MetaChannelConfig;
+  onDisconnect: () => void;
+  onDelete: () => void;
+}) {
+  const startMetaConnect = useAction(api.metaMessaging.startMetaConnect);
+  const completeMetaConnection = useAction(api.metaMessaging.completeMetaConnection);
+  const checkChannelHealth = useAction(api.channelConfigs.checkChannelHealth);
+  const [busy, setBusy] = useState<"action" | "test" | null>(null);
+  const [showHealth, setShowHealth] = useState(false);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  // Congelado na montagem: o rótulo "há Xh" não precisa ser reativo ao segundo.
+  const [now] = useState(() => Date.now());
+
+  const Icon = channelIcon(config.channel, config.channel);
+  const state = metaConnectionState(config);
+  const view = metaCardView(config, now);
+  const verified = config.metaAuthState === "ok" ? verifiedAgoLabel(config.metaLastHealthAt, now) : null;
+  const name = config.metaAccountLabel ?? config.displayName;
+  const handle = config.metaAccountHandle ? `@${config.metaAccountHandle.replace(/^@/, "")}` : null;
+  const connectionId = config.metaConnectionId;
+
+  const handleAction = async () => {
+    if (!connectionId || !view.action) return;
+    setBusy("action");
+    try {
+      if (view.action === "reconnect") {
+        // Marca para a volta (?meta=ok) mostrar "Conexão renovada".
+        safeSession.set(RECONNECT_FLAG_KEY, "1");
+        const { url } = await startMetaConnect({ organizationId, connectionId });
+        window.location.assign(url);
+        return;
+      }
+      const result = await completeMetaConnection({ organizationId, connectionId });
+      if (result.ok) toast.success("Conexão concluída");
+      else toast.error(completeConnectionMessage(result.code));
+    } catch (error) {
+      safeSession.remove(RECONNECT_FLAG_KEY);
+      toast.error(mutationErrorMessage(error, "Não foi possível continuar. Tente novamente."));
+    }
+    setBusy(null);
+  };
+
+  const handleTest = async () => {
+    setBusy("test");
+    try {
+      const result = await checkChannelHealth({ configId: config._id });
+      if (result.ok) toast.success("Conexão verificada");
+      else toast.error(result.error ?? config.healthDetail ?? "A verificação encontrou um problema");
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Não foi possível testar a conexão"));
+    }
+    setBusy(null);
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-surface-sunken p-3.5">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="relative h-9 w-9 shrink-0">
+            {config.metaAvatarUrl && !avatarFailed ? (
+              <img
+                src={config.metaAvatarUrl}
+                alt=""
+                onError={() => setAvatarFailed(true)}
+                className="h-9 w-9 rounded-full object-cover"
+              />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/10 text-brand-500">
+                <Icon size={18} aria-hidden="true" />
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-medium text-text-primary">{channelLabel(config.channel)}</span>
+              <Badge variant={state.variant}>{state.label}</Badge>
+            </div>
+            <p className="mt-0.5 text-sm text-text-secondary break-all">
+              {name}
+              {handle && handle !== name ? ` · ${handle}` : ""}
+            </p>
+            {config.metaConnectedBy && (
+              <p className="mt-0.5 text-xs text-text-muted">Conectado por {config.metaConnectedBy.name}</p>
+            )}
+            {verified && (
+              <p className="mt-0.5 flex items-center gap-1 text-xs text-text-muted">
+                <CheckCircle2 size={12} className="text-semantic-success" aria-hidden="true" />
+                {verified}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <PermissionGate organizationId={organizationId} category="settings" level="manage">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {view.action && connectionId && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleAction}
+                disabled={busy !== null}
+                className="min-h-[44px] md:min-h-0"
+              >
+                <RefreshCw size={14} className={busy === "action" ? "animate-spin" : undefined} />
+                {view.actionLabel}
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleTest}
+              disabled={busy !== null}
+              className="min-h-[44px] md:min-h-0"
+            >
+              <Activity size={14} className={busy === "test" ? "animate-pulse" : undefined} />
+              {busy === "test" ? "Testando..." : "Testar conexão"}
+            </Button>
+            {connectionId && (
+              <Button variant="secondary" size="sm" onClick={onDisconnect} className="min-h-[44px] md:min-h-0">
+                <Link2Off size={14} />
+                Desconectar
+              </Button>
+            )}
+            <Button variant="danger" size="sm" onClick={onDelete} className="min-h-[44px] md:min-h-0">
+              <Trash2 size={14} />
+              Excluir
+            </Button>
+          </div>
+        </PermissionGate>
+      </div>
+
+      {view.notice && (
+        <p
+          role="status"
+          className="mt-3 flex items-start gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-xs text-semantic-warning"
+        >
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{view.notice.text}</span>
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowHealth((v) => !v)}
+        aria-expanded={showHealth}
+        className="mt-3 inline-flex min-h-[44px] items-center gap-1.5 text-xs font-medium text-brand-500 hover:underline md:min-h-0"
+      >
+        <Activity size={13} aria-hidden="true" />
+        {showHealth ? "Ocultar saúde do canal" : "Ver saúde do canal (7 dias)"}
+      </button>
+      {showHealth && <ChannelHealthPanel organizationId={organizationId} configId={config._id} className="mt-2" />}
+
+      <div className="mt-3 space-y-1.5 rounded-lg border border-border-subtle bg-surface-base p-2.5 text-xs text-text-muted">
+        <p className="flex items-start gap-2">
+          <ShieldAlert size={13} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden="true" />
+          <span>{STANDARD_ACCESS_NOTICE}</span>
+        </p>
+        <p>{DEFAULT_APP_HINT}</p>
+      </div>
+    </div>
+  );
+}

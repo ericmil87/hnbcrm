@@ -8,9 +8,13 @@ export function registerConversationTools(
 ) {
   server.tool(
     "crm_list_conversations",
-    "List conversations, optionally filtered by lead ID. Each conversation includes its channel, status, and associated lead. By default only 1:1 conversations are returned — WhatsApp group rooms have no lead or contact and only appear with kind=group or kind=all. To send into a group, use crm_send_group_message, not crm_send_message. A conversation with `botSuspicion` and no `clearedAt` (v0.65) is one where the built-in AI attendant stopped replying because the other side looks like a bot — check the pending bot_suspect handoff before messaging it.",
+    "List conversations, optionally filtered by lead ID or by channel account (channelConfigId). Each conversation includes its channel (whatsapp, instagram, messenger, ...), status, and associated lead. By default only 1:1 conversations are returned — WhatsApp group rooms have no lead or contact and only appear with kind=group or kind=all. To send into a group, use crm_send_group_message, not crm_send_message. A conversation with `botSuspicion` and no `clearedAt` (v0.65) is one where the built-in AI attendant stopped replying because the other side looks like a bot — check the pending bot_suspect handoff before messaging it.",
     {
       leadId: z.string().optional().describe("Filter by lead ID"),
+      channelConfigId: z
+        .string()
+        .optional()
+        .describe("Filter by account: a WhatsApp number, Facebook Page or Instagram account (id from crm_list_whatsapp_channels)"),
       kind: z
         .enum(["direct", "group", "all"])
         .optional()
@@ -20,6 +24,7 @@ export function registerConversationTools(
       const params: Record<string, string> = {};
       if (args.leadId) params.leadId = args.leadId;
       if (args.kind) params.kind = args.kind;
+      if (args.channelConfigId) params.channelConfigId = args.channelConfigId;
       const result = await client.get("/api/v1/conversations", params);
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -45,7 +50,7 @@ export function registerConversationTools(
 
   server.tool(
     "crm_send_message",
-    "Send a message in a conversation. Can be a customer-facing reply or an internal note visible only to team members. Use isInternal=true for notes between team members.",
+    "Send a message in a conversation. Can be a customer-facing reply or an internal note visible only to team members. Use isInternal=true for notes between team members. On Instagram and Messenger conversations the Meta service window applies: replies are allowed for 24 hours after the contact's last message (7 days when the conversation came from an ad); outside it the message is stored as failed and nothing is sent. Those channels carry plain text only (no markdown) and there are no templates.",
     {
       conversationId: z.string().describe("The conversation ID to send to"),
       content: z.string().describe("Message content"),
@@ -67,7 +72,7 @@ export function registerConversationTools(
   );
   server.tool(
     "crm_list_whatsapp_channels",
-    "List the organization's active WhatsApp numbers you can start a conversation from (use the returned id as channelConfigId in crm_start_conversation). Each item has id, provider (\"bridge\" = unofficial gateway, accepts a free-text first message; \"meta\" = official Cloud API, no free-text first message), displayName, phoneDisplay, connected and, for bridge, sessionState. Prefer a channel with connected=true. Never returns tokens, gateway URLs or instance ids.",
+    "List the organization's active channel accounts. Only WhatsApp entries (canStart=true) can start a conversation (use their id as channelConfigId in crm_start_conversation); Instagram and Messenger accounts are also listed with canStart=false because the person must write first, and their id is only useful to filter crm_list_conversations. Each item has id, channel, transport, accountLabel, handle, canStart, and for WhatsApp provider (\"bridge\" = unofficial gateway, accepts a free-text first message; \"meta\" = official Cloud API, no free-text first message), displayName, phoneDisplay, connected and, for bridge, sessionState. Prefer a channel with connected=true. Never returns tokens, gateway URLs or instance ids.",
     {},
     async () => {
       const result = await client.get("/api/v1/conversations/channels");

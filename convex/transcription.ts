@@ -289,7 +289,7 @@ export const internalSetTranscriptionPending = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
-    if (!message) return null;
+    if (!message || message.metadata?.deletedByCustomer === true) return null;
     const transcription: TranscriptionMeta = { status: "pending", engine: ENGINE, at: Date.now() };
     await ctx.db.patch(args.messageId, {
       metadata: { ...(message.metadata ?? {}), transcription },
@@ -309,8 +309,9 @@ export const internalSetTranscriptionResult = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    // Apagada pelo cliente (Meta Messaging F2): resultado tardio é descartado.
     const message = await ctx.db.get(args.messageId);
-    if (!message) return null;
+    if (!message || message.metadata?.deletedByCustomer === true) return null;
     const transcription: TranscriptionMeta = {
       status: args.status,
       engine: ENGINE,

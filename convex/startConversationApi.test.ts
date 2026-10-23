@@ -143,9 +143,12 @@ describe("GET /api/v1/conversations/channels", () => {
     expect(bridge).toEqual({
       id: s.bridgeId, provider: "bridge", displayName: "Bridge",
       phoneDisplay: expect.any(String), connected: true, sessionState: "connected",
+      channel: "whatsapp", transport: "bridge", accountLabel: "Bridge", handle: expect.any(String), canStart: true,
     });
     const meta = json.channels.find((c: any) => c.provider === "meta");
-    expect(Object.keys(meta).sort()).toEqual(["connected", "displayName", "id", "phoneDisplay", "provider"]);
+    expect(Object.keys(meta).sort()).toEqual([
+      "accountLabel", "canStart", "channel", "connected", "displayName", "handle", "id", "phoneDisplay", "provider", "transport",
+    ]);
     const raw = JSON.stringify(json);
     for (const leak of ["wuzapi.example.com", "inst_secret_id", "enc:tok", "pn_1", "Token", "vt\""]) {
       expect(raw).not.toContain(leak);

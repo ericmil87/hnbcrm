@@ -65,5 +65,11 @@ export function shouldDescribeImage(org: OrgDoc): boolean {
  * transportes marcam o tipo original no metadata (bridgeParse / whatsappParse).
  */
 export function isSticker(metadata: Record<string, unknown> | undefined): boolean {
-  return metadata?.bridgeType === "sticker" || metadata?.whatsappType === "sticker";
+  return (
+    metadata?.bridgeType === "sticker" ||
+    metadata?.whatsappType === "sticker" ||
+    // Instagram/Messenger (F2): curtida e sticker nunca vão para a visão.
+    metadata?.metaType === "like_heart" ||
+    metadata?.metaType === "sticker"
+  );
 }

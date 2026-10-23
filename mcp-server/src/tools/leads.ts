@@ -40,7 +40,7 @@ export function registerLeadTools(server: McpServer, client: HnbCrmClient) {
       channel: z
         .string()
         .optional()
-        .describe("Channel for the initial message (e.g. webchat, email, whatsapp)"),
+        .describe("Channel for the initial message (webchat, email, whatsapp, telegram). Not instagram/messenger: those channels cannot be started by the team, the person must write first (their messages arrive through the Meta webhook)"),
     },
     async (args) => {
       const result = await client.post("/api/v1/inbound/lead", args);

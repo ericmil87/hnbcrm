@@ -359,7 +359,8 @@ export function HandoffPeekSlideOver({
                 <MessageBubble
                   key={message._id}
                   message={message}
-                  channelIsWhatsapp={conversation?.channel === "whatsapp"}
+                  channel={conversation?.channel}
+                  transport={(conversation as { channelProvider?: string } | null | undefined)?.channelProvider}
                   canInteract={false}
                   currentMemberId={null}
                   contactName={contactName}

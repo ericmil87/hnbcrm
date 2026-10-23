@@ -116,7 +116,9 @@ export const internalTemplateSyncContext = internalQuery({
     const config = await ctx.db.get(args.channelConfigId);
     if (!config) throw new Error("Canal não encontrado");
     await requireTemplateManager(ctx, config.organizationId, args.actorMemberId);
-    if (configProvider(config) !== "meta") throw new Error("Templates existem só no canal oficial (Meta)");
+    if (config.channel !== "whatsapp" || configProvider(config) !== "meta") {
+      throw new Error("Templates existem só no canal oficial (Meta)");
+    }
     if (!config.wabaId || !config.accessTokenEncrypted || !config.phoneNumberId) {
       throw new Error("Canal Meta incompleto — informe WABA ID e token em Configurações → Canais");
     }

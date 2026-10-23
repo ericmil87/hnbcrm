@@ -34,7 +34,7 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   ai_followup_needs_human: Bot,
   // Central — conversa transferida para você ou para o seu setor.
   conversation_transferred: ArrowRightLeft,
-  // T02 — o número do WhatsApp perdeu a sessão.
+  // T02 — canal desconectado (WhatsApp perdeu a sessão; Instagram/Messenger pedem reconexão).
   channel_session_lost: WifiOff,
   // v0.69 — gasto de IA do mês: aviso (80%) / teto atingido.
   ai_spend_warning: Gauge,

@@ -64,7 +64,7 @@ export const OPENAPI_SPEC = `{
                     }
                   },
                   "message": { "type": "string", "description": "Mensagem que a pessoa escreveu no formulário. Com boas-vindas aplicável ou channel=whatsapp vira nota interna; senão (legado) é registrada numa conversa do canal informado" },
-                  "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal"], "default": "webchat", "description": "Canal da conversa" },
+                  "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "default": "webchat", "description": "Canal da conversa" },
                   "value": { "type": "number", "default": 0, "description": "Valor monetário do lead" },
                   "currency": { "type": "string", "description": "Código da moeda (ex: BRL)" },
                   "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"], "default": "medium", "description": "Prioridade do lead" },
@@ -652,6 +652,8 @@ export const OPENAPI_SPEC = `{
         "operationId": "listConversations",
         "parameters": [
           { "name": "leadId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por lead" },
+          { "name": "channel", "in": "query", "schema": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"] }, "description": "Filtrar por canal" },
+          { "name": "channelConfigId", "in": "query", "schema": { "type": "string" }, "description": "Filtrar por conta/número (id de GET /conversations/channels): um número de WhatsApp, uma Página do Messenger ou uma conta do Instagram" },
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "maximum": 500 }, "description": "Limite de resultados" },
           { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
         ],
@@ -680,8 +682,8 @@ export const OPENAPI_SPEC = `{
     "/api/v1/conversations/channels": {
       "get": {
         "tags": ["Conversas"],
-        "summary": "Listar números de WhatsApp para iniciar conversa",
-        "description": "Retorna os números de WhatsApp ativos da organização que podem iniciar conversas. Nunca expõe tokens nem URLs de gateway. Requer permissão inbox: view_own na chave de API.",
+        "summary": "Listar canais da organização (WhatsApp, Instagram e Messenger)",
+        "description": "Retorna os números de WhatsApp ativos (canStart: true) e as contas ativas de Instagram e Messenger (canStart: false: nesses canais a pessoa precisa escrever primeiro, então POST /conversations/start e /conversations/send-template não se aplicam). Instagram e Messenger só aparecem com o módulo Meta Messaging ligado e trazem apenas rótulo e @ da conta, nunca ids de Página ou conta. Nunca expõe tokens nem URLs de gateway. Requer permissão inbox: view_own na chave de API.",
         "operationId": "listConversationChannels",
         "responses": {
           "200": {
@@ -697,10 +699,15 @@ export const OPENAPI_SPEC = `{
                         "type": "object",
                         "properties": {
                           "id": { "type": "string", "description": "ID da configuração de canal (channelConfigId)" },
-                          "provider": { "type": "string", "enum": ["meta", "bridge"], "description": "Provedor do número" },
+                          "channel": { "type": "string", "enum": ["whatsapp", "instagram", "messenger"], "description": "Canal da conta" },
+                          "transport": { "type": "string", "enum": ["meta", "bridge", "instagram", "messenger"], "description": "Transporte usado para enviar" },
+                          "accountLabel": { "type": "string", "description": "Rótulo da conta (nome do número, da Página ou @ do Instagram)" },
+                          "handle": { "type": "string", "nullable": true, "description": "@ do Instagram ou final do telefone mascarado" },
+                          "canStart": { "type": "boolean", "description": "true = a equipe pode iniciar conversa por esta conta (só WhatsApp)" },
+                          "provider": { "type": "string", "enum": ["meta", "bridge"], "description": "Provedor do número (só WhatsApp)" },
                           "displayName": { "type": "string", "description": "Nome de exibição" },
-                          "phoneDisplay": { "type": "string", "description": "Telefone formatado" },
-                          "connected": { "type": "boolean", "description": "Número conectado" },
+                          "phoneDisplay": { "type": "string", "description": "Telefone formatado (só WhatsApp)" },
+                          "connected": { "type": "boolean", "description": "Conta conectada (WhatsApp: sessão/Cloud API; Instagram e Messenger: autorização válida)" },
                           "sessionState": { "type": "string", "description": "Estado da sessão (bridge)" }
                         }
                       }
@@ -730,7 +737,7 @@ export const OPENAPI_SPEC = `{
                 "type": "object",
                 "required": ["channelConfigId"],
                 "properties": {
-                  "channelConfigId": { "type": "string", "description": "ID do número (de GET /conversations/channels)" },
+                  "channelConfigId": { "type": "string", "description": "ID do número de WhatsApp (de GET /conversations/channels com canStart: true). Uma conta de Instagram ou Messenger responde 400: Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro." },
                   "phone": { "type": "string", "description": "Telefone (use + e código do país quando fora do país padrão da organização). Informe phone ou contactId" },
                   "contactId": { "type": "string", "description": "Contato existente (alternativa a phone)" },
                   "firstName": { "type": "string", "description": "Nome, ao criar contato" },
@@ -811,6 +818,105 @@ export const OPENAPI_SPEC = `{
                   "type": "object",
                   "properties": {
                     "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/conversations/receive": {
+      "post": {
+        "tags": ["Conversas"],
+        "summary": "Registrar mensagem recebida (ponte externa)",
+        "description": "Grava uma mensagem recebida de um contato, vinda de uma integração externa. Em Instagram e Messenger (channel: instagram ou messenger) informe contactId (não existe telefone nesses canais, contactPhone é recusado) e channelConfigId de uma conta da própria organização, do mesmo canal (de GET /conversations/channels); caso contrário 400. Requer permissão inbox: reply na chave de API.",
+        "operationId": "receiveMessage",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["content"],
+                "properties": {
+                  "content": { "type": "string", "description": "Texto da mensagem" },
+                  "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "default": "whatsapp", "description": "Canal de origem" },
+                  "channelConfigId": { "type": "string", "description": "Conta de origem; obrigatório em instagram e messenger" },
+                  "contactId": { "type": "string", "description": "Contato existente (obrigatório em instagram e messenger)" },
+                  "contactPhone": { "type": "string", "description": "Telefone (cria o contato se não existir); não vale em instagram e messenger" },
+                  "contactFirstName": { "type": "string" },
+                  "contactLastName": { "type": "string" },
+                  "contentType": { "type": "string", "enum": ["text", "image", "file", "audio"], "default": "text" },
+                  "externalId": { "type": "string", "description": "ID da mensagem na origem (idempotência)" },
+                  "leadTitle": { "type": "string" },
+                  "metadata": { "type": "object", "additionalProperties": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Mensagem registrada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "const": true },
+                    "messageId": { "type": "string" },
+                    "leadId": { "type": "string" },
+                    "contactId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/conversations/send-template": {
+      "post": {
+        "tags": ["Conversas"],
+        "summary": "Enviar template do WhatsApp",
+        "description": "Envia um template aprovado do WhatsApp Cloud API (reengajamento fora da janela de 24 h). Só vale em conversas de WhatsApp com número oficial (Meta): em conversa de Instagram ou Messenger responde 400 «Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.». Requer permissão inbox: reply na chave de API.",
+        "operationId": "sendTemplate",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["conversationId", "templateName", "languageCode"],
+                "properties": {
+                  "conversationId": { "type": "string" },
+                  "templateName": { "type": "string" },
+                  "languageCode": { "type": "string", "example": "pt_BR" },
+                  "components": { "type": "array", "items": { "type": "object", "additionalProperties": true } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Template enviado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean", "const": true },
+                    "messageId": { "type": "string" }
                   }
                 }
               }
@@ -2408,7 +2514,7 @@ export const OPENAPI_SPEC = `{
           "_creationTime": { "type": "number", "description": "Timestamp de criação" },
           "organizationId": { "type": "string", "description": "ID da organização" },
           "leadId": { "type": "string", "description": "ID do lead associado" },
-          "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal"], "description": "Canal da conversa" },
+          "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "description": "Canal da conversa" },
           "status": { "type": "string", "enum": ["active", "closed"], "description": "Status da conversa" },
           "messageCount": { "type": "integer", "description": "Total de mensagens" }
         }

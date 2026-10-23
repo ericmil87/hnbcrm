@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, CheckCheck, AlertCircle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, AlertTriangle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { FormattedMessageText } from "./FormattedMessageText";
@@ -18,9 +18,23 @@ import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
 import { DeferredMedia } from "./DeferredMedia";
 import { SpecialMessageCard } from "./SpecialMessageCard";
+import { MediaUnavailablePlaceholder, MetaSpecialCard, StoryReplyStrip } from "./MetaSpecialCard";
+import {
+  DELETED_BY_CUSTOMER_LABEL,
+  describeMetaCard,
+  describeStoryReply,
+  editHistoryOf,
+  isDeletedByCustomer,
+  mediaUnavailableDetail,
+  mediaUnavailableLabel,
+  metaTypeOf,
+  reactionNoteOf,
+} from "@/lib/metaSpecialMessage";
 import { describeSpecialMessage, isEdited, isRevoked, isViewOnce } from "@/lib/bridgeSpecialMessage";
 import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatMessageTimestamp } from "@/lib/messageTime";
+import { allowedReactionEmojis, channelSupports, deliveryTicksMode } from "@/lib/channelCapabilities";
+import { deviceViaLabel } from "@/lib/serviceWindow";
 import {
   InboxMessage,
   getQuoted,
@@ -37,8 +51,9 @@ import {
 
 interface MessageBubbleProps {
   message: InboxMessage;
-  /** Delivery ticks + reply/react/forward only apply to the WhatsApp channel. */
-  channelIsWhatsapp: boolean;
+  /** Canal + transporte da conversa: a matriz de capacidades decide ticks/reply/react/forward. */
+  channel: string | null | undefined;
+  transport?: string | null;
   /** Whether the current user can reply/react/forward. */
   canInteract: boolean;
   /** Current team member id — highlights the user's own reactions. */
@@ -146,9 +161,11 @@ const DELIVERY_LABELS: Record<string, string> = {
   failed: "Falhou",
 };
 
-function DeliveryTick({ message }: { message: InboxMessage }) {
+function DeliveryTick({ message, readOnly = false }: { message: InboxMessage; readOnly?: boolean }) {
   const status = message.deliveryStatus;
   if (!status) return null;
+  // Instagram só informa "lida": sem tique de enviada/entregue (seria promessa falsa).
+  if (readOnly && status !== "read" && status !== "failed") return null;
   // Em grupo o recibo é por MEMBRO (`Receipt.MessageSender`): o tique mostra o
   // primeiro que entregou/leu, e o tooltip conta quantos já leram — que é a
   // única leitura honesta de "lido" numa sala de N pessoas.
@@ -171,7 +188,8 @@ function DeliveryTick({ message }: { message: InboxMessage }) {
 
 export function MessageBubble({
   message,
-  channelIsWhatsapp,
+  channel,
+  transport,
   canInteract,
   currentMemberId,
   contactName,
@@ -193,7 +211,7 @@ export function MessageBubble({
   const style = getBubbleStyle(message);
   const attachments = message.attachmentFiles ?? [];
   const hasAttachments = attachments.length > 0;
-  const sticker = isSticker(message);
+  const sticker = isSticker(message) || (metaTypeOf(message.metadata) === "sticker" && hasAttachments);
   const voiceNote = isVoiceNote(message);
   const imageMessage = isImageMessage(message);
   const mediaProblem = hasMediaProblem(message);
@@ -204,7 +222,17 @@ export function MessageBubble({
   // sido lida antes, e o texto (transcrição/descrição) continua valendo.
   const mediaPurged = mediaState.state === "purged";
 
-  const revoked = isRevoked(message.metadata) && !message.isInternal;
+  const deletedByCustomer = isDeletedByCustomer(message.metadata) && !message.isInternal;
+  const revoked = (isRevoked(message.metadata) || deletedByCustomer) && !message.isInternal;
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const metaCard = message.isInternal || revoked ? null : describeMetaCard(message.metadata);
+  // Sticker com imagem vira figurinha; o card só aparece quando não há anexo.
+  const showMetaCard = !!metaCard && !(metaCard.kind === "sticker" && hasAttachments);
+  const storyReply = message.isInternal || revoked ? null : describeStoryReply(message.metadata);
+  const unavailableLabel = message.isInternal || revoked ? null : mediaUnavailableLabel(message.metadata);
+  const editHistory = editHistoryOf(message.metadata);
+  const reactionNote = reactionNoteOf(message.metadata);
+  const reactionEmojis = allowedReactionEmojis(channel, transport);
   const edited = isEdited(message.metadata) && !revoked;
   const viewOnce = isViewOnce(message.metadata) && !revoked;
   const special = message.isInternal || revoked ? null : describeSpecialMessage(message.metadata, message.content);
@@ -216,7 +244,11 @@ export function MessageBubble({
 
   // Reactions/reply/forward are whatsapp-channel actions; internal notes and
   // other channels don't push to a provider, so keep the bar off there.
-  const actionsEnabled = channelIsWhatsapp && !message.isInternal;
+  // Reply/react/forward vêm da matriz de capacidades (WhatsApp, Instagram, Messenger).
+  const canReplyQuote = channelSupports(channel, transport, "replyQuote");
+  const canForward = channelSupports(channel, transport, "forward");
+  const canReactSend = channelSupports(channel, transport, "reactionsSend");
+  const actionsEnabled = (canReplyQuote || canForward || canReactSend) && !message.isInternal;
   const activeEmoji =
     currentMemberId != null
       ? reactions.find((r) => r.sender === currentMemberId)?.emoji ?? null
@@ -236,8 +268,10 @@ export function MessageBubble({
   const needsVision =
     canDescribeImage && (!vision || (vision.status !== "done" && vision.status !== "pending"));
 
+  const ticksMode = deliveryTicksMode(channel, transport);
   const showDeliveryTick =
-    !message.isInternal && message.direction === "outbound" && channelIsWhatsapp;
+    !message.isInternal && message.direction === "outbound" && ticksMode !== false;
+  const viaDevice = !message.isInternal && message.metadata?.via === "device";
   const isFailed = showDeliveryTick && message.deliveryStatus === "failed";
 
   // Suppress server-side placeholders like "[imagem]" when the real media is
@@ -248,6 +282,7 @@ export function MessageBubble({
   const visibleText =
     !message.isInternal && !revoked && message.content && !suppressPlaceholder
       && !(special && special.kind !== "interactive_reply")
+      && !(metaCard && ["like_heart", "sticker", "ig_post", "ig_reel"].includes(metaCard.kind) && isMediaPlaceholder(message.content))
       ? message.content
       : null;
 
@@ -321,18 +356,27 @@ export function MessageBubble({
             canInteract={canInteract}
             activeEmoji={activeEmoji}
             align={style.side}
-            onReply={() => {
-              setMenuOpen(false);
-              onReply(message);
-            }}
-            onReact={(emoji) => {
-              setMenuOpen(false);
-              onReact(message, emoji);
-            }}
+            reactionEmojis={reactionEmojis}
+            onReply={
+              canReplyQuote
+                ? () => {
+                    setMenuOpen(false);
+                    onReply(message);
+                  }
+                : undefined
+            }
+            onReact={
+              canReactSend
+                ? (emoji) => {
+                    setMenuOpen(false);
+                    onReact(message, emoji);
+                  }
+                : undefined
+            }
             onForward={
               // Numa sala de grupo não há encaminhar: o conteúdo é de dezenas
               // de terceiros e o servidor recusa (review de correção nº 1).
-              group
+              group || !canForward
                 ? undefined
                 : () => {
                     setMenuOpen(false);
@@ -376,13 +420,28 @@ export function MessageBubble({
           editada
         </span>
       )}
+      {edited && editHistory.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((v) => !v)}
+          aria-expanded={historyOpen}
+          className="inline-flex min-h-11 items-center text-[10px] underline md:min-h-5"
+        >
+          {historyOpen ? "ocultar histórico" : "ver histórico"}
+        </button>
+      )}
       <span className="text-[10px] tabular-nums">{timestamp}</span>
       {showDeliveryTick && (
         <span
           className="inline-flex items-center"
           title={readCount > 0 ? `Lido por ${readCount}` : undefined}
         >
-          <DeliveryTick message={message} />
+          <DeliveryTick message={message} readOnly={ticksMode === "read"} />
+        </span>
+      )}
+      {viaDevice && (
+        <span className="text-[10px]" title="Enviada fora do HNBCRM">
+          {deviceViaLabel(message.metadata?.viaApp, channel)}
         </span>
       )}
     </div>
@@ -393,7 +452,14 @@ export function MessageBubble({
       reactions={reactions}
       currentMemberId={currentMemberId}
       align={style.side}
-      onToggle={canInteract && actionsEnabled ? handleReactToggle : undefined}
+      onToggle={
+        canInteract && actionsEnabled && canReactSend
+          ? (emoji) => {
+              if (reactionEmojis && !reactionEmojis.includes(emoji)) return;
+              handleReactToggle(emoji);
+            }
+          : undefined
+      }
     />
   );
 
@@ -404,6 +470,27 @@ export function MessageBubble({
           {actions}
           <MessageAttachments files={attachments} variant={style.variant} sticker />
           {footer}
+
+          {edited && historyOpen && editHistory.length > 0 && (
+            <ol
+              aria-label="Versões anteriores"
+              className={cn(
+                "flex flex-col gap-1 rounded-md px-2 py-1.5 text-[11px]",
+                style.variant === "outbound" ? "bg-white/10 text-white/85" : "bg-surface-sunken/60 text-text-secondary"
+              )}
+            >
+              {editHistory.map((v, i) => (
+                <li key={i} className="break-words">
+                  {v.at ? (
+                    <span className="mr-1 tabular-nums opacity-75">
+                      {new Date(v.at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}
+                    </span>
+                  ) : null}
+                  {v.content.slice(0, 500)}
+                </li>
+              ))}
+            </ol>
+          )}
           {reactionChips}
         </div>
       </div>
@@ -487,7 +574,17 @@ export function MessageBubble({
             />
           )}
 
-          {!revoked && mediaProblem && (
+          {storyReply && <StoryReplyStrip href={storyReply.href} variant={style.variant} />}
+
+          {showMetaCard && metaCard && (
+            <MetaSpecialCard info={metaCard} variant={style.variant} hasMedia={hasAttachments} />
+          )}
+
+          {unavailableLabel && !hasAttachments && (
+            <MediaUnavailablePlaceholder label={unavailableLabel} detail={mediaUnavailableDetail(message.metadata)} variant={style.variant} />
+          )}
+
+          {!revoked && mediaProblem && !unavailableLabel && (
             <div
               className={cn(
                 "flex items-center gap-1.5 text-xs italic",
@@ -558,7 +655,7 @@ export function MessageBubble({
               )}
             >
               <Ban size={14} className="shrink-0" aria-hidden />
-              Mensagem apagada
+              {deletedByCustomer ? DELETED_BY_CUSTOMER_LABEL : "Mensagem apagada"}
             </div>
           )}
 
@@ -589,8 +686,18 @@ export function MessageBubble({
           {isFailed && message.metadata?.deliveryError && (
             <p className="text-[10px] text-semantic-error">{message.metadata.deliveryError}</p>
           )}
+          {/* Falha parcial / "só o texto saiu": aparece mesmo sem status failed. */}
+          {!message.isInternal && typeof message.metadata?.dispatchNote === "string" && message.metadata.dispatchNote && (
+            <p className="mt-1 flex items-start gap-1 text-[11px] text-semantic-warning">
+              <AlertTriangle className="size-3 mt-0.5 shrink-0" aria-hidden="true" />
+              <span>{message.metadata.dispatchNote}</span>
+            </p>
+          )}
         </div>
         {reactionChips}
+        {reactionNote && reactions.length > 0 && (
+          <p className="px-1 text-[10px] text-text-muted">{reactionNote}</p>
+        )}
       </div>
     </div>
   );

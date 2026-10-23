@@ -4,7 +4,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
-import { scheduleWhatsappDispatch } from "./lib/whatsappDispatch";
+import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 import { getLeadRef } from "./lib/leadRef";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { firstResponsePatch } from "./lib/conversationTiming";
@@ -239,9 +239,7 @@ export const deliver = internalMutation({
       },
     });
 
-    if (conversation.channel === "whatsapp") {
-      await scheduleWhatsappDispatch(ctx, conversation, messageId);
-    }
+    await scheduleOutboundDispatch(ctx, conversation, messageId);
 
     await ctx.db.patch(args.scheduledMessageId, { status: "sent", sentMessageId: messageId });
     return null;

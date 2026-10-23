@@ -7,8 +7,10 @@ interface MessageActionsBarProps {
   /** Whether the current user can reply/react/forward (inbox reply permission). */
   canInteract: boolean;
   activeEmoji?: string | null;
-  onReply: () => void;
-  onReact: (emoji: string) => void;
+  /** Ausente quando o canal não aceita responder com citação (ex.: Messenger). */
+  onReply?: () => void;
+  /** Ausente quando o canal não envia reação (Instagram/Messenger, F2). */
+  onReact?: (emoji: string) => void;
   /**
    * Ausente numa sala de GRUPO: encaminhar uma mensagem que dezenas de
    * terceiros escreveram é vazamento com um clique, e o servidor recusa
@@ -21,6 +23,8 @@ interface MessageActionsBarProps {
   onDescribeImage?: () => void;
   /** Which side the bubble sits on — drives picker alignment. */
   align?: "start" | "end";
+  /** Emojis oferecidos no picker (Instagram: só o coração); null = todos. */
+  reactionEmojis?: string[] | null;
   className?: string;
 }
 
@@ -36,13 +40,14 @@ export function MessageActionsBar({
   onTranscribe,
   onDescribeImage,
   align = "start",
+  reactionEmojis = null,
   className,
 }: MessageActionsBarProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const handleReact = (emoji: string) => {
     setPickerOpen(false);
-    onReact(emoji);
+    onReact?.(emoji);
   };
 
   return (
@@ -55,19 +60,23 @@ export function MessageActionsBar({
     >
       {canInteract && (
         <>
-          <button type="button" onClick={onReply} className={BTN} aria-label="Responder">
-            <Reply size={16} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPickerOpen((v) => !v)}
-            className={cn(BTN, pickerOpen && "text-brand-400 bg-surface-raised")}
-            aria-label="Reagir"
-            aria-haspopup="menu"
-            aria-expanded={pickerOpen}
-          >
-            <Smile size={16} />
-          </button>
+          {onReply && (
+            <button type="button" onClick={onReply} className={BTN} aria-label="Responder">
+              <Reply size={16} />
+            </button>
+          )}
+          {onReact && (
+            <button
+              type="button"
+              onClick={() => setPickerOpen((v) => !v)}
+              className={cn(BTN, pickerOpen && "text-brand-400 bg-surface-raised")}
+              aria-label="Reagir"
+              aria-haspopup="menu"
+              aria-expanded={pickerOpen}
+            >
+              <Smile size={16} />
+            </button>
+          )}
           {onForward && (
             <button type="button" onClick={onForward} className={BTN} aria-label="Encaminhar">
               <Forward size={16} />
@@ -106,6 +115,7 @@ export function MessageActionsBar({
           onClose={() => setPickerOpen(false)}
           placement="top"
           align={align}
+          emojis={reactionEmojis}
         />
       )}
     </div>

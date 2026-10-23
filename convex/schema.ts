@@ -22,7 +22,9 @@ export const savedViewFiltersValidator = v.object({
     v.literal("telegram"),
     v.literal("email"),
     v.literal("webchat"),
-    v.literal("internal")
+    v.literal("internal"),
+    v.literal("instagram"),
+    v.literal("messenger")
   )),
   // P1 — filtros de tarefas (entityType "tasks"); todos opcionais para
   // não afetar views de leads existentes
@@ -558,6 +560,8 @@ export const orgModulesValidator = v.object({
   departments: v.optional(v.boolean()), // Setores + transferência + filas
   attribution: v.optional(v.boolean()), // Origem de anúncio, investimento, ROAS/CAC
   central: v.optional(v.boolean()), // Painel da Central (/app/central)
+  // Instagram + Facebook Messenger (Meta Messaging). NÃO é da Central: fora de assertAnyModule.
+  metaMessaging: v.optional(v.boolean()),
 });
 
 // Tipo de contato da conversa/lead. Ausente = "lead" — só lead entra em
@@ -854,6 +858,7 @@ const applicationTables = {
     title: v.optional(v.string()),
     whatsappNumber: v.optional(v.string()),
     telegramUsername: v.optional(v.string()),
+    instagramUsername: v.optional(v.string()), // Meta Messaging: @ do IG (sem phone)
     tags: v.array(v.string()),
     searchText: v.optional(v.string()),
 
@@ -1004,7 +1009,7 @@ const applicationTables = {
   // Channel configurations (per-org connections to external messaging providers)
   channelConfigs: defineTable({
     organizationId: v.id("organizations"),
-    channel: v.union(v.literal("whatsapp")), // union-ready for future channels
+    channel: v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger")),
     // Which WhatsApp transport this config uses. Optional for backward compat:
     // legacy rows predate the field — read paths normalize undefined → "meta"
     // (see configProvider() in channelConfigs.ts). "meta" = Cloud API (Graph),
@@ -1114,6 +1119,14 @@ const applicationTables = {
         document: v.optional(groupMediaModeValidator),
       })
     ),
+    // ── Meta Messaging (channel "instagram" | "messenger"); token NUNCA aqui, só em metaConnections ──
+    metaConnectionId: v.optional(v.id("metaConnections")),
+    messengerPageId: v.optional(v.string()), // só channel "messenger"; = entry.id de object "page"
+    instagramAccountId: v.optional(v.string()), // só channel "instagram"; = entry.id de object "instagram"
+    metaAccountLabel: v.optional(v.string()), // nome da Página / nome do perfil IG
+    metaAccountHandle: v.optional(v.string()), // @username (IG)
+    metaAccountAvatarFileId: v.optional(v.id("files")), // foto do NEGÓCIO (F4)
+    disabledByModuleAt: v.optional(v.number()), // desativado por desligar o módulo metaMessaging
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -1123,7 +1136,132 @@ const applicationTables = {
     .index("by_bridge_instance", ["bridgeInstanceId"])
     // Deployment-wide de propósito (sem organizationId): a pergunta que ele
     // responde é "este número já está em ALGUMA conta?".
-    .index("by_bridge_phone", ["bridgePhone"]),
+    .index("by_bridge_phone", ["bridgePhone"])
+    // Meta Messaging: roteamento do webhook (deployment-wide, entry.id é único na Meta).
+    .index("by_messenger_page_id", ["messengerPageId"])
+    .index("by_instagram_account_id", ["instagramAccountId"])
+    .index("by_meta_connection", ["metaConnectionId"]),
+
+  // Meta Messaging: credencial (1 por Página na forma #1). Token só aqui, cifrado.
+  metaConnections: defineTable({
+    organizationId: v.id("organizations"),
+    authMethod: v.union(v.literal("facebook_login"), v.literal("instagram_login")),
+    tokenKind: v.union(v.literal("page"), v.literal("ig_user")),
+    tokenEncrypted: v.string(),
+    tokenLast4: v.string(),
+    tokenExpiresAt: v.optional(v.number()), // ausente = não expira (page)
+    dataAccessExpiresAt: v.optional(v.number()),
+    pageId: v.optional(v.string()),
+    pageName: v.optional(v.string()),
+    igAccountId: v.optional(v.string()),
+    igUsername: v.optional(v.string()),
+    scopes: v.array(v.string()),
+    authState: v.union(v.literal("ok"), v.literal("reauth_required"), v.literal("revoked")),
+    authDetail: v.optional(v.string()),
+    authAlertedAt: v.optional(v.number()),
+    // Quem marcou `reauth_required`: só o que o cron de saúde marcou se recupera sozinho.
+    authSource: v.optional(
+      v.union(
+        v.literal("health"),
+        v.literal("send"),
+        v.literal("test"),
+        v.literal("subscribe"),
+        v.literal("deauthorize")
+      )
+    ),
+    // `user_id` da Meta (debug_token) de quem autorizou: casa os callbacks de desautorização/exclusão.
+    metaUserId: v.optional(v.string()),
+    subscribedAt: v.optional(v.number()),
+    subscribedFields: v.optional(v.array(v.string())),
+    lastHealthAt: v.optional(v.number()),
+    connectedByMemberId: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    // Deployment-wide de propósito: exclusividade de Página/IG entre organizações.
+    .index("by_page_id", ["pageId"])
+    .index("by_ig_account_id", ["igAccountId"])
+    .index("by_meta_user_id", ["metaUserId"]),
+
+  // Meta Messaging: pedidos de exclusão de dados (callback da Meta). Só hash do user_id.
+  metaDeletionRequests: defineTable({
+    metaUserIdHash: v.string(),
+    confirmationCode: v.string(),
+    status: v.union(v.literal("received"), v.literal("done")),
+    connectionsRevoked: v.number(),
+    createdAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_confirmation_code", ["confirmationCode"]),
+
+  // Meta Messaging: identidade do cliente por canal (PSID/IGSID), nunca em contacts.phone.
+  contactChannelIdentities: defineTable({
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+    channelConfigId: v.id("channelConfigs"),
+    kind: v.union(v.literal("instagram"), v.literal("messenger")),
+    externalId: v.string(),
+    username: v.optional(v.string()),
+    displayName: v.optional(v.string()),
+    profileFetchedAt: v.optional(v.number()),
+    optedOutAt: v.optional(v.number()),
+    optOutSource: v.optional(v.union(v.literal("keyword"), v.literal("manual"))),
+    createdAt: v.number(),
+  })
+    .index("by_channel_config_and_external_id", ["channelConfigId", "externalId"])
+    .index("by_contact", ["contactId"])
+    .index("by_organization", ["organizationId"]),
+
+  // Meta Messaging: mids enviados por nós (eco do IG sem app_id; usado na F1).
+  metaSentMids: defineTable({
+    organizationId: v.id("organizations"),
+    mid: v.string(),
+    messageId: v.id("messages"),
+    createdAt: v.number(),
+  })
+    .index("by_organization_and_mid", ["organizationId", "mid"])
+    .index("by_created", ["createdAt"]),
+
+  // OAuth: state single-use (TTL 10 min), hash do nonce no banco.
+  oauthStates: defineTable({
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    provider: v.literal("meta"),
+    nonceHash: v.string(),
+    connectionId: v.optional(v.id("metaConnections")), // reconectar
+    returnPath: v.string(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    // F6: o callback só guarda o `code` (cifrado, `encryptSecret`) e troca o `nonceHash` por um
+    // nonce novo que só o navegador do callback recebe; a action autenticada finaliza e apaga.
+    codeEncrypted: v.optional(v.string()),
+    codeReceivedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_nonce_hash", ["nonceHash"])
+    .index("by_expires", ["expiresAt"]),
+
+  // Seleção de Páginas quando o login devolve mais de uma (TTL 15 min, apagada ao finalizar).
+  metaOAuthPending: defineTable({
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    stateId: v.id("oauthStates"),
+    // `GET /me?fields=id` do token de usuário (callbacks de desautorização); nunca logar.
+    metaUserId: v.optional(v.string()),
+    pages: v.array(
+      v.object({
+        pageId: v.string(),
+        pageName: v.string(),
+        tokenEncrypted: v.string(),
+        igAccountId: v.optional(v.string()),
+        igUsername: v.optional(v.string()),
+        tasksOk: v.boolean(),
+      })
+    ),
+    scopes: v.array(v.string()),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  }).index("by_expires", ["expiresAt"]),
 
   // Conversations
   conversations: defineTable({
@@ -1144,12 +1282,17 @@ const applicationTables = {
       v.literal("telegram"),
       v.literal("email"),
       v.literal("webchat"),
-      v.literal("internal")
+      v.literal("internal"),
+      v.literal("instagram"),
+      v.literal("messenger")
     ),
     channelConfigId: v.optional(v.id("channelConfigs")), // which connected number this conversation belongs to
     status: v.union(v.literal("active"), v.literal("closed")),
     lastMessageAt: v.optional(v.number()),
     lastInboundAt: v.optional(v.number()), // set by ingress — drives the 24h customer-service window
+    // Instagram/Messenger: 1ª inbound veio de anúncio (referral.source "ADS") →
+    // janela de 7 dias a partir daqui (Meta Messaging F1). Ausente = 24 h.
+    windowOpenedByAdAt: v.optional(v.number()),
     // Presença, lock do turno de IA e cursor de pacing por conversa vivem em
     // `conversationRuntime` (fase 4b) — fora deste doc de propósito.
     archivedAt: v.optional(v.number()), // conversa arquivada (fora da lista padrão)
@@ -1222,7 +1365,9 @@ const applicationTables = {
     groupSubject: v.optional(v.string()),
     groupParticipantsCount: v.optional(v.number()),
     // Provider do `channelConfigId` (janela de 24 h só existe no meta).
-    channelProvider: v.optional(v.union(v.literal("meta"), v.literal("bridge"))),
+    channelProvider: v.optional(
+      v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger"))
+    ),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1250,7 +1395,13 @@ const applicationTables = {
     // Filas da Central (setor/unidade) por última mensagem, com o filtro de
     // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
     .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
-    .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"]),
+    .index("by_organization_and_unit_and_archived_and_last_message", ["organizationId", "unitId", "archivedAt", "lastMessageAt"])
+    // Meta Messaging (D11): filtro por conta no inbox. O arg de getConversations entra na F1.
+    .index("by_organization_and_channel_config_and_archived_and_last_message", ["organizationId", "channelConfigId", "archivedAt", "lastMessageAt"])
+    // REST (F5): `GET /conversations?channelConfigId=` e `?channel=` paginam por `_creationTime`
+    // sem pós-filtro (o cursor da rota é por criação; os índices acima ordenam por última mensagem).
+    .index("by_organization_and_channel_config", ["organizationId", "channelConfigId"])
+    .index("by_organization_and_channel", ["organizationId", "channel"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
@@ -1275,6 +1426,9 @@ const applicationTables = {
     // Cursor de pacing do dispatch por destinatário (~1 msg/6,5 s).
     // NÃO confundir com `channelPacing.nextDispatchAt` (cursor por número).
     nextDispatchAt: v.optional(v.number()),
+    // Meta Messaging F2: último `typing_on` enviado ao Instagram/Messenger
+    // (throttle de 5 s por conversa; ausente = nada em andamento).
+    metaTypingAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])

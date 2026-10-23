@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
+import { INSTAGRAM_REACTION_HINT } from "@/lib/channelCapabilities";
 
 // Reactions are real user content, so unicode emoji is intentional here (UI
 // glyphs elsewhere stay on lucide).
@@ -13,6 +14,8 @@ interface ReactionPickerProps {
   /** Anchor the popover above (default) or below the trigger. */
   placement?: "top" | "bottom";
   align?: "start" | "end";
+  /** Subconjunto permitido pelo canal; null/ausente = todos. */
+  emojis?: string[] | null;
 }
 
 export function ReactionPicker({
@@ -21,6 +24,7 @@ export function ReactionPicker({
   onClose,
   placement = "top",
   align = "start",
+  emojis = null,
 }: ReactionPickerProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -53,7 +57,7 @@ export function ReactionPicker({
         align === "start" ? "left-0" : "right-0"
       )}
     >
-      {QUICK_REACTIONS.map((emoji) => {
+      {(emojis ?? QUICK_REACTIONS).map((emoji: string) => {
         const isActive = activeEmoji === emoji;
         return (
           <button
@@ -73,6 +77,9 @@ export function ReactionPicker({
           </button>
         );
       })}
+      {emojis && (
+        <span className="px-2 text-xs text-text-secondary">{INSTAGRAM_REACTION_HINT}</span>
+      )}
     </div>
   );
 }

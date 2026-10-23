@@ -123,7 +123,7 @@ describe("módulos", () => {
     const asAdmin = as(s);
 
     expect(await asAdmin.query(api.orgModules.getOrgModules, { organizationId: s.organizationId })).toEqual({
-      units: false, departments: false, attribution: false, central: false, demoMode: false,
+      units: false, departments: false, attribution: false, central: false, metaMessaging: false, demoMode: false,
     });
     await expect(
       asAdmin.mutation(api.units.createUnit, { organizationId: s.organizationId, name: "Hotel A" })

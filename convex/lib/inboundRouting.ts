@@ -10,7 +10,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { buildSearchText } from "./searchText";
 import { leadCreationStagePatch } from "./leadStageMove";
 import { orgAiActive } from "./agentSecurity";
-import { configProvider } from "../channelConfigs";
+import { configTransport } from "./channelTransport";
 
 /**
  * Atendente IA responsável por um CANAL (v4.1 P4 — resolvido ANTES do lead
@@ -24,13 +24,18 @@ export async function findAttendantForChannel(
   org: Doc<"organizations"> | null,
   // Só os campos lidos aqui: o roteamento inbound passa o recorte da config
   // (lib/bridgeSnapshot.ts) em vez do doc inteiro.
-  config: Pick<Doc<"channelConfigs">, "_id" | "organizationId" | "status" | "provider">
+  // `channel` é opcional porque o recorte do bridge não o carrega (é sempre
+  // WhatsApp); ausente = linha de WhatsApp.
+  config: Pick<Doc<"channelConfigs">, "_id" | "organizationId" | "status" | "provider"> & {
+    channel?: string;
+  }
 ): Promise<Doc<"teamMembers"> | null> {
   if (!orgAiActive(org)) return null;
   const aiConfig = org!.settings.aiConfig;
   if (aiConfig?.attendantEnabled === false) return null;
   if (config.status !== "active") return null;
-  if (configProvider(config) === "bridge" && aiConfig?.bridgeAiAck === undefined) return null;
+  const transport = configTransport({ channel: config.channel ?? "whatsapp", provider: config.provider });
+  if (transport === "bridge" && aiConfig?.bridgeAiAck === undefined) return null;
 
   const aiMembers = await ctx.db
     .query("teamMembers")

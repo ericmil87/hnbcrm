@@ -1,4 +1,7 @@
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
+import { assertModule, getModules } from "./lib/orgModules";
+import { configTransport, isWhatsappTransport } from "./lib/channelTransport";
+import { fetchDebugToken, graphGetJson, isGraphAuthError } from "./lib/metaHealth";
 import {
   query,
   action,
@@ -7,6 +10,8 @@ import {
   internalMutation,
   internalAction,
   MutationCtx,
+  QueryCtx,
+  ActionCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -15,6 +20,8 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deleteFileRow } from "./lib/storageUsage";
 import {
   buildBridgeConnectRequest,
   buildBridgeHmacConfigRequest,
@@ -61,13 +68,24 @@ export async function bridgeFetchJson(
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 
-const channelValidator = v.union(v.literal("whatsapp"));
+// Widened for internal readers; the PUBLIC createChannelConfig stays WhatsApp-only (Instagram/Messenger
+// configs are created only by metaMessaging.internalUpsertMetaChannelConfigs after OAuth).
+const channelValidator = v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"));
 const providerValidator = v.union(v.literal("meta"), v.literal("bridge"));
 const statusValidator = v.union(v.literal("active"), v.literal("disabled"), v.literal("error"));
 
-// Normalize the provider of a config. Legacy rows predate the `provider` field,
-// so undefined always means the original Meta Cloud API transport.
-export function configProvider(config: { provider?: "meta" | "bridge" | null }): "meta" | "bridge" {
+// Normalize the provider of a WhatsApp config. Legacy rows predate the `provider`
+// field, so undefined always means the original Meta Cloud API transport.
+// WhatsApp-only and FAIL-CLOSED (Meta Messaging F0.2): a config of another channel
+// (instagram/messenger) throws instead of silently becoming "meta". Generic
+// transport decisions use `configTransport` (lib/channelTransport.ts).
+export function configProvider(config: {
+  channel?: string;
+  provider?: "meta" | "bridge" | null;
+}): "meta" | "bridge" {
+  if (config.channel !== undefined && config.channel !== "whatsapp") {
+    throw new Error(`configProvider: config não é WhatsApp (channel=${config.channel})`);
+  }
   return config.provider === "bridge" ? "bridge" : "meta";
 }
 
@@ -89,12 +107,59 @@ function normalizeBridgeBaseUrl(raw: string): string {
 // Masked shape returned to clients — encrypted fields never leave the server.
 // Shape stays backward-compatible for Meta configs; bridge-only fields are null
 // on Meta configs and Meta-only fields are null on bridge configs.
-function maskConfig(config: Doc<"channelConfigs">) {
+type MetaMaskExtras = {
+  metaAuthState: "ok" | "reauth_required" | "revoked" | null;
+  metaSubscribed: boolean | null;
+  metaConnectedBy: { memberId: Id<"teamMembers">; name: string } | null;
+  hasMetaToken: boolean;
+  metaAuthDetail: string | null;
+  metaDataAccessExpiresAt: number | null;
+  metaLastHealthAt: number | null;
+  metaAvatarUrl: string | null;
+};
+const NO_META_EXTRAS: MetaMaskExtras = {
+  metaAuthState: null,
+  metaSubscribed: null,
+  metaConnectedBy: null,
+  hasMetaToken: false,
+  metaAuthDetail: null,
+  metaDataAccessExpiresAt: null,
+  metaLastHealthAt: null,
+  metaAvatarUrl: null,
+};
+
+/** URL assinada da foto do NEGÓCIO (uma leitura de `files`); `null` sem foto ou de outra org. */
+async function accountAvatarUrl(ctx: QueryCtx, config: Doc<"channelConfigs">): Promise<string | null> {
+  if (!config.metaAccountAvatarFileId) return null;
+  const file = await ctx.db.get(config.metaAccountAvatarFileId);
+  if (!file || file.organizationId !== config.organizationId) return null;
+  return await ctx.storage.getUrl(file.storageId as Id<"_storage">);
+}
+
+function maskConfig(config: Doc<"channelConfigs">, meta: MetaMaskExtras = NO_META_EXTRAS) {
   return {
+    // Meta Messaging (Instagram/Messenger). Token NUNCA sai: só `hasMetaToken`.
+    transport: configTransport(config),
+    metaConnectionId: config.metaConnectionId ?? null,
+    messengerPageId: config.messengerPageId ?? null,
+    instagramAccountId: config.instagramAccountId ?? null,
+    metaAccountLabel: config.metaAccountLabel ?? null,
+    metaAccountHandle: config.metaAccountHandle ?? null,
+    metaAuthState: meta.metaAuthState,
+    metaSubscribed: meta.metaSubscribed,
+    metaConnectedBy: meta.metaConnectedBy,
+    hasMetaToken: meta.hasMetaToken,
+    metaAuthDetail: meta.metaAuthDetail,
+    metaDataAccessExpiresAt: meta.metaDataAccessExpiresAt,
+    metaLastHealthAt: meta.metaLastHealthAt,
+    metaAvatarUrl: meta.metaAvatarUrl,
+    disabledByModuleAt: config.disabledByModuleAt ?? null,
     _id: config._id,
     organizationId: config.organizationId,
     channel: config.channel,
-    provider: configProvider(config),
+    // Listagem genérica: `configProvider` é WA-only (fail-closed). Canal Meta Messaging
+    // devolve null aqui; o transporte está em `transport`.
+    provider: config.channel === "whatsapp" ? configProvider(config) : null,
     displayName: config.displayName,
     // Meta fields
     phoneNumberId: config.phoneNumberId ?? null,
@@ -140,9 +205,156 @@ export const getChannelConfigs = query({
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .collect();
 
-    return configs.map(maskConfig);
+    // Configs Meta Messaging: 1 leitura de conexão + 1 de membro por config (poucas linhas).
+    const out = [];
+    for (const config of configs) {
+      let extras = NO_META_EXTRAS;
+      if (config.metaConnectionId) {
+        const conn = await ctx.db.get(config.metaConnectionId);
+        if (conn && conn.organizationId === config.organizationId) {
+          const member = await ctx.db.get(conn.connectedByMemberId);
+          extras = {
+            metaAuthState: conn.authState,
+            metaSubscribed: conn.subscribedAt !== undefined,
+            metaConnectedBy: member ? { memberId: member._id, name: member.name } : null,
+            hasMetaToken: conn.tokenEncrypted !== "",
+            metaAuthDetail: conn.authDetail ?? null,
+            metaDataAccessExpiresAt: conn.dataAccessExpiresAt ?? null,
+            metaLastHealthAt: conn.lastHealthAt ?? null,
+            metaAvatarUrl: await accountAvatarUrl(ctx, config),
+          };
+        }
+      }
+      out.push(maskConfig(config, extras));
+    }
+    return out;
   },
 });
+
+/** "WhatsApp ····1234" quando o canal não tem nome próprio. */
+function whatsappFallbackLabel(phone: string | undefined): string {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? `WhatsApp ····${digits.slice(-4)}` : "WhatsApp";
+}
+
+/**
+ * Contas de canal da org para o inbox (D11): rótulo, @ e estado, juntados no
+ * front por `channelConfigId`. O rótulo NUNCA é copiado nas conversas. Lê N
+ * configs da org (tipicamente 1 a 5) + a conexão Meta de cada um. Nunca token,
+ * nunca `phoneNumberId`; telefone só com os 4 últimos dígitos.
+ */
+export const getInboxChannelAccounts = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(
+    v.object({
+      _id: v.id("channelConfigs"),
+      channel: channelValidator,
+      transport: v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger")),
+      label: v.string(),
+      handle: v.union(v.string(), v.null()),
+      avatarUrl: v.union(v.string(), v.null()),
+      status: statusValidator,
+      authState: v.union(v.literal("ok"), v.literal("reauth_required"), v.literal("revoked"), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    // Módulo desligado = UI do Instagram/Messenger some (D12); WhatsApp segue.
+    const metaOn = (await getModules(ctx, args.organizationId)).metaMessaging;
+    const configs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(100);
+    const out = [];
+    for (const config of configs) {
+      const isMeta = config.channel === "instagram" || config.channel === "messenger";
+      if (isMeta && (!metaOn || config.disabledByModuleAt !== undefined)) continue;
+      const transport = configTransport(config);
+      let label: string;
+      let handle: string | null = null;
+      let authState: "ok" | "reauth_required" | "revoked" | null = null;
+      if (config.channel === "whatsapp") {
+        const phone = config.displayPhoneNumber ?? config.bridgePhone;
+        label = config.displayName?.trim() || whatsappFallbackLabel(phone);
+        const digits = (phone ?? "").replace(/\D/g, "");
+        handle = digits.length >= 4 ? `····${digits.slice(-4)}` : null;
+      } else {
+        if (config.channel === "instagram") {
+          label = config.metaAccountHandle || config.metaAccountLabel || config.displayName || "Instagram";
+        } else {
+          label = config.metaAccountLabel || config.displayName || "Messenger";
+        }
+        handle = config.metaAccountHandle ?? null;
+        if (config.metaConnectionId) {
+          const conn = await ctx.db.get(config.metaConnectionId);
+          if (conn && conn.organizationId === config.organizationId) authState = conn.authState;
+        }
+      }
+      out.push({
+        _id: config._id,
+        channel: config.channel,
+        transport,
+        label,
+        handle,
+        avatarUrl: isMeta ? await accountAvatarUrl(ctx, config) : null,
+        status: config.status,
+        authState,
+      });
+    }
+    return out;
+  },
+});
+
+const META_STATS_CONVERSATIONS = 50;
+const META_STATS_MESSAGES_PER_CONVERSATION = 40;
+
+/**
+ * Estatísticas de UMA conta Instagram/Messenger: conversas pelo índice da conta
+ * (as 50 mais recentes, não arquivadas) e as últimas mensagens de cada uma.
+ * `sampled` avisa quando algum teto cortou.
+ */
+async function metaAccountStats(ctx: QueryCtx, config: Doc<"channelConfigs">, since: number) {
+  const conversations = await ctx.db
+    .query("conversations")
+    .withIndex("by_organization_and_channel_config_and_archived_and_last_message", (q) =>
+      q.eq("organizationId", config.organizationId).eq("channelConfigId", config._id).eq("archivedAt", undefined)
+    )
+    .order("desc")
+    .take(META_STATS_CONVERSATIONS);
+  let sent = 0;
+  let delivered = 0;
+  let read = 0;
+  let failed = 0;
+  let inbound = 0;
+  let lastInboundAt: number | null = null;
+  let lastOutboundAt: number | null = null;
+  let sampled = conversations.length === META_STATS_CONVERSATIONS;
+  for (const conv of conversations) {
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conv._id))
+      .order("desc")
+      .take(META_STATS_MESSAGES_PER_CONVERSATION);
+    if (messages.length === META_STATS_MESSAGES_PER_CONVERSATION) sampled = true;
+    for (const m of messages) {
+      if (m.isInternal) continue;
+      if (m.direction === "outbound") {
+        if (lastOutboundAt === null || m.createdAt > lastOutboundAt) lastOutboundAt = m.createdAt;
+        if (m.createdAt < since) continue;
+        sent++;
+        if (m.deliveryStatus === "delivered") delivered++;
+        else if (m.deliveryStatus === "read") {
+          delivered++;
+          read++;
+        } else if (m.deliveryStatus === "failed") failed++;
+      } else if (m.direction === "inbound") {
+        if (lastInboundAt === null || m.createdAt > lastInboundAt) lastInboundAt = m.createdAt;
+        if (m.createdAt >= since) inbound++;
+      }
+    }
+  }
+  return { sent, delivered, read, failed, inbound, lastInboundAt, lastOutboundAt, sampled };
+}
 
 // Saúde do canal WhatsApp: métricas de entrega sobre as mensagens recentes da
 // org (janela `since`, teto de 1000 — `sampled` avisa quando o teto cortou).
@@ -150,6 +362,9 @@ export const getChannelStats = query({
   args: {
     organizationId: v.id("organizations"),
     since: v.number(), // timestamp do início da janela (calculado no cliente)
+    // Instagram/Messenger (F4): conta a conta pedida. Ausente ou WhatsApp = o
+    // cálculo de sempre (todas as conversas WhatsApp da org).
+    configId: v.optional(v.id("channelConfigs")),
   },
   returns: v.object({
     sent: v.number(),
@@ -163,6 +378,16 @@ export const getChannelStats = query({
   }),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
+
+    if (args.configId) {
+      const config = await ctx.db.get(args.configId);
+      if (!config || config.organizationId !== args.organizationId) {
+        throw new ConvexError("Canal não encontrado.");
+      }
+      if (config.channel === "instagram" || config.channel === "messenger") {
+        return await metaAccountStats(ctx, config, args.since);
+      }
+    }
 
     const recent = await ctx.db
       .query("messages")
@@ -222,7 +447,7 @@ export const getChannelStats = query({
 export const createChannelConfig = action({
   args: {
     organizationId: v.id("organizations"),
-    channel: channelValidator,
+    channel: v.literal("whatsapp"),
     provider: v.optional(providerValidator),
     displayName: v.string(),
     // Meta Cloud API fields
@@ -358,8 +583,23 @@ export const setChannelConfigStatus = mutation({
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
 
+    // Meta Messaging (D12): reativar canal Instagram/Messenger exige o módulo ligado e
+    // conexão em "ok"; a reativação manual limpa a marca de desativação pelo módulo.
+    const isMetaMessaging = config.channel === "instagram" || config.channel === "messenger";
+    if (isMetaMessaging && args.status === "active") {
+      await assertModule(ctx, config.organizationId, "metaMessaging");
+      const conn = config.metaConnectionId ? await ctx.db.get(config.metaConnectionId) : null;
+      if (!conn || conn.authState !== "ok") {
+        throw new ConvexError("Reconecte a conta antes de ativar este canal.");
+      }
+    }
+
     const now = Date.now();
-    await ctx.db.patch(args.configId, { status: args.status, updatedAt: now });
+    await ctx.db.patch(args.configId, {
+      status: args.status,
+      updatedAt: now,
+      ...(isMetaMessaging && args.status === "active" ? { disabledByModuleAt: undefined } : {}),
+    });
 
     await ctx.db.insert("auditLogs", {
       organizationId: config.organizationId,
@@ -380,13 +620,37 @@ export const setChannelConfigStatus = mutation({
 
 // Delete a channel config
 export const deleteChannelConfig = mutation({
-  args: { configId: v.id("channelConfigs") },
+  args: { configId: v.id("channelConfigs"), force: v.optional(v.boolean()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) throw new Error("Channel config not found");
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
+    let forcedConversations: number | undefined;
+
+    // Meta Messaging: as conversas (e as identidades PSID/IGSID) apontam para ESTE config; excluir
+    // com histórico deixa tudo órfão e a reconexão duplicaria contatos. Desconectar preserva.
+    if (config.channel === "instagram" || config.channel === "messenger") {
+      // Contagem limitada: o front só precisa de uma ordem de grandeza para confirmar.
+      const convs = await ctx.db
+        .query("conversations")
+        .withIndex("by_organization_and_channel_config", (q) =>
+          q.eq("organizationId", config.organizationId).eq("channelConfigId", config._id)
+        )
+        .take(1000);
+      if (convs.length > 0) {
+        if (!args.force) {
+          throw new ConvexError({
+            code: "has_conversations",
+            conversations: convs.length,
+            message: "Este canal tem conversas. Use Desconectar ou confirme a exclusão.",
+          });
+        }
+        // Forçado: as conversas ficam com channelConfigId morto até a reconexão religá-las.
+        forcedConversations = convs.length;
+      }
+    }
 
     // Encerra a sessão no gateway ANTES de perder as credenciais com a linha.
     //
@@ -396,6 +660,7 @@ export const deleteChannelConfig = mutation({
     // órfãs vivas apareceram no gateway de produção — excluir/reparear canal era
     // o caminho normal e ninguém desvinculava nada.
     if (
+      config.channel === "whatsapp" &&
       configProvider(config) === "bridge" &&
       config.bridgeBaseUrl &&
       config.bridgeTokenEncrypted
@@ -420,6 +685,31 @@ export const deleteChannelConfig = mutation({
 
     await ctx.db.delete(args.configId);
 
+    // Meta Messaging: a foto do negócio (blob + linha de `files`) vai junto com o canal.
+    if (config.metaAccountAvatarFileId) {
+      const avatar = await ctx.db.get(config.metaAccountAvatarFileId);
+      if (avatar && avatar.organizationId === config.organizationId) {
+        await deleteBlobIfUnreferenced(ctx, avatar);
+        await deleteFileRow(ctx, avatar);
+      }
+    }
+
+    // Meta Messaging: a conexão (credencial) some junto quando nenhum outro canal a usa.
+    let metaConnectionDeleted = false;
+    if ((config.channel === "instagram" || config.channel === "messenger") && config.metaConnectionId) {
+      const others = await ctx.db
+        .query("channelConfigs")
+        .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", config.metaConnectionId))
+        .take(2);
+      if (others.length === 0) {
+        const conn = await ctx.db.get(config.metaConnectionId);
+        if (conn && conn.organizationId === config.organizationId) {
+          await ctx.db.delete(conn._id);
+          metaConnectionDeleted = true;
+        }
+      }
+    }
+
     await ctx.db.insert("auditLogs", {
       organizationId: config.organizationId,
       entityType: "channelConfig",
@@ -430,10 +720,16 @@ export const deleteChannelConfig = mutation({
       metadata: {
         name: config.displayName,
         channel: config.channel,
-        provider: configProvider(config),
-        ...(configProvider(config) === "meta"
-          ? { phoneNumberId: config.phoneNumberId }
-          : { bridgeInstanceId: config.bridgeInstanceId }),
+        ...(config.channel !== "whatsapp" ? { metaConnectionDeleted } : {}),
+        ...(forcedConversations !== undefined ? { forced: true, conversations: forcedConversations } : {}),
+        ...(config.channel === "whatsapp"
+          ? {
+              provider: configProvider(config),
+              ...(configProvider(config) === "meta"
+                ? { phoneNumberId: config.phoneNumberId }
+                : { bridgeInstanceId: config.bridgeInstanceId }),
+            }
+          : {}),
       },
       description: buildAuditDescription({ action: "delete", entityType: "channelConfig", metadata: { name: config.displayName } }),
       severity: "high",
@@ -477,6 +773,86 @@ async function resolveBridgePhone(params: {
   } catch {
     return undefined;
   }
+}
+
+// Instagram/Messenger: `debug_token` (mesma observação do cron diário) + leitura do
+// nome/@ da conta com o token da conexão. Token só decifrado aqui, nunca devolvido.
+async function checkMetaMessagingHealth(
+  ctx: ActionCtx,
+  config: Doc<"channelConfigs">
+): Promise<{ ok: boolean; verifiedName?: string; error?: string }> {
+  const record = async (healthDetail: string) => {
+    await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
+      configId: config._id,
+      forceStamp: true,
+      keepStatus: true,
+      ok: true,
+      healthDetail,
+    });
+  };
+  const conn: Doc<"metaConnections"> | null = config.metaConnectionId
+    ? await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, { connectionId: config.metaConnectionId })
+    : null;
+  if (!conn || conn.organizationId !== config.organizationId || conn.authState === "revoked" || !conn.tokenEncrypted) {
+    const error = "Conta desconectada. Conecte novamente em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const appId = process.env.META_MESSAGING_APP_ID;
+  const appSecret = process.env.META_MESSAGING_APP_SECRET;
+  if (!appId || !appSecret) {
+    const error = "Instagram/Messenger não está configurado neste ambiente.";
+    await record(error);
+    return { ok: false, error };
+  }
+
+  const pageToken = await decryptSecret(conn.tokenEncrypted);
+  const dbg = await fetchDebugToken({ pageToken, appId, appSecret });
+  if (dbg.kind === "unavailable") {
+    const error = "Não foi possível falar com a Meta agora. Tente de novo em instantes.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const applied: { outcome: string } = await ctx.runMutation(internal.metaMessaging.internalApplyHealthObservation, {
+    connectionId: conn._id,
+    observation: dbg.observation,
+    source: "test",
+  });
+  if (applied.outcome === "degraded") {
+    const error = "A Meta não aceita mais a autorização desta conta. Reconecte em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+
+  const isIg = config.channel === "instagram";
+  const accountId = isIg ? config.instagramAccountId : config.messengerPageId;
+  if (!accountId) {
+    const error = "Conta desconectada. Conecte novamente em Configurações → Canais.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const profile = await graphGetJson(
+    `${encodeURIComponent(accountId)}?fields=${isIg ? "username" : "name"}`,
+    pageToken
+  );
+  if (!profile || !profile.ok) {
+    if (isGraphAuthError(profile)) {
+      await ctx.runMutation(internal.metaMessaging.internalMarkConnectionReauthRequired, {
+        connectionId: conn._id,
+        detail: "A Meta recusou a autorização desta Página.",
+        source: "test",
+      });
+    }
+    const error = profile
+      ? "A Meta recusou a leitura da conta. Reconecte em Configurações → Canais."
+      : "Não foi possível falar com a Meta agora. Tente de novo em instantes.";
+    await record(error);
+    return { ok: false, error };
+  }
+  const raw = isIg ? profile.body.username : profile.body.name;
+  const verifiedName = typeof raw === "string" && raw ? (isIg ? `@${raw}` : raw) : undefined;
+  await record(`Conectado como ${verifiedName ?? "conta da Meta"}`);
+  return { ok: true, ...(verifiedName ? { verifiedName } : {}) };
 }
 
 // Health check: Graph API lookup with the decrypted token ("Test connection").
@@ -523,9 +899,16 @@ export const checkChannelHealth = action({
       };
     }
 
+    // Transporte genérico: Instagram/Messenger têm probe próprio (F4); nunca cair
+    // no probe da Graph do WhatsApp com outro canal.
+    const transport = configTransport(config);
+    if (!isWhatsappTransport(transport)) {
+      return await checkMetaMessagingHealth(ctx, config);
+    }
+
     // Bridge health check: probe GET /session/status on the gateway and map the
     // connected/loggedIn flags to a pairing state + PT-BR detail.
-    if (configProvider(config) === "bridge") {
+    if (transport === "bridge") {
       if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
         return { ok: false, error: "Configuração bridge incompleta — reconfigure o canal" };
       }
@@ -649,7 +1032,7 @@ export const getBridgeQrCode = action({
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfigForMember, {
       configId: args.configId,
     });
-    if (configProvider(config) !== "bridge") {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("QR só se aplica a canais do provider bridge");
     }
     if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
@@ -965,7 +1348,7 @@ export const internalGetDefaultActiveConfig = internalQuery({
 export const internalInsertConfig = internalMutation({
   args: {
     organizationId: v.id("organizations"),
-    channel: channelValidator,
+    channel: v.literal("whatsapp"),
     provider: providerValidator,
     displayName: v.string(),
     // Meta fields (present when provider === "meta")
@@ -1067,6 +1450,31 @@ export const internalPatchConfig = internalMutation({
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
 
+    // Instagram/Messenger: só campos de EXIBIÇÃO (token vive em metaConnections).
+    if (config.channel === "instagram" || config.channel === "messenger") {
+      const META_DISPLAY_FIELDS = new Set(["displayName", "metaAccountLabel", "metaAccountHandle"]);
+      for (const field of Object.keys(args.patch)) {
+        if (!META_DISPLAY_FIELDS.has(field)) throw new Error(`Field not updatable: ${field}`);
+      }
+      const nowMeta = Date.now();
+      await ctx.db.patch(args.configId, { ...args.patch, updatedAt: nowMeta });
+      await ctx.db.insert("auditLogs", {
+        organizationId: config.organizationId,
+        entityType: "channelConfig",
+        entityId: args.configId,
+        action: "update",
+        actorId: userMember._id,
+        actorType: userMember.type === "ai" ? "ai" : "human",
+        metadata: { name: config.displayName, channel: config.channel, fields: Object.keys(args.patch) },
+        description: buildAuditDescription({ action: "update", entityType: "channelConfig", metadata: { name: config.displayName } }),
+        severity: "medium",
+        createdAt: nowMeta,
+      });
+      return null;
+    }
+    if (config.channel !== "whatsapp") {
+      throw new ConvexError("Edição de credenciais não é suportada para este canal.");
+    }
     const provider = configProvider(config);
     const META_FIELDS = new Set([
       "phoneNumberId", "wabaId", "verifyToken",
@@ -1170,7 +1578,7 @@ async function claimBridgePhone(
   const displaced: string[] = [];
   for (const rival of rivals) {
     if (rival._id === params.config._id) continue;
-    if (configProvider(rival) !== "bridge") continue;
+    if (rival.channel !== "whatsapp" || configProvider(rival) !== "bridge") continue;
     if (rival.status === "disabled") continue; // já fora do ar — nada a fazer
 
     const claimingOrg = await ctx.db.get(params.config.organizationId);
@@ -1284,6 +1692,9 @@ export const internalRecordHealthCheck = internalMutation({
     // passa o tick inteiro (até 50 × 8 s). Se o canal foi desativado nesse
     // meio-tempo, não grava nada — igual a `internalApplyUnhealthyObservation`.
     skipIfDisabled: v.optional(v.boolean()),
+    // Instagram/Messenger: o resultado do teste NÃO muda `status` (o webhook descarta
+    // canal que não esteja "active"); o estado da credencial vive em `metaConnections`.
+    keepStatus: v.optional(v.boolean()),
   },
   // Nomes das contas que perderam este número para esta conexão (vazio é o
   // caso normal). A UI avisa quem acabou de parear o que foi encerrado.
@@ -1327,7 +1738,11 @@ export const internalRecordHealthCheck = internalMutation({
     const patch: Partial<Doc<"channelConfigs">> = {};
     // A failing check marks the config as errored; a passing one restores
     // active only if it wasn't deliberately disabled
-    const status = args.ok ? (config.status === "disabled" ? "disabled" : "active") : "error";
+    const status = args.keepStatus
+      ? config.status
+      : args.ok
+        ? (config.status === "disabled" ? "disabled" : "active")
+        : "error";
     if (status !== config.status) patch.status = status;
     const displayPhoneNumber = args.displayPhoneNumber ?? config.displayPhoneNumber;
     if (displayPhoneNumber !== config.displayPhoneNumber) patch.displayPhoneNumber = displayPhoneNumber;
@@ -1400,8 +1815,8 @@ export const internalGetBridgeCredentials = internalAction({
       configId: args.configId,
     });
     if (!config) throw new Error("Channel config not found");
-    if (configProvider(config) !== "bridge") {
-      throw new Error("Config não é do provider bridge");
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
+      throw new ConvexError("Este canal não é um número de WhatsApp via bridge.");
     }
     if (!config.bridgeBaseUrl || !config.bridgeInstanceId || !config.bridgeTokenEncrypted) {
       throw new Error("Config bridge incompleta — faltam bridgeBaseUrl, bridgeInstanceId ou token");
@@ -1441,7 +1856,7 @@ export const internalLearnBridgeIdentity = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
-    if (!config || configProvider(config) !== "bridge") return null;
+    if (!config || config.channel !== "whatsapp" || configProvider(config) !== "bridge") return null;
 
     const lid = config.bridgeLid ? undefined : args.lid?.trim() || undefined;
     const phoneDigits = args.phone?.replace(/\D/g, "") || undefined;
@@ -1483,7 +1898,7 @@ export const internalBackfillBridgePhone = internalMutation({
     let patched = 0;
 
     for (const config of configs) {
-      if (configProvider(config) !== "bridge") continue;
+      if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") continue;
       if (config.bridgePhone) continue;
       const digits = (config.displayPhoneNumber ?? "").replace(/\D/g, "");
       if (!digits) continue;
@@ -1495,7 +1910,7 @@ export const internalBackfillBridgePhone = internalMutation({
     const after = await ctx.db.query("channelConfigs").collect();
     const byPhone = new Map<string, string[]>();
     for (const config of after) {
-      if (configProvider(config) !== "bridge") continue;
+      if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") continue;
       if (!config.bridgePhone || config.status === "disabled") continue;
       const list = byPhone.get(config.bridgePhone) ?? [];
       list.push(`${config.displayName} (${config._id})`);
@@ -1536,7 +1951,7 @@ export const internalResolveBridgePhone = internalAction({
       configId: args.configId,
     });
     if (!config) throw new Error("Canal não encontrado");
-    if (configProvider(config) !== "bridge" || !config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
+    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge" || !config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
       return { phone: null, displacedFrom: [], detail: "Canal não é bridge ou está incompleto" };
     }
 

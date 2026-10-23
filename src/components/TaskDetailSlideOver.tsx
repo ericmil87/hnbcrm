@@ -432,7 +432,7 @@ export function TaskDetailSlideOver({
       } else {
         toast.error(
           result.reason
-            ? `A IA não conseguiu: ${humanizeFollowUpReason(result.reason)}`
+            ? `A IA não conseguiu: ${humanizeFollowUpReason(result.reason, followUp.channelLabel)}`
             : "A IA não conseguiu executar agora"
         );
       }
@@ -1421,6 +1421,7 @@ type FollowUpSummary = {
   note: string | null;
   reason: string | null;
   conversationId: Id<"conversations">;
+  channelLabel?: string | null;
 };
 
 /**
@@ -1494,7 +1495,7 @@ function FollowUpCard({
   const headline = followUpHeadline(status, followUp.dueAt);
   const isActive = status === "scheduled" || status === "queued" || status === "drafted";
   const isNeedsHuman = status === "needs_human";
-  const reasonLabel = humanizeFollowUpReason(followUp.reason);
+  const reasonLabel = humanizeFollowUpReason(followUp.reason, followUp.channelLabel);
 
   return (
     <div className="px-4 pt-1">

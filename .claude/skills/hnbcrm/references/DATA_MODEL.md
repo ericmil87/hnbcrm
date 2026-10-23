@@ -123,10 +123,25 @@ A message thread on a lead, scoped by channel.
 | Field | Type | Description |
 |-------|------|-------------|
 | leadId | Id\<leads\> | Associated lead |
-| channel | enum | `whatsapp`, `telegram`, `email`, `webchat`, `internal` |
+| channel | enum | `whatsapp`, `telegram`, `email`, `webchat`, `internal`, `instagram`, `messenger` |
+| channelConfigId | Id\<channelConfigs\>? | Account/number the thread belongs to (strict for `instagram`/`messenger`: only this config sends; Instagram/Messenger service window is 24 h, 7 days when opened by an ad) |
 | status | enum | `active`, `closed` |
 | messageCount | number | Total messages |
 | lastMessageAt | number | Timestamp of last message |
+
+---
+
+### Meta Messaging (Instagram + Messenger)
+
+Optional module `metaMessaging`. Not returned as entities by the public API, but they shape what you see.
+
+| Table | Purpose |
+|-------|---------|
+| `channelConfigs` | One config per Messenger Page (`channel: "messenger"`) and per linked Instagram account (`channel: "instagram"`); listed by `GET /conversations/channels` as `accountLabel` + `handle`, never with Page/Instagram ids |
+| `metaConnections` | The Facebook Page credential (token encrypted, never exposed) with `authState` `ok` / `reauth_required` / `revoked`; one connection serves both configs of a Page |
+| `contactChannelIdentities` | PSID (Messenger) / IGSID (Instagram) per `(channelConfigId, contact)`; these ids are NOT phones, a contact created from them has no `phone`. Same person on both channels = two contacts until linked manually |
+
+Rules: the person must write first (no start, no templates); free-form replies only inside the 24 h window (7 days when from an ad); plain text only; "pare"/"parar"/"stop"/"sair" opts the identity out of proactive follow-ups; a revoked authorization disables the configs but keeps conversations, contacts and leads.
 
 ---
 
@@ -493,7 +508,7 @@ Rollback trail for an import — one document per batch of 50 rows.
 | Priority | `low`, `medium`, `high`, `urgent` |
 | Temperature | `cold`, `warm`, `hot` |
 | Conversation Status | `new`, `active`, `waiting`, `closed` |
-| Channel | `whatsapp`, `telegram`, `email`, `webchat`, `internal` |
+| Channel | `whatsapp`, `telegram`, `email`, `webchat`, `internal`, `instagram`, `messenger` |
 | Message Direction | `inbound`, `outbound`, `internal` |
 | Content Type | `text`, `image`, `file`, `audio` |
 | Sender Type | `contact`, `human`, `ai` |

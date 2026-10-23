@@ -21,6 +21,7 @@ import { applyTaskCompletion, addTaskCommentCore, taskDeepLink } from "./taskOps
 import { createNotification, inboxRepliers } from "./notify";
 import { appUrl as resolveAppUrl } from "./appUrl";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { channelDisplayName } from "./channelTransport";
 
 /** Estados em que o follow-up ainda "pertence" à IA. */
 export const ACTIVE_FOLLOW_UP_STATUSES = ["scheduled", "queued", "drafted"] as const;
@@ -300,9 +301,13 @@ export async function resolveFollowUpOutcome(
           ? outcome.detail
           : undefined;
   const reasonCode = rawReason && isFollowUpReasonCode(rawReason) ? rawReason : undefined;
+  // Cópia por canal (F3): a frase grava no follow-up, no comentário da tarefa
+  // e na notificação — "janela do Instagram", não "do WhatsApp".
+  const reasonConversation = reasonCode === "janela_24h" ? await ctx.db.get(followUp.conversationId) : null;
+  const channelName = reasonConversation ? channelDisplayName(null, reasonConversation.channel) : null;
   const reasonText = rawReason
     ? reasonCode
-      ? describeFollowUpReason(reasonCode)
+      ? describeFollowUpReason(reasonCode, channelName)
       : rawReason
     : undefined;
 
@@ -604,6 +609,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   bridge_sem_aceite: "o canal não tem o aceite de risco do WhatsApp não oficial",
   janela_24h: "a janela de 24h do WhatsApp está fechada",
   suspeita_de_bot: "o outro lado parece ser um robô — aguardando verificação humana",
+  outro_app_controla: "outro app controla a conversa",
   // ── Fila do atendente ──
   budget_mensal: "o teto mensal de conversas com IA foi atingido",
   conversa_removida: "a conversa não existe mais",
@@ -627,6 +633,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   tarefa_sem_prazo: "a tarefa ficou sem prazo",
   conversa_sem_mensagens: "a conversa não tem mensagens",
   bridge_offline: "o número do WhatsApp está desconectado",
+  sem_identidade: "o contato não tem identidade neste canal do Instagram/Messenger",
   fila_ocupada: "a conversa ficou ocupada com o atendimento normal",
   cadeia_maxima: "o cliente não respondeu aos follow-ups anteriores",
   teto_diario: "o teto diário de follow-ups deste número foi atingido",
@@ -655,7 +662,14 @@ export function isFollowUpReasonCode(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(FOLLOW_UP_REASONS, value);
 }
 
-export function describeFollowUpReason(reason: string): string {
+/**
+ * `channelName` (F3): conversa do Instagram/Messenger troca a cópia da janela
+ * ("a janela de atendimento do Instagram está fechada"); WhatsApp/ausente não muda.
+ */
+export function describeFollowUpReason(reason: string, channelName?: string | null): string {
+  if (reason === "janela_24h" && channelName && channelName !== "WhatsApp") {
+    return `a janela de atendimento do ${channelName} está fechada`;
+  }
   return FOLLOW_UP_REASONS[reason] ?? "a IA não conseguiu concluir este follow-up";
 }
 

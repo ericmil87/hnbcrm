@@ -707,10 +707,36 @@ export function buildChannelSessionLostTemplate(data: {
   expiresAt?: number;
   pausedCampaigns?: number;
   pausedGroupPosts?: number;
+  /** "meta_messaging" = Instagram/Messenger (F4): cópia neutra, sem "WhatsApp". */
+  provider?: string;
   appUrl?: string;
 }): TemplateResult {
   const appUrl = data.appUrl || resolveAppUrl();
   const url = `${appUrl}/app/configuracoes?secao=channels`;
+  if (data.provider === "meta_messaging") {
+    const expiring = data.state === "data_access_expiring";
+    const name = maskDigitRuns(data.channelName);
+    const revoked = data.state === "revoked";
+    return {
+      subject: revoked
+        ? `A autorização de ${name} foi removida`
+        : expiring ? `Reconecte ${name} para manter o acesso` : `${name} precisa ser reconectada`,
+      html: baseTemplate({
+        preheader: `${escapeHtml(data.orgName)}: ${expiring ? "reconecte" : "a conexão precisa ser refeita"} — ${escapeHtml(name)}.`,
+        appUrl,
+        content: `
+        ${heading(expiring ? "Reconecte para manter o acesso" : revoked ? "Autorização removida" : "Conta precisa ser reconectada")}
+        ${paragraph(
+          expiring
+            ? `O acesso de <strong style="color: ${TEXT_PRIMARY};">${escapeHtml(name)}</strong> às mensagens de ${escapeHtml(data.orgName)} está perto de expirar. Reconecte a conta para continuar sem interrupção.`
+            : `A conta <strong style="color: ${TEXT_PRIMARY};">${escapeHtml(name)}</strong> de ${escapeHtml(data.orgName)} precisa ser reconectada. Enquanto isso, não é possível enviar mensagens por ela.`
+        )}
+        ${data.detail ? paragraph(escapeHtml(data.detail)) : ""}
+        ${ctaButton("Ver canais", url)}
+      `,
+      }),
+    };
+  }
   const label = data.phoneDisplay ? `${data.channelName} (${data.phoneDisplay})` : data.channelName;
   const stateLabel = SESSION_STATE_LABELS[data.state] ?? "Sem conexão";
   const paused: string[] = [];
