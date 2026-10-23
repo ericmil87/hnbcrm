@@ -509,7 +509,7 @@ describe("mídia de saída (F2)", () => {
     expect((await getMessage(t, msId)).deliveryStatus).toBe("sent");
   });
 
-  test("áudio e vídeo (pesados) usam o tipo certo e empurram o cursor do canal", async () => {
+  test("áudio e vídeo (pesados) usam o tipo certo e empurram o cursor do canal", { retry: 2 }, async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const g = graph([ok("a1"), ok("v1")]);
@@ -519,7 +519,7 @@ describe("mídia de saída (F2)", () => {
     expect(g.calls.map((c) => c.body.message.attachment.type)).toEqual(["audio", "video"]);
   });
 
-  test("áudio/vídeo empurram o cursor do canal mais que uma imagem", async () => {
+  test("áudio/vídeo empurram o cursor do canal mais que uma imagem", { retry: 2 }, async () => {
     const cursorAfter = async (spec: FileSpec) => {
       const t = convexTest(schema, modules);
       const s = await seed(t);

@@ -104,9 +104,14 @@ export type MetaOAuthErrorCode = (typeof META_OAUTH_ERROR_CODES)[number];
 /** Redirect de volta ao app. Nunca carrega token, corpo da Meta, PSID ou nome. */
 export function redirectUrlFor(
   appUrl: string,
-  result: MetaOAuthErrorCode | "ok" | { selecionar: true; pendenteId: string }
+  result:
+    | MetaOAuthErrorCode
+    | "ok"
+    | { selecionar: true; pendenteId: string }
+    | { finalizar: true; state: string }
 ): string {
   const base = `${appUrl.replace(/\/+$/, "")}/app/configuracoes?secao=channels`;
   if (typeof result === "string") return `${base}&meta=${result}`;
+  if ("finalizar" in result) return `${base}&meta=finalizar&state=${encodeURIComponent(result.state)}`;
   return `${base}&meta=selecionar&pendente=${encodeURIComponent(result.pendenteId)}`;
 }

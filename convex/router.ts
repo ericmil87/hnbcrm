@@ -1296,6 +1296,22 @@ http.route({
         title: body.leadTitle,
       });
 
+      // Meta: a janela de 7 dias (`referral` de anúncio) e o `standby` só podem vir da própria Meta
+      // (webhook assinado), nunca de um cliente REST. Sem identidade do contato nesta conta, a IA
+      // não é acordada (a resposta não teria destinatário).
+      let metadata = body.metadata;
+      let skipAiEnqueue = false;
+      if (metaConfigId) {
+        if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+          const { referral: _referral, standby: _standby, ...rest } = metadata as Record<string, unknown>;
+          metadata = rest;
+        }
+        skipAiEnqueue = !(await ctx.runQuery(internal.metaMessaging.internalContactHasMetaIdentity, {
+          contactId,
+          channelConfigId: metaConfigId,
+        }));
+      }
+
       const messageId = await ctx.runMutation(internal.conversations.internalReceiveMessage, {
         organizationId: apiKeyRecord.organizationId,
         leadId,
@@ -1304,7 +1320,8 @@ http.route({
         content: body.content,
         contentType: body.contentType || "text",
         externalId: body.externalId,
-        metadata: body.metadata,
+        metadata,
+        ...(skipAiEnqueue ? { skipAiEnqueue: true } : {}),
       });
 
       return jsonResponse({ success: true, messageId, leadId, contactId }, 201);

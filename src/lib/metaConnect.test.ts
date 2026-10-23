@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   STANDARD_ACCESS_NOTICE,
   completeConnectionMessage,
+  FINALIZE_FAILED_TEXT,
   daysUntil,
+  finalizeMetaAction,
   expiringDays,
   groupMetaConfigs,
   humanizeAuthDetail,
@@ -166,5 +168,30 @@ describe("completeConnectionMessage", () => {
     expect(completeConnectionMessage("sem_pagina")).toContain("não está mais acessível");
     expect(completeConnectionMessage("xyz")).toContain("Tente novamente");
     expect(completeConnectionMessage(undefined)).toContain("Tente novamente");
+  });
+});
+
+describe("finalizeMetaAction", () => {
+  it("opens the page selection with the pending id", () => {
+    expect(finalizeMetaAction({ code: "selecionar", pendingId: "p1" })).toEqual({ type: "select", pendingId: "p1" });
+  });
+  it("falls back to an error when selecionar has no pending id", () => {
+    expect(finalizeMetaAction({ code: "selecionar" })).toEqual({
+      type: "message",
+      message: { kind: "error", text: FINALIZE_FAILED_TEXT },
+    });
+  });
+  it("maps ok, reconnect and error codes to messages", () => {
+    expect(finalizeMetaAction({ code: "ok" })).toEqual({
+      type: "message",
+      message: { kind: "success", text: "Conta conectada com sucesso." },
+    });
+    expect(finalizeMetaAction({ code: "ok" }, true)).toEqual({
+      type: "message",
+      message: { kind: "success", text: "Conexão renovada." },
+    });
+    expect(finalizeMetaAction({ code: "cancelado" })).toMatchObject({ message: { kind: "info" } });
+    expect(finalizeMetaAction({ code: "conta_em_uso" })).toMatchObject({ message: { kind: "error" } });
+    expect(finalizeMetaAction({ code: "zzz" })).toMatchObject({ message: { kind: "error" } });
   });
 });

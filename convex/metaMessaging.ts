@@ -27,8 +27,7 @@ import {
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requirePermission, requireAccountWithEmail, isMembershipRevoked } from "./lib/auth";
-import { hasPermission, resolvePermissions, Role } from "./lib/permissions";
+import { requirePermission, requireAccountWithEmail } from "./lib/auth";
 import { assertModule, isDemoOrg, modulesOf } from "./lib/orgModules";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { appUrl } from "./lib/appUrl";
@@ -360,7 +359,14 @@ export const internalGetConfigForMetaAccount = internalQuery({
     if (rows.length > 1) {
       console.warn(`meta-messaging: ${rows.length} configs para a conta ${maskExternalId(args.accountId)}`);
     }
-    return rows.find((c) => c.status === "active") ?? rows[0] ?? null;
+    const active = rows.filter((c) => c.status === "active");
+    // Multi-tenant: dois configs ATIVOS da mesma conta em orgs diferentes = ambíguo. Descarta em vez
+    // de entregar a conversa de um cliente à org errada (a exclusividade devia ter impedido).
+    if (new Set(active.map((c) => c.organizationId)).size > 1) {
+      console.error(`meta-messaging: conta ${maskExternalId(args.accountId)} ativa em ${active.length} orgs; descartado`);
+      return null;
+    }
+    return active[0] ?? rows[0] ?? null;
   },
 });
 
@@ -368,6 +374,19 @@ export const internalMetaModuleEnabled = internalQuery({
   args: { organizationId: v.id("organizations") },
   returns: v.boolean(),
   handler: async (ctx, args) => modulesOf(await ctx.db.get(args.organizationId)).metaMessaging,
+});
+
+/** REST `/receive` Meta: o contato tem identidade (PSID/IGSID) nesta conta? Sem ela não há destino. */
+export const internalContactHasMetaIdentity = internalQuery({
+  args: { contactId: v.id("contacts"), channelConfigId: v.id("channelConfigs") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("contactChannelIdentities")
+      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
+      .take(50);
+    return rows.some((r) => r.channelConfigId === args.channelConfigId);
+  },
 });
 
 export const internalGetMetaConnection = internalQuery({
@@ -1225,6 +1244,7 @@ async function removeDeviceDuplicates(
 ): Promise<void> {
   let removed = 0;
   let removedLast = false;
+  const ownFiles = new Set<Id<"files">>((await ctx.db.get(messageId))?.attachments ?? []);
   for (const mid of mids) {
     const rows = await ctx.db
       .query("messages")
@@ -1235,7 +1255,15 @@ async function removeDeviceDuplicates(
     for (const dup of rows) {
       if (dup._id === messageId || dup.conversationId !== conversation._id) continue;
       if (dup.direction !== "outbound" || dup.metadata?.via !== "device") continue;
-      if (dup.attachments && dup.attachments.length > 0) continue; // F1 não grava mídia em device; nunca apaga blob aqui
+      // Duplicata com mídia (o eco baixou os anexos): blob só sai se ninguém mais o usa (porta
+      // `lib/fileRefs`), a linha de `files` sai e devolve a cota, como em `internalApplyMetaDeleted`.
+      for (const fileId of dup.attachments ?? []) {
+        if (ownFiles.has(fileId)) continue; // nunca o anexo da NOSSA mensagem
+        const file = await ctx.db.get(fileId);
+        if (!file || file.organizationId !== conversation.organizationId) continue;
+        await deleteBlobIfUnreferenced(ctx, file);
+        await deleteFileRow(ctx, file);
+      }
       await ctx.db.delete(dup._id);
       removed++;
       if (conversation.lastMessageId === dup._id) removedLast = true;
@@ -1941,50 +1969,88 @@ export const internalCreateOAuthState = internalMutation({
   },
 });
 
-/** Single-use: existe, não usado, não expirado; marca `usedAt` na MESMA transação. */
-export const internalConsumeOAuthState = internalMutation({
-  args: { nonceHash: v.string() },
-  returns: v.union(
-    v.null(),
-    v.object({
-      stateId: v.id("oauthStates"),
-      organizationId: v.id("organizations"),
-      memberId: v.id("teamMembers"),
-      connectionId: v.optional(v.id("metaConnections")),
-    })
-  ),
+/**
+ * Perna 1 do OAuth (callback, sem usuário autenticado): o state existe, não foi usado, não expirou
+ * e ainda não recebeu `code`. Guarda o `code` CIFRADO e troca o `nonceHash` pelo hash de um nonce
+ * novo que só o navegador que recebeu o callback conhece: quem iniciou e mandou a URL da Meta para
+ * outra pessoa sabe o nonce ORIGINAL, que deixa de valer aqui. Não marca `usedAt`.
+ */
+export const internalStoreOAuthCode = internalMutation({
+  args: { nonceHash: v.string(), newNonceHash: v.string(), codeEncrypted: v.string() },
+  returns: v.boolean(),
   handler: async (ctx, args) => {
     const state = await ctx.db
       .query("oauthStates")
       .withIndex("by_nonce_hash", (q) => q.eq("nonceHash", args.nonceHash))
       .first();
     const now = Date.now();
-    if (!state || state.provider !== "meta" || state.usedAt !== undefined || state.expiresAt <= now) {
-      return null;
+    if (
+      !state ||
+      state.provider !== "meta" ||
+      state.usedAt !== undefined ||
+      state.codeEncrypted !== undefined ||
+      state.expiresAt <= now
+    ) {
+      return false;
     }
-    await ctx.db.patch(state._id, { usedAt: now });
-    return {
-      stateId: state._id,
-      organizationId: state.organizationId,
-      memberId: state.memberId,
-      ...(state.connectionId ? { connectionId: state.connectionId } : {}),
-    };
+    await ctx.db.patch(state._id, {
+      nonceHash: args.newNonceHash,
+      codeEncrypted: args.codeEncrypted,
+      codeReceivedAt: now,
+    });
+    return true;
   },
 });
 
-/** Rechecagem do callback: o membro segue ativo, com settings:manage, e o módulo está on. */
-export const internalRecheckOAuthMember = internalQuery({
-  args: { organizationId: v.id("organizations"), memberId: v.id("teamMembers") },
-  returns: v.union(v.literal("ok"), v.literal("sem_papel"), v.literal("modulo_off")),
+const claimOAuthCodeReturn = v.union(
+  v.object({ ok: v.literal(false), code: v.union(v.literal("expirado"), v.literal("sem_papel"), v.literal("modulo_off")) }),
+  v.object({
+    ok: v.literal(true),
+    stateId: v.id("oauthStates"),
+    memberId: v.id("teamMembers"),
+    connectionId: v.optional(v.id("metaConnections")),
+    codeEncrypted: v.string(),
+  })
+);
+
+/**
+ * Perna 2 do OAuth (usuário autenticado): mesma org, state com `code`, não usado, não expirado e
+ * iniciado pelo PRÓPRIO usuário. Consome (`usedAt`) e apaga o `code` na mesma transação.
+ * Outro usuário/outra org não consome nada.
+ */
+export const internalClaimOAuthCode = internalMutation({
+  args: { organizationId: v.id("organizations"), nonceHash: v.string() },
+  returns: claimOAuthCodeReturn,
   handler: async (ctx, args) => {
-    const member = await ctx.db.get(args.memberId);
-    if (!member || member.organizationId !== args.organizationId || isMembershipRevoked(member)) {
-      return "sem_papel" as const;
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx);
+    if (!modulesOf(await ctx.db.get(args.organizationId)).metaMessaging) {
+      return { ok: false as const, code: "modulo_off" as const };
     }
-    const permissions = resolvePermissions(member.role as Role, member.permissions ?? undefined);
-    if (!hasPermission(permissions, "settings", "manage")) return "sem_papel" as const;
-    if (!modulesOf(await ctx.db.get(args.organizationId)).metaMessaging) return "modulo_off" as const;
-    return "ok" as const;
+    const state = await ctx.db
+      .query("oauthStates")
+      .withIndex("by_nonce_hash", (q) => q.eq("nonceHash", args.nonceHash))
+      .first();
+    const now = Date.now();
+    if (
+      !state ||
+      state.provider !== "meta" ||
+      state.organizationId !== args.organizationId ||
+      state.usedAt !== undefined ||
+      !state.codeEncrypted ||
+      state.expiresAt <= now
+    ) {
+      return { ok: false as const, code: "expirado" as const };
+    }
+    if (state.memberId !== member._id) return { ok: false as const, code: "sem_papel" as const };
+    await ctx.db.patch(state._id, { usedAt: now, codeEncrypted: undefined });
+    return {
+      ok: true as const,
+      stateId: state._id,
+      memberId: state.memberId,
+      ...(state.connectionId ? { connectionId: state.connectionId } : {}),
+      codeEncrypted: state.codeEncrypted,
+    };
   },
 });
 
@@ -2132,6 +2198,7 @@ async function finalizeConnection(
   return { ok: true, configIds };
 }
 
+/** Perna 1: só guarda o `code` (cifrado) e devolve o navegador ao app com um nonce novo. */
 export const oauthCallback = httpAction(async (ctx, request) => {
   const url = new URL(request.url);
   const to = (r: Parameters<typeof redirectUrlFor>[1]) => redirect(redirectUrlFor(appUrl(), r));
@@ -2141,111 +2208,147 @@ export const oauthCallback = httpAction(async (ctx, request) => {
   const code = url.searchParams.get("code");
   if (!state || !code) return to("expirado");
 
-  const consumed = await ctx.runMutation(internal.metaMessaging.internalConsumeOAuthState, {
-    nonceHash: await sha256Hex(state),
-  });
-  if (!consumed) return to("expirado");
-
-  const recheck = await ctx.runQuery(internal.metaMessaging.internalRecheckOAuthMember, {
-    organizationId: consumed.organizationId,
-    memberId: consumed.memberId,
-  });
-  if (recheck !== "ok") return to(recheck);
-
-  const appId = process.env.META_MESSAGING_APP_ID;
-  const appSecret = process.env.META_MESSAGING_APP_SECRET;
-  const siteUrl = process.env.CONVEX_SITE_URL;
-  if (!appId || !appSecret || !siteUrl) return to("falha_meta");
-  const redirectUri = `${siteUrl.replace(/\/+$/, "")}/oauth/meta/callback`;
-  const base = graphBase("facebook_login");
-
+  const newNonce = randomNonce();
+  let stored: boolean;
   try {
-    // 3. code → token de usuário curto
-    const short = await graphCall(
-      `${base}/oauth/access_token?${new URLSearchParams({ client_id: appId, redirect_uri: redirectUri, client_secret: appSecret, code })}`
-    );
-    const shortToken = short.ok ? short.body.access_token : undefined;
-    if (typeof shortToken !== "string") return to("falha_meta");
-
-    // 4. → token de usuário longo (necessário para o token de Página não expirar)
-    const long = await graphCall(
-      `${base}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: appId, client_secret: appSecret, fb_exchange_token: shortToken })}`
-    );
-    const userToken = long.ok ? long.body.access_token : undefined;
-    if (typeof userToken !== "string") return to("falha_meta");
-
-    // 5. permissões: as 8 ou nenhuma
-    const perms = await graphCall(`${base}/me/permissions`, { token: userToken });
-    if (!perms.ok || !Array.isArray(perms.body.data)) return to("falha_meta");
-    const granted = (perms.body.data as Array<Record<string, unknown>>)
-      .filter((p) => p && p.status === "granted" && typeof p.permission === "string")
-      .map((p) => p.permission as string);
-    if (missingScopes(granted).length > 0) return to("sem_permissao");
-
-    // O `id` do usuário casa os callbacks de desautorização/exclusão. Best-effort: sem ele, o
-    // `debug_token` da Página é o fallback em `finalizeConnection`.
-    const me = await graphCall(`${base}/me?fields=id`, { token: userToken });
-    const metaUserId = me.ok && typeof me.body.id === "string" && me.body.id ? me.body.id : undefined;
-
-    // 6. Páginas (o token de usuário morre aqui, nunca é persistido)
-    const accountsRes = await graphCall(
-      `${base}/me/accounts?${new URLSearchParams({
-        fields: "id,name,access_token,tasks,picture{url},instagram_business_account{id,username,name,profile_picture_url}",
-        limit: "100",
-      })}`,
-      { token: userToken }
-    );
-    if (!accountsRes.ok) return to("falha_meta");
-    let pages = pickUsablePages(accountsRes.body.data);
-    if (consumed.connectionId) {
-      // Reconectar: a Página devolvida tem de ser a mesma da conexão.
-      const conn: Doc<"metaConnections"> | null = await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, {
-        connectionId: consumed.connectionId,
-      });
-      pages = pages.filter((p) => p.pageId === conn?.pageId);
-    }
-    if (pages.length === 0) return to("sem_pagina");
-    const usable = pages.filter((p) => p.tasksOk);
-    if (usable.length === 0) return to("sem_papel");
-
-    const scopes = granted;
-    if (pages.length === 1) {
-      const result = await finalizeConnection(ctx, {
-        organizationId: consumed.organizationId,
-        memberId: consumed.memberId,
-        connectionId: consumed.connectionId,
-        page: pages[0],
-        messenger: true,
-        instagram: true,
-        scopes,
-        metaUserId,
-      });
-      return to(result.ok ? "ok" : result.code);
-    }
-
-    // 7. N Páginas: tokens cifrados em metaOAuthPending, a UI escolhe
-    const pendingId: Id<"metaOAuthPending"> = await ctx.runMutation(internal.metaMessaging.internalCreatePending, {
-      organizationId: consumed.organizationId,
-      memberId: consumed.memberId,
-      stateId: consumed.stateId,
-      scopes,
-      ...(metaUserId ? { metaUserId } : {}),
-      pages: await Promise.all(
-        pages.map(async (p) => ({
-          pageId: p.pageId,
-          pageName: p.pageName,
-          tokenEncrypted: await encryptSecret(p.pageToken),
-          ...(p.igAccountId ? { igAccountId: p.igAccountId } : {}),
-          ...(p.igUsername ? { igUsername: p.igUsername } : {}),
-          tasksOk: p.tasksOk,
-        }))
-      ),
+    stored = await ctx.runMutation(internal.metaMessaging.internalStoreOAuthCode, {
+      nonceHash: await sha256Hex(state),
+      newNonceHash: await sha256Hex(newNonce),
+      codeEncrypted: await encryptSecret(code),
     });
-    return to({ selecionar: true, pendenteId: pendingId });
   } catch (e) {
     console.error(`meta oauth callback: ${e instanceof Error ? e.name : "erro"}`);
     return to("falha_meta");
   }
+  if (!stored) return to("expirado");
+  return to({ finalizar: true, state: newNonce });
+});
+
+const metaOAuthCodeValidator = v.union(
+  v.literal("ok"),
+  v.literal("selecionar"),
+  v.literal("cancelado"),
+  v.literal("expirado"),
+  v.literal("conta_em_uso"),
+  v.literal("sem_permissao"),
+  v.literal("sem_pagina"),
+  v.literal("sem_papel"),
+  v.literal("modulo_off"),
+  v.literal("falha_meta")
+);
+type FinalizeOAuthResult = { code: MetaOAuthErrorCode | "ok" | "selecionar"; pendingId?: Id<"metaOAuthPending"> };
+
+/**
+ * Perna 2: o usuário autenticado que INICIOU a conexão finaliza com o `state` que o callback
+ * devolveu ao navegador dele. Troca o code → token curto → longo → `/me` → permissões →
+ * `/me/accounts`; 1 Página finaliza direto, N Páginas criam `metaOAuthPending`.
+ */
+export const finalizeMetaOAuth = action({
+  args: { organizationId: v.id("organizations"), state: v.string() },
+  returns: v.object({ code: metaOAuthCodeValidator, pendingId: v.optional(v.id("metaOAuthPending")) }),
+  handler: async (ctx, args): Promise<FinalizeOAuthResult> => {
+    const claimed: (typeof claimOAuthCodeReturn)["type"] = await ctx.runMutation(
+      internal.metaMessaging.internalClaimOAuthCode,
+      { organizationId: args.organizationId, nonceHash: await sha256Hex(args.state) }
+    );
+    if (!claimed.ok) return { code: claimed.code };
+
+    const appId = process.env.META_MESSAGING_APP_ID;
+    const appSecret = process.env.META_MESSAGING_APP_SECRET;
+    const siteUrl = process.env.CONVEX_SITE_URL;
+    if (!appId || !appSecret || !siteUrl) return { code: "falha_meta" };
+    const redirectUri = `${siteUrl.replace(/\/+$/, "")}/oauth/meta/callback`;
+    const base = graphBase("facebook_login");
+
+    try {
+      const code = await decryptSecret(claimed.codeEncrypted);
+      // 3. code → token de usuário curto
+      const short = await graphCall(
+        `${base}/oauth/access_token?${new URLSearchParams({ client_id: appId, redirect_uri: redirectUri, client_secret: appSecret, code })}`
+      );
+      const shortToken = short.ok ? short.body.access_token : undefined;
+      if (typeof shortToken !== "string") return { code: "falha_meta" };
+
+      // 4. → token de usuário longo (necessário para o token de Página não expirar)
+      const long = await graphCall(
+        `${base}/oauth/access_token?${new URLSearchParams({ grant_type: "fb_exchange_token", client_id: appId, client_secret: appSecret, fb_exchange_token: shortToken })}`
+      );
+      const userToken = long.ok ? long.body.access_token : undefined;
+      if (typeof userToken !== "string") return { code: "falha_meta" };
+
+      // 5. permissões: as 8 ou nenhuma
+      const perms = await graphCall(`${base}/me/permissions`, { token: userToken });
+      if (!perms.ok || !Array.isArray(perms.body.data)) return { code: "falha_meta" };
+      const granted = (perms.body.data as Array<Record<string, unknown>>)
+        .filter((p) => p && p.status === "granted" && typeof p.permission === "string")
+        .map((p) => p.permission as string);
+      if (missingScopes(granted).length > 0) return { code: "sem_permissao" };
+
+      // O `id` do usuário casa os callbacks de desautorização/exclusão. Best-effort: sem ele, o
+      // `debug_token` da Página é o fallback em `finalizeConnection`.
+      const me = await graphCall(`${base}/me?fields=id`, { token: userToken });
+      const metaUserId = me.ok && typeof me.body.id === "string" && me.body.id ? me.body.id : undefined;
+
+      // 6. Páginas (o token de usuário morre aqui, nunca é persistido)
+      const accountsRes = await graphCall(
+        `${base}/me/accounts?${new URLSearchParams({
+          fields: "id,name,access_token,tasks,picture{url},instagram_business_account{id,username,name,profile_picture_url}",
+          limit: "100",
+        })}`,
+        { token: userToken }
+      );
+      if (!accountsRes.ok) return { code: "falha_meta" };
+      let pages = pickUsablePages(accountsRes.body.data);
+      if (claimed.connectionId) {
+        // Reconectar: a Página devolvida tem de ser a mesma da conexão.
+        const conn: Doc<"metaConnections"> | null = await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, {
+          connectionId: claimed.connectionId,
+        });
+        pages = pages.filter((p) => p.pageId === conn?.pageId);
+      }
+      if (pages.length === 0) return { code: "sem_pagina" };
+      const usable = pages.filter((p) => p.tasksOk);
+      if (usable.length === 0) return { code: "sem_papel" };
+
+      const scopes = granted;
+      if (pages.length === 1) {
+        const result = await finalizeConnection(ctx, {
+          organizationId: args.organizationId,
+          memberId: claimed.memberId,
+          connectionId: claimed.connectionId,
+          page: pages[0],
+          messenger: true,
+          instagram: true,
+          scopes,
+          metaUserId,
+        });
+        return { code: result.ok ? "ok" : result.code };
+      }
+
+      // 7. N Páginas: tokens cifrados em metaOAuthPending, a UI escolhe
+      const pendingId: Id<"metaOAuthPending"> = await ctx.runMutation(internal.metaMessaging.internalCreatePending, {
+        organizationId: args.organizationId,
+        memberId: claimed.memberId,
+        stateId: claimed.stateId,
+        scopes,
+        ...(metaUserId ? { metaUserId } : {}),
+        pages: await Promise.all(
+          pages.map(async (p) => ({
+            pageId: p.pageId,
+            pageName: p.pageName,
+            tokenEncrypted: await encryptSecret(p.pageToken),
+            ...(p.igAccountId ? { igAccountId: p.igAccountId } : {}),
+            ...(p.igUsername ? { igUsername: p.igUsername } : {}),
+            tasksOk: p.tasksOk,
+          }))
+        ),
+      });
+      return { code: "selecionar", pendingId };
+    } catch (e) {
+      console.error(`meta oauth finalize: ${e instanceof Error ? e.name : "erro"}`);
+      return { code: "falha_meta" };
+    }
+  },
 });
 
 // ── Seleção de Páginas ──
@@ -2605,7 +2708,14 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
           .query("channelConfigs")
           .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
           .take(20);
-        existing = byConn.find((c) => c.organizationId === args.organizationId && c.channel === channel);
+        // Instagram que TROCOU de conta não reaproveita o config da conta antiga (IGSIDs são por
+        // conta): só o config com o id liberado; o antigo é desativado logo abaixo.
+        existing = byConn.find(
+          (c) =>
+            c.organizationId === args.organizationId &&
+            c.channel === channel &&
+            (channel === "messenger" || c.instagramAccountId === undefined)
+        );
       }
       const handle = channel === "instagram" && conn.igUsername ? `@${conn.igUsername}` : undefined;
       const label = channel === "messenger" ? conn.pageName : handle ?? conn.pageName;
@@ -2636,6 +2746,14 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
           createdAt: now,
           updatedAt: now,
         });
+        // Canal excluído e reconectado: identidades e conversas que apontavam para o config morto
+        // voltam para o novo (sem isto o mesmo cliente vira um contato novo).
+        await ctx.scheduler.runAfter(0, internal.metaMessaging.internalRelinkMetaOrphans, {
+          organizationId: args.organizationId,
+          channel,
+          configId,
+          phase: "identities",
+        });
       }
       ids.push(configId);
       await ctx.db.insert("auditLogs", {
@@ -2654,7 +2772,136 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
 
     if (args.messenger) await upsert("messenger");
     if (args.instagram) await upsert("instagram");
+
+    // A conexão perdeu ou trocou a conta IG: o config `instagram` dela deixa de ser roteável
+    // (um id de IG que sobra num config ativo pode ser conectado por outra org).
+    const connConfigs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_meta_connection", (q) => q.eq("metaConnectionId", conn._id))
+      .take(20);
+    for (const c of connConfigs) {
+      if (c.organizationId !== args.organizationId || c.channel !== "instagram") continue;
+      if (args.instagram && conn.igAccountId && c.instagramAccountId === conn.igAccountId) continue;
+      if (c.instagramAccountId === undefined && c.status === "disabled") continue;
+      await ctx.db.patch(c._id, { status: "disabled", instagramAccountId: undefined, updatedAt: now });
+      await ctx.db.insert("auditLogs", {
+        organizationId: args.organizationId,
+        entityType: "channelConfig",
+        entityId: c._id,
+        action: "update",
+        actorId: args.memberId,
+        actorType: "human",
+        metadata: { name: c.displayName, channel: "instagram", fields: ["status", "instagramAccountId"], reason: "ig_unlinked" },
+        description: `Desativou o canal Instagram "${c.displayName}": a Página não está mais vinculada a essa conta`,
+        severity: "high",
+        createdAt: now,
+      });
+    }
     return ids;
+  },
+});
+
+const RELINK_BATCH = 200;
+
+/**
+ * Religa ao config novo as `contactChannelIdentities` e conversas da mesma org e canal cujo
+ * `channelConfigId` aponta para um config que não existe mais (canal Meta excluído e reconectado).
+ * Só roda quando o config novo é o ÚNICO config desse canal na org: PSID/IGSID são por conta, então
+ * com outra conta viva do mesmo canal não dá para saber de qual conta o órfão era. Bounded por lote,
+ * reagenda por cursor; identidade que já existe no config novo (mesmo `externalId`) fica como está.
+ */
+export const internalRelinkMetaOrphans = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    channel: surfaceValidator,
+    configId: v.id("channelConfigs"),
+    phase: v.union(v.literal("identities"), v.literal("conversations")),
+    cursor: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config || config.organizationId !== args.organizationId || config.channel !== args.channel) return null;
+    const orgConfigs = await ctx.db
+      .query("channelConfigs")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(200);
+    const sameChannel = orgConfigs.filter((c) => c.channel === args.channel);
+    if (sameChannel.length !== 1) {
+      if (!args.cursor && args.phase === "identities") {
+        console.warn(`meta-messaging relink: ${sameChannel.length} configs ${args.channel} na org; órfãos não religados`);
+      }
+      return null;
+    }
+    const alive = new Map<Id<"channelConfigs">, boolean>(orgConfigs.map((c) => [c._id, true]));
+    const isDead = async (id: Id<"channelConfigs"> | undefined) => {
+      if (!id) return false;
+      if (!alive.has(id)) alive.set(id, (await ctx.db.get(id)) !== null);
+      return alive.get(id) === false;
+    };
+
+    let relinked = 0;
+    let page: { continueCursor: string; isDone: boolean };
+    if (args.phase === "identities") {
+      const res = await ctx.db
+        .query("contactChannelIdentities")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .paginate({ numItems: RELINK_BATCH, cursor: args.cursor ?? null });
+      page = res;
+      for (const ident of res.page) {
+        if (ident.kind !== args.channel || !(await isDead(ident.channelConfigId))) continue;
+        const clash = await ctx.db
+          .query("contactChannelIdentities")
+          .withIndex("by_channel_config_and_external_id", (q) =>
+            q.eq("channelConfigId", args.configId).eq("externalId", ident.externalId)
+          )
+          .first();
+        if (clash) continue;
+        await ctx.db.patch(ident._id, { channelConfigId: args.configId });
+        relinked++;
+      }
+    } else {
+      const res = await ctx.db
+        .query("conversations")
+        .withIndex("by_organization_and_channel", (q) =>
+          q.eq("organizationId", args.organizationId).eq("channel", args.channel)
+        )
+        .paginate({ numItems: RELINK_BATCH, cursor: args.cursor ?? null });
+      page = res;
+      for (const conv of res.page) {
+        if (!(await isDead(conv.channelConfigId))) continue;
+        await ctx.db.patch(conv._id, { channelConfigId: args.configId });
+        relinked++;
+      }
+    }
+
+    if (relinked > 0) {
+      await ctx.db.insert("auditLogs", {
+        organizationId: args.organizationId,
+        entityType: "channelConfig",
+        entityId: args.configId,
+        action: "update",
+        actorType: "system",
+        metadata: { relinked, phase: args.phase, channel: args.channel },
+        description: `Religou ${relinked} ${args.phase === "identities" ? "identidades" : "conversas"} ao canal reconectado`,
+        severity: "medium",
+        createdAt: Date.now(),
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalRelinkMetaOrphans, {
+        ...args,
+        cursor: page.continueCursor,
+      });
+    } else if (args.phase === "identities") {
+      await ctx.scheduler.runAfter(0, internal.metaMessaging.internalRelinkMetaOrphans, {
+        organizationId: args.organizationId,
+        channel: args.channel,
+        configId: args.configId,
+        phase: "conversations",
+      });
+    }
+    return null;
   },
 });
 
@@ -2752,7 +2999,21 @@ export const internalApplyHealthObservation = internalMutation({
       ...(obs.dataAccessExpiresAt !== undefined ? { dataAccessExpiresAt: obs.dataAccessExpiresAt } : {}),
     };
 
+    // Todos os canais desligados (manual ou módulo off): ninguém usa a conexão, então só grava o
+    // estado, sem sino/e-mail/webhook. `authAlertedAt` fica vazio: religando, o próximo tick avisa.
+    const silent = configs.every((c) => c.status === "disabled" || c.disabledByModuleAt !== undefined);
+
     if (verdict.kind !== "ok") {
+      if (silent) {
+        await ctx.db.patch(conn._id, {
+          ...seen,
+          authState: "reauth_required",
+          authSource: conn.authState === "reauth_required" ? conn.authSource : "health",
+          authDetail: verdict.detail,
+          updatedAt: now,
+        });
+        return { outcome: "degraded" as const };
+      }
       await ctx.db.patch(conn._id, seen);
       await emitChannelDegraded(ctx, {
         connection: { ...conn, ...seen },
@@ -2797,7 +3058,9 @@ export const internalApplyHealthObservation = internalMutation({
       await ctx.db.patch(conn._id, seen);
     }
 
-    if (verdict.expiring) {
+    if (verdict.expiring && silent) {
+      // sem aviso com os canais desligados
+    } else if (verdict.expiring) {
       const emitted = await emitChannelDegraded(ctx, {
         connection: current,
         configs,
@@ -3128,7 +3391,11 @@ export const internalRevokeConnectionsForMetaUser = internalMutation({
       .take(100);
     let revoked = 0;
     for (const conn of conns) {
-      if (conn.authState === "revoked" && !conn.tokenEncrypted) continue;
+      if (conn.authState === "revoked" && !conn.tokenEncrypted) {
+        // Já revogada (deauthorize antes, ou desconectada): a exclusão de dados ainda apaga o id.
+        if (args.confirmationCode) await ctx.db.patch(conn._id, { metaUserId: undefined, updatedAt: now });
+        continue;
+      }
       const configs = (
         await ctx.db
           .query("channelConfigs")

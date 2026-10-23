@@ -187,6 +187,42 @@ describe("POST /receive com Meta", () => {
     await cancelPendingJobs(t);
   });
 
+  test("descarta referral/standby do cliente REST e só acorda a IA quando o contato tem identidade na conta", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const enqueues = () =>
+      t.run(async (ctx) =>
+        (await ctx.db.system.query("_scheduled_functions").collect()).filter(
+          (j) => j.name.includes("internalEnqueueFromInbound") && j.state.kind === "pending"
+        ).length
+      );
+    const res = await call(t, "POST", "/api/v1/conversations/receive", {
+      channel: "messenger", channelConfigId: s.messengerId, contactId: s.contactId, content: "Oi!",
+      metadata: { referral: { source: "ADS", ad_id: "1" }, standby: true, campo: "x" },
+    });
+    expect(res.status).toBe(201);
+    const { conv, msg } = await t.run(async (ctx) => ({
+      conv: (await ctx.db.query("conversations").collect())[0],
+      msg: (await ctx.db.query("messages").collect())[0],
+    }));
+    expect(conv.windowOpenedByAdAt).toBeUndefined();
+    expect(msg.metadata).toEqual({ campo: "x" });
+    expect(await enqueues()).toBe(0); // sem identidade: a IA não teria para quem responder
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("contactChannelIdentities", {
+        organizationId: s.organizationId, contactId: s.contactId, channelConfigId: s.messengerId, kind: "messenger",
+        externalId: "1000000000000201", createdAt: Date.now(),
+      });
+    });
+    const again = await call(t, "POST", "/api/v1/conversations/receive", {
+      channel: "messenger", channelConfigId: s.messengerId, contactId: s.contactId, content: "De novo",
+    });
+    expect(again.status).toBe(201);
+    expect(await enqueues()).toBe(1);
+    await cancelPendingJobs(t);
+  });
+
   test("recusa contactPhone, falta de channelConfigId, config de outra org ou de outro canal", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

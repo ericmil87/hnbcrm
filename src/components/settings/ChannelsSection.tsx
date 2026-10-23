@@ -37,7 +37,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
-import { RECONNECT_FLAG_KEY, metaReturnMessage, safeSession } from "@/lib/metaConnect";
+import {
+  FINALIZE_FAILED_TEXT,
+  FINALIZE_WRONG_ORG_HINT,
+  RECONNECT_FLAG_KEY,
+  finalizeMetaAction,
+  metaReturnMessage,
+  safeSession,
+} from "@/lib/metaConnect";
 import { MetaMessagingCard } from "@/components/settings/MetaMessagingCard";
 import { MetaChannelCards, type MetaChannelConfig } from "@/components/settings/MetaChannelCards";
 import { MetaPageSelectionModal } from "@/components/settings/MetaPageSelectionModal";
@@ -200,7 +207,67 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
     );
   }, [metaCode, setSearchParams]);
 
+  // Novo fluxo: a Meta volta com ?meta=finalizar&state=<nonce>; o usuário autenticado finaliza.
+  const finalizeMetaOAuth = useAction(api.metaMessaging.finalizeMetaOAuth);
+  const startMetaConnect = useAction(api.metaMessaging.startMetaConnect);
+  const metaState = searchParams.get("state");
+  const finalizeStarted = useRef<string | null>(null);
+  const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [finalizedPendingId, setFinalizedPendingId] = useState<Id<"metaOAuthPending"> | null>(null);
+  useEffect(() => {
+    if (metaCode !== "finalizar" || !metaState) return;
+    if (finalizeStarted.current === metaState) return;
+    finalizeStarted.current = metaState;
+    const state = metaState;
+    setFinalizing(true);
+    setFinalizeError(false);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("meta");
+        next.delete("state");
+        return next;
+      },
+      { replace: true }
+    );
+    void (async () => {
+      try {
+        const result = await finalizeMetaOAuth({ organizationId, state });
+        const reconnecting = result.code === "ok" && safeSession.get(RECONNECT_FLAG_KEY) === "1";
+        safeSession.remove(RECONNECT_FLAG_KEY);
+        const action = finalizeMetaAction(result, reconnecting);
+        if (action.type === "select") {
+          setFinalizedPendingId(action.pendingId as Id<"metaOAuthPending">);
+        } else {
+          const { kind, text } = action.message;
+          if (kind === "success") toast.success(text);
+          else if (kind === "info") toast.info(text);
+          else toast.error(text);
+        }
+      } catch {
+        setFinalizeError(true);
+        toast.error(FINALIZE_FAILED_TEXT);
+      } finally {
+        setFinalizing(false);
+      }
+    })();
+  }, [metaCode, metaState, organizationId, finalizeMetaOAuth, setSearchParams]);
+
+  const retryMetaConnect = async () => {
+    setRetrying(true);
+    try {
+      const { url } = await startMetaConnect({ organizationId });
+      window.location.href = url;
+    } catch (error) {
+      toast.error(mutationErrorMessage(error, "Não foi possível iniciar a conexão com a Meta"));
+      setRetrying(false);
+    }
+  };
+
   const closeSelection = useCallback(() => {
+    setFinalizedPendingId(null);
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -289,6 +356,33 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
 
   return (
     <div className="space-y-6">
+      {finalizing && (
+        <div
+          role="status"
+          className="flex items-center gap-3 rounded-card border border-border bg-surface-raised p-4 text-sm text-text-secondary"
+        >
+          <Spinner size="sm" />
+          Concluindo a conexão com a Meta…
+        </div>
+      )}
+      {finalizeError && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-card border border-semantic-error/30 bg-semantic-error/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p className="text-text-primary">
+            {FINALIZE_FAILED_TEXT} {FINALIZE_WRONG_ORG_HINT}
+          </p>
+          <Button
+            variant="secondary"
+            className="min-h-11 shrink-0"
+            disabled={retrying}
+            onClick={() => void retryMetaConnect()}
+          >
+            Conectar de novo
+          </Button>
+        </div>
+      )}
       {canManage && (
         <MetaMessagingCard
           organizationId={organizationId}
@@ -454,10 +548,10 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
         variant="danger"
       />
 
-      {metaEnabled && canManage && metaCode === "selecionar" && pendingId && (
+      {metaEnabled && canManage && (finalizedPendingId || (metaCode === "selecionar" && pendingId)) && (
         <MetaPageSelectionModal
           organizationId={organizationId}
-          pendingId={pendingId as Id<"metaOAuthPending">}
+          pendingId={(finalizedPendingId ?? pendingId) as Id<"metaOAuthPending">}
           onClose={closeSelection}
         />
       )}

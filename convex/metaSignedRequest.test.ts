@@ -301,6 +301,27 @@ describe("POST /webhooks/meta-messaging/data-deletion e GET /meta/deletion-statu
     expect((await t.fetch("/meta/deletion-status", { method: "GET" })).status).toBe(404);
   });
 
+  test("conexão já revogada (deauthorize antes): a exclusão de dados ainda limpa o metaUserId", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await post(t, "/webhooks/meta-messaging/deauthorize", await signRequestPayload(payload(), SECRET));
+    await cancelPendingJobs(t);
+    const revoked = await t.run(async (ctx) => await ctx.db.get(s.target.connectionId));
+    expect(revoked).toMatchObject({ authState: "revoked", tokenEncrypted: "", metaUserId: USER_A });
+
+    const res = await post(t, "/webhooks/meta-messaging/data-deletion", await signRequestPayload(payload(), SECRET));
+    expect(res.status).toBe(200);
+    await cancelPendingJobs(t);
+    const after = await t.run(async (ctx) => ({
+      conn: await ctx.db.get(s.target.connectionId),
+      other: await ctx.db.get(s.otherUserSameOrg.connectionId),
+      req: (await ctx.db.query("metaDeletionRequests").collect())[0],
+    }));
+    expect((after.conn as any).metaUserId).toBeUndefined();
+    expect(after.other).toMatchObject({ metaUserId: USER_B, authState: "ok" });
+    expect(after.req.connectionsRevoked).toBe(0); // nada novo a revogar, mas o id saiu
+  });
+
   test("sem assinatura: 400 e nenhum pedido gravado", async () => {
     const t = convexTest(schema, modules);
     await seed(t);

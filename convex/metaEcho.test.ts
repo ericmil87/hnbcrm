@@ -360,6 +360,29 @@ describe("eco do Instagram sem app_id (camadas)", () => {
     expect(after.lastMessageId).toBe(ours);
   });
 
+  test("(camada 3) duplicata device COM anexo também sai: blob e linha de files removidos", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ours = await outbound(t, s, s.igConv, { createdAt: Date.now() - 1000 });
+    await ingest(t, s.instagramId, echo("instagram", "ig_dup_media"));
+    const dup = (await messagesOf(t, s.igConv)).find((r) => r.externalId === "ig_dup_media")!;
+    const { fileId, storageId } = await t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(["fake-image"], { type: "image/jpeg" }));
+      const fileId = await ctx.db.insert("files", {
+        organizationId: dup.organizationId, storageId, name: "eco.jpg", mimeType: "image/jpeg", size: 10,
+        fileType: "message_attachment", messageId: dup._id, createdAt: Date.now(),
+      } as any);
+      await ctx.db.patch(dup._id, { attachments: [fileId], contentType: "image" });
+      return { fileId, storageId };
+    });
+
+    await t.mutation(internal.metaMessaging.internalMarkMetaDispatched, { messageId: ours, mids: ["ig_dup_media"] });
+    expect((await messagesOf(t, s.igConv)).map((r) => r._id)).toEqual([ours]);
+    const left = await t.run(async (ctx) => ({ file: await ctx.db.get(fileId), blob: await ctx.storage.get(storageId) }));
+    expect(left.file).toBeNull();
+    expect(left.blob).toBeNull();
+  });
+
   test("(camada 3) não apaga mensagem device de outra conversa nem com outro mid", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

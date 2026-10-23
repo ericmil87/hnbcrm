@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import {
@@ -68,6 +68,9 @@ describe("lib/metaOAuth", () => {
     expect(META_OAUTH_ERROR_CODES).toContain("conta_em_uso");
     expect(redirectUrlFor("https://a.test/", "ok")).toBe("https://a.test/app/configuracoes?secao=channels&meta=ok");
     expect(redirectUrlFor("https://a.test", "sem_pagina")).toBe("https://a.test/app/configuracoes?secao=channels&meta=sem_pagina");
+    expect(redirectUrlFor("https://a.test", { finalizar: true, state: "n 1" })).toBe(
+      "https://a.test/app/configuracoes?secao=channels&meta=finalizar&state=n%201"
+    );
     expect(redirectUrlFor("https://a.test", { selecionar: true, pendenteId: "abc" })).toBe(
       "https://a.test/app/configuracoes?secao=channels&meta=selecionar&pendente=abc"
     );
@@ -165,9 +168,41 @@ async function startState(t: TestConvex<typeof schema>, s: { organizationId: Id<
   return new URL(url).searchParams.get("state")!;
 }
 
-async function callback(t: TestConvex<typeof schema>, state: string, extra = "code=fake-code") {
+/** Só a perna 1 (GET /oauth/meta/callback). */
+async function rawCallback(t: TestConvex<typeof schema>, state: string, extra = "code=fake-code") {
   const res = await t.fetch(`/oauth/meta/callback?${extra}&state=${state}`);
   return { status: res.status, location: res.headers.get("Location") ?? "" };
+}
+
+function finalizeStateFrom(location: string): string | null {
+  const m = location.match(/meta=finalizar&state=([^&]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+/** Usuário que iniciou o state que está esperando a perna 2. */
+async function initiatorIdentity(t: TestConvex<typeof schema>) {
+  return await t.run(async (ctx) => {
+    const rows = await ctx.db.query("oauthStates").collect();
+    const st = rows.find((r) => r.codeEncrypted !== undefined && r.usedAt === undefined)!;
+    const member = (await ctx.db.get(st.memberId))!;
+    return { organizationId: st.organizationId, subject: `${member.userId}|s1` };
+  });
+}
+
+/** As duas pernas: callback + `finalizeMetaOAuth` pelo próprio iniciador; devolve a URL equivalente. */
+async function callback(t: TestConvex<typeof schema>, state: string, extra = "code=fake-code") {
+  const first = await rawCallback(t, state, extra);
+  const next = finalizeStateFrom(first.location);
+  if (!next) return first;
+  const who = await initiatorIdentity(t);
+  const res = await t
+    .withIdentity({ subject: who.subject })
+    .action(api.metaMessaging.finalizeMetaOAuth, { organizationId: who.organizationId, state: next });
+  const location =
+    res.code === "selecionar"
+      ? `https://app.example.test/app/configuracoes?secao=channels&meta=selecionar&pendente=${res.pendingId}`
+      : metaUrl(res.code);
+  return { status: first.status, location };
 }
 
 const OK = "https://app.example.test/app/configuracoes?secao=channels&meta=ok";
@@ -224,10 +259,13 @@ describe("startMetaConnect e state", () => {
     expect(res.headers.get("Location")).toBe(metaUrl("cancelado"));
 
     const st1 = await startState(t, s);
+    const next1 = finalizeStateFrom((await rawCallback(t, st1)).location)!;
     await t.run(async (ctx) => {
       await ctx.db.patch(s.adminId, { removedAt: Date.now() });
     });
-    expect((await callback(t, st1)).location).toBe(metaUrl("sem_papel"));
+    await expect(
+      t.withIdentity({ subject: `${s.adminUserId}|s1` }).action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state: next1 })
+    ).rejects.toThrow();
 
     await t.run(async (ctx) => {
       await ctx.db.patch(s.adminId, { removedAt: undefined });
@@ -637,5 +675,248 @@ describe("seleção de Páginas: robustez", () => {
     ).rejects.toThrow(/pertence a outro usuário/);
     const asOwner = t.withIdentity({ subject: `${s.adminUserId}|s1` });
     expect(await asOwner.query(api.metaMessaging.getPendingSelection, { organizationId: s.organizationId, pendingId })).not.toBeNull();
+  });
+});
+
+describe("OAuth em duas pernas: preso ao usuário que iniciou (F6)", () => {
+  async function addAdmin(t: TestConvex<typeof schema>, organizationId: Id<"organizations">, email: string) {
+    return await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", { email });
+      await ctx.db.insert("teamMembers", {
+        organizationId,
+        userId,
+        name: "Outro Admin",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      return userId;
+    });
+  }
+  const counts = (t: TestConvex<typeof schema>) =>
+    t.run(async (ctx) => ({
+      conns: (await ctx.db.query("metaConnections").collect()).length,
+      configs: (await ctx.db.query("channelConfigs").collect()).length,
+      pending: (await ctx.db.query("metaOAuthPending").collect()).length,
+    }));
+
+  test("o callback não finaliza: guarda o code cifrado, troca o nonce e redireciona com meta=finalizar", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    const { calls } = stubMeta({ pages: [page1] });
+    const state = await startState(t, s);
+    const res = await rawCallback(t, state, "code=fake-code-segredo");
+    expect(res.status).toBe(302);
+    const next = finalizeStateFrom(res.location);
+    expect(next).toBeTruthy();
+    expect(next).not.toBe(state); // o nonce original não serve para finalizar
+    expect(res.location).not.toContain("fake-code-segredo");
+    expect(calls).toHaveLength(0); // nenhuma chamada à Meta na perna 1
+    expect(await counts(t)).toEqual({ conns: 0, configs: 0, pending: 0 });
+    const row = (await t.run(async (ctx) => await ctx.db.query("oauthStates").collect()))[0];
+    expect(row.usedAt).toBeUndefined();
+    expect(row.codeEncrypted).toMatch(/^v1:/);
+    expect(row.codeReceivedAt).toBeTypeOf("number");
+    expect(JSON.stringify(row)).not.toContain("fake-code-segredo");
+    // replay do callback com o mesmo nonce: já recebeu code
+    expect((await rawCallback(t, state, "code=outro")).location).toBe(metaUrl("expirado"));
+  });
+
+  test("ataque: quem iniciou não finaliza com o nonce original; outro admin da org ganha sem_papel e nada é gravado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    const state = await startState(t, s);
+    const next = finalizeStateFrom((await rawCallback(t, state)).location)!;
+    const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    // O iniciador conhece o nonce original (gerou a URL), não o novo que foi para o navegador da vítima.
+    expect(await asAdmin.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state })).toEqual({ code: "expirado" });
+
+    const otherUserId = await addAdmin(t, s.organizationId, "outro-admin@example.test");
+    const asOther = t.withIdentity({ subject: `${otherUserId}|s1` });
+    expect(await asOther.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state: next })).toEqual({ code: "sem_papel" });
+    expect(await counts(t)).toEqual({ conns: 0, configs: 0, pending: 0 });
+    const row = (await t.run(async (ctx) => await ctx.db.query("oauthStates").collect()))[0];
+    expect(row.usedAt).toBeUndefined(); // não consumiu
+
+    // pelo usuário certo: conecta; reutilizar o state = expirado
+    expect(await asAdmin.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state: next })).toEqual({ code: "ok" });
+    expect(await counts(t)).toMatchObject({ conns: 1, configs: 2 });
+    expect(await asAdmin.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state: next })).toEqual({ code: "expirado" });
+    const used = (await t.run(async (ctx) => await ctx.db.query("oauthStates").collect()))[0];
+    expect(used.usedAt).toBeTypeOf("number");
+    expect(used.codeEncrypted).toBeUndefined(); // o code sai do banco ao ser usado
+  });
+
+  test("outra org: admin da org B não finaliza o state da org A (nem passando a org A)", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const b = await seedOrg(t, "b");
+    stubMeta({ pages: [page1] });
+    const next = finalizeStateFrom((await rawCallback(t, await startState(t, a))).location)!;
+    const asB = t.withIdentity({ subject: `${b.adminUserId}|s1` });
+    expect(await asB.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: b.organizationId, state: next })).toEqual({ code: "expirado" });
+    await expect(asB.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: a.organizationId, state: next })).rejects.toThrow();
+    expect(await counts(t)).toEqual({ conns: 0, configs: 0, pending: 0 });
+    const row = (await t.run(async (ctx) => await ctx.db.query("oauthStates").collect()))[0];
+    expect(row.usedAt).toBeUndefined();
+  });
+
+  test("TTL conta do início: finalizar depois de 10 min = expirado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    const next = finalizeStateFrom((await rawCallback(t, await startState(t, s))).location)!;
+    vi.advanceTimersByTime(11 * 60 * 1000);
+    const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    expect(await asAdmin.action(api.metaMessaging.finalizeMetaOAuth, { organizationId: s.organizationId, state: next })).toEqual({ code: "expirado" });
+    expect(await counts(t)).toEqual({ conns: 0, configs: 0, pending: 0 });
+  });
+});
+
+describe("excluir e reconectar canal Meta (F6)", () => {
+  async function seedThread(t: TestConvex<typeof schema>, organizationId: Id<"organizations">, configId: Id<"channelConfigs">, externalId: string) {
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const contactId = await ctx.db.insert("contacts", { organizationId, firstName: "Cliente", tags: [], createdAt: now, updatedAt: now } as any);
+      const identityId = await ctx.db.insert("contactChannelIdentities", { organizationId, contactId, channelConfigId: configId, kind: "messenger", externalId, createdAt: now });
+      const conversationId = await ctx.db.insert("conversations", {
+        organizationId, channel: "messenger", channelConfigId: configId, status: "active", messageCount: 0, createdAt: now, updatedAt: now,
+      } as any);
+      return { contactId, identityId, conversationId };
+    });
+  }
+
+  test("Excluir canal Meta com conversas é recusado (Desconectar preserva)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    await callback(t, await startState(t, s));
+    const messenger = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).find((c) => c.channel === "messenger")!;
+    await seedThread(t, s.organizationId, messenger._id, "1000000000000101");
+    const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    await expect(asAdmin.mutation(api.channelConfigs.deleteChannelConfig, { configId: messenger._id })).rejects.toThrow(
+      "Este canal tem conversas. Use Desconectar; Excluir só é permitido sem histórico."
+    );
+    expect(await t.run(async (ctx) => await ctx.db.get(messenger._id))).not.toBeNull();
+  });
+
+  test("config apagado no passado: reconectar religa identidades e conversas órfãs ao config novo", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    await callback(t, await startState(t, s));
+    const messenger = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).find((c) => c.channel === "messenger")!;
+    const thread = await seedThread(t, s.organizationId, messenger._id, "1000000000000101");
+    // Exclusão legada (antes da trava): o config some e deixa tudo apontando para ele.
+    await t.run(async (ctx) => {
+      await ctx.db.delete(messenger._id);
+    });
+    // órfão de OUTRA org não é tocado
+    const b = await seedOrg(t, "b");
+    const foreign = await seedThread(t, b.organizationId, messenger._id, "1000000000000102");
+
+    stubMeta({ pages: [page1] });
+    expect((await callback(t, await startState(t, s))).location).toBe(OK);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const after = await t.run(async (ctx) => ({
+      configs: await ctx.db.query("channelConfigs").collect(),
+      ident: await ctx.db.get(thread.identityId),
+      conv: await ctx.db.get(thread.conversationId),
+      foreignIdent: await ctx.db.get(foreign.identityId),
+      foreignConv: await ctx.db.get(foreign.conversationId),
+      contacts: (await ctx.db.query("contacts").collect()).filter((c) => c.organizationId === s.organizationId),
+    }));
+    const fresh = after.configs.find((c) => c.channel === "messenger" && c.organizationId === s.organizationId)!;
+    expect(fresh._id).not.toEqual(messenger._id);
+    expect(after.ident!.channelConfigId).toEqual(fresh._id);
+    expect(after.conv!.channelConfigId).toEqual(fresh._id);
+    expect(after.foreignIdent!.channelConfigId).toEqual(messenger._id);
+    expect(after.foreignConv!.channelConfigId).toEqual(messenger._id);
+    expect(after.contacts).toHaveLength(1);
+  });
+
+  test("com outra conta viva do mesmo canal na org, órfãos não são religados (PSID é por conta)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1, page2] });
+    const { location } = await callback(t, await startState(t, s));
+    const pendingId = decodeURIComponent(location.match(/pendente=([^&]+)/)![1]) as Id<"metaOAuthPending">;
+    const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
+    await asAdmin.action(api.metaMessaging.finalizeMetaSelection, {
+      organizationId: s.organizationId,
+      pendingId,
+      picks: [{ pageId: page1.id, messenger: true, instagram: false }, { pageId: page2.id, messenger: true, instagram: false }],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const cfgs = await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect());
+    const m1 = cfgs.find((c) => c.messengerPageId === page1.id)!;
+    const thread = await seedThread(t, s.organizationId, m1._id, "1000000000000101");
+    await t.run(async (ctx) => {
+      await ctx.db.delete(m1._id);
+    });
+    stubMeta({ pages: [page1] });
+    expect((await callback(t, await startState(t, s))).location).toBe(OK);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const ident = await t.run(async (ctx) => await ctx.db.get(thread.identityId));
+    expect(ident!.channelConfigId).toEqual(m1._id);
+  });
+});
+
+describe("config Instagram órfão não fica roteável (F6)", () => {
+  test("reconectar sem IG desativa o config instagram e limpa o id", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    await callback(t, await startState(t, s));
+    const conn = (await t.run(async (ctx) => await ctx.db.query("metaConnections").collect()))[0];
+    stubMeta({ pages: [{ ...page1, ig: undefined }] });
+    expect((await callback(t, await startState(t, s, conn._id))).location).toBe(OK);
+    const ig = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).find((c) => c.channel === "instagram")!;
+    expect(ig.status).toBe("disabled");
+    expect(ig.instagramAccountId).toBeUndefined();
+    expect(await t.query(internal.metaMessaging.internalGetConfigForMetaAccount, { surface: "instagram", accountId: "1000000000000003" })).toBeNull();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("IG trocado: config novo para a conta nova; o antigo é desativado sem id", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "a");
+    stubMeta({ pages: [page1] });
+    await callback(t, await startState(t, s));
+    const conn = (await t.run(async (ctx) => await ctx.db.query("metaConnections").collect()))[0];
+    const oldIg = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).find((c) => c.channel === "instagram")!;
+    stubMeta({ pages: [{ ...page1, ig: { id: "1000000000000004", username: "marina_dois" } }] });
+    expect((await callback(t, await startState(t, s, conn._id))).location).toBe(OK);
+    const igs = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).filter((c) => c.channel === "instagram");
+    expect(igs).toHaveLength(2);
+    const oldAfter = igs.find((c) => c._id === oldIg._id)!;
+    expect(oldAfter.status).toBe("disabled");
+    expect(oldAfter.instagramAccountId).toBeUndefined();
+    expect(igs.find((c) => c._id !== oldIg._id)).toMatchObject({ status: "active", instagramAccountId: "1000000000000004" });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("dois configs ATIVOS da mesma conta em orgs diferentes: o roteamento descarta", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedOrg(t, "a");
+    const b = await seedOrg(t, "b");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (const organizationId of [a.organizationId, b.organizationId]) {
+        await ctx.db.insert("channelConfigs", { organizationId, channel: "messenger", displayName: "x", status: "active", messengerPageId: page1.id, createdAt: now, updatedAt: now });
+      }
+    });
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await t.query(internal.metaMessaging.internalGetConfigForMetaAccount, { surface: "messenger", accountId: page1.id })).toBeNull();
+      expect(err.mock.calls.join(" ")).not.toContain(page1.id);
+    } finally {
+      err.mockRestore();
+      warn.mockRestore();
+    }
   });
 });

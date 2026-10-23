@@ -520,8 +520,8 @@ describe("Página que muda de organização", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const cfg = await t.query(internal.metaMessaging.internalGetConfigForMetaAccount, { surface: "messenger", accountId: PAGE_A });
-      expect(cfg._id).toEqual(a.messengerId);
-      expect(cfg._id).not.toEqual(old);
+      expect(cfg!._id).toEqual(a.messengerId);
+      expect(cfg!._id).not.toEqual(old);
       expect(warn).toHaveBeenCalled();
       expect(warn.mock.calls.join(" ")).not.toContain(PAGE_A);
     } finally {

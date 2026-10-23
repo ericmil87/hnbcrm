@@ -251,3 +251,28 @@ export function completeConnectionMessage(code: string | undefined): string {
   if (code && COMPLETE_MESSAGES[code]) return COMPLETE_MESSAGES[code];
   return "Não foi possível concluir a conexão com a Meta. Tente novamente em instantes.";
 }
+
+export const FINALIZE_FAILED_TEXT = "Não foi possível concluir a conexão. Tente de novo.";
+export const FINALIZE_WRONG_ORG_HINT =
+  "Troque para a organização em que você iniciou a conexão e tente de novo.";
+
+export interface FinalizeMetaResult {
+  code: string;
+  pendingId?: string;
+}
+
+export type FinalizeAction =
+  | { type: "select"; pendingId: string }
+  | { type: "message"; message: MetaReturnMessage };
+
+/** Decide o que a UI faz com o retorno de `finalizeMetaOAuth`. */
+export function finalizeMetaAction(result: FinalizeMetaResult, reconnecting = false): FinalizeAction {
+  if (result.code === "selecionar") {
+    if (result.pendingId) return { type: "select", pendingId: result.pendingId };
+    return { type: "message", message: { kind: "error", text: FINALIZE_FAILED_TEXT } };
+  }
+  return {
+    type: "message",
+    message: metaReturnMessage(result.code, reconnecting) ?? { kind: "error", text: FINALIZE_FAILED_TEXT },
+  };
+}

@@ -1687,6 +1687,9 @@ export const internalReceiveMessage = internalMutation({
     attachments: v.optional(v.array(v.id("files"))),
     externalId: v.optional(v.string()),
     metadata: v.optional(v.record(v.string(), v.any())),
+    // REST `/receive` em Instagram/Messenger para contato sem identidade na conta: grava, mas não
+    // acorda o atendente (a resposta não teria destinatário).
+    skipAiEnqueue: v.optional(v.boolean()),
   },
   returns: v.union(v.id("messages"), v.null()),
   handler: async (ctx, args) => {
@@ -1862,9 +1865,11 @@ export const internalReceiveMessage = internalMutation({
     // Atendente IA: ENFILEIRA (aiReplyQueue) — nunca inferência direta daqui.
     // O enqueue re-checa elegibilidade (org opt-in, agente, pausa, opt-out…)
     // e é um no-op barato quando a IA está desligada.
-    await ctx.scheduler.runAfter(0, internal.attendant.internalEnqueueFromInbound, {
-      messageId,
-    });
+    if (!args.skipAiEnqueue) {
+      await ctx.scheduler.runAfter(0, internal.attendant.internalEnqueueFromInbound, {
+        messageId,
+      });
+    }
 
     return messageId;
   },

@@ -628,6 +628,20 @@ export const deleteChannelConfig = mutation({
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
 
+    // Meta Messaging: as conversas (e as identidades PSID/IGSID) apontam para ESTE config; excluir
+    // com histórico deixa tudo órfão e a reconexão duplicaria contatos. Desconectar preserva.
+    if (config.channel === "instagram" || config.channel === "messenger") {
+      const hasConversation = await ctx.db
+        .query("conversations")
+        .withIndex("by_organization_and_channel_config", (q) =>
+          q.eq("organizationId", config.organizationId).eq("channelConfigId", config._id)
+        )
+        .first();
+      if (hasConversation) {
+        throw new ConvexError("Este canal tem conversas. Use Desconectar; Excluir só é permitido sem histórico.");
+      }
+    }
+
     // Encerra a sessão no gateway ANTES de perder as credenciais com a linha.
     //
     // Sem isto a instância continua logada e recebendo eventos para sempre: ela

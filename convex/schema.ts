@@ -1232,6 +1232,10 @@ const applicationTables = {
     returnPath: v.string(),
     expiresAt: v.number(),
     usedAt: v.optional(v.number()),
+    // F6: o callback só guarda o `code` (cifrado, `encryptSecret`) e troca o `nonceHash` por um
+    // nonce novo que só o navegador do callback recebe; a action autenticada finaliza e apaga.
+    codeEncrypted: v.optional(v.string()),
+    codeReceivedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_nonce_hash", ["nonceHash"])

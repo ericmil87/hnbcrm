@@ -5,13 +5,15 @@ app na Meta até a primeira mensagem no inbox. Decisões técnicas e histórico:
 
 ## 1. O que existe hoje e o que ainda não
 
-| Já funciona (F0) | Ainda não (próximas fases) |
+| Funciona (0.71.0) | Ainda não (próximas entregas) |
 |---|---|
-| Ligar o módulo por organização (desligado por padrão) | Responder pelo inbox (F1): uma resposta enviada numa conversa de Instagram/Messenger fica marcada como **falha** com aviso |
-| Conectar uma Página do Facebook e a conta do Instagram vinculada a ela, num login só | Mídia (fotos, áudios, vídeos, arquivos) e tipos ricos (F2): hoje entram como `[imagem]`, `[menção em story]`… |
-| Mensagens de **texto** chegando no inbox, com contato e lead criados | Atendente de IA nesses canais (F3) |
-| Selo de origem na lista de conversas (ícone do canal) | Saúde da conexão, alerta e botão Reconectar (F4) |
-| Desconectar / Excluir o canal | API REST, MCP e callbacks de exclusão de dados da Meta (F5) |
+| Ligar o módulo por organização (desligado por padrão) | Clientes finais sem papel no app Meta: exige **App Review** (Advanced Access) |
+| Conectar uma Página do Facebook e a conta do Instagram vinculada, num login só; Reconectar, Concluir conexão, Testar conexão | Instagram sem Página (Instagram Login) |
+| Receber texto, fotos, áudios (transcritos), vídeos, arquivos, stories, posts, curtidas; apagada/editada; reações | Tag HUMAN_AGENT (7 dias para humano) |
+| Responder pelo inbox (texto e anexos) dentro da janela da Meta; entregue/lida; respostas pelo Business Suite/app aparecem | Vínculo manual da mesma pessoa em canais diferentes |
+| Atendente IA nos dois canais (texto puro, janela com margem, follow-up com opt-out) | Áudio gravado no navegador (webm) enviado ao Instagram |
+| Saúde diária da credencial, alerta e webhook de canal degradado; avatar e estatísticas por conta | Reações de saída no Messenger (a Meta não tem API) |
+| API REST/MCP, callbacks de desautorização/exclusão, Privacidade e Termos | |
 
 Campanhas, grupos, templates e "Nova conversa" continuam exclusivos do WhatsApp.
 
@@ -162,16 +164,16 @@ npx convex data channelConfigs        # canais instagram/messenger com messenger
 ## 6. Desconectar, excluir, desligar o módulo
 - **Desconectar**: revoga a credencial, desativa os dois canais da Página (Messenger e Instagram) e libera a Página para outra
   organização. Conversas e contatos ficam. Reconectar (F4) reaproveita os mesmos canais.
-- **Excluir**: apaga o canal; a credencial é apagada quando o último canal da Página sai.
+- **Excluir**: apaga o canal (só permitido sem conversas; com histórico, use Desconectar, para não duplicar contatos numa reconexão); a credencial é apagada quando o último canal da Página sai.
 - **Desligar o módulo**: desativa todos os canais Meta da organização (a tela pede confirmação: mensagens recebidas nesse
   período **não** entram no HNBCRM). Religar reativa só os canais que o módulo desativou, se a credencial ainda estiver ok.
   Desconectar e Excluir funcionam mesmo com o módulo desligado.
 - Revogar o HNBCRM nas configurações do Facebook do usuário, trocar a senha ou perder o papel na Página invalida a credencial:
-  até a F4 isso não gera alerta; o sintoma é envio/perfil falhando com erro 190 nos logs.
+  o cron diário de saúde e o erro 190 no envio marcam a conexão como "Precisa reconectar", com alerta no sino, e-mail e webhook; o card oferece Reconectar.
 
-## 7. Monitoramento manual até a F4 (sem saúde automática nem Reconectar)
+## 7. Monitoramento manual (complementa a saúde automática diária)
 
-Até a F4 não há verificação diária da credencial, alerta nem botão Reconectar. O que fazer à mão:
+A verificação diária (`debug_token`, 09:30 UTC), o alerta e o botão Reconectar existem desde a 0.71.0. O que ainda vale conferir à mão:
 
 - **Sintoma de credencial morta** (senha trocada, app revogado em facebook.com/settings > Integrações comerciais, papel na
   Página perdido, Página desvinculada do portfólio): envios passam a falhar com "Este canal precisa ser reconectado" e o card
@@ -185,7 +187,7 @@ Até a F4 não há verificação diária da credencial, alerta nem botão Recone
   ```
   (o token da Página só sai do banco cifrado; para o `debug_token` gere um no Dashboard, em Casos de uso > Messenger > Gere
   tokens de acesso, e descarte depois.)
-- **Como reconectar à mão**: Configurações > Canais > **Desconectar** o canal e **Conectar** de novo pela opção
+- **Como reconectar**: botão **Reconectar** no card (mesma conta da Meta, mesma Página). Alternativa: **Desconectar** e **Conectar** de novo pela opção
   "Instagram / Facebook Messenger (oficial)" com a MESMA conta da Meta. Conversas, contatos e leads ficam; a conexão
   nova reaproveita os canais da Página (índice por conexão).
 - **`data_access_expires_at`** (~90 dias): quando faltar menos de 14 dias, reconectar à mão pelo mesmo caminho.

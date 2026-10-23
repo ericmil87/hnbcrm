@@ -253,6 +253,36 @@ describe("internalHealthTick", () => {
     await cancelPendingJobs(t);
   });
 
+  test("canais desligados (módulo off ou manual): grava o estado sem sino/e-mail/webhook; religado, o próximo tick avisa", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t, { webhook: true });
+    const c = await seedConnection(t, org, 1);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(c.messengerId, { status: "disabled", disabledByModuleAt: Date.now() });
+      await ctx.db.patch(c.instagramId, { status: "disabled" });
+    });
+    stubDebug({ "tok-1": { is_valid: false } });
+    await tick(t);
+    const conn = await t.run((ctx) => ctx.db.get(c.connectionId));
+    expect(conn?.authState).toBe("reauth_required");
+    expect(conn?.authAlertedAt).toBeUndefined();
+    const silent = await counts(t, c.connectionId);
+    expect(silent).toMatchObject({ notifications: 0, audits: 0 });
+    expect(silent.hooks).toHaveLength(0);
+    const emails = await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) => j.name.includes("dispatchNotification")).length
+    );
+    expect(emails).toBe(0);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(c.messengerId, { status: "active", disabledByModuleAt: undefined });
+    });
+    await tick(t);
+    const after = await counts(t, c.connectionId);
+    expect(after.notifications).toBe(1);
+    await cancelPendingJobs(t);
+  });
+
   test("escopo de mensagens ausente: reauth_required", async () => {
     const t = convexTest(schema, modules);
     const org = await seedOrg(t);
