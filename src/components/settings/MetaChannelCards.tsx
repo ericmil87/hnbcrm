@@ -7,6 +7,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { Modal } from "@/components/ui/Modal";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { channelIcon, channelLabel } from "@/lib/channelAccounts";
 import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
@@ -19,6 +20,8 @@ import {
   metaCardView,
   metaConnectionState,
   completeConnectionMessage,
+  deleteWithHistoryText,
+  hasConversationsCount,
   safeSession,
   verifiedAgoLabel,
   type MetaAuthState,
@@ -59,6 +62,10 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
   const disconnect = useMutation(api.metaMessaging.disconnectMetaConnection);
   const deleteConfig = useMutation(api.channelConfigs.deleteChannelConfig);
   const [pending, setPending] = useState<Pending>(null);
+  const [withHistory, setWithHistory] = useState<{
+    configId: Id<"channelConfigs">;
+    conversations: number;
+  } | null>(null);
 
   const groups = groupMetaConfigs(configs);
 
@@ -71,12 +78,37 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
         error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
       });
     } else {
-      toast.promise(deleteConfig({ configId: pending.configId }), {
-        loading: "Excluindo canal...",
-        success: "Canal excluído",
-        error: (e) => mutationErrorMessage(e, "Não foi possível excluir o canal"),
-      });
+      void deleteChannel(pending.configId);
     }
+  };
+
+  const deleteChannel = async (configId: Id<"channelConfigs">, force = false) => {
+    const toastId = toast.loading("Excluindo canal...");
+    try {
+      await deleteConfig(force ? { configId, force: true } : { configId });
+      toast.success("Canal excluído", { id: toastId });
+    } catch (error) {
+      const conversations = hasConversationsCount(error);
+      if (conversations !== null && !force) {
+        toast.dismiss(toastId);
+        setWithHistory({ configId, conversations });
+      } else {
+        toast.error(mutationErrorMessage(error, "Não foi possível excluir o canal"), { id: toastId });
+      }
+    }
+  };
+
+  const historyConnectionId =
+    (withHistory && configs.find((c) => c._id === withHistory.configId)?.metaConnectionId) || null;
+
+  const disconnectInstead = () => {
+    if (!historyConnectionId) return;
+    toast.promise(disconnect({ organizationId, connectionId: historyConnectionId }), {
+      loading: "Desconectando...",
+      success: "Página desconectada",
+      error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
+    });
+    setWithHistory(null);
   };
 
   return (
@@ -112,6 +144,45 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
         confirmLabel={pending?.kind === "disconnect" ? "Desconectar" : "Excluir"}
         variant="danger"
       />
+
+      <Modal
+        open={withHistory !== null}
+        onClose={() => setWithHistory(null)}
+        title="Excluir canal com histórico?"
+      >
+        <div className="space-y-4">
+          <div className="flex gap-3">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-semantic-error/10">
+              <AlertTriangle size={20} className="text-semantic-error" aria-hidden="true" />
+            </div>
+            <p className="pt-2 text-sm leading-relaxed text-text-secondary">
+              {deleteWithHistoryText(withHistory?.conversations ?? 0)}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 pt-2">
+            {historyConnectionId && (
+              <Button variant="secondary" onClick={disconnectInstead} className="min-h-[44px] w-full">
+                <Link2Off size={14} />
+                Desconectar em vez disso
+              </Button>
+            )}
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (withHistory) void deleteChannel(withHistory.configId, true);
+                setWithHistory(null);
+              }}
+              className="min-h-[44px] w-full"
+            >
+              <Trash2 size={14} />
+              Excluir mesmo assim
+            </Button>
+            <Button variant="ghost" onClick={() => setWithHistory(null)} className="min-h-[44px] w-full">
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

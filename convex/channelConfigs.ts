@@ -620,25 +620,35 @@ export const setChannelConfigStatus = mutation({
 
 // Delete a channel config
 export const deleteChannelConfig = mutation({
-  args: { configId: v.id("channelConfigs") },
+  args: { configId: v.id("channelConfigs"), force: v.optional(v.boolean()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) throw new Error("Channel config not found");
 
     const userMember = await requirePermission(ctx, config.organizationId, "settings", "manage");
+    let forcedConversations: number | undefined;
 
     // Meta Messaging: as conversas (e as identidades PSID/IGSID) apontam para ESTE config; excluir
     // com histórico deixa tudo órfão e a reconexão duplicaria contatos. Desconectar preserva.
     if (config.channel === "instagram" || config.channel === "messenger") {
-      const hasConversation = await ctx.db
+      // Contagem limitada: o front só precisa de uma ordem de grandeza para confirmar.
+      const convs = await ctx.db
         .query("conversations")
         .withIndex("by_organization_and_channel_config", (q) =>
           q.eq("organizationId", config.organizationId).eq("channelConfigId", config._id)
         )
-        .first();
-      if (hasConversation) {
-        throw new ConvexError("Este canal tem conversas. Use Desconectar; Excluir só é permitido sem histórico.");
+        .take(1000);
+      if (convs.length > 0) {
+        if (!args.force) {
+          throw new ConvexError({
+            code: "has_conversations",
+            conversations: convs.length,
+            message: "Este canal tem conversas. Use Desconectar ou confirme a exclusão.",
+          });
+        }
+        // Forçado: as conversas ficam com channelConfigId morto até a reconexão religá-las.
+        forcedConversations = convs.length;
       }
     }
 
@@ -711,6 +721,7 @@ export const deleteChannelConfig = mutation({
         name: config.displayName,
         channel: config.channel,
         ...(config.channel !== "whatsapp" ? { metaConnectionDeleted } : {}),
+        ...(forcedConversations !== undefined ? { forced: true, conversations: forcedConversations } : {}),
         ...(config.channel === "whatsapp"
           ? {
               provider: configProvider(config),

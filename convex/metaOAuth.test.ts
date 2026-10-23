@@ -797,10 +797,22 @@ describe("excluir e reconectar canal Meta (F6)", () => {
     const messenger = (await t.run(async (ctx) => await ctx.db.query("channelConfigs").collect())).find((c) => c.channel === "messenger")!;
     await seedThread(t, s.organizationId, messenger._id, "1000000000000101");
     const asAdmin = t.withIdentity({ subject: `${s.adminUserId}|s1` });
-    await expect(asAdmin.mutation(api.channelConfigs.deleteChannelConfig, { configId: messenger._id })).rejects.toThrow(
-      "Este canal tem conversas. Use Desconectar; Excluir só é permitido sem histórico."
-    );
+    const err = await asAdmin
+      .mutation(api.channelConfigs.deleteChannelConfig, { configId: messenger._id })
+      .then(() => null, (e: unknown) => (e as { data?: unknown }).data);
+    // convex-test entrega `data` serializado; o runtime real entrega o objeto.
+    const data = (typeof err === "string" ? JSON.parse(err) : err) as { code?: string; conversations?: number };
+    expect(data.code).toBe("has_conversations");
+    expect(data.conversations).toBe(1);
     expect(await t.run(async (ctx) => await ctx.db.get(messenger._id))).not.toBeNull();
+
+    // Com force: exclui e audita forced + contagem.
+    await asAdmin.mutation(api.channelConfigs.deleteChannelConfig, { configId: messenger._id, force: true });
+    expect(await t.run(async (ctx) => await ctx.db.get(messenger._id))).toBeNull();
+    const audit = (await t.run(async (ctx) => await ctx.db.query("auditLogs").collect())).find(
+      (l) => l.action === "delete" && l.entityId === messenger._id
+    );
+    expect(audit?.metadata).toMatchObject({ forced: true, conversations: 1 });
   });
 
   test("config apagado no passado: reconectar religa identidades e conversas órfãs ao config novo", async () => {

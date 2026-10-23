@@ -276,3 +276,25 @@ export function finalizeMetaAction(result: FinalizeMetaResult, reconnecting = fa
     message: metaReturnMessage(result.code, reconnecting) ?? { kind: "error", text: FINALIZE_FAILED_TEXT },
   };
 }
+
+/**
+ * Lê o `data` de um erro de `deleteChannelConfig`: devolve o número de conversas
+ * quando o backend recusou por `has_conversations`, ou null para qualquer outro erro.
+ */
+export function hasConversationsCount(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const data = (error as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) return null;
+  const { code, conversations } = data as { code?: unknown; conversations?: unknown };
+  if (code !== "has_conversations") return null;
+  return typeof conversations === "number" && Number.isFinite(conversations) && conversations >= 0
+    ? conversations
+    : 0;
+}
+
+/** Texto do diálogo de exclusão de canal com histórico. */
+export function deleteWithHistoryText(conversations: number): string {
+  const one = conversations === 1;
+  const noun = one ? "1 conversa" : `${conversations} conversas`;
+  return `Este canal tem ${noun}. ${one ? "Ela continua visível" : "Elas continuam visíveis"} na Caixa de Entrada, mas não será possível responder por ${one ? "ela" : "elas"} até conectar esta conta de novo (a reconexão religa as conversas). Para só pausar, use Desconectar.`;
+}

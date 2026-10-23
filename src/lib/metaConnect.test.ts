@@ -7,6 +7,8 @@ import {
   finalizeMetaAction,
   expiringDays,
   groupMetaConfigs,
+  deleteWithHistoryText,
+  hasConversationsCount,
   humanizeAuthDetail,
   metaCardView,
   metaConnectionState,
@@ -158,6 +160,28 @@ describe("card health helpers", () => {
 
   it("offers no action when disabled by the module", () => {
     expect(metaCardView({ ...base, disabledByModuleAt: 1, metaSubscribed: false }, NOW).action).toBeNull();
+  });
+});
+
+describe("hasConversationsCount", () => {
+  it("reads the conversation count from a has_conversations error", () => {
+    expect(hasConversationsCount({ data: { code: "has_conversations", conversations: 12 } })).toBe(12);
+    expect(hasConversationsCount({ data: { code: "has_conversations" } })).toBe(0);
+  });
+  it("returns null for other errors", () => {
+    expect(hasConversationsCount({ data: "Sem permissão" })).toBeNull();
+    expect(hasConversationsCount({ data: { code: "other" } })).toBeNull();
+    expect(hasConversationsCount(new Error("x"))).toBeNull();
+    expect(hasConversationsCount(null)).toBeNull();
+    expect(hasConversationsCount(undefined)).toBeNull();
+  });
+});
+
+describe("deleteWithHistoryText", () => {
+  it("mentions the count and the Desconectar alternative", () => {
+    expect(deleteWithHistoryText(5)).toContain("Este canal tem 5 conversas. Elas continuam visíveis");
+    expect(deleteWithHistoryText(5)).toContain("use Desconectar.");
+    expect(deleteWithHistoryText(1)).toContain("1 conversa. Ela continua");
   });
 });
 
