@@ -326,8 +326,15 @@ export function messageLineText(m: {
   transcriptText?: string;
   imageDescription?: string;
   fileName?: string;
+  /** F4: mime of the first attachment (a video travels as `file`). */
+  fileMime?: string;
+  sticker?: boolean;
 }): string {
   const caption = m.content?.trim() ?? "";
+  if (m.sticker) return "[figurinha]";
+  if (m.fileMime?.toLowerCase().startsWith("video/")) {
+    return caption && caption !== m.fileName ? `🎬 vídeo (abrir no CRM) ${caption}` : "🎬 vídeo (abrir no CRM)";
+  }
   if (m.contentType === "image") return caption ? `[imagem] ${caption}` : "[imagem]";
   if (m.contentType === "audio") {
     return m.transcriptText ? `[áudio: ${m.transcriptText.trim()}]` : "[áudio]";
@@ -682,14 +689,26 @@ export function quoteSnippet(text: string, max = 120): string {
  * Cancelar envio (`vc:`). Used for AI drafts and for the member's own reply
  * in automatic mode.
  */
-export function buildCountdownCard(ctx: CardContext, text: string, seconds: number, cancelId: string): CardOutput {
+export function buildCountdownCard(
+  ctx: CardContext,
+  text: string,
+  seconds: number,
+  cancelId: string,
+  attachment?: DraftAttachmentLine,
+  /** Review F4 #5: the member's OWN reply (text or file) — nothing to regenerate. */
+  origin: "ai" | "human" = "ai",
+): CardOutput {
   const conv = ctx.conversation?.id ?? "0";
   const body = ctx.discreet ? safe(text, true) : escapeHtml(stripEmails(text));
   return {
     text:
       `⏳ Enviando em ${seconds} s → <b>${escapeHtml(leadName(ctx))}</b> (${channelLabel(ctx.conversation?.channel)})\n` +
-      `<blockquote expandable>${body}</blockquote>`,
-    keyboard: [[cb("🔁 Regenerar", "rg", conv), cb("✖ Cancelar envio", "vc", cancelId)]],
+      (attachment ? `${attachmentLine(attachment)}\n` : "") +
+      (text.trim() ? `<blockquote expandable>${body}</blockquote>` : ""),
+    keyboard:
+      origin === "human"
+        ? [[cb("✖ Cancelar envio", "vc", cancelId)]]
+        : [[cb("🔁 Regenerar", "rg", conv), cb("✖ Cancelar envio", "vc", cancelId)]],
     focus: focusOf(ctx),
   };
 }
@@ -712,17 +731,32 @@ export function buildPrompt(kind: PromptKind, ctx: CardContext): CardOutput {
     };
   }
   return {
-    text: `💬 Escreva a mensagem para ${name} (${channelLabel(ctx.conversation?.channel)}):`,
+    text: `💬 Escreva, grave ou mande um arquivo para ${name} (${channelLabel(ctx.conversation?.channel)}):`,
     keyboard: [[cb("✖ Cancelar", "cp", conv)]],
   };
 }
 
-export function buildReplyPreview(ctx: CardContext, text: string): CardOutput {
+/** F4 (§4.5): the attachment line of a preview/countdown/record ("📄 contrato.pdf · 3,1 MB"). */
+export type DraftAttachmentLine = { name: string; size: number; kind: "photo" | "voice" | "audio" | "document" };
+export function attachmentLine(a: DraftAttachmentLine): string {
+  const icon = a.kind === "document" ? "📄" : a.kind === "photo" ? "📎" : "🎙";
+  return `${icon} ${escapeHtml(a.name)} · ${sizeLabel(a.size)}`;
+}
+function sizeLabel(bytes: number): string {
+  const MB = 1024 * 1024;
+  const one = (n: number) => (Math.round(n * 10) / 10).toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+  if (bytes >= MB) return `${one(bytes / MB)} MB`;
+  if (bytes >= 1024) return `${one(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
+export function buildReplyPreview(ctx: CardContext, text: string, attachment?: DraftAttachmentLine): CardOutput {
   const conv = ctx.conversation?.id ?? "0";
   return {
     text:
       `Enviar para <b>${escapeHtml(leadName(ctx))}</b> no ${channelLabel(ctx.conversation?.channel)}?\n` +
-      `<blockquote expandable>${escapeHtml(text)}</blockquote>`,
+      (attachment ? `${attachmentLine(attachment)}\n` : "") +
+      (text.trim() ? `<blockquote expandable>${escapeHtml(text)}</blockquote>` : ""),
     keyboard: [[cb("📤 Enviar", "ps", conv), cb("✖ Cancelar", "cp", conv)]],
   };
 }

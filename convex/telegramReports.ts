@@ -547,6 +547,8 @@ const chunksValidator = v.object({
   chunks: v.array(v.string()),
   keyboard: keyboardValidator,
   protectContent: v.boolean(),
+  /** F4 (D25): pacing slot already claimed (send at it without claiming again). */
+  slotAt: v.optional(v.number()),
 });
 type Chunks = {
   organizationId: Id<"organizations">;
@@ -555,10 +557,26 @@ type Chunks = {
   chunks: string[];
   keyboard: CardKeyboard;
   protectContent: boolean;
+  slotAt?: number;
 };
 
 async function deliverChunks(ctx: ActionCtx, r: Chunks, attempt: number): Promise<void> {
   if (r.chunks.length === 0) return;
+  // F4 (D25): one pacing claim; a future slot reschedules AT it (no second claim).
+  if (r.slotAt === undefined) {
+    const now = Date.now();
+    const { sendAt }: { sendAt: number } = await ctx.runMutation(internal.telegramQuota.internalClaimTelegramSendSlot, {
+      chatId: r.chatId,
+      now,
+    });
+    if (sendAt > now + 30) {
+      await ctx.scheduler.runAt(sendAt, internal.telegramReports.internalDeliverReportChunks, {
+        report: { ...r, slotAt: sendAt },
+        attempt,
+      });
+      return;
+    }
+  }
   const res = await sendMessageChunks({
     chatId: r.chatId,
     chunks: r.chunks,
@@ -584,7 +602,7 @@ async function deliverChunks(ctx: ActionCtx, r: Chunks, attempt: number): Promis
   if (res.kind === "rate_limited" && attempt < MAX_SEND_ATTEMPTS) {
     const delayMs = Math.min(Math.max(res.retryAfterSeconds ?? 1, 1), 300) * 1000;
     await ctx.scheduler.runAfter(delayMs, internal.telegramReports.internalDeliverReportChunks, {
-      report: { ...r, chunks: r.chunks.slice(res.sentCount) },
+      report: { ...r, chunks: r.chunks.slice(res.sentCount), slotAt: undefined },
       attempt: attempt + 1,
     });
   }

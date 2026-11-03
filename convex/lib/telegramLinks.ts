@@ -11,6 +11,7 @@ import { isMembershipRevoked } from "./auth";
 import { modulesOf } from "./orgModules";
 import { resolvePermissions, type Permissions, type Role } from "./permissions";
 import type { CleanupReason } from "./telegramCore";
+import { discardChatPromptForOrg } from "./telegramDrafts";
 
 export type RevokeReason = CleanupReason | "relinked";
 
@@ -80,6 +81,8 @@ export async function revokeTelegramLink(
   if (link.status === "revoked") return;
   const now = opts.now ?? Date.now();
   await ctx.db.patch(link._id, { status: "revoked", revokedAt: now, revokedReason: reason });
+  // F4 (review #2): a file draft of this org in the chat must not outlive the link.
+  await discardChatPromptForOrg(ctx, link.chatId, link.organizationId, now);
   if (opts.audit !== false) {
     await ctx.db.insert("auditLogs", {
       organizationId: link.organizationId,

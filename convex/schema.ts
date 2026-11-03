@@ -3451,6 +3451,19 @@ const applicationTables = {
         organizationId: v.optional(v.id("organizations")),
         // F1 "Responder": texto pendente que só sai no toque em Enviar.
         draftText: v.optional(v.string()),
+        // F4 (D25): arquivo que o membro mandou no "Responder" — já no storage
+        // (porta do inbound) e com a cota reservada; sai junto no Enviar.
+        draftAttachments: v.optional(
+          v.array(
+            v.object({
+              fileId: v.id("files"),
+              name: v.string(),
+              size: v.number(),
+              kind: v.union(v.literal("photo"), v.literal("voice"), v.literal("audio"), v.literal("document")),
+              quota: v.object({ linkId: v.id("telegramLinks"), dayKey: v.string(), hourStart: v.optional(v.number()) }),
+            })
+          )
+        ),
       })
     ), // F1
     keyboardShown: v.optional(v.boolean()),
@@ -3523,6 +3536,7 @@ const applicationTables = {
             fileId: v.string(),
             fileSize: v.optional(v.number()),
             mimeType: v.optional(v.string()),
+            fileName: v.optional(v.string()), // F4: documento/áudio
           })
         ),
       })
@@ -3545,7 +3559,9 @@ const applicationTables = {
       v.literal("copilot"),
       v.literal("prompt"),
       v.literal("auto_record"),
-      v.literal("draft")
+      v.literal("draft"),
+      // F4 (D21): foto/voz/documento enviados logo depois de um cartão.
+      v.literal("media")
     ),
     draft: v.optional(
       v.object({
@@ -3569,9 +3585,16 @@ const applicationTables = {
     taskId: v.optional(v.id("tasks")),
     // F1: mensagem do CRM espelhada (relay da IA) — dedupe "um relay por mensagem".
     crmMessageId: v.optional(v.id("messages")),
+    // F4: mensagem do CRM ENVIADA a partir deste cartão (Responder/rascunho) —
+    // a falha do dispatch edita o cartão para "✗ Falhou" e devolve a cota.
+    sentCrmMessageId: v.optional(v.id("messages")),
+    // F4: o blob que esta mensagem de mídia levou ("Ver tudo" não reenvia o mesmo arquivo).
+    mediaStorageId: v.optional(v.string()),
+    fileQuota: v.optional(v.object({ bytes: v.number(), dayKey: v.string(), hourStart: v.optional(v.number()) })),
     sentAt: v.number(),
   })
     .index("by_notification", ["notificationId"])
+    .index("by_sent_crm_message", ["sentCrmMessageId"])
     // F1: o callback acha o cartão tocado (chat + message_id do Telegram).
     .index("by_chat_and_message", ["chatId", "messageId"])
     .index("by_handoff", ["handoffId"])

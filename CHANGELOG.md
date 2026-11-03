@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.77.0] - 2026-11-03
+
+### Copiloto no Telegram — fotos, áudios e arquivos nos dois sentidos, com limites
+
+- **Do cliente para o Telegram:** nos cartões de mensagem e nos relays, a foto do cliente chega como foto (até 5 MB), o áudio como transcrição mais a nota de voz (até 20 MB) e o documento como arquivo (até 20 MB); acima disso, ou em vídeo, uma linha com link para abrir no CRM.
+- **Do Telegram para o cliente:** ao responder pelo bot você pode mandar foto, nota de voz ou arquivo (PDF, Office, CSV, TXT, ZIP; até 20 MB) com legenda; o anexo entra no rascunho e sai pelo mesmo caminho das mensagens do CRM (respeita a janela e os limites do canal). Vídeo continua fora ("mande pelo CRM ou pelo WhatsApp").
+- **Limites para não levar bloqueio nem inundar o servidor:** por pessoa 30 arquivos por hora e 150 MB por dia, por organização 500 arquivos por dia; o bot avisa quando bate ("libera às 15:00") e nada é descartado em silêncio. Envios do bot respeitam 1 mensagem por segundo por chat e um teto global por deployment, reagendando em vez de estourar.
+
 ## [0.76.0] - 2026-11-03
 
 ### Copiloto no Telegram — fale com a IA por texto e voz, com a conversa em foco; modos Sugestão e Automático; envio com veto

@@ -266,10 +266,12 @@ describe("onboarding D24", () => {
     const report = jobs.find((j) => j.name.includes("internalSendReport"));
     expect(report?.args[0]).toEqual({ linkId, kind: "morning", trigger: "command" });
     calls = [];
+    // F4 pacing: draining may run a later message 1 s ahead, so pin the tap time.
+    const tappedAt = Date.now();
     await tap(CHAT_ADMIN, 321, "ob:done");
     const link = await linkOf(linkId);
     expect(link?.onboarding?.step).toBe(4);
-    expect(link?.onboarding?.doneAt).toBe(Date.now());
+    expect(link?.onboarding?.doneAt).toBe(tappedAt);
     expect(edited()[0].body.reply_markup).toEqual({ inline_keyboard: [] });
     const [final] = sends(CHAT_ADMIN);
     expect(final.body.text).toBe("Pronto. Quando chegar algo, eu te aviso aqui.");

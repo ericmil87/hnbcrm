@@ -63,6 +63,30 @@ export async function callTelegram<T = unknown>(
   params: Record<string, unknown> = {},
   opts: TelegramCallOptions = {},
 ): Promise<TelegramResult<T>> {
+  return await postTelegram<T>(
+    method,
+    { headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) },
+    opts,
+  );
+}
+
+/**
+ * F4: multipart upload (documents/audio keep their real file name, which a URL
+ * send cannot set). Same outcome contract and logging rules as `callTelegram`.
+ */
+export async function callTelegramMultipart<T = unknown>(
+  method: string,
+  form: FormData,
+  opts: TelegramCallOptions = {},
+): Promise<TelegramResult<T>> {
+  return await postTelegram<T>(method, { body: form }, opts);
+}
+
+async function postTelegram<T>(
+  method: string,
+  init: { headers?: Record<string, string>; body: string | FormData },
+  opts: TelegramCallOptions,
+): Promise<TelegramResult<T>> {
   const token = opts.token ?? process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
     console.warn(`[telegram] TELEGRAM_BOT_TOKEN ausente; chamada ignorada: ${method}`);
@@ -74,8 +98,8 @@ export async function callTelegram<T = unknown>(
   try {
     const response = await fetch(`${API_BASE}/bot${token}/${method}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
+      ...(init.headers ? { headers: init.headers } : {}),
+      body: init.body,
       signal: controller.signal,
     });
     try {
@@ -360,4 +384,91 @@ export async function downloadTelegramFile(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// F4 (D21): files to the chat, by a storage URL or as an upload
+// ---------------------------------------------------------------------------
+
+/** Bot API caption limit (after entity parsing). */
+export const TELEGRAM_CAPTION_LIMIT = 1024;
+
+export type SendFileArgs = {
+  chatId: number;
+  /** Storage URL (`ctx.storage.getUrl`; it does not expire by itself). Never a `file_id` from another bot. */
+  url: string;
+  /** Already-escaped HTML caption (clipped to the Bot API limit here). */
+  caption?: string;
+  /** Documents: the name Telegram shows. */
+  fileName?: string;
+  protectContent?: boolean;
+  replyMarkup?: ReplyMarkup;
+};
+
+const FILE_METHODS = {
+  photo: ["sendPhoto", "photo"],
+  voice: ["sendVoice", "voice"],
+  audio: ["sendAudio", "audio"],
+  document: ["sendDocument", "document"],
+} as const;
+export type TelegramFileKind = keyof typeof FILE_METHODS;
+
+/**
+ * `sendPhoto` / `sendVoice` / `sendAudio` / `sendDocument` by URL. Telegram
+ * fetches the URL itself (photo ≤ 5 MB, others ≤ 20 MB); a URL it cannot
+ * fetch comes back as `bad_request` and the caller falls back to a link line.
+ */
+export async function sendFile(
+  kind: TelegramFileKind,
+  args: SendFileArgs,
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<SentMessage>> {
+  const [method, field] = FILE_METHODS[kind];
+  const caption = args.caption ? clipCaption(args.caption) : undefined;
+  return await callTelegram<SentMessage>(
+    method,
+    {
+      chat_id: args.chatId,
+      [field]: args.url,
+      ...(caption ? { caption, parse_mode: "HTML" } : {}),
+      ...(args.protectContent ? { protect_content: true } : {}),
+      ...(args.replyMarkup ? { reply_markup: args.replyMarkup } : {}),
+    },
+    { timeoutMs: 30_000, ...opts },
+  );
+}
+/**
+ * Upload variant: the bytes go in the request so Telegram shows `fileName`
+ * (documents, audio). The caller read the blob from storage (≤ 20 MB).
+ */
+export async function sendFileUpload(
+  kind: TelegramFileKind,
+  args: Omit<SendFileArgs, "url"> & { blob: Blob; fileName: string },
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<SentMessage>> {
+  const [method, field] = FILE_METHODS[kind];
+  const form = new FormData();
+  form.append("chat_id", String(args.chatId));
+  form.append(field, args.blob, args.fileName);
+  const caption = args.caption ? clipCaption(args.caption) : undefined;
+  if (caption) {
+    form.append("caption", caption);
+    form.append("parse_mode", "HTML");
+  }
+  if (args.protectContent) form.append("protect_content", "true");
+  if (args.replyMarkup) form.append("reply_markup", JSON.stringify(args.replyMarkup));
+  return await callTelegramMultipart<SentMessage>(method, form, { timeoutMs: 60_000, ...opts });
+}
+
+export const sendPhoto = (a: SendFileArgs, o?: TelegramCallOptions) => sendFile("photo", a, o);
+export const sendVoice = (a: SendFileArgs, o?: TelegramCallOptions) => sendFile("voice", a, o);
+export const sendAudio = (a: SendFileArgs, o?: TelegramCallOptions) => sendFile("audio", a, o);
+export const sendDocument = (a: SendFileArgs, o?: TelegramCallOptions) => sendFile("document", a, o);
+
+/** Clips an HTML caption to the limit without cutting an entity or leaving a tag open (plain fallback). */
+function clipCaption(html: string): string {
+  if (html.length <= TELEGRAM_CAPTION_LIMIT) return html;
+  const plain = htmlToPlainText(html);
+  const cut = plain.slice(0, TELEGRAM_CAPTION_LIMIT - 1).trimEnd() + "…";
+  return cut.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

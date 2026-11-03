@@ -20,25 +20,29 @@ import {
 } from "./telegramNotifications";
 import { maskDigitRuns } from "./telegramFormat";
 import { wrapUntrustedJson } from "./promptEnvelope";
+import { isSticker } from "./mediaEnrichment";
 
 type Db = QueryCtx["db"];
 
 const HISTORY_SIZE = 10;
 
-async function firstFileName(db: Db, m: Doc<"messages">): Promise<string | undefined> {
+async function firstFile(db: Db, m: Doc<"messages">): Promise<Doc<"files"> | null> {
   const fileId = m.attachments?.[0];
-  if (!fileId) return undefined;
+  if (!fileId) return null;
   const file = await db.get(fileId);
-  return file && file.organizationId === m.organizationId ? file.name : undefined;
+  return file && file.organizationId === m.organizationId ? file : null;
 }
 
 export async function messageText(db: Db, m: Doc<"messages">): Promise<string> {
+  const file = m.contentType === "file" ? await firstFile(db, m) : null;
   return messageLineText({
     content: m.content,
     contentType: m.contentType,
     transcriptText: m.transcriptText,
     imageDescription: m.imageDescription,
-    fileName: m.contentType === "file" ? await firstFileName(db, m) : undefined,
+    fileName: file?.name,
+    fileMime: file?.mimeType,
+    sticker: isSticker(m.metadata as Record<string, unknown> | undefined),
   });
 }
 

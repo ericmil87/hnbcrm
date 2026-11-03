@@ -105,6 +105,8 @@ export type ParsedMedia = {
   fileId: string;
   fileSize?: number;
   mimeType?: string;
+  /** F4: Telegram's file name (documents, audio). */
+  fileName?: string;
 };
 
 function mediaOf(message: Record<string, unknown>): ParsedMedia | undefined {
@@ -114,7 +116,14 @@ function mediaOf(message: Record<string, unknown>): ParsedMedia | undefined {
     if (!fileId) return undefined;
     const fileSize = num(f?.file_size);
     const mimeType = str(f?.mime_type, 100) ?? defaultMime;
-    return { kind, fileId, ...(fileSize !== undefined ? { fileSize } : {}), ...(mimeType ? { mimeType } : {}) };
+    const fileName = str(f?.file_name, 200);
+    return {
+      kind,
+      fileId,
+      ...(fileSize !== undefined ? { fileSize } : {}),
+      ...(mimeType ? { mimeType } : {}),
+      ...(fileName ? { fileName } : {}),
+    };
   };
   if (message.voice) return file("voice", message.voice, "audio/ogg");
   if (message.audio) return file("audio", message.audio);
@@ -123,6 +132,8 @@ function mediaOf(message: Record<string, unknown>): ParsedMedia | undefined {
     return file("photo", message.photo[message.photo.length - 1], "image/jpeg");
   }
   if (message.video) return file("video", message.video);
+  // A GIF ("animation") also carries `document`: it is a video for us (F4, never sent on).
+  if (message.animation) return file("video", message.animation);
   if (message.video_note) return file("video_note", message.video_note);
   if (message.document) return file("document", message.document);
   return undefined;

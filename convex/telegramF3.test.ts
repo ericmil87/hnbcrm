@@ -761,7 +761,9 @@ describe("envio com veto (D23)", () => {
     const out = await sentOut();
     expect(out.map((m) => m.content)).toEqual(["Oi Maria, segue a chave"]);
     expect(out[0].metadata?.via).toBe("telegram_auto");
-    expect(edits().at(-1)!.body.text).toMatch(/^✓ Enviado/);
+    expect(edits().some((e) => /^✓ Enviado/.test(e.body.text))).toBe(true);
+    // The seed's Meta channel is incomplete: the dispatch fails and (F4) the card says so.
+    expect(edits().at(-1)!.body.text).toMatch(/^✗ Falhou: /);
   });
 
   test("cancelar antes de N s: nunca envia; regenerar veta; sugestão e allowAutoMode:false não contam regressivo", async () => {
