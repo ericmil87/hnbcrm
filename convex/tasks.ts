@@ -14,6 +14,7 @@ import { cronsDisabled } from "./lib/cronGuard";
 import {
   ORDER_STEP,
   applyTaskCompletion,
+  snoozeTaskCore,
   defaultColumnForProject,
   doneColumnForProject,
   generateNextRecurrenceSafely,
@@ -1674,42 +1675,7 @@ export const snoozeTask = mutation({
 
     const userMember = await requireAuth(ctx, task.organizationId);
 
-    const now = Date.now();
-
-    await ctx.db.patch(args.taskId, {
-      snoozedUntil: args.snoozedUntil,
-      reminderTriggered: false,
-      updatedAt: now,
-    });
-
-    // Reschedule reminder
-    if (task.type === "reminder") {
-      const delay = Math.max(0, args.snoozedUntil - now);
-      await ctx.scheduler.runAfter(delay, internal.tasks.triggerReminder, { taskId: args.taskId });
-    }
-
-    // Log audit entry
-    await ctx.db.insert("auditLogs", {
-      organizationId: task.organizationId,
-      entityType: "task",
-      entityId: args.taskId,
-      action: "update",
-      actorId: userMember._id,
-      actorType: userMember.type === "ai" ? "ai" : "human",
-      changes: { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil: args.snoozedUntil } },
-      metadata: { title: task.title },
-      description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes: { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil: args.snoozedUntil } } }),
-      severity: "low",
-      createdAt: now,
-    });
-
-    // Trigger webhooks
-    await scheduleWebhookEvent(ctx, {
-      organizationId: task.organizationId,
-      event: "task.snoozed",
-      payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
-    });
-
+    await snoozeTaskCore(ctx, task, userMember, args.snoozedUntil, Date.now());
     await syncFollowUpForTask(ctx, args.taskId);
 
     return null;
@@ -2516,39 +2482,7 @@ export const internalSnoozeTask = internalMutation({
 
     const task = await requireTaskOfMember(ctx, args.taskId, teamMember);
 
-    const now = Date.now();
-
-    await ctx.db.patch(args.taskId, {
-      snoozedUntil: args.snoozedUntil,
-      reminderTriggered: false,
-      updatedAt: now,
-    });
-
-    if (task.type === "reminder") {
-      const delay = Math.max(0, args.snoozedUntil - now);
-      await ctx.scheduler.runAfter(delay, internal.tasks.triggerReminder, { taskId: args.taskId });
-    }
-
-    await ctx.db.insert("auditLogs", {
-      organizationId: task.organizationId,
-      entityType: "task",
-      entityId: args.taskId,
-      action: "update",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      changes: { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil: args.snoozedUntil } },
-      metadata: { title: task.title },
-      description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes: { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil: args.snoozedUntil } } }),
-      severity: "low",
-      createdAt: now,
-    });
-
-    await scheduleWebhookEvent(ctx, {
-      organizationId: task.organizationId,
-      event: "task.snoozed",
-      payload: { taskId: args.taskId, snoozedUntil: args.snoozedUntil },
-    });
-
+    await snoozeTaskCore(ctx, task, teamMember, args.snoozedUntil, Date.now());
     await syncFollowUpForTask(ctx, args.taskId);
 
     return null;

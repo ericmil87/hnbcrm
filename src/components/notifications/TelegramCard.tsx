@@ -31,6 +31,7 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
   const createLinkCode = useMutation(api.telegram.createLinkCode);
   const unlink = useMutation(api.telegram.unlink);
   const updatePrefs = useMutation(api.telegram.updateMyLinkPrefs);
+  const updateOrgSettings = useMutation(api.telegram.updateOrgTelegramSettings);
 
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState<{ url: string; expiresAt: number } | null>(null);
@@ -334,6 +335,45 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
               Desligar faz o bot parar para todos da organização, mas os vínculos são mantidos e voltam a funcionar quando
               o módulo for ligado de novo.
             </p>
+          </div>
+        )}
+        {moduleEnabled && data.canManage && (
+          <div className="mt-4 space-y-1">
+            <h4 className="text-sm font-semibold text-text-primary">Configurações da organização</h4>
+            <div className="divide-y divide-border">
+              {(
+                [
+                  {
+                    key: "discreet",
+                    label: "Modo discreto",
+                    desc: "Cartões curtos (200 caracteres), sem telefone e sem nome completo do cliente; sem botão 'Abrir no WhatsApp' e sem 'Ver tudo'. Use se a organização não quer dados de clientes íntegros no Telegram.",
+                  },
+                  {
+                    key: "protectContent",
+                    label: "Proteger conteúdo",
+                    desc: "Impede encaminhar e copiar as mensagens do bot no Telegram.",
+                  },
+                ] as const
+              ).map(({ key, label, desc }) => (
+                <div key={key} className="flex min-h-[44px] items-start justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-text-primary">{label}</span>
+                    <p className="text-xs text-text-secondary">{desc}</p>
+                  </div>
+                  <Switch
+                    checked={data.org[key]}
+                    label={label}
+                    disabled={busy}
+                    onChange={() =>
+                      void run(
+                        () => updateOrgSettings({ organizationId, [key]: !data.org[key] }),
+                        "Não foi possível salvar a configuração"
+                      )
+                    }
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <div>{body}</div>

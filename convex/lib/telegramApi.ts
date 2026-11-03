@@ -206,7 +206,8 @@ export async function editMessageText(
   const params = (text: string, mode: "HTML" | null) => ({
     chat_id: args.chatId,
     message_id: args.messageId,
-    text: text.slice(0, TELEGRAM_TEXT_LIMIT),
+    // Never cut inside a tag/entity: the first balanced chunk of `splitMessage`.
+    text: splitMessage(text, TELEGRAM_TEXT_LIMIT)[0] ?? "",
     ...(mode ? { parse_mode: mode } : {}),
     link_preview_options: { is_disabled: args.disablePreview !== false },
     ...(args.replyMarkup ? { reply_markup: args.replyMarkup } : {}),

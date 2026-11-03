@@ -10,7 +10,9 @@ paths:
 Gotchas that change how code must be written. Full reasoning: `docs/architecture/telegram.md`.
 
 - `convex/lib/telegramApi.ts` is the ONLY code that talks to `api.telegram.org` or reads `TELEGRAM_BOT_TOKEN` (guard `telegramApiPort.test.ts`). Everything else calls its wrappers; never `fetch` the Bot API elsewhere.
-- Button actions (F1+) go through the future `convex/lib/telegramActions.ts`, which re-authorizes (live member + RBAC + entity org) before calling the domain port. Never call a domain `internal*` straight from Telegram code.
+- Button and prompt actions go ONLY through `convex/lib/telegramActions.ts`: `authorizeTelegramActor` (org of the tapped card, live member, module, RBAC like the public mutation) before every port; ids from `callback_data` via `normalizeId` of the expected table. No other telegram file references domain `internal.*` or cores (guard `telegramActionsPort.test.ts`).
+- Notifications reach Telegram only through `createNotification` (fan-out after the insert); every notification type needs a template or an `IGNORED_FOR_TELEGRAM` entry (parity test).
+- The hooks in `lib/telegramRelay.ts` are the only pipeline hooks (`internalReceiveMessage`, `internalCommitAiReply`, accept/reject/cancel handoff cores); they never throw into the caller; never relay a group conversation.
 - Revocation has one door: `revokeTelegramLink` (`convex/lib/telegramLinks.ts`) — status, audit `telegram.unlinked`, cleanup (farewell, `deleteMessage` ≤ 48 h, chat pointer). Member removal calls `revokeTelegramLinksForMember`.
 - "Member alive" = `isLinkMemberAlive` (same org, human, same `userId`, not removed; `busy` is alive). Re-check it on every update; never trust a link row alone.
 - Never log the token, the request URL, a chat id next to a name, or any message text (member's or customer's). Bot API `description` is not logged by the port.

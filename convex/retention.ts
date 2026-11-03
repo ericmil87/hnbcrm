@@ -15,6 +15,7 @@
  * | telegramUpdates    | todos (dedupe de `update_id` só precisa de horas) | `receivedAt` | 2 d |
  * | telegramDeliveries | todos (`deleteMessage` só vale ≤ 48 h)       | `sentAt`        |  30 d  |
  * | telegramLinkCodes  | todos (TTL do código é 10 min)               | `createdAt`     |   1 d  |
+ * | telegramRelayBuffer | sobras (o flush apaga em 20 s; isto é rede) | `flushAt`       |   1 d  |
  *
  * As três do Telegram (F0) têm piso próprio (`RETENTION_MIN_DAYS_BY_TABLE`):
  * são registros técnicos de vida curta, não histórico de negócio.
@@ -78,6 +79,7 @@ export const RETENTION_TABLES = [
   "telegramUpdates",
   "telegramDeliveries",
   "telegramLinkCodes",
+  "telegramRelayBuffer",
 ] as const;
 export type RetentionTable = (typeof RETENTION_TABLES)[number];
 
@@ -91,6 +93,7 @@ export const RETENTION_DEFAULT_DAYS: Record<RetentionTable, number> = {
   telegramUpdates: 2,
   telegramDeliveries: 30,
   telegramLinkCodes: 1,
+  telegramRelayBuffer: 1,
 };
 
 /** Env opcional que sobrepõe a janela padrão de cada tabela. */
@@ -103,6 +106,7 @@ export const RETENTION_ENV_DAYS: Record<RetentionTable, string> = {
   telegramUpdates: "RETENTION_TELEGRAM_UPDATES_DAYS",
   telegramDeliveries: "RETENTION_TELEGRAM_DELIVERIES_DAYS",
   telegramLinkCodes: "RETENTION_TELEGRAM_LINK_CODES_DAYS",
+  telegramRelayBuffer: "RETENTION_TELEGRAM_RELAY_BUFFER_DAYS",
 };
 
 /** Piso de qualquer janela (env ou override): um typo nunca apaga a semana. */
@@ -115,6 +119,7 @@ export const RETENTION_MIN_DAYS_BY_TABLE: Partial<Record<RetentionTable, number>
   telegramUpdates: 1,
   telegramDeliveries: 2,
   telegramLinkCodes: 1,
+  telegramRelayBuffer: 1,
 };
 function minDays(table: RetentionTable): number {
   return RETENTION_MIN_DAYS_BY_TABLE[table] ?? RETENTION_MIN_DAYS;
@@ -143,7 +148,8 @@ const tableValidator = v.union(
   v.literal("auditLogs"),
   v.literal("telegramUpdates"),
   v.literal("telegramDeliveries"),
-  v.literal("telegramLinkCodes")
+  v.literal("telegramLinkCodes"),
+  v.literal("telegramRelayBuffer")
 );
 
 const overridesValidator = v.object({
@@ -155,6 +161,7 @@ const overridesValidator = v.object({
   telegramUpdates: v.optional(v.number()),
   telegramDeliveries: v.optional(v.number()),
   telegramLinkCodes: v.optional(v.number()),
+  telegramRelayBuffer: v.optional(v.number()),
 });
 type Overrides = Partial<Record<RetentionTable, number>>;
 
@@ -265,6 +272,13 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
           (
             await db.query("telegramLinkCodes").withIndex("by_created_at", (q) => q.lt("createdAt", cutoff)).take(limit)
           ).map((d) => ({ id: d._id, ts: d.createdAt })),
+      ];
+    case "telegramRelayBuffer":
+      return [
+        async (limit) =>
+          (
+            await db.query("telegramRelayBuffer").withIndex("by_flush_at", (q) => q.lt("flushAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.flushAt })),
       ];
   }
 }

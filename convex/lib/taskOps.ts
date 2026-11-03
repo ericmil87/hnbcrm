@@ -283,7 +283,9 @@ export async function applyTaskCompletion(
   task: Doc<"tasks">,
   actor: Doc<"teamMembers">,
   now: number,
-  placement?: { columnId: Id<"taskColumns">; order: number }
+  placement?: { columnId: Id<"taskColumns">; order: number },
+  /** Origem fora do app (Telegram F1): vai para o metadata do audit desta conclusão. */
+  via?: "telegram"
 ): Promise<void> {
   const patch: Record<string, any> = { status: "completed", completedAt: now, updatedAt: now };
 
@@ -314,7 +316,7 @@ export async function applyTaskCompletion(
     actorId: actor._id,
     actorType: actor.type === "ai" ? "ai" : "human",
     changes: { before: { status: task.status }, after: { status: "completed" } },
-    metadata: { title: task.title },
+    metadata: { title: task.title, ...(via ? { via } : {}) },
     description: buildAuditDescription({
       action: "update",
       entityType: "task",
@@ -458,4 +460,44 @@ export async function addTaskCommentCore(
   });
 
   return commentId;
+}
+
+/**
+ * Núcleo de "adiar tarefa" (app, REST e Telegram): `snoozedUntil`, lembrete
+ * reagendado, audit `low` e webhook `task.snoozed`. Quem chama já autorizou o
+ * ator e checou a org da tarefa, e roda `syncFollowUpForTask` depois
+ * (`lib/followUpOps` importa este arquivo; o inverso fecharia um ciclo).
+ */
+export async function snoozeTaskCore(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  actor: Doc<"teamMembers">,
+  snoozedUntil: number,
+  now: number,
+  extraMetadata?: Record<string, unknown>
+): Promise<void> {
+  await ctx.db.patch(task._id, { snoozedUntil, reminderTriggered: false, updatedAt: now });
+  if (task.type === "reminder") {
+    const delay = Math.max(0, snoozedUntil - now);
+    await ctx.scheduler.runAfter(delay, internal.tasks.triggerReminder, { taskId: task._id });
+  }
+  const changes = { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil } };
+  await ctx.db.insert("auditLogs", {
+    organizationId: task.organizationId,
+    entityType: "task",
+    entityId: task._id,
+    action: "update",
+    actorId: actor._id,
+    actorType: actor.type === "ai" ? "ai" : "human",
+    changes,
+    metadata: { title: task.title, ...(extraMetadata ?? {}) },
+    description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes }),
+    severity: "low",
+    createdAt: now,
+  });
+  await scheduleWebhookEvent(ctx, {
+    organizationId: task.organizationId,
+    event: "task.snoozed",
+    payload: { taskId: task._id, snoozedUntil },
+  });
 }

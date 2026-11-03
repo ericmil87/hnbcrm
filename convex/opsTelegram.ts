@@ -16,6 +16,7 @@
  */
 import { v } from "convex/values";
 import { internalAction } from "./_generated/server";
+import { internal } from "./_generated/api";
 import {
   deleteWebhook,
   getMe,
@@ -180,5 +181,45 @@ export const internalTelegramSetCommands = internalAction({
     const res = await setMyCommands({ commands });
     if (!res.ok) return { dryRun, ok: false, commands, error: failureOf(res) };
     return { dryRun, ok: true, commands };
+  },
+});
+
+/**
+ * Health snapshot (F1): webhook info + `telegramUpdates` by status in the last
+ * 24 h (bounded at 2000). Read-only; `dryRun` accepted for the ops convention.
+ *
+ *   npx convex run opsTelegram:internalTelegramHealth '{}'
+ */
+export const internalTelegramHealth = internalAction({
+  args: { dryRun: v.optional(v.boolean()) },
+  returns: v.object({
+    webhook: v.object({
+      ok: v.boolean(),
+      matchesExpected: v.optional(v.boolean()),
+      pendingUpdateCount: v.optional(v.number()),
+      lastErrorDate: v.optional(v.number()),
+      lastErrorMessage: v.optional(v.string()),
+      error: v.optional(failureValidator),
+    }),
+    last24h: v.object({ pending: v.number(), done: v.number(), error: v.number(), truncated: v.boolean() }),
+  }),
+  handler: async (ctx) => {
+    const expectedUrl = expectedWebhookUrl();
+    const info = await getWebhookInfo();
+    const last24h: { pending: number; done: number; error: number; truncated: boolean } = await ctx.runQuery(
+      internal.telegram.internalUpdateStats,
+      { since: Date.now() - 24 * 60 * 60 * 1000 },
+    );
+    if (!info.ok) return { webhook: { ok: false, error: failureOf(info) }, last24h };
+    return {
+      webhook: {
+        ok: true,
+        matchesExpected: expectedUrl !== null && info.result.url === expectedUrl,
+        pendingUpdateCount: info.result.pending_update_count,
+        lastErrorDate: info.result.last_error_date,
+        lastErrorMessage: info.result.last_error_message?.slice(0, 300),
+      },
+      last24h,
+    };
   },
 });

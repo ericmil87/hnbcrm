@@ -15,6 +15,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
 
 const APP_URL = () => resolveAppUrl();
 
@@ -354,7 +355,7 @@ export async function createHandoffCore(
  */
 export async function acceptHandoffCore(
   ctx: MutationCtx,
-  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string }
+  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" }
 ): Promise<Id<"conversations"> | null> {
   const { handoff, member } = args;
 
@@ -448,6 +449,7 @@ export async function acceptHandoffCore(
       title: lead?.title,
       fromMemberName: fromMember?.name,
       toMemberName: member.name,
+      ...(args.via ? { via: args.via } : {}),
     },
     description: buildAuditDescription({
       action: "update",
@@ -472,7 +474,7 @@ export async function acceptHandoffCore(
       actorId: member._id,
       actorType: "human",
       content: `Repasse aceito por ${member.name} — conversa assumida (IA pausada)`,
-      metadata: { handoffId: handoff._id, conversationId },
+      metadata: { handoffId: handoff._id, conversationId, ...(args.via ? { via: args.via } : {}) },
       createdAt: now,
     });
   }
@@ -514,6 +516,10 @@ export async function acceptHandoffCore(
     actorId: member._id,
   });
 
+  // Telegram (F1): as cópias do cartão deste repasse viram "✅ Aceito por …"
+  // (quem aceitou pelo Telegram já tem o seu registro e fica de fora).
+  await maybeScheduleHandoffCardsUpdate(ctx, handoff._id, args.via === "telegram" ? member._id : undefined);
+
   return conversationId;
 }
 
@@ -524,7 +530,7 @@ export async function acceptHandoffCore(
  */
 async function rejectHandoffCore(
   ctx: MutationCtx,
-  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string }
+  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" }
 ): Promise<void> {
   const { handoff, member } = args;
 
@@ -606,6 +612,7 @@ async function rejectHandoffCore(
       title: lead?.title,
       fromMemberName: fromMember?.name,
       toMemberName: member.name,
+      ...(args.via ? { via: args.via } : {}),
     },
     description: buildAuditDescription({
       action: "update",
@@ -665,6 +672,8 @@ async function rejectHandoffCore(
     conversationId: handoff.conversationId,
     actorId: member._id,
   });
+
+  await maybeScheduleHandoffCardsUpdate(ctx, handoff._id, args.via === "telegram" ? member._id : undefined);
 }
 
 // Enriquecimento comum das listagens: lead/contato/membros + conversa do
@@ -900,32 +909,58 @@ export const rejectHandoff = mutation({
 
     const userMember = await requirePermission(ctx, handoff.organizationId, "inbox", "reply");
 
-    const instruction = args.instruction?.trim() || undefined;
-    // Espelha attendant.MAX_INSTRUCTION_CHARS (2000).
-    if (instruction && instruction.length > 2000) {
-      throw new Error("Instrução muito longa (máx. 2000 caracteres)");
-    }
-
-    await rejectHandoffCore(ctx, {
+    await rejectHandoffWithInstructionCore(ctx, {
       handoff,
       member: userMember,
-      notes: args.notes ?? instruction,
+      notes: args.notes,
+      instruction: args.instruction,
     });
-
-    if (instruction) {
-      const conversationId =
-        handoff.conversationId ?? (await resolveLeadPrimaryConversationId(ctx, handoff.leadId));
-      if (conversationId) {
-        await ctx.scheduler.runAfter(0, internal.attendant.internalQueueInstructedTurn, {
-          conversationId,
-          instructedBy: userMember._id,
-          instruction,
-        });
-      }
-    }
     return null;
   },
 });
+
+/**
+ * Núcleo de "rejeitar = devolver à IA, com instrução opcional" (corpo do
+ * `rejectHandoff`, sem sessão). Quem chama já autorizou o membro: o app via
+ * `requirePermission`, o Telegram via `lib/telegramActions.ts`. O turno
+ * instruído segue pelo scheduler (import direto criaria ciclo handoffs↔attendant).
+ */
+export async function rejectHandoffWithInstructionCore(
+  ctx: MutationCtx,
+  args: {
+    handoff: Doc<"handoffs">;
+    member: Doc<"teamMembers">;
+    notes?: string;
+    instruction?: string;
+    via?: "telegram";
+  }
+): Promise<void> {
+  const { handoff, member } = args;
+  const instruction = args.instruction?.trim() || undefined;
+  // Espelha attendant.MAX_INSTRUCTION_CHARS (2000).
+  if (instruction && instruction.length > 2000) {
+    throw new Error("Instrução muito longa (máx. 2000 caracteres)");
+  }
+
+  await rejectHandoffCore(ctx, {
+    handoff,
+    member,
+    notes: args.notes ?? instruction,
+    via: args.via,
+  });
+
+  if (instruction) {
+    const conversationId =
+      handoff.conversationId ?? (await resolveLeadPrimaryConversationId(ctx, handoff.leadId));
+    if (conversationId) {
+      await ctx.scheduler.runAfter(0, internal.attendant.internalQueueInstructedTurn, {
+        conversationId,
+        instructedBy: member._id,
+        instruction,
+      });
+    }
+  }
+}
 
 // ── Internal functions (for httpAction context, no auth session) ──
 

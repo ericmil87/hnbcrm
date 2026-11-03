@@ -510,7 +510,13 @@ describe("API do card", () => {
   test("getMyLink: forma exata antes, durante e depois do vínculo", async () => {
     const s = await seed();
     const me = () => as(s.userId).query(api.telegram.getMyLink, { organizationId: s.organizationId });
-    expect(await me()).toEqual({ moduleEnabled: true, botUsername: BOT, link: null });
+    expect(await me()).toEqual({
+      moduleEnabled: true,
+      botUsername: BOT,
+      link: null,
+      org: { discreet: false, protectContent: false, allowAutoMode: true },
+      canManage: true,
+    });
     await link(s.userId, s.organizationId);
     const linked = await me();
     expect(Object.keys(linked.link!).sort()).toEqual(

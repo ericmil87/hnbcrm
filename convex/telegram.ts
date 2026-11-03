@@ -19,10 +19,34 @@ import {
   query,
   type ActionCtx,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requireAccountWithEmail, requireAuth } from "./lib/auth";
+import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
+import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { createNotification } from "./lib/notify";
+import { editMessageText } from "./lib/telegramApi";
+import {
+  PROMPT_EXPIRED_COPY,
+  TELEGRAM_FAILURE,
+  handleTelegramCallback,
+  handleTelegramPromptAnswer,
+  type EditOp,
+  type RecordSpec,
+  type SendOp,
+} from "./lib/telegramActions";
+import { loadCardContext, messageText } from "./lib/telegramContext";
+import {
+  buildAiRelayCard,
+  buildNotificationCard,
+  buildRecordCard,
+  channelLabel,
+  formatTime,
+  type CardKeyboard,
+} from "./lib/telegramNotifications";
+import { escapeHtml } from "./lib/telegramFormat";
+import { FOCUS_TTL_MS, resolveRelayRecipient } from "./lib/telegramRelay";
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
@@ -63,6 +87,30 @@ import {
 // Validators
 // ---------------------------------------------------------------------------
 
+const keyboardValidator = v.array(
+  v.array(
+    v.union(
+      v.object({ text: v.string(), url: v.string() }),
+      v.object({ text: v.string(), callback_data: v.string() }),
+    ),
+  ),
+);
+
+/** After a successful send, the message is recorded in `telegramDeliveries`. */
+const recordValidator = v.object({
+  organizationId: v.id("organizations"),
+  linkId: v.id("telegramLinks"),
+  kind: v.union(v.literal("notification"), v.literal("relay"), v.literal("prompt")),
+  conversationId: v.optional(v.id("conversations")),
+  handoffId: v.optional(v.id("handoffs")),
+  taskId: v.optional(v.id("tasks")),
+  notificationId: v.optional(v.id("notifications")),
+  crmMessageId: v.optional(v.id("messages")),
+  setPromptMessageId: v.optional(v.boolean()),
+  /** `expiresAt` of the prompt open when the send was decided (binds the id to THAT prompt). */
+  promptExpiresAt: v.optional(v.number()),
+});
+
 /** A bot reply decided by a mutation and sent by an action. */
 const replyValidator = v.object({
   chatId: v.number(),
@@ -71,15 +119,19 @@ const replyValidator = v.object({
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
+  keyboard: v.optional(keyboardValidator),
+  record: v.optional(recordValidator),
 });
-type Reply = {
-  chatId: number;
-  text: string;
-  settingsButton?: boolean;
-  removeKeyboard?: boolean;
-  protectContent?: boolean;
-};
-const repliesReturn = v.object({ replies: v.array(replyValidator) });
+type Reply = SendOp & { settingsButton?: boolean; removeKeyboard?: boolean };
+
+/** "Mensagem vira registro": edit of a message the bot already sent. */
+const editValidator = v.object({
+  chatId: v.number(),
+  messageId: v.number(),
+  text: v.string(),
+  keyboard: v.optional(keyboardValidator),
+});
+const repliesReturn = v.object({ replies: v.array(replyValidator), edits: v.optional(v.array(editValidator)) });
 
 const cleanupReasonValidator = v.union(
   v.literal("unlink"),
@@ -155,6 +207,9 @@ export const getMyLink = query({
     moduleEnabled: v.boolean(),
     botUsername: v.union(v.string(), v.null()),
     link: v.union(v.null(), myLinkValidator),
+    // F1: org options (card section for admins) and whether this member may change them.
+    org: v.object({ discreet: v.boolean(), protectContent: v.boolean(), allowAutoMode: v.boolean() }),
+    canManage: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
@@ -171,9 +226,17 @@ export const getMyLink = query({
         .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", member._id).eq("status", "blocked"))
         .order("desc")
         .first());
+    const tg = org?.settings.telegram;
+    const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
     return {
       moduleEnabled: modulesOf(org).telegram,
       botUsername: botUsernameEnv(),
+      org: {
+        discreet: tg?.discreet === true,
+        protectContent: tg?.protectContent === true,
+        allowAutoMode: tg?.allowAutoMode !== false,
+      },
+      canManage: hasPermission(perms, "settings", "manage"),
       link: link
         ? {
             _id: link._id,
@@ -466,6 +529,13 @@ export const internalRouteUpdate = internalMutation({
     }
     if (p.kind !== "message" && p.kind !== "callback_query") return none;
 
+    // Hard expiry: an expired prompt (and its `draftText`) is removed on ANY update.
+    const chatRow = await getChat(ctx, chatId);
+    const promptExpired = chatRow?.pendingPrompt !== undefined && chatRow.pendingPrompt.expiresAt <= now;
+    if (chatRow && promptExpired) {
+      await ctx.db.patch(chatRow._id, { pendingPrompt: undefined, updatedAt: now });
+    }
+
     const { active, alive, removed } = await resolveChat(ctx, chatId, now);
     if (!active) {
       // Removed member: the cleanup's farewell already says it; nothing else.
@@ -473,7 +543,16 @@ export const internalRouteUpdate = internalMutation({
       return { replies: [unlinkedReply(chatId)] };
     }
     await touchLink(ctx, active, p, now);
-    if (p.kind === "callback_query") return none; // F0: ack only (webhook body)
+    if (p.kind === "callback_query") {
+      // F1: buttons → lib/telegramActions (reauthorization + single ports).
+      return await handleTelegramCallback(ctx, {
+        chatId,
+        messageId: p.messageId,
+        data: p.callbackData,
+        now,
+        appBaseUrl: appUrl(),
+      });
+    }
 
     const cmd = parseCommand(p.text);
     if (cmd?.command === "sair") {
@@ -499,6 +578,12 @@ export const internalRouteUpdate = internalMutation({
     }
     if (cmd?.command === "ajuda" || cmd?.command === "help") {
       return { replies: [{ chatId, text: COPY.help, protectContent }] };
+    }
+    if (!cmd && promptExpired) return { replies: [{ chatId, text: PROMPT_EXPIRED_COPY }] };
+    if (!cmd) {
+      // An open prompt (instruct / regenerate / reply) consumes the next message.
+      const answered = await handleTelegramPromptAnswer(ctx, { chatId, text: p.text, now, appBaseUrl: appUrl() });
+      if (answered) return answered;
     }
     return { replies: [{ chatId, text: COPY.learning, protectContent }] };
   },
@@ -645,8 +730,11 @@ export const internalMarkChatBlocked = internalMutation({
 // Processing action
 // ---------------------------------------------------------------------------
 
-function markupFor(reply: Pick<Reply, "removeKeyboard" | "settingsButton">): ReplyMarkup | undefined {
+function markupFor(
+  reply: Pick<Reply, "removeKeyboard" | "settingsButton" | "keyboard">,
+): ReplyMarkup | undefined {
   if (reply.removeKeyboard) return { remove_keyboard: true };
+  if (reply.keyboard && reply.keyboard.length > 0) return { inline_keyboard: reply.keyboard };
   if (reply.settingsButton) {
     return { inline_keyboard: [[{ text: COPY.unlinkedButton, url: settingsUrl(appUrl()) }]] };
   }
@@ -661,6 +749,8 @@ const resumeValidator = v.object({
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
+  keyboard: v.optional(keyboardValidator),
+  record: v.optional(recordValidator),
 });
 type Resume = Omit<Reply, "text"> & { chunks: string[] };
 
@@ -677,7 +767,17 @@ async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Pr
     replyMarkup: markupFor(reply),
     protectContent: reply.protectContent,
   });
-  if (res.ok) return;
+  if (res.ok) {
+    const last = res.result[res.result.length - 1];
+    if (reply.record && last) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: reply.record,
+        chatId: reply.chatId,
+        messageId: last.message_id,
+      });
+    }
+    return;
+  }
   if (res.kind === "bad_request" && reply.settingsButton) {
     // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): send the link as text.
     await sendMessage({
@@ -700,6 +800,69 @@ async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Pr
     });
   }
 }
+
+/** The result carried by a failed Telegram action (`lib/telegramActions.failWith`), if any. */
+function telegramFailureOf(e: unknown): { kind?: string; result?: { replies: Reply[]; edits: EditOp[] } } | null {
+  if (!(e instanceof ConvexError)) return null;
+  let data: unknown = e.data;
+  // Across `runMutation` the data may arrive serialized (convex-test does this).
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  return data && typeof data === "object" ? (data as { kind?: string; result?: { replies: Reply[]; edits: EditOp[] } }) : null;
+}
+
+/** Edits ("mensagem vira registro"); "not modified" is fine, a failed edit is best effort. */
+async function deliverEdits(edits: EditOp[] | undefined): Promise<void> {
+  for (const e of edits ?? []) {
+    await editMessageText({
+      chatId: e.chatId,
+      messageId: e.messageId,
+      text: e.text,
+      replyMarkup: { inline_keyboard: e.keyboard ?? [] },
+    });
+  }
+}
+
+/** Records a bot message (base of callbacks, broadcast edits, deleteMessage ≤ 48 h). */
+export const internalRecordDelivery = internalMutation({
+  args: { record: recordValidator, chatId: v.number(), messageId: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const r: RecordSpec = args.record;
+    const now = Date.now();
+    await ctx.db.insert("telegramDeliveries", {
+      organizationId: r.organizationId,
+      linkId: r.linkId,
+      chatId: args.chatId,
+      messageId: args.messageId,
+      kind: r.kind,
+      ...(r.notificationId ? { notificationId: r.notificationId } : {}),
+      ...(r.handoffId ? { handoffId: r.handoffId } : {}),
+      ...(r.conversationId ? { conversationId: r.conversationId } : {}),
+      ...(r.taskId ? { taskId: r.taskId } : {}),
+      ...(r.crmMessageId ? { crmMessageId: r.crmMessageId } : {}),
+      sentAt: now,
+    });
+    if (r.setPromptMessageId) {
+      const chat = await getChat(ctx, args.chatId);
+      const sameprompt =
+        chat?.pendingPrompt !== undefined &&
+        (r.promptExpiresAt === undefined || chat.pendingPrompt.expiresAt === r.promptExpiresAt);
+      if (chat?.pendingPrompt && sameprompt) {
+        await ctx.db.patch(chat._id, {
+          pendingPrompt: { ...chat.pendingPrompt, promptMessageId: args.messageId },
+          updatedAt: now,
+        });
+      }
+    }
+    return null;
+  },
+});
 
 /** 429 retry of the undelivered chunks of one reply (§3.8, at most `MAX_SEND_ATTEMPTS`). */
 export const internalDeliverReply = internalAction({
@@ -724,6 +887,7 @@ export const internalProcessUpdate = internalAction({
       const p = row.parsed;
       const cmd = p?.kind === "message" ? parseCommand(p.text) : null;
       let replies: Reply[];
+      let edits: EditOp[] | undefined;
       if (
         p &&
         cmd?.command === "start" &&
@@ -741,14 +905,26 @@ export const internalProcessUpdate = internalAction({
         });
         replies = res.replies;
       } else {
-        const res: { replies: Reply[] } = await ctx.runMutation(internal.telegram.internalRouteUpdate, {
-          updateRowId: args.updateRowId,
-        });
+        const res: { replies: Reply[]; edits?: EditOp[] } = await ctx.runMutation(
+          internal.telegram.internalRouteUpdate,
+          { updateRowId: args.updateRowId },
+        );
         replies = res.replies;
+        edits = res.edits;
       }
+      await deliverEdits(edits);
       for (const reply of replies) await deliverReply(ctx, reply, 1);
       await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
     } catch (e) {
+      // A Telegram action whose port threw: the mutation rolled back (no
+      // partial writes) and the error carries what to tell the user.
+      const data = telegramFailureOf(e);
+      if (data?.kind === TELEGRAM_FAILURE && data.result) {
+        await deliverEdits(data.result.edits);
+        for (const reply of data.result.replies) await deliverReply(ctx, reply, 1);
+        await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
+        return null;
+      }
       // Name only: Convex validation messages echo argument values (code, names).
       const error = e instanceof Error ? e.name : "erro";
       console.error(`[telegram] update falhou: ${e instanceof Error ? e.name : "erro"}`);
@@ -805,6 +981,18 @@ export const internalFinishLinkCleanup = internalMutation({
     if (!chat) return null;
     const others = (await activeLinksOfChat(ctx, link.chatId)).filter((l) => l._id !== link._id);
     const now = Date.now();
+    // Nothing of the revoked org stays on the chat: open prompt (may hold
+    // `draftText`) and conversation focus (review F1 #11).
+    const promptOfOrg = chat.pendingPrompt?.organizationId === link.organizationId;
+    const focusConv = chat.focus ? await ctx.db.get(chat.focus.conversationId) : null;
+    const focusOfOrg = chat.focus !== undefined && (!focusConv || focusConv.organizationId === link.organizationId);
+    if (promptOfOrg || focusOfOrg) {
+      await ctx.db.patch(chat._id, {
+        ...(promptOfOrg ? { pendingPrompt: undefined } : {}),
+        ...(focusOfOrg ? { focus: undefined } : {}),
+        updatedAt: now,
+      });
+    }
     if (others.length === 0) {
       await ctx.db.patch(chat._id, { activeOrganizationId: undefined, activeTeamMemberId: undefined, updatedAt: now });
     } else if (!others.some((l) => l.teamMemberId === chat.activeTeamMemberId)) {
@@ -957,5 +1145,329 @@ export const internalRevokeForRemovedMembers = internalMutation({
       isDone: page.isDone && status === "blocked",
       continueCursor: page.isDone ? null : page.continueCursor,
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// F1 — notification delivery (D7), relay (D20) and org settings
+// ---------------------------------------------------------------------------
+
+const cardTargetValidator = v.object({
+  chatId: v.number(),
+  text: v.string(),
+  keyboard: keyboardValidator,
+  protectContent: v.boolean(),
+  record: recordValidator,
+});
+type CardTarget = { chatId: number; text: string; keyboard: CardKeyboard; protectContent: boolean; record: RecordSpec };
+
+/** The live link that may receive a card for this member/org, or null (re-checked at delivery). */
+async function deliverableLink(
+  ctx: { db: QueryCtx["db"] },
+  memberId: Id<"teamMembers">,
+  organizationId: Id<"organizations">,
+  now: number,
+  opts: { conversationContent?: boolean } = {},
+) {
+  const link = await ctx.db
+    .query("telegramLinks")
+    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", memberId).eq("status", "active"))
+    .first();
+  if (!link || link.organizationId !== organizationId) return null;
+  if (link.mutedUntil !== undefined && link.mutedUntil > now) return null;
+  const member = await ctx.db.get(link.teamMemberId);
+  if (!member || !isLinkMemberAlive(link, member)) return null;
+  // Conversation content (customer text, relay) only to whoever still has at
+  // least `inbox:view_own` — same helper as the actions (review F1 #9).
+  if (opts.conversationContent) {
+    const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+    if (!hasPermission(perms, "inbox", "view_own")) return null;
+  }
+  const org = await ctx.db.get(organizationId);
+  if (!org || !modulesOf(org).telegram) return null;
+  return { link, org };
+}
+
+/** Everything the delivery action needs, in one read (`now` passed in: no clock in queries). */
+export const internalGetNotificationDelivery = internalQuery({
+  args: { notificationId: v.id("notifications"), now: v.number() },
+  returns: v.union(v.null(), cardTargetValidator),
+  handler: async (ctx, args) => {
+    const n = await ctx.db.get(args.notificationId);
+    if (!n) return null;
+    const target = await deliverableLink(ctx, n.memberId, n.organizationId, args.now, {
+      conversationContent: n.conversationId !== undefined || n.handoffId !== undefined,
+    });
+    if (!target) return null;
+    const context = await loadCardContext(ctx.db, {
+      organizationId: n.organizationId,
+      now: args.now,
+      appBaseUrl: appUrl(),
+      notification: n,
+    });
+    if (!context) return null;
+    const card = buildNotificationCard({ notification: { ...n, _id: n._id }, context });
+    return {
+      chatId: target.link.chatId,
+      text: card.text,
+      keyboard: card.keyboard,
+      protectContent: target.org.settings.telegram?.protectContent === true,
+      record: {
+        organizationId: n.organizationId,
+        linkId: target.link._id,
+        kind: "notification" as const,
+        notificationId: n._id,
+        ...(n.handoffId ? { handoffId: n.handoffId } : {}),
+        ...(n.conversationId ? { conversationId: n.conversationId } : {}),
+        ...(n.taskId ? { taskId: n.taskId } : {}),
+      },
+    };
+  },
+});
+
+/** Scheduled by `createNotification` (lib/notify.ts) for members with an active link. */
+export const internalDeliverNotification = internalAction({
+  args: { notificationId: v.id("notifications") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const target: CardTarget | null = await ctx.runQuery(internal.telegram.internalGetNotificationDelivery, {
+      notificationId: args.notificationId,
+      now: Date.now(),
+    });
+    if (!target) return null;
+    await deliverReply(ctx, target, 1);
+    return null;
+  },
+});
+
+/** End of the 20 s window: ONE `new_message` notification (bell + Telegram via the fan-out). */
+export const internalFlushRelayBuffer = internalMutation({
+  args: { bufferId: v.id("telegramRelayBuffer") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const buffer = await ctx.db.get(args.bufferId);
+    if (!buffer) return null;
+    await ctx.db.delete(buffer._id);
+    const link = await ctx.db.get(buffer.linkId);
+    const conversation = await ctx.db.get(buffer.conversationId);
+    if (!link || link.status !== "active" || !conversation) return null;
+    if (!link.prefs.relayAssignedConversations) return null; // turned off during the window
+    const now = Date.now();
+    // Re-check: someone may have handed the conversation back to the AI meanwhile.
+    const lead = conversation.leadId ? await ctx.db.get(conversation.leadId) : null;
+    const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
+    if (!recipient || recipient._id !== link.teamMemberId) return null;
+    const lines: string[] = [];
+    for (const id of buffer.messageIds) {
+      const m = await ctx.db.get(id);
+      if (m && m.conversationId === conversation._id) lines.push(await messageText(ctx.db, m));
+    }
+    if (lines.length === 0) return null;
+    const more = buffer.droppedCount ?? 0;
+    if (more > 0) lines.push(`… e mais ${more} mensagens (abrir no CRM)`);
+    await createNotification(ctx, {
+      organizationId: buffer.organizationId,
+      memberId: link.teamMemberId,
+      type: "new_message",
+      title: `${lead?.title ?? "Contato"} · ${channelLabel(conversation.channel)}`,
+      body: lines.join("\n").slice(0, 1000),
+      conversationId: conversation._id,
+      data: { messageIds: buffer.messageIds, ...(more > 0 ? { moreCount: more } : {}) },
+    });
+    return null;
+  },
+});
+
+/** Chats whose focus is this conversation get "🤖 IA → …" once per CRM message. */
+export const internalGetAiRelayTargets = internalQuery({
+  args: { messageId: v.id("messages"), now: v.number() },
+  returns: v.array(cardTargetValidator),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.direction !== "outbound" || message.senderType !== "ai") return [];
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation || conversation.kind === "group") return [];
+    const chats = await ctx.db
+      .query("telegramChats")
+      .withIndex("by_focus_conversation", (q) => q.eq("focus.conversationId", conversation._id))
+      .take(10);
+    const recent = await ctx.db
+      .query("telegramDeliveries")
+      .withIndex("by_conversation_and_sent", (q) =>
+        q.eq("conversationId", conversation._id).gt("sentAt", args.now - FOCUS_TTL_MS),
+      )
+      // Newest first: the relay of THIS message, if any, is among the latest.
+      .order("desc")
+      .take(50);
+    const out: CardTarget[] = [];
+    for (const chat of chats) {
+      if (!chat.focus || chat.focus.setAt <= args.now - FOCUS_TTL_MS) continue;
+      const link = (await activeLinksOfChat(ctx, chat.chatId)).find(
+        (l) => l.organizationId === conversation.organizationId,
+      );
+      if (!link) continue;
+      const target = await deliverableLink(ctx, link.teamMemberId, conversation.organizationId, args.now, {
+        conversationContent: true,
+      });
+      if (!target) continue;
+      if (recent.some((d) => d.crmMessageId === message._id && d.linkId === link._id)) continue;
+      const context = await loadCardContext(ctx.db, {
+        organizationId: conversation.organizationId,
+        now: args.now,
+        appBaseUrl: appUrl(),
+        conversationId: conversation._id,
+      });
+      if (!context) continue;
+      const card = buildAiRelayCard(context, { text: message.content, at: message.createdAt });
+      out.push({
+        chatId: chat.chatId,
+        text: card.text,
+        keyboard: card.keyboard,
+        protectContent: target.org.settings.telegram?.protectContent === true,
+        record: {
+          organizationId: conversation.organizationId,
+          linkId: link._id,
+          kind: "relay",
+          conversationId: conversation._id,
+          crmMessageId: message._id,
+        },
+      });
+    }
+    return out;
+  },
+});
+
+/** Scheduled by `lib/telegramRelay.maybeScheduleAiReplyRelay` after the attendant commits a reply. */
+export const internalRelayAiReply = internalAction({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const targets: CardTarget[] = await ctx.runQuery(internal.telegram.internalGetAiRelayTargets, {
+      messageId: args.messageId,
+      now: Date.now(),
+    });
+    for (const target of targets) await deliverReply(ctx, target, 1);
+    return null;
+  },
+});
+
+/** Configurações → Telegram (org): discreet / protect_content / automatic mode. Admin only. */
+export const updateOrgTelegramSettings = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    discreet: v.optional(v.boolean()),
+    protectContent: v.optional(v.boolean()),
+    allowAutoMode: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Same gate as `orgModules.setOrgModules`.
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const before = org.settings.telegram ?? {};
+    const after = { ...before };
+    if (args.discreet !== undefined) after.discreet = args.discreet;
+    if (args.protectContent !== undefined) after.protectContent = args.protectContent;
+    if (args.allowAutoMode !== undefined) after.allowAutoMode = args.allowAutoMode;
+    const now = Date.now();
+    await ctx.db.patch(org._id, { settings: { ...org.settings, telegram: after }, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: org._id,
+      entityType: "organization",
+      entityId: org._id,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: { before: { ...before }, after: { ...after } },
+      metadata: { event: "telegram.settings_updated" },
+      description: "Alterou as opções do Telegram da organização",
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/** Ops health: `telegramUpdates` by status since `since` (bounded). */
+export const internalUpdateStats = internalQuery({
+  args: { since: v.number() },
+  returns: v.object({
+    pending: v.number(),
+    done: v.number(),
+    error: v.number(),
+    truncated: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const LIMIT = 2000;
+    const rows = await ctx.db
+      .query("telegramUpdates")
+      .withIndex("by_received_at", (q) => q.gt("receivedAt", args.since))
+      .take(LIMIT + 1);
+    const counted = rows.slice(0, LIMIT);
+    return {
+      pending: counted.filter((r) => r.status === "pending").length,
+      done: counted.filter((r) => r.status === "done").length,
+      error: counted.filter((r) => r.status === "error").length,
+      truncated: rows.length > LIMIT,
+    };
+  },
+});
+
+/**
+ * Every live copy of a handoff card becomes the record of how it was resolved
+ * (review F1 #2/#5): "✅ Aceito por Ana · hh:mm" or "🤖 Devolvido à IA por Ana",
+ * with only Ver tudo / WhatsApp / CRM. Copies of revoked/blocked links or of
+ * members who left are skipped; `skipMemberId` = who acted from Telegram (their
+ * own card already became the record).
+ */
+export const internalGetHandoffCardEdits = internalQuery({
+  args: { handoffId: v.id("handoffs"), skipMemberId: v.optional(v.id("teamMembers")), now: v.number() },
+  returns: v.array(editValidator),
+  handler: async (ctx, args) => {
+    const handoff = await ctx.db.get(args.handoffId);
+    if (!handoff || handoff.status === "pending") return [];
+    const resolverId = handoff.status === "accepted" ? handoff.acceptedBy : handoff.resolvedBy;
+    const resolver = resolverId ? await ctx.db.get(resolverId) : null;
+    const context = await loadCardContext(ctx.db, {
+      organizationId: handoff.organizationId,
+      now: args.now,
+      appBaseUrl: appUrl(),
+      handoffId: handoff._id,
+      conversationId: handoff.conversationId,
+    });
+    if (!context) return [];
+    const who = escapeHtml(resolver?.name ?? "outro membro");
+    const at = formatTime(handoff.resolvedAt ?? args.now, context.timezone);
+    const status = handoff.status === "accepted" ? `✅ Aceito por ${who} · ${at}` : `🤖 Devolvido à IA por ${who} · ${at}`;
+    const record = buildRecordCard(context, status, ["viewAll", "links"]);
+    const copies = await ctx.db
+      .query("telegramDeliveries")
+      .withIndex("by_handoff", (q) => q.eq("handoffId", handoff._id))
+      .take(50);
+    const out: EditOp[] = [];
+    for (const d of copies) {
+      const link = await ctx.db.get(d.linkId);
+      if (!link || link.status !== "active" || link.organizationId !== handoff.organizationId) continue;
+      if (args.skipMemberId && link.teamMemberId === args.skipMemberId) continue;
+      if (!isLinkMemberAlive(link, await ctx.db.get(link.teamMemberId))) continue;
+      out.push({ chatId: d.chatId, messageId: d.messageId, text: record.text, keyboard: record.keyboard });
+    }
+    return out;
+  },
+});
+
+/** Scheduled by `lib/telegramRelay.maybeScheduleHandoffCardsUpdate` (accept/reject/cancel cores). */
+export const internalMarkHandoffCards = internalAction({
+  args: { handoffId: v.id("handoffs"), skipMemberId: v.optional(v.id("teamMembers")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const edits: EditOp[] = await ctx.runQuery(internal.telegram.internalGetHandoffCardEdits, {
+      handoffId: args.handoffId,
+      skipMemberId: args.skipMemberId,
+      now: Date.now(),
+    });
+    await deliverEdits(edits);
+    return null;
   },
 });
