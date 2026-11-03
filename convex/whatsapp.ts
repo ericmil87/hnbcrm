@@ -44,6 +44,7 @@ import {
   parseBridgeSendResponse,
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
+import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
 import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
 import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
@@ -500,7 +501,13 @@ async function dispatchViaBridge(
   // scheduling (claimChannelSlot somou o mesmo valor ao avanço). Best-effort:
   // falha de presence nunca falha o envio. Envio manual não passa por aqui
   // (typingDelayMs só é agendado para senderType "ai" ou metadata.scheduled).
+  // Colchete de presença global (lib/bridgePresence): no modo "celular continua
+  // tocando" o canal está `unavailable` e o WhatsApp pode não repassar o
+  // composing — abre `available` antes do digitando; o `unavailable` sai
+  // depois de TODO envio (sucesso OU falha). Modo legado: nada muda.
+  let bracketOpen = false;
   if (args.typingDelayMs && args.typingDelayMs > 0 && toPhone) {
+    bracketOpen = await openTypingPresenceBracket(config, config.bridgeBaseUrl, token);
     try {
       const presence = buildBridgePresenceRequest({
         baseUrl: config.bridgeBaseUrl,
@@ -518,6 +525,39 @@ async function dispatchViaBridge(
     }
     await new Promise((resolve) => setTimeout(resolve, args.typingDelayMs));
   }
+
+  const sendState = { attempted: false };
+  try {
+    await sendViaBridge(ctx, { ...args, toPhone }, token, sendState);
+  } finally {
+    // Fecha SEMPRE (não só após o digitando de IA): um envio humano do inbox
+    // costuma vir depois de um composing do operador, e este é o re-assert
+    // natural do `unavailable`. Mensagem recusada antes de tocar o gateway (sem
+    // anexo, anexo grande…) não gera chamada. No modo legado não faz nada.
+    if (bracketOpen || sendState.attempted) {
+      await closeTypingPresenceBracket(config, config.bridgeBaseUrl, token);
+    }
+  }
+}
+
+// Segunda metade do dispatch bridge: monta e envia a mensagem (texto ou mídia)
+// e grava o resultado. Separada para o colchete de presença fechar num finally.
+async function sendViaBridge(
+  ctx: ActionCtx,
+  args: {
+    messageId: Id<"messages">;
+    message: any;
+    config: any;
+    toPhone: string;
+    attachmentFiles: any[];
+    isGroup?: boolean;
+    quoteParticipantJid?: string | null;
+  },
+  token: string,
+  // Marcado logo antes do POST de envio: o chamador fecha a presença só então.
+  sendState: { attempted: boolean }
+): Promise<void> {
+  const { messageId, message, config, toPhone, attachmentFiles } = args;
 
   // Reply/quote: the outbound message carries metadata.quoted.externalId (the
   // whatsmeow id of the quoted message) resolved when the message was created.
@@ -629,6 +669,7 @@ async function dispatchViaBridge(
 
   let response: Response;
   let body: Record<string, any>;
+  sendState.attempted = true;
   try {
     response = await fetch(request.url, {
       method: "POST",
@@ -1256,8 +1297,20 @@ export const internalBridgeSendPresence = internalAction({
     ) {
       return null;
     }
+    let token: string;
     try {
-      const token = await decryptSecret(config.bridgeTokenEncrypted);
+      token = await decryptSecret(config.bridgeTokenEncrypted);
+    } catch (e) {
+      console.warn("Bridge presence failed (best-effort):", e);
+      return null;
+    }
+    // Colchete de presença global (lib/bridgePresence): composing abre
+    // `available` antes; paused fecha `unavailable` depois. Só no modo
+    // "celular continua tocando"; best effort, nunca lança.
+    if (args.state === "composing") {
+      await openTypingPresenceBracket(config, config.bridgeBaseUrl, token);
+    }
+    try {
       const request = buildBridgePresenceRequest({
         baseUrl: config.bridgeBaseUrl,
         token,
@@ -1267,6 +1320,9 @@ export const internalBridgeSendPresence = internalAction({
       await fetch(request.url, { method: "POST", headers: request.headers, body: request.body });
     } catch (e) {
       console.warn("Bridge presence failed (best-effort):", e);
+    }
+    if (args.state === "paused") {
+      await closeTypingPresenceBracket(config, config.bridgeBaseUrl, token);
     }
     return null;
   },

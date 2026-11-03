@@ -584,7 +584,11 @@ describe("cron: tick sonda só os bridge elegíveis", () => {
 
     const result = await t.action(internal.channelHealth.internalChannelHealthTick, {});
     expect(result).toEqual({ checked: 1, probeErrors: 0 });
-    expect(probed).toEqual(["https://wa-gw.example.test/session/status"]);
+    // Canal conectado também reafirma a presença global (celular continua tocando).
+    expect(probed).toEqual([
+      "https://wa-gw.example.test/session/status",
+      "https://wa-gw.example.test/user/presence",
+    ]);
     await cancelPendingJobs(t);
   });
 });

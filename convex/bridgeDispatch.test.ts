@@ -227,7 +227,10 @@ describe("internalDispatchMessage — bridge provider", () => {
 
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1); // no read-receipt call on bridge
+    // No read-receipt call on bridge: the send, then the global-presence close
+    // (bridgePhoneNotifications default on → /user/presence "unavailable").
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String((fetchMock.mock.calls[1] as unknown as [string])[0])).toBe(`${BRIDGE_BASE_URL}/user/presence`);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${BRIDGE_BASE_URL}/chat/send/text`);
     expect((init.headers as Record<string, string>).token).toBe(BRIDGE_TOKEN);
@@ -403,7 +406,8 @@ describe("internalDispatchMessage — bridge outbound media", () => {
 
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Send + global-presence close (/user/presence "unavailable").
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${BRIDGE_BASE_URL}/chat/send/image`);
     expect((init.headers as Record<string, string>).token).toBe(BRIDGE_TOKEN);
@@ -475,7 +479,8 @@ describe("internalDispatchMessage — bridge outbound media", () => {
 
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // One media send + the global-presence close (/user/presence "unavailable").
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const message = await t.run(async (ctx) => ctx.db.get(messageId));
     expect(message!.deliveryStatus).toBe("sent");
     expect(String(message!.metadata!.dispatchNote)).toContain("adicional");

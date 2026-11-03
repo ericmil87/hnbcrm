@@ -175,6 +175,46 @@ export function buildBridgePresenceRequest(params: {
   };
 }
 
+/** Presença GLOBAL da sessão (não confundir com o "digitando" por conversa). */
+export type BridgeGlobalPresence = "available" | "unavailable";
+
+/**
+ * Build the POST request to set the instance's GLOBAL presence.
+ *
+ * Path `/user/presence`, body `{"type":"available"|"unavailable"}` (lowercase
+ * key — wuzapi handler `SendPresence`), header `token` = instance token.
+ * Why it matters: the WhatsApp server silences notifications on the PHONE while
+ * a linked device announces `available`, and upstream wuzapi announces it on
+ * every `Connected`. `unavailable` keeps the companion "invisible" so the phone
+ * keeps ringing.
+ */
+export function buildBridgeGlobalPresenceRequest(params: {
+  baseUrl: string;
+  token: string;
+  type: BridgeGlobalPresence;
+}): BridgeSendRequest {
+  const base = params.baseUrl.replace(/\/+$/, "");
+  return {
+    url: `${base}/user/presence`,
+    headers: {
+      "Content-Type": "application/json",
+      token: params.token,
+    },
+    body: JSON.stringify({ type: params.type }),
+  };
+}
+
+/**
+ * Presença que o CRM deve anunciar para o canal. Ausente ou `true` = o celular
+ * continua notificando (`unavailable`); só `false` explícito volta ao legado
+ * (`available`, o celular fica mudo enquanto o CRM está conectado).
+ */
+export function desiredBridgePresence(config: {
+  bridgePhoneNotifications?: boolean;
+}): BridgeGlobalPresence {
+  return config.bridgePhoneNotifications === false ? "available" : "unavailable";
+}
+
 /**
  * The four wuzapi media send endpoints. We route by the file's mime type, not by
  * the inbound whatsmeow "kind", so a sticker (image/webp) goes out as an image and

@@ -18,6 +18,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// Caminhos "conectado" agendam a presença global (channelHealth.internalBridgeApplyPresence);
+// cancela antes do fim do teste para nada rodar contra a rede depois.
+async function cancelPendingJobs(t: TestConvex<typeof schema>) {
+  await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    for (const job of jobs) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
+
 function setup() {
   return convexTest(schema, modules);
 }
@@ -347,6 +359,7 @@ describe("channelConfigs bridge provider", () => {
     expect(stored!.bridgeSessionState).toBe("connected");
     expect(stored!.displayPhoneNumber).toBe("+15550000000");
     expect(stored!.healthDetail).toContain("15550000000");
+    await cancelPendingJobs(t);
   });
 
   test("checkChannelHealth on a logged-out bridge marks it errored (disconnected)", async () => {
@@ -438,6 +451,7 @@ describe("channelConfigs bridge provider", () => {
     expect(result.qrCode).toBeUndefined();
     // Only the status probe was needed — no connect/qr calls.
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    await cancelPendingJobs(t);
   });
 
   test("provisionBridgeChannel creates a bridge config on gateway success", async () => {

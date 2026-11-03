@@ -1061,6 +1061,11 @@ const applicationTables = {
     // Auto-transcribe inbound voice notes with the local Whisper service
     // (convex/transcription.ts). Applies to both providers; absent/false = off.
     autoTranscribeAudio: v.optional(v.boolean()),
+    // Bridge only: o celular do cliente continua tocando notificações? Ausente
+    // ou true = sim (o CRM anuncia presença global "unavailable" no gateway);
+    // false = legado (anuncia "available" e o WhatsApp silencia o celular).
+    // Reafirmado pelo cron de saúde (channelHealth.applyBridgePresence).
+    bridgePhoneNotifications: v.optional(v.boolean()),
     // LEGADO (v0.51 → v0.52): existiu por uma versão como segundo interruptor da
     // leitura de imagens, num AND com aiConfig.visionEnabled. Dois interruptores
     // em telas diferentes para ligar UMA coisa era confuso e não valia a
