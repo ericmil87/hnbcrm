@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.77.3] - 2026-11-03
+
+### Copiloto no Telegram — `/modo` no menu do bot e documentação consolidada
+
+- `/modo` passa a aparecer no menu de comandos do bot (já funcionava digitando).
+- Documentação de arquitetura do Telegram consolidada depois dos dois hotfixes do dia: estado atual único, histórico por fase, pendências conhecidas; regras de código reduzidas e atualizadas.
+
 ## [0.77.2] - 2026-11-03
 
 ### Copiloto no Telegram — menos ruído no relay, cartões legíveis, e-mail só oculto no modo discreto

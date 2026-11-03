@@ -19,13 +19,13 @@ Cada arquivo tem **Estado atual** (curto) e **Decisões, pegadinhas medidas e hi
 | [`ai-core.md`](ai-core.md) | IA — runtime, provedores, rotas, custo e data/hora | `lib/llm/`, `lib/agentRoutes.ts`, `aiSettings.ts`, `aiSpend.ts`, `agentRuns`, `lib/promptDateTime.ts`, `lib/whatsappText.ts` |
 | [`ai-attendant.md`](ai-attendant.md) | Atendente IA — repasses, follow-up, agenda externa, guardrails | `attendant.ts`, `attendantFollowUp.ts`, `handoffs.ts`, `lib/agentTools.ts`, `lib/botGuard*.ts`, `lib/llmOutputGuard.ts`, `attendantAgenda.ts`, `inboundLeadWelcome.ts` |
 | [`ai-vision-media.md`](ai-vision-media.md) | Atendente IA — visão de imagens e mídia inbound | `vision.ts`, `lib/mediaEnrichment.ts`, `internalSaveInboundAttachment`, `lib/fileRefs.ts`, simulador/goldens |
-| [`ai-copilot.md`](ai-copilot.md) | Copiloto in-app | `copilot.ts`, `copilotHttp.ts`, `src/components/copilot/`, `src/lib/markdown.ts` |
+| [`ai-copilot.md`](ai-copilot.md) | Copiloto in-app (e o loop `lib/copilotTurn.ts` que o Telegram reaproveita) | `copilot.ts`, `copilotHttp.ts`, `src/components/copilot/`, `src/lib/markdown.ts` |
 | [`leads-pipeline.md`](leads-pipeline.md) | Leads, funis e etapas | `leads.ts`, `boards.ts`, `lib/leadStageMove.ts`, `lib/leadCascade.ts`, `lib/leadAttribution.ts`, `LeadDetailPanel` |
 | [`phones-contacts.md`](phones-contacts.md) | Telefones e contatos | `lib/phone.ts`, `lib/orgPhone.ts`, `contacts.ts`, `lib/inboundRouting.ts` |
 | [`data-export-import.md`](data-export-import.md) | Export/Import de dados | `exports.ts`, `imports.ts`, `importRun.ts`, `lib/csv.ts`, `DataSection.tsx` |
 | [`campaigns.md`](campaigns.md) | Campanhas de WhatsApp (disparo em massa) | `campaigns.ts`, `campaignWorker.ts`, `lib/campaign*.ts`, `optOuts.ts`, `whatsappTemplates.ts` |
 | [`groups.md`](groups.md) | Grupos de WhatsApp (bridge) | `groupChats.ts`, `groupPosts.ts`, `groupPostWorker.ts`, `groupAgent.ts`, `lib/group*.ts`, `src/components/groups/` |
-| [`telegram.md`](telegram.md) | Copiloto no Telegram: bot da plataforma para a equipe (vínculo, webhook, ops) | `telegram.ts`, `telegramHttp.ts`, `opsTelegram.ts`, `lib/telegram*.ts`, módulo `telegram` em `lib/orgModules.ts` |
+| [`telegram.md`](telegram.md) | Copiloto no Telegram: bot da plataforma para a equipe (vínculo, notificações e ações, comandos e relatórios, Copiloto e modos, arquivos, quotas e pacing, ops) | `telegram*.ts`, `opsTelegram.ts`, `lib/telegram*.ts`, `lib/copilotTurn.ts`, módulo `telegram` em `lib/orgModules.ts` |
 | [`central.md`](central.md) | Central de atendimento (unidades, setores, desfecho, atribuição, painel) | `conversationRouting.ts`, `centralAnalytics.ts`, `adSpend.ts`, `demoSim.ts`, `lib/orgModules.ts` |
 | [`frontend.md`](frontend.md) | Frontend — arquitetura, build e SEO | `vite.config.ts`, `src/main.tsx`, rotas, SEO, chunks |
 
