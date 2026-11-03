@@ -13,6 +13,7 @@ npm run convert-images   # Convert PNG images to WebP format
 npm run lint             # Full check: tsc (convex + app) → convex dev --once (DEV) → vite build
 npx convex dev --once    # Push schema/functions para o deployment DEV, sem watch
 npm run deploy:prod      # Publica backend no PROD (lê a chave de convex-prod-key.env.local) — só com testes verdes
+                         # o arquivo pode ser a chave CRUA (`prod:…|…`) ou `CONVEX_DEPLOY_KEY=…`; chave que não começa com `prod:` é recusada (v0.72.1)
 ```
 
 Tests: `npm run test` (vitest + convex-test; `*.test.ts` em `convex/`). Seed data is available via `convex/seed.ts`.

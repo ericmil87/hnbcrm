@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm",
   "private": true,
-  "version": "0.72.0",
+  "version": "0.72.1",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
@@ -10,7 +10,7 @@
     "build": "vite build",
     "lint": "tsc -p convex -noEmit --pretty false && tsc -p tsconfig.app.json -noEmit --pretty false && tsc -p tsconfig.node.json -noEmit --pretty false && convex dev --once && vite build",
     "test": "vitest run",
-    "deploy:prod": "sh -c 'CONVEX_DEPLOY_KEY=$(grep \"^CONVEX_DEPLOY_KEY=\" convex-prod-key.env.local | cut -d= -f2-) npx convex deploy -y'",
+    "deploy:prod": "sh -c 'f=convex-prod-key.env.local; [ -s \"$f\" ] || { echo \"deploy:prod: $f ausente ou vazio (chave do deploy PROD)\" >&2; exit 1; }; k=$(sed -n \"s/^CONVEX_DEPLOY_KEY=//p\" \"$f\" | head -n1); [ -n \"$k\" ] || k=$(head -n1 \"$f\"); k=$(printf %s \"$k\" | tr -d \"\\\"\\r \"); case \"$k\" in prod:*) ;; *) echo \"deploy:prod: a chave em $f não começa com prod: — recusando\" >&2; exit 1;; esac; CONVEX_DEPLOY_KEY=\"$k\" npx convex deploy -y'",
     "build:embed": "vite build --config vite.embed.config.ts",
     "convert-images": "node scripts/convert-images.js"
   },
