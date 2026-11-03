@@ -34,3 +34,5 @@ Runtime provider-agnostic (`convex/lib/llm/`), Copiloto + Atendente, segurança 
 Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadores que não existiam em nenhum outro lugar).
 
 - `lib/agentPersonas.ts` — Personas de atendente por indústria (sementes do 1-toque)
+
+**Alias `deepseek-flash-latest` (v0.71.1, 02/11/2026):** id canônico que resolve para o slug `~deepseek/deepseek-flash-latest` do OpenRouter (router que SEMPRE aponta para o Flash mais novo da DeepSeek — em 02/11 a V4.1 Flash 1017). Entrou em `OPENROUTER_ONLY_MODELS` (a cadeia pula o elo do OpenCode Go, como o `0731`), em `MODEL_CAPABILITIES` (`jsonSchemaStrict:false`) e em `MODEL_PRICES` com a mediana dos 44 endpoints do modelo-alvo (0,18/0,72/0,006 USD por 1M). Pegadinha: o `/api/v1/models/<alias>/endpoints` do router devolve `endpoints: []` — o preço tem que ser coletado no modelo para o qual ele aponta, e re-coletado quando a DeepSeek trocar o alvo. Motivo: mensagens com letras faltando e "Kengi" no titular do Pix vindas do `deepseek-v4-flash` na org Kenji Kawano (02/11); a troca por org é `aiSettings:internalReplaceOrgModel` ou `setModels`.

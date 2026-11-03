@@ -530,6 +530,16 @@ describe("deepseek-v4-flash-0731 e withReasoningEffort", () => {
     expect(resolvePlatformChain("deepseek-v4-flash-0731", { opencodeGoKey: "sk-go" })).toHaveLength(0);
   });
 
+  test("deepseek-flash-latest: alias só-OpenRouter com o slug `~deepseek/…` do router", () => {
+    const chain = resolvePlatformChain("deepseek-flash-latest", {
+      opencodeGoKey: "sk-go",
+      openrouterKey: "sk-or",
+    });
+    expect(chain.map((r) => r.providerId)).toEqual(["openrouter"]);
+    expect(chain[0].model).toBe("~deepseek/deepseek-flash-latest");
+    expect(resolvePlatformChain("deepseek-flash-latest", { opencodeGoKey: "sk-go" })).toHaveLength(0);
+  });
+
   test("reasoning.effort entra só na rota OpenRouter e preserva a trava ZDR", () => {
     const chain = withReasoningEffort(
       resolvePlatformChain("deepseek-v4-flash", { opencodeGoKey: "sk-go", openrouterKey: "sk-or" }),
