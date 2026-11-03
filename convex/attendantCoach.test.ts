@@ -21,6 +21,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { upsertRuntime } from "./lib/conversationRuntime";
+import { requestAiDraftCore } from "./attendant";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -1108,5 +1109,33 @@ describe("notas da equipe e devolver com instrução", () => {
       humanInitiated: true,
     });
     expect(committed).toMatchObject({ committed: true });
+  });
+});
+
+describe("origem do pedido pelo Telegram (D23)", () => {
+  test("pedido via Telegram marca o item e o rascunho (requestedVia + instructedBy); pelo app, não", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await t.run(async (ctx) => {
+      const conversation = (await ctx.db.get(seed.conversationId))!;
+      const member = (await ctx.db.get(seed.adminId))!;
+      await requestAiDraftCore(ctx, { conversation, member, instruction: "Ofereça 10%", via: "telegram" });
+    });
+    const item = await coachItemOf(t, seed);
+    expect(item).toMatchObject({ origin: "coach", instructedBy: seed.adminId, requestedVia: "telegram" });
+    vi.useRealTimers();
+    stubLlm("Consigo 10% no anual.");
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item!._id });
+    const drafts = await draftsOf(t, seed);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].metadata!.aiDraft).toMatchObject({ requestedVia: "telegram", instructedBy: seed.adminId });
+  });
+
+  test("pedido pelo app: o item e o rascunho ficam sem requestedVia", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await asUser(t, seed.adminUserId).mutation(api.attendant.requestAiDraft, { conversationId: seed.conversationId });
+    const item = await coachItemOf(t, seed);
+    expect(item!.requestedVia).toBeUndefined();
   });
 });

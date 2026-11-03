@@ -30,6 +30,7 @@ import { editMessageText } from "./lib/telegramApi";
 import {
   PROMPT_EXPIRED_COPY,
   TELEGRAM_FAILURE,
+  executeAutoSend,
   handleTelegramCallback,
   handleTelegramPromptAnswer,
   type EditOp,
@@ -39,6 +40,7 @@ import {
 import { loadCardContext, messageText } from "./lib/telegramContext";
 import {
   buildAiRelayCard,
+  buildCountdownCard,
   buildNotificationCard,
   buildRecordCard,
   channelLabel,
@@ -48,7 +50,11 @@ import {
 import { escapeHtml } from "./lib/telegramFormat";
 import { PERSISTENT_KEYBOARD, CMD_COPY, parseCommandCallback, resolveCommandName } from "./lib/telegramCommands";
 import { runTelegramCallback, runTelegramCommand } from "./telegramCommands";
+import { buildWelcomeCard } from "./lib/telegramOnboarding";
 import { FOCUS_TTL_MS, resolveRelayRecipient } from "./lib/telegramRelay";
+import { COPILOT_COPY } from "./telegramCopilot";
+import { appendFirstTimeTip } from "./lib/telegramOnboarding";
+import { AUTO_SEND_MAX_S, AUTO_SEND_MIN_S, autoSendSeconds, draftAutoSendable, effectiveAssistantMode } from "./lib/telegramAssistant";
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
@@ -74,7 +80,6 @@ import {
   parseTelegramUpdate,
   settingsUrl,
   updateIdOf,
-  welcomeText,
   type ParsedUpdate,
 } from "./lib/telegramCore";
 import {
@@ -102,7 +107,15 @@ const keyboardValidator = v.array(
 const recordValidator = v.object({
   organizationId: v.id("organizations"),
   linkId: v.id("telegramLinks"),
-  kind: v.union(v.literal("notification"), v.literal("relay"), v.literal("prompt")),
+  kind: v.union(
+    v.literal("notification"),
+    v.literal("relay"),
+    v.literal("prompt"),
+    // F3: Copilot answers/cards, automatic-mode record, countdown draft (D22/D23).
+    v.literal("copilot"),
+    v.literal("auto_record"),
+    v.literal("draft"),
+  ),
   conversationId: v.optional(v.id("conversations")),
   handoffId: v.optional(v.id("handoffs")),
   taskId: v.optional(v.id("tasks")),
@@ -111,6 +124,15 @@ const recordValidator = v.object({
   setPromptMessageId: v.optional(v.boolean()),
   /** `expiresAt` of the prompt open when the send was decided (binds the id to THAT prompt). */
   promptExpiresAt: v.optional(v.number()),
+  /** F3 (D22): automatic-mode record — what "Desfazer" reverts, until `expiresAt`. */
+  undo: v.optional(
+    v.object({
+      steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()), after: v.optional(v.any()) })),
+      expiresAt: v.number(),
+    }),
+  ),
+  /** F3 (D23): countdown card — `internalAutoSendDraft` fires after `delayMs` unless vetoed. */
+  autoSend: v.optional(v.object({ delayMs: v.number(), draftMessageId: v.optional(v.id("messages")) })),
 });
 
 /** A bot reply decided by a mutation and sent by an action. */
@@ -144,6 +166,14 @@ const cleanupReasonValidator = v.union(
   v.literal("moved"),
 );
 
+const autoAllowedValidator = v.object({
+  instructAi: v.boolean(),
+  createTask: v.boolean(),
+  moveStage: v.boolean(),
+  acceptHandoff: v.boolean(),
+  replyCustomer: v.boolean(),
+});
+
 const myLinkValidator = v.object({
   _id: v.id("telegramLinks"),
   status: v.union(v.literal("active"), v.literal("blocked"), v.literal("revoked")),
@@ -159,7 +189,14 @@ const myLinkValidator = v.object({
     eveningHour: v.number(),
     weekends: v.optional(v.boolean()), // F2 relatórios
   }),
-  assistant: v.object({ mode: v.union(v.literal("suggest"), v.literal("auto")) }),
+  assistant: v.object({
+    mode: v.union(v.literal("suggest"), v.literal("auto")),
+    // F3 (D22/D23): settings shown in the card; hourly counters stay server-side.
+    suggestOnEvents: v.boolean(),
+    autoSendDelaySeconds: v.number(),
+    autoAllowed: autoAllowedValidator,
+    autoPausedAt: v.optional(v.number()),
+  }),
 });
 
 function botUsernameEnv(): string | null {
@@ -257,7 +294,13 @@ export const getMyLink = query({
             mutedUntil: link.mutedUntil,
             prefs: link.prefs,
             reports: link.reports,
-            assistant: { mode: link.assistant.mode },
+            assistant: {
+              mode: link.assistant.mode,
+              suggestOnEvents: link.assistant.suggestOnEvents,
+              autoSendDelaySeconds: autoSendSeconds(link),
+              autoAllowed: link.assistant.autoAllowed,
+              ...(link.assistant.autoPausedAt !== undefined ? { autoPausedAt: link.assistant.autoPausedAt } : {}),
+            },
           }
         : null,
     };
@@ -301,6 +344,15 @@ export const updateMyLinkPrefs = mutation({
         weekends: v.optional(v.boolean()), // F2 relatórios
       }),
     ),
+    // F3 (D22/D23): assistant mode and its limits, edited from the card.
+    assistant: v.optional(
+      v.object({
+        mode: v.optional(v.union(v.literal("suggest"), v.literal("auto"))),
+        suggestOnEvents: v.optional(v.boolean()),
+        autoSendDelaySeconds: v.optional(v.number()),
+        autoAllowed: v.optional(autoAllowedValidator.partial()),
+      }),
+    ),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -320,9 +372,72 @@ export const updateMyLinkPrefs = mutation({
     if (args.reports?.eveningHour !== undefined) reports.eveningHour = args.reports.eveningHour;
     if (args.reports?.weekends !== undefined) reports.weekends = args.reports.weekends; // F2 relatórios
     await ctx.db.patch(link._id, { prefs, reports });
+    if (args.assistant) await updateAssistantSettings(ctx, link, member, args.assistant);
     return null;
   },
 });
+
+type AssistantPatch = {
+  mode?: "suggest" | "auto";
+  suggestOnEvents?: boolean;
+  autoSendDelaySeconds?: number;
+  autoAllowed?: Partial<Doc<"telegramLinks">["assistant"]["autoAllowed"]>;
+};
+
+/** Card edits of the assistant (D22/D23): same rules as `/modo`, audited. */
+async function updateAssistantSettings(
+  ctx: MutationCtx,
+  link: Doc<"telegramLinks">,
+  member: Doc<"teamMembers">,
+  patch: AssistantPatch,
+) {
+  const delay = patch.autoSendDelaySeconds;
+  if (delay !== undefined && (!Number.isInteger(delay) || delay < AUTO_SEND_MIN_S || delay > AUTO_SEND_MAX_S)) {
+    throw new ConvexError(`O tempo para cancelar precisa ser um número inteiro entre ${AUTO_SEND_MIN_S} e ${AUTO_SEND_MAX_S} segundos`);
+  }
+  const now = Date.now();
+  const before = link.assistant;
+  if (patch.mode === "auto" && before.mode !== "auto") {
+    const org = await ctx.db.get(link.organizationId);
+    if (org?.settings.telegram?.allowAutoMode === false) {
+      throw new ConvexError("O modo automático está desligado nesta organização");
+    }
+  }
+  const turningAutoOn = patch.mode === "auto" && (before.mode !== "auto" || before.autoPausedAt !== undefined);
+  const next: Doc<"telegramLinks">["assistant"] = {
+    ...before,
+    ...(patch.mode !== undefined ? { mode: patch.mode } : {}),
+    ...(patch.suggestOnEvents !== undefined ? { suggestOnEvents: patch.suggestOnEvents } : {}),
+    ...(delay !== undefined ? { autoSendDelaySeconds: delay } : {}),
+    autoAllowed: { ...before.autoAllowed, ...compact(patch.autoAllowed ?? {}) },
+    // Choosing automatic again clears the undo pause and the hourly counter (same as `/modo`).
+    ...(turningAutoOn ? { autoPausedAt: undefined, autoActionsThisHour: 0, autoHourStart: now } : {}),
+  };
+  await ctx.db.patch(link._id, { assistant: next });
+  const view = (a: Doc<"telegramLinks">["assistant"]) => ({
+    mode: a.mode,
+    suggestOnEvents: a.suggestOnEvents,
+    autoSendDelaySeconds: a.autoSendDelaySeconds,
+    autoAllowed: a.autoAllowed,
+  });
+  const widened =
+    turningAutoOn || (next.autoAllowed.replyCustomer && !before.autoAllowed.replyCustomer);
+  await ctx.db.insert("auditLogs", {
+    organizationId: link.organizationId,
+    entityType: "telegramLink",
+    entityId: link._id,
+    action: "update",
+    actorId: member._id,
+    actorType: "human",
+    changes: { before: view(before), after: view(next) },
+    metadata: { event: "telegram.assistant_mode", via: "app" },
+    description: turningAutoOn
+      ? "Ligou o modo automático da assistente no Telegram"
+      : "Alterou as configurações da assistente no Telegram",
+    severity: widened ? "high" : "low",
+    createdAt: now,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Ingress (D5)
@@ -379,6 +494,22 @@ const parsedValidator = v.object({
   callbackQueryId: v.optional(v.string()),
   callbackData: v.optional(v.string()),
   memberStatus: v.optional(v.string()),
+  // F3 (D21): incoming media (voice/audio/photo/video/document).
+  media: v.optional(
+    v.object({
+      kind: v.union(
+        v.literal("voice"),
+        v.literal("audio"),
+        v.literal("photo"),
+        v.literal("video"),
+        v.literal("video_note"),
+        v.literal("document"),
+      ),
+      fileId: v.string(),
+      fileSize: v.optional(v.number()),
+      mimeType: v.optional(v.string()),
+    }),
+  ),
 });
 
 export const internalGetUpdate = internalQuery({
@@ -538,6 +669,12 @@ export const internalRouteUpdate = internalMutation({
       }
       return none;
     }
+    if (p.kind === "stopped_message_generation") {
+      // F3 (D10): the user tapped "stop" on a streaming answer — the running turn ends.
+      const chat = await getChat(ctx, chatId);
+      if (chat) await ctx.db.patch(chat._id, { cancelRequestedAt: now, updatedAt: now });
+      return none;
+    }
     if (p.kind !== "message" && p.kind !== "callback_query") return none;
 
     // Hard expiry: an expired prompt (and its `draftText`) is removed on ANY update.
@@ -605,11 +742,42 @@ export const internalRouteUpdate = internalMutation({
       return await runTelegramCommand(ctx, commandName, { chatId, active, alive, now, appBaseUrl: appUrl() });
     }
     if (cmd) return { replies: [{ chatId, text: CMD_COPY.unknown, protectContent }] };
-    if (!cmd && promptExpired) return { replies: [{ chatId, text: PROMPT_EXPIRED_COPY }] };
-    if (!cmd) {
-      // An open prompt (instruct / regenerate / reply) consumes the next message.
-      const answered = await handleTelegramPromptAnswer(ctx, { chatId, text: p.text, now, appBaseUrl: appUrl() });
-      if (answered) return answered;
+    if (promptExpired) return { replies: [{ chatId, text: PROMPT_EXPIRED_COPY }] };
+    // F3 (D21): voice/audio go to the Copilot runner FIRST (the transcript may
+    // answer an open prompt there); video is not supported.
+    const media = p.media;
+    if (media && (media.kind === "video" || media.kind === "video_note")) {
+      return { replies: [{ chatId, text: COPILOT_COPY.video, protectContent }] };
+    }
+    if (media && (media.kind === "voice" || media.kind === "audio")) {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "voice",
+        media,
+        ...(p.text ? { text: p.text } : {}),
+      });
+      return none;
+    }
+    // An open prompt (instruct / regenerate / reply) consumes the next message.
+    const answered = await handleTelegramPromptAnswer(ctx, { chatId, text: p.text, now, appBaseUrl: appUrl() });
+    if (answered) return answered;
+    // F3 (D9): everything else is a Copilot turn (photo → vision first).
+    if (media && media.kind === "photo") {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "photo",
+        media,
+        ...(p.text ? { text: p.text } : {}),
+      });
+      return none;
+    }
+    if (p.text?.trim()) {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "text",
+        text: p.text,
+      });
+      return none;
     }
     return { replies: [{ chatId, text: COPY.learning, protectContent }] };
   },
@@ -731,14 +899,15 @@ export const internalConsumeLinkCode = internalMutation({
       const other = await ctx.db.get(l.organizationId);
       if (other) otherOrgNames.push(other.name);
     }
+    // D24: card 0 of the tour. A message carries one reply_markup (inline wins), so the
+    // persistent keyboard (P6, default on) comes in its own short message.
+    await ctx.db.patch(linkId, { onboarding: { step: 0 } });
+    const protectContent = await protectContentFor(ctx, code.organizationId);
+    const welcome = buildWelcomeCard({ memberName: member.name, orgName: org.name, otherOrgNames });
     return {
       replies: [
-        {
-          chatId,
-          text: welcomeText({ memberName: member.name, orgName: org.name, otherOrgNames }),
-          protectContent: await protectContentFor(ctx, code.organizationId),
-          ...(keyboardShown ? { persistentKeyboard: true } : {}),
-        },
+        { chatId, text: welcome.text, keyboard: welcome.keyboard, protectContent },
+        ...(keyboardShown ? [{ chatId, text: CMD_COPY.keyboardOn, protectContent, persistentKeyboard: true }] : []),
       ],
     };
   },
@@ -881,6 +1050,17 @@ async function deliverEdits(edits: EditOp[] | undefined): Promise<void> {
   }
 }
 
+/** F3: sends a mutation's `{replies, edits}` (prompt answers from a voice note, mode changes, undo). */
+export const internalDeliverActionResult = internalAction({
+  args: { result: v.object({ replies: v.array(replyValidator), edits: v.optional(v.array(editValidator)) }) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await deliverEdits(args.result.edits);
+    await deliverReplies(ctx, args.result.replies, 1);
+    return null;
+  },
+});
+
 /** Records a bot message (base of callbacks, broadcast edits, deleteMessage ≤ 48 h). */
 export const internalRecordDelivery = internalMutation({
   args: { record: recordValidator, chatId: v.number(), messageId: v.number() },
@@ -899,8 +1079,24 @@ export const internalRecordDelivery = internalMutation({
       ...(r.conversationId ? { conversationId: r.conversationId } : {}),
       ...(r.taskId ? { taskId: r.taskId } : {}),
       ...(r.crmMessageId ? { crmMessageId: r.crmMessageId } : {}),
+      ...(r.undo ? { undo: r.undo } : {}),
+      ...(r.autoSend
+        ? { draft: { ...(r.autoSend.draftMessageId ? { messageId: r.autoSend.draftMessageId } : {}), sendAt: now + r.autoSend.delayMs } }
+        : {}),
       sentAt: now,
     });
+    if (r.autoSend) {
+      // D23: the veto window starts when the countdown card is on the screen.
+      const deliveryId = (
+        await ctx.db
+          .query("telegramDeliveries")
+          .withIndex("by_chat_and_message", (q) => q.eq("chatId", args.chatId).eq("messageId", args.messageId))
+          .first()
+      )?._id;
+      if (deliveryId) {
+        await ctx.scheduler.runAfter(r.autoSend.delayMs, internal.telegram.internalAutoSendDraft, { deliveryId });
+      }
+    }
     if (r.setPromptMessageId) {
       const chat = await getChat(ctx, args.chatId);
       const sameprompt =
@@ -1212,8 +1408,17 @@ const cardTargetValidator = v.object({
   keyboard: keyboardValidator,
   protectContent: v.boolean(),
   record: recordValidator,
+  /** F3 (D24): the link's updated `tipsShown` when the card carried a first-time tip. */
+  tipsShown: v.optional(v.array(v.string())),
 });
-type CardTarget = { chatId: number; text: string; keyboard: CardKeyboard; protectContent: boolean; record: RecordSpec };
+type CardTarget = {
+  chatId: number;
+  text: string;
+  keyboard: CardKeyboard;
+  protectContent: boolean;
+  record: RecordSpec;
+  tipsShown?: string[];
+};
 
 /** The live link that may receive a card for this member/org, or null (re-checked at delivery). */
 async function deliverableLink(
@@ -1244,7 +1449,14 @@ async function deliverableLink(
 
 /** Everything the delivery action needs, in one read (`now` passed in: no clock in queries). */
 export const internalGetNotificationDelivery = internalQuery({
-  args: { notificationId: v.id("notifications"), now: v.number() },
+  args: {
+    notificationId: v.id("notifications"),
+    now: v.number(),
+    /** F3 (D22): "🤔 Não decidi sozinha…" line on top of the card. */
+    preface: v.optional(v.string()),
+    /** F3 (D22, suggest mode): "💡 Sugiro: …" + "💡 Aplicar sugestão" (`pa:`). */
+    suggestion: v.optional(v.object({ pendingActionId: v.id("pendingActions"), summary: v.string() })),
+  },
   returns: v.union(v.null(), cardTargetValidator),
   handler: async (ctx, args) => {
     const n = await ctx.db.get(args.notificationId);
@@ -1260,36 +1472,147 @@ export const internalGetNotificationDelivery = internalQuery({
       notification: n,
     });
     if (!context) return null;
+    const baseRecord = {
+      organizationId: n.organizationId,
+      linkId: target.link._id,
+      notificationId: n._id,
+      ...(n.handoffId ? { handoffId: n.handoffId } : {}),
+      ...(n.conversationId ? { conversationId: n.conversationId } : {}),
+      ...(n.taskId ? { taskId: n.taskId } : {}),
+    };
+    const protectContent = target.org.settings.telegram?.protectContent === true;
+    // D23: in automatic mode an AI draft card is a countdown that sends unless vetoed.
+    const mode = effectiveAssistantMode(target.link, target.org);
+    const draftDoc =
+      n.type === "ai_draft_pending" && mode === "auto" && context.draft
+        ? await ctx.db.get(context.draft.messageId as Id<"messages">)
+        : null;
+    if (context.draft && draftDoc && draftAutoSendable(draftDoc.metadata?.aiDraft, n.memberId)) {
+      const seconds = autoSendSeconds(target.link);
+      const card = buildCountdownCard(context, context.draft.text, seconds, context.draft.messageId);
+      return {
+        chatId: target.link.chatId,
+        text: card.text,
+        keyboard: card.keyboard,
+        protectContent,
+        record: {
+          ...baseRecord,
+          kind: "draft" as const,
+          autoSend: { delayMs: seconds * 1000, draftMessageId: context.draft.messageId as Id<"messages"> },
+        },
+      };
+    }
     const card = buildNotificationCard({ notification: { ...n, _id: n._id }, context });
+    const tip = appendFirstTimeTip({ type: n.type, tipsShown: target.link.tipsShown });
+    const text = [
+      args.preface ? escapeHtml(args.preface) : null,
+      card.text,
+      args.suggestion ? `💡 Sugiro: ${escapeHtml(args.suggestion.summary)}` : null,
+      tip.line ? escapeHtml(tip.line) : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const keyboard = args.suggestion
+      ? [[{ text: "💡 Aplicar sugestão", callback_data: `pa:${args.suggestion.pendingActionId}` }], ...card.keyboard]
+      : card.keyboard;
     return {
       chatId: target.link.chatId,
-      text: card.text,
-      keyboard: card.keyboard,
-      protectContent: target.org.settings.telegram?.protectContent === true,
-      record: {
-        organizationId: n.organizationId,
-        linkId: target.link._id,
-        kind: "notification" as const,
-        notificationId: n._id,
-        ...(n.handoffId ? { handoffId: n.handoffId } : {}),
-        ...(n.conversationId ? { conversationId: n.conversationId } : {}),
-        ...(n.taskId ? { taskId: n.taskId } : {}),
-      },
+      text,
+      keyboard,
+      protectContent,
+      record: { ...baseRecord, kind: "notification" as const },
+      ...(tip.line ? { tipsShown: tip.tipsShown } : {}),
     };
   },
 });
 
-/** Scheduled by `createNotification` (lib/notify.ts) for members with an active link. */
+/**
+ * Scheduled by `createNotification` (lib/notify.ts) for members with an active
+ * link. F3 (D22): first asks whether the assistant handles the event — auto
+ * mode runs `internalAssistantAutoTurn` (which falls back to this card with a
+ * preface when it does not act); suggest mode with `suggestOnEvents` runs the
+ * read-only suggestion turn, which comes back here with `suggestion`.
+ */
 export const internalDeliverNotification = internalAction({
-  args: { notificationId: v.id("notifications") },
+  args: {
+    notificationId: v.id("notifications"),
+    forceCard: v.optional(v.boolean()),
+    preface: v.optional(v.string()),
+    suggestion: v.optional(v.object({ pendingActionId: v.id("pendingActions"), summary: v.string() })),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
+    if (!args.forceCard && !args.suggestion) {
+      const decision: { route: "card" | "auto" | "suggest"; linkId?: Id<"telegramLinks"> } = await ctx.runQuery(
+        internal.telegramCopilot.internalAssistantDecision,
+        { notificationId: args.notificationId, now: Date.now() },
+      );
+      if (decision.route === "auto" && decision.linkId) {
+        await ctx.runAction(internal.telegramCopilot.internalAssistantAutoTurn, {
+          linkId: decision.linkId,
+          notificationId: args.notificationId,
+        });
+        return null;
+      }
+      if (decision.route === "suggest" && decision.linkId) {
+        await ctx.runAction(internal.telegramCopilot.internalAssistantSuggestTurn, {
+          linkId: decision.linkId,
+          notificationId: args.notificationId,
+        });
+        return null;
+      }
+    }
     const target: CardTarget | null = await ctx.runQuery(internal.telegram.internalGetNotificationDelivery, {
       notificationId: args.notificationId,
       now: Date.now(),
+      ...(args.preface ? { preface: args.preface } : {}),
+      ...(args.suggestion ? { suggestion: args.suggestion } : {}),
     });
     if (!target) return null;
-    await deliverReplies(ctx, [target], 1);
+    const { tipsShown, ...reply } = target;
+    await deliverReplies(ctx, [reply], 1);
+    if (tipsShown) {
+      await ctx.runMutation(internal.telegram.internalSetTipsShown, { linkId: target.record.linkId, tipsShown });
+    }
+    return null;
+  },
+});
+
+/** D23: the countdown elapsed — sends unless vetoed (`lib/telegramActions.executeAutoSend`). */
+export const internalExecuteAutoSend = internalMutation({
+  args: { deliveryId: v.id("telegramDeliveries") },
+  returns: v.object({ replies: v.array(replyValidator), edits: v.array(editValidator) }),
+  handler: async (ctx, args) => {
+    return await executeAutoSend(ctx, { deliveryId: args.deliveryId, now: Date.now(), appBaseUrl: appUrl() });
+  },
+});
+
+/** Scheduled by `internalRecordDelivery` when a countdown card goes out (D23). */
+export const internalAutoSendDraft = internalAction({
+  args: { deliveryId: v.id("telegramDeliveries") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    let result: { replies: Reply[]; edits: EditOp[] };
+    try {
+      result = await ctx.runMutation(internal.telegram.internalExecuteAutoSend, { deliveryId: args.deliveryId });
+    } catch (e) {
+      const data = telegramFailureOf(e);
+      if (data?.kind !== TELEGRAM_FAILURE || !data.result) throw e;
+      result = data.result;
+    }
+    await deliverEdits(result.edits);
+    await deliverReplies(ctx, result.replies, 1);
+    return null;
+  },
+});
+
+/** D24: first-time tips already shown on this link (helper `appendFirstTimeTip`). */
+export const internalSetTipsShown = internalMutation({
+  args: { linkId: v.id("telegramLinks"), tipsShown: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const link = await ctx.db.get(args.linkId);
+    if (link) await ctx.db.patch(link._id, { tipsShown: args.tipsShown.slice(0, 50) });
     return null;
   },
 });

@@ -7,7 +7,7 @@
  * de saber que dia é. O bloco fica no FIM, pelo cache de prefixo do provider.
  */
 import { describe, expect, test } from "vitest";
-import { buildSystemPrompt } from "./copilotHttp";
+import { buildSystemPrompt } from "./lib/copilotTurn";
 
 const session = {
   member: { name: "Eric" },

@@ -415,6 +415,8 @@ describe("preview", () => {
       telegramDeliveries: 0,
       telegramLinkCodes: 0,
       telegramRelayBuffer: 0,
+      telegramAutoSteps: 0,
+      telegramSuggestions: 0,
     });
     expect(out.every((p) => p.truncated === false)).toBe(true);
     // Override de janela no preview.

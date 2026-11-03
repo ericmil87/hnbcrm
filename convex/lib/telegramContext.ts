@@ -9,7 +9,17 @@ import { getLeadRef } from "./leadRef";
 import { safeTimezone } from "./promptDateTime";
 import { normalizeCampaignPhone } from "./phone";
 import { resolveDefaultCountry } from "./orgPhone";
-import { messageLineText, type CardContext, type HistoryLine } from "./telegramNotifications";
+import {
+  channelLabel,
+  formatMoney,
+  initials,
+  messageLineText,
+  redactName,
+  type CardContext,
+  type HistoryLine,
+} from "./telegramNotifications";
+import { maskDigitRuns } from "./telegramFormat";
+import { wrapUntrustedJson } from "./promptEnvelope";
 
 type Db = QueryCtx["db"];
 
@@ -181,4 +191,148 @@ export async function loadHistory(
     out.push({ at: m.createdAt, author, text: await messageText(db, m) });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// F3 (D17): context block of the conversation in focus, for the Copilot turn
+// ---------------------------------------------------------------------------
+
+export type FocusContextInput = {
+  lead?: { title: string; stageName?: string; boardName?: string; value?: number; ownerName?: string };
+  channel: string;
+  attendantMode?: "suggest" | "autopilot" | null;
+  handoff?: { origin?: string; reason: string };
+  teamNotes: string[];
+  pendingDraft?: string;
+  messages: { direction: string; author: string; at: number; text: string }[];
+  discreet: boolean;
+  currency: string;
+};
+
+/** Customer text per message in the block (D17, cost cap). */
+export const CONTEXT_MESSAGE_MAX = 300;
+export const CONTEXT_MESSAGES = 20;
+
+function clip(text: string, max = CONTEXT_MESSAGE_MAX): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/**
+ * The system message injected in a Copilot turn when the chat has a
+ * conversation in focus (< 6 h). Not persisted in the thread. Customer text
+ * goes inside the untrusted envelope. Discreet mode: lead name as initials
+ * and digit runs masked; full mode: as the member sees it in the CRM.
+ */
+export function buildConversationContextBlock(input: FocusContextInput): string {
+  const name = (t: string) => (input.discreet ? initials(t) : t);
+  const mask = (t: string) => (input.discreet ? maskDigitRuns(redactNameIn(t, input.lead?.title)) : t);
+  const lines: string[] = ["CONVERSA EM FOCO (contexto do sistema; o usuário está falando desta conversa)"];
+  if (input.lead) {
+    const bits = [`Lead: ${name(input.lead.title)}`];
+    if (input.lead.boardName && input.lead.stageName) bits.push(`etapa ${input.lead.boardName} › ${input.lead.stageName}`);
+    if (input.lead.value) bits.push(formatMoney(input.lead.value, input.currency));
+    if (input.lead.ownerName) bits.push(`responsável: ${input.lead.ownerName}`);
+    lines.push(bits.join(" · "));
+  }
+  lines.push(
+    `Canal: ${channelLabel(input.channel)} · Atendente de IA: ${input.attendantMode ?? "nenhum para este canal"}`,
+  );
+  if (input.handoff) {
+    lines.push(`Repasse pendente (origem ${input.handoff.origin ?? "?"}): ${mask(clip(input.handoff.reason, 300))}`);
+  }
+  if (input.teamNotes.length > 0) {
+    lines.push("Notas da equipe já dadas à IA:");
+    for (const note of input.teamNotes.slice(-5)) lines.push(`- ${mask(clip(note, 300))}`);
+  }
+  if (input.pendingDraft) lines.push(`Rascunho pendente da IA: "${mask(clip(input.pendingDraft, 500))}"`);
+  const messages = input.messages.slice(-CONTEXT_MESSAGES).map((m) => ({
+    de: m.author,
+    direcao: m.direction,
+    em: new Date(m.at).toISOString(),
+    texto: mask(clip(m.text)),
+  }));
+  lines.push(wrapUntrustedJson("últimas mensagens da conversa em foco", messages));
+  lines.push(
+    "Quando o usuário falar desta conversa, prefira acionar o Atendente de IA com uma instrução clara (instructAttendant) a responder você mesmo; explique em uma linha o que fez.",
+  );
+  return lines.join("\n");
+}
+
+function redactNameIn(text: string, leadTitle: string | undefined): string {
+  return leadTitle ? redactName({ discreet: true, lead: { id: "", title: leadTitle } }, text) : text;
+}
+
+/** Loads the focus conversation into a `FocusContextInput` (org-checked, bounded). */
+export async function loadFocusContextInput(
+  db: Db,
+  args: { organizationId: Id<"organizations">; conversationId: Id<"conversations"> },
+): Promise<FocusContextInput | null> {
+  const org = await db.get(args.organizationId);
+  const conversation = await db.get(args.conversationId);
+  if (!org || !conversation || conversation.organizationId !== org._id || conversation.kind === "group") return null;
+  const lead = await getLeadRef(db, conversation.leadId);
+  let leadInfo: FocusContextInput["lead"];
+  let attendantMode: FocusContextInput["attendantMode"] = null;
+  if (lead && lead.organizationId === org._id) {
+    const [stage, board, owner] = await Promise.all([
+      db.get(lead.stageId),
+      db.get(lead.boardId),
+      lead.assignedTo ? db.get(lead.assignedTo) : Promise.resolve(null),
+    ]);
+    leadInfo = {
+      title: lead.title,
+      ...(stage ? { stageName: stage.name } : {}),
+      ...(board ? { boardName: board.name } : {}),
+      ...(lead.value ? { value: lead.value } : {}),
+      ...(owner ? { ownerName: owner.name } : {}),
+    };
+    if (owner?.type === "ai" && owner.agentProfile?.kind === "attendant") attendantMode = owner.agentProfile.mode;
+  }
+  if (attendantMode === null) {
+    const ais = await db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) => q.eq("organizationId", org._id).eq("type", "ai"))
+      .take(20);
+    const attendant = ais.find((m) => m.agentProfile?.kind === "attendant" && m.status !== "inactive");
+    attendantMode = attendant?.agentProfile?.mode ?? null;
+  }
+  const handoff = await db
+    .query("handoffs")
+    .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", conversation._id).eq("status", "pending"))
+    .first();
+  const draft = await pendingDraftOf(db, conversation._id);
+  const recent = await db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+    .order("desc")
+    .take(60);
+  const visible = recent
+    .filter((m) => !m.isInternal && m.direction !== "internal")
+    .slice(0, CONTEXT_MESSAGES)
+    .reverse();
+  const names = new Map<string, string>();
+  const messages: FocusContextInput["messages"] = [];
+  for (const m of visible) {
+    let author = "cliente";
+    if (m.direction === "outbound") {
+      if (m.senderType === "ai") author = "IA";
+      else if (m.senderId) {
+        if (!names.has(m.senderId)) names.set(m.senderId, (await db.get(m.senderId))?.name ?? "equipe");
+        author = names.get(m.senderId)!;
+      } else author = "equipe";
+    }
+    messages.push({ direction: m.direction, author, at: m.createdAt, text: await messageText(db, m) });
+  }
+  return {
+    ...(leadInfo ? { lead: leadInfo } : {}),
+    channel: conversation.channel,
+    attendantMode,
+    ...(handoff ? { handoff: { origin: handoff.origin, reason: handoff.reason } } : {}),
+    teamNotes: (conversation.aiTeamNotes ?? []).map((n) => n.text),
+    ...(draft ? { pendingDraft: draft.content } : {}),
+    messages,
+    discreet: org.settings.telegram?.discreet === true,
+    currency: org.settings.currency || "BRL",
+  };
 }

@@ -10,6 +10,7 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { decryptSecret } from "./secretCrypto";
 import { resolvePlatformChain, resolveByoRoute, ResolvedRoute } from "./llm";
+import { DEFAULT_MODELS } from "./llm/registry";
 
 export type PlatformOrder = "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
 
@@ -20,11 +21,13 @@ export type AiProduct =
   | "vision"
   | "groupPosts"
   /** Agente que responde DENTRO de um grupo de WhatsApp (F4). */
-  | "groupAgent";
+  | "groupAgent"
+  /** Copiloto no Telegram (D16): rota e modelo próprios. */
+  | "telegramCopilot";
 
 export interface ProductRouting {
   order?: PlatformOrder;
-  /** Só a visão usa: ausente significa "Automático" (a cadeia inteira). */
+  /** Visão e Copiloto no Telegram: ausente = o padrão do produto. */
   model?: string;
 }
 
@@ -38,6 +41,7 @@ export interface OrgProviderConfig {
   strictZdr?: boolean;
   platformOrder?: PlatformOrder;
   products?: Partial<Record<AiProduct, ProductRouting>>;
+  models?: { copilot?: string };
 }
 
 const PLATFORM_ORDERS: PlatformOrder[] = [
@@ -94,7 +98,48 @@ export function effectivePlatformOrder(
   product?: AiProduct
 ): PlatformOrder | undefined {
   const perProduct = product ? providerConfig?.products?.[product]?.order : undefined;
+  // D16: o Copiloto no Telegram nasce em "openrouter-first" (o modelo padrão
+  // só existe no OpenRouter); a escolha do produto ou da org ainda vence.
+  if (product === "telegramCopilot") {
+    return perProduct ?? providerConfig?.platformOrder ?? "openrouter-first";
+  }
   return perProduct ?? providerConfig?.platformOrder ?? envPlatformOrder();
+}
+
+/**
+ * Modelo canônico de um produto que escolhe o próprio modelo (D16). Copiloto
+ * no Telegram: o fixado no produto; senão `DEFAULT_MODELS.telegramCopilot`
+ * (`deepseek-flash-latest`, só OpenRouter) no modo plataforma; no BYO a chave
+ * da org não fala esse alias, então vale o modelo do Copiloto da org.
+ */
+export function productModel(
+  providerConfig: OrgProviderConfig | null | undefined,
+  product: "telegramCopilot"
+): { model: string; fallback: string } {
+  const copilot = providerConfig?.models?.copilot ?? DEFAULT_MODELS.copilot;
+  const pinned = providerConfig?.products?.[product]?.model?.trim();
+  if (pinned) return { model: pinned, fallback: copilot };
+  if (providerConfig?.mode === "byo") return { model: copilot, fallback: copilot };
+  return { model: DEFAULT_MODELS.telegramCopilot, fallback: copilot };
+}
+
+/**
+ * Rotas do produto com fallback de modelo: se o modelo do produto não tem rota
+ * neste deployment (ex.: `deepseek-flash-latest` sem OPENROUTER_API_KEY), cai
+ * no `fallback` (o modelo do Copiloto), que funciona sem OpenRouter. Sem rota
+ * nenhuma, lança com a mensagem PT-BR de sempre.
+ */
+export async function resolveProductRoutes(
+  ctx: RunQueryCtx,
+  organizationId: Id<"organizations">,
+  providerConfig: OrgProviderConfig | null | undefined,
+  product: "telegramCopilot"
+): Promise<{ routes: ResolvedRoute[]; canonicalModel: string }> {
+  const { model, fallback } = productModel(providerConfig, product);
+  const routes = await resolveOrgRoutes(ctx, organizationId, providerConfig, model, product);
+  if (routes.length > 0 || fallback === model) return { routes, canonicalModel: model };
+  const fallbackRoutes = await resolveOrgRoutes(ctx, organizationId, providerConfig, fallback, product);
+  return { routes: fallbackRoutes, canonicalModel: fallback };
 }
 
 export async function resolveOrgRoutes(

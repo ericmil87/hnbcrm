@@ -96,7 +96,37 @@ export type ParsedUpdate = {
   callbackQueryId?: string;
   callbackData?: string;
   memberStatus?: string;
+  /** F3 (D21): the largest photo, the voice note, etc. (never the bytes). */
+  media?: ParsedMedia;
 };
+
+export type ParsedMedia = {
+  kind: "voice" | "audio" | "photo" | "video" | "video_note" | "document";
+  fileId: string;
+  fileSize?: number;
+  mimeType?: string;
+};
+
+function mediaOf(message: Record<string, unknown>): ParsedMedia | undefined {
+  const file = (kind: ParsedMedia["kind"], raw: unknown, defaultMime?: string): ParsedMedia | undefined => {
+    const f = obj(raw);
+    const fileId = str(f?.file_id, 256);
+    if (!fileId) return undefined;
+    const fileSize = num(f?.file_size);
+    const mimeType = str(f?.mime_type, 100) ?? defaultMime;
+    return { kind, fileId, ...(fileSize !== undefined ? { fileSize } : {}), ...(mimeType ? { mimeType } : {}) };
+  };
+  if (message.voice) return file("voice", message.voice, "audio/ogg");
+  if (message.audio) return file("audio", message.audio);
+  if (Array.isArray(message.photo) && message.photo.length > 0) {
+    // Telegram sends several sizes; the last is the largest.
+    return file("photo", message.photo[message.photo.length - 1], "image/jpeg");
+  }
+  if (message.video) return file("video", message.video);
+  if (message.video_note) return file("video_note", message.video_note);
+  if (message.document) return file("document", message.document);
+  return undefined;
+}
 
 const MAX_TEXT = 4096;
 const MAX_NAME = 128;
@@ -135,6 +165,7 @@ export function parseTelegramUpdate(update: unknown): ParsedUpdate {
       firstName: str(from?.first_name, MAX_NAME),
       text: str(message.text, MAX_TEXT) ?? str(message.caption, MAX_TEXT),
       messageId: num(message.message_id),
+      ...(mediaOf(message) ? { media: mediaOf(message) } : {}),
     };
   }
 
@@ -229,6 +260,7 @@ export const COPY = {
     "/pausar · silenciar notificações\n" +
     "/org · trocar de organização\n" +
     "/teclado · mostrar ou ocultar o teclado\n" +
+    "/tour · reabre o guia\n" +
     "/sair · desconectar este Telegram\n\n" +
     "O Copiloto, por texto e áudio, chega na próxima versão.",
 } as const;

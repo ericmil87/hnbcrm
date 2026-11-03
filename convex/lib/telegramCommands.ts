@@ -12,6 +12,7 @@
  *   org:<linkId>          switch the chat's active organization
  */
 import { escapeHtml } from "./telegramFormat";
+import { parseOnboardingCallback, type OnboardingCallback } from "./telegramOnboarding";
 import {
   channelLabel,
   formatMoney,
@@ -46,13 +47,14 @@ export const TELEGRAM_COMMANDS = [
   { command: "pausar", description: "Silenciar notificações" },
   { command: "org", description: "Trocar de organização" },
   { command: "teclado", description: "Mostrar ou ocultar o teclado" },
+  { command: "tour", description: "Rever o guia" },
   { command: "ajuda", description: "Como usar o bot" },
   { command: "sair", description: "Desconectar este Telegram" },
 ] as const;
 
 /** Commands the router dispatches here (`sair`/`start` are handled before). `help` aliases `ajuda`. */
 const KNOWN = new Set([
-  "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "ajuda", "help", "modo",
+  "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "ajuda", "help", "modo", "tour",
 ]);
 
 /** Persistent keyboard labels → command. A plain text equal to one is that command. */
@@ -92,11 +94,14 @@ export type CommandCallback =
   | { kind: "focus"; conversationId: string }
   | { kind: "focusOff" }
   | { kind: "mute"; mode: "1h" | "tomorrow" | "off" }
-  | { kind: "org"; linkId: string };
+  | { kind: "org"; linkId: string }
+  | { kind: "onboarding"; cb: OnboardingCallback };
 
 /** Null when `data` is not an F2 callback (it may still be an F1 one). */
 export function parseCommandCallback(data: string | undefined): CommandCallback | null {
   if (!data || new TextEncoder().encode(data).length > 64) return null;
+  const ob = parseOnboardingCallback(data);
+  if (ob) return { kind: "onboarding", cb: ob };
   let m = data.match(/^cmd:([a-z]{2,12})$/);
   if (m) return CMD_BUTTONS.has(m[1]) ? { kind: "cmd", command: m[1] } : null;
   m = data.match(/^pg:([a-z]{2,12}):(\d{1,3})$/);
@@ -121,12 +126,12 @@ export function parseCommandCallback(data: string | undefined): CommandCallback 
 
 export const CMD_COPY = {
   unknown: "Não conheço esse comando. /ajuda lista o que sei fazer.",
-  modoSoon: "O modo automático chega na próxima versão.",
   noHandoffs: "Nenhum repasse pendente 🎉",
   noTasks: "Nenhuma tarefa pendente para você 🎉",
   noLeads: "Nenhum lead para mostrar.",
   noConversations: "Você não tem conversas abertas para pôr em foco.",
   focusCleared: "Foco limpo.",
+  newConversation: "Foco limpo e conversa nova com o Copiloto.",
   focusGone: "⚠️ Não encontrei essa conversa. Ela pode ter sido apagada ou não ser sua.",
   muteChoose: "Silenciar notificações por:",
   unmuted: "🔔 Notificações retomadas.",

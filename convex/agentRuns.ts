@@ -14,6 +14,8 @@ export const internalStartRun = internalMutation({
     memberId: v.id("teamMembers"),
     kind: v.union(
       v.literal("copilot"),
+      // Copiloto no Telegram (F3): mesmo loop, superfície e produto próprios.
+      v.literal("telegram_copilot"),
       v.literal("attendant"),
       v.literal("simulator"),
       v.literal("vision"),

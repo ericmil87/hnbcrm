@@ -957,7 +957,8 @@ describe("revisão F1 — lote 2", () => {
     const card = sends(CHAT_ADMIN)[0].body.text as string;
     expect(card.length).toBeLessThanOrEqual(4096);
     expect(card).toContain("… (continua no CRM)");
-    expect(card.endsWith("</blockquote>")).toBe(true);
+    // The quote closes before anything appended after the card (D24 first-time tip).
+    expect(card).toContain('… (continua no CRM)"</blockquote>');
   });
 
   test("#14 concluir tarefa grava UMA auditoria, com via telegram", async () => {

@@ -295,3 +295,69 @@ export type BotInfo = { id: number; is_bot: boolean; first_name: string; usernam
 export async function getMe(opts?: TelegramCallOptions): Promise<TelegramResult<BotInfo>> {
   return await callTelegram<BotInfo>("getMe", {}, opts);
 }
+
+// ---------------------------------------------------------------------------
+// F3: streaming drafts, chat actions and file download (voice/photo)
+// ---------------------------------------------------------------------------
+
+/**
+ * Bot API 9.5 `sendMessageDraft`: streams a partial answer into the chat
+ * (D10). Plain text, ≤ 4096. Callers throttle (≥ 1 s) and fall back to
+ * `sendChatAction` when the method is refused.
+ */
+export async function sendMessageDraft(
+  args: { chatId: number; draftId: number; text: string },
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<boolean>> {
+  return await callTelegram<boolean>(
+    "sendMessageDraft",
+    { chat_id: args.chatId, draft_id: args.draftId, text: args.text.slice(0, TELEGRAM_TEXT_LIMIT) || "…" },
+    opts,
+  );
+}
+
+export async function sendChatAction(
+  args: { chatId: number; action: "typing" | "record_voice" | "upload_photo" },
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<boolean>> {
+  return await callTelegram<boolean>("sendChatAction", { chat_id: args.chatId, action: args.action }, opts);
+}
+
+/** Bot API limit for `getFile` downloads. */
+export const TELEGRAM_FILE_MAX_BYTES = 20 * 1024 * 1024;
+
+export async function getFile(
+  args: { fileId: string },
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<{ file_id: string; file_path?: string; file_size?: number }>> {
+  return await callTelegram("getFile", { file_id: args.fileId }, opts);
+}
+
+/**
+ * Downloads a file returned by `getFile` (the file URL carries the token, so
+ * it lives here and is never logged). Bounded by `maxBytes` and `timeoutMs`.
+ */
+export async function downloadTelegramFile(
+  filePath: string,
+  opts: { maxBytes?: number; timeoutMs?: number; token?: string } = {},
+): Promise<{ ok: true; bytes: ArrayBuffer; contentType: string } | { ok: false; reason: "disabled" | "too_large" | "network" | "http" }> {
+  const token = opts.token ?? process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return { ok: false, reason: "disabled" };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 15_000);
+  try {
+    const response = await fetch(`${API_BASE}/file/bot${token}/${filePath}`, { signal: controller.signal });
+    if (!response.ok) {
+      console.warn(`[telegram] download: HTTP ${response.status}`);
+      return { ok: false, reason: "http" };
+    }
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > (opts.maxBytes ?? TELEGRAM_FILE_MAX_BYTES)) return { ok: false, reason: "too_large" };
+    return { ok: true, bytes, contentType: response.headers.get("content-type") ?? "application/octet-stream" };
+  } catch (e) {
+    console.warn(`[telegram] download: falha de rede (${e instanceof Error ? e.name : "erro"})`);
+    return { ok: false, reason: "network" };
+  } finally {
+    clearTimeout(timer);
+  }
+}

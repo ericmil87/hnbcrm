@@ -29,7 +29,14 @@ import {
   type CardContext,
   type CardKeyboard,
 } from "./lib/telegramNotifications";
-import type { EditOp, SendOp } from "./lib/telegramActions";
+import { handleModeCommand, type EditOp, type SendOp } from "./lib/telegramActions";
+import {
+  LAST_STEP,
+  ONBOARDING_COPY,
+  buildTourCard,
+  buildWelcomeCard,
+  type OnboardingCallback,
+} from "./lib/telegramOnboarding";
 import {
   CLEAR_FOCUS_KEYBOARD,
   CMD_COPY,
@@ -142,15 +149,25 @@ async function dispatchCommand(ctx: MutationCtx, name: string, viewer: TelegramV
       return await runList(ctx, name, 0, viewer, env);
     case "novo":
       await setFocus(ctx, env.chatId, undefined, env.now);
-      return say(viewer, env, CMD_COPY.focusCleared);
+      // F3: the Copilot thread starts over too.
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalRotateCopilotThread, { linkId: viewer.link._id });
+      return say(viewer, env, CMD_COPY.newConversation);
     case "pausar":
       return say(viewer, env, CMD_COPY.muteChoose, { keyboard: MUTE_KEYBOARD });
     case "org":
       return await runOrg(ctx, viewer, env);
+    case "tour": {
+      // Restarts at card 1 in a NEW message.
+      await ctx.db.patch(viewer.link._id, { onboarding: { ...viewer.link.onboarding, step: 1 } });
+      const card = buildTourCard(1);
+      return say(viewer, env, card.text, { keyboard: card.keyboard });
+    }
     case "teclado":
       return await runKeyboardToggle(ctx, viewer, env);
-    case "modo":
-      return say(viewer, env, CMD_COPY.modoSoon);
+    case "modo": {
+      const mode = await handleModeCommand(ctx, { chatId: env.chatId, now: env.now });
+      return { replies: mode.replies, edits: mode.edits };
+    }
     default:
       return say(viewer, env, COPY.help);
   }
@@ -180,6 +197,8 @@ export async function runTelegramCallback(ctx: MutationCtx, cb: CommandCallback,
       return await onMute(ctx, cb.mode, viewer, env);
     case "org":
       return await onOrg(ctx, cb.linkId, viewer, env);
+    case "onboarding":
+      return await onOnboarding(ctx, cb.cb, viewer, env);
   }
 }
 
@@ -519,4 +538,85 @@ async function runKeyboardToggle(ctx: MutationCtx, viewer: TelegramViewer, env: 
   return showing
     ? say(viewer, env, CMD_COPY.keyboardOff, { removeKeyboard: true })
     : say(viewer, env, CMD_COPY.keyboardOn, { persistentKeyboard: true });
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding tour (D24): ob:* edit the SAME message
+// ---------------------------------------------------------------------------
+
+function showCard(viewer: TelegramViewer, env: CommandEnv, card: { text: string; keyboard: CardKeyboard }): CommandResult {
+  if (env.messageId === undefined) return say(viewer, env, card.text, { keyboard: card.keyboard });
+  return { replies: [], edits: [{ chatId: env.chatId, messageId: env.messageId, text: card.text, keyboard: card.keyboard }] };
+}
+
+async function setStep(ctx: MutationCtx, viewer: TelegramViewer, step: number, doneAt?: number) {
+  const prev = viewer.link.onboarding;
+  await ctx.db.patch(viewer.link._id, {
+    onboarding: { step, ...(doneAt !== undefined ? { doneAt } : prev?.doneAt !== undefined ? { doneAt: prev.doneAt } : {}) },
+  });
+}
+
+/** Card 0 text, rebuilt for "back" from card 1. */
+async function welcomeFor(ctx: MutationCtx, viewer: TelegramViewer, env: CommandEnv) {
+  const otherOrgNames: string[] = [];
+  for (const l of env.alive) {
+    if (l.organizationId === viewer.org._id) continue;
+    const other = await ctx.db.get(l.organizationId);
+    if (other) otherOrgNames.push(other.name);
+  }
+  return buildWelcomeCard({ memberName: viewer.member.name, orgName: viewer.org.name, otherOrgNames });
+}
+
+async function onOnboarding(ctx: MutationCtx, cb: OnboardingCallback, viewer: TelegramViewer, env: CommandEnv): Promise<CommandResult> {
+  const step = viewer.link.onboarding?.step ?? 0;
+  switch (cb.kind) {
+    case "step":
+      await setStep(ctx, viewer, cb.step);
+      return showCard(viewer, env, buildTourCard(cb.step));
+    case "back": {
+      const target = Math.max(step - 1, 0);
+      await setStep(ctx, viewer, target);
+      return showCard(viewer, env, target === 0 ? await welcomeFor(ctx, viewer, env) : buildTourCard(target));
+    }
+    case "mode": {
+      const autoAllowed = viewer.org.settings.telegram?.allowAutoMode !== false;
+      const mode = cb.mode === "auto" && !autoAllowed ? "suggest" : cb.mode;
+      if (viewer.link.assistant.mode !== mode) {
+        await ctx.db.patch(viewer.link._id, { assistant: { ...viewer.link.assistant, mode } });
+        await ctx.db.insert("auditLogs", {
+          organizationId: viewer.org._id,
+          entityType: "telegramLink",
+          entityId: viewer.link._id,
+          action: "update",
+          actorId: viewer.member._id,
+          actorType: "human",
+          changes: { before: { mode: viewer.link.assistant.mode }, after: { mode } },
+          metadata: { event: "telegram.assistant_mode", via: "telegram_onboarding" },
+          description: "Escolheu o modo da assistente no Telegram",
+          severity: "medium",
+          createdAt: env.now,
+        });
+      }
+      await setStep(ctx, viewer, 3);
+      const note = cb.mode === "auto" && !autoAllowed ? ONBOARDING_COPY.autoOff : ONBOARDING_COPY.modeSet(mode);
+      const result = showCard(viewer, env, buildTourCard(3));
+      result.replies.unshift(...say(viewer, env, note).replies);
+      return result;
+    }
+    case "done": {
+      await setStep(ctx, viewer, LAST_STEP, env.now);
+      const chat = await getChat(ctx, env.chatId);
+      if (chat && chat.keyboardShown !== false) await ctx.db.patch(chat._id, { keyboardShown: true, updatedAt: env.now });
+      // The card loses its buttons; the closing line carries the persistent keyboard.
+      const card = buildTourCard(LAST_STEP);
+      const result: CommandResult = {
+        replies: [],
+        edits: env.messageId !== undefined ? [{ chatId: env.chatId, messageId: env.messageId, text: card.text, keyboard: [] }] : [],
+      };
+      result.replies.push(
+        ...say(viewer, env, ONBOARDING_COPY.done, chat?.keyboardShown === false ? {} : { persistentKeyboard: true }).replies,
+      );
+      return result;
+    }
+  }
 }

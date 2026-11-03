@@ -19,6 +19,9 @@ export const DEFAULT_MODELS = {
   // Passe de visão: melhor em acurácia (7/7), latência (3,8 s) E custo
   // (495 tokens de imagem, 5,6x menos que os demais) na medição de 2026-08-27.
   vision: "deepseek-v4-flash-vision-exp",
+  // Copiloto no Telegram (D16): alias do OpenRouter para o DeepSeek Flash mais
+  // novo. Só OpenRouter: sem rota, `resolveProductRoutes` cai no `copilot`.
+  telegramCopilot: "deepseek-flash-latest",
 } as const;
 
 // Os papéis que a org PERSISTE em aiConfig.providerConfig.models (schema:

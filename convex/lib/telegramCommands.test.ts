@@ -41,7 +41,7 @@ describe("resolveCommandName", () => {
   });
   test("lista do setMyCommands", () => {
     expect(TELEGRAM_COMMANDS.map((c) => c.command)).toEqual([
-      "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "ajuda", "sair",
+      "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "tour", "ajuda", "sair",
     ]);
   });
 });

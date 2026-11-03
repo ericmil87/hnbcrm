@@ -624,6 +624,39 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     effect: "read",
     resultFields: ["post", "history"],
   },
+  // ── D18 (Telegram F3): atendimento. Endereçam a CONVERSA pelo lead (ou pelo
+  // foco do Telegram, injetado pelo servidor) e tarefas por NÚMERO da lista de
+  // listMyOpenTasks — o modelo nunca passa conversationId/taskId. Executores em
+  // `lib/copilotAttendantTools.ts`. ──
+  {
+    name: "getConversationHistory",
+    description:
+      "Lê as últimas 20 mensagens de uma conversa (quem falou, quando, texto curto; mídia como [imagem: …]/[áudio: …]/[📎 …]), o modo do Atendente de IA, o rascunho pendente e o repasse em aberto.",
+    parameters: schema(
+      {
+        leadId: {
+          type: "string",
+          description:
+            "ID do lead da conversa (de um resultado que você viu). Omita para usar a conversa em foco no Telegram.",
+        },
+      },
+      []
+    ),
+    permission: { category: "inbox", level: "view_own" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["status", "message", "lead", "channel", "attendantMode", "pendingDraft", "handoff", "messages"],
+  },
+  {
+    name: "listMyOpenTasks",
+    description:
+      "Lista as suas tarefas abertas (até 20), numeradas, com prazo e lead. Use o número em completeTask/snoozeTask.",
+    parameters: schema({}, []),
+    permission: { category: "tasks", level: "view_own" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["tasks"],
+  },
 ];
 
 // ── Tools de ESCRITA do copiloto (F2): gated + confirmação por reversibilidade.
@@ -991,6 +1024,112 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     audience: "copilot",
     effect: "write",
     resultFields: ["status", "leadId", "contactId", "conversationId", "created"],
+  },
+  // ── D18 (Telegram F3): agir no atendimento como o usuário (portas do domínio). ──
+  {
+    name: "instructAttendant",
+    description:
+      "Devolve a conversa ao Atendente de IA com uma instrução clara (ex.: 'ofereça 10% até sexta e pergunte boleto ou Pix'). Prefira isto a responder você mesmo ao cliente. Com o Atendente em autopilot pede confirmação (a resposta sai direto).",
+    parameters: schema(
+      {
+        instruction: { type: "string", description: "O que a IA deve fazer/dizer (até 2000 caracteres)" },
+        leadId: {
+          type: "string",
+          description:
+            "ID do lead da conversa (de um resultado que você viu). Omita para usar a conversa em foco no Telegram.",
+        },
+      },
+      ["instruction"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "pendingActionId", "preview"],
+  },
+  {
+    name: "regenerateAiReply",
+    description:
+      "Pede ao Atendente de IA uma nova versão do rascunho (ou um rascunho novo) com o motivo dado (ex.: 'muito formal', 'não repita o valor').",
+    parameters: schema(
+      {
+        reason: { type: "string", description: "Motivo/instrução para a nova versão" },
+        leadId: {
+          type: "string",
+          description:
+            "ID do lead da conversa (de um resultado que você viu). Omita para usar a conversa em foco no Telegram.",
+        },
+      },
+      ["reason"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message"],
+  },
+  {
+    name: "acceptHandoff",
+    description: "Aceita o repasse pendente da conversa: o usuário assume e a IA pausa.",
+    parameters: schema(
+      {
+        leadId: {
+          type: "string",
+          description:
+            "ID do lead da conversa (de um resultado que você viu). Omita para usar a conversa em foco no Telegram.",
+        },
+      },
+      []
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message"],
+  },
+  {
+    name: "completeTask",
+    description: "Conclui uma das suas tarefas abertas pelo número mostrado em listMyOpenTasks.",
+    parameters: schema(
+      { taskNumber: { type: "number", description: "Número da tarefa na lista de listMyOpenTasks (1 = primeira)" } },
+      ["taskNumber"]
+    ),
+    permission: { category: "tasks", level: "edit_own" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "title"],
+  },
+  {
+    name: "snoozeTask",
+    description: "Adia uma das suas tarefas abertas (número de listMyOpenTasks) por 1 hora ou para amanhã às 9h.",
+    parameters: schema(
+      {
+        taskNumber: { type: "number", description: "Número da tarefa na lista de listMyOpenTasks" },
+        until: { type: "string", enum: ["1h", "amanha_9h"] },
+      },
+      ["taskNumber", "until"]
+    ),
+    permission: { category: "tasks", level: "edit_own" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "title", "snoozedUntil"],
+  },
+  {
+    name: "sendCustomerReply",
+    description:
+      "Propõe uma mensagem do USUÁRIO para o cliente da conversa. SEMPRE pede confirmação (mostra a prévia) — nada sai sem o toque do usuário.",
+    parameters: schema(
+      {
+        text: { type: "string", description: "Texto exato a enviar ao cliente" },
+        leadId: {
+          type: "string",
+          description:
+            "ID do lead da conversa (de um resultado que você viu). Omita para usar a conversa em foco no Telegram.",
+        },
+      },
+      ["text"]
+    ),
+    permission: { category: "inbox", level: "reply" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "pendingActionId", "preview"],
   },
 ];
 

@@ -111,6 +111,8 @@ export const getAiStatus = query({
       vision: v.object({ order: v.string(), model: v.string() }),
       groupPosts: v.object({ order: v.string(), model: v.string() }),
       groupAgent: v.object({ order: v.string(), model: v.string() }),
+      // Telegram F3 (D16): `model: ""` = padrão (deepseek-flash-latest no OpenRouter).
+      telegramCopilot: v.object({ order: v.string(), model: v.string() }),
     }),
     byo: v.union(
       v.object({
@@ -167,6 +169,7 @@ export const getAiStatus = query({
         vision: productRoutingOf(aiConfig?.providerConfig?.products?.vision),
         groupPosts: productRoutingOf(aiConfig?.providerConfig?.products?.groupPosts),
         groupAgent: productRoutingOf(aiConfig?.providerConfig?.products?.groupAgent),
+        telegramCopilot: productRoutingOf(aiConfig?.providerConfig?.products?.telegramCopilot),
       },
       providerMode: aiConfig?.providerConfig?.mode ?? "platform",
       platformOrder: aiConfig?.providerConfig?.platformOrder ?? "auto",
@@ -1845,7 +1848,9 @@ export const setProductRouting = mutation({
       // Publicações programadas em grupo (F3) e agente de grupo (F4) escolhem a
       // própria rota; só a visão escolhe o próprio MODELO por aqui.
       v.literal("groupPosts"),
-      v.literal("groupAgent")
+      v.literal("groupAgent"),
+      // Copiloto no Telegram (D16): rota E modelo (lista de modelos de texto).
+      v.literal("telegramCopilot")
     ),
     // "inherit" limpa o override e volta a seguir o padrão da org.
     order: v.optional(
@@ -1868,16 +1873,20 @@ export const setProductRouting = mutation({
     const current = org.settings.aiConfig;
     if (!current) throw new Error("Ative a IA primeiro");
 
-    if (args.model !== undefined && args.product !== "vision") {
-      throw new Error("Só a leitura de imagens escolhe o modelo por aqui");
+    if (args.model !== undefined && args.product !== "vision" && args.product !== "telegramCopilot") {
+      throw new Error("Só a leitura de imagens e o Copiloto no Telegram escolhem o modelo por aqui");
     }
     // Fail-closed: um id fora da allowlist medida entraria como uma cadeia vazia
     // e a org descobriria só quando a primeira imagem não fosse lida. Recusar
     // aqui é o único ponto em que dá para avisar a tempo.
     const pinned = args.model?.trim();
-    if (pinned) {
+    if (pinned && args.product === "vision") {
       const known = visionModelOptions().some((o) => o.id === pinned);
       if (!known) throw new Error(`"${pinned}" não é um modelo de visão validado`);
+    }
+    if (pinned && args.product === "telegramCopilot") {
+      const known = ([...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[]).includes(pinned);
+      if (!known) throw new Error(`"${pinned}" não é um modelo de texto conhecido`);
     }
 
     const providerConfig = current.providerConfig ?? {

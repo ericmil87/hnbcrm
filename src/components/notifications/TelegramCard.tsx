@@ -100,6 +100,126 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
     }
   };
 
+
+  const renderAssistant = (l: NonNullable<typeof link>) => {
+    const a = l.assistant;
+    const autoAllowedOrg = data.org.allowAutoMode;
+    const isAuto = a.mode === "auto";
+    const save = (assistant: Parameters<typeof updatePrefs>[0]["assistant"]) =>
+      run(() => updatePrefs({ organizationId, assistant }), "Não foi possível salvar o assistente");
+    const modes = [
+      {
+        value: "suggest" as const,
+        label: "Sugestão",
+        desc: "Eu proponho, você confirma. Nada vai para o cliente sem o seu toque.",
+      },
+      {
+        value: "auto" as const,
+        label: "Automático",
+        desc: `Eu decido e executo; o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para você cancelar ou regenerar. Tudo tem Desfazer.`,
+      },
+    ];
+    const actions = [
+      { key: "instructAi", label: "Instruir a IA" },
+      { key: "createTask", label: "Criar tarefa" },
+      { key: "moveStage", label: "Mover etapa" },
+      { key: "acceptHandoff", label: "Aceitar repasse" },
+      { key: "replyCustomer", label: "Responder ao cliente" },
+    ] as const;
+    return (
+      <div className="space-y-3 border-t border-border pt-4">
+        <h4 className="text-sm font-semibold text-text-primary">Assistente</h4>
+        <div role="radiogroup" aria-label="Modo do assistente" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {modes.map((m) => {
+            const selected = a.mode === m.value;
+            const disabled = busy || (m.value === "auto" && !autoAllowedOrg);
+            return (
+              <button
+                key={m.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={disabled}
+                onClick={() => !selected && void save({ mode: m.value })}
+                className={cn(
+                  "min-h-[44px] rounded-card border px-3.5 py-2.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base disabled:cursor-not-allowed disabled:opacity-50",
+                  selected ? "border-brand-500 bg-brand-500/10" : "border-border hover:bg-surface-overlay"
+                )}
+              >
+                <span className="block text-sm font-medium text-text-primary">{m.label}</span>
+                <span className="block text-xs text-text-secondary">
+                  {m.value === "auto" && !autoAllowedOrg ? "Desligado pela organização" : m.desc}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {a.autoPausedAt !== undefined && !isAuto && (
+          <div className="flex items-start gap-2 rounded-lg border border-semantic-warning/30 bg-semantic-warning/10 px-3.5 py-2.5 text-xs text-text-secondary">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden="true" />
+            <span>
+              Pausado automaticamente após 3 desfazeres na última hora; escolha Automático de novo para religar.
+            </span>
+          </div>
+        )}
+        <div className="flex min-h-[44px] items-center justify-between gap-3">
+          <span className="text-sm text-text-primary">
+            Sugerir ação nos repasses (uma chamada de IA por repasse)
+          </span>
+          <Switch
+            checked={a.suggestOnEvents}
+            label="Sugerir ação nos repasses"
+            disabled={busy}
+            onChange={() => void save({ suggestOnEvents: !a.suggestOnEvents })}
+          />
+        </div>
+        <div className={cn(!isAuto && "opacity-50")}>
+          <label htmlFor="tg-auto-delay" className="mb-1 block text-xs text-text-secondary">
+            Segundos para cancelar um envio no automático
+          </label>
+          <input
+            id="tg-auto-delay"
+            type="number"
+            inputMode="numeric"
+            min={5}
+            max={120}
+            defaultValue={a.autoSendDelaySeconds}
+            key={a.autoSendDelaySeconds}
+            disabled={busy}
+            onBlur={(e) => {
+              const n = Math.min(120, Math.max(5, Math.round(Number(e.target.value) || 15)));
+              if (n !== a.autoSendDelaySeconds) void save({ autoSendDelaySeconds: n });
+              else e.target.value = String(n);
+            }}
+            className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 sm:w-40"
+          />
+        </div>
+        <fieldset className={cn("space-y-1", !isAuto && "opacity-50")}>
+          <legend className="mb-1 text-xs text-text-secondary">No automático ela pode</legend>
+          {actions.map(({ key, label }) => (
+            <label key={key} className="flex min-h-[44px] cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={a.autoAllowed[key]}
+                disabled={busy}
+                onChange={() => void save({ autoAllowed: { [key]: !a.autoAllowed[key] } })}
+                className="h-5 w-5 rounded border-border-strong accent-brand-600"
+              />
+              <span className="text-sm text-text-primary">
+                {label}
+                {key === "replyCustomer" && (
+                  <span className="block text-xs text-text-muted">
+                    sempre com os {a.autoSendDelaySeconds} s para cancelar
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      </div>
+    );
+  };
+
   const renderConnectFlow = () => {
     const expired = code ? isExpired(code.expiresAt, now) : false;
     return (
@@ -322,9 +442,7 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
           </div>
         </div>
 
-        <span className="inline-flex items-center rounded-full bg-surface-overlay px-3 py-1 text-xs text-text-secondary">
-          Modo: {link.assistant.mode === "auto" ? "Automático" : "Sugestão"}
-        </span>
+        {renderAssistant(link)}
       </div>
     );
   } else {
@@ -414,6 +532,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
                     key: "protectContent",
                     label: "Proteger conteúdo",
                     desc: "Impede encaminhar e copiar as mensagens do bot no Telegram.",
+                  },
+                  {
+                    key: "allowAutoMode",
+                    label: "Permitir modo automático na organização",
+                    desc: "Desligado, todo mundo fica em Sugestão.",
                   },
                 ] as const
               ).map(({ key, label, desc }) => (

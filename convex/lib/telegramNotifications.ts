@@ -134,6 +134,13 @@ export const CALLBACK_VERBS = [
   "ni", // return to the AI without instruction
   "ps", // send the reply previewed in the prompt (F1 addition)
   "ae", // "Assumir eu" from the AI relay (F1 addition)
+  // F3:
+  "pa", // confirm a Copilot pending action (also "💡 Aplicar sugestão")
+  "pc", // cancel a Copilot pending action
+  "un", // undo an automatic-mode record (D22)
+  "aj", // "✏️ Ajustar": focus + talk to the Copilot about it
+  "md", // set the assistant mode (md:suggest / md:auto)
+  "vc", // veto a countdown send (D23)
 ] as const;
 export type CallbackVerb = (typeof CALLBACK_VERBS)[number];
 export const CALLBACK_DATA_MAX_BYTES = 64;
@@ -668,6 +675,23 @@ export function buildRecordCard(
 export function quoteSnippet(text: string, max = 120): string {
   const t = text.replace(/\s+/g, " ").trim();
   return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
+}
+
+/**
+ * D23 countdown: "⏳ Enviando em N s → lead (canal)" + the text + Regenerar ·
+ * Cancelar envio (`vc:`). Used for AI drafts and for the member's own reply
+ * in automatic mode.
+ */
+export function buildCountdownCard(ctx: CardContext, text: string, seconds: number, cancelId: string): CardOutput {
+  const conv = ctx.conversation?.id ?? "0";
+  const body = ctx.discreet ? safe(text, true) : escapeHtml(stripEmails(text));
+  return {
+    text:
+      `⏳ Enviando em ${seconds} s → <b>${escapeHtml(leadName(ctx))}</b> (${channelLabel(ctx.conversation?.channel)})\n` +
+      `<blockquote expandable>${body}</blockquote>`,
+    keyboard: [[cb("🔁 Regenerar", "rg", conv), cb("✖ Cancelar envio", "vc", cancelId)]],
+    focus: focusOf(ctx),
+  };
 }
 
 export type PromptKind = "instruct_ai" | "regenerate" | "reply_customer";

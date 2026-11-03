@@ -1608,6 +1608,7 @@ export const internalClaimForProcessing = internalMutation({
         humanInitiated,
         humanInstruction: item.instruction ?? null,
         instructedBy: item.instructedBy ?? null,
+        requestedVia: item.requestedVia ?? null,
         sourceDraftId: item.sourceDraftId ?? null,
         previousDraftText: sourceDraft?.content ?? null,
         // Coach SEMPRE commita como sugestão (quem instrui quer revisar),
@@ -2852,6 +2853,7 @@ export const internalCommitAiSuggestion = internalMutation({
     supersedesDraftId: v.optional(v.id("messages")),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))), // F3 (D23)
     // v0.64 — flyer: fica preso ao RASCUNHO e é re-anexado no aceite.
     attachments: v.optional(v.array(v.id("files"))),
     contentType: v.optional(v.union(v.literal("text"), v.literal("image"))),
@@ -2943,6 +2945,7 @@ export const internalCommitAiSuggestion = internalMutation({
           ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
           ...(args.instruction ? { instruction: args.instruction } : {}),
           ...(args.instructedBy ? { instructedBy: args.instructedBy } : {}),
+          ...(args.instructedBy && args.requestedVia ? { requestedVia: args.requestedVia } : {}),
           ...(supersededDraft ? { previousDraftId: supersededDraft._id } : {}),
           ...(inheritedFollowUpId ? { followUpId: inheritedFollowUpId } : {}),
           ...(args.attachments && args.attachments.length > 0
@@ -3225,6 +3228,8 @@ type RunContext = {
   humanInitiated: boolean;
   humanInstruction: string | null;
   instructedBy: Id<"teamMembers"> | null;
+  /** F3 (D23): request came from the Telegram bot. */
+  requestedVia?: "telegram" | "telegram_auto" | null;
   sourceDraftId: Id<"messages"> | null;
   previousDraftText: string | null;
   forceSuggest: boolean;
@@ -4047,6 +4052,7 @@ export const internalProcessQueueItem = internalAction({
               ...(context.sourceDraftId ? { supersedesDraftId: context.sourceDraftId } : {}),
               ...(context.humanInstruction ? { instruction: context.humanInstruction } : {}),
               ...(context.instructedBy ? { instructedBy: context.instructedBy } : {}),
+              ...(context.requestedVia ? { requestedVia: context.requestedVia } : {}),
             })
           : await ctx.runMutation(internal.attendant.internalCommitAiReply, {
               ...commitArgsBase,
@@ -4233,7 +4239,7 @@ export async function acceptAiDraftCore(
     member: Doc<"teamMembers">;
     editedText?: string;
     actionIndexes?: number[];
-    via?: "telegram";
+    via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<Id<"messages">> {
   const { draft, conversation, member } = args;
@@ -4423,7 +4429,7 @@ export const discardAiDraft = mutation({
 /** Núcleo de "descartar o rascunho da IA" (sem sessão; o chamador autorizou). Sem rascunho pendente = no-op. */
 export async function discardAiDraftCore(
   ctx: MutationCtx,
-  args: { draft: Doc<"messages">; member: Doc<"teamMembers">; via?: "telegram" }
+  args: { draft: Doc<"messages">; member: Doc<"teamMembers">; via?: "telegram" | "telegram_auto" | "copilot" }
 ): Promise<boolean> {
   const { draft, member } = args;
   const aiDraft = draft.metadata?.aiDraft as
@@ -4490,6 +4496,11 @@ export const requestAiDraft = mutation({
  * Núcleo de "pedir/regenerar rascunho da IA" (corpo do `requestAiDraft`, sem
  * sessão). O chamador autorizou o membro (`inbox:reply`) e a org da conversa.
  */
+type TelegramVia = "telegram" | "telegram_auto";
+/** D23: only bot-originated requests mark the queue item (and then the draft). */
+const telegramViaOf = (via: string | undefined): TelegramVia | undefined =>
+  via === "telegram" || via === "telegram_auto" ? via : undefined;
+
 export async function requestAiDraftCore(
   ctx: MutationCtx,
   args: {
@@ -4497,7 +4508,7 @@ export async function requestAiDraftCore(
     member: Doc<"teamMembers">;
     instruction?: string;
     sourceDraftId?: Id<"messages">;
-    via?: "telegram";
+    via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<void> {
   const { conversation, member } = args;
@@ -4569,6 +4580,7 @@ export async function requestAiDraftCore(
     origin: "coach",
     instruction,
     instructedBy: member._id,
+    ...(telegramViaOf(args.via) ? { requestedVia: telegramViaOf(args.via) } : {}),
     sourceDraftId: args.sourceDraftId,
     createdAt: now,
     updatedAt: now,
@@ -4617,6 +4629,7 @@ async function queueInstructedAiTurn(
     instructedBy: Id<"teamMembers">;
     instruction: string;
     now: number;
+    requestedVia?: TelegramVia;
   }
 ): Promise<void> {
   const { conversation, agent, instructedBy, instruction, now } = params;
@@ -4636,6 +4649,7 @@ async function queueInstructedAiTurn(
       origin: "return_to_ai" as const,
       instruction,
       instructedBy,
+      requestedVia: params.requestedVia,
       sourceDraftId: undefined,
       nextAttemptAt: now,
       updatedAt: now,
@@ -4662,6 +4676,7 @@ async function queueInstructedAiTurn(
     origin: "return_to_ai",
     instruction,
     instructedBy,
+    ...(params.requestedVia ? { requestedVia: params.requestedVia } : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -4777,7 +4792,7 @@ export const returnToAi = mutation({
  */
 export async function returnToAiCore(
   ctx: MutationCtx,
-  args: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; instruction?: string; via?: "telegram" }
+  args: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; instruction?: string; via?: "telegram" | "telegram_auto" | "copilot" }
 ): Promise<void> {
   const { conversation, member } = args;
   // GRUPO: caminho próprio, deliberadamente MENOR (review de correção nº 6).
@@ -4918,6 +4933,7 @@ export async function returnToAiCore(
       instructedBy: member._id,
       instruction,
       now,
+      ...(telegramViaOf(args.via) ? { requestedVia: telegramViaOf(args.via) } : {}),
     });
   }
 }
@@ -4932,6 +4948,7 @@ export const internalQueueInstructedTurn = internalMutation({
     conversationId: v.id("conversations"),
     instructedBy: v.id("teamMembers"),
     instruction: v.string(),
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -4978,6 +4995,7 @@ export const internalQueueInstructedTurn = internalMutation({
       instructedBy: args.instructedBy,
       instruction: args.instruction,
       now,
+      ...(args.requestedVia ? { requestedVia: args.requestedVia } : {}),
     });
     return null;
   },

@@ -8,22 +8,35 @@
  * Runs inside a mutation and returns what to send/edit; the action sends
  * (`telegram.internalProcessUpdate`). Writes carry `via:"telegram"`.
  */
-import { ConvexError } from "convex/values";
+import { ConvexError, type Value } from "convex/values";
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { acceptHandoffCore, rejectHandoffWithInstructionCore } from "../handoffs";
 import { acceptAiDraftCore, discardAiDraftCore, requestAiDraftCore, returnToAiCore } from "../attendant";
 import { assumeConversationCore, internalSendMessageCore } from "../conversations";
-import { applyTaskCompletion, snoozeTaskCore } from "./taskOps";
+import { applyTaskCompletion, reopenTaskCore, snoozeTaskCore } from "./taskOps";
+import { otherHumanHolder } from "./conversationHolder";
 import { syncFollowUpForTask } from "./followUpOps";
 import { hasPermission, resolvePermissions, type PermissionCategory, type Permissions, type Role } from "./permissions";
 import { modulesOf } from "./orgModules";
 import { activeLinksOfChat, isLinkMemberAlive, revokeTelegramLink } from "./telegramLinks";
 import { loadCardContext, loadHistory, pendingDraftOf } from "./telegramContext";
 import { COPY } from "./telegramCore";
+import { confirmPendingActionCore, cancelPendingActionCore } from "./copilotPendingActions";
+import { moveLeadToStageCore } from "./leadStageMove";
+import {
+  MODE_COPY,
+  STEP_LABELS,
+  AUTO_PAUSE_UNDOS,
+  autoSendSeconds,
+  autoWriteTools,
+  draftAutoSendable,
+  effectiveAssistantMode,
+} from "./telegramAssistant";
 import { escapeHtml } from "./telegramFormat";
 import {
   buildAiRelayCard,
+  buildCountdownCard,
   buildHistoryCard,
   buildNotificationCard,
   buildPrompt,
@@ -46,7 +59,7 @@ export const INSTRUCTION_MAX_CHARS = 2000;
 /** Server-side cap for a reply typed in Telegram (the dispatcher splits per channel). */
 export const REPLY_MAX_CHARS = 4096;
 
-export type DeliveryKind = "notification" | "relay" | "prompt";
+export type DeliveryKind = "notification" | "relay" | "prompt" | "copilot" | "auto_record" | "draft";
 export type RecordSpec = {
   organizationId: Id<"organizations">;
   linkId: Id<"telegramLinks">;
@@ -60,6 +73,10 @@ export type RecordSpec = {
   setPromptMessageId?: boolean;
   /** …only if the open prompt still has this `expiresAt` (the one the send was for). */
   promptExpiresAt?: number;
+  /** F3 (D22): automatic-mode record. */
+  undo?: { steps: { kind: string; refId: string; before?: Value; after?: Value }[]; expiresAt: number };
+  /** F3 (D23): countdown card. */
+  autoSend?: { delayMs: number; draftMessageId?: Id<"messages"> };
 };
 export type SendOp = { chatId: number; text: string; keyboard?: CardKeyboard; protectContent?: boolean; record?: RecordSpec };
 export type EditOp = { chatId: number; messageId: number; text: string; keyboard?: CardKeyboard };
@@ -200,7 +217,7 @@ async function setFocus(
  * `callback_data` is client-supplied: an id is accepted only if it belongs to
  * the expected TABLE (a handoff verb with a task id resolves to nothing).
  */
-async function getTyped<T extends "conversations" | "handoffs" | "messages" | "tasks">(
+async function getTyped<T extends "conversations" | "handoffs" | "messages" | "tasks" | "leads">(
   ctx: MutationCtx,
   table: T,
   id: string,
@@ -275,6 +292,13 @@ export async function handleTelegramCallback(
     va: onViewAll,
     rs: onSummarize,
     ae: onAssume,
+    // F3
+    pa: onConfirmPending,
+    pc: onCancelPending,
+    un: onUndoAutoRecord,
+    aj: onAdjust,
+    md: onSetMode,
+    vc: onVetoSend,
   };
   return await handlers[parsed.verb](ctx, tap);
 }
@@ -328,25 +352,15 @@ async function takenOverCopy(
   now: number,
   timezone: string,
 ): Promise<string | null> {
-  let ownerId: Id<"teamMembers"> | undefined;
-  let at: number | undefined;
-  const normalized = handoffId ? ctx.db.normalizeId("handoffs", handoffId) : null;
-  const handoff = normalized ? await ctx.db.get(normalized) : null;
-  if (handoff && handoff.organizationId === actor.org._id && handoff.status === "accepted" && handoff.acceptedBy) {
-    ownerId = handoff.acceptedBy;
-    at = handoff.resolvedAt;
-  } else {
-    const paused = conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now;
-    const lead = conversation.leadId ? await ctx.db.get(conversation.leadId) : null;
-    if (paused && lead?.assignedTo) {
-      ownerId = lead.assignedTo;
-      at = lead.handoffState?.toMemberId === lead.assignedTo ? lead.handoffState.completedAt : undefined;
-    }
-  }
-  if (!ownerId || ownerId === actor.member._id) return null;
-  const owner = await ctx.db.get(ownerId);
-  if (!owner || owner.type !== "human" || owner.organizationId !== actor.org._id || owner.removedAt !== undefined) return null;
-  return `⚠️ ${escapeHtml(owner.name)} assumiu esta conversa${at ? ` às ${formatTime(at, timezone)}` : ""}.`;
+  const holder = await otherHumanHolder(ctx.db, {
+    organizationId: actor.org._id,
+    actorId: actor.member._id,
+    conversation,
+    handoffId,
+    now,
+  });
+  if (!holder) return null;
+  return `⚠️ ${escapeHtml(holder.member.name)} assumiu esta conversa${holder.at ? ` às ${formatTime(holder.at, timezone)}` : ""}.`;
 }
 
 /** Refusal for a stale card: the card (if known) becomes the record and the copy is said. */
@@ -378,6 +392,10 @@ async function onOpenPrompt(ctx: MutationCtx, tap: Tap, kind: PromptKind): Promi
     const tz = (await contextFor(ctx, actor, tap, {})).timezone;
     const copy = await takenOverCopy(ctx, actor, conversation, tap.delivery?.handoffId, tap.now, tz);
     if (copy) return await refuseTakenOver(ctx, actor, tap, conversation, copy, tap.messageId);
+  }
+  // D23: "Regenerar" on a countdown card vetoes the pending send first.
+  if (kind === "regenerate" && tap.delivery?.kind === "draft" && tap.delivery.draft && !tap.delivery.draft.sentAt) {
+    await ctx.db.patch(tap.delivery._id, { draft: { ...tap.delivery.draft, vetoedAt: tap.now } });
   }
   const expiresAt = tap.now + PROMPT_TTL_MS;
   await ctx.db.patch(chat._id, {
@@ -783,10 +801,34 @@ export async function handleTelegramPromptAnswer(
     pendingPrompt: { ...prompt, draftText: text, expiresAt },
     updatedAt: args.now,
   });
-  const preview = buildReplyPreview(card, text);
   const edits: EditOp[] = prompt.promptMessageId
     ? [{ chatId: args.chatId, messageId: prompt.promptMessageId, text: "💬 Prévia logo abaixo." }]
     : [];
+  // D23: in automatic mode the preview is a countdown that sends unless vetoed.
+  if (effectiveAssistantMode(actor.link, actor.org) === "auto") {
+    const seconds = autoSendSeconds(actor.link);
+    const countdown = buildCountdownCard(card, text, seconds, conversation._id);
+    return {
+      replies: [
+        {
+          chatId: args.chatId,
+          text: countdown.text,
+          keyboard: countdown.keyboard,
+          record: {
+            organizationId: actor.org._id,
+            linkId: actor.link._id,
+            kind: "draft",
+            conversationId: conversation._id,
+            setPromptMessageId: true,
+            promptExpiresAt: expiresAt,
+            autoSend: { delayMs: seconds * 1000 },
+          },
+        },
+      ],
+      edits,
+    };
+  }
+  const preview = buildReplyPreview(card, text);
   return {
     replies: [
       {
@@ -805,4 +847,408 @@ export async function handleTelegramPromptAnswer(
     ],
     edits,
   };
+}
+
+// ---------------------------------------------------------------------------
+// F3 — Copilot pending actions, modes, undo, veto (D18/D22/D23)
+// ---------------------------------------------------------------------------
+
+async function pendingOf(ctx: MutationCtx, actor: TelegramActor, id: string) {
+  const normalized = ctx.db.normalizeId("pendingActions", id);
+  const pending = normalized ? await ctx.db.get(normalized) : null;
+  return pending && pending.organizationId === actor.org._id ? pending : null;
+}
+
+/** A tap on a Copilot card edits it; on a notification card ("Aplicar sugestão") it answers below. */
+function resultFor(tap: Tap, text: string): ActionResult {
+  if (tap.delivery?.kind === "copilot") return { replies: [], edits: [{ chatId: tap.chatId, messageId: tap.messageId, text }] };
+  return say(tap.chatId, text);
+}
+
+async function onConfirmPending(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  // RBAC of the action itself is re-checked inside the core (the proposal may be old).
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const pending = await pendingOf(ctx, actor, tap.id);
+  if (!pending) return notFound(tap.chatId);
+  let message: string;
+  try {
+    message = (await confirmPendingActionCore(ctx, { pending, member: actor.member, now: tap.now, via: "telegram" })).message;
+  } catch (e) {
+    failWith(say(tap.chatId, errorText(e)));
+  }
+  const tz = (await contextFor(ctx, actor, tap, {})).timezone;
+  return resultFor(tap, `✅ ${escapeHtml(message)} · ${formatTime(tap.now, tz)}`);
+}
+
+async function onCancelPending(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const pending = await pendingOf(ctx, actor, tap.id);
+  if (!pending) return notFound(tap.chatId);
+  try {
+    await cancelPendingActionCore(ctx, { pending, member: actor.member });
+  } catch (e) {
+    failWith(say(tap.chatId, errorText(e)));
+  }
+  return resultFor(tap, "✖ Cancelado.");
+}
+
+/** `/modo` (the commands dispatcher calls this) and the onboarding card. */
+export async function handleModeCommand(ctx: MutationCtx, args: { chatId: number; now: number }): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: args.chatId, now: args.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  if (actor.org.settings.telegram?.allowAutoMode === false) return say(args.chatId, MODE_COPY.autoForbidden(actor.org.name));
+  const mode = effectiveAssistantMode(actor.link, actor.org);
+  const lines = [MODE_COPY.current(mode, autoSendSeconds(actor.link))];
+  if (actor.link.assistant.autoPausedAt !== undefined) lines.push(MODE_COPY.paused);
+  const other = mode === "auto" ? { text: "💡 Sugestão", callback_data: "md:suggest" } : { text: "🤖 Automático", callback_data: "md:auto" };
+  return { replies: [{ chatId: args.chatId, text: lines.join("\n"), keyboard: [[other]] }], edits: [] };
+}
+
+async function onSetMode(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  if (tap.id !== "auto" && tap.id !== "suggest") return empty();
+  if (tap.id === "auto" && actor.org.settings.telegram?.allowAutoMode === false) {
+    return say(tap.chatId, MODE_COPY.autoForbidden(actor.org.name));
+  }
+  await ctx.db.patch(actor.link._id, {
+    assistant: {
+      ...actor.link.assistant,
+      mode: tap.id,
+      // Turning automatic on again clears the undo pause and the hourly counter.
+      ...(tap.id === "auto" ? { autoPausedAt: undefined, autoActionsThisHour: 0, autoHourStart: tap.now } : {}),
+    },
+  });
+  await ctx.db.insert("auditLogs", {
+    organizationId: actor.org._id,
+    entityType: "telegramLink",
+    entityId: actor.link._id,
+    action: "update",
+    actorId: actor.member._id,
+    actorType: "human",
+    changes: { before: { mode: actor.link.assistant.mode }, after: { mode: tap.id } },
+    metadata: { event: "telegram.assistant_mode", via: "telegram" },
+    description: tap.id === "auto" ? "Ligou o modo automático da assistente no Telegram" : "Voltou a assistente para o modo sugestão",
+    severity: tap.id === "auto" ? "high" : "low",
+    createdAt: tap.now,
+  });
+  const text =
+    tap.id === "auto"
+      ? MODE_COPY.autoOn(autoWriteTools(actor.link), actor.link.assistant.autoAllowed.replyCustomer, autoSendSeconds(actor.link))
+      : MODE_COPY.suggestOn;
+  return { replies: [], edits: [{ chatId: tap.chatId, messageId: tap.messageId, text }] };
+}
+
+async function onAdjust(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: INBOX_VIEW, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const conversation = await conversationOf(ctx, auth.actor, tap.id);
+  if (!conversation) return notFound(tap.chatId);
+  await setFocus(ctx, tap.chatId, { conversationId: conversation._id, leadId: conversation.leadId }, tap.now);
+  return say(tap.chatId, "✏️ Me diga o que ajustar nesta conversa (texto ou áudio).");
+}
+
+type UndoStep = { kind: string; refId: string; before?: unknown; after?: unknown };
+
+/**
+ * Reverts ONE automatic step. There is no "reopen" port in the domain, so the
+ * inverse of an instruction/acceptance is written here, field by field, from
+ * the `before` snapshot taken when the step ran; stage moves go back through
+ * `moveLeadToStageCore`. Returns the line for the record card.
+ */
+/**
+ * True when the state the step left behind changed since (someone took over,
+ * resolved, reassigned, finished the task…). Undo then SKIPS the step instead
+ * of overwriting newer work (review F3 #6). Steps without `after` (legacy) never drift.
+ */
+async function stepDrifted(ctx: MutationCtx, actor: TelegramActor, step: UndoStep, now: number): Promise<boolean> {
+  if (!step.after || typeof step.after !== "object") return false;
+  const after = step.after as Record<string, unknown>;
+  const before = (step.before ?? {}) as Record<string, unknown>;
+  switch (step.kind) {
+    case "instruct":
+    case "accept_handoff": {
+      const handoffId =
+        step.kind === "accept_handoff"
+          ? ctx.db.normalizeId("handoffs", step.refId)
+          : typeof before.handoffId === "string"
+            ? ctx.db.normalizeId("handoffs", before.handoffId)
+            : null;
+      const handoff = handoffId ? await ctx.db.get(handoffId) : null;
+      if ("handoffStatus" in after && handoff) {
+        if (handoff.status !== after.handoffStatus || (handoff.resolvedBy ?? null) !== after.handoffResolvedBy) return true;
+      }
+      const conversationId =
+        step.kind === "instruct" ? ctx.db.normalizeId("conversations", step.refId) : (handoff?.conversationId ?? null);
+      const conversation = conversationId ? await ctx.db.get(conversationId) : null;
+      if (!conversation) return false;
+      const lead = conversation.leadId ? await ctx.db.get(conversation.leadId) : null;
+      if (lead && "leadAssignedTo" in after) {
+        const current = lead.assignedTo ?? null;
+        if (current !== after.leadAssignedTo) {
+          // The instructed turn (scheduled) hands the lead to the AI attendant: expected, not drift.
+          const holder = current ? await ctx.db.get(current) : null;
+          if (!(step.kind === "instruct" && holder?.type === "ai")) return true;
+        }
+      }
+      const paused = conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now;
+      // Instruct unpauses (maybe later, via the scheduled turn): a NEW pause = someone took over.
+      if (step.kind === "instruct") return paused && after.aiPaused !== true;
+      return paused !== (after.aiPaused === true);
+    }
+    case "complete_task": {
+      const task = await getTyped(ctx, "tasks", step.refId);
+      return !!task && (task.status !== "completed" || task.completedAt !== after.completedAt);
+    }
+    case "snooze_task": {
+      const task = await getTyped(ctx, "tasks", step.refId);
+      return !!task && (task.status === "completed" || (task.snoozedUntil ?? null) !== (after.snoozedUntil ?? null));
+    }
+    case "create_task": {
+      const task = await getTyped(ctx, "tasks", step.refId);
+      return !!task && task.status !== after.status;
+    }
+    case "move_stage": {
+      const lead = await getTyped(ctx, "leads", step.refId);
+      return !!lead && lead.stageId !== after.stageId;
+    }
+    default:
+      return false;
+  }
+}
+
+async function revertStep(ctx: MutationCtx, actor: TelegramActor, step: UndoStep, now: number): Promise<string> {
+  const before = (step.before ?? {}) as Record<string, unknown>;
+  const label = STEP_LABELS[step.kind] ?? step.kind;
+  if (await stepDrifted(ctx, actor, step, now)) return `${label}: mudou depois, não desfiz`;
+  const restoreConversation = async (conversationId: Id<"conversations"> | null) => {
+    const conversation = conversationId ? await ctx.db.get(conversationId) : null;
+    if (conversation && conversation.organizationId === actor.org._id) {
+      const notes = conversation.aiTeamNotes ?? [];
+      const keep = typeof before.notesCount === "number" ? before.notesCount : notes.length;
+      await ctx.db.patch(conversation._id, {
+        aiPausedUntil: typeof before.aiPausedUntil === "number" ? before.aiPausedUntil : undefined,
+        aiTeamNotes: notes.slice(0, keep),
+        updatedAt: now,
+      });
+      // The instructed turn that has not run yet is dropped.
+      const queued = await ctx.db
+        .query("aiReplyQueue")
+        .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", conversation._id).eq("status", "pending"))
+        .take(5);
+      for (const item of queued) {
+        if (item.origin === "return_to_ai" && item.instructedBy === actor.member._id) {
+          await ctx.db.patch(item._id, { status: "skipped", updatedAt: now });
+        }
+      }
+    }
+    const handoffId = typeof before.handoffId === "string" ? ctx.db.normalizeId("handoffs", before.handoffId) : null;
+    const handoff = handoffId ? await ctx.db.get(handoffId) : null;
+    if (handoff && handoff.organizationId === actor.org._id && handoff.status !== "pending") {
+      await ctx.db.patch(handoff._id, {
+        status: "pending",
+        acceptedBy: undefined,
+        resolvedBy: undefined,
+        resolvedAt: undefined,
+        notes: undefined,
+      });
+    }
+    const leadId = typeof before.leadId === "string" ? ctx.db.normalizeId("leads", before.leadId) : null;
+    const lead = leadId ? await ctx.db.get(leadId) : null;
+    if (lead && lead.organizationId === actor.org._id) {
+      await ctx.db.patch(lead._id, {
+        assignedTo: (typeof before.leadAssignedTo === "string" ? before.leadAssignedTo : undefined) as Id<"teamMembers"> | undefined,
+        handoffState: (before.leadHandoffState ?? undefined) as Doc<"leads">["handoffState"],
+        updatedAt: now,
+      });
+    }
+  };
+
+  switch (step.kind) {
+    case "instruct":
+      await restoreConversation(ctx.db.normalizeId("conversations", step.refId));
+      return `${label}: instrução cancelada, repasse reaberto`;
+    case "accept_handoff": {
+      const handoff = await getTyped(ctx, "handoffs", step.refId);
+      await restoreConversation(handoff?.conversationId ?? null);
+      return `${label}: repasse reaberto para a equipe`;
+    }
+    case "complete_task":
+    case "snooze_task": {
+      const task = await getTyped(ctx, "tasks", step.refId);
+      if (!task || task.organizationId !== actor.org._id) return `${label}: tarefa não encontrada`;
+      if (step.kind === "complete_task") {
+        // Through the core: done column, recurrence successor and audit stay consistent.
+        const previousColumnId = typeof before.columnId === "string" ? ctx.db.normalizeId("taskColumns", before.columnId) : null;
+        await reopenTaskCore(ctx, task, actor.member, now, {
+          status: before.status === "in_progress" ? "in_progress" : "pending",
+          ...(previousColumnId ? { previousColumnId } : {}),
+          via: "telegram_auto",
+        });
+        return `${label}: reaberta`;
+      }
+      await ctx.db.patch(task._id, {
+        snoozedUntil: typeof before.snoozedUntil === "number" ? before.snoozedUntil : undefined,
+        updatedAt: now,
+      });
+      return `${label}: prazo de volta`;
+    }
+    case "create_task": {
+      const task = await getTyped(ctx, "tasks", step.refId);
+      if (!task || task.organizationId !== actor.org._id) return `${label}: tarefa não encontrada`;
+      // Cancelled (not hard-deleted): the audit trail of what the assistant did stays.
+      await ctx.db.patch(task._id, { status: "cancelled", updatedAt: now });
+      return `${label}: cancelada`;
+    }
+    case "move_stage": {
+      const lead = await getTyped(ctx, "leads", step.refId);
+      const stageId = typeof before.stageId === "string" ? ctx.db.normalizeId("stages", before.stageId) : null;
+      if (!lead || lead.organizationId !== actor.org._id || !stageId) return `${label}: lead não encontrado`;
+      await moveLeadToStageCore(ctx, {
+        lead,
+        newStageId: stageId,
+        actor: { type: "human", memberId: actor.member._id },
+        metadata: { via: "telegram_auto", undo: true },
+      });
+      return `${label}: etapa de volta`;
+    }
+    default:
+      return `${label}: não dá para desfazer`;
+  }
+}
+
+async function onUndoAutoRecord(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: INBOX_REPLY, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const d = tap.delivery;
+  if (!d || d.kind !== "auto_record" || !d.undo || d.linkId !== actor.link._id) return notFound(tap.chatId);
+  const tz = (await contextFor(ctx, actor, tap, {})).timezone;
+  if (d.undo.undoneAt) return say(tap.chatId, "Isso já foi desfeito.");
+  if (d.undo.expiresAt <= tap.now) return say(tap.chatId, "⌛ O prazo para desfazer (10 min) passou.");
+  const lines: string[] = [];
+  for (const step of [...d.undo.steps].reverse()) lines.push(await revertStep(ctx, actor, step, tap.now));
+  await ctx.db.patch(d._id, { undo: { ...d.undo, undoneAt: tap.now } });
+  await ctx.db.insert("auditLogs", {
+    organizationId: actor.org._id,
+    entityType: "telegramLink",
+    entityId: actor.link._id,
+    action: "update",
+    actorId: actor.member._id,
+    actorType: "human",
+    metadata: { event: "telegram.auto_undo", via: "telegram_auto", steps: d.undo.steps.map((s) => s.kind) },
+    description: "Desfez ações do modo automático da assistente",
+    severity: "medium",
+    createdAt: tap.now,
+  });
+  // D22: 3 undos within an hour pause the automatic mode.
+  const recent = await ctx.db
+    .query("telegramDeliveries")
+    .withIndex("by_link_and_sent", (q) => q.eq("linkId", actor.link._id).gt("sentAt", tap.now - 2 * 60 * 60 * 1000))
+    .take(100);
+  const undos = recent.filter((r) => r.kind === "auto_record" && (r.undo?.undoneAt ?? 0) > tap.now - 60 * 60 * 1000).length + 1;
+  const replies: SendOp[] = [];
+  if (undos >= AUTO_PAUSE_UNDOS && actor.link.assistant.autoPausedAt === undefined) {
+    await ctx.db.patch(actor.link._id, { assistant: { ...actor.link.assistant, autoPausedAt: tap.now } });
+    replies.push({ chatId: tap.chatId, text: MODE_COPY.pausedByUndos });
+  }
+  const conversationId = d.conversationId;
+  const card = await contextFor(ctx, actor, tap, conversationId ? { conversationId } : {});
+  const record = buildRecordCard(
+    card,
+    `↩️ Desfeito · ${formatTime(tap.now, tz)}\n${lines.map((l) => `• ${escapeHtml(l)}`).join("\n")}`,
+    ["instruct", "links"],
+  );
+  return { replies, edits: [edit(tap, record)] };
+}
+
+async function onVetoSend(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: INBOX_REPLY, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const d = tap.delivery;
+  if (!d || d.kind !== "draft" || !d.draft) return notFound(tap.chatId);
+  if (d.draft.sentAt) return say(tap.chatId, "Já foi enviado.");
+  await ctx.db.patch(d._id, { draft: { ...d.draft, vetoedAt: tap.now } });
+  if (d.draft.messageId) {
+    // AI draft: discarded so it never comes back (D23).
+    const draftMsg = await ctx.db.get(d.draft.messageId);
+    if (draftMsg && draftMsg.organizationId === actor.org._id) {
+      await discardAiDraftCore(ctx, { draft: draftMsg, member: actor.member, via: "telegram" });
+    }
+  } else {
+    await clearPrompt(ctx, tap.chatId, tap.now);
+  }
+  const card = await contextFor(ctx, actor, tap, d.conversationId ? { conversationId: d.conversationId } : {});
+  const record = buildRecordCard(
+    card,
+    `✖ Envio cancelado · ${formatTime(tap.now, card.timezone)}. Diga o que fazer, ou:`,
+    ["instruct", "reply", "regenerate"],
+  );
+  return { replies: [], edits: [edit(tap, record)] };
+}
+
+/**
+ * D23: the countdown elapsed (`telegram.internalAutoSendDraft`). Sends only if
+ * the card was not vetoed, nothing was sent yet, the member may still reply,
+ * the assistant is still in automatic mode and the draft/prompt is current.
+ */
+export async function executeAutoSend(
+  ctx: MutationCtx,
+  args: { deliveryId: Id<"telegramDeliveries">; now: number; appBaseUrl: string },
+): Promise<ActionResult> {
+  const d = await ctx.db.get(args.deliveryId);
+  if (!d || d.kind !== "draft" || !d.draft || d.draft.vetoedAt || d.draft.sentAt) return empty();
+  const auth = await authorizeTelegramActor(ctx, {
+    chatId: d.chatId,
+    organizationId: d.organizationId,
+    permission: INBOX_REPLY,
+    now: args.now,
+  });
+  if (!auth.ok) return empty();
+  const { actor } = auth;
+  const tap = { chatId: d.chatId, messageId: d.messageId, now: args.now, appBaseUrl: args.appBaseUrl };
+  const card = await contextFor(ctx, actor, tap, d.conversationId ? { conversationId: d.conversationId } : {});
+  if (effectiveAssistantMode(actor.link, actor.org) !== "auto") {
+    const record = buildRecordCard(card, "⏸ Envio automático suspenso (modo sugestão). Toque para decidir:", ["reply", "instruct", "regenerate"]);
+    return { replies: [], edits: [edit(tap, record)] };
+  }
+  let sentText = "";
+  try {
+    if (d.draft.messageId) {
+      const draftMsg = await ctx.db.get(d.draft.messageId);
+      const conversation = draftMsg ? await ctx.db.get(draftMsg.conversationId) : null;
+      const status = (draftMsg?.metadata?.aiDraft as { status?: string } | undefined)?.status;
+      if (!draftMsg || !conversation || conversation.organizationId !== actor.org._id || status !== "pending") return empty();
+      // D23: only drafts this member asked for from the bot are ever auto-sent.
+      if (!draftAutoSendable(draftMsg.metadata?.aiDraft, actor.member._id)) return empty();
+      await acceptAiDraftCore(ctx, { draft: draftMsg, conversation, member: actor.member, via: "telegram_auto" });
+      sentText = draftMsg.content;
+    } else {
+      const chat = await chatOf(ctx, d.chatId);
+      const prompt = chat?.pendingPrompt;
+      if (!prompt || prompt.kind !== "reply_customer" || !prompt.draftText || prompt.promptMessageId !== d.messageId) return empty();
+      const conversationId = prompt.conversationId;
+      if (!conversationId) return empty();
+      await internalSendMessageCore(ctx, {
+        conversationId,
+        content: prompt.draftText,
+        teamMemberId: actor.member._id,
+        via: "telegram_auto",
+      });
+      sentText = prompt.draftText;
+      await clearPrompt(ctx, d.chatId, args.now);
+    }
+  } catch (e) {
+    failWith({ replies: [], edits: [{ chatId: d.chatId, messageId: d.messageId, text: errorText(e) }] });
+  }
+  await ctx.db.patch(d._id, { draft: { ...d.draft, sentAt: args.now } });
+  const record = buildRecordCard(card, `✓ Enviado · ${formatTime(args.now, card.timezone)}`, ["instruct", "reply", "regenerate"], sentText);
+  return { replies: [], edits: [edit(tap, record)] };
 }

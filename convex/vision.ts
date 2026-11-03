@@ -59,6 +59,7 @@ import {
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
+import { orgAiActive } from "./lib/agentSecurity";
 import { shouldDescribeImage, visionEnabledForOrg, isSticker } from "./lib/mediaEnrichment";
 import { toDataUri } from "./lib/bridgeMedia";
 import { chatWithFallback, ResolvedRoute } from "./lib/llm";
@@ -85,7 +86,7 @@ import {
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000;
 // Teto de tamanho: o WhatsApp já recomprime, e base64 de 25 MB (o cap do ingest)
 // seria desperdício puro. 5 MB cobre qualquer print/foto de celular.
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 // Timeout por tentativa. O Whisper não tem nenhum — dívida conhecida; aqui não
 // repetimos o erro: uma cadeia de 3 modelos sem timeout travaria a fila.
 const VISION_TIMEOUT_MS = 45_000;
@@ -325,6 +326,65 @@ async function runVision(
       })
     : null;
 
+  const outcome = await runVisionAttempts(attempts, dataUri);
+
+  if (outcome.ok) {
+    await ctx.runMutation(internal.vision.internalSetVisionResult, {
+      messageId: message.messageId,
+      status: "done",
+      text: outcome.text,
+      tipo: outcome.tipo,
+      fields: outcome.fields,
+      model: outcome.attempt.canonicalModel,
+      provider: outcome.attempt.providerId,
+      ...(outcome.upstream ? { upstream: outcome.upstream } : {}),
+      ...(outcome.attemptLog.length > 0 ? { attempts: outcome.attemptLog } : {}),
+    });
+    if (runId) {
+      await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+        runId,
+        status: "done",
+        provider: outcome.attempt.providerId,
+        model: outcome.attempt.canonicalModel,
+        requestCount: outcome.requestCount,
+        ...finishRunCostFields(outcome.usage),
+      });
+    }
+    return { status: "done", text: outcome.text, tipo: outcome.tipo, fields: outcome.fields };
+  }
+
+  if (runId) {
+    await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+      runId,
+      status: "error",
+      requestCount: outcome.requestCount,
+      ...finishRunCostFields(outcome.usage),
+      error: outcome.lastError,
+    });
+  }
+  return await fail(ctx, message.messageId, outcome.lastError, outcome.attemptLog);
+}
+
+type VisionAttemptsOutcome =
+  | {
+      ok: true;
+      text: string;
+      tipo: string | undefined;
+      fields: Record<string, string | null> | undefined;
+      attempt: ResolvedRoute;
+      upstream?: string;
+      attemptLog: string[];
+      usage: ReturnType<typeof newUsageTotals>;
+      requestCount: number;
+    }
+  | { ok: false; lastError: string; attemptLog: string[]; usage: ReturnType<typeof newUsageTotals>; requestCount: number };
+
+/**
+ * The vision chain itself (shared by the message pass above and the Telegram
+ * photo → Copilot pass, F3): one call per attempt; ANY error, an empty
+ * reading or a dropped image means "next attempt". No persistence here.
+ */
+async function runVisionAttempts(attempts: ResolvedRoute[], dataUri: string): Promise<VisionAttemptsOutcome> {
   let requestCount = 0;
   // Custo de TODAS as tentativas que responderam (inclusive as descartadas por
   // leitura vazia/imagem perdida — o provedor cobrou por elas).
@@ -384,53 +444,99 @@ async function runVision(
         attemptLog.push(attemptNote(attempt, lastError, upstream));
         continue;
       }
-
-      await ctx.runMutation(internal.vision.internalSetVisionResult, {
-        messageId: message.messageId,
-        status: "done",
-        text: parsed.descricao.trim(),
-        tipo: parsed.tipo,
-        fields: parsed.campos,
-        model: attempt.canonicalModel,
-        provider: attempt.providerId,
-        ...(upstream ? { upstream } : {}),
-        ...(attemptLog.length > 0 ? { attempts: attemptLog } : {}),
-      });
-
-      if (runId) {
-        await ctx.runMutation(internal.agentRuns.internalFinishRun, {
-          runId,
-          status: "done",
-          provider: attempt.providerId,
-          model: attempt.canonicalModel,
-          requestCount,
-          ...finishRunCostFields(usage),
-        });
-      }
-
       return {
-        status: "done",
+        ok: true,
         text: parsed.descricao.trim(),
         tipo: parsed.tipo,
         fields: parsed.campos,
+        attempt,
+        ...(upstream ? { upstream } : {}),
+        attemptLog,
+        usage,
+        requestCount,
       };
     } catch (e) {
       lastError = visionError(e);
       attemptLog.push(attemptNote(attempt, lastError));
     }
   }
+  return { ok: false, lastError, attemptLog, usage, requestCount };
+}
 
-  if (runId) {
+/**
+ * Telegram F3 (D21): a photo sent to the Copilot (no open prompt) is read by
+ * the SAME chain, from storage, without a `messages` row. Gates: org AI on,
+ * `visionEnabled` (opt-in, like the inbox), spend cap, 5 MB, mime allowlist.
+ * The run is logged as `vision` under the member. The caller deletes the blob.
+ */
+export const internalDescribeImageForCopilot = internalAction({
+  args: {
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    storageId: v.id("_storage"),
+    mimeType: v.string(),
+    size: v.number(),
+  },
+  returns: v.object({ status: v.union(v.literal("done"), v.literal("failed")), text: v.optional(v.string()), error: v.optional(v.string()) }),
+  handler: async (ctx, args) => {
+    const failed = (error: string) => ({ status: "failed" as const, error });
+    const gate: { providerConfig: OrgProviderConfig | null; strictZdr: boolean; visionOn: boolean; aiOn: boolean } =
+      await ctx.runQuery(internal.vision.internalVisionGateForOrg, { organizationId: args.organizationId });
+    if (!gate.aiOn) return failed("A IA não está ativa nesta organização");
+    if (!gate.visionOn) return failed("A leitura de imagens está desligada nesta organização (Configurações → IA)");
+    if (args.size > MAX_IMAGE_BYTES) return failed("Imagem maior que 5MB — não lida");
+    if (!SUPPORTED_MIME.includes(args.mimeType.toLowerCase())) return failed(`Formato não suportado para leitura (${args.mimeType})`);
+    const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+      organizationId: args.organizationId,
+      month: monthKeyUtc(Date.now()),
+    });
+    if (spendGate.blocked) return failed(SPEND_CAP_BLOCKED_MESSAGE);
+    let attempts: ResolvedRoute[];
+    try {
+      attempts = await buildVisionAttempts(ctx, {
+        organizationId: args.organizationId,
+        providerConfig: gate.providerConfig,
+        strictZdr: gate.strictZdr,
+      });
+    } catch (e) {
+      return failed(visionError(e));
+    }
+    if (attempts.length === 0) return failed("Nenhum modelo de visão disponível para o provider desta organização");
+    const blob = await ctx.storage.get(args.storageId);
+    if (!blob) return failed("Imagem não encontrada no storage");
+    const dataUri = toDataUri(new Uint8Array(await blob.arrayBuffer()), args.mimeType);
+    const runId = await ctx.runMutation(internal.agentRuns.internalStartRun, {
+      organizationId: args.organizationId,
+      memberId: args.memberId,
+      kind: "vision" as const,
+      model: gate.providerConfig?.products?.vision?.model ?? DEFAULT_MODELS.vision,
+    });
+    const outcome = await runVisionAttempts(attempts, dataUri);
     await ctx.runMutation(internal.agentRuns.internalFinishRun, {
       runId,
-      status: "error",
-      requestCount,
-      ...finishRunCostFields(usage),
-      error: lastError,
+      status: outcome.ok ? "done" : "error",
+      ...(outcome.ok ? { provider: outcome.attempt.providerId, model: outcome.attempt.canonicalModel } : { error: outcome.lastError }),
+      requestCount: outcome.requestCount,
+      ...finishRunCostFields(outcome.usage),
     });
-  }
-  return await fail(ctx, message.messageId, lastError, attemptLog);
-}
+    return outcome.ok ? { status: "done" as const, text: outcome.text } : failed(outcome.lastError);
+  },
+});
+
+export const internalVisionGateForOrg = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.object({ providerConfig: v.any(), strictZdr: v.boolean(), visionOn: v.boolean(), aiOn: v.boolean() }),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    const ai = org?.settings.aiConfig;
+    return {
+      providerConfig: ai?.providerConfig ?? null,
+      strictZdr: ai?.providerConfig?.strictZdr === true,
+      visionOn: ai?.visionEnabled === true,
+      aiOn: orgAiActive(org ?? null),
+    };
+  },
+});
 
 async function fail(
   ctx: ActionCtx,
@@ -473,7 +579,7 @@ function upstreamProviderOf(raw: unknown): string | undefined {
  */
 async function buildVisionAttempts(
   ctx: ActionCtx,
-  message: ImageMessageForVision
+  message: Pick<ImageMessageForVision, "organizationId" | "providerConfig" | "strictZdr">
 ): Promise<ResolvedRoute[]> {
   const pinned = message.providerConfig?.products?.vision?.model;
   const baseRoutes = await resolveOrgRoutes(
