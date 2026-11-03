@@ -84,12 +84,11 @@ describe("goldens (§4)", () => {
     const card = buildNotificationCard({ notification: handoffN, context: ctx() });
     expect(card.text).toBe(
       [
-        "🔔 Repasse da IA · Acme Corp · 14:31",
-        "<b>Maria Souza</b> · WhatsApp · +55 11 98765-4321 · Vendas › Proposta enviada · R$ 4.800",
-        "Motivo: pediu desconto no plano anual e quer falar com uma pessoa.",
-        "Resumo: 3ª conversa; recebeu proposta ontem; agora pede 15% de desconto.",
+        "🔔 <b>Repasse da IA</b> · 14:31\n<b>Maria Souza</b>\nWhatsApp · +55 11 98765-4321\nVendas › Proposta enviada · R$ 4.800",
+        "<b>Motivo:</b> pediu desconto no plano anual e quer falar com uma pessoa.",
+        "<b>Resumo</b>\n3ª conversa; recebeu proposta ontem; agora pede 15% de desconto.",
         '<blockquote expandable>Maria (14:30): "Oi, vocês conseguem fazer 15% no anual? Senão prefiro falar com alguém da equipe"</blockquote>',
-      ].join("\n"),
+      ].join("\n\n"),
     );
     expect(card.keyboard).toEqual([
       [
@@ -110,11 +109,24 @@ describe("goldens (§4)", () => {
     const base = ctx();
     const withActions = ctx({ handoff: { ...base.handoff!, suggestedActions: ["Oferecer 10%", "Ligar hoje"] } });
     const full = buildNotificationCard({ notification: handoffN, context: withActions }).text;
-    expect(full).toContain("Resumo: 3ª conversa; recebeu proposta ontem; agora pede 15% de desconto.\nAções sugeridas:\n• Oferecer 10%\n• Ligar hoje\n<blockquote");
+    expect(full).toContain("agora pede 15% de desconto.\n\n<b>Ações sugeridas</b>\n• Oferecer 10%\n• Ligar hoje\n\n<blockquote");
     const discreet = buildNotificationCard({ notification: handoffN, context: { ...withActions, discreet: true } }).text;
     expect(discreet).not.toContain("Ações sugeridas");
     expect(discreet).not.toContain("Oferecer");
     expect(buildNotificationCard({ notification: handoffN, context: base }).text).not.toContain("Ações sugeridas");
+  });
+
+  test("cabeçalho: nome da org só com mais de uma org; blocos separados por linha em branco", () => {
+    const single = buildNotificationCard({ notification: handoffN, context: ctx() }).text;
+    expect(single.split("\n")[0]).toBe("🔔 <b>Repasse da IA</b> · 14:31");
+    const multi = buildNotificationCard({ notification: handoffN, context: ctx({ multiOrg: true }) }).text;
+    expect(multi.split("\n")[0]).toBe("🔔 <b>Repasse da IA</b> · Acme Corp · 14:31");
+    expect(single.split("\n\n").length).toBeGreaterThanOrEqual(4);
+    const nm = buildNotificationCard({
+      notification: { _id: "n3", type: "new_message", title: "x", createdAt: NOW, conversationId: CID },
+      context: ctx({ multiOrg: true, handoff: undefined, relayLines: [{ at: NOW, author: "", text: "oi" }] }),
+    });
+    expect(nm.text).toBe('💬 <b>Maria Souza</b> · WhatsApp · Acme Corp · 14:31\n\n"oi"');
   });
 
   test("4.11 modo discreto: iniciais, sem telefone, 200 chars mascarados, sem WhatsApp nem Ver tudo", () => {
@@ -123,7 +135,7 @@ describe("goldens (§4)", () => {
       notification: handoffN,
       context: ctx({ discreet: true, lastInbound: { text: long, at: NOW - 60_000 } }),
     });
-    expect(card.text).toContain("<b>M. S.</b> · WhatsApp · Vendas › Proposta enviada · R$ 4.800");
+    expect(card.text).toContain("<b>M. S.</b>\nWhatsApp\nVendas › Proposta enviada · R$ 4.800");
     expect(card.text).not.toContain("98765");
     expect(card.text).not.toContain("123.456");
     expect(card.text).toContain("•••8900");
@@ -148,7 +160,7 @@ describe("goldens (§4)", () => {
       }),
     });
     expect(card.text).toBe(
-      '📌 Tarefa vence em breve · 15:31\n"Ligar para Dona Rejane sobre a renovação" · lead Rejane Alves · R$ 1.200',
+      '<b>📌 Tarefa vence em breve · 15:31</b>\n\n"Ligar para Dona Rejane sobre a renovação" · lead Rejane Alves · R$ 1.200',
     );
     expect(card.keyboard).toEqual([
       [
@@ -187,7 +199,7 @@ describe("goldens (§4)", () => {
       }),
     });
     expect(card.text).toBe(
-      '💬 <b>Maria Souza</b> · WhatsApp · 14:41\n"Pix! Me manda a chave que eu pago hoje ainda 🙏"\n"[imagem] comprovante"',
+      '💬 <b>Maria Souza</b> · WhatsApp · 14:41\n\n"Pix! Me manda a chave que eu pago hoje ainda 🙏"\n"[imagem] comprovante"',
     );
     expect(card.keyboard[0]).toEqual([
       { text: "💬 Responder", callback_data: `rp:${CID}` },
@@ -222,7 +234,7 @@ describe("goldens (§4)", () => {
       notification: { _id: "n5", type: "channel_session_lost", title: "WhatsApp (…1234) caiu", createdAt: NOW },
       context: ctx({ lead: undefined, conversation: undefined, handoff: undefined, lastInbound: undefined }),
     });
-    expect(card.text).toBe("🔴 WhatsApp (…1234) caiu");
+    expect(card.text).toBe("🔴 <b>WhatsApp (…1234) caiu</b>");
     expect(card.keyboard).toEqual([
       [{ text: "🔗 Abrir no CRM", url: "https://app.example.test/app/configuracoes?secao=channels" }],
     ]);
@@ -230,6 +242,22 @@ describe("goldens (§4)", () => {
 });
 
 describe("segurança do texto", () => {
+  test("e-mail (ex.: chave Pix) aparece no modo completo e vira [e-mail] só no discreto", () => {
+    const base = ctx({ lastInbound: { text: "minha chave pix é pix@milfont.net", at: NOW } });
+    const full = buildNotificationCard({ notification: handoffN, context: base }).text;
+    expect(full).toContain("pix@milfont.net");
+    const hidden = buildNotificationCard({ notification: handoffN, context: { ...base, discreet: true } }).text;
+    expect(hidden).toContain("[e-mail]");
+    expect(hidden).not.toContain("milfont.net");
+    const relay = buildNotificationCard({
+      notification: { _id: "n3", type: "new_message", title: "x", createdAt: NOW, conversationId: CID },
+      context: ctx({ handoff: undefined, relayLines: [{ at: NOW, author: "", text: "pix@milfont.net" }] }),
+    });
+    expect(relay.text).toContain("pix@milfont.net");
+    const history = buildHistoryCard(ctx(), [{ at: NOW, author: "Maria", text: "pix@milfont.net" }], []);
+    expect(history.text).toContain("pix@milfont.net");
+  });
+
   test("nunca e-mail, em nenhum modo; HTML do cliente escapado", () => {
     for (const discreet of [false, true]) {
       const card = buildNotificationCard({
@@ -240,7 +268,9 @@ describe("segurança do texto", () => {
           lastInbound: { text: "me escreve em maria@cliente.com <script>", at: NOW },
         }),
       });
-      expect(card.text).not.toMatch(/@cliente\.com/);
+      // E-mails are hidden ONLY in discreet mode (a Pix key can be an e-mail).
+      if (discreet) expect(card.text).not.toMatch(/@cliente\.com/);
+      else expect(card.text).toContain("maria@cliente.com");
       expect(card.text).not.toContain("<script>");
     }
   });
@@ -305,7 +335,7 @@ describe("modo discreto: nome do cliente nunca por extenso (revisão F1 #4)", ()
       context: discreet(),
     });
     expect(card.text).not.toMatch(/Maria|Souza/);
-    expect(card.text).toBe("➡️ Ana transferiu M. S. para você\nM. S.\n<b>M. S.</b> · WhatsApp · Vendas › Proposta enviada · R$ 4.800");
+    expect(card.text).toBe("➡️ <b>Ana transferiu M. S. para você</b>\n\n<b>M. S.</b>\nWhatsApp\nVendas › Proposta enviada · R$ 4.800");
   });
 
   test("handoff_resolved: corpo (título do lead) vira iniciais", () => {
@@ -313,7 +343,7 @@ describe("modo discreto: nome do cliente nunca por extenso (revisão F1 #4)", ()
       notification: { _id: "t2", type: "handoff_resolved", title: "Repasse aceito por Ana", body: "Maria Souza", createdAt: NOW, handoffId: HID },
       context: discreet(),
     });
-    expect(card.text).toBe("✅ Repasse aceito por Ana\nM. S.");
+    expect(card.text).toBe("✅ <b>Repasse aceito por Ana</b>\n\nM. S.");
   });
 
   test("tarefa: nome no título vira iniciais; sem lead conhecido o título some", () => {
@@ -324,12 +354,12 @@ describe("modo discreto: nome do cliente nunca por extenso (revisão F1 #4)", ()
         task: { id: TID, title: "Ligar para a maria souza amanhã", status: "pending" },
       }),
     });
-    expect(withLead.text).toBe('📌 Nova tarefa para você\n"Ligar para a M. S. amanhã" · lead M. S. · R$ 4.800');
+    expect(withLead.text).toBe('<b>📌 Nova tarefa para você</b>\n\n"Ligar para a M. S. amanhã" · lead M. S. · R$ 4.800');
     const noLead = buildNotificationCard({
       notification: { _id: "t4", type: "task_assigned", title: "Nova tarefa", createdAt: NOW, taskId: TID },
       context: discreet({ lead: undefined, conversation: undefined, task: { id: TID, title: "Ligar para Maria", status: "pending" } }),
     });
-    expect(noLead.text).toBe('📌 Nova tarefa para você\n"Tarefa"');
+    expect(noLead.text).toBe('<b>📌 Nova tarefa para você</b>\n\n"Tarefa"');
   });
 
   test("follow-up: título e corpo com o nome redigidos", () => {
@@ -341,6 +371,6 @@ describe("modo discreto: nome do cliente nunca por extenso (revisão F1 #4)", ()
       context: discreet(),
     });
     expect(card.text).not.toMatch(/Maria|Souza/);
-    expect(card.text).toContain("⚠️ Follow-up de M. S. precisa de você\nM. S. não respondeu");
+    expect(card.text).toContain("⚠️ <b>Follow-up de M. S. precisa de você</b>\n\nM. S. não respondeu\n\n<b>M. S.</b>");
   });
 });

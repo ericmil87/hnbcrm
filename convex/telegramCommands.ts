@@ -120,7 +120,7 @@ async function cardFor(
   env: CommandEnv,
   refs: { conversationId?: Id<"conversations">; handoffId?: Id<"handoffs">; taskId?: Id<"tasks"> },
 ): Promise<CardContext> {
-  const c = await loadCardContext(ctx.db, { organizationId: viewer.org._id, now: env.now, appBaseUrl: env.appBaseUrl, ...refs });
+  const c = await loadCardContext(ctx.db, { organizationId: viewer.org._id, now: env.now, appBaseUrl: env.appBaseUrl, chatId: env.chatId, ...refs });
   return c ?? fallbackCard(viewer, env);
 }
 

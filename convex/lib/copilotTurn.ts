@@ -84,6 +84,10 @@ const FORMAT_TELEGRAM = [
   "Você também é o assistente executivo no Telegram: quando o usuário fala sobre",
   "a conversa em foco, prefira acionar o Atendente de IA com uma instrução clara",
   "a responder você mesmo ao cliente; explique em uma linha o que fez.",
+  "CONFIRMAÇÕES: quando uma ferramenta devolver confirmacao_necessaria, o Telegram",
+  "mostra um cartão com os botões ✅ Confirmar e ✖ Cancelar logo abaixo da sua",
+  "resposta. Diga só \"toque em ✅ Confirmar no cartão\". Confirmação por texto NÃO",
+  "existe: nunca peça \"pode ir\", \"me diga sim\" nem \"aprove na tela\".",
 ].join(" ");
 
 /** Exportado (como os demais construtores de prompt do produto) para teste. */
@@ -217,6 +221,8 @@ export type CopilotTurnOptions = {
   focusConversationId?: Id<"conversations">;
   /** D22: origem das escritas deste turno (auditoria `metadata.via`); default do executor = "copilot". */
   toolVia?: "telegram_auto";
+  /** Telegram (0.77.2): the member's effective assistant mode; absent on the web. */
+  assistantMode?: "suggest" | "auto";
   onThread?: (threadId: Id<"copilotThreads">) => void | Promise<void>;
   onDelta?: (text: string) => void | Promise<void>;
   onTool?: (name: string) => void | Promise<void>;
@@ -498,6 +504,7 @@ export async function runCopilotTurn(
                   focusConversationId: opts.focusConversationId,
                   via: opts.toolVia,
                   ...(opts.toolVia ? { agentRunId: runId } : {}),
+                  ...(opts.assistantMode ? { assistantMode: opts.assistantMode } : {}),
                   // Ordinal rule: numbers resolve against the list as of the turn start.
                   turnStartedAt: startedAt,
                 })

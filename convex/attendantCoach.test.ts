@@ -21,7 +21,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { upsertRuntime } from "./lib/conversationRuntime";
-import { requestAiDraftCore } from "./attendant";
+import { requestAiDraftCore, returnToAiCore } from "./attendant";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -1137,5 +1137,48 @@ describe("origem do pedido pelo Telegram (D23)", () => {
     await asUser(t, seed.adminUserId).mutation(api.attendant.requestAiDraft, { conversationId: seed.conversationId });
     const item = await coachItemOf(t, seed);
     expect(item!.requestedVia).toBeUndefined();
+  });
+});
+
+describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em autopilot", () => {
+  const instructAndRun = async (t: TestConvex<typeof schema>, seed: Seed, via?: "telegram") => {
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seed.conversationId, { aiPausedUntil: Number.MAX_SAFE_INTEGER });
+      await ctx.db.patch(seed.leadId, { assignedTo: seed.sellerId });
+      const conversation = (await ctx.db.get(seed.conversationId))!;
+      const member = (await ctx.db.get(seed.sellerId))!;
+      await returnToAiCore(ctx, { conversation, member, instruction: "Reforce a proposta do plano anual", ...(via ? { via } : {}) });
+    });
+    const item = await t.run(async (ctx) =>
+      (await ctx.db.query("aiReplyQueue").collect()).filter((i) => i.origin === "return_to_ai" && i.status === "pending").at(-1),
+    );
+    vi.useRealTimers();
+    stubLlm("Olá! Passando para reforçar a proposta do plano anual.");
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item!._id });
+    vi.useFakeTimers();
+    const outbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").withIndex("by_conversation_and_created", (q) => q.eq("conversationId", seed.conversationId)).collect())
+        .filter((m) => m.direction === "outbound"),
+    );
+    return { item: item!, outbound };
+  };
+
+  test("autopilot + devolução com instrução via Telegram (botão 'Instruir a IA' ou Copiloto): rascunho marcado, nada sai", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t, { mode: "autopilot" });
+    const { item, outbound } = await instructAndRun(t, seed, "telegram");
+    expect(item.requestedVia).toBe("telegram");
+    expect(outbound).toHaveLength(0);
+    const drafts = await draftsOf(t, seed);
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0].metadata!.aiDraft).toMatchObject({ status: "pending", requestedVia: "telegram", instructedBy: seed.sellerId });
+  });
+
+  test("autopilot + devolução pelo app (sem Telegram): continua enviando direto", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t, { mode: "autopilot" });
+    const { outbound } = await instructAndRun(t, seed);
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].metadata?.aiReply).toBeUndefined();
   });
 });

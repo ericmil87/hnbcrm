@@ -33,7 +33,9 @@ import {
   AUTO_PAUSE_UNDOS,
   autoSendSeconds,
   autoWriteTools,
+  AI_BACK_IN_CHARGE,
   draftAutoSendable,
+  isTelegramRequestedDraft,
   effectiveAssistantMode,
 } from "./telegramAssistant";
 import { escapeHtml } from "./telegramFormat";
@@ -211,6 +213,8 @@ async function contextFor(
     organizationId: actor.org._id,
     now: tap.now,
     appBaseUrl: tap.appBaseUrl,
+    // Multi-org chat: the rebuilt card keeps the org name in its header.
+    chatId: actor.link.chatId,
     ...refs,
   });
   return c ?? {
@@ -613,7 +617,13 @@ async function onSendDraft(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
     failWith(say(tap.chatId, errorText(e)));
   }
   const card = await contextFor(ctx, actor, tap, { conversationId: found.conversation._id });
-  const record = buildRecordCard(card, `✅ Rascunho enviado por você · ${formatTime(tap.now, card.timezone)}`, ["viewAll", "links"], found.draft.content);
+  const closing = isTelegramRequestedDraft(found.draft.metadata?.aiDraft) ? `\n${AI_BACK_IN_CHARGE}` : "";
+  const record = buildRecordCard(
+    card,
+    `✅ Rascunho enviado por você · ${formatTime(tap.now, card.timezone)}${closing}`,
+    ["viewAll", "links"],
+    found.draft.content,
+  );
   return { replies: [], edits: [edit(tap, record)] };
 }
 
@@ -1430,6 +1440,7 @@ export async function executeAutoSend(
   }
   let sentText = "";
   let sentFile: DraftAttachment | undefined;
+  let backInCharge = false;
   try {
     if (d.draft.messageId) {
       const draftMsg = await ctx.db.get(d.draft.messageId);
@@ -1440,6 +1451,7 @@ export async function executeAutoSend(
       if (!draftAutoSendable(draftMsg.metadata?.aiDraft, actor.member._id)) return empty();
       await acceptAiDraftCore(ctx, { draft: draftMsg, conversation, member: actor.member, via: "telegram_auto" });
       sentText = draftMsg.content;
+      backInCharge = isTelegramRequestedDraft(draftMsg.metadata?.aiDraft);
     } else {
       const chat = await chatOf(ctx, d.chatId);
       const prompt = chat?.pendingPrompt;
@@ -1468,7 +1480,7 @@ export async function executeAutoSend(
   await ctx.db.patch(d._id, { draft: { ...d.draft, sentAt: args.now } });
   const record = buildRecordCard(
     card,
-    `✓ Enviado · ${formatTime(args.now, card.timezone)}${sentFile ? ` · ${attachmentLine(sentFile)}` : ""}`,
+    `✓ Enviado · ${formatTime(args.now, card.timezone)}${sentFile ? ` · ${attachmentLine(sentFile)}` : ""}${backInCharge ? `\n${AI_BACK_IN_CHARGE}` : ""}`,
     ["instruct", "reply", "regenerate"],
     sentText || undefined,
   );

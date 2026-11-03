@@ -55,7 +55,14 @@ import { buildWelcomeCard } from "./lib/telegramOnboarding";
 import { FOCUS_TTL_MS, resolveRelayRecipient } from "./lib/telegramRelay";
 import { COPILOT_COPY } from "./telegramCopilot";
 import { appendFirstTimeTip } from "./lib/telegramOnboarding";
-import { AUTO_SEND_MAX_S, AUTO_SEND_MIN_S, autoSendSeconds, draftAutoSendable, effectiveAssistantMode } from "./lib/telegramAssistant";
+import {
+  AI_BACK_IN_CHARGE,
+  AUTO_SEND_MAX_S,
+  AUTO_SEND_MIN_S,
+  autoSendSeconds,
+  draftAutoSendable,
+  effectiveAssistantMode,
+} from "./lib/telegramAssistant";
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
@@ -1699,11 +1706,11 @@ export const internalGetNotificationDelivery = internalQuery({
     const text = [
       args.preface ? escapeHtml(args.preface) : null,
       card.text,
-      args.suggestion ? `💡 Sugiro: ${escapeHtml(args.suggestion.summary)}` : null,
+      args.suggestion ? `💡 <b>Sugiro:</b> ${escapeHtml(args.suggestion.summary)}` : null,
       tip.line ? escapeHtml(tip.line) : null,
     ]
       .filter(Boolean)
-      .join("\n");
+      .join("\n\n");
     const keyboard = args.suggestion
       ? [[{ text: "💡 Aplicar sugestão", callback_data: `pa:${args.suggestion.pendingActionId}` }], ...card.keyboard]
       : card.keyboard;
@@ -1888,70 +1895,65 @@ export const internalFlushRelayBuffer = internalMutation({
   },
 });
 
-/** Chats whose focus is this conversation get "🤖 IA → …" once per CRM message. */
+/**
+ * D20 amended (0.77.2): "🤖 IA → …" goes ONLY for the reply to an
+ * instruction/regeneration asked from the bot (`metadata.aiReply`), once, to
+ * the member who asked — with the closing line. Focus no longer relays.
+ */
+export const AI_RELAY_CLOSING = AI_BACK_IN_CHARGE;
 export const internalGetAiRelayTargets = internalQuery({
   args: { messageId: v.id("messages"), now: v.number() },
   returns: v.array(cardTargetValidator),
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message || message.direction !== "outbound" || message.senderType !== "ai") return [];
+    const marker = (message.metadata as { aiReply?: { requestedVia?: string; instructedBy?: string } } | undefined)?.aiReply;
+    if (!marker || (marker.requestedVia !== "telegram" && marker.requestedVia !== "telegram_auto") || !marker.instructedBy) return [];
     const conversation = await ctx.db.get(message.conversationId);
     if (!conversation || conversation.kind === "group") return [];
-    const chats = await ctx.db
-      .query("telegramChats")
-      .withIndex("by_focus_conversation", (q) => q.eq("focus.conversationId", conversation._id))
-      .take(10);
+    const memberId = ctx.db.normalizeId("teamMembers", marker.instructedBy);
+    if (!memberId) return [];
+    const target = await deliverableLink(ctx, memberId, conversation.organizationId, args.now, { conversationContent: true });
+    if (!target) return [];
+    const link = target.link;
+    // Once per CRM message (a retried job must not send it twice).
     const recent = await ctx.db
       .query("telegramDeliveries")
-      .withIndex("by_conversation_and_sent", (q) =>
-        q.eq("conversationId", conversation._id).gt("sentAt", args.now - FOCUS_TTL_MS),
-      )
-      // Newest first: the relay of THIS message, if any, is among the latest.
+      .withIndex("by_conversation_and_sent", (q) => q.eq("conversationId", conversation._id).gt("sentAt", args.now - FOCUS_TTL_MS))
       .order("desc")
       .take(50);
-    const out: CardTarget[] = [];
-    for (const chat of chats) {
-      if (!chat.focus || chat.focus.setAt <= args.now - FOCUS_TTL_MS) continue;
-      const link = (await activeLinksOfChat(ctx, chat.chatId)).find(
-        (l) => l.organizationId === conversation.organizationId,
-      );
-      if (!link) continue;
-      const target = await deliverableLink(ctx, link.teamMemberId, conversation.organizationId, args.now, {
-        conversationContent: true,
-      });
-      if (!target) continue;
-      if (recent.some((d) => d.crmMessageId === message._id && d.linkId === link._id)) continue;
-      const context = await loadCardContext(ctx.db, {
-        organizationId: conversation.organizationId,
-        now: args.now,
-        appBaseUrl: appUrl(),
-        conversationId: conversation._id,
-      });
-      if (!context) continue;
-      const card = buildAiRelayCard(context, { text: message.content, at: message.createdAt });
-      // F4 (D21): the AI sent a file (flyer, document) → it goes right after the relay card.
-      const media = await mediaForMessages(ctx.db, [message], {
-        organizationId: conversation.organizationId,
-        discreet: context.discreet,
-        mediaInbound: link.prefs.mediaInbound,
-        crmUrl: conversationCrmUrl(appUrl(), conversation._id),
-      });
-      out.push({
-        chatId: chat.chatId,
-        text: card.text,
+    if (recent.some((d) => d.crmMessageId === message._id && d.linkId === link._id)) return [];
+    const context = await loadCardContext(ctx.db, {
+      organizationId: conversation.organizationId,
+      now: args.now,
+      appBaseUrl: appUrl(),
+      conversationId: conversation._id,
+    });
+    if (!context) return [];
+    const card = buildAiRelayCard(context, { text: message.content, at: message.createdAt });
+    // F4 (D21): the AI sent a file (flyer, document) → it goes right after the relay card.
+    const media = await mediaForMessages(ctx.db, [message], {
+      organizationId: conversation.organizationId,
+      discreet: context.discreet,
+      mediaInbound: link.prefs.mediaInbound,
+      crmUrl: conversationCrmUrl(appUrl(), conversation._id),
+    });
+    return [
+      {
+        chatId: link.chatId,
+        text: `${card.text}\n${AI_RELAY_CLOSING}`,
         keyboard: card.keyboard,
         ...(media.length > 0 ? { media } : {}),
         protectContent: target.org.settings.telegram?.protectContent === true,
         record: {
           organizationId: conversation.organizationId,
           linkId: link._id,
-          kind: "relay",
+          kind: "relay" as const,
           conversationId: conversation._id,
           crmMessageId: message._id,
         },
-      });
-    }
-    return out;
+      },
+    ];
   },
 });
 

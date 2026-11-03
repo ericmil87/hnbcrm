@@ -271,6 +271,22 @@ describe("revisão F2 — lote 1", () => {
   });
 });
 
+describe("e-mail só some no modo discreto", () => {
+  test("motivo de repasse e título de tarefa com e-mail (chave Pix)", () => {
+    const data = morning({
+      handoffs: {
+        count: 1, capped: false, oldestAt: NOW - 5 * MIN,
+        items: [{ id: "h1", leadName: "Pedro Nunes", reason: "chave pix@milfont.net", createdAt: NOW - 5 * MIN }],
+      },
+      tasksToday: { count: 1, capped: false, items: [{ id: "t1", title: "Pagar pix@milfont.net", dueDate: at(10) }] },
+    });
+    const full = formatMorningReport(data, opts()).text;
+    expect(full).toContain("pix@milfont.net");
+    const hidden = formatMorningReport(data, opts({ discreet: true })).text;
+    expect(hidden).not.toContain("milfont.net");
+  });
+});
+
 describe("greetingName", () => {
   test("usa o primeiro nome do membro", async () => {
     const { greetingName } = await import("./executiveReport");

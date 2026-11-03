@@ -18,7 +18,6 @@ import {
   formatMoney,
   initials,
   safeText,
-  stripEmails,
   type CardButton,
   type CardContext,
   type CardKeyboard,
@@ -179,7 +178,7 @@ export function daysAgo(at: number, now: number): string {
 /** Display name for a lead/room title in this mode: initials when discreet; never an e-mail. */
 export function displayName(discreet: boolean, raw: string | undefined): string {
   const title = raw?.trim() || "Contato";
-  return discreet ? initials(title) : stripEmails(title);
+  return discreet ? initials(title) : title;
 }
 
 const moreRow = (command: PagedCommand, offset: number): CardButton[] => [

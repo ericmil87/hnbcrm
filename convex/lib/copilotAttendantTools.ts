@@ -40,7 +40,19 @@ export type AttendantToolScope = {
   agentRunId?: Id<"agentRuns">;
   /** Ordinal rule: task numbers resolve against the list as of the turn start. */
   turnStartedAt?: number;
+  /** Telegram (0.77.2): the member's effective assistant mode; absent on the web Copilot. */
+  assistantMode?: "suggest" | "auto";
 };
+
+/**
+ * The origin domain cores record. A Telegram turn (assistant mode present) is
+ * `telegram` / `telegram_auto`, so the queue item carries `requestedVia` and
+ * the reply comes back to the member (D20/D23); the web Copilot stays `copilot`.
+ */
+function domainVia(scope: Pick<AttendantToolScope, "via" | "assistantMode">): "copilot" | "telegram" | "telegram_auto" {
+  if (scope.via === "telegram_auto") return "telegram_auto";
+  return scope.assistantMode ? "telegram" : "copilot";
+}
 
 const READ_TOOLS = ["getConversationHistory", "listMyOpenTasks"] as const;
 const WRITE_TOOLS = [
@@ -399,7 +411,7 @@ export async function runAttendantCopilotWriteTool(
     if (reason.length > INSTRUCTION_MAX) return { error: `Motivo muito longo (máx. ${INSTRUCTION_MAX} caracteres).` };
     const draft = await pendingDraftOf(ctx.db, conversation._id);
     await recordAutoStep(ctx, scope, "regenerate", conversation._id, {});
-    await requestAiDraftCore(ctx, { conversation, member: scope.member, instruction: reason, sourceDraftId: draft?._id, via });
+    await requestAiDraftCore(ctx, { conversation, member: scope.member, instruction: reason, sourceDraftId: draft?._id, via: domainVia(scope) });
     return { status: "ok", message: "Pedi uma nova versão ao Atendente; o rascunho chega em instantes." };
   }
 
@@ -437,7 +449,11 @@ export async function runAttendantCopilotWriteTool(
       `Instruir a IA na conversa com ${leadLabel(lead)}: "${cut(instruction, 500)}" (${await holderNotice(ctx, scope.organizationId, holder)} Instruir devolve a conversa à IA.)`,
     );
   }
-  if (mode === "autopilot") {
+  // P8 amended (0.77.2): an attendant in autopilot sends the instructed reply straight to the
+  // customer, so it needs a confirmation — on the web and in Telegram's suggest mode. In
+  // Telegram's AUTOMATIC mode the member already delegated: it runs, and the reply comes back
+  // to the chat (relay with 🔁 Regenerar / 🙋 Assumir eu).
+  if (mode === "autopilot" && scope.assistantMode !== "auto") {
     return await proposal(
       ctx,
       scope,
@@ -447,7 +463,7 @@ export async function runAttendantCopilotWriteTool(
     );
   }
   const before = await conversationBefore(ctx, conversation, lead);
-  await instructNow(ctx, scope.member, conversation, instruction, via);
+  await instructNow(ctx, scope.member, conversation, instruction, domainVia(scope));
   await recordAutoStep(
     ctx, scope, "instruct", conversation._id, before,
     await conversationAfter(ctx, conversation._id, before.handoffId),

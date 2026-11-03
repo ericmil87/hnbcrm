@@ -175,20 +175,20 @@ function plural(c: Counted, one: string, many: string): string {
   return `${n(c)} ${c.count === 1 && !c.capped ? one : many}`;
 }
 
-/** A customer/lead name for the report: initials in discreet mode, never an e-mail. */
+/** A customer/lead name for the report: initials in discreet mode (e-mails only hidden there). */
 function personName(name: string, discreet: boolean): string {
-  const clean = stripEmails(name).trim() || "Contato";
+  const clean = (discreet ? stripEmails(name) : name).trim() || "Contato";
   return escapeHtml(discreet ? maskDigitRuns(initials(clean)) : clean);
 }
 
 /** Labels (channel names, sources): digit runs masked in discreet mode. */
 function labelText(text: string, discreet: boolean): string {
-  return escapeHtml(discreet ? maskDigitRuns(stripEmails(text)) : stripEmails(text));
+  return escapeHtml(discreet ? maskDigitRuns(stripEmails(text)) : text);
 }
 
 /** Free text that may carry a lead name (task titles, reasons). */
 function freeText(text: string, leadName: string | undefined, discreet: boolean, max = 60): string {
-  let t = stripEmails(text).replace(/\s+/g, " ").trim();
+  let t = (discreet ? stripEmails(text) : text).replace(/\s+/g, " ").trim();
   if (discreet && leadName) t = redactName({ discreet: true, lead: { id: "", title: leadName } }, t);
   if (t.length > max) t = `${t.slice(0, max).trimEnd()}…`;
   // Discreet: phones/documents in task titles and reasons (review F2 #1).
@@ -346,7 +346,7 @@ export function formatEveningReport(data: ReportData, o: ReportOptions): ReportO
   const keyboard: CardKeyboard = [];
   const only = e.ownerlessHandoffs.count === 1 && !e.ownerlessHandoffs.capped ? e.ownerlessHandoffs.items[0] : undefined;
   if (only && data.canReply) {
-    const name = o.discreet ? initials(stripEmails(only.leadName)) : stripEmails(only.leadName).split(/\s+/).slice(0, 2).join(" ");
+    const name = o.discreet ? initials(stripEmails(only.leadName)) : only.leadName.split(/\s+/).slice(0, 2).join(" ");
     keyboard.push([{ text: `🔁 Pegar ${name}`, callback_data: callbackData("ah", only.id) }]);
   }
   keyboard.push([crmButton(o)]);
