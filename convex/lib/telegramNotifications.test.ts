@@ -11,6 +11,13 @@ import {
   buildHistoryCard,
   buildNotificationCard,
   buildRecordCard,
+  reconnectCodeCard,
+  reconnectDoneCard,
+  reconnectExpiredCard,
+  reconnectLimitCard,
+  reconnectNotAllowedCard,
+  reconnectQrCaption,
+  reconnectQrKeyboard,
   callbackData,
   formatWhen,
   parseCallbackData,
@@ -372,5 +379,118 @@ describe("modo discreto: nome do cliente nunca por extenso (revisão F1 #4)", ()
     });
     expect(card.text).not.toMatch(/Maria|Souza/);
     expect(card.text).toContain("⚠️ <b>Follow-up de M. S. precisa de você</b>\n\nM. S. não respondeu\n\n<b>M. S.</b>");
+  });
+});
+
+describe("canal caiu por estado (v0.78)", () => {
+  const CFG = "k17abcdefgh";
+  const lost = (channelSession: CardContext["channelSession"], over: Partial<CardContext> = {}) =>
+    buildNotificationCard({
+      notification: { _id: "n9", type: "channel_session_lost", title: "x", createdAt: NOW },
+      context: ctx({ lead: undefined, conversation: undefined, handoff: undefined, lastInbound: undefined, channelSession, ...over }),
+    });
+  const urls = (c: { keyboard: { text: string }[][] }) => c.keyboard.flat().map((b: any) => b.url ?? b.callback_data);
+
+  test("bridge logged_out: Reconectar + Abrir canais, blocos separados", () => {
+    const card = lost({ kind: "bridge", channelConfigId: CFG, state: "logged_out", last4: "1234" });
+    expect(card.text).toBe(
+      "🔴 <b>WhatsApp (…1234) caiu</b> · 14:31\n\n" +
+        "A sessão do número foi encerrada.\nA IA e os envios por esse número estão parados até reconectar.\n\n" +
+        "Você pode reconectar daqui em 1 minuto, com o celular do número na mão.",
+    );
+    expect(card.keyboard).toEqual([
+      [
+        { text: "🔄 Reconectar", callback_data: `rc:${CFG}` },
+        { text: "🔗 Abrir canais", url: "https://app.example.test/app/configuracoes?secao=channels" },
+      ],
+    ]);
+    expect(lost({ kind: "bridge", channelConfigId: CFG, state: "disconnected" }).text).toContain("<b>WhatsApp caiu</b>");
+  });
+
+  test("banimento temporário: até quando, sem Reconectar", () => {
+    const card = lost({ kind: "bridge", channelConfigId: CFG, state: "temporarily_banned", last4: "1234", expiresAt: NOW + 3600_000 });
+    expect(card.text).toContain("⛔ <b>WhatsApp (…1234) banido temporariamente</b>");
+    expect(card.text).toContain("bloqueou o número até 15:31.\nNão tente reconectar antes disso.");
+    expect(urls(card).some((u: string) => u.startsWith("rc:"))).toBe(false);
+  });
+
+  test("banned / outdated: suporte; Meta: refazer login no navegador", () => {
+    const banned = lost({ kind: "bridge", channelConfigId: CFG, state: "banned" });
+    expect(banned.text).toContain("Fale com o suporte.");
+    expect(urls(banned).some((u: string) => u.startsWith("rc:"))).toBe(false);
+    expect(lost({ kind: "bridge", channelConfigId: CFG, state: "outdated" }).text).toContain("precisa de atualização");
+    const meta = lost({ kind: "meta", state: "reauth_required" });
+    expect(meta.text).toContain("<b>Instagram/Messenger precisa de novo login</b>");
+    expect(meta.text).toContain("O login é feito no navegador.");
+    expect(meta.keyboard).toEqual([[{ text: "🔗 Refazer login", url: "https://app.example.test/app/configuracoes?secao=channels" }]]);
+  });
+
+  test("modo discreto: mesmo texto (nada de cliente); sem canal conhecido cai no genérico", () => {
+    const a = lost({ kind: "bridge", channelConfigId: CFG, state: "logged_out", last4: "1234" });
+    const b = lost({ kind: "bridge", channelConfigId: CFG, state: "logged_out", last4: "1234" }, { discreet: true });
+    expect(b.text).toBe(a.text);
+    expect(lost(undefined).text).toBe("🔴 <b>x</b>");
+  });
+});
+
+describe("telas da reconexão (v0.78)", () => {
+  const CFG = "k17abcdefgh";
+  test("código: passos numerados, código em <code>, copiar / QR / cancelar", () => {
+    const card = reconnectCodeCard({ channelConfigId: CFG, last4: "1234", code: "ABCD-EFGH", expiresAt: NOW + 160_000, tz: TZ });
+    expect(card.text).toBe(
+      "🔄 <b>Reconectando o WhatsApp (…1234)</b>\n\n" +
+        "1. No celular do número, abra o WhatsApp\n" +
+        "2. Toque em ⋮ → Aparelhos conectados → Conectar aparelho\n" +
+        "3. Escolha <b>Conectar com número de telefone</b>\n" +
+        "4. Digite o código:\n\n" +
+        "<code>ABCD-EFGH</code>\n\n" +
+        "⏳ Vale até 14:33. Acompanho aqui.",
+    );
+    expect(card.keyboard).toEqual([
+      [{ text: "📋 Copiar código", copy_text: { text: "ABCD-EFGH" } }],
+      [{ text: "📷 Prefiro ler um QR", callback_data: `rcq:${CFG}` }],
+      [{ text: "✖ Cancelar", callback_data: `rcx:${CFG}` }],
+    ]);
+  });
+
+  test("discreto: sem QR", () => {
+    const card = reconnectCodeCard({ channelConfigId: CFG, code: "ABCD-EFGH", expiresAt: NOW, tz: TZ, qrOffered: false });
+    expect(card.keyboard.flat().map((b: any) => b.callback_data ?? "copy")).toEqual(["copy", `rcx:${CFG}`]);
+    expect(card.text).toContain("<b>Reconectando o WhatsApp</b>");
+  });
+
+  test("QR, conectado, vencido, limite e não permitido", () => {
+    expect(reconnectQrCaption({ last4: "1234" })).toContain("📷 <b>QR do WhatsApp (…1234)</b>\n\nLeia com o celular do número");
+    expect(reconnectQrKeyboard(CFG)).toEqual([[{ text: "✖ Cancelar", callback_data: `rcx:${CFG}` }]]);
+    expect(reconnectDoneCard({ last4: "1234", time: "15:42" }).text).toBe("✅ <b>WhatsApp (…1234) conectado</b> · 15:42");
+    const moved = reconnectDoneCard({ last4: "1234", time: "15:42", displacedFrom: "Org <B>" });
+    expect(moved.text).toBe(
+      "✅ <b>WhatsApp (…1234) conectado</b> · 15:42\n\nO número estava em outra conta (<b>Org &lt;B&gt;</b>) e foi movido para cá.",
+    );
+    const expired = reconnectExpiredCard({ channelConfigId: CFG, last4: "1234" });
+    expect(expired.text).toContain("⌛ <b>O código venceu.</b>");
+    expect(expired.keyboard).toEqual([[{ text: "🔄 Tentar de novo", callback_data: `rc:${CFG}` }]]);
+    expect(reconnectLimitCard({ nextAt: NOW + 20 * 60_000, tz: TZ }).text).toBe(
+      "⏳ <b>Já foram 3 tentativas nesta hora.</b>\n\nPróxima às 14:51.\nEnquanto isso, use o CRM.",
+    );
+    expect(reconnectNotAllowedCard("connected").text).toBe("✅ Este número já está conectado.");
+    expect(reconnectNotAllowedCard("banned", "https://a.test").keyboard[0]![0]).toMatchObject({ url: "https://a.test/app/configuracoes?secao=channels" });
+    expect(reconnectNotAllowedCard("meta").text).toContain("Use o CRM");
+  });
+
+  test("callback_data de todos os botões cabe em 64 bytes e os verbos estão registrados", () => {
+    const all = [
+      reconnectCodeCard({ channelConfigId: "k".repeat(32), code: "ABCD-EFGH", expiresAt: NOW, tz: TZ }),
+      reconnectExpiredCard({ channelConfigId: "k".repeat(32) }),
+    ];
+    for (const c of all) {
+      for (const b of c.keyboard.flat()) {
+        if ("callback_data" in b) {
+          expect(new TextEncoder().encode(b.callback_data).length).toBeLessThanOrEqual(64);
+          expect(parseCallbackData(b.callback_data)).not.toBeNull();
+        }
+      }
+    }
+    expect(parseCallbackData("rcq:k17abc")).toEqual({ verb: "rcq", id: "k17abc" });
   });
 });

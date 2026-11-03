@@ -16,6 +16,9 @@ import { acceptHandoffCore, rejectHandoffWithInstructionCore } from "../handoffs
 import { acceptAiDraftCore, discardAiDraftCore, requestAiDraftCore, returnToAiCore } from "../attendant";
 import { assumeConversationCore, internalSendMessageCore } from "../conversations";
 import { applyTaskCompletion, reopenTaskCore, snoozeTaskCore } from "./taskOps";
+import { requireAccountWithEmail } from "./auth";
+import { canStartReconnect } from "./channelReconnectCore";
+import { safeTimezone } from "./promptDateTime";
 import { discardDraftFile, discardPromptDraft, type DraftAttachment, type PendingPrompt } from "./telegramDrafts";
 import { otherHumanHolder } from "./conversationHolder";
 import { syncFollowUpForTask } from "./followUpOps";
@@ -47,6 +50,8 @@ import {
   buildNotificationCard,
   buildPrompt,
   buildRecordCard,
+  reconnectLimitCard,
+  reconnectNotAllowedCard,
   buildReplyPreview,
   formatTime,
   formatWhen,
@@ -360,6 +365,10 @@ export async function handleTelegramCallback(
     aj: onAdjust,
     md: onSetMode,
     vc: onVetoSend,
+    // v0.78: reconnect the WhatsApp (bridge) from the channel_session_lost card
+    rc: (c, t) => onReconnect(c, t, "code"),
+    rcq: (c, t) => onReconnect(c, t, "qr"),
+    rcx: onReconnectCancel,
   };
   return await handlers[parsed.verb](ctx, tap);
 }
@@ -1485,4 +1494,313 @@ export async function executeAutoSend(
     sentText || undefined,
   );
   return { replies: [], edits: [edit(tap, record)] };
+}
+
+// ---------------------------------------------------------------------------
+// v0.78 — reconnect the WhatsApp (bridge) from Telegram
+// ---------------------------------------------------------------------------
+
+const SETTINGS_MANAGE: [PermissionCategory, string] = ["settings", "manage"];
+const HOUR_MS = 60 * 60 * 1000;
+export const RECONNECT_ATTEMPTS_PER_HOUR = 3;
+/** Pairing code ≈ one login websocket (~160 s); the QR rotates for ~160–180 s. */
+export const RECONNECT_CODE_WINDOW_MS = 150_000;
+export const RECONNECT_QR_WINDOW_MS = 180_000;
+
+const reconnectRetry = (channelConfigId: string): CardKeyboard => [[{ text: "🔄 Tentar de novo", callback_data: `rc:${channelConfigId}` }]];
+const last4Of = (config: Doc<"channelConfigs">) => {
+  const digits = (config.bridgePhone ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : undefined;
+};
+
+async function reconnectRowOf(ctx: MutationCtx, channelConfigId: Id<"channelConfigs">) {
+  return await ctx.db
+    .query("telegramReconnects")
+    .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
+    .first();
+}
+
+async function reconnectAudit(
+  ctx: MutationCtx,
+  config: Doc<"channelConfigs">,
+  actorId: Id<"teamMembers"> | undefined,
+  event: "channel.reconnect_requested" | "channel.reconnect_succeeded" | "channel.reconnect_expired" | "channel.reconnect_cancelled",
+  now: number,
+  extra: Record<string, unknown> = {},
+) {
+  // Never the token, the URL, the QR or the code: only who, which channel and how.
+  await ctx.db.insert("auditLogs", {
+    organizationId: config.organizationId,
+    entityType: "channelConfig",
+    entityId: config._id,
+    action: "update",
+    ...(actorId ? { actorId, actorType: "human" as const } : { actorType: "system" as const }),
+    metadata: { event, via: "telegram", ...extra },
+    description:
+      event === "channel.reconnect_requested"
+        ? "Pediu a reconexão do WhatsApp pelo Telegram"
+        : event === "channel.reconnect_succeeded"
+          ? "WhatsApp reconectado pelo Telegram"
+          : event === "channel.reconnect_expired"
+            ? "Reconexão do WhatsApp pelo Telegram expirou"
+            : "Cancelou a reconexão do WhatsApp pelo Telegram",
+    severity: event === "channel.reconnect_requested" || event === "channel.reconnect_succeeded" ? "high" : "medium",
+    createdAt: now,
+  });
+}
+
+/**
+ * `rc:` (pairing code) / `rcq:` (QR instead): admin (`settings:manage`) with an
+ * e-mail account, a bridge WhatsApp channel of the card's org in a
+ * reconnectable state (`logged_out`/`disconnected`), 3 attempts per hour per
+ * channel (switching code → QR inside a running attempt does not count).
+ * Writes the attempt + anti-zombie token and schedules the reconnect action.
+ */
+async function onReconnect(ctx: MutationCtx, tap: Tap, mode: "code" | "qr"): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: SETTINGS_MANAGE, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  try {
+    await requireAccountWithEmail(ctx, actor.member.userId);
+  } catch (e) {
+    return say(tap.chatId, errorText(e));
+  }
+  const configId = ctx.db.normalizeId("channelConfigs", tap.id);
+  const config = configId ? await ctx.db.get(configId) : null;
+  if (!config || config.organizationId !== actor.org._id) return notFound(tap.chatId);
+  if (config.channel !== "whatsapp" || config.provider !== "bridge") {
+    const card = reconnectNotAllowedCard("meta", tap.appBaseUrl);
+    return { replies: [], edits: [edit(tap, card)] };
+  }
+  if (!canStartReconnect(config.bridgeSessionState)) {
+    const card = reconnectNotAllowedCard(config.bridgeSessionState ?? "unknown", tap.appBaseUrl);
+    return { replies: [], edits: [edit(tap, card)] };
+  }
+  const discreet = actor.org.settings.telegram?.discreet === true;
+  if (mode === "qr" && discreet) return say(tap.chatId, "No modo discreto o QR fica desligado. Use o código de pareamento ou o CRM.");
+
+  const row = await reconnectRowOf(ctx, config._id);
+  const active = row?.token !== undefined && (row.until ?? 0) > tap.now;
+  // Review v0.78 #2: one attempt per channel — another admin's running attempt is not taken over.
+  if (row && active && row.chatId !== tap.chatId) {
+    const holderLink = row.linkId ? await ctx.db.get(row.linkId) : null;
+    const holder = holderLink ? await ctx.db.get(holderLink.teamMemberId) : null;
+    const tz = (await contextFor(ctx, actor, tap, {})).timezone;
+    const since = row.startedAt ? ` desde ${formatTime(row.startedAt, tz)}` : "";
+    return say(
+      tap.chatId,
+      `⏳ ${escapeHtml(holder?.name ?? "Outra pessoa da equipe")} já está reconectando este número${since}. Aguarde ou peça que cancele.`,
+    );
+  }
+  const sameChatActive = !!row && active && row.chatId === tap.chatId;
+  // Review v0.78 #1: code → QR once per attempt, inside the attempt's window; an rcq: while the QR is
+  // already showing does not hit the gateway again.
+  if (mode === "qr" && sameChatActive && (row!.mode === "qr" || row!.qrSwitched)) {
+    return say(tap.chatId, "📷 O QR já está logo abaixo. Leia com o celular do número; ele renova sozinho.");
+  }
+  const switchingToQr = mode === "qr" && sameChatActive;
+  const fresh = !row || tap.now - row.hourStart >= HOUR_MS;
+  const hourStart = fresh ? tap.now : row!.hourStart;
+  const attempts = fresh ? 0 : row!.attempts;
+  if (!switchingToQr && attempts >= RECONNECT_ATTEMPTS_PER_HOUR) {
+    const tz = (await contextFor(ctx, actor, tap, {})).timezone;
+    const card = reconnectLimitCard({ nextAt: hourStart + HOUR_MS, tz });
+    return { replies: [{ chatId: tap.chatId, text: card.text, keyboard: card.keyboard }], edits: [] };
+  }
+  const edits: EditOp[] = [];
+  if (sameChatActive && !switchingToQr) {
+    // A new attempt replaces the running one in this chat: its photo goes, its card says so.
+    if (row!.qrMessageId) {
+      await ctx.scheduler.runAfter(0, internal.telegramReconnect.internalDeleteQrPhoto, { chatId: tap.chatId, messageId: row!.qrMessageId });
+    }
+    if (row!.cardMessageId && row!.cardMessageId !== tap.messageId) {
+      edits.push({ chatId: tap.chatId, messageId: row!.cardMessageId, text: "↪️ Tentativa substituída por uma nova.", keyboard: [] });
+    }
+  }
+  const token = `${tap.now.toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  const startedAt = switchingToQr ? (row!.startedAt ?? tap.now) : tap.now;
+  const fields = {
+    hourStart,
+    attempts: switchingToQr ? attempts : attempts + 1,
+    token,
+    linkId: actor.link._id,
+    chatId: tap.chatId,
+    cardMessageId: switchingToQr ? (row!.cardMessageId ?? tap.messageId) : tap.messageId,
+    mode,
+    qrSwitched: switchingToQr,
+    startedAt,
+    // The QR window counts from the attempt's start: switching never extends it.
+    until: startedAt + (mode === "code" ? RECONNECT_CODE_WINDOW_MS : RECONNECT_QR_WINDOW_MS),
+    qrHash: undefined,
+    qrMessageId: undefined,
+    updatedAt: tap.now,
+  };
+  if (row) await ctx.db.patch(row._id, fields);
+  else await ctx.db.insert("telegramReconnects", { organizationId: config.organizationId, channelConfigId: config._id, ...fields });
+  if (!switchingToQr) await reconnectAudit(ctx, config, actor.member._id, "channel.reconnect_requested", tap.now, { mode });
+  await ctx.scheduler.runAfter(0, internal.telegramReconnect.internalStartReconnect, { channelConfigId: config._id, token });
+  const waiting = mode === "code" ? "⏳ Pedindo o código de pareamento ao WhatsApp…" : "⏳ Gerando o QR…";
+  return { replies: [], edits: [...edits, { chatId: tap.chatId, messageId: fields.cardMessageId, text: waiting, keyboard: [] }] };
+}
+
+/** `rcx:` — cancels the running attempt (token cleared: the watcher stops), the QR photo is deleted. */
+async function onReconnectCancel(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: SETTINGS_MANAGE, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const configId = ctx.db.normalizeId("channelConfigs", tap.id);
+  const config = configId ? await ctx.db.get(configId) : null;
+  if (!config || config.organizationId !== actor.org._id) return notFound(tap.chatId);
+  const row = await reconnectRowOf(ctx, config._id);
+  if (row?.token) {
+    await ctx.db.patch(row._id, { token: undefined, qrMessageId: undefined, qrHash: undefined, updatedAt: tap.now });
+    if (row.qrMessageId && row.chatId) {
+      await ctx.scheduler.runAfter(0, internal.telegramReconnect.internalDeleteQrPhoto, { chatId: row.chatId, messageId: row.qrMessageId });
+    }
+    await reconnectAudit(ctx, config, actor.member._id, "channel.reconnect_cancelled", tap.now);
+  }
+  const text = "✖ Reconexão cancelada.";
+  const keyboard = reconnectRetry(config._id);
+  // The tap may be on the QR photo (caption) or on the code card: the code card becomes the record.
+  const cardId = row?.cardMessageId && row.cardMessageId !== tap.messageId ? row.cardMessageId : tap.messageId;
+  return { replies: [], edits: [{ chatId: tap.chatId, messageId: cardId, text, keyboard }] };
+}
+
+/** The channel fields the reconnect core needs — never the whole `channelConfigs` doc (review v0.78 #6). */
+export type ReconnectConfig = {
+  _id: Id<"channelConfigs">;
+  organizationId: Id<"organizations">;
+  channel: string;
+  provider?: string;
+  bridgeBaseUrl?: string;
+  bridgeInstanceId?: string;
+  bridgeTokenEncrypted?: string;
+  bridgePhone?: string;
+  bridgeSessionState?: string;
+};
+function reconnectConfigOf(c: Doc<"channelConfigs">): ReconnectConfig {
+  return {
+    _id: c._id,
+    organizationId: c.organizationId,
+    channel: c.channel,
+    ...(c.provider ? { provider: c.provider } : {}),
+    ...(c.bridgeBaseUrl ? { bridgeBaseUrl: c.bridgeBaseUrl } : {}),
+    ...(c.bridgeInstanceId ? { bridgeInstanceId: c.bridgeInstanceId } : {}),
+    ...(c.bridgeTokenEncrypted ? { bridgeTokenEncrypted: c.bridgeTokenEncrypted } : {}),
+    ...(c.bridgePhone ? { bridgePhone: c.bridgePhone } : {}),
+    ...(c.bridgeSessionState ? { bridgeSessionState: c.bridgeSessionState } : {}),
+  };
+}
+
+export type ReconnectRun = {
+  ok: true;
+  config: ReconnectConfig;
+  organizationId: Id<"organizations">;
+  linkId: Id<"telegramLinks">;
+  memberId: Id<"teamMembers">;
+  chatId: number;
+  cardMessageId: number;
+  qrMessageId?: number;
+  qrHash?: string;
+  mode: "code" | "qr";
+  startedAt: number;
+  until: number;
+  discreet: boolean;
+  protectContent: boolean;
+  timezone: string;
+  last4?: string;
+};
+
+/**
+ * Every step of a reconnect attempt (start and each watcher tick) passes here
+ * first: the token must still be the attempt's (anti-zombie: another attempt
+ * or a cancel owns the row now → silent stop), and the member must still be a
+ * live, linked `settings:manage` of the channel's org. Losing that stops the
+ * attempt for good: the QR photo is deleted (scheduled BEFORE the field is
+ * cleared) and the card says "✖ Reconexão interrompida" (review v0.78 #3).
+ */
+export async function authorizeReconnectRun(
+  ctx: MutationCtx,
+  args: { channelConfigId: Id<"channelConfigs">; token: string; now: number },
+): Promise<ReconnectRun | { ok: false; result: ActionResult }> {
+  const silent = { ok: false as const, result: empty() };
+  const row = await reconnectRowOf(ctx, args.channelConfigId);
+  if (!row || row.token !== args.token || row.chatId === undefined || row.cardMessageId === undefined || !row.mode) return silent;
+  const interrupt = async (extra: ActionResult = empty()) => {
+    if (row.qrMessageId !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.telegramReconnect.internalDeleteQrPhoto, { chatId: row.chatId!, messageId: row.qrMessageId });
+    }
+    await ctx.db.patch(row._id, { token: undefined, qrMessageId: undefined, qrHash: undefined, updatedAt: args.now });
+    return {
+      ok: false as const,
+      result: {
+        replies: extra.replies,
+        edits: [...extra.edits, { chatId: row.chatId!, messageId: row.cardMessageId!, text: "✖ Reconexão interrompida.", keyboard: [] }],
+      },
+    };
+  };
+  const config = await ctx.db.get(args.channelConfigId);
+  if (!config || config.organizationId !== row.organizationId) return await interrupt();
+  const auth = await authorizeTelegramActor(ctx, { chatId: row.chatId, organizationId: row.organizationId, permission: SETTINGS_MANAGE, now: args.now });
+  if (!auth.ok) return await interrupt(auth.result);
+  if (auth.actor.link._id !== row.linkId) return await interrupt();
+  const { actor } = auth;
+  return {
+    ok: true,
+    config: reconnectConfigOf(config),
+    organizationId: row.organizationId,
+    linkId: actor.link._id,
+    memberId: actor.member._id,
+    chatId: row.chatId,
+    cardMessageId: row.cardMessageId,
+    ...(row.qrMessageId !== undefined ? { qrMessageId: row.qrMessageId } : {}),
+    ...(row.qrHash !== undefined ? { qrHash: row.qrHash } : {}),
+    mode: row.mode,
+    startedAt: row.startedAt ?? args.now,
+    until: row.until ?? args.now,
+    discreet: actor.org.settings.telegram?.discreet === true,
+    protectContent: actor.org.settings.telegram?.protectContent === true,
+    timezone: safeTimezone(actor.org.settings.timezone),
+    ...(last4Of(config) ? { last4: last4Of(config) } : {}),
+  };
+}
+
+/** Ends (or updates) the attempt — only while the token is still this attempt's. */
+export async function settleReconnect(
+  ctx: MutationCtx,
+  args: {
+    channelConfigId: Id<"channelConfigs">;
+    token: string;
+    now: number;
+    outcome?: "succeeded" | "expired" | "failed";
+    /** Review v0.78 #5: a gateway hiccup on start gives the attempt back (3 hiccups must not lock the hour). */
+    refund?: boolean;
+    patch?: { qrMessageId?: number; qrHash?: string; mode?: "code" | "qr"; until?: number };
+    memberId?: Id<"teamMembers">;
+  },
+): Promise<boolean> {
+  const row = await reconnectRowOf(ctx, args.channelConfigId);
+  if (!row || row.token !== args.token) return false;
+  const config = await ctx.db.get(args.channelConfigId);
+  if (args.outcome) {
+    await ctx.db.patch(row._id, {
+      token: undefined,
+      qrMessageId: undefined,
+      qrHash: undefined,
+      ...(args.refund ? { attempts: Math.max(0, row.attempts - 1) } : {}),
+      updatedAt: args.now,
+    });
+    if (config && args.outcome !== "failed") {
+      await reconnectAudit(
+        ctx,
+        config,
+        args.memberId,
+        args.outcome === "succeeded" ? "channel.reconnect_succeeded" : "channel.reconnect_expired",
+        args.now,
+      );
+    }
+    return true;
+  }
+  if (args.patch) await ctx.db.patch(row._id, { ...args.patch, updatedAt: args.now });
+  return true;
 }

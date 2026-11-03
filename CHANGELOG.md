@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.78.0] - 2026-11-03
+
+### Copiloto no Telegram — reconecte o WhatsApp pelo celular, sem abrir o computador
+
+- Quando o número do WhatsApp (bridge) cai, o cartão "🔴 WhatsApp (…1234) caiu" ganha o botão **🔄 Reconectar**. O bot pede um **código de pareamento** ao gateway e mostra o passo a passo: no celular do número, WhatsApp → Aparelhos conectados → Conectar aparelho → **Conectar com número de telefone** → digite o código (há um botão para copiá-lo). O bot acompanha e o cartão vira "✅ Conectado · hh:mm" sozinho. Quem tiver outro aparelho pode escolher **Prefiro ler um QR**: o QR chega como foto protegida e se renova até conectar.
+- Limites e segurança: só administradores com conta com e-mail; só quando a sessão caiu ou foi encerrada (banimento temporário e gateway desatualizado só informam); 3 tentativas por hora por número; o QR nunca é guardado e é apagado ao conectar ou expirar; Instagram e Messenger continuam com o link para refazer o login no navegador.
+
 ## [0.77.3] - 2026-11-03
 
 ### Copiloto no Telegram — `/modo` no menu do bot e documentação consolidada

@@ -17,13 +17,17 @@ import path from "node:path";
 
 const CONVEX_DIR = __dirname;
 const PORT = "lib/telegramActions.ts";
+/** v0.78: the reconnect core needs an action (network); its ONE telegram caller re-authorizes every step. */
+const RECONNECT_PORT = "telegramReconnect.ts";
+const RECONNECT_CORE = "runBridgeReconnectStep";
+const RECONNECT_AUTH = "internalAuthorizeReconnectRun";
 const AUTH = "authorizeTelegramActor(";
 
 const FORBIDDEN =
-  /internal\s*\.\s*(handoffs|attendant|conversations|tasks|leads)\b|\b(acceptHandoffCore|rejectHandoffCore|rejectHandoffWithInstructionCore|moveLeadToStageCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|internalSendMessage\w*|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|assumeConversationCore|confirmPendingActionCore|cancelPendingActionCore)\b/g;
+  /internal\s*\.\s*(handoffs|attendant|conversations|tasks|leads)\b|\b(acceptHandoffCore|rejectHandoffCore|rejectHandoffWithInstructionCore|moveLeadToStageCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|internalSendMessage\w*|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|assumeConversationCore|confirmPendingActionCore|cancelPendingActionCore|runBridgeReconnectStep)\b/g;
 /** Port CALLS (not imports) inside telegramActions. */
 const PORT_CALL =
-  /\b(acceptHandoffCore|rejectHandoffWithInstructionCore|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|internalSendMessageCore|assumeConversationCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|confirmPendingActionCore|cancelPendingActionCore|moveLeadToStageCore)\s*\(/g;
+  /\b(acceptHandoffCore|rejectHandoffWithInstructionCore|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|internalSendMessageCore|assumeConversationCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|confirmPendingActionCore|cancelPendingActionCore|moveLeadToStageCore|runBridgeReconnectStep)\s*\(/g;
 
 function stripComments(src: string): string {
   return src
@@ -103,7 +107,10 @@ describe("porta única das ações do Telegram", () => {
     const violations: string[] = [];
     for (const r of telegramFiles()) {
       if (r === PORT) continue;
-      for (const hit of hits(readFileSync(path.join(CONVEX_DIR, r), "utf8"), FORBIDDEN)) violations.push(`${r}:${hit}`);
+      for (const hit of hits(readFileSync(path.join(CONVEX_DIR, r), "utf8"), FORBIDDEN)) {
+        if (r === RECONNECT_PORT && hit.endsWith(`: ${RECONNECT_CORE}`)) continue; // policed below
+        violations.push(`${r}:${hit}`);
+      }
     }
     expect(
       violations,
@@ -123,5 +130,48 @@ describe("porta única das ações do Telegram", () => {
     // O lado da autorização checa membro vivo e RBAC.
     expect(src).toMatch(/isLinkMemberAlive\(/);
     expect(src).toMatch(/hasPermission\(/);
+  });
+});
+
+describe("v0.78 — reconexão do WhatsApp", () => {
+  /** `export const X = internal…({…})` blocks of a registered module. */
+  const registeredBlocks = (src: string) => {
+    const code = stripComments(src);
+    const re = /^export const (\w+) = internal(?:Action|Mutation|Query)\(/gm;
+    const starts: { name: string; index: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(code))) starts.push({ name: m[1]!, index: m.index });
+    return starts.map((st, i) => ({ name: st.name, body: code.slice(st.index, i + 1 < starts.length ? starts[i + 1]!.index : code.length) }));
+  };
+
+  test("todo passo da core de reconexão em telegramReconnect.ts vem depois da reautorização (token + admin vivo)", () => {
+    const src = readFileSync(path.join(CONVEX_DIR, RECONNECT_PORT), "utf8");
+    const bad: string[] = [];
+    let calls = 0;
+    for (const { name, body } of registeredBlocks(src)) {
+      const core = body.indexOf(`${RECONNECT_CORE}(`);
+      if (core < 0) continue;
+      calls++;
+      const auth = body.indexOf(RECONNECT_AUTH);
+      if (auth < 0 || auth > core) bad.push(name);
+    }
+    expect(bad).toEqual([]);
+    expect(calls).toBeGreaterThanOrEqual(2); // start + watcher
+  });
+
+  test("a core de reconexão só é importada pela action web, pelo módulo do Telegram e pela porta", () => {
+    const importers: string[] = [];
+    const scan = (dir: string, prefix: string) => {
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".ts") || f.endsWith(".test.ts") || f.endsWith(".d.ts")) continue;
+        const src = readFileSync(path.join(dir, f), "utf8");
+        if (/from "\.{1,2}\/(?:lib\/)?channelReconnectCore"/.test(src)) importers.push(`${prefix}${f}`);
+      }
+    };
+    scan(CONVEX_DIR, "");
+    scan(path.join(CONVEX_DIR, "lib"), "lib/");
+    expect(importers.sort()).toEqual(["channelConfigs.ts", "lib/telegramActions.ts", "telegramReconnect.ts"]);
+    // The port only uses the pure state check, never the network step.
+    expect(hits(readFileSync(path.join(CONVEX_DIR, PORT), "utf8"), /\brunBridgeReconnectStep\b/g)).toEqual([]);
   });
 });

@@ -3643,6 +3643,32 @@ const applicationTables = {
     .index("by_run_id", ["runId"])
     .index("by_created_at", ["createdAt"]),
 
+  // v0.78: reconexão do WhatsApp (bridge) pelo Telegram — UMA linha por canal.
+  // Teto de 3 tentativas por hora (`hourStart`/`attempts`) e a tentativa em
+  // curso: `token` anti-zumbi (o watcher para quando muda), chat/cartão/foto
+  // do QR. O QR e o código NUNCA ficam aqui (só o hash do QR, para editar a
+  // foto só quando ele muda).
+  telegramReconnects: defineTable({
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    hourStart: v.number(),
+    attempts: v.number(),
+    token: v.optional(v.string()),
+    linkId: v.optional(v.id("telegramLinks")),
+    chatId: v.optional(v.number()),
+    cardMessageId: v.optional(v.number()),
+    qrMessageId: v.optional(v.number()),
+    qrHash: v.optional(v.string()),
+    mode: v.optional(v.union(v.literal("code"), v.literal("qr"))),
+    // Review v0.78 #1: code → QR only once per attempt (and never extends the window).
+    qrSwitched: v.optional(v.boolean()),
+    startedAt: v.optional(v.number()),
+    until: v.optional(v.number()),
+    updatedAt: v.number(),
+  })
+    .index("by_channel_config", ["channelConfigId"])
+    .index("by_updated_at", ["updatedAt"]),
+
   // F3 (review #11): one "💡 Sugiro" LLM call per handoff, shared by every
   // member it was broadcast to for 10 min. `status:"pending"` = a turn is
   // computing it (the others wait); `suggestion` absent on "done" = no proposal.
