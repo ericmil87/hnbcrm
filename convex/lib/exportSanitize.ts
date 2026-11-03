@@ -70,6 +70,7 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "telegramDeliveries",
   "telegramPacing",
   "telegramOrgQuota",
+  "telegramRelayBuffer",
 ];
 
 /**

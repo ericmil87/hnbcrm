@@ -2186,7 +2186,10 @@ const applicationTables = {
       // v0.69 — gasto de IA do mês cruzou o aviso (default 80%) / atingiu o
       // teto em R$. Vão aos admins (settings:manage), 1×/mês cada.
       v.literal("ai_spend_warning"),
-      v.literal("ai_spend_reached")
+      v.literal("ai_spend_reached"),
+      // Telegram F1 (D20) — relay agrupado (20 s) das mensagens do cliente para
+      // quem está atendendo com a IA fora do comando. `data.messageIds`.
+      v.literal("new_message")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -3421,12 +3424,20 @@ const applicationTables = {
         refId: v.optional(v.string()),
         promptMessageId: v.number(),
         expiresAt: v.number(),
+        // F1: o cartão que abriu o prompt (vira registro depois) e a org dele.
+        cardMessageId: v.optional(v.number()),
+        organizationId: v.optional(v.id("organizations")),
+        // F1 "Responder": texto pendente que só sai no toque em Enviar.
+        draftText: v.optional(v.string()),
       })
     ), // F1
     keyboardShown: v.optional(v.boolean()),
     pacingAt: v.optional(v.number()), // D25 (F4)
     updatedAt: v.number(),
-  }).index("by_chat_id", ["chatId"]),
+  })
+    .index("by_chat_id", ["chatId"])
+    // F1 (D17/D20): relay da resposta da IA para os chats com esta conversa em foco.
+    .index("by_focus_conversation", ["focus.conversationId"]),
 
   // Código de uso único do deep link `/start <code>` (D2). Só o HASH SHA-256
   // fica no banco; o código cru existe apenas no link devolvido ao cliente.
@@ -3515,9 +3526,13 @@ const applicationTables = {
     handoffId: v.optional(v.id("handoffs")),
     conversationId: v.optional(v.id("conversations")),
     taskId: v.optional(v.id("tasks")),
+    // F1: mensagem do CRM espelhada (relay da IA) — dedupe "um relay por mensagem".
+    crmMessageId: v.optional(v.id("messages")),
     sentAt: v.number(),
   })
     .index("by_notification", ["notificationId"])
+    // F1: o callback acha o cartão tocado (chat + message_id do Telegram).
+    .index("by_chat_and_message", ["chatId", "messageId"])
     .index("by_handoff", ["handoffId"])
     .index("by_conversation_and_sent", ["conversationId", "sentAt"])
     .index("by_link_and_sent", ["linkId", "sentAt"])
@@ -3531,6 +3546,20 @@ const applicationTables = {
     windowStart: v.number(),
     sentInWindow: v.number(),
   }).index("by_key", ["key"]),
+
+  // Relay das mensagens do cliente (D20, F1): agrupa 20 s por conversa e
+  // vínculo antes de virar UMA notificação `new_message`.
+  telegramRelayBuffer: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    linkId: v.id("telegramLinks"),
+    messageIds: v.array(v.id("messages")), // teto 50 por janela
+    // Mensagens além do teto: viram "… e mais N mensagens (abrir no CRM)".
+    droppedCount: v.optional(v.number()),
+    flushAt: v.number(),
+  })
+    .index("by_conversation_and_link", ["conversationId", "linkId"])
+    .index("by_flush_at", ["flushAt"]),
 
   // Cota diária de arquivos por org (D25, F4).
   telegramOrgQuota: defineTable({

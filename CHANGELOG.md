@@ -2,6 +2,16 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.74.0] - 2026-11-03
+
+### Copiloto no Telegram — repasses, tarefas e mensagens com botões para agir na hora
+
+- **Notificações chegam no Telegram com ações.** Quem conectou o Telegram (0.73) passa a receber ali tudo o que chega no sino: repasse da IA com **Aceitar · Instruir a IA · Regenerar**, rascunho da IA com **Enviar · Regenerar · Descartar**, tarefa com **Concluir · Adiar 1h · Amanhã 9h**, transferências, alertas de canal, campanhas, grupos e gasto de IA, cada cartão com **Abrir no CRM** e, quando a conversa é WhatsApp ou Instagram, **Abrir no WhatsApp / Instagram** direto na conversa do cliente. As mesmas preferências do sino valem para o Telegram.
+- **Texto íntegro, resumo primeiro.** O cartão abre com o resumo (lead, canal, telefone, funil › etapa, valor, motivo) e traz a última mensagem do cliente inteira numa citação que expande ao toque; **Ver tudo** troca o cartão pelas últimas 10 mensagens e **Resumir** volta. Admins que preferirem menos dados no Telegram ligam o **Modo discreto** no card (200 caracteres, sem telefone, sem nome completo, sem botão de WhatsApp) e podem **Proteger conteúdo** (sem encaminhar/copiar).
+- **Instruir a IA e Regenerar pelo Telegram.** "Instruir a IA" pede o texto (até 2.000 caracteres), devolve a conversa à IA com a instrução (vai para as notas da equipe, como no painel) e o cartão vira registro ("Devolvido à IA por você · 14:33"). "Regenerar" pede o motivo e o novo rascunho volta como cartão. "Responder" mostra uma prévia e só envia ao tocar em **Enviar**.
+- **Relay: a resposta do cliente chega para quem está atendendo.** Nova notificação "Novas mensagens nas conversas que eu atendo" (sino + Telegram): quando um humano está no comando da conversa (IA pausada ou sem atendente), as mensagens do cliente chegam agrupadas (janela de 20 s) com **Responder · Instruir a IA · Abrir no WhatsApp**. E quando a IA responde numa conversa que você acabou de tocar no Telegram, o bot mostra "IA → Maria: …" com **Regenerar · Assumir eu**.
+- **Segurança:** cada toque é reautorizado no servidor (membro vivo, permissão `inbox:reply`/tarefas, entidade da org certa); ids forjados não encontram nada; cartões de outros membros viram "Já aceito por Ana" quando alguém aceita primeiro. Nada passa por fora das portas existentes (aceite, devolução à IA, envio, tarefas).
+
 ## [0.73.0] - 2026-11-03
 
 ### Copiloto no Telegram — fundação: conecte seu Telegram à sua conta
