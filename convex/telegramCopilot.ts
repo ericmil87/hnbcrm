@@ -105,6 +105,7 @@ const runTargetValidator = v.object({
   focusConversationId: v.optional(v.id("conversations")),
   promptOpen: v.boolean(),
   protectContent: v.boolean(),
+  assistantMode: v.union(v.literal("suggest"), v.literal("auto")),
 });
 type RunTarget = {
   organizationId: Id<"organizations">;
@@ -117,6 +118,7 @@ type RunTarget = {
   focusConversationId?: Id<"conversations">;
   promptOpen: boolean;
   protectContent: boolean;
+  assistantMode: "suggest" | "auto";
 };
 
 async function chatRow(ctx: { db: QueryCtx["db"] }, chatId: number): Promise<Doc<"telegramChats"> | null> {
@@ -156,6 +158,7 @@ export const internalGetCopilotRun = internalQuery({
       ...(focusConversationId ? { focusConversationId } : {}),
       promptOpen: prompt !== undefined && prompt.expiresAt > args.now && prompt.organizationId === org._id,
       protectContent: org.settings.telegram?.protectContent === true,
+      assistantMode: effectiveAssistantMode(link, org),
     };
   },
 });
@@ -557,6 +560,7 @@ export async function runTelegramTurn(
     ...(target.focusConversationId ? { focusConversationId: target.focusConversationId } : {}),
     // D22: lets the write executors record undo steps (copilotTurn passes it to the tool runner).
     ...(opts.toolVia ? { toolVia: opts.toolVia } : {}),
+    assistantMode: target.assistantMode,
     onDelta: async (delta: string) => {
       buffer += delta;
       await draft();

@@ -68,6 +68,8 @@ export async function loadCardContext(
     conversationId?: Id<"conversations">;
     handoffId?: Id<"handoffs">;
     taskId?: Id<"tasks">;
+    /** The chat the card goes to (multi-org header); inferred from `notification.memberId` when absent. */
+    chatId?: number;
   },
 ): Promise<CardContext | null> {
   const org = await db.get(args.organizationId);
@@ -82,6 +84,23 @@ export async function loadCardContext(
     discreet: org.settings.telegram?.discreet === true,
     now: args.now,
   };
+
+  // Several active orgs on the same Telegram: the header names the org (otherwise it is noise).
+  let chatId = args.chatId;
+  if (chatId === undefined && n) {
+    const own = await db
+      .query("telegramLinks")
+      .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", n.memberId).eq("status", "active"))
+      .first();
+    chatId = own?.chatId;
+  }
+  if (chatId !== undefined) {
+    const chatLinks = await db
+      .query("telegramLinks")
+      .withIndex("by_chat_id_and_status", (q) => q.eq("chatId", chatId!).eq("status", "active"))
+      .take(3);
+    if (chatLinks.length > 1) ctx.multiOrg = true;
+  }
 
   const handoffId = args.handoffId ?? n?.handoffId;
   const handoff = handoffId ? await db.get(handoffId) : null;

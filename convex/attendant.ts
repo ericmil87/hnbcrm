@@ -1619,6 +1619,10 @@ export const internalClaimForProcessing = internalMutation({
         // Teto de gastos em R$ estourado em `block` (v0.69): rascunho até virar o mês.
         forceSuggest:
           item.origin === "coach" ||
+          // D23 (0.77.2): an instruction asked from the Telegram bot always becomes a DRAFT,
+          // even with the attendant in autopilot — the member sees it (countdown in automatic
+          // mode, Enviar/Regenerar/Descartar in suggest) before it reaches the customer.
+          (item.origin === "return_to_ai" && (item.requestedVia === "telegram" || item.requestedVia === "telegram_auto")) ||
           budgetGate.forceSuggest ||
           (isFollowUpTurn &&
             (followUpSettings.mode !== "send" || profile.mode !== "autopilot" || followUpDegraded)),
@@ -2796,6 +2800,11 @@ export const internalCommitAiReply = internalMutation({
         // Commit ≠ entregue: aqui a tarefa NÃO é concluída.
         ...(queueItem?.followUpId ? { followUp: { followUpId: queueItem.followUpId } } : {}),
         ...(args.imageRejected ? { aiImageRejected: true } : {}),
+        // Telegram (0.77.2): the reply to an instruction/regeneration asked from the bot —
+        // the ONLY AI reply relayed to Telegram (to that member, once).
+        ...(queueItem?.requestedVia && queueItem.instructedBy
+          ? { aiReply: { requestedVia: queueItem.requestedVia, instructedBy: queueItem.instructedBy } }
+          : {}),
       },
       createdAt: now,
     });
@@ -2807,9 +2816,9 @@ export const internalCommitAiReply = internalMutation({
       now,
       activityContent: `${queueItem?.followUpId ? "Follow-up enviado" : "Resposta enviada"} pelo atendente IA via ${channelLabelFor(transportOf(channelConfig), conversation.channel)}`,
     });
-    // Telegram (F1, D20): espelha a resposta da IA nos chats com esta conversa
-    // em foco. Uma leitura indexada; só agenda quando há foco.
-    await maybeScheduleAiReplyRelay(ctx, conversation, messageId);
+    // Telegram (D20, 0.77.2): só a resposta de uma instrução/regeneração pedida pelo bot
+    // volta ao Telegram, para quem pediu (nunca toda resposta da IA na conversa em foco).
+    await maybeScheduleAiReplyRelay(ctx, conversation, messageId, queueItem);
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
       if (followUp) {

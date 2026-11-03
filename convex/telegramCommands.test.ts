@@ -210,16 +210,16 @@ describe("/repasses", () => {
     expect(out).toHaveLength(3);
     expect(out[0].body.text).toBe("🔁 2 repasses pendentes · Acme Corp");
     const card = out[1].body.text as string;
-    expect(card).toContain("🔔 Repasse da IA · Acme Corp");
-    expect(card).toContain("<b>Maria Souza</b> · WhatsApp");
-    expect(card).toContain("Motivo: preço");
-    expect(card).toContain("Resumo: Quer 15% no plano anual");
-    expect(card).toContain("Ações sugeridas:\n• Oferecer 10%\n• Ligar hoje");
+    expect(card).toContain("🔔 <b>Repasse da IA</b>");
+    expect(card).toContain("<b>Maria Souza</b>\nWhatsApp");
+    expect(card).toContain("<b>Motivo:</b> preço");
+    expect(card).toContain("<b>Resumo</b>\nQuer 15% no plano anual");
+    expect(card).toContain("<b>Ações sugeridas</b>\n• Oferecer 10%\n• Ligar hoje");
     expect(card).toContain("Vocês fazem 15% no anual?");
     expect(datas(out[1])).toEqual(
       expect.arrayContaining([`ah:${hMaria}`, `ia:${maria.conversationId}`, `va:${maria.conversationId}`]),
     );
-    expect(out[2].body.text).toContain("<b>Pedro Nunes</b> · Instagram");
+    expect(out[2].body.text).toContain("<b>Pedro Nunes</b>\nInstagram");
     expect(datas(out[2])).toEqual(expect.arrayContaining([`ah:${hPedro}`, `va:${pedro.conversationId}`]));
     // Each row is recorded like a pushed card (no notification behind it).
     const deliveries = await t.run((ctx) => ctx.db.query("telegramDeliveries").collect());
@@ -307,7 +307,7 @@ describe("/repasses", () => {
     await say(CHAT_ADMIN, "/repasses");
     const row = sends(CHAT_ADMIN)[1];
     const text = row.body.text as string;
-    expect(text).toContain("<b>M. S.</b> · WhatsApp");
+    expect(text).toContain("<b>M. S.</b>\nWhatsApp");
     for (const leak of ["Maria", "98765", "Segredo", "Ligar para"]) expect(text).not.toContain(leak);
     expect(datas(row).some((d: string) => d.startsWith("va:") || d.includes("wa.me"))).toBe(false);
     expect(datas(row).some((d: string) => d.startsWith("ah:"))).toBe(true);
@@ -320,7 +320,7 @@ describe("/repasses", () => {
     await tap(CHAT_ADMIN, 555, "cmd:repasses");
     expect(texts(CHAT_ADMIN)[0]).toBe("🔁 1 repasse pendente · Acme Corp");
     expect(texts(CHAT_ADMIN)).toHaveLength(2);
-    expect(texts(CHAT_ADMIN)[1]).toContain("🔔 Repasse da IA");
+    expect(texts(CHAT_ADMIN)[1]).toContain("🔔 <b>Repasse da IA</b>");
   });
 
   test("Aceitar numa linha da lista aceita o repasse pela porta do F1", async () => {
@@ -562,6 +562,14 @@ describe("/org", () => {
     expect(texts(CHAT_ADMIN).at(-1)).toBe("Nenhum repasse pendente 🎉");
     await say(CHAT_ADMIN, "/org");
     expect(sends(CHAT_ADMIN).at(-1)!.body.text).toBe("Você está em <b>Aos Filhos da Terra</b>.\n\nTrocar para:");
+  });
+
+  test("com duas orgs no chat o cabeçalho do cartão traz a org; com uma, não", async () => {
+    const { s1 } = await twoOrgs();
+    const lead = await seedLead(s1, "Maria Souza", s1.aiId);
+    await seedHandoff(s1, lead);
+    await say(CHAT_ADMIN, "/repasses");
+    expect(sends(CHAT_ADMIN)[1].body.text.split("\n")[0]).toMatch(/^🔔 <b>Repasse da IA<\/b> · Acme Corp · \d\d:\d\d$/);
   });
 
   test("recusa e revoga o vínculo de membro removido; recusa link de outro chat", async () => {

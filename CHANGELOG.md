@@ -2,6 +2,15 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.77.2] - 2026-11-03
+
+### Copiloto no Telegram — menos ruído no relay, cartões legíveis, e-mail só oculto no modo discreto
+
+- **Relay da IA sem inundar o chat.** Depois que você instrui a IA pelo Telegram, o bot mostra **só a resposta que saiu daquela instrução** (com Regenerar · Assumir eu · Ver tudo) e avisa em uma linha que o Atendente voltou a conduzir a conversa e que um novo repasse chegará ali se precisar de você. As demais respostas da IA naquela conversa não são mais repetidas no Telegram. As mensagens do cliente continuam chegando quando um humano está no comando.
+- **Instruir a IA em linguagem natural no modo Automático executa direto**, mesmo com o Atendente em autopilot: a resposta da IA passa pelos segundos de veto do seu cartão. No modo Sugestão continua pedindo confirmação. O Copiloto não promete mais confirmar por frase ("pode ir"); a confirmação é pelo botão.
+- **Cartão de repasse formatado**: blocos separados (quem · canal · funil, Motivo, Resumo, Ações sugeridas, última mensagem), rótulos em negrito, uma ação sugerida por linha.
+- **E-mail só é ocultado no modo discreto.** Fora dele, chaves Pix e e-mails aparecem como na conversa (antes viravam "[e-mail]").
+
 ## [0.77.1] - 2026-11-03
 
 ### Copiloto no Telegram — no modo automático, repasses sempre esperam você

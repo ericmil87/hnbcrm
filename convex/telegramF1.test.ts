@@ -241,8 +241,8 @@ describe("fan-out (D7)", () => {
     await drain();
     const [card] = sends(CHAT_ADMIN);
     expect(card.body.parse_mode).toBe("HTML");
-    expect(card.body.text).toContain("🔔 Repasse da IA · Acme Corp");
-    expect(card.body.text).toContain("<b>Maria Souza</b> · WhatsApp · +55 11 98765-4321");
+    expect(card.body.text).toContain("🔔 <b>Repasse da IA</b>");
+    expect(card.body.text).toContain("<b>Maria Souza</b>\nWhatsApp · +55 11 98765-4321");
     expect(callbackDatas(card)).toEqual(
       expect.arrayContaining([`ah:${handoffId}`, `ia:${s.conversationId}`, "https://wa.me/5511987654321"]),
     );
@@ -503,7 +503,7 @@ describe("tarefas e Ver tudo", () => {
     expect(hist.body.text).toContain("<b>Maria</b>");
     expect(callbackDatas(hist)[0]).toBe(`rs:${s.conversationId}`);
     await tap(CHAT_ADMIN, msg, `rs:${s.conversationId}`);
-    expect(edits(CHAT_ADMIN).at(-1)!.body.text).toContain("🔔 Repasse da IA");
+    expect(edits(CHAT_ADMIN).at(-1)!.body.text).toContain("🔔 <b>Repasse da IA</b>");
   });
 });
 
@@ -578,7 +578,7 @@ describe("relay (D20)", () => {
     expect(await buffers()).toEqual([]);
   });
 
-  test("resposta da IA vai uma vez só ao chat com a conversa em foco", async () => {
+  test("0.77.2: só a resposta da instrução pedida pelo Telegram volta, uma vez, a quem pediu (com a linha de fecho)", async () => {
     const s = await seedOrg();
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
     await linkMember(s, s.sellerId, s.sellerUserId, CHAT_SELLER);
@@ -591,14 +591,17 @@ describe("relay (D20)", () => {
       const id = await ctx.db.insert("messages", {
         organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound",
         senderId: s.agentId, senderType: "ai", content: "Oi Maria! Consigo 10% até sexta.", contentType: "text",
-        isInternal: false, createdAt: now,
+        isInternal: false, metadata: { aiReply: { requestedVia: "telegram", instructedBy: s.adminId } }, createdAt: now,
       });
-      await maybeScheduleAiReplyRelay(ctx, (await ctx.db.get(s.conversationId))!, id);
+      await maybeScheduleAiReplyRelay(ctx, (await ctx.db.get(s.conversationId))!, id, { requestedVia: "telegram", instructedBy: s.adminId });
       return id;
     });
     await drain();
     expect(sends(CHAT_ADMIN)).toHaveLength(1);
     expect(sends(CHAT_ADMIN)[0].body.text).toMatch(/^🤖 IA → <b>Maria Souza<\/b>/);
+    expect(sends(CHAT_ADMIN)[0].body.text).toContain(
+      "✅ O Atendente voltou a conduzir a conversa. Se precisar de você de novo, o repasse chega aqui.",
+    );
     expect(sends(CHAT_SELLER)).toEqual([]);
     // De novo para a mesma mensagem: dedupe.
     await t.action(internal.telegram.internalRelayAiReply, { messageId });
@@ -791,7 +794,7 @@ describe("revisão F1 — lote 1", () => {
     expect(await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect())).toEqual([]);
   });
 
-  test("#7/#8 foco vencido não agenda relay; dedupe acha o relay mais recente", async () => {
+  test("#7/#8 (0.77.2) resposta sem pedido pelo Telegram não agenda relay, mesmo com foco; dedupe acha o relay mais recente", async () => {
     const s = await seedOrg();
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
     const now = Date.now();
@@ -800,24 +803,25 @@ describe("revisão F1 — lote 1", () => {
         const chat = await ctx.db.query("telegramChats").withIndex("by_chat_id", (q) => q.eq("chatId", CHAT_ADMIN)).first();
         await ctx.db.patch(chat!._id, { focus: { conversationId: s.conversationId, setAt, source: "notification" } });
       });
-    const aiMessage = () =>
+    const marker = { requestedVia: "telegram" as const, instructedBy: s.adminId };
+    const aiMessage = (instructed = false) =>
       t.run((ctx) =>
         ctx.db.insert("messages", {
           organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound",
           senderId: s.agentId, senderType: "ai", content: "resposta da IA", contentType: "text", isInternal: false,
+          ...(instructed ? { metadata: { aiReply: marker } } : {}),
           createdAt: Date.now(),
         }),
       );
-    await setFocus(now - 7 * 60 * 60 * 1000);
+    await setFocus(now);
     const m1 = await aiMessage();
-    await t.run(async (ctx) => maybeScheduleAiReplyRelay(ctx, (await ctx.db.get(s.conversationId))!, m1));
+    await t.run(async (ctx) => maybeScheduleAiReplyRelay(ctx, (await ctx.db.get(s.conversationId))!, m1, null));
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     expect(scheduled.filter((j) => j.name.includes("internalRelayAiReply"))).toHaveLength(0);
 
     // Foco válido + 220 entregas antigas na janela (a leitura antiga, crescente com take 200,
     // nunca chegava ao relay desta mensagem) + o relay desta mensagem por último.
-    await setFocus(now);
-    const m2 = await aiMessage();
+    const m2 = await aiMessage(true);
     await t.run(async (ctx) => {
       const link = (await ctx.db.query("telegramLinks").collect())[0]!;
       for (let i = 0; i < 220; i++) {

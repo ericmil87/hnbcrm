@@ -12,6 +12,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { createNotification } from "./lib/notify";
+import { maybeScheduleAiReplyRelay } from "./lib/telegramRelay";
 import { runAttendantCopilotWriteTool } from "./lib/copilotAttendantTools";
 import { buildConversationContextBlock, loadFocusContextInput } from "./lib/telegramContext";
 import { autoModeDescription, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
@@ -569,7 +570,7 @@ describe("modos (D22)", () => {
     const { handoffId } = await handoffEvent(s);
     await drain();
     const card = sends()[0];
-    expect(card.body.text).toContain("💡 Sugiro: aceitar o repasse e ligar às 15h");
+    expect(card.body.text).toContain("💡 <b>Sugiro:</b> aceitar o repasse e ligar às 15h");
     expect(buttons(card).some((b) => String(b).startsWith("pa:"))).toBe(true);
     const toolNames = ((llmCalls[0].body.tools ?? []) as any[]).map((tl) => tl.function.name);
     expect(toolNames).not.toContain("acceptHandoff");
@@ -820,7 +821,7 @@ describe("modos (D22)", () => {
     await handoffEvent(s);
     await drain();
     const card = sends()[0];
-    expect(card.body.text).toContain("💡 Sugiro: instruir a IA a oferecer 10% até sexta");
+    expect(card.body.text).toContain("💡 <b>Sugiro:</b> instruir a IA a oferecer 10% até sexta");
     const pa = buttons(card).find((b) => String(b).startsWith("pa:"));
     expect(pa).toBeDefined();
     const cardMsg = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).find((d) => d.kind === "notification")!.messageId);
@@ -1405,9 +1406,171 @@ describe("uma sugestão por repasse (review #11)", () => {
     await drain();
     expect(llmCalls).toHaveLength(1);
     for (const chat of [CHAT, CHAT_B, 9003]) {
-      expect(sends(chat).some((m) => String(m.body.text).includes("💡 Sugiro: instruir a IA a oferecer 10%"))).toBe(true);
+      expect(sends(chat).some((m) => String(m.body.text).includes("💡 <b>Sugiro:</b> instruir a IA a oferecer 10%"))).toBe(true);
     }
     const pas = await t.run(async (ctx) => (await ctx.db.query("pendingActions").collect()).filter((p) => p.tool === "instructAttendant"));
     expect(new Set(pas.map((p) => p.requestedBy)).size).toBe(3);
+  });
+});
+
+describe("hotfix 0.77.2", () => {
+  const aiReply = (s: Seed, marker?: { requestedVia: "telegram"; instructedBy: Id<"teamMembers"> }) =>
+    t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound",
+        senderId: s.agentId, senderType: "ai", content: "Consigo 10% até sexta.", contentType: "text", isInternal: false,
+        ...(marker ? { metadata: { aiReply: marker } } : {}), createdAt: Date.now(),
+      });
+      await maybeScheduleAiReplyRelay(ctx, (await ctx.db.get(s.conversationId))!, id, marker ?? null);
+      return id;
+    });
+
+  test("só a resposta da instrução vai ao Telegram (uma vez, com o fecho); as 3 seguintes não, mesmo com foco; Regenerar no cartão funciona", async () => {
+    const s = await seed();
+    await setFocus(s);
+    await aiReply(s, { requestedVia: "telegram", instructedBy: s.adminId });
+    await drain();
+    expect(sends()).toHaveLength(1);
+    const card = sends()[0];
+    expect(card.body.text).toMatch(/^🤖 IA → <b>Maria Souza<\/b>/);
+    expect(card.body.text).toContain("✅ O Atendente voltou a conduzir a conversa. Se precisar de você de novo, o repasse chega aqui.");
+    expect(buttons(card)).toEqual(expect.arrayContaining([`rg:${s.conversationId}`, `ae:${s.conversationId}`, `va:${s.conversationId}`]));
+    for (let i = 0; i < 3; i++) await aiReply(s);
+    await drain();
+    expect(sends()).toHaveLength(1);
+    const relayId = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).find((d) => d.kind === "relay")!.messageId);
+    await tap(relayId, `rg:${s.conversationId}`);
+    expect(sends().at(-1)!.body.text).toMatch(/^🔁 Por que regenerar\?/);
+  });
+
+  test("resposta de um turno que não veio de instrução pelo Telegram não é espelhada, nem com foco", async () => {
+    const s = await seed();
+    await setFocus(s);
+    await aiReply(s);
+    await drain();
+    expect(sends()).toHaveLength(0);
+  });
+
+  test("Copiloto em automático + Atendente em autopilot: instructAttendant executa direto e marca o item da fila", async () => {
+    const s = await seed({ attendantMode: "autopilot" });
+    await setAssistant(s, { mode: "auto" });
+    await setFocus(s);
+    llmQueue.push(toolFrames("instructAttendant", '{"instruction":"ofereça 10% até sexta"}'), textFrames("Instruí o Atendente."));
+    await say("instrua o atendente a oferecer 10% até sexta");
+    expect(await t.run(async (ctx) => (await ctx.db.query("pendingActions").collect()).length)).toBe(0);
+    const conv = await t.run((ctx) => ctx.db.get(s.conversationId));
+    expect(conv!.aiTeamNotes?.at(-1)?.text).toBe("ofereça 10% até sexta");
+    const items = await t.run((ctx) => ctx.db.query("aiReplyQueue").collect());
+    expect(items.some((i) => i.requestedVia === "telegram" && i.instructedBy === s.adminId)).toBe(true);
+  });
+
+  test("Copiloto em sugestão + Atendente em autopilot: continua pedindo confirmação", async () => {
+    const s = await seed({ attendantMode: "autopilot" });
+    await setFocus(s);
+    llmQueue.push(toolFrames("instructAttendant", '{"instruction":"ofereça 10% até sexta"}'), textFrames("Toque em ✅ Confirmar no cartão."));
+    await say("instrua o atendente a oferecer 10% até sexta");
+    const pas = await t.run((ctx) => ctx.db.query("pendingActions").collect());
+    expect(pas).toHaveLength(1);
+    expect(sends().some((c) => buttons(c).some((b) => String(b).startsWith("pa:")))).toBe(true);
+    expect((await t.run((ctx) => ctx.db.get(s.conversationId)))!.aiTeamNotes ?? []).toEqual([]);
+    // The Telegram prompt tells the model to point at the card button, never a text confirmation.
+    const system = (llmCalls[0].body.messages as any[]).filter((m) => m.role === "system").map((m) => m.content).join("\n");
+    expect(system).toContain("toque em ✅ Confirmar no cartão");
+    expect(system).toContain("Confirmação por texto NÃO existe");
+  });
+
+  test("Copiloto do painel web (sem modo da assistente) + autopilot: confirmação como antes", async () => {
+    const s = await seed({ attendantMode: "autopilot" });
+    const result = await t.run(async (ctx) => {
+      const member = (await ctx.db.get(s.adminId))!;
+      return await runAttendantCopilotWriteTool(ctx, "instructAttendant", { instruction: "ofereça 10%", leadId: s.leadId }, {
+        organizationId: s.organizationId, member, pendingActionTtlMs: 600_000,
+      });
+    });
+    expect(result.status).toBe("confirmacao_necessaria");
+  });
+});
+
+describe("cartão reconstruído em chat com várias orgs", () => {
+  test("Resumir reconstrói o cartão com o nome da org no cabeçalho quando o chat tem 2 vínculos", async () => {
+    const s = await seed();
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const userId = (await ctx.db.get(s.adminId))!.userId!;
+      const otherOrg = await ctx.db.insert("organizations", {
+        name: "Beta Ltda", slug: "beta", settings: { timezone: "America/Sao_Paulo", currency: "BRL", modules: { telegram: true } },
+        createdAt: now, updatedAt: now,
+      });
+      const otherMember = await ctx.db.insert("teamMembers", {
+        organizationId: otherOrg, userId, name: "Eric Milfont", role: "admin", type: "human", status: "active", createdAt: now, updatedAt: now,
+      });
+      const link = (await ctx.db.get(s.linkId))!;
+      const { _id, _creationTime, ...rest } = link;
+      void _id;
+      void _creationTime;
+      await ctx.db.insert("telegramLinks", { ...rest, organizationId: otherOrg, teamMemberId: otherMember });
+      const handoffId = await ctx.db.insert("handoffs", {
+        organizationId: s.organizationId, leadId: s.leadId, conversationId: s.conversationId, fromMemberId: s.agentId,
+        reason: "pediu desconto", suggestedActions: [], origin: "ai_tool", status: "pending", createdAt: now,
+      });
+      const notificationId = await ctx.db.insert("notifications", {
+        organizationId: s.organizationId, memberId: s.adminId, type: "handoff_requested", title: "Repasse: Maria Souza",
+        handoffId, conversationId: s.conversationId, createdAt: now,
+      } as any);
+      await ctx.db.insert("telegramDeliveries", {
+        organizationId: s.organizationId, linkId: s.linkId, chatId: CHAT, messageId: 660, kind: "notification",
+        notificationId, handoffId, conversationId: s.conversationId, sentAt: now,
+      });
+    });
+    await tap(660, `rs:${s.conversationId}`);
+    expect(edits().at(-1)!.body.text).toMatch(/^🔔 <b>[^<]+<\/b> · Acme Corp · /);
+  });
+});
+
+describe("D23 (0.77.2): rascunho pedido pelo Telegram, depois de enviado, fecha o ciclo", () => {
+  const telegramDraft = (s: Seed) =>
+    t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "internal",
+        senderId: s.agentId, senderType: "ai", content: "Consigo 10% até sexta.", contentType: "text", isInternal: true,
+        metadata: { aiDraft: { status: "pending", requestedVia: "telegram", instructedBy: s.adminId } }, createdAt: Date.now(),
+      });
+      await createNotification(ctx, {
+        organizationId: s.organizationId, memberId: s.adminId, type: "ai_draft_pending", title: "Rascunho", conversationId: s.conversationId,
+      });
+      return id;
+    });
+  const sentOut = () =>
+    t.run(async (ctx) => (await ctx.db.query("messages").collect()).filter((m) => (m.metadata as any)?.aiDraft?.approvedBy));
+  const CLOSING = "✅ O Atendente voltou a conduzir a conversa. Se precisar de você de novo, o repasse chega aqui.";
+
+  test("automático: contagem → envia no prazo → '✓ Enviado · hh:mm' + linha de fecho", async () => {
+    const s = await seed({ attendantMode: "autopilot" });
+    await setAssistant(s, { mode: "auto" });
+    await telegramDraft(s);
+    await step();
+    expect(sends()[0].body.text).toMatch(/^⏳ Enviando em 15 s/);
+    vi.advanceTimersByTime(16_000);
+    await t.finishInProgressScheduledFunctions();
+    await step();
+    expect(await sentOut()).toHaveLength(1);
+    expect(edits().some((e) => /^✓ Enviado · \d\d:\d\d/.test(e.body.text) && e.body.text.includes(CLOSING))).toBe(true);
+  });
+
+  test("sugestão: cartão Enviar · Regenerar · Descartar; nada sai sem toque; Enviar → registro + fecho", async () => {
+    const s = await seed({ attendantMode: "autopilot" });
+    const draftId = await telegramDraft(s);
+    await step();
+    const card = sends()[0];
+    expect(buttons(card)).toEqual(expect.arrayContaining([`sd:${draftId}`, `dd:${draftId}`]));
+    expect(buttons(card).some((b) => String(b).startsWith("rg:"))).toBe(true);
+    vi.advanceTimersByTime(60_000);
+    await t.finishInProgressScheduledFunctions();
+    expect(await sentOut()).toHaveLength(0);
+    const cardId = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).find((d) => d.kind === "notification")!.messageId);
+    await tapNow(cardId, `sd:${draftId}`);
+    expect(await sentOut()).toHaveLength(1);
+    expect(edits().at(-1)!.body.text).toMatch(/^✅ Rascunho enviado por você/);
+    expect(edits().at(-1)!.body.text).toContain(CLOSING);
   });
 });

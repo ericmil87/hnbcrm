@@ -1070,6 +1070,8 @@ export const internalRunCopilotWriteTool = internalMutation({
     agentRunId: v.optional(v.id("agentRuns")),
     // Regra do ordinal: `completeTask(2)` é o #2 da lista mostrada neste turno.
     turnStartedAt: v.optional(v.number()),
+    // Telegram (0.77.2): modo efetivo da assistente do membro; ausente no painel web.
+    assistantMode: v.optional(v.union(v.literal("suggest"), v.literal("auto"))),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1102,6 +1104,7 @@ export const internalRunCopilotWriteTool = internalMutation({
       via: args.via,
       agentRunId: args.agentRunId,
       turnStartedAt: args.turnStartedAt,
+      assistantMode: args.assistantMode,
     });
     if ("error" in raw) return raw;
     return projectToolResult(spec, raw);
@@ -1116,6 +1119,7 @@ type WriteToolCtx = {
   via?: "telegram_auto";
   agentRunId?: Id<"agentRuns">;
   turnStartedAt?: number;
+  assistantMode?: "suggest" | "auto";
 };
 
 async function runWriteTool(
@@ -1819,6 +1823,7 @@ async function runWriteTool(
           via: scope.via ?? "copilot",
           agentRunId: scope.agentRunId,
           turnStartedAt: scope.turnStartedAt,
+          assistantMode: scope.assistantMode,
         });
       }
       return { error: `Tool não implementada: ${name}` };

@@ -7,8 +7,10 @@
  *   in command of the conversation and has an active link with relay on, the
  *   message joins a 20 s buffer that becomes ONE `new_message` notification.
  * - `maybeScheduleAiReplyRelay`: called from `attendant.internalCommitAiReply`
- *   right after the AI reply is committed. Schedules the relay only when some
- *   chat has this conversation in focus (one indexed read).
+ *   right after the AI reply is committed. Schedules the relay ONLY for the
+ *   reply to an instruction/regeneration asked from the bot (queue item
+ *   `requestedVia` + `instructedBy` with an active link), once, to that member
+ *   (0.77.2: relaying every reply of a focused conversation flooded the chat).
  *
  * - `maybeScheduleHandoffCardsUpdate`: called from `acceptHandoffCore`,
  *   `rejectHandoffCore` and the cancel path of `returnToAiCore`. When some
@@ -114,17 +116,23 @@ export async function maybeScheduleAiReplyRelay(
   ctx: MutationCtx,
   conversation: Doc<"conversations">,
   messageId: Id<"messages">,
+  queueItem: Pick<Doc<"aiReplyQueue">, "requestedVia" | "instructedBy"> | null | undefined,
 ): Promise<void> {
-  if (conversation.kind === "group") return;
-  // Focus is never cleared, only aged (D17): schedule only for a focus < 6 h
-  // (the action re-checks the same TTL).
-  const now = Date.now();
-  const focused = await ctx.db
-    .query("telegramChats")
-    .withIndex("by_focus_conversation", (q) => q.eq("focus.conversationId", conversation._id))
-    .take(10);
-  if (!focused.some((c) => c.focus !== undefined && c.focus.setAt > now - FOCUS_TTL_MS)) return;
-  await ctx.scheduler.runAfter(0, internal.telegram.internalRelayAiReply, { messageId });
+  try {
+    if (conversation.kind === "group") return;
+    // 0.77.2 (PROD flood): ONLY the reply to an instruction/regeneration asked from the bot,
+    // and only for a member who still has an active link. Focus no longer relays AI replies.
+    if (!queueItem?.requestedVia || !queueItem.instructedBy) return;
+    const instructedBy = queueItem.instructedBy;
+    const link = await ctx.db
+      .query("telegramLinks")
+      .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", instructedBy).eq("status", "active"))
+      .first();
+    if (!link || link.organizationId !== conversation.organizationId) return;
+    await ctx.scheduler.runAfter(0, internal.telegram.internalRelayAiReply, { messageId });
+  } catch (e) {
+    console.error(`[telegram] relay da IA: ${e instanceof Error ? e.name : "erro"}`);
+  }
 }
 
 export async function maybeScheduleHandoffCardsUpdate(

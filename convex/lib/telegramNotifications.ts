@@ -30,6 +30,8 @@ export type CardContext = {
   appBaseUrl: string;
   discreet: boolean;
   now: number;
+  /** The person has more than one active org on this Telegram: the header names the org. */
+  multiOrg?: boolean;
   lead?: {
     id: string;
     title: string;
@@ -169,18 +171,23 @@ export function parseCallbackData(data: string | undefined): { verb: CallbackVer
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
-/** Never an e-mail address in a Telegram message (any mode). */
+/** E-mail addresses become "[e-mail]". Applied ONLY in discreet mode (`scrub`). */
 export function stripEmails(text: string): string {
   return text.replace(EMAIL_RE, "[e-mail]");
+}
+
+/** Full mode keeps the text (a Pix key can be an e-mail); discreet mode hides e-mails. */
+export function scrub(text: string, discreet: boolean): string {
+  return discreet ? stripEmails(text) : text;
 }
 
 const DISCREET_MAX = 200;
 /** Full-mode customer quote cap (review F1 #13); the rest is "continua no CRM". */
 export const FULL_QUOTE_MAX = 3000;
 
-/** Plain text → safe HTML for this mode (e-mails out; discreet = 200 chars + masked digits). */
+/** Plain text → safe HTML for this mode (discreet = e-mails out, 200 chars, masked digits). */
 function safe(text: string, discreet: boolean, max?: number): string {
-  let t = stripEmails(text);
+  let t = scrub(text, discreet);
   const cap = discreet ? DISCREET_MAX : max;
   if (cap !== undefined && t.length > cap) t = `${t.slice(0, cap).trimEnd()}…`;
   if (discreet) t = maskDigitRuns(t);
@@ -223,7 +230,7 @@ export function safeText(ctx: CardContext, text: string, max?: number): string {
 
 function leadName(ctx: CardContext): string {
   const title = ctx.lead?.title ?? "Contato";
-  return ctx.discreet ? initials(title) : stripEmails(title);
+  return ctx.discreet ? initials(title) : title;
 }
 
 export function channelLabel(channel: string | undefined): string {
@@ -420,9 +427,9 @@ export function summaryLine(ctx: CardContext): string {
 }
 
 function customerQuote(ctx: CardContext, text: string, at: number): string {
-  const who = ctx.discreet ? "" : `${stripEmails(ctx.lead?.title?.split(/\s+/)[0] ?? "Cliente")} (${formatWhen(at, ctx.now, ctx.timezone)}): `;
+  const who = ctx.discreet ? "" : `${ctx.lead?.title?.split(/\s+/)[0] ?? "Cliente"} (${formatWhen(at, ctx.now, ctx.timezone)}): `;
   // Plain text in; expandableQuote escapes. Discreet: cut + masked BEFORE escaping.
-  let body = stripEmails(text);
+  let body = scrub(text, ctx.discreet);
   if (ctx.discreet) {
     if (body.length > DISCREET_MAX) body = `${body.slice(0, DISCREET_MAX).trimEnd()}…`;
     body = maskDigitRuns(body);
@@ -433,9 +440,29 @@ function customerQuote(ctx: CardContext, text: string, at: number): string {
   return expandableQuote(`${who}"${body}"`);
 }
 
+/** "🔔 <b>Repasse da IA</b> · 14:56" — the org name only when the person has several (multi-org). */
 function header(emoji: string, label: string, ctx: CardContext, at: number): string {
-  return `${emoji} ${label} · ${escapeHtml(ctx.orgName)} · ${formatWhen(at, ctx.now, ctx.timezone)}`;
+  const org = ctx.multiOrg ? `${escapeHtml(ctx.orgName)} · ` : "";
+  return `${emoji} <b>${label}</b> · ${org}${formatWhen(at, ctx.now, ctx.timezone)}`;
 }
+
+/** The lead as a block of lines: name, "canal · telefone", "funil › etapa · valor". */
+export function leadBlock(ctx: CardContext): string[] {
+  if (!ctx.lead) return [];
+  const lines = [`<b>${escapeHtml(leadName(ctx))}</b>`];
+  const contact: string[] = [];
+  if (ctx.conversation) contact.push(channelLabel(ctx.conversation.channel));
+  if (!ctx.discreet && ctx.lead.phone) contact.push(escapeHtml(formatPhone(ctx.lead.phone)));
+  if (contact.length > 0) lines.push(contact.join(" · "));
+  const funnel: string[] = [];
+  if (ctx.lead.boardName && ctx.lead.stageName) funnel.push(`${escapeHtml(ctx.lead.boardName)} › ${escapeHtml(ctx.lead.stageName)}`);
+  if (ctx.lead.value) funnel.push(escapeHtml(formatMoney(ctx.lead.value, ctx.currency)));
+  if (funnel.length > 0) lines.push(funnel.join(" · "));
+  return lines;
+}
+
+/** Blocks separated by a blank line; empty ones dropped. */
+const blocks = (parts: (string | null | undefined | false)[]): string => parts.filter(Boolean).join("\n\n");
 
 // ---------------------------------------------------------------------------
 // Builders
@@ -470,32 +497,35 @@ export function buildNotificationCard(args: {
 
 function handoffCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const h = ctx.handoff;
-  const from = h?.fromAi !== false ? "Repasse da IA" : `Repasse de ${escapeHtml(stripEmails(h?.fromName ?? "um colega"))}`;
-  const lines = [header("🔔", from, ctx, n.createdAt)];
-  if (ctx.lead) lines.push(summaryLine(ctx));
-  if (h?.reason) lines.push(`Motivo: ${safe(redactName(ctx, h.reason), ctx.discreet, 500)}`);
-  if (!ctx.discreet && h?.summary) lines.push(`Resumo: ${safe(h.summary, false, 800)}`);
-  // Full mode only: suggested actions are free text that may carry names or numbers.
-  if (!ctx.discreet && h?.suggestedActions && h.suggestedActions.length > 0) {
-    lines.push("Ações sugeridas:", ...h.suggestedActions.slice(0, 5).map((a) => `• ${safe(a, false, 160)}`));
-  }
-  if (ctx.lastInbound) lines.push(customerQuote(ctx, ctx.lastInbound.text, ctx.lastInbound.at));
-
-  if (h && h.status !== "pending") {
-    lines.push(
-      h.status === "accepted"
+  const from = h?.fromAi !== false ? "Repasse da IA" : `Repasse de ${escapeHtml(scrub(h?.fromName ?? "um colega", ctx.discreet))}`;
+  const head = [header("🔔", from, ctx, n.createdAt), ...leadBlock(ctx)].join("\n");
+  // Suggested actions are free text that may carry names or numbers: full mode only.
+  const actions =
+    !ctx.discreet && h?.suggestedActions && h.suggestedActions.length > 0
+      ? ["<b>Ações sugeridas</b>", ...h.suggestedActions.slice(0, 5).map((a) => `• ${safe(a, false, 160)}`)].join("\n")
+      : null;
+  const text = blocks([
+    head,
+    h?.reason ? `<b>Motivo:</b> ${safe(redactName(ctx, h.reason), ctx.discreet, 500)}` : null,
+    !ctx.discreet && h?.summary ? `<b>Resumo</b>\n${safe(h.summary, false, 800)}` : null,
+    actions,
+    ctx.lastInbound ? customerQuote(ctx, ctx.lastInbound.text, ctx.lastInbound.at) : null,
+    h && h.status !== "pending"
+      ? h.status === "accepted"
         ? `⚠️ Repasse já aceito por ${escapeHtml(h.acceptedByName ?? "outro membro")}`
-        : "⚠️ Este repasse já foi resolvido",
-    );
-    return { text: lines.join("\n"), keyboard: nonEmpty([viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
+        : "⚠️ Este repasse já foi resolvido"
+      : null,
+  ]);
+  if (h && h.status !== "pending") {
+    return { text, keyboard: nonEmpty([viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
   }
-  const actions: CardButton[] = [];
-  if (h) actions.push(cb("✅ Aceitar", "ah", h.id));
+  const buttons: CardButton[] = [];
+  if (h) buttons.push(cb("✅ Aceitar", "ah", h.id));
   if (ctx.conversation) {
-    actions.push(cb("🤖 Instruir a IA", "ia", ctx.conversation.id));
-    actions.push(cb("🔁 Regenerar", "rg", ctx.conversation.id));
+    buttons.push(cb("🤖 Instruir a IA", "ia", ctx.conversation.id));
+    buttons.push(cb("🔁 Regenerar", "rg", ctx.conversation.id));
   }
-  return { text: lines.join("\n"), keyboard: nonEmpty([actions, viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
+  return { text, keyboard: nonEmpty([buttons, viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
 }
 
 function relayBody(ctx: CardContext, lines: HistoryLine[]): string {
@@ -503,14 +533,14 @@ function relayBody(ctx: CardContext, lines: HistoryLine[]): string {
   if (!text) return "";
   const long = text.length > 300 || lines.length > 4;
   if (long || ctx.discreet) {
-    let body = stripEmails(text);
+    let body = scrub(text, ctx.discreet);
     if (ctx.discreet) {
       if (body.length > DISCREET_MAX) body = `${body.slice(0, DISCREET_MAX).trimEnd()}…`;
       body = maskDigitRuns(body);
     }
     return expandableQuote(body);
   }
-  return lines.map((l) => `"${escapeHtml(stripEmails(l.text))}"`).join("\n");
+  return lines.map((l) => `"${escapeHtml(l.text)}"`).join("\n");
 }
 
 function conversationActions(ctx: CardContext): CardButton[] {
@@ -521,10 +551,11 @@ function conversationActions(ctx: CardContext): CardButton[] {
 function newMessageCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const lines = ctx.relayLines ?? [];
   const at = lines.length > 0 ? lines[lines.length - 1]!.at : n.createdAt;
-  const head = `💬 <b>${escapeHtml(leadName(ctx))}</b> · ${channelLabel(ctx.conversation?.channel)} · ${formatWhen(at, ctx.now, ctx.timezone)}`;
+  const org = ctx.multiOrg ? `${escapeHtml(ctx.orgName)} · ` : "";
+  const head = `💬 <b>${escapeHtml(leadName(ctx))}</b> · ${channelLabel(ctx.conversation?.channel)} · ${org}${formatWhen(at, ctx.now, ctx.timezone)}`;
   const body = relayBody(ctx, lines) || safe(n.body ?? "", ctx.discreet, 1500);
   return {
-    text: [head, body].filter(Boolean).join("\n"),
+    text: blocks([head, body]),
     keyboard: nonEmpty([conversationActions(ctx), linkRow(ctx, n)]),
     focus: focusOf(ctx),
   };
@@ -534,30 +565,32 @@ function draftCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const head = `✍️ Rascunho da IA para <b>${escapeHtml(leadName(ctx))}</b>`;
   if (!ctx.draft) {
     return {
-      text: `${head}\n${safe(n.body ?? "", ctx.discreet, 500)}\n<i>Nenhum rascunho pendente agora.</i>`,
+      text: blocks([head, safe(n.body ?? "", ctx.discreet, 500), "<i>Nenhum rascunho pendente agora.</i>"]),
       keyboard: nonEmpty([linkRow(ctx, n)]),
       focus: focusOf(ctx),
     };
   }
-  const draft = ctx.discreet ? safe(ctx.draft.text, true) : escapeHtml(stripEmails(ctx.draft.text));
+  const draft = ctx.discreet ? safe(ctx.draft.text, true) : escapeHtml(ctx.draft.text);
   const actions: CardButton[] = [cb("📤 Enviar", "sd", ctx.draft.messageId)];
   if (ctx.conversation) actions.push(cb("🔁 Regenerar", "rg", ctx.conversation.id));
   actions.push(cb("🗑 Descartar", "dd", ctx.draft.messageId));
   return {
-    text: `${head}\n<blockquote expandable>${draft}</blockquote>`,
+    text: blocks([head, `<blockquote expandable>${draft}</blockquote>`]),
     keyboard: nonEmpty([actions, linkRow(ctx, n)]),
     focus: focusOf(ctx),
   };
 }
 
 function followUpCard(n: NotificationInput, ctx: CardContext): CardOutput {
-  const lines = [`⚠️ ${safeText(ctx, n.title, 300) || "Follow-up da IA precisa de você"}`];
-  if (n.body) lines.push(safeText(ctx, n.body, 800));
-  if (ctx.lead) lines.push(summaryLine(ctx));
+  const parts: (string | null)[] = [
+    `⚠️ <b>${safeText(ctx, n.title, 300) || "Follow-up da IA precisa de você"}</b>`,
+    n.body ? safeText(ctx, n.body, 800) : null,
+    ctx.lead ? leadBlock(ctx).join("\n") : null,
+  ];
   const actions: CardButton[] = [];
   if (ctx.conversation) actions.push(cb("🤖 Instruir a IA", "ia", ctx.conversation.id));
   if (ctx.task && ctx.task.status !== "completed") actions.push(cb("✅ Concluir tarefa", "ct", ctx.task.id));
-  return { text: lines.join("\n"), keyboard: nonEmpty([actions, linkRow(ctx, n)]), focus: focusOf(ctx) };
+  return { text: blocks(parts), keyboard: nonEmpty([actions, linkRow(ctx, n)]), focus: focusOf(ctx) };
 }
 
 const TASK_HEADLINE: Partial<Record<NotificationType, string>> = {
@@ -569,37 +602,33 @@ const TASK_HEADLINE: Partial<Record<NotificationType, string>> = {
 function taskCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const t = ctx.task;
   const head = TASK_HEADLINE[n.type] ?? "📌 Tarefa";
-  const lines = [t?.dueDate ? `${head} · ${formatWhen(t.dueDate, ctx.now, ctx.timezone)}` : head];
+  const headline = `<b>${t?.dueDate ? `${head} · ${formatWhen(t.dueDate, ctx.now, ctx.timezone)}` : head}</b>`;
   const taskTitle = ctx.discreet && !ctx.lead ? "Tarefa" : safeText(ctx, t?.title ?? n.body ?? n.title, 300);
-  lines.push(`"${taskTitle}"${ctx.lead ? ` · lead ${escapeHtml(leadName(ctx))}` : ""}`);
-  if (ctx.lead?.value) lines[1] += ` · ${escapeHtml(formatMoney(ctx.lead.value, ctx.currency))}`;
+  let detail = `"${taskTitle}"${ctx.lead ? ` · lead ${escapeHtml(leadName(ctx))}` : ""}`;
+  if (ctx.lead?.value) detail += ` · ${escapeHtml(formatMoney(ctx.lead.value, ctx.currency))}`;
+  const lines = [headline, detail];
   if (t && t.status === "completed") {
-    lines.push("✅ Já concluída");
-    return { text: lines.join("\n"), keyboard: nonEmpty([linkRow(ctx, n, "🔗 Abrir tarefa")]) };
+    return { text: blocks([headline, detail, "✅ Já concluída"]), keyboard: nonEmpty([linkRow(ctx, n, "🔗 Abrir tarefa")]) };
   }
   const actions: CardButton[] = t
     ? [cb("✅ Concluir", "ct", t.id), cb("⏰ Adiar 1h", "sz1", t.id), cb("🌅 Amanhã 9h", "sz9", t.id)]
     : [];
-  return { text: lines.join("\n"), keyboard: nonEmpty([actions, linkRow(ctx, n, "🔗 Abrir tarefa")]), focus: focusOf(ctx) };
+  return { text: blocks(lines), keyboard: nonEmpty([actions, linkRow(ctx, n, "🔗 Abrir tarefa")]), focus: focusOf(ctx) };
 }
 
 function transferredCard(n: NotificationInput, ctx: CardContext): CardOutput {
-  const lines = [`➡️ ${safeText(ctx, n.title, 300) || "Conversa transferida para você"}`];
-  if (n.body && ctx.discreet) {
-    // Body is the contact label: initials only.
-    if (ctx.lead) lines.push(escapeHtml(leadName(ctx)));
-  } else if (n.body) lines.push(safe(n.body, false, 500));
-  if (ctx.lead) lines.push(summaryLine(ctx));
-  return { text: lines.join("\n"), keyboard: nonEmpty([conversationActions(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
+  const parts: (string | null)[] = [`➡️ <b>${safeText(ctx, n.title, 300) || "Conversa transferida para você"}</b>`];
+  // Body is the contact label: initials only in discreet mode (the lead block already shows it).
+  if (n.body && !ctx.discreet) parts.push(safe(n.body, false, 500));
+  if (ctx.lead) parts.push(leadBlock(ctx).join("\n"));
+  return { text: blocks(parts), keyboard: nonEmpty([conversationActions(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
 }
 
 function simpleCard(emoji: string, n: NotificationInput, ctx: CardContext, rows: CardButton[][]): CardOutput {
-  const lines = [`${emoji} ${safe(redactName(ctx, n.title), ctx.discreet, 300)}`];
   // Generic bodies are system text (spend, channel); `handoff_resolved`'s body
   // is the lead title, which `redactName` turns into initials.
   const body = n.body ? safe(redactName(ctx, n.body), ctx.discreet, 1500) : "";
-  if (body) lines.push(body);
-  return { text: lines.join("\n"), keyboard: nonEmpty(rows), focus: focusOf(ctx) };
+  return { text: blocks([`${emoji} <b>${safe(redactName(ctx, n.title), ctx.discreet, 300)}</b>`, body]), keyboard: nonEmpty(rows), focus: focusOf(ctx) };
 }
 
 const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
@@ -622,7 +651,7 @@ function genericCard(n: NotificationInput, ctx: CardContext): CardOutput {
 /** "🤖 IA → Maria Souza · 14:34" + the text + Regenerar · Assumir eu · Ver tudo. */
 export function buildAiRelayCard(ctx: CardContext, message: { text: string; at: number }): CardOutput {
   const head = `🤖 IA → <b>${escapeHtml(leadName(ctx))}</b> · ${formatWhen(message.at, ctx.now, ctx.timezone)}`;
-  const body = ctx.discreet ? safe(message.text, true) : escapeHtml(stripEmails(message.text));
+  const body = ctx.discreet ? safe(message.text, true) : escapeHtml(message.text);
   const actions: CardButton[] = ctx.conversation
     ? [cb("🔁 Regenerar", "rg", ctx.conversation.id), cb("🙋 Assumir eu", "ae", ctx.conversation.id), ...viewAllRow(ctx)]
     : [];
@@ -642,7 +671,7 @@ export function buildHistoryCard(ctx: CardContext, history: HistoryLine[], cardK
   const out: string[] = [head];
   let total = head.length;
   for (const l of history) {
-    const line = `<b>${escapeHtml(stripEmails(l.author))}</b> (${formatWhen(l.at, ctx.now, ctx.timezone)}): ${safe(l.text, false, HISTORY_LINE_MAX)}`;
+    const line = `<b>${escapeHtml(l.author)}</b> (${formatWhen(l.at, ctx.now, ctx.timezone)}): ${safe(l.text, false, HISTORY_LINE_MAX)}`;
     if (total + line.length > HISTORY_TOTAL_MAX) {
       out.push("…");
       break;
@@ -704,7 +733,7 @@ export function buildCountdownCard(
   origin: "ai" | "human" = "ai",
 ): CardOutput {
   const conv = ctx.conversation?.id ?? "0";
-  const body = ctx.discreet ? safe(text, true) : escapeHtml(stripEmails(text));
+  const body = ctx.discreet ? safe(text, true) : escapeHtml(text);
   return {
     text:
       `⏳ Enviando em ${seconds} s → <b>${escapeHtml(leadName(ctx))}</b> (${channelLabel(ctx.conversation?.channel)})\n` +

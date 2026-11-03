@@ -170,3 +170,13 @@ export function draftAutoSendable(aiDraft: unknown, memberId: string): boolean {
   const d = aiDraft as { requestedVia?: unknown; instructedBy?: unknown; status?: unknown };
   return (d.requestedVia === "telegram" || d.requestedVia === "telegram_auto") && d.instructedBy === memberId;
 }
+
+/** D20/D23 (0.77.2): the line that closes a Telegram-requested AI reply once it is sent. */
+export const AI_BACK_IN_CHARGE =
+  "✅ O Atendente voltou a conduzir a conversa. Se precisar de você de novo, o repasse chega aqui.";
+
+/** A draft asked from the bot (instruct/regenerate): its sent record carries `AI_BACK_IN_CHARGE`. */
+export function isTelegramRequestedDraft(aiDraft: unknown): boolean {
+  const via = (aiDraft as { requestedVia?: unknown } | undefined)?.requestedVia;
+  return via === "telegram" || via === "telegram_auto";
+}
