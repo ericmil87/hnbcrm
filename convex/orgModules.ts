@@ -1,5 +1,5 @@
 /**
- * Módulos opcionais por org (Central + Instagram/Messenger). Leitura para o hook do front
+ * Módulos opcionais por org (Central + Instagram/Messenger + Telegram da equipe). Leitura para o hook do front
  * (`useOrgModules`) e liga/desliga em Configurações.
  *
  * `demoMode` é só LIDO aqui: quem liga é o simulador interno (`demoSim`), nunca
@@ -16,6 +16,7 @@ const modulesReturn = v.object({
   attribution: v.boolean(),
   central: v.boolean(),
   metaMessaging: v.boolean(),
+  telegram: v.boolean(),
   demoMode: v.boolean(),
 });
 
@@ -38,6 +39,7 @@ export const setOrgModules = mutation({
       attribution: v.optional(v.boolean()),
       central: v.optional(v.boolean()),
       metaMessaging: v.optional(v.boolean()),
+      telegram: v.optional(v.boolean()),
     }),
   },
   returns: modulesReturn,
@@ -49,7 +51,7 @@ export const setOrgModules = mutation({
     const before = modulesOf(org);
     const current = org.settings.modules ?? {};
     const next = { ...current };
-    for (const key of ["units", "departments", "attribution", "central", "metaMessaging"] as const) {
+    for (const key of ["units", "departments", "attribution", "central", "metaMessaging", "telegram"] as const) {
       const value = args.modules[key];
       if (value !== undefined) next[key] = value;
     }
@@ -101,6 +103,7 @@ export const setOrgModules = mutation({
           attribution: before.attribution,
           central: before.central,
           metaMessaging: before.metaMessaging,
+          telegram: before.telegram,
         },
         after: {
           units: after.units,
@@ -108,10 +111,11 @@ export const setOrgModules = mutation({
           attribution: after.attribution,
           central: after.central,
           metaMessaging: after.metaMessaging,
+          telegram: after.telegram,
         },
       },
       metadata: { modules: true },
-      description: "Alterou os módulos da organização (Central, Instagram e Messenger)",
+      description: "Alterou os módulos da organização (Central, Instagram e Messenger, Telegram)",
       severity: "medium",
       createdAt: now,
     });

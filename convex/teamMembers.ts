@@ -23,6 +23,7 @@ import {
 import { normalizeEmail } from "./lib/emailAddress";
 import { stripAgentTexts } from "./lib/agentProfileTexts";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { revokeTelegramLinksForMember } from "./lib/telegramLinks";
 
 // Role hierarchy for elevation checks: admin > manager > agent/ai
 const ROLE_RANK: Record<string, number> = { admin: 3, manager: 2, agent: 1, ai: 0 };
@@ -393,6 +394,10 @@ export const removeTeamMember = mutation({
       removedBy: userMember._id,
       updatedAt: now,
     });
+
+    // Telegram (F0): o vínculo cai junto — revoga, apaga as mensagens ≤ 48 h e
+    // avisa no chat. O processador também recusa membro removido (D6).
+    await revokeTelegramLinksForMember(ctx, args.teamMemberId, { actorId: userMember._id });
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
