@@ -22,5 +22,7 @@ Gotchas that change how code must be written. Full reasoning: `docs/architecture
 - Private chats only. A group chat must never receive CRM data.
 - DEV ≠ PROD bots, each deployment with its own token. The webhook URL is always `${CONVEX_SITE_URL}/webhooks/telegram/platform` of the running deployment; never add a URL override to ops.
 - Ops in `opsTelegram.ts`: `internalAction`, `dryRun` default true, output never contains the token or the webhook secret.
+- Reports (`telegramReports.ts`): the hourly tick stamps the local date on the link BEFORE scheduling (idempotent); `internalSendReport` with `trigger:"command"` (`/hoje`) never stamps; data only through `internalBuildReportData` (bounded indexes, "50+" caps, no `.collect()`).
+- F2 commands (`telegramCommands.ts`) read only through bounded indexes, authorize with `resolveTelegramViewer` + RBAC per list, and never touch domain tables for writes; F2 callbacks (`cmd:`/`pg:`/`fc:`/`mu:`/`org:`) are parsed BEFORE F1's `handleTelegramCallback` and every id in them is re-validated (`normalizeId`, same org, ownership). Mute applies to ALL active links of the chat. `Reply.persistentKeyboard` is the reply keyboard; a message carries only one `reply_markup` (inline wins).
 - Schema is additive: fields for later phases stay `v.optional`; new telegram tables go to `retention.ts` and `EXCLUDED_BACKUP_TABLES`.
 - Tests always stub `fetch` (`vi.stubGlobal`) and use fake tokens (`123456:FAKE-TOKEN-…`).

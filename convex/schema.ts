@@ -3375,8 +3375,16 @@ const applicationTables = {
       autoHourStart: v.optional(v.number()),
       autoPausedAt: v.optional(v.number()),
     }),
-    reports: v.object({ enabled: v.boolean(), morningHour: v.number(), eveningHour: v.number() }), // hora local da org (F2)
+    reports: v.object({
+      enabled: v.boolean(),
+      morningHour: v.number(),
+      eveningHour: v.number(),
+      // F2: também sábado e domingo (hora local da org). Ausente = não.
+      weekends: v.optional(v.boolean()),
+    }), // hora local da org (F2)
     lastMorningReportDate: v.optional(v.string()), // "AAAA-MM-DD" local
+    // F2: último `/hoje` (relatório sob demanda), teto de 1 por minuto.
+    lastCommandReportAt: v.optional(v.number()),
     lastEveningReportDate: v.optional(v.string()),
     copilotThreadId: v.optional(v.id("copilotThreads")),
     onboarding: v.optional(v.object({ step: v.number(), doneAt: v.optional(v.number()) })), // D24

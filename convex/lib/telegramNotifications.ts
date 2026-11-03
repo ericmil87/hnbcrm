@@ -208,7 +208,7 @@ export function redactName(ctx: Pick<CardContext, "discreet" | "lead">, text: st
 }
 
 /** `safe` + name redaction; in discreet mode without a known lead, free text is dropped. */
-function safeText(ctx: CardContext, text: string, max?: number): string {
+export function safeText(ctx: CardContext, text: string, max?: number): string {
   if (ctx.discreet && !ctx.lead) return "";
   return safe(redactName(ctx, text), ctx.discreet, max);
 }
