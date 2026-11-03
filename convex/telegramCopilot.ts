@@ -344,7 +344,13 @@ async function deliverResult(ctx: ActionCtx, result: ActionResult | null): Promi
 // Media → text
 // ---------------------------------------------------------------------------
 
-type MediaArg = { kind: "voice" | "audio" | "photo" | "video" | "video_note" | "document"; fileId: string; fileSize?: number; mimeType?: string };
+type MediaArg = {
+  kind: "voice" | "audio" | "photo" | "video" | "video_note" | "document";
+  fileId: string;
+  fileSize?: number;
+  mimeType?: string;
+  fileName?: string;
+};
 
 /** getFile + download into storage. The caller deletes the blob. */
 async function fetchToStorage(
@@ -634,6 +640,7 @@ export const internalCopilotTurn = internalAction({
         fileId: v.string(),
         fileSize: v.optional(v.number()),
         mimeType: v.optional(v.string()),
+        fileName: v.optional(v.string()),
       }),
     ),
     /** Retries while another turn of the same link holds the lock. */

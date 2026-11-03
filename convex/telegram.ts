@@ -33,6 +33,7 @@ import {
   executeAutoSend,
   handleTelegramCallback,
   handleTelegramPromptAnswer,
+  discardPromptDraft,
   type EditOp,
   type RecordSpec,
   type SendOp,
@@ -58,7 +59,9 @@ import { AUTO_SEND_MAX_S, AUTO_SEND_MIN_S, autoSendSeconds, draftAutoSendable, e
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
-import { sendMessage, sendMessageChunks, deleteMessage, type ReplyMarkup } from "./lib/telegramApi";
+import { sendMessage, sendMessageChunks, deleteMessage, sendFile, sendFileUpload, type ReplyMarkup } from "./lib/telegramApi";
+import { conversationCrmUrl, mediaForMessages, type MediaOut } from "./lib/telegramMedia";
+import { fileSizeCopy } from "./lib/telegramQuota";
 import { htmlToPlainText, splitMessage } from "./lib/telegramFormat";
 import {
   CLEANUP_DELETE_MAX,
@@ -115,12 +118,15 @@ const recordValidator = v.object({
     v.literal("copilot"),
     v.literal("auto_record"),
     v.literal("draft"),
+    // F4 (D21): a file sent right after a card.
+    v.literal("media"),
   ),
   conversationId: v.optional(v.id("conversations")),
   handoffId: v.optional(v.id("handoffs")),
   taskId: v.optional(v.id("tasks")),
   notificationId: v.optional(v.id("notifications")),
   crmMessageId: v.optional(v.id("messages")),
+  mediaStorageId: v.optional(v.string()),
   setPromptMessageId: v.optional(v.boolean()),
   /** `expiresAt` of the prompt open when the send was decided (binds the id to THAT prompt). */
   promptExpiresAt: v.optional(v.number()),
@@ -135,6 +141,16 @@ const recordValidator = v.object({
   autoSend: v.optional(v.object({ delayMs: v.number(), draftMessageId: v.optional(v.id("messages")) })),
 });
 
+/** F4 (D21): one file a card carries (`lib/telegramMedia.MediaOut`). */
+const mediaOutValidator = v.object({
+  kind: v.union(v.literal("photo"), v.literal("voice"), v.literal("audio"), v.literal("document"), v.literal("link")),
+  storageId: v.optional(v.string()),
+  fileName: v.string(),
+  size: v.number(),
+  mime: v.string(),
+  text: v.optional(v.string()),
+});
+
 /** A bot reply decided by a mutation and sent by an action. */
 const replyValidator = v.object({
   chatId: v.number(),
@@ -147,6 +163,7 @@ const replyValidator = v.object({
   protectContent: v.optional(v.boolean()),
   keyboard: v.optional(keyboardValidator),
   record: v.optional(recordValidator),
+  media: v.optional(v.array(mediaOutValidator)),
 });
 type Reply = SendOp & { settingsButton?: boolean; removeKeyboard?: boolean; persistentKeyboard?: boolean };
 
@@ -508,6 +525,7 @@ const parsedValidator = v.object({
       fileId: v.string(),
       fileSize: v.optional(v.number()),
       mimeType: v.optional(v.string()),
+      fileName: v.optional(v.string()),
     }),
   ),
 });
@@ -681,6 +699,8 @@ export const internalRouteUpdate = internalMutation({
     const chatRow = await getChat(ctx, chatId);
     const promptExpired = chatRow?.pendingPrompt !== undefined && chatRow.pendingPrompt.expiresAt <= now;
     if (chatRow && promptExpired) {
+      // F4: an unsent file draft goes too (quota back, file row + blob deleted).
+      await discardPromptDraft(ctx, chatRow.pendingPrompt!);
       await ctx.db.patch(chatRow._id, { pendingPrompt: undefined, updatedAt: now });
     }
 
@@ -746,9 +766,27 @@ export const internalRouteUpdate = internalMutation({
     // F3 (D21): voice/audio go to the Copilot runner FIRST (the transcript may
     // answer an open prompt there); video is not supported.
     const media = p.media;
+    const openPrompt = chatRow?.pendingPrompt && !promptExpired ? chatRow.pendingPrompt : undefined;
+    const replyPrompt =
+      openPrompt?.kind === "reply_customer" && openPrompt.organizationId === active.organizationId ? openPrompt : undefined;
     if (media && (media.kind === "video" || media.kind === "video_note")) {
-      return { replies: [{ chatId, text: COPILOT_COPY.video, protectContent }] };
+      // §4.5: videos never go to the customer; with an open reply, offer the CRM.
+      const keyboard = replyPrompt?.conversationId
+        ? [[{ text: "🔗 Abrir conversa", url: conversationCrmUrl(appUrl(), replyPrompt.conversationId) }]]
+        : undefined;
+      return { replies: [{ chatId, text: COPILOT_COPY.video, protectContent, ...(keyboard ? { keyboard } : {}) }] };
     }
+    // F4 (D25): a file while "Responder" is open goes to the CUSTOMER (voice too, as audio).
+    if (media && replyPrompt) {
+      await ctx.scheduler.runAfter(0, internal.telegramFiles.internalReceiveReplyFile, {
+        linkId: active._id,
+        chatId,
+        media,
+        ...(p.text ? { caption: p.text } : {}),
+      });
+      return none;
+    }
+    if (media?.kind === "document") return { replies: [{ chatId, text: COPY_DOCUMENT_WITHOUT_PROMPT, protectContent }] };
     if (media && (media.kind === "voice" || media.kind === "audio")) {
       await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
         linkId: active._id,
@@ -782,6 +820,10 @@ export const internalRouteUpdate = internalMutation({
     return { replies: [{ chatId, text: COPY.learning, protectContent }] };
   },
 });
+
+/** F4: a document with no reply open has nobody to go to. */
+export const COPY_DOCUMENT_WITHOUT_PROMPT =
+  "Para mandar um arquivo ao cliente, toque em Responder no cartão da conversa (ou use /foco e responda).";
 
 /** `/start <code>` (D2): validates the one-time code and creates/refreshes the link. */
 export const internalConsumeLinkCode = internalMutation({
@@ -952,8 +994,12 @@ const resumeValidator = v.object({
   protectContent: v.optional(v.boolean()),
   keyboard: v.optional(keyboardValidator),
   record: v.optional(recordValidator),
+  /** F4: this item is ONE file (then `chunks` is empty). */
+  media: v.optional(mediaOutValidator),
+  /** F4 (D25): the pacing slot already claimed for this item — send at it, never claim again. */
+  slotAt: v.optional(v.number()),
 });
-type Resume = Omit<Reply, "text"> & { chunks: string[] };
+type Resume = Omit<Reply, "text" | "media"> & { chunks: string[]; media?: MediaOut; slotAt?: number };
 
 /**
  * Sends replies strictly in order. On a 429 the undelivered part of the
@@ -961,16 +1007,65 @@ type Resume = Omit<Reply, "text"> & { chunks: string[] };
  * a later row can never overtake an earlier one and nothing is sent twice.
  */
 async function deliverReplies(ctx: ActionCtx, replies: Reply[], attempt: number): Promise<void> {
-  const items: Resume[] = replies.map(({ text, ...opts }) => ({ ...opts, chunks: splitMessage(text) }));
+  const items: Resume[] = [];
+  for (const { text, media, ...opts } of replies) {
+    if (text.trim()) items.push({ ...opts, chunks: splitMessage(text) });
+    // F4 (D21): each file is its own item (own pacing slot, own delivery row), right after the card.
+    for (const m of media ?? []) {
+      items.push({
+        chatId: opts.chatId,
+        chunks: [],
+        media: m,
+        ...(opts.protectContent ? { protectContent: true } : {}),
+        ...(opts.record ? { record: mediaRecordOf(opts.record) } : {}),
+      });
+    }
+  }
   await deliverSeries(ctx, items, attempt);
 }
 
+/** The delivery row of a file: same link/conversation as its card, never its notification (callbacks/broadcast edits key on that). */
+function mediaRecordOf(r: RecordSpec): RecordSpec {
+  return {
+    organizationId: r.organizationId,
+    linkId: r.linkId,
+    kind: "media",
+    ...(r.conversationId ? { conversationId: r.conversationId } : {}),
+  };
+}
+
+/**
+ * Pacing (D25): every item claims ONE send slot (`internalClaimTelegramSendSlot`,
+ * 1 msg/s per chat + 25 msg/s global). A slot in the future reschedules the
+ * rest of the series AT the slot, carrying `slotAt`, so it is sent there without
+ * claiming again. Order is kept: later items wait behind the first.
+ */
+const PACING_SLACK_MS = 30;
 async function deliverSeries(ctx: ActionCtx, items: Resume[], attempt: number): Promise<void> {
   for (let i = 0; i < items.length; i++) {
+    if (items[i].slotAt === undefined) {
+      const now = Date.now();
+      const { sendAt }: { sendAt: number } = await ctx.runMutation(internal.telegramQuota.internalClaimTelegramSendSlot, {
+        chatId: items[i].chatId,
+        now,
+      });
+      if (sendAt > now + PACING_SLACK_MS) {
+        await ctx.scheduler.runAt(sendAt, internal.telegram.internalDeliverReply, {
+          replies: [{ ...items[i], slotAt: sendAt }, ...items.slice(i + 1)],
+          attempt,
+        });
+        return;
+      }
+    }
     const rest = await deliverChunks(ctx, items[i], attempt);
+    if (rest && "insert" in rest) {
+      // A follow-up message (settings-link fallback) is a new item: it claims its own slot (review F4 #7).
+      items.splice(i + 1, 0, rest.insert);
+      continue;
+    }
     if (rest) {
       await ctx.scheduler.runAfter(rest.delayMs, internal.telegram.internalDeliverReply, {
-        replies: [rest.resume, ...items.slice(i + 1)],
+        replies: [{ ...rest.resume, slotAt: undefined }, ...items.slice(i + 1)],
         attempt: attempt + 1,
       });
       return;
@@ -978,12 +1073,16 @@ async function deliverSeries(ctx: ActionCtx, items: Resume[], attempt: number): 
   }
 }
 
-/** Returns what to retry when Telegram rate-limited the send (and attempts remain), else null. */
+/**
+ * Returns what to retry when Telegram rate-limited the send (and attempts
+ * remain), a follow-up item to send next (`insert`), or null.
+ */
 async function deliverChunks(
   ctx: ActionCtx,
   reply: Resume,
   attempt: number,
-): Promise<{ resume: Resume; delayMs: number } | null> {
+): Promise<{ resume: Resume; delayMs: number } | { insert: Resume } | null> {
+  if (reply.media) return await deliverMedia(ctx, reply, attempt);
   if (reply.chunks.length === 0) return null;
   const res = await sendMessageChunks({
     chatId: reply.chatId,
@@ -1003,13 +1102,15 @@ async function deliverChunks(
     return null;
   }
   if (res.kind === "bad_request" && reply.settingsButton) {
-    // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): send the link as text.
-    await sendMessage({
-      chatId: reply.chatId,
-      text: `${htmlToPlainText(reply.chunks.join("\n"))}\n${settingsUrl(appUrl())}`,
-      parseMode: null,
-    });
-    return null;
+    // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): the link as text, as a NEW
+    // item of the series (own pacing slot), without the button.
+    return {
+      insert: {
+        chatId: reply.chatId,
+        chunks: [`${escapeHtml(htmlToPlainText(reply.chunks.join("\n")))}\n${escapeHtml(settingsUrl(appUrl()))}`],
+        ...(reply.protectContent ? { protectContent: true } : {}),
+      },
+    };
   }
   if (res.kind === "blocked") {
     await ctx.runMutation(internal.telegram.internalMarkChatBlocked, { chatId: reply.chatId });
@@ -1020,6 +1121,77 @@ async function deliverChunks(
     // Only what was not delivered travels: chunks already sent are never repeated.
     return { resume: { ...reply, chunks: reply.chunks.slice(res.sentCount) }, delayMs };
   }
+  return null;
+}
+
+/**
+ * One file (F4, D21). No file quota (that is for what the MEMBER sends); a
+ * file Telegram cannot take → the link line instead, never
+ * a silent drop. Photo/voice by a storage URL (only Telegram sees it); audio/document as an
+ * upload so Telegram shows the real name. Never a `file_id` of another bot.
+ */
+async function deliverMedia(
+  ctx: ActionCtx,
+  item: Resume,
+  attempt: number,
+): Promise<{ resume: Resume; delayMs: number } | null> {
+  const m = item.media!;
+  const sendLine = async (text: string) => {
+    const res = await sendMessage({ chatId: item.chatId, text, protectContent: item.protectContent });
+    const last = res.ok ? res.result[res.result.length - 1] : undefined;
+    if (last && item.record) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: item.record,
+        chatId: item.chatId,
+        messageId: last.message_id,
+      });
+    }
+  };
+  const linkLine = (why?: string) =>
+    `${m.kind === "photo" ? "🖼" : m.kind === "document" ? "📄" : "🎙"} ${escapeHtml(m.fileName)} (${fileSizeCopy(m.size)})` +
+    (why ? ` · ${why}` : "") +
+    (item.record?.conversationId ? ` · <a href="${escapeHtml(conversationCrmUrl(appUrl(), item.record.conversationId))}">Abrir no CRM</a>` : "");
+  if (m.kind === "link" || !m.storageId) {
+    await sendLine(m.text ?? linkLine());
+    return null;
+  }
+  // Relay of CUSTOMER files: pacing + MEDIA_PER_CARD only. D25's file quota is for what the
+  // MEMBER sends (review F4 #3), so 30 customer photos never block the member's contract.
+  let res: Awaited<ReturnType<typeof sendFile>>;
+  if (m.kind === "photo" || m.kind === "voice") {
+    const url = await ctx.storage.getUrl(m.storageId as Id<"_storage">);
+    if (!url) {
+      await sendLine(linkLine("arquivo indisponível"));
+      return null;
+    }
+    res = await sendFile(m.kind, { chatId: item.chatId, url, protectContent: item.protectContent });
+  } else {
+    const blob = await ctx.storage.get(m.storageId as Id<"_storage">);
+    if (!blob) {
+      await sendLine(linkLine("arquivo indisponível"));
+      return null;
+    }
+    res = await sendFileUpload(m.kind, { chatId: item.chatId, blob, fileName: m.fileName, protectContent: item.protectContent });
+  }
+  if (res.ok) {
+    if (item.record) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: { ...item.record, mediaStorageId: m.storageId },
+        chatId: item.chatId,
+        messageId: res.result.message_id,
+      });
+    }
+    return null;
+  }
+  if (res.kind === "blocked") {
+    await ctx.runMutation(internal.telegram.internalMarkChatBlocked, { chatId: item.chatId });
+    return null;
+  }
+  if (res.kind === "rate_limited" && attempt < MAX_SEND_ATTEMPTS) {
+    return { resume: item, delayMs: Math.min(Math.max(res.retryAfterSeconds ?? 1, 1), 300) * 1000 };
+  }
+  // Telegram could not take the file (URL fetch failed, type refused): the link instead.
+  await sendLine(linkLine());
   return null;
 }
 
@@ -1079,6 +1251,7 @@ export const internalRecordDelivery = internalMutation({
       ...(r.conversationId ? { conversationId: r.conversationId } : {}),
       ...(r.taskId ? { taskId: r.taskId } : {}),
       ...(r.crmMessageId ? { crmMessageId: r.crmMessageId } : {}),
+      ...(r.mediaStorageId ? { mediaStorageId: r.mediaStorageId } : {}),
       ...(r.undo ? { undo: r.undo } : {}),
       ...(r.autoSend
         ? { draft: { ...(r.autoSend.draftMessageId ? { messageId: r.autoSend.draftMessageId } : {}), sendAt: now + r.autoSend.delayMs } }
@@ -1259,7 +1432,12 @@ export const internalFinishLinkCleanup = internalMutation({
 
 /** Farewell (removes the reply keyboard), deletes the bot's messages ≤ 48 h, fixes the chat pointer. */
 export const internalCleanupRevokedLink = internalAction({
-  args: { linkId: v.id("telegramLinks"), reason: cleanupReasonValidator },
+  args: {
+    linkId: v.id("telegramLinks"),
+    reason: cleanupReasonValidator,
+    /** F4 (D25): pacing slot already claimed for the farewell. */
+    slotAt: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const plan: { chatId: number; orgName: string; messageIds: number[]; protectContent: boolean } | null =
@@ -1267,6 +1445,17 @@ export const internalCleanupRevokedLink = internalAction({
         linkId: args.linkId,
         since: Date.now() - CLEANUP_DELETE_WINDOW_MS,
       });
+    if (plan && args.slotAt === undefined) {
+      const now = Date.now();
+      const { sendAt }: { sendAt: number } = await ctx.runMutation(internal.telegramQuota.internalClaimTelegramSendSlot, {
+        chatId: plan.chatId,
+        now,
+      });
+      if (sendAt > now + PACING_SLACK_MS) {
+        await ctx.scheduler.runAt(sendAt, internal.telegram.internalCleanupRevokedLink, { ...args, slotAt: sendAt });
+        return null;
+      }
+    }
     if (plan) {
       const farewell = await sendMessage({
         chatId: plan.chatId,
@@ -1410,6 +1599,8 @@ const cardTargetValidator = v.object({
   record: recordValidator,
   /** F3 (D24): the link's updated `tipsShown` when the card carried a first-time tip. */
   tipsShown: v.optional(v.array(v.string())),
+  /** F4 (D21): files sent right after the card. */
+  media: v.optional(v.array(mediaOutValidator)),
 });
 type CardTarget = {
   chatId: number;
@@ -1418,6 +1609,7 @@ type CardTarget = {
   protectContent: boolean;
   record: RecordSpec;
   tipsShown?: string[];
+  media?: MediaOut[];
 };
 
 /** The live link that may receive a card for this member/org, or null (re-checked at delivery). */
@@ -1515,6 +1707,7 @@ export const internalGetNotificationDelivery = internalQuery({
     const keyboard = args.suggestion
       ? [[{ text: "💡 Aplicar sugestão", callback_data: `pa:${args.suggestion.pendingActionId}` }], ...card.keyboard]
       : card.keyboard;
+    const media = await notificationMedia(ctx, n, target.link, context.discreet);
     return {
       chatId: target.link.chatId,
       text,
@@ -1522,9 +1715,49 @@ export const internalGetNotificationDelivery = internalQuery({
       protectContent,
       record: { ...baseRecord, kind: "notification" as const },
       ...(tip.line ? { tipsShown: tip.tipsShown } : {}),
+      ...(media.length > 0 ? { media } : {}),
     };
   },
 });
+
+/**
+ * F4 (D21): the customer files a card carries — the relayed messages of a
+ * `new_message`, the last customer message of a `handoff_requested`.
+ */
+async function notificationMedia(
+  ctx: QueryCtx,
+  n: Doc<"notifications">,
+  link: Doc<"telegramLinks">,
+  discreet: boolean,
+): Promise<MediaOut[]> {
+  if (!n.conversationId || discreet || !link.prefs.mediaInbound) return [];
+  const conversation = await ctx.db.get(n.conversationId);
+  if (!conversation || conversation.organizationId !== n.organizationId) return [];
+  let messages: Doc<"messages">[] = [];
+  if (n.type === "new_message") {
+    const ids = (n.data as { messageIds?: unknown } | undefined)?.messageIds;
+    for (const id of Array.isArray(ids) ? ids.slice(0, 50) : []) {
+      const m = typeof id === "string" ? await ctx.db.get(id as Id<"messages">) : null;
+      if (m && m.conversationId === conversation._id) messages.push(m);
+    }
+  } else if (n.type === "handoff_requested") {
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+      .order("desc")
+      .take(20);
+    const lastInbound = recent.find((m) => m.direction === "inbound");
+    if (lastInbound) messages = [lastInbound];
+  } else {
+    return [];
+  }
+  return await mediaForMessages(ctx.db, messages, {
+    organizationId: n.organizationId,
+    discreet,
+    mediaInbound: link.prefs.mediaInbound,
+    crmUrl: conversationCrmUrl(appUrl(), conversation._id),
+  });
+}
 
 /**
  * Scheduled by `createNotification` (lib/notify.ts) for members with an active
@@ -1696,10 +1929,18 @@ export const internalGetAiRelayTargets = internalQuery({
       });
       if (!context) continue;
       const card = buildAiRelayCard(context, { text: message.content, at: message.createdAt });
+      // F4 (D21): the AI sent a file (flyer, document) → it goes right after the relay card.
+      const media = await mediaForMessages(ctx.db, [message], {
+        organizationId: conversation.organizationId,
+        discreet: context.discreet,
+        mediaInbound: link.prefs.mediaInbound,
+        crmUrl: conversationCrmUrl(appUrl(), conversation._id),
+      });
       out.push({
         chatId: chat.chatId,
         text: card.text,
         keyboard: card.keyboard,
+        ...(media.length > 0 ? { media } : {}),
         protectContent: target.org.settings.telegram?.protectContent === true,
         record: {
           organizationId: conversation.organizationId,

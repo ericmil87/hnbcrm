@@ -11,16 +11,19 @@
 import { ConvexError, type Value } from "convex/values";
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
+import { internal } from "../_generated/api";
 import { acceptHandoffCore, rejectHandoffWithInstructionCore } from "../handoffs";
 import { acceptAiDraftCore, discardAiDraftCore, requestAiDraftCore, returnToAiCore } from "../attendant";
 import { assumeConversationCore, internalSendMessageCore } from "../conversations";
 import { applyTaskCompletion, reopenTaskCore, snoozeTaskCore } from "./taskOps";
+import { discardDraftFile, discardPromptDraft, type DraftAttachment, type PendingPrompt } from "./telegramDrafts";
 import { otherHumanHolder } from "./conversationHolder";
 import { syncFollowUpForTask } from "./followUpOps";
 import { hasPermission, resolvePermissions, type PermissionCategory, type Permissions, type Role } from "./permissions";
 import { modulesOf } from "./orgModules";
 import { activeLinksOfChat, isLinkMemberAlive, revokeTelegramLink } from "./telegramLinks";
 import { loadCardContext, loadHistory, pendingDraftOf } from "./telegramContext";
+import { conversationCrmUrl, mediaForMessages, type MediaOut } from "./telegramMedia";
 import { COPY } from "./telegramCore";
 import { confirmPendingActionCore, cancelPendingActionCore } from "./copilotPendingActions";
 import { moveLeadToStageCore } from "./leadStageMove";
@@ -36,6 +39,7 @@ import {
 import { escapeHtml } from "./telegramFormat";
 import {
   buildAiRelayCard,
+  attachmentLine,
   buildCountdownCard,
   buildHistoryCard,
   buildNotificationCard,
@@ -59,7 +63,7 @@ export const INSTRUCTION_MAX_CHARS = 2000;
 /** Server-side cap for a reply typed in Telegram (the dispatcher splits per channel). */
 export const REPLY_MAX_CHARS = 4096;
 
-export type DeliveryKind = "notification" | "relay" | "prompt" | "copilot" | "auto_record" | "draft";
+export type DeliveryKind = "notification" | "relay" | "prompt" | "copilot" | "auto_record" | "draft" | "media";
 export type RecordSpec = {
   organizationId: Id<"organizations">;
   linkId: Id<"telegramLinks">;
@@ -69,6 +73,8 @@ export type RecordSpec = {
   taskId?: Id<"tasks">;
   notificationId?: Id<"notifications">;
   crmMessageId?: Id<"messages">;
+  /** F4: the blob a media message carried (dedupe of "Ver tudo"). */
+  mediaStorageId?: string;
   /** The sent message becomes `telegramChats.pendingPrompt.promptMessageId`… */
   setPromptMessageId?: boolean;
   /** …only if the open prompt still has this `expiresAt` (the one the send was for). */
@@ -78,11 +84,26 @@ export type RecordSpec = {
   /** F3 (D23): countdown card. */
   autoSend?: { delayMs: number; draftMessageId?: Id<"messages"> };
 };
-export type SendOp = { chatId: number; text: string; keyboard?: CardKeyboard; protectContent?: boolean; record?: RecordSpec };
+export type SendOp = {
+  chatId: number;
+  text: string;
+  keyboard?: CardKeyboard;
+  protectContent?: boolean;
+  record?: RecordSpec;
+  /** F4 (D21): files sent right after this message, one Telegram message each. */
+  media?: MediaOut[];
+};
 export type EditOp = { chatId: number; messageId: number; text: string; keyboard?: CardKeyboard };
 export type ActionResult = { replies: SendOp[]; edits: EditOp[] };
 
 const empty = (): ActionResult => ({ replies: [], edits: [] });
+
+/** "Ver tudo" does not resend a file this chat got for the conversation in the last 7 days. */
+const MEDIA_DEDUPE_MS = 7 * 24 * 60 * 60 * 1000;
+function alreadySentLine(m: MediaOut, crmUrl: string): string {
+  const icon = m.mime.startsWith("image/") ? "🖼" : m.mime.startsWith("audio/") ? "🎙" : "📄";
+  return `${icon} ${escapeHtml(m.fileName)} (já enviado acima) · <a href="${escapeHtml(crmUrl)}">Abrir no CRM</a>`;
+}
 
 /** `ConvexError.data.kind` of a failed Telegram action (review F1 #10). */
 export const TELEGRAM_FAILURE = "telegramFailure";
@@ -238,9 +259,45 @@ async function pendingHandoffOf(ctx: MutationCtx, conversationId: Id<"conversati
     .first();
 }
 
-async function clearPrompt(ctx: MutationCtx, chatId: number, now: number) {
+/** Clears the open prompt. An UNSENT file draft is discarded (quota back, file row + blob deleted). */
+async function clearPrompt(ctx: MutationCtx, chatId: number, now: number, opts: { sent?: boolean } = {}) {
   const chat = await chatOf(ctx, chatId);
-  if (chat?.pendingPrompt) await ctx.db.patch(chat._id, { pendingPrompt: undefined, updatedAt: now });
+  if (!chat?.pendingPrompt) return;
+  if (!opts.sent) await discardPromptDraft(ctx, chat.pendingPrompt);
+  await ctx.db.patch(chat._id, { pendingPrompt: undefined, updatedAt: now });
+}
+
+export { discardPromptDraft };
+
+/** contentType of the CRM message for a file sent from Telegram. */
+function contentTypeOf(a: DraftAttachment | undefined): "text" | "image" | "audio" | "file" {
+  if (!a) return "text";
+  return a.kind === "photo" ? "image" : a.kind === "document" ? "file" : "audio";
+}
+
+/**
+ * The card a reply was sent from remembers the CRM message (and the quota of
+ * its file): a failed dispatch edits it to "✗ Falhou" and gives the quota back
+ * (`lib/telegramRelay.maybeNotifyTelegramSendFailed`).
+ */
+async function bindSentMessage(
+  ctx: MutationCtx,
+  chatId: number,
+  cardMessageId: number,
+  crmMessageId: Id<"messages">,
+  attachment: DraftAttachment | undefined,
+) {
+  const delivery = await ctx.db
+    .query("telegramDeliveries")
+    .withIndex("by_chat_and_message", (q) => q.eq("chatId", chatId).eq("messageId", cardMessageId))
+    .first();
+  if (!delivery) return;
+  await ctx.db.patch(delivery._id, {
+    sentCrmMessageId: crmMessageId,
+    ...(attachment
+      ? { fileQuota: { bytes: attachment.size, dayKey: attachment.quota.dayKey, ...(attachment.quota.hourStart !== undefined ? { hourStart: attachment.quota.hourStart } : {}) } }
+      : {}),
+  });
 }
 
 const notFound = (chatId: number) => say(chatId, "⚠️ Não encontrei este item. Ele pode ter sido apagado.");
@@ -398,6 +455,7 @@ async function onOpenPrompt(ctx: MutationCtx, tap: Tap, kind: PromptKind): Promi
     await ctx.db.patch(tap.delivery._id, { draft: { ...tap.delivery.draft, vetoedAt: tap.now } });
   }
   const expiresAt = tap.now + PROMPT_TTL_MS;
+  if (chat.pendingPrompt) await discardPromptDraft(ctx, chat.pendingPrompt);
   await ctx.db.patch(chat._id, {
     pendingPrompt: {
       kind,
@@ -484,9 +542,11 @@ async function onSendPreviewedReply(ctx: MutationCtx, tap: Tap): Promise<ActionR
   const { actor } = auth;
   const chat = await chatOf(ctx, tap.chatId);
   const prompt = chat?.pendingPrompt;
-  if (!prompt || prompt.kind !== "reply_customer" || !prompt.draftText || prompt.conversationId !== tap.id) {
+  const attachment = prompt?.draftAttachments?.[0];
+  if (!prompt || prompt.kind !== "reply_customer" || (!prompt.draftText && !attachment) || prompt.conversationId !== tap.id) {
     return say(tap.chatId, "⌛ Esta prévia não está mais ativa. Toque em Responder no cartão de novo.");
   }
+  const draftText = prompt.draftText ?? "";
   if (prompt.expiresAt <= tap.now) {
     await clearPrompt(ctx, tap.chatId, tap.now);
     return say(tap.chatId, EXPIRED);
@@ -501,20 +561,29 @@ async function onSendPreviewedReply(ctx: MutationCtx, tap: Tap): Promise<ActionR
   }
   const conversation = await conversationOf(ctx, actor, tap.id);
   if (!conversation) return notFound(tap.chatId);
+  let sentId: Id<"messages">;
   try {
-    await internalSendMessageCore(ctx, {
+    sentId = await internalSendMessageCore(ctx, {
       conversationId: conversation._id,
-      content: prompt.draftText,
+      content: draftText,
+      contentType: contentTypeOf(attachment),
+      ...(attachment ? { attachments: [attachment.fileId] } : {}),
       teamMemberId: actor.member._id,
       via: "telegram",
     });
   } catch (e) {
     failWith(say(tap.chatId, errorText(e)));
   }
-  await clearPrompt(ctx, tap.chatId, tap.now);
+  await clearPrompt(ctx, tap.chatId, tap.now, { sent: true });
+  await bindSentMessage(ctx, tap.chatId, tap.messageId, sentId, attachment);
   const card = await contextFor(ctx, actor, tap, { conversationId: conversation._id });
   const time = formatTime(tap.now, card.timezone);
-  const sentRecord = buildRecordCard(card, `✓ Enviado · ${time}`, [], prompt.draftText);
+  const sentRecord = buildRecordCard(
+    card,
+    `✓ Enviado · ${time}${attachment ? ` · ${attachmentLine(attachment)}` : ""}`,
+    [],
+    draftText || undefined,
+  );
   const edits: EditOp[] = [edit(tap, sentRecord)];
   if (prompt.cardMessageId) {
     const record = buildRecordCard(card, `💬 Respondido por você · ${time}`, ["reply", "instruct", "links"]);
@@ -636,7 +705,46 @@ async function onViewAll(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
   const { card, out } = await rebuildCard(ctx, actor, tap, conversation._id);
   if (card.discreet) return empty(); // no "Ver tudo" in discreet mode
   const history = await loadHistory(ctx.db, conversation, card.lead?.title);
-  return { replies: [], edits: [edit(tap, buildHistoryCard(card, history, out.keyboard))] };
+  // F4 (D21): the files of the visible history go right after (newest last, capped).
+  const recent = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+    .order("desc")
+    .take(40);
+  const visible = recent.filter((m) => !m.isInternal && m.direction !== "internal").slice(0, 10).reverse();
+  const crmUrl = conversationCrmUrl(tap.appBaseUrl, conversation._id);
+  const planned = await mediaForMessages(ctx.db, visible, {
+    organizationId: actor.org._id,
+    discreet: card.discreet,
+    mediaInbound: actor.link.prefs.mediaInbound,
+    crmUrl,
+  });
+  // A file this chat already got for this conversation is not sent again (review F4 #3): the line + link instead.
+  const already = await ctx.db
+    .query("telegramDeliveries")
+    .withIndex("by_conversation_and_sent", (q) => q.eq("conversationId", conversation._id).gt("sentAt", tap.now - MEDIA_DEDUPE_MS))
+    .order("desc")
+    .take(200);
+  const sentBlobs = new Set(
+    already.filter((d) => d.chatId === tap.chatId && d.kind === "media" && d.mediaStorageId).map((d) => d.mediaStorageId!),
+  );
+  const media: MediaOut[] = planned.map((m) =>
+    m.storageId && sentBlobs.has(m.storageId)
+      ? { kind: "link", fileName: m.fileName, size: m.size, mime: m.mime, text: alreadySentLine(m, crmUrl) }
+      : m,
+  );
+  const replies: SendOp[] =
+    media.length > 0
+      ? [
+          {
+            chatId: tap.chatId,
+            text: "",
+            media,
+            record: { organizationId: actor.org._id, linkId: actor.link._id, kind: "media", conversationId: conversation._id },
+          },
+        ]
+      : [];
+  return { replies, edits: [edit(tap, buildHistoryCard(card, history, out.keyboard))] };
 }
 
 async function onSummarize(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
@@ -796,18 +904,51 @@ export async function handleTelegramPromptAnswer(
   if (text.length > REPLY_MAX_CHARS) {
     return say(args.chatId, `⏳ A mensagem tem ${fmtCount(text.length)} caracteres; o máximo é ${fmtCount(REPLY_MAX_CHARS)}.`);
   }
+  return await stageReplyDraft(ctx, { chatId: args.chatId, now: args.now, actor, chat, prompt, conversation, card, text });
+}
+
+/**
+ * The member's reply becomes the prompt's draft and a preview (suggest: 📤
+ * Enviar; auto: the D23 countdown). Shared by text and files (F4): a file
+ * keeps an existing text draft as its caption only when it brings none.
+ */
+async function stageReplyDraft(
+  ctx: MutationCtx,
+  args: {
+    chatId: number;
+    now: number;
+    actor: TelegramActor;
+    chat: Doc<"telegramChats">;
+    prompt: PendingPrompt;
+    conversation: Doc<"conversations">;
+    card: CardContext;
+    text: string;
+    attachment?: DraftAttachment;
+  },
+): Promise<ActionResult> {
+  const { actor, chat, prompt, conversation, card, text } = args;
   const expiresAt = args.now + PROMPT_TTL_MS;
+  const attachment = args.attachment ?? prompt.draftAttachments?.[0];
   await ctx.db.patch(chat._id, {
-    pendingPrompt: { ...prompt, draftText: text, expiresAt },
+    pendingPrompt: {
+      ...prompt,
+      draftText: text,
+      ...(attachment ? { draftAttachments: [attachment] } : {}),
+      expiresAt,
+    },
     updatedAt: args.now,
   });
+  // F4 (review #2): a file draft nobody touches again is discarded AT its expiry, not on the next update.
+  if (attachment) {
+    await ctx.scheduler.runAt(expiresAt, internal.telegramFiles.internalExpirePromptDraft, { chatId: args.chatId, expiresAt });
+  }
   const edits: EditOp[] = prompt.promptMessageId
     ? [{ chatId: args.chatId, messageId: prompt.promptMessageId, text: "💬 Prévia logo abaixo." }]
     : [];
-  // D23: in automatic mode the preview is a countdown that sends unless vetoed.
+  // D23: in automatic mode the preview is a countdown that sends unless vetoed (text or file alike).
   if (effectiveAssistantMode(actor.link, actor.org) === "auto") {
     const seconds = autoSendSeconds(actor.link);
-    const countdown = buildCountdownCard(card, text, seconds, conversation._id);
+    const countdown = buildCountdownCard(card, text, seconds, conversation._id, attachment, "human");
     return {
       replies: [
         {
@@ -828,7 +969,7 @@ export async function handleTelegramPromptAnswer(
       edits,
     };
   }
-  const preview = buildReplyPreview(card, text);
+  const preview = buildReplyPreview(card, text, attachment);
   return {
     replies: [
       {
@@ -847,6 +988,73 @@ export async function handleTelegramPromptAnswer(
     ],
     edits,
   };
+}
+
+/**
+ * F4 (D25, §4.5): a file the member sent while "Responder" is open. It is
+ * already in storage through the inbound attachment port and its quota is
+ * reserved (`telegramFiles.internalReceiveReplyFile`). Here: re-authorize,
+ * re-check the prompt, and stage it as the draft. Anything that stops it
+ * discards the file and releases the quota — nothing is dropped silently.
+ */
+export async function handleTelegramReplyFile(
+  ctx: MutationCtx,
+  args: {
+    chatId: number;
+    now: number;
+    appBaseUrl: string;
+    file: { fileId: Id<"files">; name: string; size: number; kind: DraftAttachment["kind"] };
+    caption?: string;
+    quota: DraftAttachment["quota"];
+  },
+): Promise<ActionResult> {
+  const attachment: DraftAttachment = { ...args.file, quota: args.quota };
+  const chat = await chatOf(ctx, args.chatId);
+  const prompt = chat?.pendingPrompt;
+  const file = await ctx.db.get(args.file.fileId);
+  const orgId = file?.organizationId;
+  if (!chat || !prompt || prompt.kind !== "reply_customer" || prompt.expiresAt <= args.now || prompt.organizationId !== orgId) {
+    await discardDraftFile(ctx, attachment, orgId);
+    return say(args.chatId, "⌛ O Responder não está mais aberto. Toque em Responder no cartão e mande o arquivo de novo.");
+  }
+  const auth = await authorizeTelegramActor(ctx, {
+    chatId: args.chatId,
+    organizationId: prompt.organizationId,
+    permission: INBOX_REPLY,
+    now: args.now,
+  });
+  if (!auth.ok) {
+    await discardDraftFile(ctx, attachment, orgId);
+    return auth.result;
+  }
+  const { actor } = auth;
+  const conversation = prompt.conversationId ? await conversationOf(ctx, actor, prompt.conversationId) : null;
+  if (!conversation) {
+    await discardDraftFile(ctx, attachment, orgId);
+    await clearPrompt(ctx, args.chatId, args.now);
+    return notFound(args.chatId);
+  }
+  const caption = args.caption?.trim() ?? "";
+  if (caption.length > REPLY_MAX_CHARS) {
+    await discardDraftFile(ctx, attachment, orgId);
+    return say(args.chatId, `⏳ A legenda tem ${fmtCount(caption.length)} caracteres; o máximo é ${fmtCount(REPLY_MAX_CHARS)}.`);
+  }
+  // A new file replaces the previous one of this draft.
+  for (const old of prompt.draftAttachments ?? []) {
+    if (old.fileId !== attachment.fileId) await discardDraftFile(ctx, old, orgId);
+  }
+  const card = await contextFor(ctx, actor, { now: args.now, appBaseUrl: args.appBaseUrl }, { conversationId: conversation._id });
+  return await stageReplyDraft(ctx, {
+    chatId: args.chatId,
+    now: args.now,
+    actor,
+    chat,
+    prompt: { ...prompt, draftAttachments: undefined },
+    conversation,
+    card,
+    text: caption || prompt.draftText || "",
+    attachment,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1186,10 +1394,11 @@ async function onVetoSend(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
     await clearPrompt(ctx, tap.chatId, tap.now);
   }
   const card = await contextFor(ctx, actor, tap, d.conversationId ? { conversationId: d.conversationId } : {});
+  // The member's own reply: offer Responder again (and Instruir), never Regenerar (review F4 #5).
   const record = buildRecordCard(
     card,
     `✖ Envio cancelado · ${formatTime(tap.now, card.timezone)}. Diga o que fazer, ou:`,
-    ["instruct", "reply", "regenerate"],
+    d.draft.messageId ? ["instruct", "reply", "regenerate"] : ["reply", "instruct"],
   );
   return { replies: [], edits: [edit(tap, record)] };
 }
@@ -1220,6 +1429,7 @@ export async function executeAutoSend(
     return { replies: [], edits: [edit(tap, record)] };
   }
   let sentText = "";
+  let sentFile: DraftAttachment | undefined;
   try {
     if (d.draft.messageId) {
       const draftMsg = await ctx.db.get(d.draft.messageId);
@@ -1233,22 +1443,34 @@ export async function executeAutoSend(
     } else {
       const chat = await chatOf(ctx, d.chatId);
       const prompt = chat?.pendingPrompt;
-      if (!prompt || prompt.kind !== "reply_customer" || !prompt.draftText || prompt.promptMessageId !== d.messageId) return empty();
+      const attachment = prompt?.draftAttachments?.[0];
+      if (!prompt || prompt.kind !== "reply_customer" || (!prompt.draftText && !attachment) || prompt.promptMessageId !== d.messageId) {
+        return empty();
+      }
       const conversationId = prompt.conversationId;
       if (!conversationId) return empty();
-      await internalSendMessageCore(ctx, {
+      const sentId = await internalSendMessageCore(ctx, {
         conversationId,
-        content: prompt.draftText,
+        content: prompt.draftText ?? "",
+        contentType: contentTypeOf(attachment),
+        ...(attachment ? { attachments: [attachment.fileId] } : {}),
         teamMemberId: actor.member._id,
         via: "telegram_auto",
       });
-      sentText = prompt.draftText;
-      await clearPrompt(ctx, d.chatId, args.now);
+      sentText = prompt.draftText ?? "";
+      sentFile = attachment;
+      await clearPrompt(ctx, d.chatId, args.now, { sent: true });
+      await bindSentMessage(ctx, d.chatId, d.messageId, sentId, attachment);
     }
   } catch (e) {
     failWith({ replies: [], edits: [{ chatId: d.chatId, messageId: d.messageId, text: errorText(e) }] });
   }
   await ctx.db.patch(d._id, { draft: { ...d.draft, sentAt: args.now } });
-  const record = buildRecordCard(card, `✓ Enviado · ${formatTime(args.now, card.timezone)}`, ["instruct", "reply", "regenerate"], sentText);
+  const record = buildRecordCard(
+    card,
+    `✓ Enviado · ${formatTime(args.now, card.timezone)}${sentFile ? ` · ${attachmentLine(sentFile)}` : ""}`,
+    ["instruct", "reply", "regenerate"],
+    sentText || undefined,
+  );
   return { replies: [], edits: [edit(tap, record)] };
 }

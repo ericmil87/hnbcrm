@@ -15,6 +15,9 @@
  *   Telegram card of the handoff exists, schedules the edit of every copy
  *   ("✅ Aceito por Ana" / "Devolvido à IA"). Never throws into the core.
  *
+ * - `maybeNotifyTelegramSendFailed` (F4): called from the two dispatch-failure
+ *   doors; a reply sent from Telegram that failed edits its card to "✗ Falhou".
+ *
  * Groups are never relayed. No network here; cheap when it does not apply.
  */
 import { MutationCtx } from "../_generated/server";
@@ -23,6 +26,8 @@ import { internal } from "../_generated/api";
 import { modulesOf } from "./orgModules";
 import { orgAiActive } from "./agentSecurity";
 import { isMembershipRevoked } from "./auth";
+import { appUrl } from "./appUrl";
+import { escapeHtml } from "./telegramFormat";
 
 export const RELAY_BUFFER_MS = 20_000;
 export const RELAY_BUFFER_MAX_MESSAGES = 50;
@@ -139,5 +144,53 @@ export async function maybeScheduleHandoffCardsUpdate(
     });
   } catch (e) {
     console.error(`[telegram] cartões do repasse: ${e instanceof Error ? e.name : "erro"}`);
+  }
+}
+
+/**
+ * F4 (D25): called by the dispatch-failure doors (`whatsapp.internalMarkDispatchFailed`,
+ * `metaMessaging.internalMarkDispatchFailed`). A message the member sent FROM
+ * Telegram (Responder/countdown) that failed: its card becomes "✗ Falhou: …"
+ * with the CRM link and the file quota comes back. Never throws into the caller.
+ */
+export async function maybeNotifyTelegramSendFailed(
+  ctx: MutationCtx,
+  message: Doc<"messages">,
+  detail: string,
+): Promise<void> {
+  try {
+    const via = (message.metadata as { via?: unknown } | undefined)?.via;
+    if (via !== "telegram" && via !== "telegram_auto") return;
+    const card = await ctx.db
+      .query("telegramDeliveries")
+      .withIndex("by_sent_crm_message", (q) => q.eq("sentCrmMessageId", message._id))
+      .first();
+    if (!card || card.organizationId !== message.organizationId) return;
+    if (card.fileQuota) {
+      await ctx.scheduler.runAfter(0, internal.telegramQuota.internalReleaseFileQuota, {
+        linkId: card.linkId,
+        organizationId: card.organizationId,
+        bytes: card.fileQuota.bytes,
+        dayKey: card.fileQuota.dayKey,
+        ...(card.fileQuota.hourStart !== undefined ? { hourStart: card.fileQuota.hourStart } : {}),
+      });
+      await ctx.db.patch(card._id, { fileQuota: undefined }); // released once
+    }
+    const url = `${appUrl()}/app/entrada?conversation=${message.conversationId}`;
+    await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverActionResult, {
+      result: {
+        replies: [],
+        edits: [
+          {
+            chatId: card.chatId,
+            messageId: card.messageId,
+            text: `✗ Falhou: ${escapeHtml(detail.slice(0, 300))}`,
+            keyboard: [[{ text: "🔗 Abrir no CRM", url }]],
+          },
+        ],
+      },
+    });
+  } catch (e) {
+    console.error(`[telegram] falha de envio: ${e instanceof Error ? e.name : "erro"}`);
   }
 }
