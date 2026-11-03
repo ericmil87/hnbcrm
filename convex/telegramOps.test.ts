@@ -108,12 +108,12 @@ describe("opsTelegram", () => {
 
     const dryCmds = await t.action(internal.opsTelegram.internalTelegramSetCommands, {});
     expect(dryCmds.commands.map((c) => c.command)).toEqual([
-      "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "tour", "ajuda", "sair",
+      "hoje", "repasses", "tarefas", "leads", "foco", "novo", "modo", "pausar", "org", "teclado", "tour", "ajuda", "sair",
     ]);
     expect(methods.some((m) => m.method === "setMyCommands")).toBe(false);
     await t.action(internal.opsTelegram.internalTelegramSetCommands, { dryRun: false });
     const registered = methods.find((m) => m.method === "setMyCommands")?.body as { commands: { command: string; description: string }[] };
-    expect(registered.commands).toHaveLength(12);
+    expect(registered.commands).toHaveLength(13);
     expect(registered.commands[0]).toEqual({ command: "hoje", description: "Resumo do dia" });
     expect(registered.commands.at(-1)).toEqual({ command: "sair", description: "Desconectar este Telegram" });
 
