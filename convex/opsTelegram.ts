@@ -25,7 +25,8 @@ import {
   setWebhook,
   type TelegramFailure,
 } from "./lib/telegramApi";
-import { TELEGRAM_ALLOWED_UPDATES, TELEGRAM_F0_COMMANDS } from "./lib/telegramCore";
+import { TELEGRAM_ALLOWED_UPDATES } from "./lib/telegramCore";
+import { TELEGRAM_COMMANDS } from "./lib/telegramCommands";
 
 const failureValidator = v.object({
   kind: v.string(),
@@ -176,7 +177,7 @@ export const internalTelegramSetCommands = internalAction({
   }),
   handler: async (_ctx, args) => {
     const dryRun = args.dryRun !== false;
-    const commands = TELEGRAM_F0_COMMANDS.map((c) => ({ command: c.command, description: c.description }));
+    const commands = TELEGRAM_COMMANDS.map((c) => ({ command: c.command, description: c.description }));
     if (dryRun) return { dryRun, ok: true, commands };
     const res = await setMyCommands({ commands });
     if (!res.ok) return { dryRun, ok: false, commands, error: failureOf(res) };

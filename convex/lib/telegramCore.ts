@@ -216,15 +216,21 @@ export const COPY = {
   moduleOff:
     "O Telegram não está habilitado nesta organização. Peça a um admin para ligar em Configurações → Notificações → Telegram.",
   learning:
-    "Ainda estou aprendendo: por enquanto respondo a /ajuda e /sair. Em breve: repasses, tarefas e o Copiloto.",
+    "Ainda estou aprendendo: por enquanto respondo aos comandos (/ajuda lista todos). O Copiloto, por texto e áudio, chega na próxima versão.",
   help:
     "<b>HNBCRM no Telegram</b>\n" +
-    "Em breve chegam aqui, com botões para agir na hora:\n" +
-    "• 🔔 repasses da IA e mensagens das conversas que você atende\n" +
-    "• 📌 tarefas e alertas\n" +
-    "• ☀️🌙 um resumo de manhã e outro no fim do dia\n" +
-    "• 🤖 o Copiloto, por texto ou áudio\n\n" +
-    "/sair desconecta este Telegram.",
+    "Repasses, tarefas e alertas chegam aqui com botões para agir na hora.\n\n" +
+    "/hoje · resumo do dia\n" +
+    "/repasses · repasses pendentes\n" +
+    "/tarefas · suas tarefas\n" +
+    "/leads · seus leads\n" +
+    "/foco · escolher a conversa em foco\n" +
+    "/novo · limpar o foco\n" +
+    "/pausar · silenciar notificações\n" +
+    "/org · trocar de organização\n" +
+    "/teclado · mostrar ou ocultar o teclado\n" +
+    "/sair · desconectar este Telegram\n\n" +
+    "O Copiloto, por texto e áudio, chega na próxima versão.",
 } as const;
 
 export function welcomeText(args: { memberName: string; orgName: string; otherOrgNames: string[] }): string {

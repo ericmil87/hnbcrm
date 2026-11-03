@@ -2,6 +2,15 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.75.0] - 2026-11-03
+
+### Copiloto no Telegram — comandos, teclado fixo e relatórios de manhã e de fim do dia
+
+- **Relatório de manhã (08:00) e de fim do dia (18:00), na hora local da organização**, para quem conectou o Telegram e deixou "Relatórios diários" ligado no card. De manhã: repasses pendentes, follow-ups da IA do dia, suas tarefas de hoje e atrasadas, leads novos desde ontem 18h, conversas não lidas e estado dos canais, com botões **Ver repasses · Ver tarefas · Abrir CRM**. No fim do dia: leads criados, ganhos (R$) e perdidos, tarefas concluídas e pendentes, repasses sem dono e custo de IA do dia e do mês. Horários ajustáveis no card; sem relatório aos fins de semana por padrão (toggle). Admin e gerente veem a organização; agente vê o que é seu. `/hoje` manda o relatório da manhã a qualquer hora.
+- **Comandos**: `/repasses` (cada repasse com Aceitar · Instruir), `/tarefas` (Concluir · Adiar 1h), `/leads`, `/foco` (escolher a conversa em foco entre as suas), `/novo` (limpar o foco), `/pausar` (1 hora · até amanhã 8h · retomar), `/org` (trocar a organização ativa quando você está em mais de uma), `/teclado` e `/ajuda`. Listas mostram 10 por vez com "Mais 10 →" e respeitam o modo discreto.
+- **Teclado fixo** com 📋 Hoje · 🔁 Repasses · ✅ Tarefas · ⏸ Pausar, ligado ao conectar e ocultável com `/teclado`.
+- Tudo é autorizado no servidor como no painel: cada lista mostra só o que a pessoa pode ver na organização ativa; nenhuma consulta varre tabelas inteiras (listas e relatórios leem por índice com teto, e mostram "50+" quando passa).
+
 ## [0.74.0] - 2026-11-03
 
 ### Copiloto no Telegram — repasses, tarefas e mensagens com botões para agir na hora

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { Switch } from "@/components/settings/CentralSection";
 import { usePermissions } from "@/hooks/usePermissions";
+import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   formatClock,
@@ -248,15 +249,76 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
             </div>
           ))}
 
-          <div className="flex min-h-[44px] items-center justify-between gap-3 py-3">
-            <div className="min-w-0">
-              <span className="text-sm text-text-muted">
-                Relatório de manhã {formatHour(link.reports.morningHour)} · Fim do dia{" "}
-                {formatHour(link.reports.eveningHour)}
-              </span>
-              <p className="text-xs text-text-muted">Disponível em breve</p>
+          <div className="space-y-3 py-3">
+            <div className="flex min-h-[44px] items-center justify-between gap-3">
+              <span className="text-sm font-medium text-text-primary">Relatórios diários</span>
             </div>
-            <Switch checked={link.reports.enabled} onChange={() => {}} label="Relatórios no Telegram" disabled />
+            <div className="flex min-h-[44px] items-center justify-between gap-3">
+              <span className="text-sm text-text-primary">Receber relatórios no Telegram</span>
+              <Switch
+                checked={link.reports.enabled}
+                label="Receber relatórios no Telegram"
+                disabled={busy}
+                onChange={() =>
+                  void run(
+                    () => updatePrefs({ organizationId, reports: { enabled: !link.reports.enabled } }),
+                    "Não foi possível salvar a preferência"
+                  )
+                }
+              />
+            </div>
+            <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", !link.reports.enabled && "opacity-50")}>
+              {(
+                [
+                  { key: "morningHour", label: "Manhã", id: "tg-morning-hour" },
+                  { key: "eveningHour", label: "Fim do dia", id: "tg-evening-hour" },
+                ] as const
+              ).map(({ key, label, id }) => (
+                <div key={key}>
+                  <label htmlFor={id} className="mb-1 block text-xs text-text-secondary">
+                    {label}
+                  </label>
+                  <select
+                    id={id}
+                    value={link.reports[key]}
+                    disabled={busy || !link.reports.enabled}
+                    onChange={(e) =>
+                      void run(
+                        () => updatePrefs({ organizationId, reports: { [key]: Number(e.target.value) } }),
+                        "Não foi possível salvar o horário"
+                      )
+                    }
+                    className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed"
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {formatHour(h)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-text-muted">Hora local da organização.</p>
+            <div className={cn("flex min-h-[44px] items-center justify-between gap-3", !link.reports.enabled && "opacity-50")}>
+              <span className="text-sm text-text-primary">Também aos fins de semana</span>
+              <Switch
+                checked={link.reports.weekends ?? false}
+                label="Também aos fins de semana"
+                disabled={busy || !link.reports.enabled}
+                onChange={() =>
+                  void run(
+                    () => updatePrefs({ organizationId, reports: { weekends: !(link.reports.weekends ?? false) } }),
+                    "Não foi possível salvar a preferência"
+                  )
+                }
+              />
+            </div>
+            <p className="text-xs text-text-muted">
+              De manhã: repasses pendentes, follow-ups da IA, suas tarefas, leads novos e conversas não lidas. No fim
+              do dia: leads, ganhos e perdidos, tarefas, repasses sem dono e custo de IA. /hoje no bot manda o da
+              manhã a qualquer hora.
+            </p>
           </div>
         </div>
 

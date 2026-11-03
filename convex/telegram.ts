@@ -46,6 +46,8 @@ import {
   type CardKeyboard,
 } from "./lib/telegramNotifications";
 import { escapeHtml } from "./lib/telegramFormat";
+import { PERSISTENT_KEYBOARD, CMD_COPY, parseCommandCallback, resolveCommandName } from "./lib/telegramCommands";
+import { runTelegramCallback, runTelegramCommand } from "./telegramCommands";
 import { FOCUS_TTL_MS, resolveRelayRecipient } from "./lib/telegramRelay";
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
@@ -118,11 +120,13 @@ const replyValidator = v.object({
   /** Inline button "🔗 Abrir configurações" → settings page. */
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
+  /** F2: the persistent reply keyboard (📋 Hoje · 🔁 Repasses · ✅ Tarefas · ⏸ Pausar). */
+  persistentKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
   keyboard: v.optional(keyboardValidator),
   record: v.optional(recordValidator),
 });
-type Reply = SendOp & { settingsButton?: boolean; removeKeyboard?: boolean };
+type Reply = SendOp & { settingsButton?: boolean; removeKeyboard?: boolean; persistentKeyboard?: boolean };
 
 /** "Mensagem vira registro": edit of a message the bot already sent. */
 const editValidator = v.object({
@@ -149,7 +153,12 @@ const myLinkValidator = v.object({
   lastSeenAt: v.number(),
   mutedUntil: v.optional(v.number()),
   prefs: v.object({ relayAssignedConversations: v.boolean(), mediaInbound: v.boolean() }),
-  reports: v.object({ enabled: v.boolean(), morningHour: v.number(), eveningHour: v.number() }),
+  reports: v.object({
+    enabled: v.boolean(),
+    morningHour: v.number(),
+    eveningHour: v.number(),
+    weekends: v.optional(v.boolean()), // F2 relatórios
+  }),
   assistant: v.object({ mode: v.union(v.literal("suggest"), v.literal("auto")) }),
 });
 
@@ -289,6 +298,7 @@ export const updateMyLinkPrefs = mutation({
         enabled: v.optional(v.boolean()),
         morningHour: v.optional(v.number()),
         eveningHour: v.optional(v.number()),
+        weekends: v.optional(v.boolean()), // F2 relatórios
       }),
     ),
   },
@@ -308,6 +318,7 @@ export const updateMyLinkPrefs = mutation({
     if (args.reports?.enabled !== undefined) reports.enabled = args.reports.enabled;
     if (args.reports?.morningHour !== undefined) reports.morningHour = args.reports.morningHour;
     if (args.reports?.eveningHour !== undefined) reports.eveningHour = args.reports.eveningHour;
+    if (args.reports?.weekends !== undefined) reports.weekends = args.reports.weekends; // F2 relatórios
     await ctx.db.patch(link._id, { prefs, reports });
     return null;
   },
@@ -420,7 +431,7 @@ async function upsertChat(
   ctx: MutationCtx,
   chatId: number,
   telegramUserId: number,
-  patch: Partial<Pick<Doc<"telegramChats">, "activeOrganizationId" | "activeTeamMemberId">>,
+  patch: Partial<Pick<Doc<"telegramChats">, "activeOrganizationId" | "activeTeamMemberId" | "keyboardShown">>,
   now: number,
 ) {
   const chat = await getChat(ctx, chatId);
@@ -544,6 +555,18 @@ export const internalRouteUpdate = internalMutation({
     }
     await touchLink(ctx, active, p, now);
     if (p.kind === "callback_query") {
+      // F2: list/command buttons (`cmd:`, `pg:`, `fc:`, `mu:`, `org:`).
+      const commandCb = parseCommandCallback(p.callbackData);
+      if (commandCb) {
+        return await runTelegramCallback(ctx, commandCb, {
+          chatId,
+          active,
+          alive,
+          now,
+          appBaseUrl: appUrl(),
+          messageId: p.messageId,
+        });
+      }
       // F1: buttons → lib/telegramActions (reauthorization + single ports).
       return await handleTelegramCallback(ctx, {
         chatId,
@@ -576,9 +599,12 @@ export const internalRouteUpdate = internalMutation({
         ],
       };
     }
-    if (cmd?.command === "ajuda" || cmd?.command === "help") {
-      return { replies: [{ chatId, text: COPY.help, protectContent }] };
+    // F2: slash commands and persistent-keyboard labels.
+    const commandName = resolveCommandName(cmd, p.text);
+    if (commandName) {
+      return await runTelegramCommand(ctx, commandName, { chatId, active, alive, now, appBaseUrl: appUrl() });
     }
+    if (cmd) return { replies: [{ chatId, text: CMD_COPY.unknown, protectContent }] };
     if (!cmd && promptExpired) return { replies: [{ chatId, text: PROMPT_EXPIRED_COPY }] };
     if (!cmd) {
       // An open prompt (instruct / regenerate / reply) consumes the next message.
@@ -675,11 +701,14 @@ export const internalConsumeLinkCode = internalMutation({
         lastSeenAt: now,
       });
     }
+    // P6: the persistent keyboard is on by default; a user who hid it keeps it hidden.
+    const chatBefore = await getChat(ctx, chatId);
+    const keyboardShown = chatBefore?.keyboardShown ?? true;
     await upsertChat(
       ctx,
       chatId,
       args.telegramUserId,
-      { activeOrganizationId: code.organizationId, activeTeamMemberId: member._id },
+      { activeOrganizationId: code.organizationId, activeTeamMemberId: member._id, keyboardShown },
       now,
     );
     await ctx.db.patch(code._id, { usedAt: now });
@@ -708,6 +737,7 @@ export const internalConsumeLinkCode = internalMutation({
           chatId,
           text: welcomeText({ memberName: member.name, orgName: org.name, otherOrgNames }),
           protectContent: await protectContentFor(ctx, code.organizationId),
+          ...(keyboardShown ? { persistentKeyboard: true } : {}),
         },
       ],
     };
@@ -731,10 +761,11 @@ export const internalMarkChatBlocked = internalMutation({
 // ---------------------------------------------------------------------------
 
 function markupFor(
-  reply: Pick<Reply, "removeKeyboard" | "settingsButton" | "keyboard">,
+  reply: Pick<Reply, "removeKeyboard" | "settingsButton" | "keyboard" | "persistentKeyboard">,
 ): ReplyMarkup | undefined {
   if (reply.removeKeyboard) return { remove_keyboard: true };
   if (reply.keyboard && reply.keyboard.length > 0) return { inline_keyboard: reply.keyboard };
+  if (reply.persistentKeyboard) return PERSISTENT_KEYBOARD;
   if (reply.settingsButton) {
     return { inline_keyboard: [[{ text: COPY.unlinkedButton, url: settingsUrl(appUrl()) }]] };
   }
@@ -748,19 +779,43 @@ const resumeValidator = v.object({
   chunks: v.array(v.string()),
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
+  persistentKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
   keyboard: v.optional(keyboardValidator),
   record: v.optional(recordValidator),
 });
 type Resume = Omit<Reply, "text"> & { chunks: string[] };
 
-async function deliverReply(ctx: ActionCtx, reply: Reply, attempt: number): Promise<void> {
-  const { text, ...opts } = reply;
-  await deliverChunks(ctx, { ...opts, chunks: splitMessage(text) }, attempt);
+/**
+ * Sends replies strictly in order. On a 429 the undelivered part of the
+ * current reply AND every reply after it travel together in ONE retry job, so
+ * a later row can never overtake an earlier one and nothing is sent twice.
+ */
+async function deliverReplies(ctx: ActionCtx, replies: Reply[], attempt: number): Promise<void> {
+  const items: Resume[] = replies.map(({ text, ...opts }) => ({ ...opts, chunks: splitMessage(text) }));
+  await deliverSeries(ctx, items, attempt);
 }
 
-async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Promise<void> {
-  if (reply.chunks.length === 0) return;
+async function deliverSeries(ctx: ActionCtx, items: Resume[], attempt: number): Promise<void> {
+  for (let i = 0; i < items.length; i++) {
+    const rest = await deliverChunks(ctx, items[i], attempt);
+    if (rest) {
+      await ctx.scheduler.runAfter(rest.delayMs, internal.telegram.internalDeliverReply, {
+        replies: [rest.resume, ...items.slice(i + 1)],
+        attempt: attempt + 1,
+      });
+      return;
+    }
+  }
+}
+
+/** Returns what to retry when Telegram rate-limited the send (and attempts remain), else null. */
+async function deliverChunks(
+  ctx: ActionCtx,
+  reply: Resume,
+  attempt: number,
+): Promise<{ resume: Resume; delayMs: number } | null> {
+  if (reply.chunks.length === 0) return null;
   const res = await sendMessageChunks({
     chatId: reply.chatId,
     chunks: reply.chunks,
@@ -776,7 +831,7 @@ async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Pr
         messageId: last.message_id,
       });
     }
-    return;
+    return null;
   }
   if (res.kind === "bad_request" && reply.settingsButton) {
     // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): send the link as text.
@@ -785,20 +840,18 @@ async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Pr
       text: `${htmlToPlainText(reply.chunks.join("\n"))}\n${settingsUrl(appUrl())}`,
       parseMode: null,
     });
-    return;
+    return null;
   }
   if (res.kind === "blocked") {
     await ctx.runMutation(internal.telegram.internalMarkChatBlocked, { chatId: reply.chatId });
-    return;
+    return null;
   }
   if (res.kind === "rate_limited" && attempt < MAX_SEND_ATTEMPTS) {
     const delayMs = Math.min(Math.max(res.retryAfterSeconds ?? 1, 1), 300) * 1000;
     // Only what was not delivered travels: chunks already sent are never repeated.
-    await ctx.scheduler.runAfter(delayMs, internal.telegram.internalDeliverReply, {
-      reply: { ...reply, chunks: reply.chunks.slice(res.sentCount) },
-      attempt: attempt + 1,
-    });
+    return { resume: { ...reply, chunks: reply.chunks.slice(res.sentCount) }, delayMs };
   }
+  return null;
 }
 
 /** The result carried by a failed Telegram action (`lib/telegramActions.failWith`), if any. */
@@ -866,10 +919,11 @@ export const internalRecordDelivery = internalMutation({
 
 /** 429 retry of the undelivered chunks of one reply (§3.8, at most `MAX_SEND_ATTEMPTS`). */
 export const internalDeliverReply = internalAction({
-  args: { reply: resumeValidator, attempt: v.number() },
+  // `reply` (single) is the pre-F2 shape; jobs scheduled before the deploy still carry it.
+  args: { replies: v.optional(v.array(resumeValidator)), reply: v.optional(resumeValidator), attempt: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await deliverChunks(ctx, args.reply, args.attempt);
+    await deliverSeries(ctx, args.replies ?? (args.reply ? [args.reply] : []), args.attempt);
     return null;
   },
 });
@@ -913,7 +967,7 @@ export const internalProcessUpdate = internalAction({
         edits = res.edits;
       }
       await deliverEdits(edits);
-      for (const reply of replies) await deliverReply(ctx, reply, 1);
+      await deliverReplies(ctx, replies, 1);
       await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
     } catch (e) {
       // A Telegram action whose port threw: the mutation rolled back (no
@@ -921,7 +975,7 @@ export const internalProcessUpdate = internalAction({
       const data = telegramFailureOf(e);
       if (data?.kind === TELEGRAM_FAILURE && data.result) {
         await deliverEdits(data.result.edits);
-        for (const reply of data.result.replies) await deliverReply(ctx, reply, 1);
+        await deliverReplies(ctx, data.result.replies, 1);
         await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
         return null;
       }
@@ -1235,7 +1289,7 @@ export const internalDeliverNotification = internalAction({
       now: Date.now(),
     });
     if (!target) return null;
-    await deliverReply(ctx, target, 1);
+    await deliverReplies(ctx, [target], 1);
     return null;
   },
 });
@@ -1346,7 +1400,7 @@ export const internalRelayAiReply = internalAction({
       messageId: args.messageId,
       now: Date.now(),
     });
-    for (const target of targets) await deliverReply(ctx, target, 1);
+    for (const target of targets) await deliverReplies(ctx, [target], 1);
     return null;
   },
 });

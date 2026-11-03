@@ -406,9 +406,9 @@ describe("comandos e chat sem vínculo", () => {
     await send(message(CHAT_A, "/ajuda"));
     await send(message(CHAT_A, "quais leads?"));
     const [help, other] = sent();
-    expect(help.body.text).toContain("/sair desconecta este Telegram.");
+    expect(help.body.text).toContain("/sair · desconectar este Telegram");
     expect(other.body.text).toBe(
-      "Ainda estou aprendendo: por enquanto respondo a /ajuda e /sair. Em breve: repasses, tarefas e o Copiloto.",
+      "Ainda estou aprendendo: por enquanto respondo aos comandos (/ajuda lista todos). O Copiloto, por texto e áudio, chega na próxima versão.",
     );
   });
 
@@ -807,7 +807,7 @@ describe("revisão de segurança (F0, 2º lote)", () => {
     });
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     const retry = scheduled.find((j) => j.name.includes("internalDeliverReply"));
-    expect(retry?.args[0]).toEqual({ reply: { chatId: CHAT_A, chunks: ["dois", "três"] }, attempt: 2 });
+    expect(retry?.args[0]).toEqual({ replies: [{ chatId: CHAT_A, chunks: ["dois", "três"] }], attempt: 2 });
     await drain();
     expect(sent().map((c) => c.body.text)).toEqual(["um", "dois", "dois", "três"]);
   });

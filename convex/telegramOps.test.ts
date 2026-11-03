@@ -107,15 +107,15 @@ describe("opsTelegram", () => {
     expect(me).toMatchObject({ ok: true, botId: 42, usernameMatchesEnv: true });
 
     const dryCmds = await t.action(internal.opsTelegram.internalTelegramSetCommands, {});
-    expect(dryCmds.commands.map((c) => c.command)).toEqual(["ajuda", "sair"]);
+    expect(dryCmds.commands.map((c) => c.command)).toEqual([
+      "hoje", "repasses", "tarefas", "leads", "foco", "novo", "pausar", "org", "teclado", "ajuda", "sair",
+    ]);
     expect(methods.some((m) => m.method === "setMyCommands")).toBe(false);
     await t.action(internal.opsTelegram.internalTelegramSetCommands, { dryRun: false });
-    expect(methods.find((m) => m.method === "setMyCommands")?.body).toEqual({
-      commands: [
-        { command: "ajuda", description: "Como usar o bot" },
-        { command: "sair", description: "Desconectar este Telegram" },
-      ],
-    });
+    const registered = methods.find((m) => m.method === "setMyCommands")?.body as { commands: { command: string; description: string }[] };
+    expect(registered.commands).toHaveLength(11);
+    expect(registered.commands[0]).toEqual({ command: "hoje", description: "Resumo do dia" });
+    expect(registered.commands.at(-1)).toEqual({ command: "sair", description: "Desconectar este Telegram" });
 
     await t.action(internal.opsTelegram.internalTelegramDeleteWebhook, {});
     expect(methods.some((m) => m.method === "deleteWebhook")).toBe(false);

@@ -124,6 +124,7 @@ export type InlineKeyboardButton =
 export type ReplyMarkup =
   | { inline_keyboard: InlineKeyboardButton[][] }
   | { remove_keyboard: true }
+  | { keyboard: { text: string }[][]; resize_keyboard: true; is_persistent: true }
   | { force_reply: true; input_field_placeholder?: string };
 
 export type SentMessage = { message_id: number };
