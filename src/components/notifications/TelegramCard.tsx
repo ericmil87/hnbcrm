@@ -116,14 +116,13 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
       {
         value: "auto" as const,
         label: "Automático",
-        desc: `Eu decido e executo; o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para você cancelar ou regenerar. Tudo tem Desfazer.`,
+        desc: `Eu decido e executo nas conversas que você colocou em foco (ao tocar num cartão ou com /foco); o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para cancelar. Repasses e follow-ups travados sempre chegam para você decidir, com uma sugestão pronta. Tudo tem Desfazer.`,
       },
     ];
     const actions = [
       { key: "instructAi", label: "Instruir a IA" },
       { key: "createTask", label: "Criar tarefa" },
       { key: "moveStage", label: "Mover etapa" },
-      { key: "acceptHandoff", label: "Aceitar repasse" },
       { key: "replyCustomer", label: "Responder ao cliente" },
     ] as const;
     return (

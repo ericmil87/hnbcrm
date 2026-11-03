@@ -35,15 +35,17 @@ const back = { text: "←", callback_data: "ob:back" };
 /** Card 0: the `/start` welcome. `otherOrgNames` adds the multi-org note. */
 export function buildWelcomeCard(args: { memberName: string; orgName: string; otherOrgNames?: string[] }): OnboardingCard {
   let text =
-    `👋 Conectado como <b>${escapeHtml(args.memberName)}</b> · ${escapeHtml(args.orgName)}\n` +
-    "Sou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.";
+    "👋 <b>Conectado!</b>\n" +
+    `${escapeHtml(args.memberName)} · ${escapeHtml(args.orgName)}\n\n` +
+    "Sou sua assistente no HNBCRM.\n" +
+    "Em 4 passos rápidos você vê como funciona.";
   const others = args.otherOrgNames ?? [];
   if (others.length > 0) {
     text +=
-      `\n\nEste Telegram também está conectado a ${others.map((n) => `<b>${escapeHtml(n)}</b>`).join(", ")}: ` +
-      `as notificações de todas chegam aqui. A organização ativa agora é <b>${escapeHtml(args.orgName)}</b>.`;
+      `\n\nEste Telegram também está conectado a ${others.map((n) => `<b>${escapeHtml(n)}</b>`).join(", ")}.\n` +
+      `As notificações de todas chegam aqui.\nOrganização ativa agora: <b>${escapeHtml(args.orgName)}</b>.`;
   }
-  return { text, keyboard: [[next(1)]] };
+  return { text, keyboard: [[next(1), { text: "Pular tour", callback_data: "ob:done" }]] };
 }
 
 export function buildTourCard(step: number): OnboardingCard {
@@ -53,23 +55,32 @@ export function buildTourCard(step: number): OnboardingCard {
     case 1:
       return {
         text:
-          "<b>1/4 · O que chega aqui</b>\n" +
-          "🔔 Repasses da IA · 💬 mensagens das conversas que você atende\n" +
-          "📌 tarefas · 🆕 leads · 🔴 alertas de canal · ☀️🌙 relatório de manhã e de noite\n" +
-          'Cada cartão vem com resumo e botões. "Ver tudo" abre o histórico.',
+          "<b>1/4 · O que chega aqui</b>\n\n" +
+          "🔔 Repasses da IA\n" +
+          "💬 Mensagens das conversas que você atende\n" +
+          "📌 Tarefas\n" +
+          "☀️🌙 Relatório de manhã e de noite\n" +
+          "🔴 Alertas de canal\n\n" +
+          "Cada cartão vem com resumo e botões.\n" +
+          "<b>Ver tudo</b> abre o histórico.",
         keyboard: [[back, next(2)]],
       };
     case 2:
       return {
         text:
-          "<b>2/4 · Dois modos</b> (troque quando quiser com /modo)\n" +
-          "💡 <b>Sugestão</b>: eu proponho, você confirma. Nada vai para o cliente sem o seu toque.\n" +
-          "🤖 <b>Automático</b>: eu decido e executo; o que for para o cliente fica 15 s na sua tela " +
-          "para você cancelar ou regenerar. Tudo tem Desfazer.\n" +
+          "<b>2/4 · Dois modos</b>\n" +
+          "(troque quando quiser com /modo)\n\n" +
+          "💡 <b>Sugestão</b> (recomendado para começar)\n" +
+          "Eu proponho, você confirma.\n" +
+          "Nada vai para o cliente sem o seu toque.\n\n" +
+          "🤖 <b>Automático</b>\n" +
+          "Eu decido e executo nas conversas que você colocou em foco.\n" +
+          "O que for para o cliente fica 15 s na sua tela para cancelar.\n\n" +
+          "Em qualquer modo, <b>repasses e follow-ups travados sempre chegam para você decidir</b>, com uma sugestão pronta.\n\n" +
           "Começar em:",
         keyboard: [
           [
-            { text: "💡 Sugestão", callback_data: "ob:mode:suggest" },
+            { text: "💡 Sugestão (recomendado)", callback_data: "ob:mode:suggest" },
             { text: "🤖 Automático", callback_data: "ob:mode:auto" },
           ],
           [back],
@@ -78,22 +89,23 @@ export function buildTourCard(step: number): OnboardingCard {
     case 3:
       return {
         text:
-          "<b>3/4 · Como falar comigo</b>\n" +
-          "• Toque nos botões, ou responda a qualquer cartão para falar sobre aquela conversa\n" +
+          "<b>3/4 · Como falar comigo</b>\n\n" +
+          "• Toque nos botões dos cartões\n" +
+          "• Responda a um cartão para falar sobre aquela conversa\n" +
           "• Áudio funciona para tudo: instruir a IA, responder, pedir coisas\n" +
-          "• Foto e arquivo (PDF, planilha) vão para o WhatsApp do cliente\n" +
-          '• Sem cartão em foco, pergunte o que quiser sobre o CRM ("leads parados?")',
+          "• Foto e arquivo (PDF, planilha) vão para o WhatsApp do cliente quando você está respondendo\n" +
+          '• Sem cartão em foco, pergunte o que quiser sobre o CRM: "leads parados?"',
         keyboard: [[back, next(4)]],
       };
     case 4:
       return {
-        text: "<b>4/4 · Teste agora</b>",
+        text: "<b>4/4 · Teste agora</b>\n\nToque em um:",
         keyboard: [
           [
             { text: "☀️ Ver meu /hoje", callback_data: "cmd:hoje" },
             { text: "🔁 Repasses pendentes", callback_data: "cmd:repasses" },
           ],
-          [{ text: "Terminar", callback_data: "ob:done" }],
+          [{ text: "✅ Terminar", callback_data: "ob:done" }],
         ],
       };
     default:
@@ -102,13 +114,18 @@ export function buildTourCard(step: number): OnboardingCard {
 }
 
 export const ONBOARDING_COPY = {
-  done: "Pronto. Quando chegar algo, eu te aviso aqui.",
+  done:
+    "✅ <b>Pronto!</b>\n" +
+    "Quando chegar algo, eu te aviso aqui.\n\n" +
+    "Comandos úteis:\n" +
+    "/hoje · /repasses · /tarefas · /foco · /modo · /ajuda\n\n" +
+    "/tour reabre este guia.",
   modeSet: (mode: "suggest" | "auto") =>
     mode === "auto"
-      ? "✅ Começando em 🤖 Automático. /modo troca quando quiser."
-      : "✅ Começando em 💡 Sugestão. /modo troca quando quiser.",
+      ? "✅ Começando em 🤖 <b>Automático</b>.\n/modo troca quando quiser."
+      : "✅ Começando em 💡 <b>Sugestão</b>.\n/modo troca quando quiser.",
   autoOff:
-    "O modo automático está desligado pela sua organização. Ficou em 💡 Sugestão.",
+    "O modo automático está desligado pela sua organização.\nFicou em 💡 <b>Sugestão</b>.",
 } as const;
 
 // ---------------------------------------------------------------------------

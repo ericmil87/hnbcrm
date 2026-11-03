@@ -55,7 +55,7 @@ export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): s
     ...(a.instructAi ? ["instructAttendant", "regenerateAiReply"] : []),
     ...(a.createTask ? ["createTask"] : []),
     ...(a.moveStage ? ["moveLead"] : []),
-    ...(a.acceptHandoff ? ["acceptHandoff"] : []),
+    // Never `acceptHandoff` (D22 amended 03/11): a handoff is always the human's call.
     ...(a.replyCustomer ? ["sendCustomerReply"] : []),
   ];
 }
@@ -123,15 +123,31 @@ export const STEP_LABELS: Record<string, string> = {
   regenerate: "Pedi uma nova versão do rascunho",
 };
 
+/**
+ * D22 amended (incident 03/11 in PROD): the automatic turn runs ONLY for a
+ * customer message in the conversation the member put in focus. Handoffs and
+ * stuck follow-ups always reach the human (card + read-only "💡 Sugiro").
+ */
+export const AUTO_TURN_TRIGGERS = new Set(["new_message"]);
+export const SUGGEST_TRIGGERS = new Set(["handoff_requested", "ai_followup_needs_human"]);
+
+/** The automatic mode in one line (/modo, md:auto, onboarding card 2). */
+export function autoModeDescription(seconds: number): string {
+  return (
+    `🤖 Automático: eu decido e executo nas conversas que você colocou em foco; o que for para o cliente fica ${seconds} s na sua tela para cancelar. ` +
+    "Repasses e follow-ups travados sempre chegam para você decidir, com uma sugestão pronta."
+  );
+}
+
 export const MODE_COPY = {
   current: (mode: AssistantMode, seconds: number) =>
-    mode === "auto" ? `Modo atual: 🤖 Automático (envios com ${seconds} s para cancelar).` : "Modo atual: 💡 Sugestão.",
+    mode === "auto" ? `Modo atual: 🤖 Automático.\n${autoModeDescription(seconds)}` : "Modo atual: 💡 Sugestão.",
   autoForbidden: (org: string) =>
     `Modo atual: 💡 Sugestão. O modo automático está desligado na ${escapeHtml(org)} (um admin liga em Configurações → Telegram).`,
   paused: "⏸ O modo automático está pausado (3 desfazeres na última hora). Toque em 🤖 Automático para religar.",
   autoOn: (tools: string[], replyCustomer: boolean, seconds: number) =>
     [
-      "🤖 Modo automático ligado. Vou decidir e executar sozinha em repasses, mensagens das conversas em foco e follow-ups travados.",
+      `Modo automático ligado.\n${autoModeDescription(seconds)}`,
       `Posso: ${tools.map((t) => AUTO_LABELS[t]).filter(Boolean).join(", ") || "só ler"}.`,
       replyCustomer
         ? `Mensagens ao cliente ficam ${seconds} s na sua tela para cancelar.`

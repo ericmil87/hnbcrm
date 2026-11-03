@@ -14,7 +14,9 @@ import schema from "./schema";
 import { createNotification } from "./lib/notify";
 import { runAttendantCopilotWriteTool } from "./lib/copilotAttendantTools";
 import { buildConversationContextBlock, loadFocusContextInput } from "./lib/telegramContext";
-import { autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
+import { autoModeDescription, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
+import { handleModeCommand } from "./lib/telegramActions";
+import { buildTourCard } from "./lib/telegramOnboarding";
 import { COPILOT_COPY } from "./telegramCopilot";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
@@ -519,6 +521,16 @@ describe("modos (D22)", () => {
       return { handoffId, notificationId: n._id };
     });
   }
+  /** A customer message relayed to the member (the ONLY automatic trigger, D22 amended 03/11). */
+  async function messageEvent(s: Seed, body = "Oi, consegue um desconto?") {
+    return await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        organizationId: s.organizationId, memberId: s.adminId, type: "new_message", title: "Maria Souza · WhatsApp",
+        body, conversationId: s.conversationId,
+      });
+      return (await ctx.db.query("notifications").collect()).at(-1)!._id;
+    });
+  }
 
   test("modo efetivo: allowAutoMode:false força sugestão; pausa por desfazeres também", () => {
     const link = { assistant: { mode: "auto" as const } } as any;
@@ -531,24 +543,92 @@ describe("modos (D22)", () => {
     expect(tools).not.toContain("deleteLead");
   });
 
-  test("decisão: auto → turno; teto 20/h → cartão; sugestão com suggestOnEvents → sugestão", async () => {
+  test("decisão (D22 emendada): repasse nunca vira turno automático; mensagem em foco sim; teto 20/h → cartão", async () => {
     const s = await seed();
     const { notificationId } = await handoffEvent(s);
-    const decide = () => t.query(internal.telegramCopilot.internalAssistantDecision, { notificationId, now: Date.now() });
+    const decide = (id = notificationId) => t.query(internal.telegramCopilot.internalAssistantDecision, { notificationId: id, now: Date.now() });
     expect((await decide()).route).toBe("card");
     await setAssistant(s, { suggestOnEvents: true });
     expect((await decide()).route).toBe("suggest");
     await setAssistant(s, { mode: "auto" });
-    expect((await decide()).route).toBe("auto");
+    // Automatic mode: a handoff is still the human's call (card + suggestion).
+    expect((await decide()).route).toBe("suggest");
+    const msg = await messageEvent(s);
+    expect((await decide(msg)).route).toBe("card"); // not in focus
+    await setFocus(s);
+    expect((await decide(msg)).route).toBe("auto");
     await setAssistant(s, { autoActionsThisHour: 20, autoHourStart: Date.now() });
-    expect((await decide()).route).toBe("card");
+    expect((await decide(msg)).route).toBe("card");
+  });
+
+  test("hotfix 0.77.1: automático + repasse → cartão com sugestão; repasse pendente, sem tarefa, sem registro, sem gastar o teto", async () => {
+    const s = await seed();
+    await setAssistant(s, { mode: "auto", suggestOnEvents: true });
+    await setFocus(s);
+    llmQueue.push(textFrames('SUGESTAO_JSON: {"tool":"acceptHandoff","args":{},"resumo":"aceitar o repasse e ligar às 15h"}'));
+    const { handoffId } = await handoffEvent(s);
+    await drain();
+    const card = sends()[0];
+    expect(card.body.text).toContain("💡 Sugiro: aceitar o repasse e ligar às 15h");
+    expect(buttons(card).some((b) => String(b).startsWith("pa:"))).toBe(true);
+    const toolNames = ((llmCalls[0].body.tools ?? []) as any[]).map((tl) => tl.function.name);
+    expect(toolNames).not.toContain("acceptHandoff");
+    expect(toolNames).not.toContain("createTask");
+    expect((await t.run((ctx) => ctx.db.get(handoffId)))!.status).toBe("pending");
+    expect(await t.run(async (ctx) => (await ctx.db.query("tasks").collect()).length)).toBe(0);
+    const kinds = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).map((d) => d.kind));
+    expect(kinds).not.toContain("auto_record");
+    const link = await t.run((ctx) => ctx.db.get(s.linkId));
+    expect(link!.assistant.autoActionsThisHour ?? 0).toBe(0);
+    expect((await t.run((ctx) => ctx.db.get(s.leadId)))!.assignedTo).toBe(s.agentId);
+  });
+
+  test("hotfix 0.77.1: automático + follow-up travado → mesmo comportamento (cartão, nada executado)", async () => {
+    const s = await seed();
+    await setAssistant(s, { mode: "auto" });
+    await setFocus(s);
+    await t.run((ctx) =>
+      createNotification(ctx, {
+        organizationId: s.organizationId, memberId: s.adminId, type: "ai_followup_needs_human", title: "Follow-up travado",
+        body: "A IA não conseguiu retomar", conversationId: s.conversationId,
+      }),
+    );
+    await drain();
+    expect(llmCalls).toHaveLength(0);
+    expect(sends()).toHaveLength(1);
+    const kinds = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).map((d) => d.kind));
+    expect(kinds).toEqual(["notification"]);
+    expect((await t.run((ctx) => ctx.db.get(s.linkId)))!.assistant.autoActionsThisHour ?? 0).toBe(0);
+  });
+
+  test("hotfix 0.77.1: tarefa criada no turno automático sem leadId fica ligada ao lead em foco", async () => {
+    const s = await seed();
+    await setAssistant(s, { mode: "auto" });
+    await setFocus(s);
+    llmQueue.push(toolFrames("createTask", '{"title":"Ligar às 15h"}'), textFrames("Criei a tarefa."));
+    await messageEvent(s, "me liga às 15h?");
+    await drain();
+    const tasks = await t.run((ctx) => ctx.db.query("tasks").collect());
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].leadId).toBe(s.leadId);
+  });
+
+  test("hotfix 0.77.1: Copiloto com foco cria tarefa sem leadId → ligada ao lead da conversa em foco", async () => {
+    const s = await seed();
+    await setFocus(s);
+    llmQueue.push(toolFrames("createTask", '{"title":"Mandar proposta"}'), textFrames("Pronto."));
+    await say("cria uma tarefa de mandar a proposta");
+    const tasks = await t.run((ctx) => ctx.db.query("tasks").collect());
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].leadId).toBe(s.leadId);
   });
 
   test("auto sem escrita: cartão normal com '🤔 Não decidi sozinha'; ferramentas do turno filtradas", async () => {
     const s = await seed();
     await setAssistant(s, { mode: "auto" });
+    await setFocus(s);
     llmQueue.push(textFrames("Ela pede desconto; prefiro que você decida."));
-    await handoffEvent(s);
+    await messageEvent(s);
     await drain();
     const card = sends()[0];
     expect(card.body.text).toMatch(/^🤔 Não decidi sozinha: Ela pede desconto/);
@@ -557,13 +637,14 @@ describe("modos (D22)", () => {
     expect(toolNames).not.toContain("sendCustomerReply");
     expect(toolNames).not.toContain("deleteLead");
     expect(toolNames).not.toContain("createCampaignDraft");
+    expect(toolNames).not.toContain("acceptHandoff"); // D22 amended: never in the automatic turn
     // Review #4: the slot reserved before the turn comes back when nothing was written.
     const link = await t.run((ctx) => ctx.db.get(s.linkId));
     expect(link!.assistant.autoActionsThisHour ?? 0).toBe(0);
     expect(link!.turnLock).toBeUndefined();
     // Review #5: an event never moves the chat focus (D17).
     const chat = await t.run((ctx) => ctx.db.query("telegramChats").withIndex("by_chat_id", (q) => q.eq("chatId", CHAT)).first());
-    expect(chat!.focus).toBeUndefined();
+    expect(chat!.focus!.source).toBe("notification");
   });
 
   test("auto com escrita: Desfazer leva só os passos DESTE turno (por runId); conta 1 no teto; foco intacto", async () => {
@@ -586,7 +667,7 @@ describe("modos (D22)", () => {
       }),
     );
     llmQueue.push(toolFrames("instructAttendant", '{"instruction":"ofereça 10% até sexta"}'), textFrames("Instruí a IA."));
-    await handoffEvent(s);
+    await messageEvent(s);
     await drain();
     const record = await t.run(async (ctx) => (await ctx.db.query("telegramDeliveries").collect()).find((d) => d.kind === "auto_record"));
     expect(record!.undo!.steps.map((st) => st.kind)).toEqual(["instruct"]);
@@ -700,6 +781,25 @@ describe("modos (D22)", () => {
     const link = await t.run((ctx) => ctx.db.get(s.linkId));
     expect(link!.assistant.autoPausedAt).toBeDefined();
     expect(sends().some((c) => c.body.text.startsWith("⏸ Voltei para o modo Sugestão"))).toBe(true);
+  });
+
+  test("hotfix 0.77.1: textos do automático (/modo, md:auto, cartão 2 do tour)", async () => {
+    const golden =
+      "🤖 Automático: eu decido e executo nas conversas que você colocou em foco; o que for para o cliente fica 15 s na sua tela para cancelar. " +
+      "Repasses e follow-ups travados sempre chegam para você decidir, com uma sugestão pronta.";
+    expect(autoModeDescription(15)).toBe(golden);
+    const s = await seed();
+    await setAssistant(s, { mode: "auto" });
+    const modo = await t.run((ctx) => handleModeCommand(ctx, { chatId: CHAT, now: Date.now() }));
+    expect(modo.replies[0].text).toBe(`Modo atual: 🤖 Automático.\n${golden}`);
+    await setAssistant(s, { mode: "suggest" });
+    await tap(501, "md:auto");
+    expect(edits().at(-1)!.body.text).toContain(`Modo automático ligado.\n${golden}`);
+    expect(edits().at(-1)!.body.text).not.toContain("aceitar repasse");
+    const tour = buildTourCard(2).text;
+    expect(tour).toContain("Eu decido e executo nas conversas que você colocou em foco.");
+    expect(tour).toContain("O que for para o cliente fica 15 s na sua tela para cancelar.");
+    expect(tour).toContain("<b>repasses e follow-ups travados sempre chegam para você decidir</b>, com uma sugestão pronta.");
   });
 
   test("md:auto recusado com allowAutoMode:false; aceito e auditado quando permitido", async () => {
@@ -1181,11 +1281,11 @@ describe("thread própria do assistente (review #8)", () => {
       t.run(async (ctx) => (await ctx.db.query("copilotMessages").withIndex("by_thread_and_created", (q) => q.eq("threadId", freeThread)).collect()).length);
     const before = await countFree();
     llmQueue.push(textFrames("Prefiro que você decida."));
-    const handoffId = await pendingHandoff(s);
+    await setFocus(s);
     await t.run((ctx) =>
       createNotification(ctx, {
-        organizationId: s.organizationId, memberId: s.adminId, type: "handoff_requested", title: "Repasse: Maria Souza",
-        handoffId, conversationId: s.conversationId, actorId: s.agentId,
+        organizationId: s.organizationId, memberId: s.adminId, type: "new_message", title: "Maria Souza · WhatsApp",
+        body: "e o desconto?", conversationId: s.conversationId,
       }),
     );
     await drain();

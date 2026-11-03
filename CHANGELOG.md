@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.77.1] - 2026-11-03
+
+### Copiloto no Telegram — no modo automático, repasses sempre esperam você
+
+- **Correção de comportamento:** com a assistente em modo Automático, um repasse do Atendente (ou um follow-up que a IA não conseguiu) era resolvido por ela sozinha — no primeiro teste em produção ela aceitou o repasse e criou uma tarefa antes de o responsável dizer qualquer coisa. Agora **repasses e follow-ups travados sempre chegam como cartão para você decidir**, em qualquer modo, com a linha "💡 Sugiro" e o botão **Aplicar sugestão**. O Automático passa a agir sozinho apenas nas conversas que você colocou em foco (ao tocar num cartão ou com `/foco`), onde você já está conduzindo.
+- Tarefa criada pela assistente ou pelo Copiloto com uma conversa em foco passa a ficar **vinculada ao lead** dessa conversa.
+- Textos do `/modo`, do tour de boas-vindas e do card em Configurações atualizados para descrever esse comportamento.
+
 ## [0.77.0] - 2026-11-03
 
 ### Copiloto no Telegram — fotos, áudios e arquivos nos dois sentidos, com limites

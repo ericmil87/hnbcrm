@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  ONBOARDING_COPY,
   appendFirstTimeTip,
   buildTourCard,
   buildWelcomeCard,
@@ -8,44 +9,74 @@ import {
 } from "./telegramOnboarding";
 
 describe("cartões do tour", () => {
-  test("cartão 0: boas-vindas com nome e org escapados", () => {
+  test("cartão 0: boas-vindas com nome e org escapados, Próximo e Pular tour", () => {
     const c = buildWelcomeCard({ memberName: "Eric <b>", orgName: "Acme & Co" });
     expect(c.text).toBe(
-      "👋 Conectado como <b>Eric &lt;b&gt;</b> · Acme &amp; Co\nSou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.",
+      "👋 <b>Conectado!</b>\nEric &lt;b&gt; · Acme &amp; Co\n\nSou sua assistente no HNBCRM.\nEm 4 passos rápidos você vê como funciona.",
     );
-    expect(c.keyboard).toEqual([[{ text: "Próximo →", callback_data: "ob:1" }]]);
+    expect(c.keyboard).toEqual([[
+      { text: "Próximo →", callback_data: "ob:1" },
+      { text: "Pular tour", callback_data: "ob:done" },
+    ]]);
   });
 
   test("cartão 0 com várias orgs", () => {
     const c = buildWelcomeCard({ memberName: "Eric", orgName: "Acme", otherOrgNames: ["Terra"] });
-    expect(c.text).toContain("também está conectado a <b>Terra</b>");
+    expect(c.text).toContain("também está conectado a <b>Terra</b>.\nAs notificações de todas chegam aqui.");
   });
 
   test("cartões 1 a 4 (golden)", () => {
     const c1 = buildTourCard(1);
     expect(c1.text).toBe(
-      "<b>1/4 · O que chega aqui</b>\n" +
-        "🔔 Repasses da IA · 💬 mensagens das conversas que você atende\n" +
-        "📌 tarefas · 🆕 leads · 🔴 alertas de canal · ☀️🌙 relatório de manhã e de noite\n" +
-        'Cada cartão vem com resumo e botões. "Ver tudo" abre o histórico.',
+      "<b>1/4 · O que chega aqui</b>\n\n" +
+        "🔔 Repasses da IA\n💬 Mensagens das conversas que você atende\n📌 Tarefas\n" +
+        "☀️🌙 Relatório de manhã e de noite\n🔴 Alertas de canal\n\n" +
+        "Cada cartão vem com resumo e botões.\n<b>Ver tudo</b> abre o histórico.",
     );
     expect(c1.keyboard).toEqual([[{ text: "←", callback_data: "ob:back" }, { text: "Próximo →", callback_data: "ob:2" }]]);
     const c2 = buildTourCard(2);
-    expect(c2.text).toContain("2/4 · Dois modos");
-    expect(c2.text).toContain("Começar em:");
+    expect(c2.text).toContain("💡 <b>Sugestão</b> (recomendado para começar)\nEu proponho, você confirma.");
+    expect(c2.text).toContain("🤖 <b>Automático</b>\nEu decido e executo nas conversas que você colocou em foco.");
+    expect(c2.text).toContain("<b>repasses e follow-ups travados sempre chegam para você decidir</b>, com uma sugestão pronta.");
+    expect(c2.text.endsWith("Começar em:")).toBe(true);
     expect(c2.keyboard[0]).toEqual([
-      { text: "💡 Sugestão", callback_data: "ob:mode:suggest" },
+      { text: "💡 Sugestão (recomendado)", callback_data: "ob:mode:suggest" },
       { text: "🤖 Automático", callback_data: "ob:mode:auto" },
     ]);
     const c3 = buildTourCard(3);
-    expect(c3.text).toContain("3/4 · Como falar comigo");
+    expect(c3.text).toBe(
+      "<b>3/4 · Como falar comigo</b>\n\n" +
+        "• Toque nos botões dos cartões\n" +
+        "• Responda a um cartão para falar sobre aquela conversa\n" +
+        "• Áudio funciona para tudo: instruir a IA, responder, pedir coisas\n" +
+        "• Foto e arquivo (PDF, planilha) vão para o WhatsApp do cliente quando você está respondendo\n" +
+        '• Sem cartão em foco, pergunte o que quiser sobre o CRM: "leads parados?"',
+    );
     expect(c3.keyboard[0][1]).toEqual({ text: "Próximo →", callback_data: "ob:4" });
     const c4 = buildTourCard(4);
-    expect(c4.text).toBe("<b>4/4 · Teste agora</b>");
+    expect(c4.text).toBe("<b>4/4 · Teste agora</b>\n\nToque em um:");
     expect(c4.keyboard).toEqual([
       [{ text: "☀️ Ver meu /hoje", callback_data: "cmd:hoje" }, { text: "🔁 Repasses pendentes", callback_data: "cmd:repasses" }],
-      [{ text: "Terminar", callback_data: "ob:done" }],
+      [{ text: "✅ Terminar", callback_data: "ob:done" }],
     ]);
+  });
+
+  test("nenhum cartão nem texto fixo é uma linha só", () => {
+    const texts = [
+      buildWelcomeCard({ memberName: "E", orgName: "O" }).text,
+      ...[1, 2, 3, 4].map((i) => buildTourCard(i).text),
+      ONBOARDING_COPY.done,
+      ONBOARDING_COPY.modeSet("auto"),
+      ONBOARDING_COPY.modeSet("suggest"),
+      ONBOARDING_COPY.autoOff,
+    ];
+    for (const t of texts) expect(t).toContain("\n");
+  });
+
+  test("texto final do tour", () => {
+    expect(ONBOARDING_COPY.done).toBe(
+      "✅ <b>Pronto!</b>\nQuando chegar algo, eu te aviso aqui.\n\nComandos úteis:\n/hoje · /repasses · /tarefas · /foco · /modo · /ajuda\n\n/tour reabre este guia.",
+    );
   });
 
   test("callbacks cabem em 64 bytes e card inexistente lança", () => {

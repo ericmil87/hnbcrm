@@ -463,6 +463,7 @@ const targetValidator = v.object({
   organizationId: v.id("organizations"),
   memberId: v.id("teamMembers"),
   memberName: v.string(),
+  firstName: v.optional(v.string()),
   orgName: v.string(),
   timezone: v.string(),
   currency: v.string(),
@@ -499,6 +500,7 @@ export const internalGetReportTarget = internalQuery({
       organizationId: org._id,
       memberId: member._id,
       memberName: member.name,
+      firstName: link.firstName,
       orgName: org.name,
       timezone: safeTimezone(org.settings.timezone),
       currency: org.settings.currency || "BRL",
@@ -655,6 +657,7 @@ export const internalSendReport = internalAction({
       organizationId: Id<"organizations">;
       memberId: Id<"teamMembers">;
       memberName: string;
+      firstName?: string;
       orgName: string;
       timezone: string;
       currency: string;

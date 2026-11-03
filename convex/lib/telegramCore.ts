@@ -248,50 +248,58 @@ export function settingsUrl(appBaseUrl: string): string {
 
 export const COPY = {
   unlinked:
-    "Este Telegram ainda não está conectado a uma conta do HNBCRM.\n" +
+    "Este Telegram ainda não está conectado a uma conta do HNBCRM.\n\n" +
     "Abra Configurações → Notificações → Telegram no CRM e toque em \"Conectar\".",
   unlinkedButton: "🔗 Abrir configurações",
   codeInvalid:
-    "Este link expirou ou já foi usado. Gere outro em Configurações → Notificações → Telegram.",
+    "Este link expirou ou já foi usado.\n\nGere outro em Configurações → Notificações → Telegram.",
   chatTaken:
-    "Este Telegram já está conectado a outra conta do HNBCRM. Use /sair lá primeiro.",
+    "Este Telegram já está conectado a outra conta do HNBCRM.\n\nUse /sair lá primeiro.",
   moduleOff:
-    "O Telegram não está habilitado nesta organização. Peça a um admin para ligar em Configurações → Notificações → Telegram.",
+    "O Telegram não está habilitado nesta organização.\n\nPeça a um admin para ligar em Configurações → Notificações → Telegram.",
   learning:
-    "Ainda estou aprendendo: por enquanto respondo aos comandos (/ajuda lista todos). O Copiloto, por texto e áudio, chega na próxima versão.",
+    "Ainda estou aprendendo.\n\n" +
+    "Por enquanto respondo aos comandos: /ajuda lista todos.\n" +
+    "O Copiloto, por texto e áudio, chega na próxima versão.",
   help:
     "<b>HNBCRM no Telegram</b>\n" +
     "Repasses, tarefas e alertas chegam aqui com botões para agir na hora.\n\n" +
-    "/hoje · resumo do dia\n" +
-    "/repasses · repasses pendentes\n" +
-    "/tarefas · suas tarefas\n" +
-    "/leads · seus leads\n" +
-    "/foco · escolher a conversa em foco\n" +
-    "/novo · limpar o foco\n" +
-    "/pausar · silenciar notificações\n" +
-    "/org · trocar de organização\n" +
-    "/teclado · mostrar ou ocultar o teclado\n" +
-    "/tour · reabre o guia\n" +
-    "/sair · desconectar este Telegram\n\n" +
-    "O Copiloto, por texto e áudio, chega na próxima versão.",
+    "<b>Ver</b>\n" +
+    "/hoje — relatório da manhã\n" +
+    "/repasses — repasses pendentes\n" +
+    "/tarefas — suas tarefas\n" +
+    "/leads — seus leads\n\n" +
+    "<b>Agir</b>\n" +
+    "/foco — escolher a conversa em foco\n" +
+    "/novo — limpar o foco e começar de novo\n" +
+    "/modo — sugestão ou automático\n\n" +
+    "<b>Configurar</b>\n" +
+    "/pausar — silenciar notificações\n" +
+    "/org — trocar de organização\n" +
+    "/teclado — mostrar ou ocultar o teclado\n" +
+    "/tour — reabre o guia\n" +
+    "/sair — desconectar este Telegram",
 } as const;
 
 export function welcomeText(args: { memberName: string; orgName: string; otherOrgNames: string[] }): string {
   const base =
-    `Conectado como <b>${escapeHtml(args.memberName)}</b> em <b>${escapeHtml(args.orgName)}</b>. ` +
-    "Você vai receber repasses, tarefas e alertas aqui, pode me mandar texto ou áudio a qualquer hora. " +
+    "👋 <b>Conectado!</b>\n" +
+    `${escapeHtml(args.memberName)} · ${escapeHtml(args.orgName)}\n\n` +
+    "Você vai receber repasses, tarefas e alertas aqui.\n" +
+    "Pode me mandar texto ou áudio a qualquer hora.\n" +
     "/ajuda mostra tudo.";
   if (args.otherOrgNames.length === 0) return base;
   const others = args.otherOrgNames.map((n) => `<b>${escapeHtml(n)}</b>`).join(", ");
   return (
-    `${base}\n\nEste Telegram também está conectado a ${others}: as notificações de todas chegam aqui. ` +
-    `A organização ativa agora é <b>${escapeHtml(args.orgName)}</b>.`
+    `${base}\n\nEste Telegram também está conectado a ${others}.\n` +
+    `As notificações de todas chegam aqui.\nOrganização ativa agora: <b>${escapeHtml(args.orgName)}</b>.`
   );
 }
 
 export function alreadyLinkedText(args: { memberName: string; orgName: string }): string {
   return (
-    `Você já está conectado como <b>${escapeHtml(args.memberName)}</b> em <b>${escapeHtml(args.orgName)}</b>. ` +
+    "✅ <b>Você já está conectado.</b>\n" +
+    `${escapeHtml(args.memberName)} · ${escapeHtml(args.orgName)}\n\n` +
     "/ajuda mostra tudo."
   );
 }
@@ -301,13 +309,14 @@ export type CleanupReason = "unlink" | "sair" | "member_removed" | "moved";
 export function farewellText(reason: CleanupReason, orgName: string): string {
   const org = escapeHtml(orgName);
   if (reason === "member_removed") {
-    return `Sua conta não está mais nesta organização (${org}). Este Telegram foi desconectado do HNBCRM.`;
+    return `Sua conta não está mais nesta organização (${org}).\n\nEste Telegram foi desconectado do HNBCRM.`;
   }
   if (reason === "moved") {
-    return `Desconectado do HNBCRM (${org}): sua conta foi conectada a outro Telegram.`;
+    return `Desconectado do HNBCRM (${org}).\n\nSua conta foi conectada a outro Telegram.`;
   }
   return (
-    `Desconectado do HNBCRM (${org}). Você não vai mais receber nada desta organização aqui. ` +
+    `Desconectado do HNBCRM (${org}).\n` +
+    "Você não vai mais receber nada desta organização aqui.\n\n" +
     "Para conectar de novo, use Configurações → Notificações → Telegram no CRM."
   );
 }

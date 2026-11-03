@@ -8,6 +8,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { hashLinkCode } from "./lib/telegramCore";
+import { ONBOARDING_COPY } from "./lib/telegramOnboarding";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -205,9 +206,9 @@ describe("onboarding D24", () => {
     await say(CHAT_ADMIN, `/start ${code}`);
     const [card0, kb] = sends(CHAT_ADMIN);
     expect(card0.body.text).toBe(
-      "👋 Conectado como <b>Eric</b> · Acme Corp\nSou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.",
+      "👋 <b>Conectado!</b>\nEric · Acme Corp\n\nSou sua assistente no HNBCRM.\nEm 4 passos rápidos você vê como funciona.",
     );
-    expect(datas(card0)).toEqual(["ob:1"]);
+    expect(datas(card0)).toEqual(["ob:1", "ob:done"]);
     expect(kb.body.reply_markup.is_persistent).toBe(true);
     const link = await t.run((ctx) => ctx.db.query("telegramLinks").first());
     expect(link?.onboarding).toEqual({ step: 0 });
@@ -225,7 +226,7 @@ describe("onboarding D24", () => {
     expect(edited()[2].body.text).toContain("1/4 · O que chega aqui");
     expect((await linkOf(linkId))?.onboarding?.step).toBe(1);
     await tap(CHAT_ADMIN, 321, "ob:back");
-    expect(edited()[3].body.text).toContain("👋 Conectado como <b>Eric</b> · Acme Corp");
+    expect(edited()[3].body.text).toContain("👋 <b>Conectado!</b>\nEric · Acme Corp");
     expect((await linkOf(linkId))?.onboarding?.step).toBe(0);
     // Toque em cartão antigo: abre o cartão pedido, sem estado preso.
     await tap(CHAT_ADMIN, 321, "ob:3");
@@ -237,7 +238,7 @@ describe("onboarding D24", () => {
     const { linkId } = await adminChat();
     await tap(CHAT_ADMIN, 321, "ob:mode:auto");
     expect((await linkOf(linkId))?.assistant.mode).toBe("auto");
-    expect(texts(CHAT_ADMIN)).toEqual(["✅ Começando em 🤖 Automático. /modo troca quando quiser."]);
+    expect(texts(CHAT_ADMIN)).toEqual(["✅ Começando em 🤖 <b>Automático</b>.\n/modo troca quando quiser."]);
     expect(edited()[0].body.text).toContain("3/4 · Como falar comigo");
     await tap(CHAT_ADMIN, 321, "ob:mode:suggest");
     expect((await linkOf(linkId))?.assistant.mode).toBe("suggest");
@@ -253,14 +254,14 @@ describe("onboarding D24", () => {
     });
     await tap(CHAT_ADMIN, 321, "ob:mode:auto");
     expect((await linkOf(linkId))?.assistant.mode).toBe("suggest");
-    expect(texts(CHAT_ADMIN)[0]).toBe("O modo automático está desligado pela sua organização. Ficou em 💡 Sugestão.");
+    expect(texts(CHAT_ADMIN)[0]).toBe("O modo automático está desligado pela sua organização.\nFicou em 💡 <b>Sugestão</b>.");
     expect(edited()[0].body.text).toContain("3/4");
   });
 
   test("cartão 4: Ver meu /hoje agenda o relatório; Terminar grava doneAt e mostra o teclado", async () => {
     const { linkId } = await adminChat();
     await tap(CHAT_ADMIN, 321, "ob:4");
-    expect(edited()[0].body.text).toBe("<b>4/4 · Teste agora</b>");
+    expect(edited()[0].body.text).toBe("<b>4/4 · Teste agora</b>\n\nToque em um:");
     await tap(CHAT_ADMIN, 321, "cmd:hoje");
     const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     const report = jobs.find((j) => j.name.includes("internalSendReport"));
@@ -274,8 +275,18 @@ describe("onboarding D24", () => {
     expect(link?.onboarding?.doneAt).toBe(tappedAt);
     expect(edited()[0].body.reply_markup).toEqual({ inline_keyboard: [] });
     const [final] = sends(CHAT_ADMIN);
-    expect(final.body.text).toBe("Pronto. Quando chegar algo, eu te aviso aqui.");
+    expect(final.body.text).toBe(ONBOARDING_COPY.done);
     expect(final.body.reply_markup.is_persistent).toBe(true);
+  });
+
+  test("Pular tour no cartão 0 encerra, tira os botões e mantém o cartão", async () => {
+    const { linkId } = await adminChat();
+    await t.run((ctx) => ctx.db.patch(linkId, { onboarding: { step: 0 } }));
+    await tap(CHAT_ADMIN, 321, "ob:done");
+    expect(edited()[0].body.text).toContain("👋 <b>Conectado!</b>\nEric · Acme Corp");
+    expect(edited()[0].body.reply_markup).toEqual({ inline_keyboard: [] });
+    expect((await linkOf(linkId))?.onboarding?.doneAt).toBeDefined();
+    expect(sends(CHAT_ADMIN)[0].body.text).toBe(ONBOARDING_COPY.done);
   });
 
   test("Terminar respeita teclado oculto", async () => {
@@ -300,7 +311,7 @@ describe("onboarding D24", () => {
     expect(link?.onboarding?.step).toBe(1);
     expect(link?.onboarding?.doneAt).toBeDefined();
     await say(CHAT_ADMIN, "/ajuda");
-    expect(sends(CHAT_ADMIN)[1].body.text).toContain("/tour · reabre o guia");
+    expect(sends(CHAT_ADMIN)[1].body.text).toContain("/tour — reabre o guia");
   });
 
   test("chat sem vínculo não consegue dirigir ob:*", async () => {
