@@ -200,9 +200,11 @@ export function buildBridgeQrRequest(params: { baseUrl: string; token: string })
  * (WhatsApp → Linked devices → Link with phone number). Body `{ Phone }` with
  * digits only (E.164 without "+"). The session must already be connecting
  * (`/session/connect` first: the upstream handler does not check `IsConnected`).
- * VALIDAR: against a LIVE gateway — header spelling, `Phone` casing, the exact
- * field of the code (`LinkingCode`) and how long it stays valid (~160 s assumed,
- * the whatsmeow login websocket window). This flow was never exercised before v0.78.
+ * VALIDADO ao vivo no gateway gerenciado (03/11/2026, sonda com instance
+ * descartável): header `token`, body `{Phone}`, resposta
+ * `{code:200, success:true, data:{LinkingCode:"XXXX-XXXX"}}` (já com o traço).
+ * Ainda não medido: validade exata do código (~160 s assumidos, janela do
+ * websocket de login do whatsmeow) e se um segundo pedido invalida o primeiro.
  */
 export function buildBridgePairPhoneRequest(baseUrl: string, token: string, phoneE164Digits: string): BridgeHttpRequest {
   return {
