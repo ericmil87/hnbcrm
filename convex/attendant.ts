@@ -126,6 +126,7 @@ import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { maybeScheduleAiReplyRelay, maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
 
 export { isWithinSchedule };
 
@@ -1607,6 +1608,7 @@ export const internalClaimForProcessing = internalMutation({
         humanInitiated,
         humanInstruction: item.instruction ?? null,
         instructedBy: item.instructedBy ?? null,
+        requestedVia: item.requestedVia ?? null,
         sourceDraftId: item.sourceDraftId ?? null,
         previousDraftText: sourceDraft?.content ?? null,
         // Coach SEMPRE commita como sugestão (quem instrui quer revisar),
@@ -2805,6 +2807,9 @@ export const internalCommitAiReply = internalMutation({
       now,
       activityContent: `${queueItem?.followUpId ? "Follow-up enviado" : "Resposta enviada"} pelo atendente IA via ${channelLabelFor(transportOf(channelConfig), conversation.channel)}`,
     });
+    // Telegram (F1, D20): espelha a resposta da IA nos chats com esta conversa
+    // em foco. Uma leitura indexada; só agenda quando há foco.
+    await maybeScheduleAiReplyRelay(ctx, conversation, messageId);
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
       if (followUp) {
@@ -2848,6 +2853,7 @@ export const internalCommitAiSuggestion = internalMutation({
     supersedesDraftId: v.optional(v.id("messages")),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))), // F3 (D23)
     // v0.64 — flyer: fica preso ao RASCUNHO e é re-anexado no aceite.
     attachments: v.optional(v.array(v.id("files"))),
     contentType: v.optional(v.union(v.literal("text"), v.literal("image"))),
@@ -2939,6 +2945,7 @@ export const internalCommitAiSuggestion = internalMutation({
           ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
           ...(args.instruction ? { instruction: args.instruction } : {}),
           ...(args.instructedBy ? { instructedBy: args.instructedBy } : {}),
+          ...(args.instructedBy && args.requestedVia ? { requestedVia: args.requestedVia } : {}),
           ...(supersededDraft ? { previousDraftId: supersededDraft._id } : {}),
           ...(inheritedFollowUpId ? { followUpId: inheritedFollowUpId } : {}),
           ...(args.attachments && args.attachments.length > 0
@@ -3221,6 +3228,8 @@ type RunContext = {
   humanInitiated: boolean;
   humanInstruction: string | null;
   instructedBy: Id<"teamMembers"> | null;
+  /** F3 (D23): request came from the Telegram bot. */
+  requestedVia?: "telegram" | "telegram_auto" | null;
   sourceDraftId: Id<"messages"> | null;
   previousDraftText: string | null;
   forceSuggest: boolean;
@@ -4043,6 +4052,7 @@ export const internalProcessQueueItem = internalAction({
               ...(context.sourceDraftId ? { supersedesDraftId: context.sourceDraftId } : {}),
               ...(context.humanInstruction ? { instruction: context.humanInstruction } : {}),
               ...(context.instructedBy ? { instructedBy: context.instructedBy } : {}),
+              ...(context.requestedVia ? { requestedVia: context.requestedVia } : {}),
             })
           : await ctx.runMutation(internal.attendant.internalCommitAiReply, {
               ...commitArgsBase,
@@ -4206,174 +4216,200 @@ export const acceptAiDraft = mutation({
     const conversation = await ctx.db.get(draft.conversationId);
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
-
-    const aiDraft = draft.metadata?.aiDraft as
-      | {
-          status: string;
-          proposedActions?: unknown[];
-          followUpId?: Id<"aiFollowUps">;
-          attachments?: Id<"files">[];
-        }
-      | undefined;
-    if (!aiDraft || aiDraft.status !== "pending") {
-      throw new Error("Rascunho já revisado");
-    }
-
-    const finalText = (args.editedText ?? draft.content).trim();
-    if (!finalText) throw new Error("Resposta vazia");
-    const wasEdited = args.editedText !== undefined && args.editedText.trim() !== draft.content.trim();
-
-    const now = Date.now();
-    // Conversa de GRUPO (F4): as menções que o agente escolheu ficaram
-    // gravadas na linha do rascunho. Sem copiá-las aqui, o "@Fulano" sairia no
-    // texto e o WhatsApp não destacaria nem notificaria ninguém.
-    const draftMentions =
-      conversation.kind === "group" && draft.mentions && draft.mentions.length > 0
-        ? draft.mentions
-        : undefined;
-    // Flyer do rascunho (v0.64): cada mensagem tem a SUA linha de `files`
-    // (vínculo 1:1), apontando para o mesmo blob — igual ao `forwardMessage`.
-    const outboundAttachments: Id<"files">[] = [];
-    for (const fileId of Array.isArray(aiDraft.attachments) ? aiDraft.attachments : []) {
-      const file = await ctx.db.get(fileId);
-      if (!file || file.organizationId !== conversation.organizationId) continue;
-      outboundAttachments.push(
-        await insertFileRow(ctx, {
-          organizationId: file.organizationId,
-          storageId: file.storageId,
-          name: file.name,
-          mimeType: file.mimeType,
-          size: file.size,
-          fileType: "message_attachment",
-          ...(file.uploadedBy ? { uploadedBy: file.uploadedBy } : {}),
-          ...(file.sourceUrl ? { sourceUrl: file.sourceUrl } : {}),
-          createdAt: now,
-        })
-      );
-    }
-    const messageId = await ctx.db.insert("messages", {
-      organizationId: conversation.organizationId,
-      conversationId: conversation._id,
-      leadId: conversation.leadId,
-      direction: "outbound",
-      senderId: draft.senderId, // o agente IA continua o remetente ("assistido por IA")
-      senderType: "ai",
-      content: finalText,
-      contentType: outboundAttachments.length > 0 ? "image" : "text",
-      ...(outboundAttachments.length > 0 ? { attachments: outboundAttachments } : {}),
-      isInternal: false,
-      ...(draftMentions ? { mentions: draftMentions } : {}),
-      metadata: {
-        aiDraft: { approvedBy: member._id, fromDraftId: draft._id, edited: wasEdited },
-        // Chip "follow-up" na bolha do inbox + rastro do que originou o envio.
-        ...(aiDraft.followUpId ? { followUp: { followUpId: aiDraft.followUpId } } : {}),
-      },
-      createdAt: now,
-    });
-    for (const fileId of outboundAttachments) await ctx.db.patch(fileId, { messageId });
-
-    const agent = draft.senderId ? await ctx.db.get(draft.senderId) : null;
-    await applyOutboundMessageSideEffects(ctx, {
+    return await acceptAiDraftCore(ctx, {
+      draft,
       conversation,
-      member: agent ?? member,
-      messageId,
-      now,
-      activityContent: `Sugestão da IA aprovada por ${member.name}${wasEdited ? " (editada)" : ""}`,
+      member,
+      editedText: args.editedText,
+      actionIndexes: args.actionIndexes,
     });
-
-    // Executa as ações aprovadas (best-effort por ação: falha vira relato no
-    // metadata, nunca desfaz o envio). Só ações ESTRUTURADAS e aprováveis.
-    const appliedActions: {
-      index: number;
-      label: string;
-      ok: boolean;
-      error?: string;
-    }[] = [];
-    const proposed = Array.isArray(aiDraft.proposedActions) ? aiDraft.proposedActions : [];
-    if (args.actionIndexes && args.actionIndexes.length > 0 && draft.senderId) {
-      const uniq = [...new Set(args.actionIndexes)].filter(
-        (i) => Number.isInteger(i) && i >= 0 && i < proposed.length
-      );
-      for (const index of uniq) {
-        const action = proposed[index] as Partial<ProposedAction> | string;
-        if (
-          typeof action !== "object" ||
-          !action ||
-          typeof action.name !== "string" ||
-          typeof action.argsJson !== "string"
-        ) {
-          continue; // rascunho legado (ações em texto puro) — não executável
-        }
-        const label = typeof action.label === "string" ? action.label : action.name;
-        if (!APPROVABLE_DRAFT_ACTIONS.includes(action.name)) {
-          appliedActions.push({ index, label, ok: false, error: "Ação não aprovável" });
-          continue;
-        }
-        // Toda tool aprovável do atendente age sobre um LEAD. Numa conversa de
-        // grupo não existe lead (o agente de grupo da F4 nem propõe estas ações).
-        const draftLeadId = conversation.leadId;
-        if (!draftLeadId) {
-          appliedActions.push({ index, label, ok: false, error: "Conversa sem lead" });
-          continue;
-        }
-        try {
-          const result = await executeAttendantToolCore(ctx, {
-            name: action.name,
-            argsJson: action.argsJson,
-            organizationId: conversation.organizationId,
-            agentMemberId: draft.senderId,
-            conversationId: conversation._id,
-            leadId: draftLeadId,
-            approvedBy: member._id,
-          });
-          const error = (result as { error?: unknown })?.error;
-          appliedActions.push({
-            index,
-            label,
-            ok: !error,
-            ...(error ? { error: String(error) } : {}),
-          });
-        } catch (e) {
-          appliedActions.push({
-            index,
-            label,
-            ok: false,
-            error: e instanceof Error ? e.message : "Falha ao executar",
-          });
-        }
-      }
-    }
-
-    await ctx.db.patch(draft._id, {
-      metadata: {
-        ...(draft.metadata ?? {}),
-        aiDraft: {
-          ...aiDraft,
-          status: wasEdited ? "sent_edited" : "sent",
-          reviewedBy: member._id,
-          reviewedAt: now,
-          sentMessageId: messageId,
-          ...(appliedActions.length > 0 ? { appliedActions } : {}),
-        },
-      },
-    });
-
-    // Rascunho de FOLLOW-UP aceito: a tarefa conclui aqui (um humano decidiu
-    // mandar). O gancho de entrega revalida depois e é idempotente.
-    if (aiDraft.followUpId) {
-      // O teto diário por NÚMERO conta mensagens que SAEM — e esta sai. Sem
-      // isto, uma org em modo rascunho nunca alimentaria o contador e o teto
-      // valeria só para quem está em autopilot.
-      await bumpFollowUpChannelCounter(ctx, conversation, now);
-      await resolveFollowUpOutcome(ctx, aiDraft.followUpId, {
-        kind: "done",
-        messageId,
-        detail: `rascunho aprovado por ${member.name}`,
-      });
-    }
-    return messageId;
   },
 });
+
+/**
+ * Núcleo de "aprovar o rascunho da IA" (corpo do `acceptAiDraft`, sem sessão).
+ * Quem chama já autorizou o membro (`inbox:reply`) e checou a org da conversa:
+ * o app via `requirePermission`, o Telegram via `lib/telegramActions.ts`.
+ */
+export async function acceptAiDraftCore(
+  ctx: MutationCtx,
+  args: {
+    draft: Doc<"messages">;
+    conversation: Doc<"conversations">;
+    member: Doc<"teamMembers">;
+    editedText?: string;
+    actionIndexes?: number[];
+    via?: "telegram" | "telegram_auto" | "copilot";
+  }
+): Promise<Id<"messages">> {
+  const { draft, conversation, member } = args;
+  const aiDraft = draft.metadata?.aiDraft as
+    | {
+        status: string;
+        proposedActions?: unknown[];
+        followUpId?: Id<"aiFollowUps">;
+        attachments?: Id<"files">[];
+      }
+    | undefined;
+  if (!aiDraft || aiDraft.status !== "pending") {
+    throw new Error("Rascunho já revisado");
+  }
+
+  const finalText = (args.editedText ?? draft.content).trim();
+  if (!finalText) throw new Error("Resposta vazia");
+  const wasEdited = args.editedText !== undefined && args.editedText.trim() !== draft.content.trim();
+
+  const now = Date.now();
+  // Conversa de GRUPO (F4): as menções que o agente escolheu ficaram
+  // gravadas na linha do rascunho. Sem copiá-las aqui, o "@Fulano" sairia no
+  // texto e o WhatsApp não destacaria nem notificaria ninguém.
+  const draftMentions =
+    conversation.kind === "group" && draft.mentions && draft.mentions.length > 0
+      ? draft.mentions
+      : undefined;
+  // Flyer do rascunho (v0.64): cada mensagem tem a SUA linha de `files`
+  // (vínculo 1:1), apontando para o mesmo blob — igual ao `forwardMessage`.
+  const outboundAttachments: Id<"files">[] = [];
+  for (const fileId of Array.isArray(aiDraft.attachments) ? aiDraft.attachments : []) {
+    const file = await ctx.db.get(fileId);
+    if (!file || file.organizationId !== conversation.organizationId) continue;
+    outboundAttachments.push(
+      await insertFileRow(ctx, {
+        organizationId: file.organizationId,
+        storageId: file.storageId,
+        name: file.name,
+        mimeType: file.mimeType,
+        size: file.size,
+        fileType: "message_attachment",
+        ...(file.uploadedBy ? { uploadedBy: file.uploadedBy } : {}),
+        ...(file.sourceUrl ? { sourceUrl: file.sourceUrl } : {}),
+        createdAt: now,
+      })
+    );
+  }
+  const messageId = await ctx.db.insert("messages", {
+    organizationId: conversation.organizationId,
+    conversationId: conversation._id,
+    leadId: conversation.leadId,
+    direction: "outbound",
+    senderId: draft.senderId, // o agente IA continua o remetente ("assistido por IA")
+    senderType: "ai",
+    content: finalText,
+    contentType: outboundAttachments.length > 0 ? "image" : "text",
+    ...(outboundAttachments.length > 0 ? { attachments: outboundAttachments } : {}),
+    isInternal: false,
+    ...(draftMentions ? { mentions: draftMentions } : {}),
+    metadata: {
+      aiDraft: { approvedBy: member._id, fromDraftId: draft._id, edited: wasEdited },
+      ...(args.via ? { via: args.via } : {}),
+      // Chip "follow-up" na bolha do inbox + rastro do que originou o envio.
+      ...(aiDraft.followUpId ? { followUp: { followUpId: aiDraft.followUpId } } : {}),
+    },
+    createdAt: now,
+  });
+  for (const fileId of outboundAttachments) await ctx.db.patch(fileId, { messageId });
+
+  const agent = draft.senderId ? await ctx.db.get(draft.senderId) : null;
+  await applyOutboundMessageSideEffects(ctx, {
+    conversation,
+    member: agent ?? member,
+    messageId,
+    now,
+    activityContent: `Sugestão da IA aprovada por ${member.name}${wasEdited ? " (editada)" : ""}`,
+  });
+
+  // Executa as ações aprovadas (best-effort por ação: falha vira relato no
+  // metadata, nunca desfaz o envio). Só ações ESTRUTURADAS e aprováveis.
+  const appliedActions: {
+    index: number;
+    label: string;
+    ok: boolean;
+    error?: string;
+  }[] = [];
+  const proposed = Array.isArray(aiDraft.proposedActions) ? aiDraft.proposedActions : [];
+  if (args.actionIndexes && args.actionIndexes.length > 0 && draft.senderId) {
+    const uniq = [...new Set(args.actionIndexes)].filter(
+      (i) => Number.isInteger(i) && i >= 0 && i < proposed.length
+    );
+    for (const index of uniq) {
+      const action = proposed[index] as Partial<ProposedAction> | string;
+      if (
+        typeof action !== "object" ||
+        !action ||
+        typeof action.name !== "string" ||
+        typeof action.argsJson !== "string"
+      ) {
+        continue; // rascunho legado (ações em texto puro) — não executável
+      }
+      const label = typeof action.label === "string" ? action.label : action.name;
+      if (!APPROVABLE_DRAFT_ACTIONS.includes(action.name)) {
+        appliedActions.push({ index, label, ok: false, error: "Ação não aprovável" });
+        continue;
+      }
+      // Toda tool aprovável do atendente age sobre um LEAD. Numa conversa de
+      // grupo não existe lead (o agente de grupo da F4 nem propõe estas ações).
+      const draftLeadId = conversation.leadId;
+      if (!draftLeadId) {
+        appliedActions.push({ index, label, ok: false, error: "Conversa sem lead" });
+        continue;
+      }
+      try {
+        const result = await executeAttendantToolCore(ctx, {
+          name: action.name,
+          argsJson: action.argsJson,
+          organizationId: conversation.organizationId,
+          agentMemberId: draft.senderId,
+          conversationId: conversation._id,
+          leadId: draftLeadId,
+          approvedBy: member._id,
+        });
+        const error = (result as { error?: unknown })?.error;
+        appliedActions.push({
+          index,
+          label,
+          ok: !error,
+          ...(error ? { error: String(error) } : {}),
+        });
+      } catch (e) {
+        appliedActions.push({
+          index,
+          label,
+          ok: false,
+          error: e instanceof Error ? e.message : "Falha ao executar",
+        });
+      }
+    }
+  }
+
+  await ctx.db.patch(draft._id, {
+    metadata: {
+      ...(draft.metadata ?? {}),
+      aiDraft: {
+        ...aiDraft,
+        status: wasEdited ? "sent_edited" : "sent",
+        reviewedBy: member._id,
+        reviewedAt: now,
+        sentMessageId: messageId,
+        ...(appliedActions.length > 0 ? { appliedActions } : {}),
+      },
+    },
+  });
+
+  // Rascunho de FOLLOW-UP aceito: a tarefa conclui aqui (um humano decidiu
+  // mandar). O gancho de entrega revalida depois e é idempotente.
+  if (aiDraft.followUpId) {
+    // O teto diário por NÚMERO conta mensagens que SAEM — e esta sai. Sem
+    // isto, uma org em modo rascunho nunca alimentaria o contador e o teto
+    // valeria só para quem está em autopilot.
+    await bumpFollowUpChannelCounter(ctx, conversation, now);
+    await resolveFollowUpOutcome(ctx, aiDraft.followUpId, {
+      kind: "done",
+      messageId,
+      detail: `rascunho aprovado por ${member.name}`,
+    });
+  }
+  return messageId;
+}
 
 // Descarta um rascunho da IA.
 export const discardAiDraft = mutation({
@@ -4385,37 +4421,47 @@ export const discardAiDraft = mutation({
     const conversation = await ctx.db.get(draft.conversationId);
     if (!conversation) return null;
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
-
-    const aiDraft = draft.metadata?.aiDraft as
-      | { status: string; followUpId?: Id<"aiFollowUps"> }
-      | undefined;
-    if (!aiDraft || aiDraft.status !== "pending") return null;
-
-    await ctx.db.patch(draft._id, {
-      metadata: {
-        ...(draft.metadata ?? {}),
-        aiDraft: {
-          ...aiDraft,
-          status: "discarded",
-          reviewedBy: member._id,
-          reviewedAt: Date.now(),
-        },
-      },
-    });
-
-    // D7: descartar o rascunho do follow-up é dizer "não é para mandar". A
-    // tarefa continua PENDENTE, mas passa a ser de quem descartou — a IA não
-    // tenta de novo sozinha.
-    if (aiDraft.followUpId) {
-      await resolveFollowUpOutcome(ctx, aiDraft.followUpId, {
-        kind: "canceled",
-        reason: `rascunho descartado por ${member.name}`,
-        reassignTo: member._id,
-      });
-    }
+    await discardAiDraftCore(ctx, { draft, member });
     return null;
   },
 });
+
+/** Núcleo de "descartar o rascunho da IA" (sem sessão; o chamador autorizou). Sem rascunho pendente = no-op. */
+export async function discardAiDraftCore(
+  ctx: MutationCtx,
+  args: { draft: Doc<"messages">; member: Doc<"teamMembers">; via?: "telegram" | "telegram_auto" | "copilot" }
+): Promise<boolean> {
+  const { draft, member } = args;
+  const aiDraft = draft.metadata?.aiDraft as
+    | { status: string; followUpId?: Id<"aiFollowUps"> }
+    | undefined;
+  if (!aiDraft || aiDraft.status !== "pending") return false;
+
+  await ctx.db.patch(draft._id, {
+    metadata: {
+      ...(draft.metadata ?? {}),
+      aiDraft: {
+        ...aiDraft,
+        status: "discarded",
+        reviewedBy: member._id,
+        reviewedAt: Date.now(),
+        ...(args.via ? { reviewedVia: args.via } : {}),
+      },
+    },
+  });
+
+  // D7: descartar o rascunho do follow-up é dizer "não é para mandar". A
+  // tarefa continua PENDENTE, mas passa a ser de quem descartou — a IA não
+  // tenta de novo sozinha.
+  if (aiDraft.followUpId) {
+    await resolveFollowUpOutcome(ctx, aiDraft.followUpId, {
+      kind: "canceled",
+      reason: `rascunho descartado por ${member.name}`,
+      reassignTo: member._id,
+    });
+  }
+  return true;
+}
 
 // ── Loop de coaching (P2): humano instrui, IA propõe, humano aprova/reinstrui ──
 
@@ -4436,97 +4482,125 @@ export const requestAiDraft = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
-
-    // Grupos (v0.57): o atendente 1:1 não serve aqui — ele responde a toda
-    // mensagem de todo membro e chama tools de lead numa conversa sem lead.
-    // Quem atende a sala é o AGENTE DE GRUPO (F4, `convex/groupAgent.ts`), e o
-    // gatilho dele é a MENÇÃO, não um botão: pedir um rascunho avulso numa sala
-    // é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
-    if (conversation.kind === "group") {
-      throw new Error(
-        "Num grupo a IA responde quando é mencionada — não dá para pedir um rascunho avulso"
-      );
-    }
-    const org = await ctx.db.get(conversation.organizationId);
-    if (!orgAiActive(org)) throw new Error("A IA da organização não está ativa");
-    if (org!.settings.aiConfig?.attendantEnabled === false) {
-      throw new Error("O atendente IA está desativado nesta organização");
-    }
-    const lead = await getLeadRef(ctx.db, conversation.leadId);
-    if (!lead) throw new Error("Lead da conversa não encontrado");
-    const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
-    const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
-    if (!agent) throw new Error("Nenhum atendente IA configurado para este canal");
-
-    const instruction = args.instruction?.trim() || undefined;
-    if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
-      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
-    }
-
-    if (args.sourceDraftId) {
-      const source = await ctx.db.get(args.sourceDraftId);
-      if (!source || source.conversationId !== conversation._id) {
-        throw new Error("Rascunho não encontrado nesta conversa");
-      }
-      const status = (source.metadata?.aiDraft as { status?: string } | undefined)?.status;
-      if (status !== "pending") throw new Error("Rascunho já revisado");
-    }
-
-    // Anti duplo-clique / anti rascunho duplo: um item por vez por conversa
-    // (qualquer origem — a fila normal também produz rascunho).
-    for (const status of ["pending", "processing"] as const) {
-      const inFlight = await ctx.db
-        .query("aiReplyQueue")
-        .withIndex("by_conversation_and_status", (q) =>
-          q.eq("conversationId", conversation._id).eq("status", status)
-        )
-        .first();
-      if (inFlight) {
-        throw new Error("A IA já está preparando uma resposta para esta conversa — aguarde");
-      }
-    }
-
-    const lastMessage = await ctx.db
-      .query("messages")
-      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
-      .order("desc")
-      .first();
-    if (!lastMessage) throw new Error("Conversa sem mensagens");
-
-    const now = Date.now();
-    const queueItemId = await ctx.db.insert("aiReplyQueue", {
-      organizationId: conversation.organizationId,
-      conversationId: conversation._id,
-      triggerMessageId: lastMessage._id,
-      agentMemberId: agent._id,
-      status: "pending",
-      attempts: 0,
-      nextAttemptAt: now, // pedido explícito: sem debounce
-      origin: "coach",
-      instruction,
-      instructedBy: member._id,
+    await requestAiDraftCore(ctx, {
+      conversation,
+      member,
+      instruction: args.instruction,
       sourceDraftId: args.sourceDraftId,
-      createdAt: now,
-      updatedAt: now,
-    });
-    if (conversation.leadId) await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: conversation.leadId,
-      type: "note",
-      actorId: member._id,
-      actorType: "human",
-      content: args.sourceDraftId
-        ? `${member.name} pediu uma nova versão do rascunho da IA${instruction ? " com instrução" : ""}`
-        : `${member.name} pediu uma sugestão de resposta à IA${instruction ? " com instrução" : ""}`,
-      metadata: { conversationId: conversation._id, queueItemId },
-      createdAt: now,
-    });
-    await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
-      queueItemId,
     });
     return null;
   },
 });
+
+/**
+ * Núcleo de "pedir/regenerar rascunho da IA" (corpo do `requestAiDraft`, sem
+ * sessão). O chamador autorizou o membro (`inbox:reply`) e a org da conversa.
+ */
+type TelegramVia = "telegram" | "telegram_auto";
+/** D23: only bot-originated requests mark the queue item (and then the draft). */
+const telegramViaOf = (via: string | undefined): TelegramVia | undefined =>
+  via === "telegram" || via === "telegram_auto" ? via : undefined;
+
+export async function requestAiDraftCore(
+  ctx: MutationCtx,
+  args: {
+    conversation: Doc<"conversations">;
+    member: Doc<"teamMembers">;
+    instruction?: string;
+    sourceDraftId?: Id<"messages">;
+    via?: "telegram" | "telegram_auto" | "copilot";
+  }
+): Promise<void> {
+  const { conversation, member } = args;
+  // Grupos (v0.57): o atendente 1:1 não serve aqui — ele responde a toda
+  // mensagem de todo membro e chama tools de lead numa conversa sem lead.
+  // Quem atende a sala é o AGENTE DE GRUPO (F4, `convex/groupAgent.ts`), e o
+  // gatilho dele é a MENÇÃO, não um botão: pedir um rascunho avulso numa sala
+  // é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
+  if (conversation.kind === "group") {
+    throw new Error(
+      "Num grupo a IA responde quando é mencionada — não dá para pedir um rascunho avulso"
+    );
+  }
+  const org = await ctx.db.get(conversation.organizationId);
+  if (!orgAiActive(org)) throw new Error("A IA da organização não está ativa");
+  if (org!.settings.aiConfig?.attendantEnabled === false) {
+    throw new Error("O atendente IA está desativado nesta organização");
+  }
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  if (!lead) throw new Error("Lead da conversa não encontrado");
+  const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
+  const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
+  if (!agent) throw new Error("Nenhum atendente IA configurado para este canal");
+
+  const instruction = args.instruction?.trim() || undefined;
+  if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
+    throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+  }
+
+  if (args.sourceDraftId) {
+    const source = await ctx.db.get(args.sourceDraftId);
+    if (!source || source.conversationId !== conversation._id) {
+      throw new Error("Rascunho não encontrado nesta conversa");
+    }
+    const status = (source.metadata?.aiDraft as { status?: string } | undefined)?.status;
+    if (status !== "pending") throw new Error("Rascunho já revisado");
+  }
+
+  // Anti duplo-clique / anti rascunho duplo: um item por vez por conversa
+  // (qualquer origem — a fila normal também produz rascunho).
+  for (const status of ["pending", "processing"] as const) {
+    const inFlight = await ctx.db
+      .query("aiReplyQueue")
+      .withIndex("by_conversation_and_status", (q) =>
+        q.eq("conversationId", conversation._id).eq("status", status)
+      )
+      .first();
+    if (inFlight) {
+      throw new Error("A IA já está preparando uma resposta para esta conversa — aguarde");
+    }
+  }
+
+  const lastMessage = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+    .order("desc")
+    .first();
+  if (!lastMessage) throw new Error("Conversa sem mensagens");
+
+  const now = Date.now();
+  const queueItemId = await ctx.db.insert("aiReplyQueue", {
+    organizationId: conversation.organizationId,
+    conversationId: conversation._id,
+    triggerMessageId: lastMessage._id,
+    agentMemberId: agent._id,
+    status: "pending",
+    attempts: 0,
+    nextAttemptAt: now, // pedido explícito: sem debounce
+    origin: "coach",
+    instruction,
+    instructedBy: member._id,
+    ...(telegramViaOf(args.via) ? { requestedVia: telegramViaOf(args.via) } : {}),
+    sourceDraftId: args.sourceDraftId,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (conversation.leadId) await ctx.db.insert("activities", {
+    organizationId: conversation.organizationId,
+    leadId: conversation.leadId,
+    type: "note",
+    actorId: member._id,
+    actorType: "human",
+    content: args.sourceDraftId
+      ? `${member.name} pediu uma nova versão do rascunho da IA${instruction ? " com instrução" : ""}`
+      : `${member.name} pediu uma sugestão de resposta à IA${instruction ? " com instrução" : ""}`,
+    metadata: { conversationId: conversation._id, queueItemId, ...(args.via ? { via: args.via } : {}) },
+    createdAt: now,
+  });
+  await ctx.scheduler.runAfter(0, internal.attendant.internalProcessQueueItem, {
+    queueItemId,
+  });
+}
 
 // Persiste a instrução do humano como "nota da equipe" na conversa: diferente
 // da instrução de turno (que só vale para a run que ela dispara), a nota entra
@@ -4555,6 +4629,7 @@ async function queueInstructedAiTurn(
     instructedBy: Id<"teamMembers">;
     instruction: string;
     now: number;
+    requestedVia?: TelegramVia;
   }
 ): Promise<void> {
   const { conversation, agent, instructedBy, instruction, now } = params;
@@ -4574,6 +4649,7 @@ async function queueInstructedAiTurn(
       origin: "return_to_ai" as const,
       instruction,
       instructedBy,
+      requestedVia: params.requestedVia,
       sourceDraftId: undefined,
       nextAttemptAt: now,
       updatedAt: now,
@@ -4600,6 +4676,7 @@ async function queueInstructedAiTurn(
     origin: "return_to_ai",
     instruction,
     instructedBy,
+    ...(params.requestedVia ? { requestedVia: params.requestedVia } : {}),
     createdAt: now,
     updatedAt: now,
   });
@@ -4703,144 +4780,163 @@ export const returnToAi = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
-
-    // GRUPO: caminho próprio, deliberadamente MENOR (review de correção nº 6).
-    // Devolver a sala à IA é despausar, encerrar o repasse e — quando veio
-    // instrução — gravá-la como NOTA DA EQUIPE, que entra em todos os turnos
-    // seguintes daquela sala. O que NÃO acontece é disparar um turno agora: o
-    // gatilho do agente de grupo é a MENÇÃO, e publicar um texto avulso numa
-    // sala é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
-    if (conversation.kind === "group") {
-      const groupInstruction = args.instruction?.trim() || undefined;
-      if (groupInstruction && groupInstruction.length > MAX_INSTRUCTION_CHARS) {
-        throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
-      }
-      await returnGroupConversationToAi(ctx, {
-        conversation,
-        memberId: member._id,
-        memberName: member.name,
-        instruction: groupInstruction,
-        now: Date.now(),
-      });
-      return null;
-    }
-    const org = await ctx.db.get(conversation.organizationId);
-    const lead = await getLeadRef(ctx.db, conversation.leadId);
-    if (!lead) throw new Error("Lead da conversa não encontrado");
-    const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
-    const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
-
-    // Sem atendente resolvível no canal, "devolver para a IA" não devolve para
-    // ninguém — e o patch abaixo APAGARIA o dono humano do lead em silêncio.
-    // Erro claro em vez de conversa órfã.
-    if (!agent) {
-      throw new Error("Nenhum atendente IA configurado para este canal");
-    }
-    const instruction = args.instruction?.trim() || undefined;
-    if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
-      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
-    }
-
-    const now = Date.now();
-    await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
-
-    // Guardrail anti-bot (v0.65): "Devolver para IA" é o humano dizendo "é
-    // pessoa" — limpa a suspeita (a condição 12 deixaria a IA muda) e tira a
-    // etiqueta do lead ANTES de enfileirar o turno abaixo.
-    await clearBotSuspicion(ctx, {
-      conversation,
-      lead,
-      member,
-      tag: botTagFor(agent),
-      now,
-      via: "return_to_ai",
-    });
-
-    // Lead volta para o atendente (condição nº 6 da elegibilidade).
-    // handoffState limpo encerra o episódio.
-    await ctx.db.patch(lead._id, {
-      assignedTo: agent._id,
-      handoffState: undefined,
-      lastActivityAt: now,
-      updatedAt: now,
-    });
-
-    // Repasse pendente do lead → cancelado (o humano decidiu devolver à IA).
-    const leadHandoffs = await ctx.db
-      .query("handoffs")
-      .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
-      .collect();
-    const pendingHandoff = leadHandoffs.find((h) => h.status === "pending");
-    if (pendingHandoff) {
-      await ctx.db.patch(pendingHandoff._id, {
-        status: "canceled",
-        resolvedBy: member._id,
-        resolvedAt: now,
-      });
-      await scheduleWebhookEvent(ctx, {
-        organizationId: conversation.organizationId,
-        event: "handoff.canceled",
-        payload: {
-          handoffId: pendingHandoff._id,
-          leadId: lead._id,
-          conversationId: conversation._id,
-          canceledBy: member._id,
-        },
-      });
-    }
-
-    await ctx.db.insert("auditLogs", {
-      organizationId: conversation.organizationId,
-      entityType: "lead",
-      entityId: lead._id,
-      action: "assign",
-      actorId: member._id,
-      actorType: "human",
-      changes: {
-        before: { assignedTo: lead.assignedTo },
-        after: { assignedTo: agent?._id },
-      },
-      metadata: { title: lead.title, returnedToAi: true, hasInstruction: !!instruction },
-      description: `Devolveu a conversa e o lead '${lead.title}' para a IA`,
-      severity: "medium",
-      createdAt: now,
-    });
-    await ctx.db.insert("activities", {
-      organizationId: conversation.organizationId,
-      leadId: lead._id,
-      type: "assignment",
-      actorId: member._id,
-      actorType: "human",
-      content: `${member.name} devolveu a conversa para a IA${instruction ? " com instrução" : ""}`,
-      metadata: { conversationId: conversation._id },
-      createdAt: now,
-    });
-    await scheduleWebhookEvent(ctx, {
-      organizationId: conversation.organizationId,
-      event: "conversation.returned_to_ai",
-      payload: {
-        conversationId: conversation._id,
-        leadId: lead._id,
-        memberId: member._id,
-        hasInstruction: !!instruction,
-      },
-    });
-
-    // Instrução → nota da equipe persistida (vale para todos os turnos futuros)
-    // + um turno da IA agora. Item pendente existente é reaproveitado (vira o
-    // turno instruído) em vez de disputar o lock com um novo.
-    if (instruction) {
-      await queueInstructedAiTurn(ctx, {
-        conversation,
-        agent,
-        instructedBy: member._id,
-        instruction,
-        now,
-      });
-    }
+    await returnToAiCore(ctx, { conversation, member, instruction: args.instruction });
     return null;
   },
 });
+
+/**
+ * Núcleo de "Devolver à IA" (corpo do `returnToAi`, sem sessão). O chamador
+ * autorizou o membro (`inbox:reply`) e a org da conversa — o app via
+ * `requirePermission`, o Telegram via `lib/telegramActions.ts`.
+ */
+export async function returnToAiCore(
+  ctx: MutationCtx,
+  args: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; instruction?: string; via?: "telegram" | "telegram_auto" | "copilot" }
+): Promise<void> {
+  const { conversation, member } = args;
+  // GRUPO: caminho próprio, deliberadamente MENOR (review de correção nº 6).
+  // Devolver a sala à IA é despausar, encerrar o repasse e — quando veio
+  // instrução — gravá-la como NOTA DA EQUIPE, que entra em todos os turnos
+  // seguintes daquela sala. O que NÃO acontece é disparar um turno agora: o
+  // gatilho do agente de grupo é a MENÇÃO, e publicar um texto avulso numa
+  // sala é escrever para dezenas de pessoas sem ninguém ter perguntado nada.
+  if (conversation.kind === "group") {
+    const groupInstruction = args.instruction?.trim() || undefined;
+    if (groupInstruction && groupInstruction.length > MAX_INSTRUCTION_CHARS) {
+      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+    }
+    await returnGroupConversationToAi(ctx, {
+      conversation,
+      memberId: member._id,
+      memberName: member.name,
+      instruction: groupInstruction,
+      now: Date.now(),
+    });
+    return;
+  }
+  const org = await ctx.db.get(conversation.organizationId);
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  if (!lead) throw new Error("Lead da conversa não encontrado");
+  const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
+  const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
+
+  // Sem atendente resolvível no canal, "devolver para a IA" não devolve para
+  // ninguém — e o patch abaixo APAGARIA o dono humano do lead em silêncio.
+  // Erro claro em vez de conversa órfã.
+  if (!agent) {
+    throw new Error("Nenhum atendente IA configurado para este canal");
+  }
+  const instruction = args.instruction?.trim() || undefined;
+  if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
+    throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+  }
+
+  const now = Date.now();
+  await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+
+  // Guardrail anti-bot (v0.65): "Devolver para IA" é o humano dizendo "é
+  // pessoa" — limpa a suspeita (a condição 12 deixaria a IA muda) e tira a
+  // etiqueta do lead ANTES de enfileirar o turno abaixo.
+  await clearBotSuspicion(ctx, {
+    conversation,
+    lead,
+    member,
+    tag: botTagFor(agent),
+    now,
+    via: "return_to_ai",
+  });
+
+  // Lead volta para o atendente (condição nº 6 da elegibilidade).
+  // handoffState limpo encerra o episódio.
+  await ctx.db.patch(lead._id, {
+    assignedTo: agent._id,
+    handoffState: undefined,
+    lastActivityAt: now,
+    updatedAt: now,
+  });
+
+  // Repasse pendente do lead → cancelado (o humano decidiu devolver à IA).
+  const leadHandoffs = await ctx.db
+    .query("handoffs")
+    .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
+    .collect();
+  const pendingHandoff = leadHandoffs.find((h) => h.status === "pending");
+  if (pendingHandoff) {
+    await ctx.db.patch(pendingHandoff._id, {
+      status: "canceled",
+      resolvedBy: member._id,
+      resolvedAt: now,
+    });
+    await scheduleWebhookEvent(ctx, {
+      organizationId: conversation.organizationId,
+      event: "handoff.canceled",
+      payload: {
+        handoffId: pendingHandoff._id,
+        leadId: lead._id,
+        conversationId: conversation._id,
+        canceledBy: member._id,
+      },
+    });
+    await maybeScheduleHandoffCardsUpdate(ctx, pendingHandoff._id, args.via === "telegram" ? member._id : undefined);
+  }
+
+  await ctx.db.insert("auditLogs", {
+    organizationId: conversation.organizationId,
+    entityType: "lead",
+    entityId: lead._id,
+    action: "assign",
+    actorId: member._id,
+    actorType: "human",
+    changes: {
+      before: { assignedTo: lead.assignedTo },
+      after: { assignedTo: agent?._id },
+    },
+    metadata: {
+      title: lead.title,
+      returnedToAi: true,
+      hasInstruction: !!instruction,
+      ...(args.via ? { via: args.via } : {}),
+    },
+    description: `Devolveu a conversa e o lead '${lead.title}' para a IA`,
+    severity: "medium",
+    createdAt: now,
+  });
+  await ctx.db.insert("activities", {
+    organizationId: conversation.organizationId,
+    leadId: lead._id,
+    type: "assignment",
+    actorId: member._id,
+    actorType: "human",
+    content: `${member.name} devolveu a conversa para a IA${instruction ? " com instrução" : ""}`,
+    metadata: { conversationId: conversation._id },
+    createdAt: now,
+  });
+  await scheduleWebhookEvent(ctx, {
+    organizationId: conversation.organizationId,
+    event: "conversation.returned_to_ai",
+    payload: {
+      conversationId: conversation._id,
+      leadId: lead._id,
+      memberId: member._id,
+      hasInstruction: !!instruction,
+    },
+  });
+
+  // Instrução → nota da equipe persistida (vale para todos os turnos futuros)
+  // + um turno da IA agora. Item pendente existente é reaproveitado (vira o
+  // turno instruído) em vez de disputar o lock com um novo.
+  if (instruction) {
+    await queueInstructedAiTurn(ctx, {
+      conversation,
+      agent,
+      instructedBy: member._id,
+      instruction,
+      now,
+      ...(telegramViaOf(args.via) ? { requestedVia: telegramViaOf(args.via) } : {}),
+    });
+  }
+}
 
 // Chamado pelo rejeitar-com-instrução do /app/repasses (handoffs.rejectHandoff,
 // via scheduler — import direto criaria ciclo handoffs↔attendant): aplica a
@@ -4852,6 +4948,7 @@ export const internalQueueInstructedTurn = internalMutation({
     conversationId: v.id("conversations"),
     instructedBy: v.id("teamMembers"),
     instruction: v.string(),
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -4898,6 +4995,7 @@ export const internalQueueInstructedTurn = internalMutation({
       instructedBy: args.instructedBy,
       instruction: args.instruction,
       now,
+      ...(args.requestedVia ? { requestedVia: args.requestedVia } : {}),
     });
     return null;
   },

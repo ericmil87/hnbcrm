@@ -144,7 +144,7 @@ type AiStatus = {
   // Override por produto. order "inherit" = herda o platformOrder da org;
   // model "" (só na visão) = Automático, a cadeia inteira com fallover.
   products: Record<
-    "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent",
+    "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent" | "telegramCopilot",
     { order: string; model: string }
   >;
   byo: { provider: string; baseUrl: string | null; keyLast4: string | null } | null;
@@ -340,7 +340,7 @@ function ActivationWizardModal({
 // guarda só o que é mesmo da organização inteira: rota padrão, chave própria e
 // privacidade.
 
-type ProductKey = "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent";
+type ProductKey = "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent" | "telegramCopilot";
 
 type ModelOption = {
   id: string;
@@ -474,7 +474,8 @@ function ProductRow({
   description: string;
   enabled: boolean;
   busy: boolean;
-  onToggle: () => void;
+  /** Sem onToggle o produto não tem interruptor próprio (ex.: liga pelo módulo). */
+  onToggle?: () => void;
   first?: boolean;
   children: React.ReactNode;
 }) {
@@ -486,7 +487,7 @@ function ProductRow({
           <p className="text-sm font-medium text-text-primary">{title}</p>
           <p className="text-xs text-text-muted mt-0.5">{description}</p>
         </div>
-        <Switch checked={enabled} onChange={onToggle} label={title} disabled={busy} />
+        {onToggle && <Switch checked={enabled} onChange={onToggle} label={title} disabled={busy} />}
       </div>
       {enabled && (
         <>
@@ -773,6 +774,35 @@ function FeatureTogglesCard({
             orgOrder={status.platformOrder}
             byoProvider={byoProvider}
             onChange={(v) => saveRouting("groupPosts", { order: v })}
+          />
+        </ProductRow>
+
+        <ProductRow
+          title="Copiloto no Telegram"
+          description="Modelo e rota usados quando a equipe fala com o Copiloto pelo Telegram (padrão: DeepSeek Flash via OpenRouter)."
+          enabled
+          busy={busy}
+        >
+          <div>
+            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Modelo</label>
+            <select
+              value={status.products.telegramCopilot?.model ?? ""}
+              onChange={(e) => saveRouting("telegramCopilot", { model: e.target.value })}
+              className={SELECT_CLS}
+            >
+              <option value="">Padrão (DeepSeek Flash via OpenRouter)</option>
+              {(modelOptions ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <RoutingSelect
+            value={status.products.telegramCopilot?.order ?? "inherit"}
+            orgOrder={status.platformOrder}
+            byoProvider={byoProvider}
+            onChange={(v) => saveRouting("telegramCopilot", { order: v })}
           />
         </ProductRow>
       </div>

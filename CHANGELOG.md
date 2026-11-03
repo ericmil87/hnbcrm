@@ -2,6 +2,43 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.77.0] - 2026-11-03
+
+### Copiloto no Telegram — fotos, áudios e arquivos nos dois sentidos, com limites
+
+- **Do cliente para o Telegram:** nos cartões de mensagem e nos relays, a foto do cliente chega como foto (até 5 MB), o áudio como transcrição mais a nota de voz (até 20 MB) e o documento como arquivo (até 20 MB); acima disso, ou em vídeo, uma linha com link para abrir no CRM.
+- **Do Telegram para o cliente:** ao responder pelo bot você pode mandar foto, nota de voz ou arquivo (PDF, Office, CSV, TXT, ZIP; até 20 MB) com legenda; o anexo entra no rascunho e sai pelo mesmo caminho das mensagens do CRM (respeita a janela e os limites do canal). Vídeo continua fora ("mande pelo CRM ou pelo WhatsApp").
+- **Limites para não levar bloqueio nem inundar o servidor:** por pessoa 30 arquivos por hora e 150 MB por dia, por organização 500 arquivos por dia; o bot avisa quando bate ("libera às 15:00") e nada é descartado em silêncio. Envios do bot respeitam 1 mensagem por segundo por chat e um teto global por deployment, reagendando em vez de estourar.
+
+## [0.76.0] - 2026-11-03
+
+### Copiloto no Telegram — fale com a IA por texto e voz, com a conversa em foco; modos Sugestão e Automático; envio com veto
+
+- **Copiloto no bolso.** Qualquer texto ou áudio que você mande ao bot (sem comando e sem prompt aberto) vai para o Copiloto, o mesmo do painel, agora com a conversa em foco: quando você toca num cartão (repasse, mensagem, tarefa) ou usa `/foco`, o Copiloto recebe lead, etapa, motivo do repasse, notas da equipe e as últimas 20 mensagens, e pode **instruir o Atendente**, **regenerar** a resposta, **aceitar o repasse**, **concluir ou adiar tarefa** e **responder ao cliente** (sempre com confirmação). Áudio é transcrito ("🎙 Entendi: …") e foto passa pela visão. A resposta chega em streaming (rascunho nativo do Telegram) e ações pendentes viram cartões **Confirmar · Cancelar**. `/novo` começa uma thread nova e limpa o foco.
+- **Modelo configurável.** Novo produto de IA "Copiloto no Telegram" em Configurações → IA → Produtos de IA (padrão DeepSeek Flash mais recente via OpenRouter; herda a rota da organização quando não há OpenRouter). Custo registrado por execução como os outros produtos.
+- **Dois modos da assistente, por pessoa (`/modo` ou no card).** *Sugestão* (padrão): em cada repasse ela propõe uma ação ("💡 Sugiro: …") com **Aplicar sugestão**, e nada vai ao cliente sem o seu toque. *Automático*: em repasses, mensagens das conversas em foco e follow-ups travados ela decide e executa com o que você permitiu (instruir a IA, criar tarefa, mover etapa, aceitar repasse; responder ao cliente só se você liberar) e manda um registro com **Desfazer** (10 minutos; reabre o repasse, apaga a tarefa, volta a etapa) e **Ajustar**. Tetos: 20 ações por hora e volta sozinha para Sugestão após 3 desfazeres numa hora. O admin pode proibir o automático na organização.
+- **Envio com veto.** No automático, toda mensagem para o cliente nascida no Telegram (resposta sua, resposta da IA a uma instrução, rascunho regenerado) fica N segundos na tela (5–120, padrão 15) com **Regenerar · Cancelar envio** antes de sair; depois o cartão confirma "✓ Enviado · hh:mm". Em Sugestão nada sai sem **Enviar**.
+- **Onboarding guiado.** Ao conectar, 4 cartões curtos explicam o que chega, os dois modos (escolha na hora), como falar com o bot e um teste com o seu `/hoje`. `/tour` reabre; a primeira vez de cada tipo de cartão traz uma dica.
+
+## [0.75.0] - 2026-11-03
+
+### Copiloto no Telegram — comandos, teclado fixo e relatórios de manhã e de fim do dia
+
+- **Relatório de manhã (08:00) e de fim do dia (18:00), na hora local da organização**, para quem conectou o Telegram e deixou "Relatórios diários" ligado no card. De manhã: repasses pendentes, follow-ups da IA do dia, suas tarefas de hoje e atrasadas, leads novos desde ontem 18h, conversas não lidas e estado dos canais, com botões **Ver repasses · Ver tarefas · Abrir CRM**. No fim do dia: leads criados, ganhos (R$) e perdidos, tarefas concluídas e pendentes, repasses sem dono e custo de IA do dia e do mês. Horários ajustáveis no card; sem relatório aos fins de semana por padrão (toggle). Admin e gerente veem a organização; agente vê o que é seu. `/hoje` manda o relatório da manhã a qualquer hora.
+- **Comandos**: `/repasses` (cada repasse com Aceitar · Instruir), `/tarefas` (Concluir · Adiar 1h), `/leads`, `/foco` (escolher a conversa em foco entre as suas), `/novo` (limpar o foco), `/pausar` (1 hora · até amanhã 8h · retomar), `/org` (trocar a organização ativa quando você está em mais de uma), `/teclado` e `/ajuda`. Listas mostram 10 por vez com "Mais 10 →" e respeitam o modo discreto.
+- **Teclado fixo** com 📋 Hoje · 🔁 Repasses · ✅ Tarefas · ⏸ Pausar, ligado ao conectar e ocultável com `/teclado`.
+- Tudo é autorizado no servidor como no painel: cada lista mostra só o que a pessoa pode ver na organização ativa; nenhuma consulta varre tabelas inteiras (listas e relatórios leem por índice com teto, e mostram "50+" quando passa).
+
+## [0.74.0] - 2026-11-03
+
+### Copiloto no Telegram — repasses, tarefas e mensagens com botões para agir na hora
+
+- **Notificações chegam no Telegram com ações.** Quem conectou o Telegram (0.73) passa a receber ali tudo o que chega no sino: repasse da IA com **Aceitar · Instruir a IA · Regenerar**, rascunho da IA com **Enviar · Regenerar · Descartar**, tarefa com **Concluir · Adiar 1h · Amanhã 9h**, transferências, alertas de canal, campanhas, grupos e gasto de IA, cada cartão com **Abrir no CRM** e, quando a conversa é WhatsApp ou Instagram, **Abrir no WhatsApp / Instagram** direto na conversa do cliente. As mesmas preferências do sino valem para o Telegram.
+- **Texto íntegro, resumo primeiro.** O cartão abre com o resumo (lead, canal, telefone, funil › etapa, valor, motivo) e traz a última mensagem do cliente inteira numa citação que expande ao toque; **Ver tudo** troca o cartão pelas últimas 10 mensagens e **Resumir** volta. Admins que preferirem menos dados no Telegram ligam o **Modo discreto** no card (200 caracteres, sem telefone, sem nome completo, sem botão de WhatsApp) e podem **Proteger conteúdo** (sem encaminhar/copiar).
+- **Instruir a IA e Regenerar pelo Telegram.** "Instruir a IA" pede o texto (até 2.000 caracteres), devolve a conversa à IA com a instrução (vai para as notas da equipe, como no painel) e o cartão vira registro ("Devolvido à IA por você · 14:33"). "Regenerar" pede o motivo e o novo rascunho volta como cartão. "Responder" mostra uma prévia e só envia ao tocar em **Enviar**.
+- **Relay: a resposta do cliente chega para quem está atendendo.** Nova notificação "Novas mensagens nas conversas que eu atendo" (sino + Telegram): quando um humano está no comando da conversa (IA pausada ou sem atendente), as mensagens do cliente chegam agrupadas (janela de 20 s) com **Responder · Instruir a IA · Abrir no WhatsApp**. E quando a IA responde numa conversa que você acabou de tocar no Telegram, o bot mostra "IA → Maria: …" com **Regenerar · Assumir eu**.
+- **Segurança:** cada toque é reautorizado no servidor (membro vivo, permissão `inbox:reply`/tarefas, entidade da org certa); ids forjados não encontram nada; cartões de outros membros viram "Já aceito por Ana" quando alguém aceita primeiro. Nada passa por fora das portas existentes (aceite, devolução à IA, envio, tarefas).
+
 ## [0.73.0] - 2026-11-03
 
 ### Copiloto no Telegram — fundação: conecte seu Telegram à sua conta

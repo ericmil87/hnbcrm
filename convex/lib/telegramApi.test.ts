@@ -82,3 +82,16 @@ describe("envio em blocos", () => {
     expect(res).toMatchObject({ ok: false, kind: "rate_limited", retryAfterSeconds: 3, sentCount: 1 });
   });
 });
+
+describe("editMessageText nunca corta dentro de tag (revisão F1 #13)", () => {
+  test("texto acima de 4096 vira o primeiro bloco balanceado", async () => {
+    stubFetch(() => ({ status: 200, json: { ok: true, result: true } }));
+    const html = `<b>cabeçalho</b>\n<blockquote expandable>${"palavra &amp; ".repeat(600)}</blockquote>`;
+    expect(html.length).toBeGreaterThan(4096);
+    await editMessageText({ chatId: 1, messageId: 2, text: html });
+    const sent = calls[0].body.text as string;
+    expect(sent.length).toBeLessThanOrEqual(4096);
+    expect(sent.endsWith("</blockquote>")).toBe(true);
+    expect(sent).not.toMatch(/&[a-z]*$/);
+  });
+});

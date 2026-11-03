@@ -8,7 +8,10 @@ import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { isMembershipRevoked } from "./auth";
+import { modulesOf } from "./orgModules";
+import { resolvePermissions, type Permissions, type Role } from "./permissions";
 import type { CleanupReason } from "./telegramCore";
+import { discardChatPromptForOrg } from "./telegramDrafts";
 
 export type RevokeReason = CleanupReason | "relinked";
 
@@ -78,6 +81,8 @@ export async function revokeTelegramLink(
   if (link.status === "revoked") return;
   const now = opts.now ?? Date.now();
   await ctx.db.patch(link._id, { status: "revoked", revokedAt: now, revokedReason: reason });
+  // F4 (review #2): a file draft of this org in the chat must not outlive the link.
+  await discardChatPromptForOrg(ctx, link.chatId, link.organizationId, now);
   if (opts.audit !== false) {
     await ctx.db.insert("auditLogs", {
       organizationId: link.organizationId,
@@ -113,4 +118,50 @@ export async function revokeTelegramLinksForMember(
     await revokeTelegramLink(ctx, link, "member_removed", { actorId: opts.actorId });
   }
   return links.length;
+}
+
+export type TelegramViewer = {
+  link: Doc<"telegramLinks">;
+  member: Doc<"teamMembers">;
+  org: Doc<"organizations">;
+  perms: Permissions;
+  /**
+   * Scope per category from the member's EFFECTIVE permissions (custom ones
+   * included): `org` = the whole organization, `own` = what is theirs (handoffs:
+   * directed to them or broadcast). The default agent (`leads:edit_own`,
+   * `inbox:reply`) is `own`; admin/manager defaults are `org`.
+   */
+  scope: { leads: "org" | "own"; inbox: "org" | "own" };
+};
+
+// Levels that mean "the whole org". `edit_own`/`reply` rank above `view_all` in the
+// hierarchy but are the AGENT defaults, whose Telegram lists stay personal.
+const ORG_LEVELS = {
+  leads: ["view_all", "edit_all", "full"],
+  inbox: ["view_all", "full"],
+} as const;
+
+export function scopeOf(perms: Permissions): TelegramViewer["scope"] {
+  return {
+    leads: (ORG_LEVELS.leads as readonly string[]).includes(perms.leads) ? "org" : "own",
+    inbox: (ORG_LEVELS.inbox as readonly string[]).includes(perms.inbox) ? "org" : "own",
+  };
+}
+
+/**
+ * Read-only twin of `authorizeTelegramActor` for the F2 command lists: the
+ * member behind the link is alive and the org has the Telegram module on.
+ * It never revokes (the routing mutation already did via `resolveChat`);
+ * RBAC per list is checked by the caller with `viewer.perms`.
+ */
+export async function resolveTelegramViewer(
+  ctx: { db: QueryCtx["db"] },
+  link: Doc<"telegramLinks">,
+): Promise<{ ok: true; viewer: TelegramViewer } | { ok: false; reason: "member_dead" | "module_off" }> {
+  const member = await ctx.db.get(link.teamMemberId);
+  if (!member || !isLinkMemberAlive(link, member)) return { ok: false, reason: "member_dead" };
+  const org = await ctx.db.get(link.organizationId);
+  if (!org || !modulesOf(org).telegram) return { ok: false, reason: "module_off" };
+  const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+  return { ok: true, viewer: { link, member, org, perms, scope: scopeOf(perms) } };
 }

@@ -60,6 +60,7 @@ import {
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
 
 type ConversationChannel =
   | "whatsapp"
@@ -1543,143 +1544,170 @@ export const internalSendMessage = internalMutation({
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
-    const teamMember = await ctx.db.get(args.teamMemberId);
-    if (!teamMember) throw new Error("Team member not found");
-
-    const conversation = await ctx.db.get(args.conversationId);
-    if (!conversation) throw new Error("Conversation not found");
-    // Guarda de org: o ator tem de pertencer à org da conversa (isolação de tenant)
-    if (teamMember.organizationId !== conversation.organizationId) {
-      throw new Error("Membro não pertence à organização da conversa");
-    }
-
-    // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
-    await assertGroupConversationSendable(ctx, conversation);
-    await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
-    const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
-
-    // Menção só existe em grupo, e só para quem está DENTRO da sala.
-    const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
-
-    const now = Date.now();
-
-    const messageId = await ctx.db.insert("messages", {
-      organizationId: conversation.organizationId,
-      conversationId: args.conversationId,
-      ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
-      direction: args.isInternal ? "internal" : "outbound",
-      senderId: teamMember._id,
-      senderType: teamMember.type === "ai" ? "ai" : "human",
-      content: args.content,
-      contentType: args.contentType || "text",
-      attachments: args.attachments,
-      isInternal: args.isInternal || false,
-      mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
-      ...(mentions && mentions.length > 0 ? { mentions } : {}),
-      ...(replyMeta ? { metadata: replyMeta } : {}),
-      createdAt: now,
-    });
-
-    // Link attachment files back to this message
-    if (args.attachments && args.attachments.length > 0) {
-      await Promise.all(
-        args.attachments.map((fileId) =>
-          ctx.db.patch(fileId, { messageId })
-        )
-      );
-    }
-
-    // Update conversation
-    await ctx.db.patch(args.conversationId, {
-      lastMessageAt: now,
-      messageCount: conversation.messageCount + 1,
-      updatedAt: now,
-      ...(args.isInternal
-        ? {}
-        : firstResponsePatch(conversation, teamMember.type === "ai" ? "ai" : "human", now)),
-      ...(await lastMessagePatchForId(ctx, conversation, messageId)),
-    });
-
-    // Update lead activity
-    const lead = await getLeadRef(ctx.db, conversation.leadId);
-    if (lead) {
-      await ctx.db.patch(lead._id, {
-        lastActivityAt: now,
-        updatedAt: now,
-        conversationStatus: "active",
-      });
-    }
-
-    // Log audit entry
-    await ctx.db.insert("auditLogs", {
-      organizationId: conversation.organizationId,
-      entityType: "message",
-      entityId: messageId,
-      action: "create",
-      actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
-      metadata: {
-        conversationId: args.conversationId,
-        leadId: conversation.leadId,
-        isInternal: args.isInternal,
-      },
-      description: buildAuditDescription({ action: "create", entityType: "message", metadata: { conversationId: args.conversationId, leadId: conversation.leadId, isInternal: args.isInternal } }),
-      severity: "low",
-      createdAt: now,
-    });
-
-    // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
-    // só no audit acima.
-    if (conversation.leadId) {
-      await ctx.db.insert("activities", {
-        organizationId: conversation.organizationId,
-        leadId: conversation.leadId,
-        type: "message_sent",
-        actorId: teamMember._id,
-        actorType: teamMember.type === "ai" ? "ai" : "human",
-        content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
-        metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
-        createdAt: now,
-      });
-    }
-
-    // Trigger webhooks
-    if (!args.isInternal) {
-      // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
-      // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
-      await scheduleWebhookEvent(ctx, {
-        organizationId: conversation.organizationId,
-        event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
-        payload: {
-          messageId,
-          conversationId: args.conversationId,
-          ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
-          ...(conversation.kind === "group" ? { kind: "group" } : {}),
-          channel: conversation.channel,
-          senderType: teamMember.type === "ai" ? "ai" : "human",
-          senderId: teamMember._id,
-        },
-      });
-    }
-
-    // Real channel dispatch (paced per conversation); channel gate lives in the port
-    if (!args.isInternal) {
-      await scheduleOutboundDispatch(ctx, conversation, messageId);
-    }
-
-    // Nota de voz do TIME (ou da IA) também é transcrita: o atendente e os
-    // colegas leem o que foi dito em vez de "[áudio enviado]". Mesmo gate do
-    // áudio do cliente (toggle do canal OU atendente ativo), decidido na action.
-    await scheduleAudioTranscription(ctx, {
-      messageId,
-      contentType: args.contentType,
-      attachments: args.attachments,
-      isInternal: args.isInternal,
-    });
-
-    return messageId;
+    return await internalSendMessageCore(ctx, args);
   },
 });
+
+/**
+ * Corpo do `internalSendMessage` (envio como membro, sem sessão): REST, MCP e
+ * o Telegram (`lib/telegramActions.ts`, depois da reautorização) chamam aqui.
+ * Guarda de org e de grupo inclusas; o despacho sai por `scheduleOutboundDispatch`.
+ */
+export async function internalSendMessageCore(
+  ctx: MutationCtx,
+  args: {
+    conversationId: Id<"conversations">;
+    content: string;
+    contentType?: "text" | "image" | "file" | "audio";
+    isInternal?: boolean;
+    attachments?: Id<"files">[];
+    mentionedUserIds?: Id<"teamMembers">[];
+    replyToMessageId?: Id<"messages">;
+    mentions?: string[];
+    teamMemberId: Id<"teamMembers">;
+    /** Origem fora do app (Telegram F1): vai para `metadata.via` da mensagem e do audit. */
+    via?: "telegram" | "telegram_auto" | "copilot";
+  }
+): Promise<Id<"messages">> {
+  const teamMember = await ctx.db.get(args.teamMemberId);
+  if (!teamMember) throw new Error("Team member not found");
+
+  const conversation = await ctx.db.get(args.conversationId);
+  if (!conversation) throw new Error("Conversation not found");
+  // Guarda de org: o ator tem de pertencer à org da conversa (isolação de tenant)
+  if (teamMember.organizationId !== conversation.organizationId) {
+    throw new Error("Membro não pertence à organização da conversa");
+  }
+
+  // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
+  await assertGroupConversationSendable(ctx, conversation);
+  await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
+  const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
+
+  // Menção só existe em grupo, e só para quem está DENTRO da sala.
+  const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
+
+  const now = Date.now();
+
+  const messageId = await ctx.db.insert("messages", {
+    organizationId: conversation.organizationId,
+    conversationId: args.conversationId,
+    ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+    direction: args.isInternal ? "internal" : "outbound",
+    senderId: teamMember._id,
+    senderType: teamMember.type === "ai" ? "ai" : "human",
+    content: args.content,
+    contentType: args.contentType || "text",
+    attachments: args.attachments,
+    isInternal: args.isInternal || false,
+    mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
+    ...(mentions && mentions.length > 0 ? { mentions } : {}),
+    ...(replyMeta || args.via
+      ? { metadata: { ...(replyMeta ?? {}), ...(args.via ? { via: args.via } : {}) } }
+      : {}),
+    createdAt: now,
+  });
+
+  // Link attachment files back to this message
+  if (args.attachments && args.attachments.length > 0) {
+    await Promise.all(
+      args.attachments.map((fileId) =>
+        ctx.db.patch(fileId, { messageId })
+      )
+    );
+  }
+
+  // Update conversation
+  await ctx.db.patch(args.conversationId, {
+    lastMessageAt: now,
+    messageCount: conversation.messageCount + 1,
+    updatedAt: now,
+    ...(args.isInternal
+      ? {}
+      : firstResponsePatch(conversation, teamMember.type === "ai" ? "ai" : "human", now)),
+    ...(await lastMessagePatchForId(ctx, conversation, messageId)),
+  });
+
+  // Update lead activity
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  if (lead) {
+    await ctx.db.patch(lead._id, {
+      lastActivityAt: now,
+      updatedAt: now,
+      conversationStatus: "active",
+    });
+  }
+
+  // Log audit entry
+  await ctx.db.insert("auditLogs", {
+    organizationId: conversation.organizationId,
+    entityType: "message",
+    entityId: messageId,
+    action: "create",
+    actorId: teamMember._id,
+    actorType: teamMember.type === "ai" ? "ai" : "human",
+    metadata: {
+      conversationId: args.conversationId,
+      leadId: conversation.leadId,
+      isInternal: args.isInternal,
+      ...(args.via ? { via: args.via } : {}),
+    },
+    description: buildAuditDescription({ action: "create", entityType: "message", metadata: { conversationId: args.conversationId, leadId: conversation.leadId, isInternal: args.isInternal } }),
+    severity: "low",
+    createdAt: now,
+  });
+
+  // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
+  // só no audit acima.
+  if (conversation.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "message_sent",
+      actorId: teamMember._id,
+      actorType: teamMember.type === "ai" ? "ai" : "human",
+      content: args.isInternal ? "Internal note added" : `Message sent via ${conversation.channel}`,
+      metadata: { conversationId: args.conversationId, isInternal: args.isInternal },
+      createdAt: now,
+    });
+  }
+
+  // Trigger webhooks
+  if (!args.isInternal) {
+    // Sala de grupo tem evento próprio (simétrico ao `group.message.received`):
+    // `message.sent` continua exclusivo do 1 a 1, sempre com `leadId`.
+    await scheduleWebhookEvent(ctx, {
+      organizationId: conversation.organizationId,
+      event: conversation.kind === "group" ? "group.message.sent" : "message.sent",
+      payload: {
+        messageId,
+        conversationId: args.conversationId,
+        ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
+        ...(conversation.kind === "group" ? { kind: "group" } : {}),
+        channel: conversation.channel,
+        senderType: teamMember.type === "ai" ? "ai" : "human",
+        senderId: teamMember._id,
+      },
+    });
+  }
+
+  // Real channel dispatch (paced per conversation); channel gate lives in the port
+  if (!args.isInternal) {
+    await scheduleOutboundDispatch(ctx, conversation, messageId);
+  }
+
+  // Nota de voz do TIME (ou da IA) também é transcrita: o atendente e os
+  // colegas leem o que foi dito em vez de "[áudio enviado]". Mesmo gate do
+  // áudio do cliente (toggle do canal OU atendente ativo), decidido na action.
+  await scheduleAudioTranscription(ctx, {
+    messageId,
+    contentType: args.contentType,
+    attachments: args.attachments,
+    isInternal: args.isInternal,
+  });
+
+  return messageId;
+}
 
 // Internal: Create conversation
 export const internalCreateConversation = internalMutation({
@@ -1819,6 +1847,10 @@ export const internalReceiveMessage = internalMutation({
         args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId }))
       );
     }
+
+    // Telegram (F1, D20): relay para quem atende com a IA fora do comando.
+    // Barato quando não se aplica (lead/conversa sem humano com vínculo ativo).
+    await maybeBufferInboundForRelay(ctx, conversation, lead, messageId, now);
 
     // Instagram/Messenger: primeira inbound vinda de anúncio abre a janela de
     // 7 dias (Click-to-Messenger / Click-to-Direct). WhatsApp não passa aqui.
@@ -3145,62 +3177,71 @@ export const assumeConversation = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversa não encontrada");
     const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
-
-    const now = Date.now();
-    await ctx.db.patch(args.conversationId, {
-      aiPausedUntil: Number.MAX_SAFE_INTEGER,
-      updatedAt: now,
-    });
-
-    // Follow-ups que a IA tinha agendado aqui passam a ser de quem assumiu —
-    // com aviso no sino, nunca sumindo em silêncio.
-    await escalateFollowUpsOfConversation(
-      ctx,
-      args.conversationId,
-      `${member.name} assumiu a conversa`,
-      { assignTo: member._id }
-    );
-
-    const lead = await getLeadRef(ctx.db, conversation.leadId);
-    if (lead && lead.assignedTo !== member._id) {
-      await ctx.db.patch(lead._id, {
-        assignedTo: member._id,
-        lastActivityAt: now,
-        updatedAt: now,
-      });
-      await ctx.db.insert("auditLogs", {
-        organizationId: conversation.organizationId,
-        entityType: "lead",
-        entityId: lead._id,
-        action: "assign",
-        actorId: member._id,
-        actorType: "human",
-        changes: {
-          before: { assignedTo: lead.assignedTo },
-          after: { assignedTo: member._id },
-        },
-        metadata: { title: lead.title, assumedConversation: true },
-        description: `Assumiu a conversa e o lead '${lead.title}'`,
-        severity: "medium",
-        createdAt: now,
-      });
-    }
-
-    if (conversation.leadId) {
-      await ctx.db.insert("activities", {
-        organizationId: conversation.organizationId,
-        leadId: conversation.leadId,
-        type: "assignment",
-        actorId: member._id,
-        actorType: "human",
-        content: `${member.name} assumiu a conversa (IA pausada)`,
-        metadata: { conversationId: args.conversationId },
-        createdAt: now,
-      });
-    }
+    await assumeConversationCore(ctx, { conversation, member });
     return null;
   },
 });
+
+/** Núcleo de "Assumir conversa" (sem sessão; o chamador autorizou `inbox:reply` e a org). */
+export async function assumeConversationCore(
+  ctx: MutationCtx,
+  params: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; via?: "telegram" | "telegram_auto" | "copilot" }
+): Promise<void> {
+  const { conversation, member } = params;
+  const args = { conversationId: conversation._id };
+  const now = Date.now();
+  await ctx.db.patch(args.conversationId, {
+    aiPausedUntil: Number.MAX_SAFE_INTEGER,
+    updatedAt: now,
+  });
+
+  // Follow-ups que a IA tinha agendado aqui passam a ser de quem assumiu —
+  // com aviso no sino, nunca sumindo em silêncio.
+  await escalateFollowUpsOfConversation(
+    ctx,
+    args.conversationId,
+    `${member.name} assumiu a conversa`,
+    { assignTo: member._id }
+  );
+
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  if (lead && lead.assignedTo !== member._id) {
+    await ctx.db.patch(lead._id, {
+      assignedTo: member._id,
+      lastActivityAt: now,
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditLogs", {
+      organizationId: conversation.organizationId,
+      entityType: "lead",
+      entityId: lead._id,
+      action: "assign",
+      actorId: member._id,
+      actorType: "human",
+      changes: {
+        before: { assignedTo: lead.assignedTo },
+        after: { assignedTo: member._id },
+      },
+      metadata: { title: lead.title, assumedConversation: true },
+      description: `Assumiu a conversa e o lead '${lead.title}'`,
+      severity: "medium",
+      createdAt: now,
+    });
+  }
+
+  if (conversation.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: conversation.organizationId,
+      leadId: conversation.leadId,
+      type: "assignment",
+      actorId: member._id,
+      actorType: "human",
+      content: `${member.name} assumiu a conversa (IA pausada)`,
+      metadata: { conversationId: args.conversationId, ...(params.via ? { via: params.via } : {}) },
+      createdAt: now,
+    });
+  }
+}
 
 // Send a typing indicator ("composing") / stopped ("paused") to the contact.
 // Best-effort and stateless — bridge whatsapp only (Meta Cloud API has no typing

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { Switch } from "@/components/settings/CentralSection";
 import { usePermissions } from "@/hooks/usePermissions";
+import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   formatClock,
@@ -31,6 +32,7 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
   const createLinkCode = useMutation(api.telegram.createLinkCode);
   const unlink = useMutation(api.telegram.unlink);
   const updatePrefs = useMutation(api.telegram.updateMyLinkPrefs);
+  const updateOrgSettings = useMutation(api.telegram.updateOrgTelegramSettings);
 
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState<{ url: string; expiresAt: number } | null>(null);
@@ -96,6 +98,126 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
     } catch {
       toast.error("Não foi possível copiar o link");
     }
+  };
+
+
+  const renderAssistant = (l: NonNullable<typeof link>) => {
+    const a = l.assistant;
+    const autoAllowedOrg = data.org.allowAutoMode;
+    const isAuto = a.mode === "auto";
+    const save = (assistant: Parameters<typeof updatePrefs>[0]["assistant"]) =>
+      run(() => updatePrefs({ organizationId, assistant }), "Não foi possível salvar o assistente");
+    const modes = [
+      {
+        value: "suggest" as const,
+        label: "Sugestão",
+        desc: "Eu proponho, você confirma. Nada vai para o cliente sem o seu toque.",
+      },
+      {
+        value: "auto" as const,
+        label: "Automático",
+        desc: `Eu decido e executo; o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para você cancelar ou regenerar. Tudo tem Desfazer.`,
+      },
+    ];
+    const actions = [
+      { key: "instructAi", label: "Instruir a IA" },
+      { key: "createTask", label: "Criar tarefa" },
+      { key: "moveStage", label: "Mover etapa" },
+      { key: "acceptHandoff", label: "Aceitar repasse" },
+      { key: "replyCustomer", label: "Responder ao cliente" },
+    ] as const;
+    return (
+      <div className="space-y-3 border-t border-border pt-4">
+        <h4 className="text-sm font-semibold text-text-primary">Assistente</h4>
+        <div role="radiogroup" aria-label="Modo do assistente" className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          {modes.map((m) => {
+            const selected = a.mode === m.value;
+            const disabled = busy || (m.value === "auto" && !autoAllowedOrg);
+            return (
+              <button
+                key={m.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                disabled={disabled}
+                onClick={() => !selected && void save({ mode: m.value })}
+                className={cn(
+                  "min-h-[44px] rounded-card border px-3.5 py-2.5 text-left transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base disabled:cursor-not-allowed disabled:opacity-50",
+                  selected ? "border-brand-500 bg-brand-500/10" : "border-border hover:bg-surface-overlay"
+                )}
+              >
+                <span className="block text-sm font-medium text-text-primary">{m.label}</span>
+                <span className="block text-xs text-text-secondary">
+                  {m.value === "auto" && !autoAllowedOrg ? "Desligado pela organização" : m.desc}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {a.autoPausedAt !== undefined && !isAuto && (
+          <div className="flex items-start gap-2 rounded-lg border border-semantic-warning/30 bg-semantic-warning/10 px-3.5 py-2.5 text-xs text-text-secondary">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden="true" />
+            <span>
+              Pausado automaticamente após 3 desfazeres na última hora; escolha Automático de novo para religar.
+            </span>
+          </div>
+        )}
+        <div className="flex min-h-[44px] items-center justify-between gap-3">
+          <span className="text-sm text-text-primary">
+            Sugerir ação nos repasses (uma chamada de IA por repasse)
+          </span>
+          <Switch
+            checked={a.suggestOnEvents}
+            label="Sugerir ação nos repasses"
+            disabled={busy}
+            onChange={() => void save({ suggestOnEvents: !a.suggestOnEvents })}
+          />
+        </div>
+        <div className={cn(!isAuto && "opacity-50")}>
+          <label htmlFor="tg-auto-delay" className="mb-1 block text-xs text-text-secondary">
+            Segundos para cancelar um envio no automático
+          </label>
+          <input
+            id="tg-auto-delay"
+            type="number"
+            inputMode="numeric"
+            min={5}
+            max={120}
+            defaultValue={a.autoSendDelaySeconds}
+            key={a.autoSendDelaySeconds}
+            disabled={busy}
+            onBlur={(e) => {
+              const n = Math.min(120, Math.max(5, Math.round(Number(e.target.value) || 15)));
+              if (n !== a.autoSendDelaySeconds) void save({ autoSendDelaySeconds: n });
+              else e.target.value = String(n);
+            }}
+            className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 sm:w-40"
+          />
+        </div>
+        <fieldset className={cn("space-y-1", !isAuto && "opacity-50")}>
+          <legend className="mb-1 text-xs text-text-secondary">No automático ela pode</legend>
+          {actions.map(({ key, label }) => (
+            <label key={key} className="flex min-h-[44px] cursor-pointer items-center gap-3">
+              <input
+                type="checkbox"
+                checked={a.autoAllowed[key]}
+                disabled={busy}
+                onChange={() => void save({ autoAllowed: { [key]: !a.autoAllowed[key] } })}
+                className="h-5 w-5 rounded border-border-strong accent-brand-600"
+              />
+              <span className="text-sm text-text-primary">
+                {label}
+                {key === "replyCustomer" && (
+                  <span className="block text-xs text-text-muted">
+                    sempre com os {a.autoSendDelaySeconds} s para cancelar
+                  </span>
+                )}
+              </span>
+            </label>
+          ))}
+        </fieldset>
+      </div>
+    );
   };
 
   const renderConnectFlow = () => {
@@ -247,21 +369,80 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
             </div>
           ))}
 
-          <div className="flex min-h-[44px] items-center justify-between gap-3 py-3">
-            <div className="min-w-0">
-              <span className="text-sm text-text-muted">
-                Relatório de manhã {formatHour(link.reports.morningHour)} · Fim do dia{" "}
-                {formatHour(link.reports.eveningHour)}
-              </span>
-              <p className="text-xs text-text-muted">Disponível em breve</p>
+          <div className="space-y-3 py-3">
+            <div className="flex min-h-[44px] items-center justify-between gap-3">
+              <span className="text-sm font-medium text-text-primary">Relatórios diários</span>
             </div>
-            <Switch checked={link.reports.enabled} onChange={() => {}} label="Relatórios no Telegram" disabled />
+            <div className="flex min-h-[44px] items-center justify-between gap-3">
+              <span className="text-sm text-text-primary">Receber relatórios no Telegram</span>
+              <Switch
+                checked={link.reports.enabled}
+                label="Receber relatórios no Telegram"
+                disabled={busy}
+                onChange={() =>
+                  void run(
+                    () => updatePrefs({ organizationId, reports: { enabled: !link.reports.enabled } }),
+                    "Não foi possível salvar a preferência"
+                  )
+                }
+              />
+            </div>
+            <div className={cn("grid grid-cols-1 gap-3 sm:grid-cols-2", !link.reports.enabled && "opacity-50")}>
+              {(
+                [
+                  { key: "morningHour", label: "Manhã", id: "tg-morning-hour" },
+                  { key: "eveningHour", label: "Fim do dia", id: "tg-evening-hour" },
+                ] as const
+              ).map(({ key, label, id }) => (
+                <div key={key}>
+                  <label htmlFor={id} className="mb-1 block text-xs text-text-secondary">
+                    {label}
+                  </label>
+                  <select
+                    id={id}
+                    value={link.reports[key]}
+                    disabled={busy || !link.reports.enabled}
+                    onChange={(e) =>
+                      void run(
+                        () => updatePrefs({ organizationId, reports: { [key]: Number(e.target.value) } }),
+                        "Não foi possível salvar o horário"
+                      )
+                    }
+                    className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:cursor-not-allowed"
+                  >
+                    {Array.from({ length: 24 }, (_, h) => (
+                      <option key={h} value={h}>
+                        {formatHour(h)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-text-muted">Hora local da organização.</p>
+            <div className={cn("flex min-h-[44px] items-center justify-between gap-3", !link.reports.enabled && "opacity-50")}>
+              <span className="text-sm text-text-primary">Também aos fins de semana</span>
+              <Switch
+                checked={link.reports.weekends ?? false}
+                label="Também aos fins de semana"
+                disabled={busy || !link.reports.enabled}
+                onChange={() =>
+                  void run(
+                    () => updatePrefs({ organizationId, reports: { weekends: !(link.reports.weekends ?? false) } }),
+                    "Não foi possível salvar a preferência"
+                  )
+                }
+              />
+            </div>
+            <p className="text-xs text-text-muted">
+              De manhã: repasses pendentes, follow-ups da IA, suas tarefas, leads novos e conversas não lidas. No fim
+              do dia: leads, ganhos e perdidos, tarefas, repasses sem dono e custo de IA. /hoje no bot manda o da
+              manhã a qualquer hora.
+            </p>
           </div>
         </div>
 
-        <span className="inline-flex items-center rounded-full bg-surface-overlay px-3 py-1 text-xs text-text-secondary">
-          Modo: {link.assistant.mode === "auto" ? "Automático" : "Sugestão"}
-        </span>
+        {renderAssistant(link)}
       </div>
     );
   } else {
@@ -334,6 +515,50 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
               Desligar faz o bot parar para todos da organização, mas os vínculos são mantidos e voltam a funcionar quando
               o módulo for ligado de novo.
             </p>
+          </div>
+        )}
+        {moduleEnabled && data.canManage && (
+          <div className="mt-4 space-y-1">
+            <h4 className="text-sm font-semibold text-text-primary">Configurações da organização</h4>
+            <div className="divide-y divide-border">
+              {(
+                [
+                  {
+                    key: "discreet",
+                    label: "Modo discreto",
+                    desc: "Cartões curtos (200 caracteres), sem telefone e sem nome completo do cliente; sem botão 'Abrir no WhatsApp' e sem 'Ver tudo'. Use se a organização não quer dados de clientes íntegros no Telegram.",
+                  },
+                  {
+                    key: "protectContent",
+                    label: "Proteger conteúdo",
+                    desc: "Impede encaminhar e copiar as mensagens do bot no Telegram.",
+                  },
+                  {
+                    key: "allowAutoMode",
+                    label: "Permitir modo automático na organização",
+                    desc: "Desligado, todo mundo fica em Sugestão.",
+                  },
+                ] as const
+              ).map(({ key, label, desc }) => (
+                <div key={key} className="flex min-h-[44px] items-start justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium text-text-primary">{label}</span>
+                    <p className="text-xs text-text-secondary">{desc}</p>
+                  </div>
+                  <Switch
+                    checked={data.org[key]}
+                    label={label}
+                    disabled={busy}
+                    onChange={() =>
+                      void run(
+                        () => updateOrgSettings({ organizationId, [key]: !data.org[key] }),
+                        "Não foi possível salvar a configuração"
+                      )
+                    }
+                  />
+                </div>
+              ))}
+            </div>
           </div>
         )}
         <div>{body}</div>

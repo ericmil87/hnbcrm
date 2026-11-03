@@ -108,6 +108,7 @@ import {
 } from "./lib/metaOAuth";
 import { safeEqual, parseSignedRequest } from "./lib/metaSignedRequest";
 import { fallbackMetaName, findOrCreateContactByMetaIdentity, maskExternalId } from "./lib/metaIdentity";
+import { maybeNotifyTelegramSendFailed } from "./lib/telegramRelay";
 
 // ── Constantes e validators ──
 
@@ -1322,6 +1323,8 @@ export const internalMarkDispatchFailed = internalMutation({
         createdAt: Date.now(),
       });
     }
+    // Telegram (F4): resposta mandada pelo bot → o cartão vira "✗ Falhou" e a cota volta.
+    await maybeNotifyTelegramSendFailed(ctx, message, args.detail);
     return null;
   },
 });

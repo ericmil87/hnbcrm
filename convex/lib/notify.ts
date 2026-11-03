@@ -2,6 +2,9 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { resolvePermissions, hasPermission, type Role } from "./permissions";
 import { isMembershipRevoked } from "./auth";
+import { internal } from "../_generated/api";
+import { modulesOf } from "./orgModules";
+import { hasTelegramTemplate } from "./telegramNotifications";
 
 export type NotificationType =
   | "task_assigned"
@@ -23,7 +26,8 @@ export type NotificationType =
   | "conversation_transferred"
   | "channel_session_lost"
   | "ai_spend_warning"
-  | "ai_spend_reached";
+  | "ai_spend_reached"
+  | "new_message";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -54,6 +58,9 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   // eventType do e-mail, com template `aiSpendAlert`).
   ai_spend_warning: "aiSpendAlert",
   ai_spend_reached: "aiSpendAlert",
+  // Telegram F1 (D20): relay agrupado — a preferência `newMessage` já existia
+  // sem emissor. Só sino + Telegram (sem template de e-mail).
+  new_message: "newMessage",
 };
 
 /**
@@ -157,7 +164,7 @@ export async function createNotification(
     .first();
   if (prefs && (prefs as any)[PREFERENCE_FLAG[args.type]] === false) return;
 
-  await ctx.db.insert("notifications", {
+  const notificationId = await ctx.db.insert("notifications", {
     organizationId: args.organizationId,
     memberId: args.memberId,
     type: args.type,
@@ -173,4 +180,17 @@ export async function createNotification(
     actorId: args.actorId,
     createdAt: Date.now(),
   });
+
+  // Telegram (F1, D7): mesma porta, depois do insert — o self-skip e a
+  // preferência acima já valeram. Uma leitura indexada do vínculo ativo; envio
+  // e formatação ficam na action agendada (nada de rede numa mutation).
+  if (!hasTelegramTemplate(args.type)) return;
+  const link = await ctx.db
+    .query("telegramLinks")
+    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", args.memberId).eq("status", "active"))
+    .first();
+  if (!link || link.organizationId !== args.organizationId) return;
+  if (link.mutedUntil !== undefined && link.mutedUntil > Date.now()) return;
+  if (!modulesOf(await ctx.db.get(args.organizationId)).telegram) return;
+  await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverNotification, { notificationId });
 }

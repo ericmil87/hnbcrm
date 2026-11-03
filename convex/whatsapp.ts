@@ -53,6 +53,7 @@ import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import { getLeadRef } from "./lib/leadRef";
 import { isDemoOrg } from "./lib/orgModules";
 import { inboundRouteChannelValidator, toInboundRouteChannel } from "./lib/bridgeSnapshot";
+import { maybeNotifyTelegramSendFailed } from "./lib/telegramRelay";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -1062,6 +1063,8 @@ export const internalMarkDispatchFailed = internalMutation({
     // Boas-vindas do lead inbound (v0.64): falha de entrega abre UM repasse
     // humano, sem retry (no-op fora de boas-vindas).
     await applyInboundWelcomeDeliveryFailure(ctx, { messageId: args.messageId, detail: args.detail });
+    // Telegram (F4): resposta mandada pelo bot → o cartão vira "✗ Falhou" e a cota volta.
+    await maybeNotifyTelegramSendFailed(ctx, message, args.detail);
     return null;
   },
 });

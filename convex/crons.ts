@@ -66,4 +66,9 @@ crons.daily(
   { dryRun: false, fromCron: true }
 );
 
+// Telegram F2 (D11): relatórios da manhã/fim do dia na hora LOCAL de cada
+// org. De hora em hora no minuto 5; carimbo por data local no vínculo antes
+// de agendar (idempotente). `cronsDisabled()` dentro do handler.
+crons.cron("telegram reports", "5 * * * *", internal.telegramReports.internalReportsTick, {});
+
 export default crons;

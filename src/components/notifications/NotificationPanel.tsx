@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, type PaginatedQueryReference } from "convex/react";
-import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot, ArrowRightLeft, WifiOff, Gauge } from "lucide-react";
+import { Bell, UserPlus, AtSign, Clock, AlertTriangle, ArrowLeftRight, CheckCheck, Sparkles, Megaphone, PauseCircle, Users, CalendarClock, CalendarX, TrendingUp, FileText, Bot, ArrowRightLeft, WifiOff, Gauge, MessageCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Doc, Id } from "../../../convex/_generated/dataModel";
@@ -34,6 +34,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   ai_followup_needs_human: Bot,
   // Central — conversa transferida para você ou para o seu setor.
   conversation_transferred: ArrowRightLeft,
+  // F1 — relay agrupado das mensagens de um cliente para quem atende.
+  new_message: MessageCircle,
   // T02 — canal desconectado (WhatsApp perdeu a sessão; Instagram/Messenger pedem reconexão).
   channel_session_lost: WifiOff,
   // v0.69 — gasto de IA do mês: aviso (80%) / teto atingido.
@@ -157,7 +159,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     // A IA não conseguiu executar um follow-up que ela mesma agendou: a
     // tarefa é onde a equipe decide o que fazer agora — só cai na conversa se
     // por algum motivo a tarefa não vier junto.
-    if (n.type === "conversation_transferred") {
+    if (n.type === "conversation_transferred" || n.type === "new_message") {
       navigate(
         n.conversationId
           ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}`

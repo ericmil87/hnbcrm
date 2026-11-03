@@ -280,8 +280,7 @@ describe("vínculo por /start <code>", () => {
       link_preview_options: { is_disabled: true },
     });
     expect(welcome.body.text).toBe(
-      "Conectado como <b>Eric Milfont</b> em <b>Acme Corp</b>. Você vai receber repasses, tarefas e alertas aqui, " +
-        "pode me mandar texto ou áudio a qualquer hora. /ajuda mostra tudo.",
+      "👋 Conectado como <b>Eric Milfont</b> · Acme Corp\nSou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.",
     );
     // O código cru nunca é gravado.
     const code = await newCode(s.userId, s.organizationId);
@@ -330,7 +329,7 @@ describe("vínculo por /start <code>", () => {
     expect((await linksOf(member2))[0].status).toBe("active");
     expect(await chatRow(CHAT_A)).toMatchObject({ activeOrganizationId: org2, activeTeamMemberId: member2 });
     const text = sent()[0].body.text as string;
-    expect(text).toContain("em <b>Aos Filhos da Terra</b>");
+    expect(text).toContain("· Aos Filhos da Terra");
     expect(text).toContain("também está conectado a <b>Acme Corp</b>");
   });
 
@@ -406,10 +405,9 @@ describe("comandos e chat sem vínculo", () => {
     await send(message(CHAT_A, "/ajuda"));
     await send(message(CHAT_A, "quais leads?"));
     const [help, other] = sent();
-    expect(help.body.text).toContain("/sair desconecta este Telegram.");
-    expect(other.body.text).toBe(
-      "Ainda estou aprendendo: por enquanto respondo a /ajuda e /sair. Em breve: repasses, tarefas e o Copiloto.",
-    );
+    expect(help.body.text).toContain("/sair · desconectar este Telegram");
+    // F3: free text is a Copilot turn; with the org's AI off it says so (§4.10).
+    expect(other.body.text).toBe("🤖 A IA não está ativada na Acme Corp. Um admin ativa em Configurações → IA.");
   });
 
   test("/sair revoga todos os vínculos do chat e remove o teclado", async () => {
@@ -510,7 +508,13 @@ describe("API do card", () => {
   test("getMyLink: forma exata antes, durante e depois do vínculo", async () => {
     const s = await seed();
     const me = () => as(s.userId).query(api.telegram.getMyLink, { organizationId: s.organizationId });
-    expect(await me()).toEqual({ moduleEnabled: true, botUsername: BOT, link: null });
+    expect(await me()).toEqual({
+      moduleEnabled: true,
+      botUsername: BOT,
+      link: null,
+      org: { discreet: false, protectContent: false, allowAutoMode: true },
+      canManage: true,
+    });
     await link(s.userId, s.organizationId);
     const linked = await me();
     expect(Object.keys(linked.link!).sort()).toEqual(
@@ -708,7 +712,7 @@ describe("revisão de segurança (F0)", () => {
     await seedMember(organizationId, userId, "<b>X</b>&");
     await link(userId, organizationId);
     const text = sent()[0].body.text as string;
-    expect(text).toContain("Conectado como <b>&lt;b&gt;X&lt;/b&gt;&amp;</b> em <b>Acme Corp</b>.");
+    expect(text).toContain("Conectado como <b>&lt;b&gt;X&lt;/b&gt;&amp;</b> · Acme Corp");
     expect(text).not.toContain("<b>X</b>&");
   });
 
@@ -801,7 +805,7 @@ describe("revisão de segurança (F0, 2º lote)", () => {
     });
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     const retry = scheduled.find((j) => j.name.includes("internalDeliverReply"));
-    expect(retry?.args[0]).toEqual({ reply: { chatId: CHAT_A, chunks: ["dois", "três"] }, attempt: 2 });
+    expect(retry?.args[0]).toEqual({ replies: [{ chatId: CHAT_A, chunks: ["dois", "três"] }], attempt: 2 });
     await drain();
     expect(sent().map((c) => c.body.text)).toEqual(["um", "dois", "dois", "três"]);
   });

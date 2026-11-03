@@ -143,6 +143,8 @@ const providerConfigValidator = v.object({
       groupPosts: v.optional(productRoutingValidator),
       // Agente que RESPONDE dentro do grupo (F4) — outro produto, outra rota.
       groupAgent: v.optional(productRoutingValidator),
+      // Copiloto no Telegram (D16): rota e modelo próprios; ausente = padrão.
+      telegramCopilot: v.optional(productRoutingValidator),
     })
   ),
 });
@@ -2186,7 +2188,10 @@ const applicationTables = {
       // v0.69 — gasto de IA do mês cruzou o aviso (default 80%) / atingiu o
       // teto em R$. Vão aos admins (settings:manage), 1×/mês cada.
       v.literal("ai_spend_warning"),
-      v.literal("ai_spend_reached")
+      v.literal("ai_spend_reached"),
+      // Telegram F1 (D20) — relay agrupado (20 s) das mensagens do cliente para
+      // quem está atendendo com a IA fora do comando. `data.messageIds`.
+      v.literal("new_message")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2681,6 +2686,8 @@ const applicationTables = {
     memberId: v.id("teamMembers"),
     kind: v.union(
       v.literal("copilot"),
+      // Copiloto no Telegram (F3): mesmo loop, superfície e produto próprios.
+      v.literal("telegram_copilot"),
       v.literal("attendant"),
       v.literal("simulator"),
       // Passe de visão (convex/vision.ts): 1 chamada por IMAGEM, não por turno.
@@ -2809,6 +2816,10 @@ const applicationTables = {
     followUpId: v.optional(v.id("aiFollowUps")),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
+    // F3 (D23): pedido feito pelo bot do Telegram (instruir/regenerar). Copiado
+    // para `metadata.aiDraft.requestedVia`; só rascunhos assim podem ter a
+    // contagem regressiva do modo automático.
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))),
     // Rascunho que esta run substitui (regeneração) — vira status "revised".
     sourceDraftId: v.optional(v.id("messages")),
     error: v.optional(v.string()),
@@ -3372,10 +3383,24 @@ const applicationTables = {
       autoHourStart: v.optional(v.number()),
       autoPausedAt: v.optional(v.number()),
     }),
-    reports: v.object({ enabled: v.boolean(), morningHour: v.number(), eveningHour: v.number() }), // hora local da org (F2)
+    reports: v.object({
+      enabled: v.boolean(),
+      morningHour: v.number(),
+      eveningHour: v.number(),
+      // F2: também sábado e domingo (hora local da org). Ausente = não.
+      weekends: v.optional(v.boolean()),
+    }), // hora local da org (F2)
     lastMorningReportDate: v.optional(v.string()), // "AAAA-MM-DD" local
+    // F2: último `/hoje` (relatório sob demanda), teto de 1 por minuto.
+    lastCommandReportAt: v.optional(v.number()),
     lastEveningReportDate: v.optional(v.string()),
     copilotThreadId: v.optional(v.id("copilotThreads")),
+    // F3: one Copilot turn at a time per link (OCC lock; TTL 9 min > 8 min turn cap).
+    turnLock: v.optional(v.object({ token: v.string(), expiresAt: v.number() })),
+    // F3 (review #8): automatic/suggestion event turns run in their OWN thread
+    // ("Assistente"), never in the member's free-text thread; own lock too.
+    assistantThreadId: v.optional(v.id("copilotThreads")),
+    assistantTurnLock: v.optional(v.object({ token: v.string(), expiresAt: v.number() })),
     onboarding: v.optional(v.object({ step: v.number(), doneAt: v.optional(v.number()) })), // D24
     tipsShown: v.optional(v.array(v.string())),
     quota: v.optional(
@@ -3421,12 +3446,35 @@ const applicationTables = {
         refId: v.optional(v.string()),
         promptMessageId: v.number(),
         expiresAt: v.number(),
+        // F1: o cartão que abriu o prompt (vira registro depois) e a org dele.
+        cardMessageId: v.optional(v.number()),
+        organizationId: v.optional(v.id("organizations")),
+        // F1 "Responder": texto pendente que só sai no toque em Enviar.
+        draftText: v.optional(v.string()),
+        // F4 (D25): arquivo que o membro mandou no "Responder" — já no storage
+        // (porta do inbound) e com a cota reservada; sai junto no Enviar.
+        draftAttachments: v.optional(
+          v.array(
+            v.object({
+              fileId: v.id("files"),
+              name: v.string(),
+              size: v.number(),
+              kind: v.union(v.literal("photo"), v.literal("voice"), v.literal("audio"), v.literal("document")),
+              quota: v.object({ linkId: v.id("telegramLinks"), dayKey: v.string(), hourStart: v.optional(v.number()) }),
+            })
+          )
+        ),
       })
     ), // F1
     keyboardShown: v.optional(v.boolean()),
     pacingAt: v.optional(v.number()), // D25 (F4)
+    // F3 (D10): `stopped_message_generation` — o turno do Copiloto em curso encerra.
+    cancelRequestedAt: v.optional(v.number()),
     updatedAt: v.number(),
-  }).index("by_chat_id", ["chatId"]),
+  })
+    .index("by_chat_id", ["chatId"])
+    // F1 (D17/D20): relay da resposta da IA para os chats com esta conversa em foco.
+    .index("by_focus_conversation", ["focus.conversationId"]),
 
   // Código de uso único do deep link `/start <code>` (D2). Só o HASH SHA-256
   // fica no banco; o código cru existe apenas no link devolvido ao cliente.
@@ -3474,6 +3522,23 @@ const applicationTables = {
         callbackQueryId: v.optional(v.string()),
         callbackData: v.optional(v.string()),
         memberStatus: v.optional(v.string()),
+        // F3 (D21): mídia recebida (voz/áudio → transcrição; foto → visão; vídeo → aviso).
+        media: v.optional(
+          v.object({
+            kind: v.union(
+              v.literal("voice"),
+              v.literal("audio"),
+              v.literal("photo"),
+              v.literal("video"),
+              v.literal("video_note"),
+              v.literal("document")
+            ),
+            fileId: v.string(),
+            fileSize: v.optional(v.number()),
+            mimeType: v.optional(v.string()),
+            fileName: v.optional(v.string()), // F4: documento/áudio
+          })
+        ),
       })
     ),
   })
@@ -3494,11 +3559,14 @@ const applicationTables = {
       v.literal("copilot"),
       v.literal("prompt"),
       v.literal("auto_record"),
-      v.literal("draft")
+      v.literal("draft"),
+      // F4 (D21): foto/voz/documento enviados logo depois de um cartão.
+      v.literal("media")
     ),
     draft: v.optional(
       v.object({
-        messageId: v.id("messages"),
+        // Ausente = a resposta do PRÓPRIO membro (texto no pendingPrompt), F3.
+        messageId: v.optional(v.id("messages")),
         sendAt: v.optional(v.number()),
         vetoedAt: v.optional(v.number()),
         sentAt: v.optional(v.number()),
@@ -3506,7 +3574,7 @@ const applicationTables = {
     ), // D23
     undo: v.optional(
       v.object({
-        steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()) })),
+        steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()), after: v.optional(v.any()) })),
         expiresAt: v.number(),
         undoneAt: v.optional(v.number()),
       })
@@ -3515,9 +3583,20 @@ const applicationTables = {
     handoffId: v.optional(v.id("handoffs")),
     conversationId: v.optional(v.id("conversations")),
     taskId: v.optional(v.id("tasks")),
+    // F1: mensagem do CRM espelhada (relay da IA) — dedupe "um relay por mensagem".
+    crmMessageId: v.optional(v.id("messages")),
+    // F4: mensagem do CRM ENVIADA a partir deste cartão (Responder/rascunho) —
+    // a falha do dispatch edita o cartão para "✗ Falhou" e devolve a cota.
+    sentCrmMessageId: v.optional(v.id("messages")),
+    // F4: o blob que esta mensagem de mídia levou ("Ver tudo" não reenvia o mesmo arquivo).
+    mediaStorageId: v.optional(v.string()),
+    fileQuota: v.optional(v.object({ bytes: v.number(), dayKey: v.string(), hourStart: v.optional(v.number()) })),
     sentAt: v.number(),
   })
     .index("by_notification", ["notificationId"])
+    .index("by_sent_crm_message", ["sentCrmMessageId"])
+    // F1: o callback acha o cartão tocado (chat + message_id do Telegram).
+    .index("by_chat_and_message", ["chatId", "messageId"])
     .index("by_handoff", ["handoffId"])
     .index("by_conversation_and_sent", ["conversationId", "sentAt"])
     .index("by_link_and_sent", ["linkId", "sentAt"])
@@ -3531,6 +3610,57 @@ const applicationTables = {
     windowStart: v.number(),
     sentInWindow: v.number(),
   }).index("by_key", ["key"]),
+
+  // Relay das mensagens do cliente (D20, F1): agrupa 20 s por conversa e
+  // vínculo antes de virar UMA notificação `new_message`.
+  telegramRelayBuffer: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    linkId: v.id("telegramLinks"),
+    messageIds: v.array(v.id("messages")), // teto 50 por janela
+    // Mensagens além do teto: viram "… e mais N mensagens (abrir no CRM)".
+    droppedCount: v.optional(v.number()),
+    flushAt: v.number(),
+  })
+    .index("by_conversation_and_link", ["conversationId", "linkId"])
+    .index("by_flush_at", ["flushAt"]),
+
+  // Modo automático (D22, F3): cada escrita que a assistente fez num turno
+  // automático, com o estado ANTERIOR, para o "Desfazer" do cartão-registro.
+  telegramAutoSteps: defineTable({
+    organizationId: v.id("organizations"),
+    threadId: v.id("copilotThreads"),
+    kind: v.string(), // "instruct" | "accept_handoff" | "create_task" | "move_stage" | "complete_task" | "snooze_task" | "regenerate"
+    refId: v.string(),
+    before: v.optional(v.any()),
+    // State right after the step: undo skips it when something changed since (review F3 #6).
+    after: v.optional(v.any()),
+    // `agentRuns` id of the automatic turn that made the step (undo is per turn).
+    runId: v.optional(v.id("agentRuns")),
+    createdAt: v.number(),
+  })
+    .index("by_thread_and_created", ["threadId", "createdAt"])
+    .index("by_run_id", ["runId"])
+    .index("by_created_at", ["createdAt"]),
+
+  // F3 (review #11): one "💡 Sugiro" LLM call per handoff, shared by every
+  // member it was broadcast to for 10 min. `status:"pending"` = a turn is
+  // computing it (the others wait); `suggestion` absent on "done" = no proposal.
+  telegramSuggestions: defineTable({
+    organizationId: v.id("organizations"),
+    handoffId: v.id("handoffs"),
+    status: v.union(v.literal("pending"), v.literal("done")),
+    suggestion: v.optional(
+      v.object({
+        tool: v.union(v.literal("instructAttendant"), v.literal("acceptHandoff"), v.literal("regenerateAiReply")),
+        args: v.record(v.string(), v.string()),
+        resumo: v.string(),
+      }),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_handoff_and_created", ["handoffId", "createdAt"])
+    .index("by_created_at", ["createdAt"]),
 
   // Cota diária de arquivos por org (D25, F4).
   telegramOrgQuota: defineTable({

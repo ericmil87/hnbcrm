@@ -26,7 +26,7 @@ const NOTIFICATION_EVENTS = [
   { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu setor" },
   { key: "channelSessionLost", label: "Canal desconectado", desc: "Avisa quando um canal conectado perde a conexão" },
   { key: "aiSpendAlert", label: "Gasto de IA do mês", desc: "Para administradores: quando o gasto de IA chega perto do teto mensal em R$ ou o atinge (no sino e por e-mail, uma vez por mês)" },
-  { key: "newMessage", label: "Nova mensagem", desc: "Quando um contato envia mensagem em um lead seu" },
+  { key: "newMessage", label: "Novas mensagens nas conversas que eu atendo", desc: "Agrupadas; chegam no sino e no Telegram quando a IA não está no comando" },
   { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },
 ] as const;
 

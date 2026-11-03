@@ -19,14 +19,49 @@ import {
   query,
   type ActionCtx,
   type MutationCtx,
+  type QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
-import { requireAccountWithEmail, requireAuth } from "./lib/auth";
+import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
+import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { createNotification } from "./lib/notify";
+import { editMessageText } from "./lib/telegramApi";
+import {
+  PROMPT_EXPIRED_COPY,
+  TELEGRAM_FAILURE,
+  executeAutoSend,
+  handleTelegramCallback,
+  handleTelegramPromptAnswer,
+  discardPromptDraft,
+  type EditOp,
+  type RecordSpec,
+  type SendOp,
+} from "./lib/telegramActions";
+import { loadCardContext, messageText } from "./lib/telegramContext";
+import {
+  buildAiRelayCard,
+  buildCountdownCard,
+  buildNotificationCard,
+  buildRecordCard,
+  channelLabel,
+  formatTime,
+  type CardKeyboard,
+} from "./lib/telegramNotifications";
+import { escapeHtml } from "./lib/telegramFormat";
+import { PERSISTENT_KEYBOARD, CMD_COPY, parseCommandCallback, resolveCommandName } from "./lib/telegramCommands";
+import { runTelegramCallback, runTelegramCommand } from "./telegramCommands";
+import { buildWelcomeCard } from "./lib/telegramOnboarding";
+import { FOCUS_TTL_MS, resolveRelayRecipient } from "./lib/telegramRelay";
+import { COPILOT_COPY } from "./telegramCopilot";
+import { appendFirstTimeTip } from "./lib/telegramOnboarding";
+import { AUTO_SEND_MAX_S, AUTO_SEND_MIN_S, autoSendSeconds, draftAutoSendable, effectiveAssistantMode } from "./lib/telegramAssistant";
 import { assertModule, modulesOf } from "./lib/orgModules";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
-import { sendMessage, sendMessageChunks, deleteMessage, type ReplyMarkup } from "./lib/telegramApi";
+import { sendMessage, sendMessageChunks, deleteMessage, sendFile, sendFileUpload, type ReplyMarkup } from "./lib/telegramApi";
+import { conversationCrmUrl, mediaForMessages, type MediaOut } from "./lib/telegramMedia";
+import { fileSizeCopy } from "./lib/telegramQuota";
 import { htmlToPlainText, splitMessage } from "./lib/telegramFormat";
 import {
   CLEANUP_DELETE_MAX,
@@ -48,7 +83,6 @@ import {
   parseTelegramUpdate,
   settingsUrl,
   updateIdOf,
-  welcomeText,
   type ParsedUpdate,
 } from "./lib/telegramCore";
 import {
@@ -63,6 +97,60 @@ import {
 // Validators
 // ---------------------------------------------------------------------------
 
+const keyboardValidator = v.array(
+  v.array(
+    v.union(
+      v.object({ text: v.string(), url: v.string() }),
+      v.object({ text: v.string(), callback_data: v.string() }),
+    ),
+  ),
+);
+
+/** After a successful send, the message is recorded in `telegramDeliveries`. */
+const recordValidator = v.object({
+  organizationId: v.id("organizations"),
+  linkId: v.id("telegramLinks"),
+  kind: v.union(
+    v.literal("notification"),
+    v.literal("relay"),
+    v.literal("prompt"),
+    // F3: Copilot answers/cards, automatic-mode record, countdown draft (D22/D23).
+    v.literal("copilot"),
+    v.literal("auto_record"),
+    v.literal("draft"),
+    // F4 (D21): a file sent right after a card.
+    v.literal("media"),
+  ),
+  conversationId: v.optional(v.id("conversations")),
+  handoffId: v.optional(v.id("handoffs")),
+  taskId: v.optional(v.id("tasks")),
+  notificationId: v.optional(v.id("notifications")),
+  crmMessageId: v.optional(v.id("messages")),
+  mediaStorageId: v.optional(v.string()),
+  setPromptMessageId: v.optional(v.boolean()),
+  /** `expiresAt` of the prompt open when the send was decided (binds the id to THAT prompt). */
+  promptExpiresAt: v.optional(v.number()),
+  /** F3 (D22): automatic-mode record — what "Desfazer" reverts, until `expiresAt`. */
+  undo: v.optional(
+    v.object({
+      steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()), after: v.optional(v.any()) })),
+      expiresAt: v.number(),
+    }),
+  ),
+  /** F3 (D23): countdown card — `internalAutoSendDraft` fires after `delayMs` unless vetoed. */
+  autoSend: v.optional(v.object({ delayMs: v.number(), draftMessageId: v.optional(v.id("messages")) })),
+});
+
+/** F4 (D21): one file a card carries (`lib/telegramMedia.MediaOut`). */
+const mediaOutValidator = v.object({
+  kind: v.union(v.literal("photo"), v.literal("voice"), v.literal("audio"), v.literal("document"), v.literal("link")),
+  storageId: v.optional(v.string()),
+  fileName: v.string(),
+  size: v.number(),
+  mime: v.string(),
+  text: v.optional(v.string()),
+});
+
 /** A bot reply decided by a mutation and sent by an action. */
 const replyValidator = v.object({
   chatId: v.number(),
@@ -70,16 +158,23 @@ const replyValidator = v.object({
   /** Inline button "🔗 Abrir configurações" → settings page. */
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
+  /** F2: the persistent reply keyboard (📋 Hoje · 🔁 Repasses · ✅ Tarefas · ⏸ Pausar). */
+  persistentKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
+  keyboard: v.optional(keyboardValidator),
+  record: v.optional(recordValidator),
+  media: v.optional(v.array(mediaOutValidator)),
 });
-type Reply = {
-  chatId: number;
-  text: string;
-  settingsButton?: boolean;
-  removeKeyboard?: boolean;
-  protectContent?: boolean;
-};
-const repliesReturn = v.object({ replies: v.array(replyValidator) });
+type Reply = SendOp & { settingsButton?: boolean; removeKeyboard?: boolean; persistentKeyboard?: boolean };
+
+/** "Mensagem vira registro": edit of a message the bot already sent. */
+const editValidator = v.object({
+  chatId: v.number(),
+  messageId: v.number(),
+  text: v.string(),
+  keyboard: v.optional(keyboardValidator),
+});
+const repliesReturn = v.object({ replies: v.array(replyValidator), edits: v.optional(v.array(editValidator)) });
 
 const cleanupReasonValidator = v.union(
   v.literal("unlink"),
@@ -87,6 +182,14 @@ const cleanupReasonValidator = v.union(
   v.literal("member_removed"),
   v.literal("moved"),
 );
+
+const autoAllowedValidator = v.object({
+  instructAi: v.boolean(),
+  createTask: v.boolean(),
+  moveStage: v.boolean(),
+  acceptHandoff: v.boolean(),
+  replyCustomer: v.boolean(),
+});
 
 const myLinkValidator = v.object({
   _id: v.id("telegramLinks"),
@@ -97,8 +200,20 @@ const myLinkValidator = v.object({
   lastSeenAt: v.number(),
   mutedUntil: v.optional(v.number()),
   prefs: v.object({ relayAssignedConversations: v.boolean(), mediaInbound: v.boolean() }),
-  reports: v.object({ enabled: v.boolean(), morningHour: v.number(), eveningHour: v.number() }),
-  assistant: v.object({ mode: v.union(v.literal("suggest"), v.literal("auto")) }),
+  reports: v.object({
+    enabled: v.boolean(),
+    morningHour: v.number(),
+    eveningHour: v.number(),
+    weekends: v.optional(v.boolean()), // F2 relatórios
+  }),
+  assistant: v.object({
+    mode: v.union(v.literal("suggest"), v.literal("auto")),
+    // F3 (D22/D23): settings shown in the card; hourly counters stay server-side.
+    suggestOnEvents: v.boolean(),
+    autoSendDelaySeconds: v.number(),
+    autoAllowed: autoAllowedValidator,
+    autoPausedAt: v.optional(v.number()),
+  }),
 });
 
 function botUsernameEnv(): string | null {
@@ -155,6 +270,9 @@ export const getMyLink = query({
     moduleEnabled: v.boolean(),
     botUsername: v.union(v.string(), v.null()),
     link: v.union(v.null(), myLinkValidator),
+    // F1: org options (card section for admins) and whether this member may change them.
+    org: v.object({ discreet: v.boolean(), protectContent: v.boolean(), allowAutoMode: v.boolean() }),
+    canManage: v.boolean(),
   }),
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
@@ -171,9 +289,17 @@ export const getMyLink = query({
         .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", member._id).eq("status", "blocked"))
         .order("desc")
         .first());
+    const tg = org?.settings.telegram;
+    const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
     return {
       moduleEnabled: modulesOf(org).telegram,
       botUsername: botUsernameEnv(),
+      org: {
+        discreet: tg?.discreet === true,
+        protectContent: tg?.protectContent === true,
+        allowAutoMode: tg?.allowAutoMode !== false,
+      },
+      canManage: hasPermission(perms, "settings", "manage"),
       link: link
         ? {
             _id: link._id,
@@ -185,7 +311,13 @@ export const getMyLink = query({
             mutedUntil: link.mutedUntil,
             prefs: link.prefs,
             reports: link.reports,
-            assistant: { mode: link.assistant.mode },
+            assistant: {
+              mode: link.assistant.mode,
+              suggestOnEvents: link.assistant.suggestOnEvents,
+              autoSendDelaySeconds: autoSendSeconds(link),
+              autoAllowed: link.assistant.autoAllowed,
+              ...(link.assistant.autoPausedAt !== undefined ? { autoPausedAt: link.assistant.autoPausedAt } : {}),
+            },
           }
         : null,
     };
@@ -226,6 +358,16 @@ export const updateMyLinkPrefs = mutation({
         enabled: v.optional(v.boolean()),
         morningHour: v.optional(v.number()),
         eveningHour: v.optional(v.number()),
+        weekends: v.optional(v.boolean()), // F2 relatórios
+      }),
+    ),
+    // F3 (D22/D23): assistant mode and its limits, edited from the card.
+    assistant: v.optional(
+      v.object({
+        mode: v.optional(v.union(v.literal("suggest"), v.literal("auto"))),
+        suggestOnEvents: v.optional(v.boolean()),
+        autoSendDelaySeconds: v.optional(v.number()),
+        autoAllowed: v.optional(autoAllowedValidator.partial()),
       }),
     ),
   },
@@ -245,10 +387,74 @@ export const updateMyLinkPrefs = mutation({
     if (args.reports?.enabled !== undefined) reports.enabled = args.reports.enabled;
     if (args.reports?.morningHour !== undefined) reports.morningHour = args.reports.morningHour;
     if (args.reports?.eveningHour !== undefined) reports.eveningHour = args.reports.eveningHour;
+    if (args.reports?.weekends !== undefined) reports.weekends = args.reports.weekends; // F2 relatórios
     await ctx.db.patch(link._id, { prefs, reports });
+    if (args.assistant) await updateAssistantSettings(ctx, link, member, args.assistant);
     return null;
   },
 });
+
+type AssistantPatch = {
+  mode?: "suggest" | "auto";
+  suggestOnEvents?: boolean;
+  autoSendDelaySeconds?: number;
+  autoAllowed?: Partial<Doc<"telegramLinks">["assistant"]["autoAllowed"]>;
+};
+
+/** Card edits of the assistant (D22/D23): same rules as `/modo`, audited. */
+async function updateAssistantSettings(
+  ctx: MutationCtx,
+  link: Doc<"telegramLinks">,
+  member: Doc<"teamMembers">,
+  patch: AssistantPatch,
+) {
+  const delay = patch.autoSendDelaySeconds;
+  if (delay !== undefined && (!Number.isInteger(delay) || delay < AUTO_SEND_MIN_S || delay > AUTO_SEND_MAX_S)) {
+    throw new ConvexError(`O tempo para cancelar precisa ser um número inteiro entre ${AUTO_SEND_MIN_S} e ${AUTO_SEND_MAX_S} segundos`);
+  }
+  const now = Date.now();
+  const before = link.assistant;
+  if (patch.mode === "auto" && before.mode !== "auto") {
+    const org = await ctx.db.get(link.organizationId);
+    if (org?.settings.telegram?.allowAutoMode === false) {
+      throw new ConvexError("O modo automático está desligado nesta organização");
+    }
+  }
+  const turningAutoOn = patch.mode === "auto" && (before.mode !== "auto" || before.autoPausedAt !== undefined);
+  const next: Doc<"telegramLinks">["assistant"] = {
+    ...before,
+    ...(patch.mode !== undefined ? { mode: patch.mode } : {}),
+    ...(patch.suggestOnEvents !== undefined ? { suggestOnEvents: patch.suggestOnEvents } : {}),
+    ...(delay !== undefined ? { autoSendDelaySeconds: delay } : {}),
+    autoAllowed: { ...before.autoAllowed, ...compact(patch.autoAllowed ?? {}) },
+    // Choosing automatic again clears the undo pause and the hourly counter (same as `/modo`).
+    ...(turningAutoOn ? { autoPausedAt: undefined, autoActionsThisHour: 0, autoHourStart: now } : {}),
+  };
+  await ctx.db.patch(link._id, { assistant: next });
+  const view = (a: Doc<"telegramLinks">["assistant"]) => ({
+    mode: a.mode,
+    suggestOnEvents: a.suggestOnEvents,
+    autoSendDelaySeconds: a.autoSendDelaySeconds,
+    autoAllowed: a.autoAllowed,
+  });
+  const widened =
+    turningAutoOn || (next.autoAllowed.replyCustomer && !before.autoAllowed.replyCustomer);
+  await ctx.db.insert("auditLogs", {
+    organizationId: link.organizationId,
+    entityType: "telegramLink",
+    entityId: link._id,
+    action: "update",
+    actorId: member._id,
+    actorType: "human",
+    changes: { before: view(before), after: view(next) },
+    metadata: { event: "telegram.assistant_mode", via: "app" },
+    description: turningAutoOn
+      ? "Ligou o modo automático da assistente no Telegram"
+      : "Alterou as configurações da assistente no Telegram",
+    severity: widened ? "high" : "low",
+    createdAt: now,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Ingress (D5)
@@ -305,6 +511,23 @@ const parsedValidator = v.object({
   callbackQueryId: v.optional(v.string()),
   callbackData: v.optional(v.string()),
   memberStatus: v.optional(v.string()),
+  // F3 (D21): incoming media (voice/audio/photo/video/document).
+  media: v.optional(
+    v.object({
+      kind: v.union(
+        v.literal("voice"),
+        v.literal("audio"),
+        v.literal("photo"),
+        v.literal("video"),
+        v.literal("video_note"),
+        v.literal("document"),
+      ),
+      fileId: v.string(),
+      fileSize: v.optional(v.number()),
+      mimeType: v.optional(v.string()),
+      fileName: v.optional(v.string()),
+    }),
+  ),
 });
 
 export const internalGetUpdate = internalQuery({
@@ -357,7 +580,7 @@ async function upsertChat(
   ctx: MutationCtx,
   chatId: number,
   telegramUserId: number,
-  patch: Partial<Pick<Doc<"telegramChats">, "activeOrganizationId" | "activeTeamMemberId">>,
+  patch: Partial<Pick<Doc<"telegramChats">, "activeOrganizationId" | "activeTeamMemberId" | "keyboardShown">>,
   now: number,
 ) {
   const chat = await getChat(ctx, chatId);
@@ -464,7 +687,22 @@ export const internalRouteUpdate = internalMutation({
       }
       return none;
     }
+    if (p.kind === "stopped_message_generation") {
+      // F3 (D10): the user tapped "stop" on a streaming answer — the running turn ends.
+      const chat = await getChat(ctx, chatId);
+      if (chat) await ctx.db.patch(chat._id, { cancelRequestedAt: now, updatedAt: now });
+      return none;
+    }
     if (p.kind !== "message" && p.kind !== "callback_query") return none;
+
+    // Hard expiry: an expired prompt (and its `draftText`) is removed on ANY update.
+    const chatRow = await getChat(ctx, chatId);
+    const promptExpired = chatRow?.pendingPrompt !== undefined && chatRow.pendingPrompt.expiresAt <= now;
+    if (chatRow && promptExpired) {
+      // F4: an unsent file draft goes too (quota back, file row + blob deleted).
+      await discardPromptDraft(ctx, chatRow.pendingPrompt!);
+      await ctx.db.patch(chatRow._id, { pendingPrompt: undefined, updatedAt: now });
+    }
 
     const { active, alive, removed } = await resolveChat(ctx, chatId, now);
     if (!active) {
@@ -473,7 +711,28 @@ export const internalRouteUpdate = internalMutation({
       return { replies: [unlinkedReply(chatId)] };
     }
     await touchLink(ctx, active, p, now);
-    if (p.kind === "callback_query") return none; // F0: ack only (webhook body)
+    if (p.kind === "callback_query") {
+      // F2: list/command buttons (`cmd:`, `pg:`, `fc:`, `mu:`, `org:`).
+      const commandCb = parseCommandCallback(p.callbackData);
+      if (commandCb) {
+        return await runTelegramCallback(ctx, commandCb, {
+          chatId,
+          active,
+          alive,
+          now,
+          appBaseUrl: appUrl(),
+          messageId: p.messageId,
+        });
+      }
+      // F1: buttons → lib/telegramActions (reauthorization + single ports).
+      return await handleTelegramCallback(ctx, {
+        chatId,
+        messageId: p.messageId,
+        data: p.callbackData,
+        now,
+        appBaseUrl: appUrl(),
+      });
+    }
 
     const cmd = parseCommand(p.text);
     if (cmd?.command === "sair") {
@@ -497,12 +756,74 @@ export const internalRouteUpdate = internalMutation({
         ],
       };
     }
-    if (cmd?.command === "ajuda" || cmd?.command === "help") {
-      return { replies: [{ chatId, text: COPY.help, protectContent }] };
+    // F2: slash commands and persistent-keyboard labels.
+    const commandName = resolveCommandName(cmd, p.text);
+    if (commandName) {
+      return await runTelegramCommand(ctx, commandName, { chatId, active, alive, now, appBaseUrl: appUrl() });
+    }
+    if (cmd) return { replies: [{ chatId, text: CMD_COPY.unknown, protectContent }] };
+    if (promptExpired) return { replies: [{ chatId, text: PROMPT_EXPIRED_COPY }] };
+    // F3 (D21): voice/audio go to the Copilot runner FIRST (the transcript may
+    // answer an open prompt there); video is not supported.
+    const media = p.media;
+    const openPrompt = chatRow?.pendingPrompt && !promptExpired ? chatRow.pendingPrompt : undefined;
+    const replyPrompt =
+      openPrompt?.kind === "reply_customer" && openPrompt.organizationId === active.organizationId ? openPrompt : undefined;
+    if (media && (media.kind === "video" || media.kind === "video_note")) {
+      // §4.5: videos never go to the customer; with an open reply, offer the CRM.
+      const keyboard = replyPrompt?.conversationId
+        ? [[{ text: "🔗 Abrir conversa", url: conversationCrmUrl(appUrl(), replyPrompt.conversationId) }]]
+        : undefined;
+      return { replies: [{ chatId, text: COPILOT_COPY.video, protectContent, ...(keyboard ? { keyboard } : {}) }] };
+    }
+    // F4 (D25): a file while "Responder" is open goes to the CUSTOMER (voice too, as audio).
+    if (media && replyPrompt) {
+      await ctx.scheduler.runAfter(0, internal.telegramFiles.internalReceiveReplyFile, {
+        linkId: active._id,
+        chatId,
+        media,
+        ...(p.text ? { caption: p.text } : {}),
+      });
+      return none;
+    }
+    if (media?.kind === "document") return { replies: [{ chatId, text: COPY_DOCUMENT_WITHOUT_PROMPT, protectContent }] };
+    if (media && (media.kind === "voice" || media.kind === "audio")) {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "voice",
+        media,
+        ...(p.text ? { text: p.text } : {}),
+      });
+      return none;
+    }
+    // An open prompt (instruct / regenerate / reply) consumes the next message.
+    const answered = await handleTelegramPromptAnswer(ctx, { chatId, text: p.text, now, appBaseUrl: appUrl() });
+    if (answered) return answered;
+    // F3 (D9): everything else is a Copilot turn (photo → vision first).
+    if (media && media.kind === "photo") {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "photo",
+        media,
+        ...(p.text ? { text: p.text } : {}),
+      });
+      return none;
+    }
+    if (p.text?.trim()) {
+      await ctx.scheduler.runAfter(0, internal.telegramCopilot.internalCopilotTurn, {
+        linkId: active._id,
+        source: "text",
+        text: p.text,
+      });
+      return none;
     }
     return { replies: [{ chatId, text: COPY.learning, protectContent }] };
   },
 });
+
+/** F4: a document with no reply open has nobody to go to. */
+export const COPY_DOCUMENT_WITHOUT_PROMPT =
+  "Para mandar um arquivo ao cliente, toque em Responder no cartão da conversa (ou use /foco e responda).";
 
 /** `/start <code>` (D2): validates the one-time code and creates/refreshes the link. */
 export const internalConsumeLinkCode = internalMutation({
@@ -590,11 +911,14 @@ export const internalConsumeLinkCode = internalMutation({
         lastSeenAt: now,
       });
     }
+    // P6: the persistent keyboard is on by default; a user who hid it keeps it hidden.
+    const chatBefore = await getChat(ctx, chatId);
+    const keyboardShown = chatBefore?.keyboardShown ?? true;
     await upsertChat(
       ctx,
       chatId,
       args.telegramUserId,
-      { activeOrganizationId: code.organizationId, activeTeamMemberId: member._id },
+      { activeOrganizationId: code.organizationId, activeTeamMemberId: member._id, keyboardShown },
       now,
     );
     await ctx.db.patch(code._id, { usedAt: now });
@@ -617,13 +941,15 @@ export const internalConsumeLinkCode = internalMutation({
       const other = await ctx.db.get(l.organizationId);
       if (other) otherOrgNames.push(other.name);
     }
+    // D24: card 0 of the tour. A message carries one reply_markup (inline wins), so the
+    // persistent keyboard (P6, default on) comes in its own short message.
+    await ctx.db.patch(linkId, { onboarding: { step: 0 } });
+    const protectContent = await protectContentFor(ctx, code.organizationId);
+    const welcome = buildWelcomeCard({ memberName: member.name, orgName: org.name, otherOrgNames });
     return {
       replies: [
-        {
-          chatId,
-          text: welcomeText({ memberName: member.name, orgName: org.name, otherOrgNames }),
-          protectContent: await protectContentFor(ctx, code.organizationId),
-        },
+        { chatId, text: welcome.text, keyboard: welcome.keyboard, protectContent },
+        ...(keyboardShown ? [{ chatId, text: CMD_COPY.keyboardOn, protectContent, persistentKeyboard: true }] : []),
       ],
     };
   },
@@ -645,8 +971,12 @@ export const internalMarkChatBlocked = internalMutation({
 // Processing action
 // ---------------------------------------------------------------------------
 
-function markupFor(reply: Pick<Reply, "removeKeyboard" | "settingsButton">): ReplyMarkup | undefined {
+function markupFor(
+  reply: Pick<Reply, "removeKeyboard" | "settingsButton" | "keyboard" | "persistentKeyboard">,
+): ReplyMarkup | undefined {
   if (reply.removeKeyboard) return { remove_keyboard: true };
+  if (reply.keyboard && reply.keyboard.length > 0) return { inline_keyboard: reply.keyboard };
+  if (reply.persistentKeyboard) return PERSISTENT_KEYBOARD;
   if (reply.settingsButton) {
     return { inline_keyboard: [[{ text: COPY.unlinkedButton, url: settingsUrl(appUrl()) }]] };
   }
@@ -660,53 +990,309 @@ const resumeValidator = v.object({
   chunks: v.array(v.string()),
   settingsButton: v.optional(v.boolean()),
   removeKeyboard: v.optional(v.boolean()),
+  persistentKeyboard: v.optional(v.boolean()),
   protectContent: v.optional(v.boolean()),
+  keyboard: v.optional(keyboardValidator),
+  record: v.optional(recordValidator),
+  /** F4: this item is ONE file (then `chunks` is empty). */
+  media: v.optional(mediaOutValidator),
+  /** F4 (D25): the pacing slot already claimed for this item — send at it, never claim again. */
+  slotAt: v.optional(v.number()),
 });
-type Resume = Omit<Reply, "text"> & { chunks: string[] };
+type Resume = Omit<Reply, "text" | "media"> & { chunks: string[]; media?: MediaOut; slotAt?: number };
 
-async function deliverReply(ctx: ActionCtx, reply: Reply, attempt: number): Promise<void> {
-  const { text, ...opts } = reply;
-  await deliverChunks(ctx, { ...opts, chunks: splitMessage(text) }, attempt);
+/**
+ * Sends replies strictly in order. On a 429 the undelivered part of the
+ * current reply AND every reply after it travel together in ONE retry job, so
+ * a later row can never overtake an earlier one and nothing is sent twice.
+ */
+async function deliverReplies(ctx: ActionCtx, replies: Reply[], attempt: number): Promise<void> {
+  const items: Resume[] = [];
+  for (const { text, media, ...opts } of replies) {
+    if (text.trim()) items.push({ ...opts, chunks: splitMessage(text) });
+    // F4 (D21): each file is its own item (own pacing slot, own delivery row), right after the card.
+    for (const m of media ?? []) {
+      items.push({
+        chatId: opts.chatId,
+        chunks: [],
+        media: m,
+        ...(opts.protectContent ? { protectContent: true } : {}),
+        ...(opts.record ? { record: mediaRecordOf(opts.record) } : {}),
+      });
+    }
+  }
+  await deliverSeries(ctx, items, attempt);
 }
 
-async function deliverChunks(ctx: ActionCtx, reply: Resume, attempt: number): Promise<void> {
-  if (reply.chunks.length === 0) return;
+/** The delivery row of a file: same link/conversation as its card, never its notification (callbacks/broadcast edits key on that). */
+function mediaRecordOf(r: RecordSpec): RecordSpec {
+  return {
+    organizationId: r.organizationId,
+    linkId: r.linkId,
+    kind: "media",
+    ...(r.conversationId ? { conversationId: r.conversationId } : {}),
+  };
+}
+
+/**
+ * Pacing (D25): every item claims ONE send slot (`internalClaimTelegramSendSlot`,
+ * 1 msg/s per chat + 25 msg/s global). A slot in the future reschedules the
+ * rest of the series AT the slot, carrying `slotAt`, so it is sent there without
+ * claiming again. Order is kept: later items wait behind the first.
+ */
+const PACING_SLACK_MS = 30;
+async function deliverSeries(ctx: ActionCtx, items: Resume[], attempt: number): Promise<void> {
+  for (let i = 0; i < items.length; i++) {
+    if (items[i].slotAt === undefined) {
+      const now = Date.now();
+      const { sendAt }: { sendAt: number } = await ctx.runMutation(internal.telegramQuota.internalClaimTelegramSendSlot, {
+        chatId: items[i].chatId,
+        now,
+      });
+      if (sendAt > now + PACING_SLACK_MS) {
+        await ctx.scheduler.runAt(sendAt, internal.telegram.internalDeliverReply, {
+          replies: [{ ...items[i], slotAt: sendAt }, ...items.slice(i + 1)],
+          attempt,
+        });
+        return;
+      }
+    }
+    const rest = await deliverChunks(ctx, items[i], attempt);
+    if (rest && "insert" in rest) {
+      // A follow-up message (settings-link fallback) is a new item: it claims its own slot (review F4 #7).
+      items.splice(i + 1, 0, rest.insert);
+      continue;
+    }
+    if (rest) {
+      await ctx.scheduler.runAfter(rest.delayMs, internal.telegram.internalDeliverReply, {
+        replies: [{ ...rest.resume, slotAt: undefined }, ...items.slice(i + 1)],
+        attempt: attempt + 1,
+      });
+      return;
+    }
+  }
+}
+
+/**
+ * Returns what to retry when Telegram rate-limited the send (and attempts
+ * remain), a follow-up item to send next (`insert`), or null.
+ */
+async function deliverChunks(
+  ctx: ActionCtx,
+  reply: Resume,
+  attempt: number,
+): Promise<{ resume: Resume; delayMs: number } | { insert: Resume } | null> {
+  if (reply.media) return await deliverMedia(ctx, reply, attempt);
+  if (reply.chunks.length === 0) return null;
   const res = await sendMessageChunks({
     chatId: reply.chatId,
     chunks: reply.chunks,
     replyMarkup: markupFor(reply),
     protectContent: reply.protectContent,
   });
-  if (res.ok) return;
+  if (res.ok) {
+    const last = res.result[res.result.length - 1];
+    if (reply.record && last) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: reply.record,
+        chatId: reply.chatId,
+        messageId: last.message_id,
+      });
+    }
+    return null;
+  }
   if (res.kind === "bad_request" && reply.settingsButton) {
-    // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): send the link as text.
-    await sendMessage({
-      chatId: reply.chatId,
-      text: `${htmlToPlainText(reply.chunks.join("\n"))}\n${settingsUrl(appUrl())}`,
-      parseMode: null,
-    });
-    return;
+    // A URL button Telegram refuses (e.g. a localhost APP_URL in DEV): the link as text, as a NEW
+    // item of the series (own pacing slot), without the button.
+    return {
+      insert: {
+        chatId: reply.chatId,
+        chunks: [`${escapeHtml(htmlToPlainText(reply.chunks.join("\n")))}\n${escapeHtml(settingsUrl(appUrl()))}`],
+        ...(reply.protectContent ? { protectContent: true } : {}),
+      },
+    };
   }
   if (res.kind === "blocked") {
     await ctx.runMutation(internal.telegram.internalMarkChatBlocked, { chatId: reply.chatId });
-    return;
+    return null;
   }
   if (res.kind === "rate_limited" && attempt < MAX_SEND_ATTEMPTS) {
     const delayMs = Math.min(Math.max(res.retryAfterSeconds ?? 1, 1), 300) * 1000;
     // Only what was not delivered travels: chunks already sent are never repeated.
-    await ctx.scheduler.runAfter(delayMs, internal.telegram.internalDeliverReply, {
-      reply: { ...reply, chunks: reply.chunks.slice(res.sentCount) },
-      attempt: attempt + 1,
+    return { resume: { ...reply, chunks: reply.chunks.slice(res.sentCount) }, delayMs };
+  }
+  return null;
+}
+
+/**
+ * One file (F4, D21). No file quota (that is for what the MEMBER sends); a
+ * file Telegram cannot take → the link line instead, never
+ * a silent drop. Photo/voice by a storage URL (only Telegram sees it); audio/document as an
+ * upload so Telegram shows the real name. Never a `file_id` of another bot.
+ */
+async function deliverMedia(
+  ctx: ActionCtx,
+  item: Resume,
+  attempt: number,
+): Promise<{ resume: Resume; delayMs: number } | null> {
+  const m = item.media!;
+  const sendLine = async (text: string) => {
+    const res = await sendMessage({ chatId: item.chatId, text, protectContent: item.protectContent });
+    const last = res.ok ? res.result[res.result.length - 1] : undefined;
+    if (last && item.record) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: item.record,
+        chatId: item.chatId,
+        messageId: last.message_id,
+      });
+    }
+  };
+  const linkLine = (why?: string) =>
+    `${m.kind === "photo" ? "🖼" : m.kind === "document" ? "📄" : "🎙"} ${escapeHtml(m.fileName)} (${fileSizeCopy(m.size)})` +
+    (why ? ` · ${why}` : "") +
+    (item.record?.conversationId ? ` · <a href="${escapeHtml(conversationCrmUrl(appUrl(), item.record.conversationId))}">Abrir no CRM</a>` : "");
+  if (m.kind === "link" || !m.storageId) {
+    await sendLine(m.text ?? linkLine());
+    return null;
+  }
+  // Relay of CUSTOMER files: pacing + MEDIA_PER_CARD only. D25's file quota is for what the
+  // MEMBER sends (review F4 #3), so 30 customer photos never block the member's contract.
+  let res: Awaited<ReturnType<typeof sendFile>>;
+  if (m.kind === "photo" || m.kind === "voice") {
+    const url = await ctx.storage.getUrl(m.storageId as Id<"_storage">);
+    if (!url) {
+      await sendLine(linkLine("arquivo indisponível"));
+      return null;
+    }
+    res = await sendFile(m.kind, { chatId: item.chatId, url, protectContent: item.protectContent });
+  } else {
+    const blob = await ctx.storage.get(m.storageId as Id<"_storage">);
+    if (!blob) {
+      await sendLine(linkLine("arquivo indisponível"));
+      return null;
+    }
+    res = await sendFileUpload(m.kind, { chatId: item.chatId, blob, fileName: m.fileName, protectContent: item.protectContent });
+  }
+  if (res.ok) {
+    if (item.record) {
+      await ctx.runMutation(internal.telegram.internalRecordDelivery, {
+        record: { ...item.record, mediaStorageId: m.storageId },
+        chatId: item.chatId,
+        messageId: res.result.message_id,
+      });
+    }
+    return null;
+  }
+  if (res.kind === "blocked") {
+    await ctx.runMutation(internal.telegram.internalMarkChatBlocked, { chatId: item.chatId });
+    return null;
+  }
+  if (res.kind === "rate_limited" && attempt < MAX_SEND_ATTEMPTS) {
+    return { resume: item, delayMs: Math.min(Math.max(res.retryAfterSeconds ?? 1, 1), 300) * 1000 };
+  }
+  // Telegram could not take the file (URL fetch failed, type refused): the link instead.
+  await sendLine(linkLine());
+  return null;
+}
+
+/** The result carried by a failed Telegram action (`lib/telegramActions.failWith`), if any. */
+function telegramFailureOf(e: unknown): { kind?: string; result?: { replies: Reply[]; edits: EditOp[] } } | null {
+  if (!(e instanceof ConvexError)) return null;
+  let data: unknown = e.data;
+  // Across `runMutation` the data may arrive serialized (convex-test does this).
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  return data && typeof data === "object" ? (data as { kind?: string; result?: { replies: Reply[]; edits: EditOp[] } }) : null;
+}
+
+/** Edits ("mensagem vira registro"); "not modified" is fine, a failed edit is best effort. */
+async function deliverEdits(edits: EditOp[] | undefined): Promise<void> {
+  for (const e of edits ?? []) {
+    await editMessageText({
+      chatId: e.chatId,
+      messageId: e.messageId,
+      text: e.text,
+      replyMarkup: { inline_keyboard: e.keyboard ?? [] },
     });
   }
 }
 
-/** 429 retry of the undelivered chunks of one reply (§3.8, at most `MAX_SEND_ATTEMPTS`). */
-export const internalDeliverReply = internalAction({
-  args: { reply: resumeValidator, attempt: v.number() },
+/** F3: sends a mutation's `{replies, edits}` (prompt answers from a voice note, mode changes, undo). */
+export const internalDeliverActionResult = internalAction({
+  args: { result: v.object({ replies: v.array(replyValidator), edits: v.optional(v.array(editValidator)) }) },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await deliverChunks(ctx, args.reply, args.attempt);
+    await deliverEdits(args.result.edits);
+    await deliverReplies(ctx, args.result.replies, 1);
+    return null;
+  },
+});
+
+/** Records a bot message (base of callbacks, broadcast edits, deleteMessage ≤ 48 h). */
+export const internalRecordDelivery = internalMutation({
+  args: { record: recordValidator, chatId: v.number(), messageId: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const r: RecordSpec = args.record;
+    const now = Date.now();
+    await ctx.db.insert("telegramDeliveries", {
+      organizationId: r.organizationId,
+      linkId: r.linkId,
+      chatId: args.chatId,
+      messageId: args.messageId,
+      kind: r.kind,
+      ...(r.notificationId ? { notificationId: r.notificationId } : {}),
+      ...(r.handoffId ? { handoffId: r.handoffId } : {}),
+      ...(r.conversationId ? { conversationId: r.conversationId } : {}),
+      ...(r.taskId ? { taskId: r.taskId } : {}),
+      ...(r.crmMessageId ? { crmMessageId: r.crmMessageId } : {}),
+      ...(r.mediaStorageId ? { mediaStorageId: r.mediaStorageId } : {}),
+      ...(r.undo ? { undo: r.undo } : {}),
+      ...(r.autoSend
+        ? { draft: { ...(r.autoSend.draftMessageId ? { messageId: r.autoSend.draftMessageId } : {}), sendAt: now + r.autoSend.delayMs } }
+        : {}),
+      sentAt: now,
+    });
+    if (r.autoSend) {
+      // D23: the veto window starts when the countdown card is on the screen.
+      const deliveryId = (
+        await ctx.db
+          .query("telegramDeliveries")
+          .withIndex("by_chat_and_message", (q) => q.eq("chatId", args.chatId).eq("messageId", args.messageId))
+          .first()
+      )?._id;
+      if (deliveryId) {
+        await ctx.scheduler.runAfter(r.autoSend.delayMs, internal.telegram.internalAutoSendDraft, { deliveryId });
+      }
+    }
+    if (r.setPromptMessageId) {
+      const chat = await getChat(ctx, args.chatId);
+      const sameprompt =
+        chat?.pendingPrompt !== undefined &&
+        (r.promptExpiresAt === undefined || chat.pendingPrompt.expiresAt === r.promptExpiresAt);
+      if (chat?.pendingPrompt && sameprompt) {
+        await ctx.db.patch(chat._id, {
+          pendingPrompt: { ...chat.pendingPrompt, promptMessageId: args.messageId },
+          updatedAt: now,
+        });
+      }
+    }
+    return null;
+  },
+});
+
+/** 429 retry of the undelivered chunks of one reply (§3.8, at most `MAX_SEND_ATTEMPTS`). */
+export const internalDeliverReply = internalAction({
+  // `reply` (single) is the pre-F2 shape; jobs scheduled before the deploy still carry it.
+  args: { replies: v.optional(v.array(resumeValidator)), reply: v.optional(resumeValidator), attempt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await deliverSeries(ctx, args.replies ?? (args.reply ? [args.reply] : []), args.attempt);
     return null;
   },
 });
@@ -724,6 +1310,7 @@ export const internalProcessUpdate = internalAction({
       const p = row.parsed;
       const cmd = p?.kind === "message" ? parseCommand(p.text) : null;
       let replies: Reply[];
+      let edits: EditOp[] | undefined;
       if (
         p &&
         cmd?.command === "start" &&
@@ -741,14 +1328,26 @@ export const internalProcessUpdate = internalAction({
         });
         replies = res.replies;
       } else {
-        const res: { replies: Reply[] } = await ctx.runMutation(internal.telegram.internalRouteUpdate, {
-          updateRowId: args.updateRowId,
-        });
+        const res: { replies: Reply[]; edits?: EditOp[] } = await ctx.runMutation(
+          internal.telegram.internalRouteUpdate,
+          { updateRowId: args.updateRowId },
+        );
         replies = res.replies;
+        edits = res.edits;
       }
-      for (const reply of replies) await deliverReply(ctx, reply, 1);
+      await deliverEdits(edits);
+      await deliverReplies(ctx, replies, 1);
       await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
     } catch (e) {
+      // A Telegram action whose port threw: the mutation rolled back (no
+      // partial writes) and the error carries what to tell the user.
+      const data = telegramFailureOf(e);
+      if (data?.kind === TELEGRAM_FAILURE && data.result) {
+        await deliverEdits(data.result.edits);
+        await deliverReplies(ctx, data.result.replies, 1);
+        await ctx.runMutation(internal.telegram.internalFinishUpdate, { updateRowId: args.updateRowId, status: "done" });
+        return null;
+      }
       // Name only: Convex validation messages echo argument values (code, names).
       const error = e instanceof Error ? e.name : "erro";
       console.error(`[telegram] update falhou: ${e instanceof Error ? e.name : "erro"}`);
@@ -805,6 +1404,18 @@ export const internalFinishLinkCleanup = internalMutation({
     if (!chat) return null;
     const others = (await activeLinksOfChat(ctx, link.chatId)).filter((l) => l._id !== link._id);
     const now = Date.now();
+    // Nothing of the revoked org stays on the chat: open prompt (may hold
+    // `draftText`) and conversation focus (review F1 #11).
+    const promptOfOrg = chat.pendingPrompt?.organizationId === link.organizationId;
+    const focusConv = chat.focus ? await ctx.db.get(chat.focus.conversationId) : null;
+    const focusOfOrg = chat.focus !== undefined && (!focusConv || focusConv.organizationId === link.organizationId);
+    if (promptOfOrg || focusOfOrg) {
+      await ctx.db.patch(chat._id, {
+        ...(promptOfOrg ? { pendingPrompt: undefined } : {}),
+        ...(focusOfOrg ? { focus: undefined } : {}),
+        updatedAt: now,
+      });
+    }
     if (others.length === 0) {
       await ctx.db.patch(chat._id, { activeOrganizationId: undefined, activeTeamMemberId: undefined, updatedAt: now });
     } else if (!others.some((l) => l.teamMemberId === chat.activeTeamMemberId)) {
@@ -821,7 +1432,12 @@ export const internalFinishLinkCleanup = internalMutation({
 
 /** Farewell (removes the reply keyboard), deletes the bot's messages ≤ 48 h, fixes the chat pointer. */
 export const internalCleanupRevokedLink = internalAction({
-  args: { linkId: v.id("telegramLinks"), reason: cleanupReasonValidator },
+  args: {
+    linkId: v.id("telegramLinks"),
+    reason: cleanupReasonValidator,
+    /** F4 (D25): pacing slot already claimed for the farewell. */
+    slotAt: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const plan: { chatId: number; orgName: string; messageIds: number[]; protectContent: boolean } | null =
@@ -829,6 +1445,17 @@ export const internalCleanupRevokedLink = internalAction({
         linkId: args.linkId,
         since: Date.now() - CLEANUP_DELETE_WINDOW_MS,
       });
+    if (plan && args.slotAt === undefined) {
+      const now = Date.now();
+      const { sendAt }: { sendAt: number } = await ctx.runMutation(internal.telegramQuota.internalClaimTelegramSendSlot, {
+        chatId: plan.chatId,
+        now,
+      });
+      if (sendAt > now + PACING_SLACK_MS) {
+        await ctx.scheduler.runAt(sendAt, internal.telegram.internalCleanupRevokedLink, { ...args, slotAt: sendAt });
+        return null;
+      }
+    }
     if (plan) {
       const farewell = await sendMessage({
         chatId: plan.chatId,
@@ -957,5 +1584,508 @@ export const internalRevokeForRemovedMembers = internalMutation({
       isDone: page.isDone && status === "blocked",
       continueCursor: page.isDone ? null : page.continueCursor,
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// F1 — notification delivery (D7), relay (D20) and org settings
+// ---------------------------------------------------------------------------
+
+const cardTargetValidator = v.object({
+  chatId: v.number(),
+  text: v.string(),
+  keyboard: keyboardValidator,
+  protectContent: v.boolean(),
+  record: recordValidator,
+  /** F3 (D24): the link's updated `tipsShown` when the card carried a first-time tip. */
+  tipsShown: v.optional(v.array(v.string())),
+  /** F4 (D21): files sent right after the card. */
+  media: v.optional(v.array(mediaOutValidator)),
+});
+type CardTarget = {
+  chatId: number;
+  text: string;
+  keyboard: CardKeyboard;
+  protectContent: boolean;
+  record: RecordSpec;
+  tipsShown?: string[];
+  media?: MediaOut[];
+};
+
+/** The live link that may receive a card for this member/org, or null (re-checked at delivery). */
+async function deliverableLink(
+  ctx: { db: QueryCtx["db"] },
+  memberId: Id<"teamMembers">,
+  organizationId: Id<"organizations">,
+  now: number,
+  opts: { conversationContent?: boolean } = {},
+) {
+  const link = await ctx.db
+    .query("telegramLinks")
+    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", memberId).eq("status", "active"))
+    .first();
+  if (!link || link.organizationId !== organizationId) return null;
+  if (link.mutedUntil !== undefined && link.mutedUntil > now) return null;
+  const member = await ctx.db.get(link.teamMemberId);
+  if (!member || !isLinkMemberAlive(link, member)) return null;
+  // Conversation content (customer text, relay) only to whoever still has at
+  // least `inbox:view_own` — same helper as the actions (review F1 #9).
+  if (opts.conversationContent) {
+    const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+    if (!hasPermission(perms, "inbox", "view_own")) return null;
+  }
+  const org = await ctx.db.get(organizationId);
+  if (!org || !modulesOf(org).telegram) return null;
+  return { link, org };
+}
+
+/** Everything the delivery action needs, in one read (`now` passed in: no clock in queries). */
+export const internalGetNotificationDelivery = internalQuery({
+  args: {
+    notificationId: v.id("notifications"),
+    now: v.number(),
+    /** F3 (D22): "🤔 Não decidi sozinha…" line on top of the card. */
+    preface: v.optional(v.string()),
+    /** F3 (D22, suggest mode): "💡 Sugiro: …" + "💡 Aplicar sugestão" (`pa:`). */
+    suggestion: v.optional(v.object({ pendingActionId: v.id("pendingActions"), summary: v.string() })),
+  },
+  returns: v.union(v.null(), cardTargetValidator),
+  handler: async (ctx, args) => {
+    const n = await ctx.db.get(args.notificationId);
+    if (!n) return null;
+    const target = await deliverableLink(ctx, n.memberId, n.organizationId, args.now, {
+      conversationContent: n.conversationId !== undefined || n.handoffId !== undefined,
+    });
+    if (!target) return null;
+    const context = await loadCardContext(ctx.db, {
+      organizationId: n.organizationId,
+      now: args.now,
+      appBaseUrl: appUrl(),
+      notification: n,
+    });
+    if (!context) return null;
+    const baseRecord = {
+      organizationId: n.organizationId,
+      linkId: target.link._id,
+      notificationId: n._id,
+      ...(n.handoffId ? { handoffId: n.handoffId } : {}),
+      ...(n.conversationId ? { conversationId: n.conversationId } : {}),
+      ...(n.taskId ? { taskId: n.taskId } : {}),
+    };
+    const protectContent = target.org.settings.telegram?.protectContent === true;
+    // D23: in automatic mode an AI draft card is a countdown that sends unless vetoed.
+    const mode = effectiveAssistantMode(target.link, target.org);
+    const draftDoc =
+      n.type === "ai_draft_pending" && mode === "auto" && context.draft
+        ? await ctx.db.get(context.draft.messageId as Id<"messages">)
+        : null;
+    if (context.draft && draftDoc && draftAutoSendable(draftDoc.metadata?.aiDraft, n.memberId)) {
+      const seconds = autoSendSeconds(target.link);
+      const card = buildCountdownCard(context, context.draft.text, seconds, context.draft.messageId);
+      return {
+        chatId: target.link.chatId,
+        text: card.text,
+        keyboard: card.keyboard,
+        protectContent,
+        record: {
+          ...baseRecord,
+          kind: "draft" as const,
+          autoSend: { delayMs: seconds * 1000, draftMessageId: context.draft.messageId as Id<"messages"> },
+        },
+      };
+    }
+    const card = buildNotificationCard({ notification: { ...n, _id: n._id }, context });
+    const tip = appendFirstTimeTip({ type: n.type, tipsShown: target.link.tipsShown });
+    const text = [
+      args.preface ? escapeHtml(args.preface) : null,
+      card.text,
+      args.suggestion ? `💡 Sugiro: ${escapeHtml(args.suggestion.summary)}` : null,
+      tip.line ? escapeHtml(tip.line) : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const keyboard = args.suggestion
+      ? [[{ text: "💡 Aplicar sugestão", callback_data: `pa:${args.suggestion.pendingActionId}` }], ...card.keyboard]
+      : card.keyboard;
+    const media = await notificationMedia(ctx, n, target.link, context.discreet);
+    return {
+      chatId: target.link.chatId,
+      text,
+      keyboard,
+      protectContent,
+      record: { ...baseRecord, kind: "notification" as const },
+      ...(tip.line ? { tipsShown: tip.tipsShown } : {}),
+      ...(media.length > 0 ? { media } : {}),
+    };
+  },
+});
+
+/**
+ * F4 (D21): the customer files a card carries — the relayed messages of a
+ * `new_message`, the last customer message of a `handoff_requested`.
+ */
+async function notificationMedia(
+  ctx: QueryCtx,
+  n: Doc<"notifications">,
+  link: Doc<"telegramLinks">,
+  discreet: boolean,
+): Promise<MediaOut[]> {
+  if (!n.conversationId || discreet || !link.prefs.mediaInbound) return [];
+  const conversation = await ctx.db.get(n.conversationId);
+  if (!conversation || conversation.organizationId !== n.organizationId) return [];
+  let messages: Doc<"messages">[] = [];
+  if (n.type === "new_message") {
+    const ids = (n.data as { messageIds?: unknown } | undefined)?.messageIds;
+    for (const id of Array.isArray(ids) ? ids.slice(0, 50) : []) {
+      const m = typeof id === "string" ? await ctx.db.get(id as Id<"messages">) : null;
+      if (m && m.conversationId === conversation._id) messages.push(m);
+    }
+  } else if (n.type === "handoff_requested") {
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
+      .order("desc")
+      .take(20);
+    const lastInbound = recent.find((m) => m.direction === "inbound");
+    if (lastInbound) messages = [lastInbound];
+  } else {
+    return [];
+  }
+  return await mediaForMessages(ctx.db, messages, {
+    organizationId: n.organizationId,
+    discreet,
+    mediaInbound: link.prefs.mediaInbound,
+    crmUrl: conversationCrmUrl(appUrl(), conversation._id),
+  });
+}
+
+/**
+ * Scheduled by `createNotification` (lib/notify.ts) for members with an active
+ * link. F3 (D22): first asks whether the assistant handles the event — auto
+ * mode runs `internalAssistantAutoTurn` (which falls back to this card with a
+ * preface when it does not act); suggest mode with `suggestOnEvents` runs the
+ * read-only suggestion turn, which comes back here with `suggestion`.
+ */
+export const internalDeliverNotification = internalAction({
+  args: {
+    notificationId: v.id("notifications"),
+    forceCard: v.optional(v.boolean()),
+    preface: v.optional(v.string()),
+    suggestion: v.optional(v.object({ pendingActionId: v.id("pendingActions"), summary: v.string() })),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (!args.forceCard && !args.suggestion) {
+      const decision: { route: "card" | "auto" | "suggest"; linkId?: Id<"telegramLinks"> } = await ctx.runQuery(
+        internal.telegramCopilot.internalAssistantDecision,
+        { notificationId: args.notificationId, now: Date.now() },
+      );
+      if (decision.route === "auto" && decision.linkId) {
+        await ctx.runAction(internal.telegramCopilot.internalAssistantAutoTurn, {
+          linkId: decision.linkId,
+          notificationId: args.notificationId,
+        });
+        return null;
+      }
+      if (decision.route === "suggest" && decision.linkId) {
+        await ctx.runAction(internal.telegramCopilot.internalAssistantSuggestTurn, {
+          linkId: decision.linkId,
+          notificationId: args.notificationId,
+        });
+        return null;
+      }
+    }
+    const target: CardTarget | null = await ctx.runQuery(internal.telegram.internalGetNotificationDelivery, {
+      notificationId: args.notificationId,
+      now: Date.now(),
+      ...(args.preface ? { preface: args.preface } : {}),
+      ...(args.suggestion ? { suggestion: args.suggestion } : {}),
+    });
+    if (!target) return null;
+    const { tipsShown, ...reply } = target;
+    await deliverReplies(ctx, [reply], 1);
+    if (tipsShown) {
+      await ctx.runMutation(internal.telegram.internalSetTipsShown, { linkId: target.record.linkId, tipsShown });
+    }
+    return null;
+  },
+});
+
+/** D23: the countdown elapsed — sends unless vetoed (`lib/telegramActions.executeAutoSend`). */
+export const internalExecuteAutoSend = internalMutation({
+  args: { deliveryId: v.id("telegramDeliveries") },
+  returns: v.object({ replies: v.array(replyValidator), edits: v.array(editValidator) }),
+  handler: async (ctx, args) => {
+    return await executeAutoSend(ctx, { deliveryId: args.deliveryId, now: Date.now(), appBaseUrl: appUrl() });
+  },
+});
+
+/** Scheduled by `internalRecordDelivery` when a countdown card goes out (D23). */
+export const internalAutoSendDraft = internalAction({
+  args: { deliveryId: v.id("telegramDeliveries") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    let result: { replies: Reply[]; edits: EditOp[] };
+    try {
+      result = await ctx.runMutation(internal.telegram.internalExecuteAutoSend, { deliveryId: args.deliveryId });
+    } catch (e) {
+      const data = telegramFailureOf(e);
+      if (data?.kind !== TELEGRAM_FAILURE || !data.result) throw e;
+      result = data.result;
+    }
+    await deliverEdits(result.edits);
+    await deliverReplies(ctx, result.replies, 1);
+    return null;
+  },
+});
+
+/** D24: first-time tips already shown on this link (helper `appendFirstTimeTip`). */
+export const internalSetTipsShown = internalMutation({
+  args: { linkId: v.id("telegramLinks"), tipsShown: v.array(v.string()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const link = await ctx.db.get(args.linkId);
+    if (link) await ctx.db.patch(link._id, { tipsShown: args.tipsShown.slice(0, 50) });
+    return null;
+  },
+});
+
+/** End of the 20 s window: ONE `new_message` notification (bell + Telegram via the fan-out). */
+export const internalFlushRelayBuffer = internalMutation({
+  args: { bufferId: v.id("telegramRelayBuffer") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const buffer = await ctx.db.get(args.bufferId);
+    if (!buffer) return null;
+    await ctx.db.delete(buffer._id);
+    const link = await ctx.db.get(buffer.linkId);
+    const conversation = await ctx.db.get(buffer.conversationId);
+    if (!link || link.status !== "active" || !conversation) return null;
+    if (!link.prefs.relayAssignedConversations) return null; // turned off during the window
+    const now = Date.now();
+    // Re-check: someone may have handed the conversation back to the AI meanwhile.
+    const lead = conversation.leadId ? await ctx.db.get(conversation.leadId) : null;
+    const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
+    if (!recipient || recipient._id !== link.teamMemberId) return null;
+    const lines: string[] = [];
+    for (const id of buffer.messageIds) {
+      const m = await ctx.db.get(id);
+      if (m && m.conversationId === conversation._id) lines.push(await messageText(ctx.db, m));
+    }
+    if (lines.length === 0) return null;
+    const more = buffer.droppedCount ?? 0;
+    if (more > 0) lines.push(`… e mais ${more} mensagens (abrir no CRM)`);
+    await createNotification(ctx, {
+      organizationId: buffer.organizationId,
+      memberId: link.teamMemberId,
+      type: "new_message",
+      title: `${lead?.title ?? "Contato"} · ${channelLabel(conversation.channel)}`,
+      body: lines.join("\n").slice(0, 1000),
+      conversationId: conversation._id,
+      data: { messageIds: buffer.messageIds, ...(more > 0 ? { moreCount: more } : {}) },
+    });
+    return null;
+  },
+});
+
+/** Chats whose focus is this conversation get "🤖 IA → …" once per CRM message. */
+export const internalGetAiRelayTargets = internalQuery({
+  args: { messageId: v.id("messages"), now: v.number() },
+  returns: v.array(cardTargetValidator),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.direction !== "outbound" || message.senderType !== "ai") return [];
+    const conversation = await ctx.db.get(message.conversationId);
+    if (!conversation || conversation.kind === "group") return [];
+    const chats = await ctx.db
+      .query("telegramChats")
+      .withIndex("by_focus_conversation", (q) => q.eq("focus.conversationId", conversation._id))
+      .take(10);
+    const recent = await ctx.db
+      .query("telegramDeliveries")
+      .withIndex("by_conversation_and_sent", (q) =>
+        q.eq("conversationId", conversation._id).gt("sentAt", args.now - FOCUS_TTL_MS),
+      )
+      // Newest first: the relay of THIS message, if any, is among the latest.
+      .order("desc")
+      .take(50);
+    const out: CardTarget[] = [];
+    for (const chat of chats) {
+      if (!chat.focus || chat.focus.setAt <= args.now - FOCUS_TTL_MS) continue;
+      const link = (await activeLinksOfChat(ctx, chat.chatId)).find(
+        (l) => l.organizationId === conversation.organizationId,
+      );
+      if (!link) continue;
+      const target = await deliverableLink(ctx, link.teamMemberId, conversation.organizationId, args.now, {
+        conversationContent: true,
+      });
+      if (!target) continue;
+      if (recent.some((d) => d.crmMessageId === message._id && d.linkId === link._id)) continue;
+      const context = await loadCardContext(ctx.db, {
+        organizationId: conversation.organizationId,
+        now: args.now,
+        appBaseUrl: appUrl(),
+        conversationId: conversation._id,
+      });
+      if (!context) continue;
+      const card = buildAiRelayCard(context, { text: message.content, at: message.createdAt });
+      // F4 (D21): the AI sent a file (flyer, document) → it goes right after the relay card.
+      const media = await mediaForMessages(ctx.db, [message], {
+        organizationId: conversation.organizationId,
+        discreet: context.discreet,
+        mediaInbound: link.prefs.mediaInbound,
+        crmUrl: conversationCrmUrl(appUrl(), conversation._id),
+      });
+      out.push({
+        chatId: chat.chatId,
+        text: card.text,
+        keyboard: card.keyboard,
+        ...(media.length > 0 ? { media } : {}),
+        protectContent: target.org.settings.telegram?.protectContent === true,
+        record: {
+          organizationId: conversation.organizationId,
+          linkId: link._id,
+          kind: "relay",
+          conversationId: conversation._id,
+          crmMessageId: message._id,
+        },
+      });
+    }
+    return out;
+  },
+});
+
+/** Scheduled by `lib/telegramRelay.maybeScheduleAiReplyRelay` after the attendant commits a reply. */
+export const internalRelayAiReply = internalAction({
+  args: { messageId: v.id("messages") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const targets: CardTarget[] = await ctx.runQuery(internal.telegram.internalGetAiRelayTargets, {
+      messageId: args.messageId,
+      now: Date.now(),
+    });
+    for (const target of targets) await deliverReplies(ctx, [target], 1);
+    return null;
+  },
+});
+
+/** Configurações → Telegram (org): discreet / protect_content / automatic mode. Admin only. */
+export const updateOrgTelegramSettings = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    discreet: v.optional(v.boolean()),
+    protectContent: v.optional(v.boolean()),
+    allowAutoMode: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Same gate as `orgModules.setOrgModules`.
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const before = org.settings.telegram ?? {};
+    const after = { ...before };
+    if (args.discreet !== undefined) after.discreet = args.discreet;
+    if (args.protectContent !== undefined) after.protectContent = args.protectContent;
+    if (args.allowAutoMode !== undefined) after.allowAutoMode = args.allowAutoMode;
+    const now = Date.now();
+    await ctx.db.patch(org._id, { settings: { ...org.settings, telegram: after }, updatedAt: now });
+    await ctx.db.insert("auditLogs", {
+      organizationId: org._id,
+      entityType: "organization",
+      entityId: org._id,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      changes: { before: { ...before }, after: { ...after } },
+      metadata: { event: "telegram.settings_updated" },
+      description: "Alterou as opções do Telegram da organização",
+      severity: "medium",
+      createdAt: now,
+    });
+    return null;
+  },
+});
+
+/** Ops health: `telegramUpdates` by status since `since` (bounded). */
+export const internalUpdateStats = internalQuery({
+  args: { since: v.number() },
+  returns: v.object({
+    pending: v.number(),
+    done: v.number(),
+    error: v.number(),
+    truncated: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const LIMIT = 2000;
+    const rows = await ctx.db
+      .query("telegramUpdates")
+      .withIndex("by_received_at", (q) => q.gt("receivedAt", args.since))
+      .take(LIMIT + 1);
+    const counted = rows.slice(0, LIMIT);
+    return {
+      pending: counted.filter((r) => r.status === "pending").length,
+      done: counted.filter((r) => r.status === "done").length,
+      error: counted.filter((r) => r.status === "error").length,
+      truncated: rows.length > LIMIT,
+    };
+  },
+});
+
+/**
+ * Every live copy of a handoff card becomes the record of how it was resolved
+ * (review F1 #2/#5): "✅ Aceito por Ana · hh:mm" or "🤖 Devolvido à IA por Ana",
+ * with only Ver tudo / WhatsApp / CRM. Copies of revoked/blocked links or of
+ * members who left are skipped; `skipMemberId` = who acted from Telegram (their
+ * own card already became the record).
+ */
+export const internalGetHandoffCardEdits = internalQuery({
+  args: { handoffId: v.id("handoffs"), skipMemberId: v.optional(v.id("teamMembers")), now: v.number() },
+  returns: v.array(editValidator),
+  handler: async (ctx, args) => {
+    const handoff = await ctx.db.get(args.handoffId);
+    if (!handoff || handoff.status === "pending") return [];
+    const resolverId = handoff.status === "accepted" ? handoff.acceptedBy : handoff.resolvedBy;
+    const resolver = resolverId ? await ctx.db.get(resolverId) : null;
+    const context = await loadCardContext(ctx.db, {
+      organizationId: handoff.organizationId,
+      now: args.now,
+      appBaseUrl: appUrl(),
+      handoffId: handoff._id,
+      conversationId: handoff.conversationId,
+    });
+    if (!context) return [];
+    const who = escapeHtml(resolver?.name ?? "outro membro");
+    const at = formatTime(handoff.resolvedAt ?? args.now, context.timezone);
+    const status = handoff.status === "accepted" ? `✅ Aceito por ${who} · ${at}` : `🤖 Devolvido à IA por ${who} · ${at}`;
+    const record = buildRecordCard(context, status, ["viewAll", "links"]);
+    const copies = await ctx.db
+      .query("telegramDeliveries")
+      .withIndex("by_handoff", (q) => q.eq("handoffId", handoff._id))
+      .take(50);
+    const out: EditOp[] = [];
+    for (const d of copies) {
+      const link = await ctx.db.get(d.linkId);
+      if (!link || link.status !== "active" || link.organizationId !== handoff.organizationId) continue;
+      if (args.skipMemberId && link.teamMemberId === args.skipMemberId) continue;
+      if (!isLinkMemberAlive(link, await ctx.db.get(link.teamMemberId))) continue;
+      out.push({ chatId: d.chatId, messageId: d.messageId, text: record.text, keyboard: record.keyboard });
+    }
+    return out;
+  },
+});
+
+/** Scheduled by `lib/telegramRelay.maybeScheduleHandoffCardsUpdate` (accept/reject/cancel cores). */
+export const internalMarkHandoffCards = internalAction({
+  args: { handoffId: v.id("handoffs"), skipMemberId: v.optional(v.id("teamMembers")) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const edits: EditOp[] = await ctx.runQuery(internal.telegram.internalGetHandoffCardEdits, {
+      handoffId: args.handoffId,
+      skipMemberId: args.skipMemberId,
+      now: Date.now(),
+    });
+    await deliverEdits(edits);
+    return null;
   },
 });

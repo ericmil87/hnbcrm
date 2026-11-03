@@ -283,7 +283,9 @@ export async function applyTaskCompletion(
   task: Doc<"tasks">,
   actor: Doc<"teamMembers">,
   now: number,
-  placement?: { columnId: Id<"taskColumns">; order: number }
+  placement?: { columnId: Id<"taskColumns">; order: number },
+  /** Origem fora do app (Telegram F1): vai para o metadata do audit desta conclusão. */
+  via?: "telegram" | "telegram_auto" | "copilot"
 ): Promise<void> {
   const patch: Record<string, any> = { status: "completed", completedAt: now, updatedAt: now };
 
@@ -314,7 +316,7 @@ export async function applyTaskCompletion(
     actorId: actor._id,
     actorType: actor.type === "ai" ? "ai" : "human",
     changes: { before: { status: task.status }, after: { status: "completed" } },
-    metadata: { title: task.title },
+    metadata: { title: task.title, ...(via ? { via } : {}) },
     description: buildAuditDescription({
       action: "update",
       entityType: "task",
@@ -343,6 +345,100 @@ export async function applyTaskCompletion(
     event: "task.completed",
     payload: { taskId: task._id, title: task.title },
   });
+}
+
+// ── Reabertura (inverso da conclusão) ──
+
+/**
+ * Reabre uma tarefa concluída, desfazendo o que `applyTaskCompletion` fez:
+ * status/`completedAt`, done column → coluna anterior (ou a default do
+ * projeto) e a próxima instância da recorrência gerada POR ESTA conclusão,
+ * enquanto ainda intocada (pendente, nascida depois de `completedAt`) — ela é
+ * cancelada e o carimbo `lastGeneratedAt` sai, para a próxima conclusão gerar
+ * de novo. Usado pelo Desfazer do Telegram (F3). Devolve false se não estava
+ * concluída.
+ */
+export async function reopenTaskCore(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  actor: Doc<"teamMembers">,
+  now: number,
+  opts: {
+    status?: "pending" | "in_progress";
+    previousColumnId?: Id<"taskColumns">;
+    via?: "telegram" | "telegram_auto" | "copilot";
+  } = {}
+): Promise<boolean> {
+  if (task.status !== "completed") return false;
+  const status = opts.status ?? "pending";
+  const patch: Record<string, any> = { status, completedAt: undefined, updatedAt: now };
+
+  const column = task.columnId ? await ctx.db.get(task.columnId) : null;
+  if (column?.isDoneColumn) {
+    const previous = opts.previousColumnId ? await ctx.db.get(opts.previousColumnId) : null;
+    const target =
+      previous && previous.organizationId === task.organizationId && !previous.isDoneColumn && previous.projectId === task.projectId
+        ? previous
+        : task.projectId
+          ? await defaultColumnForProject(ctx, task.projectId)
+          : null;
+    if (target) {
+      patch.columnId = target._id;
+      patch.order = await nextOrderInColumn(ctx, target._id);
+    }
+  }
+
+  if (task.recurrence) {
+    const successors = await ctx.db
+      .query("tasks")
+      .withIndex("by_recurrence_source", (q) => q.eq("recurrenceSourceId", task._id))
+      .take(10);
+    let canceled = 0;
+    for (const next of successors) {
+      if (next.status === "pending" && next.createdAt >= (task.completedAt ?? 0)) {
+        await ctx.db.patch(next._id, { status: "cancelled", updatedAt: now });
+        canceled++;
+      }
+    }
+    if (canceled > 0) {
+      const { lastGeneratedAt: _drop, ...recurrence } = task.recurrence as typeof task.recurrence & { lastGeneratedAt?: number };
+      patch.recurrence = recurrence;
+    }
+  }
+
+  await ctx.db.patch(task._id, patch);
+  const changes = { before: { status: "completed" }, after: { status } };
+  await ctx.db.insert("auditLogs", {
+    organizationId: task.organizationId,
+    entityType: "task",
+    entityId: task._id,
+    action: "update",
+    actorId: actor._id,
+    actorType: actor.type === "ai" ? "ai" : "human",
+    changes,
+    metadata: { title: task.title, reopened: true, ...(opts.via ? { via: opts.via } : {}) },
+    description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes }),
+    severity: "medium",
+    createdAt: now,
+  });
+  if (task.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: task.organizationId,
+      leadId: task.leadId,
+      type: "note",
+      actorId: actor._id,
+      actorType: actor.type === "ai" ? "ai" : "human",
+      content: `Tarefa "${task.title}" reaberta`,
+      metadata: { taskId: task._id, reopened: true, ...(opts.via ? { via: opts.via } : {}) },
+      createdAt: now,
+    });
+  }
+  await scheduleWebhookEvent(ctx, {
+    organizationId: task.organizationId,
+    event: "task.updated",
+    payload: { taskId: task._id, title: task.title, status },
+  });
+  return true;
 }
 
 // ── Comentário (núcleo ÚNICO) ──
@@ -458,4 +554,44 @@ export async function addTaskCommentCore(
   });
 
   return commentId;
+}
+
+/**
+ * Núcleo de "adiar tarefa" (app, REST e Telegram): `snoozedUntil`, lembrete
+ * reagendado, audit `low` e webhook `task.snoozed`. Quem chama já autorizou o
+ * ator e checou a org da tarefa, e roda `syncFollowUpForTask` depois
+ * (`lib/followUpOps` importa este arquivo; o inverso fecharia um ciclo).
+ */
+export async function snoozeTaskCore(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  actor: Doc<"teamMembers">,
+  snoozedUntil: number,
+  now: number,
+  extraMetadata?: Record<string, unknown>
+): Promise<void> {
+  await ctx.db.patch(task._id, { snoozedUntil, reminderTriggered: false, updatedAt: now });
+  if (task.type === "reminder") {
+    const delay = Math.max(0, snoozedUntil - now);
+    await ctx.scheduler.runAfter(delay, internal.tasks.triggerReminder, { taskId: task._id });
+  }
+  const changes = { before: { snoozedUntil: task.snoozedUntil }, after: { snoozedUntil } };
+  await ctx.db.insert("auditLogs", {
+    organizationId: task.organizationId,
+    entityType: "task",
+    entityId: task._id,
+    action: "update",
+    actorId: actor._id,
+    actorType: actor.type === "ai" ? "ai" : "human",
+    changes,
+    metadata: { title: task.title, ...(extraMetadata ?? {}) },
+    description: buildAuditDescription({ action: "update", entityType: "task", metadata: { title: task.title }, changes }),
+    severity: "low",
+    createdAt: now,
+  });
+  await scheduleWebhookEvent(ctx, {
+    organizationId: task.organizationId,
+    event: "task.snoozed",
+    payload: { taskId: task._id, snoozedUntil },
+  });
 }
