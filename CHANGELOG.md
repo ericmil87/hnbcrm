@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.72.1] - 2026-11-03
+
+### Operação: publicação em produção e limpeza do gateway
+
+- `npm run deploy:prod` passa a aceitar o arquivo da chave como ele está (a chave crua ou no formato `CONVEX_DEPLOY_KEY=…`), falha com mensagem clara se o arquivo não existir e **recusa qualquer chave que não comece com `prod:`** — antes, com o arquivo no formato cru, o script lia uma chave vazia e seguia sem avisar.
+- Gateway WhatsApp gerenciado: removidos 9 instances órfãos (números antigos, deslogados, de pareamentos substituídos); ficaram só os 3 referenciados por canais em produção. Backup do banco do gateway feito antes.
+
 ## [0.72.0] - 2026-11-03
 
 ### O celular volta a tocar com o WhatsApp conectado ao HNBCRM
