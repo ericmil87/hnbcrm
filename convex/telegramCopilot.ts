@@ -43,6 +43,8 @@ import { wrapUntrusted, wrapUntrustedJson } from "./lib/promptEnvelope";
 import { safeTimezone } from "./lib/promptDateTime";
 import { initials } from "./lib/telegramNotifications";
 import {
+  AUTO_TURN_TRIGGERS,
+  SUGGEST_TRIGGERS,
   AUTO_ACTIONS_PER_HOUR,
   STEP_LABELS,
   SUGGEST_SYSTEM_TEXT,
@@ -743,8 +745,7 @@ async function promptVoiceGate(ctx: ActionCtx, target: RunTarget): Promise<boole
 // D22 — assistant modes on events (automatic / suggestion)
 // ---------------------------------------------------------------------------
 
-const AUTO_TRIGGERS = new Set(["handoff_requested", "new_message", "ai_followup_needs_human"]);
-const SUGGEST_TRIGGERS = new Set(["handoff_requested", "ai_followup_needs_human"]);
+const ASSISTANT_TRIGGERS = new Set([...AUTO_TURN_TRIGGERS, ...SUGGEST_TRIGGERS]);
 const SUGGESTION_TTL_MS = 30 * 60 * 1000;
 
 /**
@@ -760,7 +761,7 @@ export const internalAssistantDecision = internalQuery({
   handler: async (ctx, args) => {
     const card = { route: "card" as const };
     const n = await ctx.db.get(args.notificationId);
-    if (!n || !n.conversationId || !AUTO_TRIGGERS.has(n.type)) return card;
+    if (!n || !n.conversationId || !ASSISTANT_TRIGGERS.has(n.type)) return card;
     const link = await ctx.db
       .query("telegramLinks")
       .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", n.memberId).eq("status", "active"))
@@ -772,18 +773,14 @@ export const internalAssistantDecision = internalQuery({
     const org = await ctx.db.get(n.organizationId);
     if (!org || !modulesOf(org).telegram || !orgAiActive(org) || org.settings.aiConfig?.copilotEnabled === false) return card;
     const mode = effectiveAssistantMode(link, org);
-    if (mode === "auto") {
+    // D22 amended (incident 03/11 in PROD): the automatic turn ONLY for a customer message in the
+    // conversation in focus (D17). Handoffs and stuck follow-ups behave as in suggest mode, in
+    // either mode: card + read-only suggestion, the human decides.
+    if (mode === "auto" && AUTO_TURN_TRIGGERS.has(n.type)) {
       if (autoActionsLeft(link, args.now) <= 0) return card;
-      if (n.type === "new_message") {
-        // Only when the conversation is in focus, or assigned to the member with the AI paused.
-        const chat = await chatRow(ctx, link.chatId);
-        const inFocus = chat?.focus?.conversationId === n.conversationId && chat.focus.setAt > args.now - FOCUS_TTL_MS;
-        const conversation = await ctx.db.get(n.conversationId);
-        const lead = conversation?.leadId ? await ctx.db.get(conversation.leadId) : null;
-        const paused = conversation?.aiPausedUntil !== undefined && conversation.aiPausedUntil > args.now;
-        const mine = conversation?.assignedTo === member._id || lead?.assignedTo === member._id;
-        if (!inFocus && !(paused && mine)) return card;
-      }
+      const chat = await chatRow(ctx, link.chatId);
+      const inFocus = chat?.focus?.conversationId === n.conversationId && chat.focus.setAt > args.now - FOCUS_TTL_MS;
+      if (!inFocus) return card;
       return { route: "auto" as const, linkId: link._id };
     }
     if (link.assistant.suggestOnEvents !== false && SUGGEST_TRIGGERS.has(n.type)) {

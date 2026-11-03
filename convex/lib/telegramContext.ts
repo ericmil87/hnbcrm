@@ -94,6 +94,7 @@ export async function loadCardContext(
       status: validHandoff.status,
       reason: validHandoff.reason,
       summary: validHandoff.summary,
+      ...(validHandoff.suggestedActions.length > 0 ? { suggestedActions: validHandoff.suggestedActions } : {}),
       fromAi: !from || from.type === "ai",
       fromName: from?.name,
       acceptedByName: acceptedBy?.name,

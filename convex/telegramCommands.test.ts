@@ -115,11 +115,11 @@ async function seedLead(s: Seed, title: string, assignedTo: Id<"teamMembers"> | 
   });
 }
 
-async function seedHandoff(s: Seed, lead: { leadId: Id<"leads">; conversationId: Id<"conversations"> }, opts: { to?: Id<"teamMembers">; ageMin?: number; reason?: string } = {}) {
+async function seedHandoff(s: Seed, lead: { leadId: Id<"leads">; conversationId: Id<"conversations"> }, opts: { to?: Id<"teamMembers">; ageMin?: number; reason?: string; summary?: string; actions?: string[] } = {}) {
   return await t.run((ctx) =>
     ctx.db.insert("handoffs", {
       organizationId: s.organizationId, leadId: lead.leadId, conversationId: lead.conversationId, fromMemberId: s.aiId,
-      toMemberId: opts.to, reason: opts.reason ?? "preço", suggestedActions: [], origin: "ai_tool", status: "pending",
+      toMemberId: opts.to, reason: opts.reason ?? "preço", ...(opts.summary ? { summary: opts.summary } : {}), suggestedActions: opts.actions ?? [], origin: "ai_tool", status: "pending",
       createdAt: Date.now() - (opts.ageMin ?? 5) * 60_000,
     }),
   );
@@ -191,21 +191,60 @@ async function adminChat() {
 // ── /repasses ───────────────────────────────────────────────────────────
 
 describe("/repasses", () => {
-  test("lista do mais antigo ao mais novo, uma mensagem por linha, com Aceitar e Instruir", async () => {
+  test("cada linha é o cartão completo do repasse: resumo, ações sugeridas, peek e entrega registrada", async () => {
     const { s } = await adminChat();
     const maria = await seedLead(s, "Maria Souza", s.aiId);
     const pedro = await seedLead(s, "Pedro Nunes", s.aiId, { channel: "instagram" });
-    const hMaria = await seedHandoff(s, maria, { ageMin: 42, reason: "preço" });
+    const hMaria = await seedHandoff(s, maria, {
+      ageMin: 42, reason: "preço", summary: "Quer 15% no plano anual", actions: ["Oferecer 10%", "Ligar hoje"],
+    });
     const hPedro = await seedHandoff(s, pedro, { ageMin: 200, reason: "reclamação" });
+    await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: maria.conversationId, leadId: maria.leadId, direction: "inbound",
+        senderType: "contact", content: "Vocês fazem 15% no anual?", contentType: "text", isInternal: false, createdAt: Date.now() - 60_000,
+      }),
+    );
     await say(CHAT_ADMIN, "/repasses");
     const out = sends(CHAT_ADMIN);
     expect(out).toHaveLength(3);
     expect(out[0].body.text).toBe("🔁 2 repasses pendentes · Acme Corp");
-    // Oldest first = created first (Maria seeded first).
-    expect(out[1].body.text).toBe("1. <b>Maria Souza</b> · WhatsApp · preço · 42 min");
-    expect(datas(out[1])).toEqual([`ah:${hMaria}`, `ia:${maria.conversationId}`]);
-    expect(out[2].body.text).toBe("2. <b>Pedro Nunes</b> · Instagram · reclamação · 3h ⚠️");
-    expect(datas(out[2])).toEqual([`ah:${hPedro}`, `ia:${pedro.conversationId}`]);
+    const card = out[1].body.text as string;
+    expect(card).toContain("🔔 Repasse da IA · Acme Corp");
+    expect(card).toContain("<b>Maria Souza</b> · WhatsApp");
+    expect(card).toContain("Motivo: preço");
+    expect(card).toContain("Resumo: Quer 15% no plano anual");
+    expect(card).toContain("Ações sugeridas:\n• Oferecer 10%\n• Ligar hoje");
+    expect(card).toContain("Vocês fazem 15% no anual?");
+    expect(datas(out[1])).toEqual(
+      expect.arrayContaining([`ah:${hMaria}`, `ia:${maria.conversationId}`, `va:${maria.conversationId}`]),
+    );
+    expect(out[2].body.text).toContain("<b>Pedro Nunes</b> · Instagram");
+    expect(datas(out[2])).toEqual(expect.arrayContaining([`ah:${hPedro}`, `va:${pedro.conversationId}`]));
+    // Each row is recorded like a pushed card (no notification behind it).
+    const deliveries = await t.run((ctx) => ctx.db.query("telegramDeliveries").collect());
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries.map((d) => d.handoffId).sort()).toEqual([hMaria, hPedro].sort());
+    expect(deliveries.every((d) => d.kind === "notification" && d.notificationId === undefined && d.chatId === CHAT_ADMIN)).toBe(true);
+  });
+
+  test("Ver tudo numa linha da lista edita o cartão para o histórico", async () => {
+    const { s } = await adminChat();
+    const maria = await seedLead(s, "Maria Souza", s.aiId);
+    await seedHandoff(s, maria);
+    await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: maria.conversationId, leadId: maria.leadId, direction: "inbound",
+        senderType: "contact", content: "Preciso de desconto", contentType: "text", isInternal: false, createdAt: Date.now() - 1000,
+      }),
+    );
+    await say(CHAT_ADMIN, "/repasses");
+    const rowId = 701; // header 700, first card 701
+    await tap(CHAT_ADMIN, rowId, `va:${maria.conversationId}`);
+    const edit = edits().at(-1)!;
+    expect(edit.body.message_id).toBe(rowId);
+    expect(edit.body.text).toContain("últimas");
+    expect(edit.body.text).toContain("Preciso de desconto");
   });
 
   test("vazio", async () => {
@@ -234,7 +273,7 @@ describe("/repasses", () => {
     expect(texts(CHAT_ADMIN)[0]).toContain("3 repasses pendentes");
   });
 
-  test("paginação: 10 + Mais 10 →, a segunda página edita o rodapé", async () => {
+  test("paginação: 5 cartões + Mais 5 →, a segunda página edita o rodapé", async () => {
     const { s } = await adminChat();
     for (let i = 0; i < 12; i++) {
       const lead = await seedLead(s, `Lead ${i + 1}`, s.aiId);
@@ -242,33 +281,36 @@ describe("/repasses", () => {
     }
     await say(CHAT_ADMIN, "/repasses");
     const first = sends(CHAT_ADMIN);
-    expect(first).toHaveLength(12); // header + 10 rows + footer
+    expect(first).toHaveLength(7); // header + 5 cards + footer
     expect(first[0].body.text).toBe("🔁 12 repasses pendentes · Acme Corp");
-    expect(first[10].body.text).toContain("10. <b>Lead 10</b>");
-    expect(first[11].body.text).toBe("Mostrando 1–10.");
-    expect(datas(first[11])).toEqual(["pg:repasses:10"]);
-    const footerId = 700 + 11;
+    expect(first[5].body.text).toContain("<b>Lead 5</b>");
+    expect(first[6].body.text).toBe("Mostrando 1–5.");
+    expect(buttons(first[6])).toEqual([{ text: "Mais 5 →", callback_data: "pg:repasses:5" }]);
+    const footerId = 700 + 6;
     calls = [];
-    await tap(CHAT_ADMIN, footerId, "pg:repasses:10");
+    await tap(CHAT_ADMIN, footerId, "pg:repasses:5");
     const second = sends(CHAT_ADMIN);
-    expect(second.map((c) => c.body.text)).toEqual([
-      expect.stringContaining("11. <b>Lead 11</b>"),
-      expect.stringContaining("12. <b>Lead 12</b>"),
-    ]);
+    expect(second).toHaveLength(6); // 5 cards + footer
+    expect(second[0].body.text).toContain("<b>Lead 6</b>");
+    expect(second[5].body.text).toBe("Mostrando 1–10.");
     expect(edits()).toHaveLength(1);
-    expect(edits()[0].body).toMatchObject({ message_id: footerId, text: "Mostrando 1–10." });
+    expect(edits()[0].body).toMatchObject({ message_id: footerId, text: "Mostrando 1–5." });
   });
 
-  test("modo discreto: iniciais, sem o motivo com nome ou dígitos", async () => {
+  test("modo discreto: iniciais, sem telefone, WhatsApp, resumo nem Ver tudo", async () => {
     const s = await seedOrg({ discreet: true });
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
     const maria = await seedLead(s, "Maria Souza", s.aiId);
-    await seedHandoff(s, maria, { ageMin: 10, reason: "Maria Souza pediu retorno no 11 98765-4321" });
+    await seedHandoff(s, maria, {
+      ageMin: 10, reason: "Maria Souza pediu retorno no 11 98765-4321", summary: "Segredo do resumo", actions: ["Ligar para Maria"],
+    });
     await say(CHAT_ADMIN, "/repasses");
-    const row = sends(CHAT_ADMIN)[1].body.text as string;
-    expect(row).toContain("1. <b>M. S.</b> · WhatsApp");
-    expect(row).not.toContain("Maria");
-    expect(row).not.toContain("98765");
+    const row = sends(CHAT_ADMIN)[1];
+    const text = row.body.text as string;
+    expect(text).toContain("<b>M. S.</b> · WhatsApp");
+    for (const leak of ["Maria", "98765", "Segredo", "Ligar para"]) expect(text).not.toContain(leak);
+    expect(datas(row).some((d: string) => d.startsWith("va:") || d.includes("wa.me"))).toBe(false);
+    expect(datas(row).some((d: string) => d.startsWith("ah:"))).toBe(true);
   });
 
   test("callback cmd:repasses de um relatório age como o comando", async () => {
@@ -278,6 +320,7 @@ describe("/repasses", () => {
     await tap(CHAT_ADMIN, 555, "cmd:repasses");
     expect(texts(CHAT_ADMIN)[0]).toBe("🔁 1 repasse pendente · Acme Corp");
     expect(texts(CHAT_ADMIN)).toHaveLength(2);
+    expect(texts(CHAT_ADMIN)[1]).toContain("🔔 Repasse da IA");
   });
 
   test("Aceitar numa linha da lista aceita o repasse pela porta do F1", async () => {
@@ -386,7 +429,7 @@ describe("/foco e /novo", () => {
     expect(buttons(picker)).toEqual([{ text: "Carlos Lima · WhatsApp", callback_data: `fc:${carlos.conversationId}` }]);
     await tap(CHAT_ADMIN, 700, `fc:${carlos.conversationId}`);
     expect(texts(CHAT_ADMIN)[1]).toBe(
-      "🎯 Foco: <b>Carlos Lima</b> (WhatsApp · Qualificado). Tudo que você me disser agora é sobre essa conversa. /novo limpa.",
+      "🎯 Foco: <b>Carlos Lima</b>\nWhatsApp · Qualificado\n\nTudo que você me disser agora é sobre essa conversa.\n/novo limpa.",
     );
     expect((await chatOf(CHAT_ADMIN))?.focus).toMatchObject({ conversationId: carlos.conversationId, leadId: carlos.leadId, source: "command" });
     // With a focus, /foco shows the current one first with "Limpar foco".
@@ -450,7 +493,7 @@ describe("/pausar", () => {
     const until = Date.now() + 3600_000;
     expect((await linkOf(l1))?.mutedUntil).toBe(until);
     expect((await linkOf(l2))?.mutedUntil).toBe(until);
-    expect(edits()[0].body.text).toBe("🔕 Silenciado até 13:00. Repasses urgentes continuam no CRM.");
+    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até 13:00.</b>\nRepasses urgentes continuam no CRM.");
     await tap(CHAT_ADMIN, 700, "mu:off");
     expect((await linkOf(l1))?.mutedUntil).toBeUndefined();
     expect((await linkOf(l2))?.mutedUntil).toBeUndefined();
@@ -463,7 +506,7 @@ describe("/pausar", () => {
     await tap(CHAT_ADMIN, 700, "mu:tomorrow");
     // 2026-11-04 08:00 America/Sao_Paulo (UTC-3) = 11:00Z.
     expect((await linkOf(linkId))?.mutedUntil).toBe(Date.UTC(2026, 10, 4, 11, 0));
-    expect(edits()[0].body.text).toBe("🔕 Silenciado até amanhã 08:00. Repasses urgentes continuam no CRM.");
+    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até amanhã 08:00.</b>\nRepasses urgentes continuam no CRM.");
     await say(CHAT_ADMIN, "/repasses");
     expect(texts(CHAT_ADMIN).at(-1)).toBe("Nenhum repasse pendente 🎉");
   });
@@ -508,7 +551,7 @@ describe("/org", () => {
     });
     await say(CHAT_ADMIN, "/org");
     const [menu] = sends(CHAT_ADMIN);
-    expect(menu.body.text).toBe("Você está em <b>Acme Corp</b>. Trocar para:");
+    expect(menu.body.text).toBe("Você está em <b>Acme Corp</b>.\n\nTrocar para:");
     expect(buttons(menu)).toEqual([{ text: "Aos Filhos da Terra", callback_data: `org:${linkId}` }]);
     await tap(CHAT_ADMIN, 700, `org:${linkId}`);
     const chat = await chatOf(CHAT_ADMIN);
@@ -518,7 +561,7 @@ describe("/org", () => {
     await say(CHAT_ADMIN, "/repasses");
     expect(texts(CHAT_ADMIN).at(-1)).toBe("Nenhum repasse pendente 🎉");
     await say(CHAT_ADMIN, "/org");
-    expect(sends(CHAT_ADMIN).at(-1)!.body.text).toBe("Você está em <b>Aos Filhos da Terra</b>. Trocar para:");
+    expect(sends(CHAT_ADMIN).at(-1)!.body.text).toBe("Você está em <b>Aos Filhos da Terra</b>.\n\nTrocar para:");
   });
 
   test("recusa e revoga o vínculo de membro removido; recusa link de outro chat", async () => {
@@ -560,7 +603,7 @@ describe("teclado persistente", () => {
     });
     expect((await chatOf(CHAT_ADMIN))?.keyboardShown).toBe(true);
     await say(CHAT_ADMIN, "/teclado");
-    expect(sends(CHAT_ADMIN).at(-1)!.body).toMatchObject({ text: "Teclado oculto. /teclado mostra de novo.", reply_markup: { remove_keyboard: true } });
+    expect(sends(CHAT_ADMIN).at(-1)!.body).toMatchObject({ text: "Teclado oculto.\n/teclado mostra de novo.", reply_markup: { remove_keyboard: true } });
     expect((await chatOf(CHAT_ADMIN))?.keyboardShown).toBe(false);
     await say(CHAT_ADMIN, "/teclado");
     expect(sends(CHAT_ADMIN).at(-1)!.body.reply_markup.is_persistent).toBe(true);
@@ -604,7 +647,7 @@ describe("demais", () => {
     for (const c of ["/hoje", "/repasses", "/tarefas", "/leads", "/foco", "/novo", "/pausar", "/org", "/teclado", "/sair"]) {
       expect(help).toContain(c);
     }
-    expect(unknown).toBe("Não conheço esse comando. /ajuda lista o que sei fazer.");
+    expect(unknown).toBe("Não conheço esse comando.\n/ajuda lista o que sei fazer.");
     // F3: free text goes to the Copilot (AI off in this org → §4.10 copy).
     expect(free).toContain("IA não está ativada");
   });
@@ -671,7 +714,7 @@ describe("429 no meio da lista mantém a ordem", () => {
       }),
     );
     await say(CHAT_ADMIN, "/repasses");
-    const rows = attempted.map((x) => (x.match(/^\d+\./) ? Number(x.split(".")[0]) : 0));
+    const rows = attempted.map((x) => Number(x.match(/<b>Lead (\d+)<\/b>/)?.[1] ?? 0));
     // header(0), 1, 2, 3(429), 3, 4, 5
     expect(rows).toEqual([0, 1, 2, 3, 3, 4, 5]);
   });

@@ -25,11 +25,16 @@ import {
 } from "./telegramNotifications";
 
 export const PAGE_SIZE = 10;
+/** Handoff rows are full cards (long): 5 per page. */
+export const HANDOFF_PAGE_SIZE = 5;
+export function pageSizeOf(command: string): number {
+  return command === "repasses" ? HANDOFF_PAGE_SIZE : PAGE_SIZE;
+}
 /** Lists never go past this many rows ("Mais de 50 — abra o CRM"). */
 export const LIST_CAP = 50;
 /** Rows fetched for a page: the page, one more to know there is more, never beyond cap + 1. */
-export function fetchLimit(offset: number): number {
-  return Math.min(offset + PAGE_SIZE + 1, LIST_CAP + 1);
+export function fetchLimit(offset: number, size = PAGE_SIZE): number {
+  return Math.min(offset + size + 1, LIST_CAP + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -107,7 +112,7 @@ export function parseCommandCallback(data: string | undefined): CommandCallback 
   m = data.match(/^pg:([a-z]{2,12}):(\d{1,3})$/);
   if (m) {
     const offset = Number(m[2]);
-    if (!PAGED.has(m[1]) || offset % PAGE_SIZE !== 0 || offset >= LIST_CAP) return null;
+    if (!PAGED.has(m[1]) || offset % pageSizeOf(m[1]) !== 0 || offset >= LIST_CAP) return null;
     return { kind: "page", command: m[1] as PagedCommand, offset };
   }
   if (data === "fc:off") return { kind: "focusOff" };
@@ -125,31 +130,31 @@ export function parseCommandCallback(data: string | undefined): CommandCallback 
 // ---------------------------------------------------------------------------
 
 export const CMD_COPY = {
-  unknown: "Não conheço esse comando. /ajuda lista o que sei fazer.",
+  unknown: "Não conheço esse comando.\n/ajuda lista o que sei fazer.",
   noHandoffs: "Nenhum repasse pendente 🎉",
   noTasks: "Nenhuma tarefa pendente para você 🎉",
   noLeads: "Nenhum lead para mostrar.",
   noConversations: "Você não tem conversas abertas para pôr em foco.",
   focusCleared: "Foco limpo.",
   newConversation: "Foco limpo e conversa nova com o Copiloto.",
-  focusGone: "⚠️ Não encontrei essa conversa. Ela pode ter sido apagada ou não ser sua.",
+  focusGone: "⚠️ Não encontrei essa conversa.\nEla pode ter sido apagada ou não ser sua.",
   muteChoose: "Silenciar notificações por:",
   unmuted: "🔔 Notificações retomadas.",
   singleOrg: (org: string) => `Você só está vinculado a <b>${escapeHtml(org)}</b>.`,
-  orgChoose: (org: string) => `Você está em <b>${escapeHtml(org)}</b>. Trocar para:`,
+  orgChoose: (org: string) => `Você está em <b>${escapeHtml(org)}</b>.\n\nTrocar para:`,
   orgSwitched: (org: string) => `✅ Organização ativa: <b>${escapeHtml(org)}</b>.`,
   orgGone: "Esse vínculo não está mais ativo.",
-  keyboardOn: "⌨️ Teclado ativado. /teclado oculta.",
-  keyboardOff: "Teclado oculto. /teclado mostra de novo.",
+  keyboardOn: "⌨️ Teclado ativado.\n/teclado oculta.",
+  keyboardOff: "Teclado oculto.\n/teclado mostra de novo.",
   tooMany: "Mais de 50 — abra o CRM.",
 } as const;
 
 export function mutedText(until: string): string {
-  return `🔕 Silenciado até ${until}. Repasses urgentes continuam no CRM.`;
+  return `🔕 <b>Silenciado até ${until}.</b>\nRepasses urgentes continuam no CRM.`;
 }
 
-export function pageFooter(offset: number): string {
-  return `Mostrando 1–${offset + PAGE_SIZE}.`;
+export function pageFooter(offset: number, size = PAGE_SIZE): string {
+  return `Mostrando 1–${offset + size}.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +183,7 @@ export function displayName(discreet: boolean, raw: string | undefined): string 
 }
 
 const moreRow = (command: PagedCommand, offset: number): CardButton[] => [
-  { text: "Mais 10 →", callback_data: `pg:${command}:${offset + PAGE_SIZE}` },
+  { text: `Mais ${pageSizeOf(command)} →`, callback_data: `pg:${command}:${offset + pageSizeOf(command)}` },
 ];
 
 /** Footer after a page: "Mais 10 →", or the CRM link past the cap. */
@@ -187,10 +192,11 @@ export function buildFooter(
   offset: number,
   crmUrl: string,
 ): { text: string; keyboard: CardKeyboard } {
-  if (offset + PAGE_SIZE >= LIST_CAP) {
+  const size = pageSizeOf(command);
+  if (offset + size >= LIST_CAP) {
     return { text: CMD_COPY.tooMany, keyboard: [[{ text: "🔗 Abrir no CRM", url: crmUrl }]] };
   }
-  return { text: pageFooter(offset), keyboard: [moreRow(command, offset)] };
+  return { text: pageFooter(offset, size), keyboard: [moreRow(command, offset)] };
 }
 
 export function countLabel(n: number, singular: string, plural: string): string {
@@ -201,27 +207,6 @@ export function countLabel(n: number, singular: string, plural: string): string 
 // ---------------------------------------------------------------------------
 // Rows
 // ---------------------------------------------------------------------------
-
-export type HandoffRowInput = {
-  handoffId: string;
-  conversationId?: string;
-  reason: string;
-  subjectLabel?: string;
-  createdAt: number;
-};
-
-/** One short message per pending handoff (§4.8). */
-export function buildHandoffRow(card: CardContext, h: HandoffRowInput, index: number): { text: string; keyboard: CardKeyboard } {
-  const bits = [`<b>${escapeHtml(displayName(card.discreet, card.lead?.title ?? h.subjectLabel))}</b>`];
-  if (card.conversation) bits.push(channelLabel(card.conversation.channel));
-  const reason = safeText(card, h.reason, 60);
-  if (reason) bits.push(reason);
-  bits.push(handoffAge(h.createdAt, card.now));
-  const buttons: CardButton[] = [{ text: "✅ Aceitar", callback_data: `ah:${h.handoffId}` }];
-  const conversationId = h.conversationId ?? card.conversation?.id;
-  if (conversationId) buttons.push({ text: "🤖 Instruir", callback_data: `ia:${conversationId}` });
-  return { text: `${index}. ${bits.join(" · ")}`, keyboard: [buttons] };
-}
 
 export type TaskRowInput = { taskId: string; title: string; dueDate?: number };
 
@@ -303,13 +288,19 @@ export function buildFocusPicker(args: {
   return { text: "Qual conversa fica em foco? (suas conversas abertas)", keyboard };
 }
 
-export function focusSetText(card: Pick<CardContext, "discreet" | "lead" | "conversation">): string {
+function focusLine(card: Pick<CardContext, "discreet" | "lead" | "conversation">, label: string): string {
   const name = displayName(card.discreet, card.lead?.title);
   const meta = [channelLabel(card.conversation?.channel), card.lead?.stageName].filter(Boolean).map((x) => escapeHtml(x as string));
-  return (
-    `🎯 Foco: <b>${escapeHtml(name)}</b> (${meta.join(" · ")}). ` +
-    "Tudo que você me disser agora é sobre essa conversa. /novo limpa."
-  );
+  return `🎯 ${label} <b>${escapeHtml(name)}</b>\n${meta.join(" · ")}`;
+}
+
+export function focusSetText(card: Pick<CardContext, "discreet" | "lead" | "conversation">): string {
+  return `${focusLine(card, "Foco:")}\n\nTudo que você me disser agora é sobre essa conversa.\n/novo limpa.`;
+}
+
+/** `/foco` with a focus already set: the current one, then the picker. */
+export function focusCurrentText(card: Pick<CardContext, "discreet" | "lead" | "conversation">): string {
+  return focusLine(card, "Foco atual:");
 }
 
 export const MUTE_KEYBOARD: CardKeyboard = [

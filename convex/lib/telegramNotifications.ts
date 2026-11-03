@@ -45,6 +45,7 @@ export type CardContext = {
     status: string;
     reason?: string;
     summary?: string;
+    suggestedActions?: string[];
     fromAi: boolean;
     fromName?: string;
     acceptedByName?: string;
@@ -474,6 +475,10 @@ function handoffCard(n: NotificationInput, ctx: CardContext): CardOutput {
   if (ctx.lead) lines.push(summaryLine(ctx));
   if (h?.reason) lines.push(`Motivo: ${safe(redactName(ctx, h.reason), ctx.discreet, 500)}`);
   if (!ctx.discreet && h?.summary) lines.push(`Resumo: ${safe(h.summary, false, 800)}`);
+  // Full mode only: suggested actions are free text that may carry names or numbers.
+  if (!ctx.discreet && h?.suggestedActions && h.suggestedActions.length > 0) {
+    lines.push("Ações sugeridas:", ...h.suggestedActions.slice(0, 5).map((a) => `• ${safe(a, false, 160)}`));
+  }
   if (ctx.lastInbound) lines.push(customerQuote(ctx, ctx.lastInbound.text, ctx.lastInbound.at));
 
   if (h && h.status !== "pending") {

@@ -270,3 +270,16 @@ describe("revisão F2 — lote 1", () => {
     expect(out.text).toContain("🆕 3 leads desde sexta 18h (0 seus)");
   });
 });
+
+describe("greetingName", () => {
+  test("usa o primeiro nome do membro", async () => {
+    const { greetingName } = await import("./executiveReport");
+    expect(greetingName({ memberName: "Eric Milfont" })).toBe(", Eric");
+  });
+  test("nome que é e-mail cai no primeiro nome do Telegram, nunca '[e-mail]'", async () => {
+    const { greetingName } = await import("./executiveReport");
+    expect(greetingName({ memberName: "eric@milfont.net", firstName: "Eric" })).toBe(", Eric");
+    expect(greetingName({ memberName: "eric@milfont.net" })).toBe("");
+    expect(greetingName({ memberName: "eric@milfont.net" })).not.toContain("e-mail");
+  });
+});

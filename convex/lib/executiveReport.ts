@@ -148,6 +148,8 @@ export type ReportData = {
 
 export type ReportOptions = {
   memberName: string;
+  /** Telegram first name of the link — fallback when the member name is an e-mail. */
+  firstName?: string;
   orgName: string;
   timezone: string;
   currency: string;
@@ -201,11 +203,23 @@ function brl(usd: number, rate: number): string {
 
 const crmButton = (o: ReportOptions) => ({ text: "🔗 Abrir CRM", url: `${o.appBaseUrl}/app/painel` });
 
+/**
+ * ", Eric" or "" — never "[e-mail]": members created from an invite often have
+ * the e-mail as `name`; then the Telegram first name is used, else no name.
+ */
+export function greetingName(o: Pick<ReportOptions, "memberName" | "firstName">): string {
+  const raw = o.memberName.trim();
+  const candidate = raw.includes("@") ? (o.firstName ?? "").trim() : raw;
+  const first = candidate.split(/\s+/)[0] ?? "";
+  if (!first || first.includes("@")) return "";
+  return `, ${escapeHtml(first)}`;
+}
+
 export function formatMorningReport(data: ReportData, o: ReportOptions): ReportOutput {
   const m = data.morning!;
   const tz = o.timezone;
   const lines: string[] = [
-    `☀️ Bom dia, ${escapeHtml(stripEmails(o.memberName).split(/\s+/)[0] || o.memberName)} · ${escapeHtml(o.orgName)} · ${shortDatePt(o.now, tz)}`,
+    `☀️ Bom dia${greetingName(o)} · ${escapeHtml(o.orgName)} · ${shortDatePt(o.now, tz)}`,
   ];
 
   if (m.handoffs.count === 0) lines.push("🔁 Nenhum repasse esperando");

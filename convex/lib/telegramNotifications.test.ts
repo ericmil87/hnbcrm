@@ -106,6 +106,17 @@ describe("goldens (§4)", () => {
     expect(card.focus).toEqual({ conversationId: CID, leadId: LID, handoffId: HID });
   });
 
+  test("repasse: ações sugeridas em bullets, depois do resumo e antes da citação; fora do modo discreto", () => {
+    const base = ctx();
+    const withActions = ctx({ handoff: { ...base.handoff!, suggestedActions: ["Oferecer 10%", "Ligar hoje"] } });
+    const full = buildNotificationCard({ notification: handoffN, context: withActions }).text;
+    expect(full).toContain("Resumo: 3ª conversa; recebeu proposta ontem; agora pede 15% de desconto.\nAções sugeridas:\n• Oferecer 10%\n• Ligar hoje\n<blockquote");
+    const discreet = buildNotificationCard({ notification: handoffN, context: { ...withActions, discreet: true } }).text;
+    expect(discreet).not.toContain("Ações sugeridas");
+    expect(discreet).not.toContain("Oferecer");
+    expect(buildNotificationCard({ notification: handoffN, context: base }).text).not.toContain("Ações sugeridas");
+  });
+
   test("4.11 modo discreto: iniciais, sem telefone, 200 chars mascarados, sem WhatsApp nem Ver tudo", () => {
     const long = `Meu CPF é 123.456.789-00 e o telefone 11 98765-4321. ${"x".repeat(300)}`;
     const card = buildNotificationCard({

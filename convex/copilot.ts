@@ -1431,6 +1431,14 @@ async function runWriteTool(
         const lead = await getLeadInOrg(toolArgs.leadId);
         if (!lead) return { error: "Lead não encontrado" };
         leadId = lead._id;
+      } else if (scope.focusConversationId) {
+        // Telegram (hotfix 0.77.1): a task created about the conversation in focus belongs to its
+        // lead — the server-injected focus, never the model; same org checked.
+        const focused = await ctx.db.get(scope.focusConversationId);
+        if (focused && focused.organizationId === organizationId && focused.leadId) {
+          const lead = await getLeadInOrg(focused.leadId);
+          if (lead) leadId = lead._id;
+        }
       }
       const dueInHours =
         typeof toolArgs.dueInHours === "number" && toolArgs.dueInHours > 0

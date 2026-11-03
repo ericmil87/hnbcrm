@@ -280,7 +280,7 @@ describe("vínculo por /start <code>", () => {
       link_preview_options: { is_disabled: true },
     });
     expect(welcome.body.text).toBe(
-      "👋 Conectado como <b>Eric Milfont</b> · Acme Corp\nSou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.",
+      "👋 <b>Conectado!</b>\nEric Milfont · Acme Corp\n\nSou sua assistente no HNBCRM.\nEm 4 passos rápidos você vê como funciona.",
     );
     // O código cru nunca é gravado.
     const code = await newCode(s.userId, s.organizationId);
@@ -295,7 +295,7 @@ describe("vínculo por /start <code>", () => {
     await send(message(CHAT_A, `/start ${code}`));
     expect(await linksOf(s.memberId)).toEqual([]);
     expect(sent()[0].body.text).toBe(
-      "Este link expirou ou já foi usado. Gere outro em Configurações → Notificações → Telegram.",
+      "Este link expirou ou já foi usado.\n\nGere outro em Configurações → Notificações → Telegram.",
     );
   });
 
@@ -342,7 +342,7 @@ describe("vínculo por /start <code>", () => {
     await link(otherUser, s.organizationId, CHAT_A);
     expect(await linksOf(otherMember)).toEqual([]);
     expect(sent()[0].body.text).toBe(
-      "Este Telegram já está conectado a outra conta do HNBCRM. Use /sair lá primeiro.",
+      "Este Telegram já está conectado a outra conta do HNBCRM.\n\nUse /sair lá primeiro.",
     );
   });
 
@@ -390,7 +390,7 @@ describe("comandos e chat sem vínculo", () => {
     const [reply] = sent();
     expect(reply.body.chat_id).toBe(CHAT_A);
     expect(reply.body.text).toBe(
-      "Este Telegram ainda não está conectado a uma conta do HNBCRM.\n" +
+      "Este Telegram ainda não está conectado a uma conta do HNBCRM.\n\n" +
         'Abra Configurações → Notificações → Telegram no CRM e toque em "Conectar".',
     );
     expect(reply.body.reply_markup).toEqual({
@@ -405,7 +405,9 @@ describe("comandos e chat sem vínculo", () => {
     await send(message(CHAT_A, "/ajuda"));
     await send(message(CHAT_A, "quais leads?"));
     const [help, other] = sent();
-    expect(help.body.text).toContain("/sair · desconectar este Telegram");
+    expect(help.body.text).toContain("/sair — desconectar este Telegram");
+    for (const section of ["<b>Ver</b>", "<b>Agir</b>", "<b>Configurar</b>"]) expect(help.body.text).toContain(section);
+    expect(help.body.text.split("\n").length).toBeGreaterThan(12);
     // F3: free text is a Copilot turn; with the org's AI off it says so (§4.10).
     expect(other.body.text).toBe("🤖 A IA não está ativada na Acme Corp. Um admin ativa em Configurações → IA.");
   });
@@ -712,7 +714,7 @@ describe("revisão de segurança (F0)", () => {
     await seedMember(organizationId, userId, "<b>X</b>&");
     await link(userId, organizationId);
     const text = sent()[0].body.text as string;
-    expect(text).toContain("Conectado como <b>&lt;b&gt;X&lt;/b&gt;&amp;</b> · Acme Corp");
+    expect(text).toContain("&lt;b&gt;X&lt;/b&gt;&amp; · Acme Corp");
     expect(text).not.toContain("<b>X</b>&");
   });
 
@@ -726,7 +728,7 @@ describe("revisão de segurança (F0)", () => {
     await send(message(CHAT_A, `/start ${code}`));
     expect(await linksOf(s.memberId)).toEqual([]);
     expect(sent()[0].body.text).toBe(
-      "O Telegram não está habilitado nesta organização. Peça a um admin para ligar em Configurações → Notificações → Telegram.",
+      "O Telegram não está habilitado nesta organização.\n\nPeça a um admin para ligar em Configurações → Notificações → Telegram.",
     );
   });
 

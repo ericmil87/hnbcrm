@@ -22,6 +22,7 @@ import { escapeHtml } from "./lib/telegramFormat";
 import { activeLinksOfChat, resolveTelegramViewer, revokeTelegramLink, type TelegramViewer } from "./lib/telegramLinks";
 import { FOCUS_TTL_MS } from "./lib/telegramRelay";
 import {
+  buildNotificationCard,
   formatTime,
   formatWhen,
   permissionDeniedText,
@@ -42,16 +43,18 @@ import {
   CMD_COPY,
   LIST_CAP,
   MUTE_KEYBOARD,
+  HANDOFF_PAGE_SIZE,
   PAGE_SIZE,
   buildFocusPicker,
   buildFooter,
-  buildHandoffRow,
   buildLeadsPage,
   buildTaskRow,
   countLabel,
   fetchLimit,
+  focusCurrentText,
   focusSetText,
   mutedText,
+  pageSizeOf,
   pageFooter,
   type CommandCallback,
   type FocusRowInput,
@@ -184,7 +187,7 @@ export async function runTelegramCallback(ctx: MutationCtx, cb: CommandCallback,
       const result = await runList(ctx, cb.command, cb.offset, viewer, env);
       // Repasses/tarefas pages end in their own footer message: the tapped one loses its button.
       if (env.messageId !== undefined && (cb.command === "repasses" || cb.command === "tarefas") && result.replies.length > 0) {
-        result.edits.push({ chatId: env.chatId, messageId: env.messageId, text: pageFooter(cb.offset - PAGE_SIZE), keyboard: [] });
+        result.edits.push({ chatId: env.chatId, messageId: env.messageId, text: pageFooter(cb.offset - pageSizeOf(cb.command), pageSizeOf(cb.command)), keyboard: [] });
       }
       return result;
     }
@@ -244,10 +247,11 @@ async function pendingHandoffs(ctx: MutationCtx, viewer: TelegramViewer, limit: 
 async function listHandoffs(ctx: MutationCtx, offset: number, viewer: TelegramViewer, env: CommandEnv): Promise<CommandResult> {
   const no = denied(viewer, env, "inbox", "view_own");
   if (no) return no;
+  const size = HANDOFF_PAGE_SIZE;
   // Page 0 also needs the total for the header (counted up to the cap).
-  const all = await pendingHandoffs(ctx, viewer, offset === 0 ? LIST_CAP + 1 : fetchLimit(offset));
+  const all = await pendingHandoffs(ctx, viewer, offset === 0 ? LIST_CAP + 1 : fetchLimit(offset, size));
   if (all.length === 0) return say(viewer, env, CMD_COPY.noHandoffs);
-  const page = all.slice(offset, offset + PAGE_SIZE);
+  const page = all.slice(offset, offset + size);
   if (page.length === 0) return NONE;
   const result: CommandResult = { replies: [], edits: [] };
   const protect = viewer.org.settings.telegram?.protectContent === true;
@@ -258,16 +262,37 @@ async function listHandoffs(ctx: MutationCtx, offset: number, viewer: TelegramVi
       protectContent: protect,
     });
   }
-  for (const [i, h] of page.entries()) {
-    const card = await cardFor(ctx, viewer, env, { handoffId: h._id, conversationId: h.conversationId });
-    const row = buildHandoffRow(
-      card,
-      { handoffId: h._id, conversationId: h.conversationId, reason: h.reason, subjectLabel: h.subjectLabel, createdAt: h.createdAt },
-      offset + i + 1,
-    );
-    result.replies.push({ chatId: env.chatId, text: row.text, keyboard: row.keyboard, protectContent: protect });
+  // Each row is the same card a push would be (summary, suggested actions, last message,
+  // peek) and is recorded as a delivery, so `va:`/`rs:`/record edits and web-accept
+  // propagation work on it. Sent in series by the processing action.
+  for (const h of page) {
+    const context = await cardFor(ctx, viewer, env, { handoffId: h._id, conversationId: h.conversationId });
+    const card = buildNotificationCard({
+      notification: {
+        _id: h._id,
+        type: "handoff_requested",
+        title: "Repasse",
+        createdAt: h.createdAt,
+        handoffId: h._id,
+        ...(h.conversationId ? { conversationId: h.conversationId } : {}),
+      },
+      context,
+    });
+    result.replies.push({
+      chatId: env.chatId,
+      text: card.text,
+      keyboard: card.keyboard,
+      protectContent: protect,
+      record: {
+        organizationId: viewer.org._id,
+        linkId: viewer.link._id,
+        kind: "notification",
+        handoffId: h._id,
+        ...(h.conversationId ? { conversationId: h.conversationId } : {}),
+      },
+    });
   }
-  if (all.length > offset + PAGE_SIZE) {
+  if (all.length > offset + size) {
     const footer = buildFooter("repasses", offset, `${env.appBaseUrl}/app/repasses`);
     result.replies.push({ chatId: env.chatId, text: footer.text, keyboard: footer.keyboard, protectContent: protect });
   }
@@ -430,7 +455,7 @@ async function listFocus(ctx: MutationCtx, offset: number, viewer: TelegramViewe
   if (offset === 0 && chat?.focus && env.now - chat.focus.setAt < FOCUS_TTL_MS) {
     const card = await cardFor(ctx, viewer, env, { conversationId: chat.focus.conversationId });
     if (card.conversation) {
-      const current = focusSetText(card).replace(/^🎯 Foco:/, "🎯 Foco atual:").replace(/ Tudo que você me disser.*$/, "");
+      const current = focusCurrentText(card);
       result.replies.push(...say(viewer, env, current, { keyboard: CLEAR_FOCUS_KEYBOARD }).replies);
     }
   }
@@ -607,11 +632,12 @@ async function onOnboarding(ctx: MutationCtx, cb: OnboardingCallback, viewer: Te
       await setStep(ctx, viewer, LAST_STEP, env.now);
       const chat = await getChat(ctx, env.chatId);
       if (chat && chat.keyboardShown !== false) await ctx.db.patch(chat._id, { keyboardShown: true, updatedAt: env.now });
-      // The card loses its buttons; the closing line carries the persistent keyboard.
-      const card = buildTourCard(LAST_STEP);
+      // The card loses its buttons (it stays on the step the user was at); the closing
+      // message carries the persistent keyboard.
+      const shown = step === 0 ? await welcomeFor(ctx, viewer, env) : buildTourCard(Math.min(step, LAST_STEP));
       const result: CommandResult = {
         replies: [],
-        edits: env.messageId !== undefined ? [{ chatId: env.chatId, messageId: env.messageId, text: card.text, keyboard: [] }] : [],
+        edits: env.messageId !== undefined ? [{ chatId: env.chatId, messageId: env.messageId, text: shown.text, keyboard: [] }] : [],
       };
       result.replies.push(
         ...say(viewer, env, ONBOARDING_COPY.done, chat?.keyboardShown === false ? {} : { persistentKeyboard: true }).replies,
