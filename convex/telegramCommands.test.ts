@@ -395,7 +395,11 @@ describe("/foco e /novo", () => {
     expect(withFocus[0].body.text).toContain("🎯 Foco atual: <b>Carlos Lima</b>");
     expect(datas(withFocus[0])).toEqual(["fc:off"]);
     await say(CHAT_ADMIN, "/novo");
-    expect(texts(CHAT_ADMIN).at(-1)).toBe("Foco limpo.");
+    expect(texts(CHAT_ADMIN).at(-1)).toBe("Foco limpo e conversa nova com o Copiloto.");
+    const rotations = (await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).filter((j) =>
+      j.name.includes("internalRotateCopilotThread"),
+    );
+    expect(rotations).toHaveLength(1);
     expect((await chatOf(CHAT_ADMIN))?.focus).toBeUndefined();
   });
 
@@ -547,7 +551,9 @@ describe("teclado persistente", () => {
       });
     });
     await say(CHAT_ADMIN, `/start ${code}`);
-    expect(sends(CHAT_ADMIN)[0].body.reply_markup).toEqual({
+    // Card 0 (inline) first, the persistent keyboard in its own message.
+    expect(sends(CHAT_ADMIN)[0].body.reply_markup.inline_keyboard[0][0].callback_data).toBe("ob:1");
+    expect(sends(CHAT_ADMIN)[1].body.reply_markup).toEqual({
       keyboard: [[{ text: "📋 Hoje" }, { text: "🔁 Repasses" }], [{ text: "✅ Tarefas" }, { text: "⏸ Pausar" }]],
       resize_keyboard: true,
       is_persistent: true,
@@ -599,7 +605,8 @@ describe("demais", () => {
       expect(help).toContain(c);
     }
     expect(unknown).toBe("Não conheço esse comando. /ajuda lista o que sei fazer.");
-    expect(free).toContain("Copiloto");
+    // F3: free text goes to the Copilot (AI off in this org → §4.10 copy).
+    expect(free).toContain("IA não está ativada");
   });
 
   test("grupo nunca recebe listas", async () => {

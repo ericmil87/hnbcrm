@@ -280,8 +280,7 @@ describe("vínculo por /start <code>", () => {
       link_preview_options: { is_disabled: true },
     });
     expect(welcome.body.text).toBe(
-      "Conectado como <b>Eric Milfont</b> em <b>Acme Corp</b>. Você vai receber repasses, tarefas e alertas aqui, " +
-        "pode me mandar texto ou áudio a qualquer hora. /ajuda mostra tudo.",
+      "👋 Conectado como <b>Eric Milfont</b> · Acme Corp\nSou sua assistente executiva no HNBCRM. Em 4 passos você entende tudo.",
     );
     // O código cru nunca é gravado.
     const code = await newCode(s.userId, s.organizationId);
@@ -330,7 +329,7 @@ describe("vínculo por /start <code>", () => {
     expect((await linksOf(member2))[0].status).toBe("active");
     expect(await chatRow(CHAT_A)).toMatchObject({ activeOrganizationId: org2, activeTeamMemberId: member2 });
     const text = sent()[0].body.text as string;
-    expect(text).toContain("em <b>Aos Filhos da Terra</b>");
+    expect(text).toContain("· Aos Filhos da Terra");
     expect(text).toContain("também está conectado a <b>Acme Corp</b>");
   });
 
@@ -407,9 +406,8 @@ describe("comandos e chat sem vínculo", () => {
     await send(message(CHAT_A, "quais leads?"));
     const [help, other] = sent();
     expect(help.body.text).toContain("/sair · desconectar este Telegram");
-    expect(other.body.text).toBe(
-      "Ainda estou aprendendo: por enquanto respondo aos comandos (/ajuda lista todos). O Copiloto, por texto e áudio, chega na próxima versão.",
-    );
+    // F3: free text is a Copilot turn; with the org's AI off it says so (§4.10).
+    expect(other.body.text).toBe("🤖 A IA não está ativada na Acme Corp. Um admin ativa em Configurações → IA.");
   });
 
   test("/sair revoga todos os vínculos do chat e remove o teclado", async () => {
@@ -714,7 +712,7 @@ describe("revisão de segurança (F0)", () => {
     await seedMember(organizationId, userId, "<b>X</b>&");
     await link(userId, organizationId);
     const text = sent()[0].body.text as string;
-    expect(text).toContain("Conectado como <b>&lt;b&gt;X&lt;/b&gt;&amp;</b> em <b>Acme Corp</b>.");
+    expect(text).toContain("Conectado como <b>&lt;b&gt;X&lt;/b&gt;&amp;</b> · Acme Corp");
     expect(text).not.toContain("<b>X</b>&");
   });
 

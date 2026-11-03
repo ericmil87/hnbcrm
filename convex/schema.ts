@@ -143,6 +143,8 @@ const providerConfigValidator = v.object({
       groupPosts: v.optional(productRoutingValidator),
       // Agente que RESPONDE dentro do grupo (F4) — outro produto, outra rota.
       groupAgent: v.optional(productRoutingValidator),
+      // Copiloto no Telegram (D16): rota e modelo próprios; ausente = padrão.
+      telegramCopilot: v.optional(productRoutingValidator),
     })
   ),
 });
@@ -2684,6 +2686,8 @@ const applicationTables = {
     memberId: v.id("teamMembers"),
     kind: v.union(
       v.literal("copilot"),
+      // Copiloto no Telegram (F3): mesmo loop, superfície e produto próprios.
+      v.literal("telegram_copilot"),
       v.literal("attendant"),
       v.literal("simulator"),
       // Passe de visão (convex/vision.ts): 1 chamada por IMAGEM, não por turno.
@@ -2812,6 +2816,10 @@ const applicationTables = {
     followUpId: v.optional(v.id("aiFollowUps")),
     instruction: v.optional(v.string()),
     instructedBy: v.optional(v.id("teamMembers")),
+    // F3 (D23): pedido feito pelo bot do Telegram (instruir/regenerar). Copiado
+    // para `metadata.aiDraft.requestedVia`; só rascunhos assim podem ter a
+    // contagem regressiva do modo automático.
+    requestedVia: v.optional(v.union(v.literal("telegram"), v.literal("telegram_auto"))),
     // Rascunho que esta run substitui (regeneração) — vira status "revised".
     sourceDraftId: v.optional(v.id("messages")),
     error: v.optional(v.string()),
@@ -3387,6 +3395,12 @@ const applicationTables = {
     lastCommandReportAt: v.optional(v.number()),
     lastEveningReportDate: v.optional(v.string()),
     copilotThreadId: v.optional(v.id("copilotThreads")),
+    // F3: one Copilot turn at a time per link (OCC lock; TTL 9 min > 8 min turn cap).
+    turnLock: v.optional(v.object({ token: v.string(), expiresAt: v.number() })),
+    // F3 (review #8): automatic/suggestion event turns run in their OWN thread
+    // ("Assistente"), never in the member's free-text thread; own lock too.
+    assistantThreadId: v.optional(v.id("copilotThreads")),
+    assistantTurnLock: v.optional(v.object({ token: v.string(), expiresAt: v.number() })),
     onboarding: v.optional(v.object({ step: v.number(), doneAt: v.optional(v.number()) })), // D24
     tipsShown: v.optional(v.array(v.string())),
     quota: v.optional(
@@ -3441,6 +3455,8 @@ const applicationTables = {
     ), // F1
     keyboardShown: v.optional(v.boolean()),
     pacingAt: v.optional(v.number()), // D25 (F4)
+    // F3 (D10): `stopped_message_generation` — o turno do Copiloto em curso encerra.
+    cancelRequestedAt: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_chat_id", ["chatId"])
@@ -3493,6 +3509,22 @@ const applicationTables = {
         callbackQueryId: v.optional(v.string()),
         callbackData: v.optional(v.string()),
         memberStatus: v.optional(v.string()),
+        // F3 (D21): mídia recebida (voz/áudio → transcrição; foto → visão; vídeo → aviso).
+        media: v.optional(
+          v.object({
+            kind: v.union(
+              v.literal("voice"),
+              v.literal("audio"),
+              v.literal("photo"),
+              v.literal("video"),
+              v.literal("video_note"),
+              v.literal("document")
+            ),
+            fileId: v.string(),
+            fileSize: v.optional(v.number()),
+            mimeType: v.optional(v.string()),
+          })
+        ),
       })
     ),
   })
@@ -3517,7 +3549,8 @@ const applicationTables = {
     ),
     draft: v.optional(
       v.object({
-        messageId: v.id("messages"),
+        // Ausente = a resposta do PRÓPRIO membro (texto no pendingPrompt), F3.
+        messageId: v.optional(v.id("messages")),
         sendAt: v.optional(v.number()),
         vetoedAt: v.optional(v.number()),
         sentAt: v.optional(v.number()),
@@ -3525,7 +3558,7 @@ const applicationTables = {
     ), // D23
     undo: v.optional(
       v.object({
-        steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()) })),
+        steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()), after: v.optional(v.any()) })),
         expiresAt: v.number(),
         undoneAt: v.optional(v.number()),
       })
@@ -3568,6 +3601,43 @@ const applicationTables = {
   })
     .index("by_conversation_and_link", ["conversationId", "linkId"])
     .index("by_flush_at", ["flushAt"]),
+
+  // Modo automático (D22, F3): cada escrita que a assistente fez num turno
+  // automático, com o estado ANTERIOR, para o "Desfazer" do cartão-registro.
+  telegramAutoSteps: defineTable({
+    organizationId: v.id("organizations"),
+    threadId: v.id("copilotThreads"),
+    kind: v.string(), // "instruct" | "accept_handoff" | "create_task" | "move_stage" | "complete_task" | "snooze_task" | "regenerate"
+    refId: v.string(),
+    before: v.optional(v.any()),
+    // State right after the step: undo skips it when something changed since (review F3 #6).
+    after: v.optional(v.any()),
+    // `agentRuns` id of the automatic turn that made the step (undo is per turn).
+    runId: v.optional(v.id("agentRuns")),
+    createdAt: v.number(),
+  })
+    .index("by_thread_and_created", ["threadId", "createdAt"])
+    .index("by_run_id", ["runId"])
+    .index("by_created_at", ["createdAt"]),
+
+  // F3 (review #11): one "💡 Sugiro" LLM call per handoff, shared by every
+  // member it was broadcast to for 10 min. `status:"pending"` = a turn is
+  // computing it (the others wait); `suggestion` absent on "done" = no proposal.
+  telegramSuggestions: defineTable({
+    organizationId: v.id("organizations"),
+    handoffId: v.id("handoffs"),
+    status: v.union(v.literal("pending"), v.literal("done")),
+    suggestion: v.optional(
+      v.object({
+        tool: v.union(v.literal("instructAttendant"), v.literal("acceptHandoff"), v.literal("regenerateAiReply")),
+        args: v.record(v.string(), v.string()),
+        resumo: v.string(),
+      }),
+    ),
+    createdAt: v.number(),
+  })
+    .index("by_handoff_and_created", ["handoffId", "createdAt"])
+    .index("by_created_at", ["createdAt"]),
 
   // Cota diária de arquivos por org (D25, F4).
   telegramOrgQuota: defineTable({

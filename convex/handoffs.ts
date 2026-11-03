@@ -355,7 +355,7 @@ export async function createHandoffCore(
  */
 export async function acceptHandoffCore(
   ctx: MutationCtx,
-  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" }
+  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" | "telegram_auto" | "copilot" }
 ): Promise<Id<"conversations"> | null> {
   const { handoff, member } = args;
 
@@ -530,7 +530,7 @@ export async function acceptHandoffCore(
  */
 async function rejectHandoffCore(
   ctx: MutationCtx,
-  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" }
+  args: { handoff: Doc<"handoffs">; member: Doc<"teamMembers">; notes?: string; via?: "telegram" | "telegram_auto" | "copilot" }
 ): Promise<void> {
   const { handoff, member } = args;
 
@@ -932,7 +932,7 @@ export async function rejectHandoffWithInstructionCore(
     member: Doc<"teamMembers">;
     notes?: string;
     instruction?: string;
-    via?: "telegram";
+    via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<void> {
   const { handoff, member } = args;
@@ -957,6 +957,8 @@ export async function rejectHandoffWithInstructionCore(
         conversationId,
         instructedBy: member._id,
         instruction,
+        // F3 (D23): marks the draft as born from the Telegram bot.
+        ...(args.via === "telegram" || args.via === "telegram_auto" ? { requestedVia: args.via } : {}),
       });
     }
   }

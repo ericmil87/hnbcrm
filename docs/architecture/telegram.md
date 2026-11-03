@@ -6,7 +6,7 @@
 
 Cada membro humano da equipe pode vincular o próprio Telegram à sua conta do HNBCRM e conversar com um bot único da plataforma (`@hnbcrm_bot` em PROD, `@hnbcrm_dev_bot` em DEV). Módulo opcional `settings.modules.telegram` ("Telegram para a equipe"), **desligado por padrão** e fora do gate da Central (`assertAnyModule`). O bot **nunca** atende cliente final: o canal de atendimento por Telegram (F6) usará bots separados por org.
 
-Na F0 o bot fez o vínculo, `/ajuda`, `/sair` e a recusa de membro removido. Na F1 (v0.74) chegaram as notificações com botões, as ações reautorizadas, os prompts de texto (instruir, regenerar, responder), "mensagem vira registro" e o relay das mensagens do cliente e da IA. Comandos, relatórios, Copiloto e mídia ficam para F2–F4.
+Na F0 o bot fez o vínculo, `/ajuda`, `/sair` e a recusa de membro removido. Na F1 (v0.74) chegaram as notificações com botões, as ações reautorizadas, os prompts de texto (instruir, regenerar, responder), "mensagem vira registro" e o relay das mensagens do cliente e da IA. Na F2 (v0.75) vieram comandos, teclado fixo e relatórios. Na F3 (v0.76) o Copiloto conversa pelo bot (texto, voz e foto), com o contexto da conversa em foco, ferramentas de atendimento e os modos Sugestão/Automático com Desfazer e veto do envio. Mídia de saída e cotas ficam para a F4.
 
 - **F1 — fan-out** (`convex/lib/notify.ts`): `createNotification`, depois do insert, lê o vínculo ativo do membro (`by_member_and_status`); com vínculo não mutado, módulo ligado e tipo com template, agenda `telegram.internalDeliverNotification`. Nada de rede nem formatação na mutation.
 - **F1 — cartões** (`convex/lib/telegramNotifications.ts`, puro; contexto em `convex/lib/telegramContext.ts`): um template por tipo da §3.3 e o genérico "título/corpo + Abrir no CRM" para os demais; `TELEGRAM_TEMPLATES` + `IGNORED_FOR_TELEGRAM` com teste de paridade contra a união do schema.
@@ -49,6 +49,64 @@ npx convex run opsTelegram:internalTelegramWebhookInfo '{}'                   # 
 PROD: os mesmos comandos com `--prod`, sempre depois do dry run. A URL do webhook é sempre `${CONVEX_SITE_URL}/webhooks/telegram/platform` do deployment que roda a action; **não existe override de URL**, e é isso que impede apontar o bot de PROD para o DEV. `internalTelegramSetWebhook` também recusa (no dry run e no real) quando o `getMe` do token não bate com `TELEGRAM_BOT_USERNAME` ("bot ≠ TELEGRAM_BOT_USERNAME"): token ou env trocados entre DEV e PROD. Rotação de token: BotFather → env nova → `internalTelegramSetWebhook` de novo. Rotação do segredo: env nova → `internalTelegramSetWebhook` (o Telegram passa a mandar o novo header).
 
 ## Decisões, pegadinhas e histórico
+
+### F3 — Copiloto no Telegram (v0.76, 03/11/2026)
+
+**Runner** (`convex/telegramCopilot.ts`). Texto livre sem prompt aberto, voz/áudio e foto viram `internalCopilotTurn` (agendado pela mutation de roteamento; a action chama a porta). `runTelegramTurn` usa o MESMO loop do painel (`lib/copilotTurn.runCopilotTurn`), com `buildSystemPrompt(…, {variant:"telegram"})`, produto `telegramCopilot` e uma thread do Copiloto por vínculo (`telegramLinks.copilotThreadId`, título "Telegram"; `/novo` = `internalRotateCopilotThread`). Streaming: "Pensando…" + `sendMessageDraft` com throttle de 1 s (sem suporte → `sendChatAction typing`); a resposta final sai em HTML (`markdownToTelegramHtml` + `splitMessage`) por `internalDeliverReply`. Cada `pendingAction` criada no turno vira um cartão com prévia e `pa:<id>` (Confirmar) / `pc:<id>` (Cancelar), executados por `internal.copilot.internalConfirmPendingAction` / `internalCancelPendingAction` via `lib/telegramActions.ts` (mesmo `confirmPendingActionCore` do painel, TTL incluso). `stopped_message_generation` grava `telegramChats.cancelRequestedAt`; o turno checa via `shouldCancel`.
+
+**Mídia.** Voz/áudio: `getFile` + `downloadTelegramFile` (teto `TELEGRAM_FILE_MAX_BYTES`, timeout) → storage → `transcription.internalTranscribeStoredAudio` (mesmo `callWhisper`) → "🎙 Entendi: …" → responde o prompt aberto (instruir/regenerar/responder) ou vira turno. Foto: `vision.internalDescribeImageForCopilot` (gates da org: IA ativa, `visionEnabled === true`, 5 MB, mime, teto de gasto) e a descrição entra no turno dentro do envelope. O blob é apagado depois do Whisper/visão. Vídeo e documento recebem texto fixo (`COPILOT_COPY.video`).
+
+**Um turno por vez por vínculo.** `internalClaimTurn` grava `telegramLinks.turnLock {token, expiresAt}` (TTL 9 min, acima do teto de 8 min do turno) antes de qualquer turno (texto, voz, foto, automático, sugestão); `internalReleaseTurn` solta só com o mesmo token. Gatilho com o lock tomado tenta de novo em 5 s (até 24 vezes); esgotado, o texto livre recebe "⏳ Ainda estou terminando a anterior…" e o evento cai no cartão normal. Sem isso, dois turnos na mesma thread intercalavam `tool_calls` e resultados. **Teto 20/h atômico:** o turno automático reserva 1 vaga NA MESMA mutation do lock (`reserveAuto`, janela da hora reiniciada ali); a liberação devolve a vaga (−1) quando o turno não escreveu nada e soma os passos extras.
+
+**Envelope.** Título e corpo da notificação que dispara o turno automático/sugestão (no `new_message` o corpo É o texto do cliente) e a descrição da foto entram via `wrapUntrustedJson`/`wrapUntrusted`; só a legenda e a transcrição de voz do próprio membro vão como texto simples.
+
+**Contexto D17** (`lib/telegramContext.buildConversationContextBlock`). Só com foco < 6 h (`FOCUS_TTL_MS`): bloco "CONVERSA EM FOCO" com as últimas 20 mensagens (≤ 300 chars cada) em `wrapUntrustedJson`; no modo discreto, iniciais e dígitos mascarados. O foco também vira `focusConversationId` injetado nas ferramentas D18 (o modelo nunca passa id). Evento do modo automático/sugestão NÃO grava `telegramChats.focus` (o foco muda só por toque, resposta ou comando); a conversa do evento vai só como `focusConversationId` daquele turno.
+
+**Produto e modelo (D16).** `telegramCopilot` tem rota própria (`providerConfig.products.telegramCopilot`), padrão `openrouter-first` e modelo `deepseek-flash-latest`; sem rota cai no modelo do Copiloto (`lib/agentRoutes.resolveProductRoutes`). Custo em `agentRuns.kind:"telegram_copilot"`. Detalhes em `ai-copilot.md`.
+
+**Modos D22** (`lib/telegramAssistant.ts`, puro; `effectiveAssistantMode(link, org)`). Notificação acionável (repasse, rascunho, mensagem nova) passa por `internalAssistantDecision` antes do cartão:
+
+| Modo | O que acontece |
+|---|---|
+| `off` (padrão) | Cartão F1 normal |
+| `suggest` | Turno sem ferramentas de escrita; a linha `SUGESTAO_JSON` vira "💡 Sugiro: …" no cartão com o botão da ação; sem linha válida, cartão normal |
+| `auto` | Turno com `autoWriteTools` (`via:"telegram_auto"`), teto `AUTO_ACTIONS_PER_HOUR` (20, reservado antes do turno). Cartão-registro "🤖 Resolvi sozinha" com os passos, `un:` (Desfazer, 10 min), `aj:` (Ajustar) e Abrir. Sem passo executado: cartão normal com "🤔 Não decidi sozinha" |
+
+`allowAutoMode:false` na org força `suggest`; 3 desfazer em 1 h gravam `assistant.autoPausedAt` e forçam `suggest` até o usuário reativar em `/modo` (`handleModeCommand`, callbacks `md:`). No app, o card edita o mesmo estado por `updateMyLinkPrefs({assistant})` (modo, `suggestOnEvents`, `autoSendDelaySeconds` inteiro 5–120, `autoAllowed` parcial): recusa `auto` com `allowAutoMode:false`, escolher `auto` limpa a pausa e o contador, e grava audit `telegram.assistant_mode` (severidade alta ao ligar o automático ou liberar responder ao cliente). `getMyLink` devolve esses campos e `autoPausedAt`, nunca os contadores.
+
+**Passos do Desfazer** (`telegramAutoSteps`, retenção 1 d, gravados por `recordAutoStep` só com `via:"telegram_auto"`, chave `runId` = o `agentRuns` do turno automático (índice `by_run_id`; tempo + thread misturava turnos); `revertStep` em `lib/telegramActions.ts`):
+
+| Passo | Desfazer |
+|---|---|
+| `accept_handoff` / `instruct` / `regenerate` | Restaura repasse, conversa e lead do `before` |
+| `complete_task` | `reopenTaskCore` (`lib/taskOps.ts`): status anterior, sai da done column, cancela a próxima instância da recorrência ainda intocada e limpa `lastGeneratedAt` |
+| `snooze_task` | Volta o vencimento anterior |
+| `create_task` | Marca `cancelled` (não apaga) |
+| `move_stage` | `moveLeadToStageCore` de volta para o estágio anterior |
+
+**Desfazer não pisa em trabalho novo (review F3 #6).** Cada passo grava também `after`, o estado logo depois do core (mesma transação): repasse (`status`, `resolvedBy`), dono do lead, IA pausada; `completedAt`; `snoozedUntil`; estágio; status da tarefa criada. `stepDrifted` compara com o estado vivo e o passo vira "mudou depois, não desfiz" quando alguém mexeu depois (Ana assumiu no app, concluiu a tarefa na mão, moveu o lead). Exceção esperada: a instrução entrega o lead ao atendente IA pelo turno agendado, então dono = membro IA não conta como mudança. Passo sem `after` (antigo) desfaz como antes.
+
+**Thread própria do assistente (review F3 #8).** Turnos de evento (automático e sugestão) usam `telegramLinks.assistantThreadId` (título "Assistente") com lock próprio (`assistantTurnLock`); a thread "Telegram" do texto livre (`copilotThreadId`, `turnLock`) nunca recebe mensagem de evento. Assim o histórico do membro não mistura eventos e um evento não espera o texto livre terminar.
+
+**Uma sugestão por repasse (review F3 #11).** O repasse vai para vários membros; o "💡 Sugiro" é calculado UMA vez: `internalClaimSuggestion` grava `telegramSuggestions {handoffId, status:"pending"}`, os outros esperam (retry 5 s) e reaproveitam o resultado por 10 min (`SUGGESTION_SHARE_MS`; "pending" com mais de 2 min é abandonado e recalculado). Cada membro recebe a própria `pendingAction` (`requestedBy` muda). Retenção 1 d, fora do backup.
+
+**Números de tarefa (review F3 #7).** `listMyOpenTasks`/`completeTask`/`snoozeTask` recebem `turnStartedAt` do loop: a lista é a do início do turno (tarefas criadas depois ficam fora, concluídas durante o turno ficam no lugar), então `completeTask(1)` e `completeTask(2)` na mesma rodada pegam o #2 original.
+
+**Instruir com outra pessoa na conversa (review F3 #10).** `lib/conversationHolder.otherHumanHolder` (o mesmo critério do cartão velho da F1): `instructAttendant` direto com outro humano vivo segurando a conversa vira confirmação, com o nome na prévia (`ackHolderId`); na confirmação, uma tomada NOVA (outra pessoa, ou proposta sem `ackHolderId`, como "Aplicar sugestão") recusa com "⚠️ Ana assumiu esta conversa…".
+
+**Mídia (review F3 #9).** Sessão e teto de gasto são checados ANTES de baixar voz ou foto. Exceção: voz que responde a um prompt ABERTO (instruir, regenerar, responder) é ação do atendimento, não turno do Copiloto: exige só IA ativa (`orgAiActive`) e o teto de gasto, nunca `copilotEnabled`; se o prompt sumiu no meio, a transcrição vira turno e aí a sessão do Copiloto é checada; foto com `file_size` acima de 5 MB (o teto da visão) é recusada antes do `getFile`, e o download usa esse teto.
+
+**Veto do envio (D23).** `sendCustomerReply` no modo automático vira `pendingAction` (cartão com Confirmar), nunca envio direto. Em `auto`, o rascunho da IA aguardando (`ai_draft_pending`) **pedido por este membro pelo bot** e a resposta do próprio membro pelo prompt "Responder" viram cartão de contagem regressiva (`buildCountdownCard`, `autoSendSeconds` 5–120, padrão 15): a entrega grava `telegramDeliveries.draft {messageId?, sendAt}` (sem `messageId` = texto do membro no `pendingPrompt`) e agenda `internalAutoSendDraft`. Estados: aguardando → `vetoedAt` (`vc:` Vetar, ou `rg:` Regenerar no cartão) ou → `sentAt` no prazo, quando `executeAutoSend` re-autoriza o membro (`authorizeTelegramActor`), confere que o rascunho ainda está `pending` na mesma org (ou que o prompt ainda é o do cartão) e envia por `acceptAiDraftCore` / `internalSendMessageCore` com `via:"telegram_auto"`. Rascunho trocado, aprovado ou vetado antes do prazo = no-op. **Origem (review F3, bloqueador):** o pedido feito pelo bot (instruir/regenerar, `via:"telegram"`/`"telegram_auto"`, inclusive "Aplicar sugestão") grava `aiReplyQueue.requestedVia`, que o commit copia para `metadata.aiDraft.requestedVia` junto com `instructedBy`. `draftAutoSendable` (`lib/telegramAssistant.ts`) exige os dois (origem Telegram E `instructedBy` = o membro do cartão); a entrega E o `executeAutoSend` checam. Rascunho que o atendente escreveu sozinho para uma mensagem do cliente (org em `suggest`, sem aceite do autopilot) sempre recebe o cartão normal Enviar · Regenerar · Descartar. `autoAllowed.replyCustomer` governa só o `sendCustomerReply` da própria assistente.
+
+### F3 — onboarding guiado (D24)
+
+**Cartões.** `lib/telegramOnboarding.ts` (puro) monta o cartão 0 (boas-vindas do `/start`: "👋 Conectado como X · Org", mais a nota de várias orgs) e os cartões 1 a 4 do §4.1. `internalConsumeLinkCode` envia o cartão 0 com `Próximo →` e grava `telegramLinks.onboarding = {step: 0}`. Como uma mensagem leva um só `reply_markup` (o inline vence), o teclado persistente (P6, padrão ligado) vai numa segunda mensagem curta logo depois.
+
+**Navegação.** `ob:1`…`ob:4` abrem o cartão pedido, `ob:back` volta a partir do `onboarding.step` guardado, e todos EDITAM a mesma mensagem (`editMessageText`). Toque em cartão antigo abre o cartão que o botão pede (sem estado preso); o passo guardado só marca o progresso. Os callbacks passam por `parseCommandCallback` e por `resolveTelegramViewer`, então chat sem vínculo ou membro removido não dirige o tour.
+
+**Modos no cartão 2.** `ob:mode:suggest|auto` grava `telegramLinks.assistant.mode` direto (com auditoria `telegram.assistant_mode`, severidade média) e segue para o cartão 3, com uma linha de confirmação. Se a org desligou `settings.telegram.allowAutoMode`, "Automático" vira "Sugestão" e avisa. **Terminar** (`ob:done`) grava `onboarding.doneAt`, tira os botões do cartão 4 e manda "Pronto. Quando chegar algo, eu te aviso aqui." com o teclado persistente (a menos que o usuário o tenha ocultado). O cartão 4 usa `cmd:hoje` (`internalSendReport` com `trigger:"command"`) e `cmd:repasses`. `/tour` reabre no cartão 1, em mensagem nova, preservando `doneAt`; `/ajuda` o lista.
+
+**Dicas da primeira vez.** `appendFirstTimeTip({type, tipsShown})` devolve `{line?, tipsShown}`: "💡 Dica: …" só na primeira vez de cada tipo (`handoff`, `new_message`, `task` para os três `task_*`, `draft`), idempotente e sem mutar a entrada. Quem entrega a notificação aplica a linha e persiste `telegramLinks.tipsShown`.
 
 ### F2 — comandos e teclado (v0.75, 03/11/2026)
 

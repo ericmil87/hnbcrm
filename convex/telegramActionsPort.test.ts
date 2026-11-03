@@ -20,10 +20,10 @@ const PORT = "lib/telegramActions.ts";
 const AUTH = "authorizeTelegramActor(";
 
 const FORBIDDEN =
-  /internal\s*\.\s*(handoffs|attendant|conversations|tasks|leads)\b|\b(acceptHandoffCore|rejectHandoffCore|rejectHandoffWithInstructionCore|moveLeadToStageCore|applyTaskCompletion|snoozeTaskCore|internalSendMessage\w*|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|assumeConversationCore)\b/g;
+  /internal\s*\.\s*(handoffs|attendant|conversations|tasks|leads)\b|\b(acceptHandoffCore|rejectHandoffCore|rejectHandoffWithInstructionCore|moveLeadToStageCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|internalSendMessage\w*|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|assumeConversationCore|confirmPendingActionCore|cancelPendingActionCore)\b/g;
 /** Port CALLS (not imports) inside telegramActions. */
 const PORT_CALL =
-  /\b(acceptHandoffCore|rejectHandoffWithInstructionCore|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|internalSendMessageCore|assumeConversationCore|applyTaskCompletion|snoozeTaskCore)\s*\(/g;
+  /\b(acceptHandoffCore|rejectHandoffWithInstructionCore|returnToAiCore|requestAiDraftCore|acceptAiDraftCore|discardAiDraftCore|internalSendMessageCore|assumeConversationCore|applyTaskCompletion|reopenTaskCore|snoozeTaskCore|confirmPendingActionCore|cancelPendingActionCore|moveLeadToStageCore)\s*\(/g;
 
 function stripComments(src: string): string {
   return src

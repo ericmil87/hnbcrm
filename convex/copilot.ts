@@ -6,10 +6,12 @@
  * enforçado server-side via assertAgentCan (camada 1); o modelo nunca fornece
  * organizationId/teamMemberId (injetados aqui).
  *
- * A inferência (loop de tool_calls + streaming SSE) vive em copilotRuntime.ts;
- * este arquivo é o estado durável + a superfície de execução de tools.
+ * A inferência (loop de tool_calls + streaming) vive em lib/copilotTurn.ts
+ * (SSE em copilotHttp.ts é só um adaptador); este arquivo é o estado durável
+ * + a superfície de execução de tools + a confirmação two-phase
+ * (núcleo em lib/copilotPendingActions.ts).
  */
-import { v } from "convex/values";
+import { v, ConvexError } from "convex/values";
 import {
   query,
   mutation,
@@ -20,7 +22,7 @@ import {
 } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { requireAuth } from "./lib/auth";
+import { requireAuth, isMembershipRevoked } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
 import {
   projectToolResult,
@@ -31,7 +33,7 @@ import {
 import { buildAuditDescription } from "./lib/auditDescription";
 import { buildSearchText } from "./lib/searchText";
 import { batchGet } from "./lib/batchGet";
-import { hardDeleteLead, scheduleLeadCascade } from "./lib/leadCascade";
+import { confirmPendingActionCore, cancelPendingActionCore } from "./lib/copilotPendingActions";
 import { leadCreationStagePatch, moveLeadToStageCore, sanitizeCloseReason } from "./lib/leadStageMove";
 import {
   listCampaignsHandler,
@@ -41,15 +43,12 @@ import {
   addManualRecipientsHandler,
   pauseCampaignHandler,
   resumeCampaignHandler,
-  cancelCampaignHandler,
 } from "./campaigns";
 import { normalizeIncludeKeys } from "./lib/campaignAudience";
 import { configProvider } from "./channelConfigs";
 // Grupos de WhatsApp (F4): executores num arquivo próprio — ver o cabeçalho de
 // `lib/groupCopilotTools.ts` para o porquê.
 import {
-  confirmGroupPendingAction,
-  isGroupPendingTool,
   isGroupReadTool,
   isGroupWriteTool,
   runGroupReadTool,
@@ -57,6 +56,13 @@ import {
 } from "./lib/groupCopilotTools";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import {
+  isAttendantCopilotReadTool,
+  isAttendantCopilotWriteTool,
+  recordAutoStep,
+  runAttendantCopilotReadTool,
+  runAttendantCopilotWriteTool,
+} from "./lib/copilotAttendantTools";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -195,6 +201,45 @@ export const internalResolveSession = internalQuery({
   },
 });
 
+// Sessão SEM JWT (F3, Copiloto no Telegram): o chamador já provou quem é o
+// membro (vínculo do Telegram reautorizado a cada update). Mesmos gates da
+// sessão de navegador: membro humano vivo da org, IA ativa, copiloto ligado.
+export const internalResolveSessionForMember = internalQuery({
+  args: { organizationId: v.id("organizations"), memberId: v.id("teamMembers") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.memberId);
+    if (
+      !member ||
+      member.organizationId !== args.organizationId ||
+      member.type !== "human" ||
+      !member.userId ||
+      isMembershipRevoked(member)
+    ) {
+      throw new Error("Membro inválido para esta organização");
+    }
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new Error("Organização não encontrada");
+    if (!orgAiActive(org)) {
+      throw new Error("IA não está ativada nesta organização");
+    }
+    const aiConfig = org.settings.aiConfig!;
+    if (aiConfig.copilotEnabled === false) {
+      throw new Error("O Copiloto está desativado nesta organização");
+    }
+    return {
+      member: { _id: member._id, name: member.name, role: member.role },
+      org: {
+        name: org.name,
+        currency: org.settings.currency,
+        timezone: org.settings.timezone,
+        industry: org.onboardingMeta?.industry ?? null,
+      },
+      providerConfig: aiConfig.providerConfig ?? null,
+    };
+  },
+});
+
 export const internalGetOrCreateThread = internalMutation({
   args: {
     organizationId: v.id("organizations"),
@@ -314,6 +359,12 @@ export const internalRunCopilotReadTool = internalQuery({
     // "agora" vem da action (sem Date.now() em query) — usado por tools que
     // dependem de janela temporal (público de campanha).
     now: v.optional(v.number()),
+    // F3 (Telegram): conversa em foco injetada pelo runner; o modelo nunca a vê.
+    focusConversationId: v.optional(v.id("conversations")),
+    // D22: escritas do modo automático auditam `via:"telegram_auto"`.
+    via: v.optional(v.literal("telegram_auto")),
+    // Regra do ordinal: listas numeradas (tarefas) congeladas no início do turno.
+    turnStartedAt: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -343,6 +394,9 @@ export const internalRunCopilotReadTool = internalQuery({
     const raw = await runReadTool(ctx, args.name, parsed, args.organizationId, {
       memberId: member._id,
       now: args.now ?? member.updatedAt,
+      member,
+      focusConversationId: args.focusConversationId,
+      turnStartedAt: args.turnStartedAt,
     });
     if ("error" in raw) return raw;
     return projectToolResult(spec, raw);
@@ -356,7 +410,13 @@ async function runReadTool(
   name: string,
   toolArgs: Record<string, unknown>,
   organizationId: Id<"organizations">,
-  scope: { memberId: Id<"teamMembers">; now: number }
+  scope: {
+    memberId: Id<"teamMembers">;
+    now: number;
+    member: Doc<"teamMembers">;
+    focusConversationId?: Id<"conversations">;
+    turnStartedAt?: number;
+  }
 ): Promise<Record<string, unknown>> {
   switch (name) {
     case "listCampaigns":
@@ -387,6 +447,15 @@ async function runReadTool(
       // Grupos de WhatsApp (F4) — executores em `lib/groupCopilotTools.ts`.
       if (isGroupReadTool(name)) {
         return await runGroupReadTool(ctx, name, toolArgs, organizationId);
+      }
+      // Atendimento (F3/D18) — executores em `lib/copilotAttendantTools.ts`.
+      if (isAttendantCopilotReadTool(name)) {
+        return await runAttendantCopilotReadTool(ctx, name, toolArgs, {
+          organizationId,
+          member: scope.member,
+          focusConversationId: scope.focusConversationId,
+          turnStartedAt: scope.turnStartedAt,
+        });
       }
       return { error: `Tool não implementada: ${name}` };
   }
@@ -993,6 +1062,14 @@ export const internalRunCopilotWriteTool = internalMutation({
     organizationId: v.id("organizations"),
     memberId: v.id("teamMembers"),
     threadId: v.optional(v.id("copilotThreads")),
+    // F3 (Telegram): conversa em foco injetada pelo runner; o modelo nunca a vê.
+    focusConversationId: v.optional(v.id("conversations")),
+    // D22: escritas do modo automático auditam `via:"telegram_auto"`.
+    via: v.optional(v.literal("telegram_auto")),
+    // D22: run do turno automático — chave dos passos do Desfazer.
+    agentRunId: v.optional(v.id("agentRuns")),
+    // Regra do ordinal: `completeTask(2)` é o #2 da lista mostrada neste turno.
+    turnStartedAt: v.optional(v.number()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -1021,6 +1098,10 @@ export const internalRunCopilotWriteTool = internalMutation({
       organizationId: args.organizationId,
       member,
       threadId: args.threadId,
+      focusConversationId: args.focusConversationId,
+      via: args.via,
+      agentRunId: args.agentRunId,
+      turnStartedAt: args.turnStartedAt,
     });
     if ("error" in raw) return raw;
     return projectToolResult(spec, raw);
@@ -1031,6 +1112,10 @@ type WriteToolCtx = {
   organizationId: Id<"organizations">;
   member: Doc<"teamMembers">;
   threadId?: Id<"copilotThreads">;
+  focusConversationId?: Id<"conversations">;
+  via?: "telegram_auto";
+  agentRunId?: Id<"agentRuns">;
+  turnStartedAt?: number;
 };
 
 async function runWriteTool(
@@ -1239,11 +1324,13 @@ async function runWriteTool(
         newStageId: target._id,
         actor: { type: "human", memberId: member._id },
         closedReason: reason || undefined,
-        metadata: { via: "copilot" },
+        metadata: { via: scope.via ?? "copilot" },
         auditDescription: `Moveu o lead '${lead.title}' de '${oldStage?.name}' para '${target.name}' (via Copiloto)`,
         activityContent: `Movido de "${oldStage?.name ?? "?"}" para "${target.name}" via Copiloto`,
         now,
       });
+      // D22: no modo automático do Telegram, guarda o passo para o Desfazer.
+      await recordAutoStep(ctx, scope, "move_stage", lead._id, { stageId: lead.stageId }, { stageId: target._id });
       return { status: "movido", leadId: lead._id, stageName: target.name };
     }
 
@@ -1371,10 +1458,12 @@ async function runWriteTool(
           actorId: member._id,
           actorType: "human",
           content: `Tarefa criada via Copiloto: ${title}`,
-          metadata: { taskId, via: "copilot" },
+          metadata: { taskId, via: scope.via ?? "copilot" },
           createdAt: now,
         });
       }
+      // D22: no modo automático do Telegram, guarda o passo para o Desfazer.
+      await recordAutoStep(ctx, scope, "create_task", taskId, {}, { status: "pending" });
       return { status: "criada", taskId };
     }
 
@@ -1711,6 +1800,19 @@ async function runWriteTool(
           pendingActionTtlMs: PENDING_ACTION_TTL_MS,
         });
       }
+      // Atendimento (F3/D18) — executores em `lib/copilotAttendantTools.ts`.
+      if (isAttendantCopilotWriteTool(name)) {
+        return await runAttendantCopilotWriteTool(ctx, name, toolArgs, {
+          organizationId,
+          member,
+          threadId: scope.threadId,
+          focusConversationId: scope.focusConversationId,
+          pendingActionTtlMs: PENDING_ACTION_TTL_MS,
+          via: scope.via ?? "copilot",
+          agentRunId: scope.agentRunId,
+          turnStartedAt: scope.turnStartedAt,
+        });
+      }
       return { error: `Tool não implementada: ${name}` };
   }
 }
@@ -1757,70 +1859,13 @@ export const confirmPendingAction = mutation({
     const pending = await ctx.db.get(args.pendingActionId);
     if (!pending) throw new Error("Ação não encontrada");
     const member = await requireAuth(ctx, pending.organizationId);
-    // Só o humano que comandou o copiloto confirma a própria proposta.
-    if (pending.requestedBy !== member._id) {
-      throw new Error("Apenas quem solicitou pode confirmar esta ação");
+    try {
+      await confirmPendingActionCore(ctx, { pending, member, now: Date.now() });
+    } catch (e) {
+      // Contrato do painel: mensagens PT-BR como Error (o cliente mostra e.message).
+      if (e instanceof ConvexError) throw new Error(String(e.data));
+      throw e;
     }
-    if (pending.status !== "pending") throw new Error("Ação já resolvida");
-    const now = Date.now();
-    if (pending.expiresAt < now) {
-      await ctx.db.patch(pending._id, { status: "expired" });
-      throw new Error("Confirmação expirou — peça ao copiloto novamente");
-    }
-
-    switch (pending.tool) {
-      case "deleteLead": {
-        const leadId = pending.args.leadId as Id<"leads">;
-        const lead = await ctx.db.get(leadId);
-        if (!lead || lead.organizationId !== pending.organizationId) {
-          throw new Error("Lead não existe mais");
-        }
-        // Re-checa a permissão NO MOMENTO da confirmação (pode ter mudado).
-        await assertAgentCan(ctx, member._id, "leads", "full", lead);
-
-        await hardDeleteLead(ctx, {
-          lead,
-          actorId: member._id,
-          actorType: "human",
-          description: `Excluiu o lead '${lead.title}' (proposto via Copiloto, confirmado)`,
-          extraMetadata: { via: "copilot", confirmedAt: now },
-        });
-        await scheduleLeadCascade(ctx, {
-          organizationId: lead.organizationId,
-          leadIds: [leadId],
-          contactIds: [],
-        });
-        break;
-      }
-      case "cancelCampaign": {
-        const campaignId = pending.args.campaignId as Id<"campaigns">;
-        const campaign = await ctx.db.get(campaignId);
-        if (!campaign || campaign.organizationId !== pending.organizationId) {
-          throw new Error("Campanha não existe mais");
-        }
-        // Re-checa a permissão NO MOMENTO da confirmação (campaigns:full).
-        await assertAgentCan(ctx, member._id, "campaigns", "full", campaign);
-        await cancelCampaignHandler(ctx, { campaignId, actorMemberId: member._id, via: "copilot" });
-        break;
-      }
-      default: {
-        // Grupos (F4): publicar num grupo exige `inbox:reply`; ativar uma
-        // publicação exige `campaigns:full` — re-checados AGORA, não na
-        // proposta (o papel do usuário pode ter mudado no meio).
-        if (isGroupPendingTool(pending.tool)) {
-          if (pending.tool === "sendGroupMessage") {
-            await assertAgentCan(ctx, member._id, "inbox", "reply");
-          } else {
-            await assertAgentCan(ctx, member._id, "campaigns", "full");
-          }
-          await confirmGroupPendingAction(ctx, pending, member);
-          break;
-        }
-        throw new Error(`Ação desconhecida: ${pending.tool}`);
-      }
-    }
-
-    await ctx.db.patch(pending._id, { status: "executed", executedAt: now });
     return null;
   },
 });
@@ -1832,12 +1877,54 @@ export const cancelPendingAction = mutation({
     const pending = await ctx.db.get(args.pendingActionId);
     if (!pending) return null;
     const member = await requireAuth(ctx, pending.organizationId);
-    if (pending.requestedBy !== member._id) {
-      throw new Error("Apenas quem solicitou pode cancelar esta ação");
+    try {
+      await cancelPendingActionCore(ctx, { pending, member });
+    } catch (e) {
+      if (e instanceof ConvexError) throw new Error(String(e.data));
+      throw e;
     }
-    if (pending.status === "pending") {
-      await ctx.db.patch(pending._id, { status: "canceled" });
+    return null;
+  },
+});
+
+// Confirmação/cancelamento SEM sessão (F3, Copiloto no Telegram): o chamador
+// (lib/telegramActions.ts) já reautorizou o membro pelo vínculo; aqui vale o
+// mesmo núcleo — só quem pediu, TTL e permissão re-checados agora.
+export const internalConfirmPendingAction = internalMutation({
+  args: { pendingActionId: v.id("pendingActions"), memberId: v.id("teamMembers") },
+  returns: v.object({ ok: v.boolean(), message: v.string() }),
+  handler: async (ctx, args) => {
+    const pending = await ctx.db.get(args.pendingActionId);
+    if (!pending) throw new ConvexError("Ação não encontrada");
+    const member = await ctx.db.get(args.memberId);
+    if (
+      !member ||
+      member.organizationId !== pending.organizationId ||
+      member.type !== "human" ||
+      isMembershipRevoked(member)
+    ) {
+      throw new ConvexError("Membro inválido para esta ação");
     }
+    return await confirmPendingActionCore(ctx, {
+      pending,
+      member,
+      now: Date.now(),
+      via: "telegram",
+    });
+  },
+});
+
+export const internalCancelPendingAction = internalMutation({
+  args: { pendingActionId: v.id("pendingActions"), memberId: v.id("teamMembers") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const pending = await ctx.db.get(args.pendingActionId);
+    if (!pending) return null;
+    const member = await ctx.db.get(args.memberId);
+    if (!member || member.organizationId !== pending.organizationId || isMembershipRevoked(member)) {
+      throw new ConvexError("Membro inválido para esta ação");
+    }
+    await cancelPendingActionCore(ctx, { pending, member });
     return null;
   },
 });

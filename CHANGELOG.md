@@ -2,6 +2,16 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.76.0] - 2026-11-03
+
+### Copiloto no Telegram — fale com a IA por texto e voz, com a conversa em foco; modos Sugestão e Automático; envio com veto
+
+- **Copiloto no bolso.** Qualquer texto ou áudio que você mande ao bot (sem comando e sem prompt aberto) vai para o Copiloto, o mesmo do painel, agora com a conversa em foco: quando você toca num cartão (repasse, mensagem, tarefa) ou usa `/foco`, o Copiloto recebe lead, etapa, motivo do repasse, notas da equipe e as últimas 20 mensagens, e pode **instruir o Atendente**, **regenerar** a resposta, **aceitar o repasse**, **concluir ou adiar tarefa** e **responder ao cliente** (sempre com confirmação). Áudio é transcrito ("🎙 Entendi: …") e foto passa pela visão. A resposta chega em streaming (rascunho nativo do Telegram) e ações pendentes viram cartões **Confirmar · Cancelar**. `/novo` começa uma thread nova e limpa o foco.
+- **Modelo configurável.** Novo produto de IA "Copiloto no Telegram" em Configurações → IA → Produtos de IA (padrão DeepSeek Flash mais recente via OpenRouter; herda a rota da organização quando não há OpenRouter). Custo registrado por execução como os outros produtos.
+- **Dois modos da assistente, por pessoa (`/modo` ou no card).** *Sugestão* (padrão): em cada repasse ela propõe uma ação ("💡 Sugiro: …") com **Aplicar sugestão**, e nada vai ao cliente sem o seu toque. *Automático*: em repasses, mensagens das conversas em foco e follow-ups travados ela decide e executa com o que você permitiu (instruir a IA, criar tarefa, mover etapa, aceitar repasse; responder ao cliente só se você liberar) e manda um registro com **Desfazer** (10 minutos; reabre o repasse, apaga a tarefa, volta a etapa) e **Ajustar**. Tetos: 20 ações por hora e volta sozinha para Sugestão após 3 desfazeres numa hora. O admin pode proibir o automático na organização.
+- **Envio com veto.** No automático, toda mensagem para o cliente nascida no Telegram (resposta sua, resposta da IA a uma instrução, rascunho regenerado) fica N segundos na tela (5–120, padrão 15) com **Regenerar · Cancelar envio** antes de sair; depois o cartão confirma "✓ Enviado · hh:mm". Em Sugestão nada sai sem **Enviar**.
+- **Onboarding guiado.** Ao conectar, 4 cartões curtos explicam o que chega, os dois modos (escolha na hora), como falar com o bot e um teste com o seu `/hoje`. `/tour` reabre; a primeira vez de cada tipo de cartão traz uma dica.
+
 ## [0.75.0] - 2026-11-03
 
 ### Copiloto no Telegram — comandos, teclado fixo e relatórios de manhã e de fim do dia

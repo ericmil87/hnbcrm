@@ -1566,7 +1566,7 @@ export async function internalSendMessageCore(
     mentions?: string[];
     teamMemberId: Id<"teamMembers">;
     /** Origem fora do app (Telegram F1): vai para `metadata.via` da mensagem e do audit. */
-    via?: "telegram";
+    via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<Id<"messages">> {
   const teamMember = await ctx.db.get(args.teamMemberId);
@@ -3185,7 +3185,7 @@ export const assumeConversation = mutation({
 /** Núcleo de "Assumir conversa" (sem sessão; o chamador autorizou `inbox:reply` e a org). */
 export async function assumeConversationCore(
   ctx: MutationCtx,
-  params: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; via?: "telegram" }
+  params: { conversation: Doc<"conversations">; member: Doc<"teamMembers">; via?: "telegram" | "telegram_auto" | "copilot" }
 ): Promise<void> {
   const { conversation, member } = params;
   const args = { conversationId: conversation._id };

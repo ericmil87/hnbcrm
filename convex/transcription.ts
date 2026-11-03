@@ -166,6 +166,35 @@ async function runTranscription(
     return { status: "failed", error };
   }
 
+  const result = await callWhisper(serviceUrl, serviceToken, audioUrl);
+  if (result.status === "failed") {
+    await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
+      messageId: message.messageId,
+      status: "failed",
+      error: result.error,
+    });
+    return result;
+  }
+  await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
+    messageId: message.messageId,
+    status: "done",
+    text: result.text,
+    language: result.language,
+    durationSec: result.durationSec,
+  });
+  return result;
+}
+
+/**
+ * The Whisper service call (POST `{url}` → `{text, language, duration_sec}`),
+ * shared by the message transcription above and the Telegram voice note
+ * (F3, `internalTranscribeStoredAudio`). Never throws.
+ */
+async function callWhisper(
+  serviceUrl: string,
+  serviceToken: string | undefined,
+  audioUrl: string
+): Promise<{ status: "done"; text: string; language?: string; durationSec?: number } | { status: "failed"; error: string }> {
   try {
     const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/transcribe`, {
       method: "POST",
@@ -185,25 +214,11 @@ async function runTranscription(
     });
     if (!response.ok) {
       const error = body?.detail ?? body?.error ?? `Whisper service error (HTTP ${response.status})`;
-      await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
-        messageId: message.messageId,
-        status: "failed",
-        error: String(error),
-      });
       return { status: "failed", error: String(error) };
     }
-
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const language = typeof body.language === "string" ? body.language : undefined;
     const durationSec = typeof body.duration_sec === "number" ? body.duration_sec : undefined;
-
-    await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
-      messageId: message.messageId,
-      status: "done",
-      text,
-      language,
-      durationSec,
-    });
     return { status: "done", text, language, durationSec };
   } catch (e) {
     const error = isAbortError(e)
@@ -211,14 +226,28 @@ async function runTranscription(
       : e instanceof Error
         ? e.message
         : "Falha ao chamar o serviço Whisper";
-    await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
-      messageId: message.messageId,
-      status: "failed",
-      error,
-    });
     return { status: "failed", error };
   }
 }
+
+/**
+ * Telegram F3 (D21): transcribes an audio file already in storage (a voice
+ * note downloaded from Telegram) without a `messages` row. The caller deletes
+ * the blob afterwards. Same service, same timeout, same 25 MB cap.
+ */
+export const internalTranscribeStoredAudio = internalAction({
+  args: { storageId: v.id("_storage"), size: v.number() },
+  returns: v.object({ status: v.union(v.literal("done"), v.literal("failed")), text: v.optional(v.string()), error: v.optional(v.string()) }),
+  handler: async (ctx, args) => {
+    if (args.size > MAX_AUDIO_BYTES) return { status: "failed" as const, error: "Áudio maior que 25MB" };
+    const serviceUrl = process.env.WHISPER_SERVICE_URL;
+    if (!serviceUrl) return { status: "failed" as const, error: "WHISPER_SERVICE_URL não configurado no Convex" };
+    const audioUrl = await ctx.storage.getUrl(args.storageId);
+    if (!audioUrl) return { status: "failed" as const, error: "URL do áudio não encontrada no storage" };
+    const result = await callWhisper(serviceUrl, process.env.WHISPER_SERVICE_TOKEN, audioUrl);
+    return result.status === "done" ? { status: "done" as const, text: result.text } : { status: "failed" as const, error: result.error };
+  },
+});
 
 // ── Internal queries ──
 
