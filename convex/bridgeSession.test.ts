@@ -5,6 +5,9 @@ import {
   buildBridgeStatusRequest,
   buildBridgeConnectRequest,
   buildBridgeQrRequest,
+  buildBridgePairPhoneRequest,
+  parseBridgePairPhoneResponse,
+  normalizeLinkingCode,
   buildBridgeProvisionRequest,
   parseBridgeStatusResponse,
   parseBridgeQrResponse,
@@ -178,5 +181,43 @@ describe("mapBridgeSessionState", () => {
     const m = mapBridgeSessionState({ connected: false, loggedIn: false });
     expect(m.state).toBe("disconnected");
     expect(m.healthDetail).toMatch(/Deslogado/);
+  });
+});
+
+describe("pairphone (v0.78: reconectar por código)", () => {
+  test("request: POST /session/pairphone, token header, só dígitos em Phone", () => {
+    const req = buildBridgePairPhoneRequest(`${BASE}/`, TOKEN, "+55 (81) 98139-2929");
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe(`${BASE}/session/pairphone`);
+    expect(req.headers.token).toBe(TOKEN);
+    expect(JSON.parse(req.body!)).toEqual({ Phone: "5581981392929" });
+  });
+
+  test("response: LinkingCode em várias grafias, sempre XXXX-XXXX", () => {
+    expect(parseBridgePairPhoneResponse({ code: 200, success: true, data: { LinkingCode: "ABCD-EFGH" } })).toEqual({ linkingCode: "ABCD-EFGH" });
+    expect(parseBridgePairPhoneResponse({ data: { linkingCode: "abcd1234" } })).toEqual({ linkingCode: "ABCD-1234" });
+    expect(parseBridgePairPhoneResponse({ Data: { LinkingCode: "WXYZ5678" } })).toEqual({ linkingCode: "WXYZ-5678" });
+    expect(parseBridgePairPhoneResponse({ code: "QRST-9012" })).toEqual({ linkingCode: "QRST-9012" });
+    expect(parseBridgePairPhoneResponse({ data: { code: "mnop 3456" } })).toEqual({ linkingCode: "MNOP-3456" });
+  });
+
+  test("o code numérico do envelope (HTTP 200) NÃO é código de pareamento", () => {
+    const r = parseBridgePairPhoneResponse({ code: 200, success: true, data: {} });
+    expect(r.linkingCode).toBeUndefined();
+    expect(r.error).toBeDefined();
+  });
+
+  test("já logado, falha explícita e lixo", () => {
+    expect(parseBridgePairPhoneResponse({ data: { LoggedIn: true } })).toEqual({ loggedIn: true });
+    expect(parseBridgePairPhoneResponse({ success: false, error: "already logged in" })).toEqual({ error: "already logged in" });
+    expect(parseBridgePairPhoneResponse({ success: false }).error).toContain("recusou");
+    expect(parseBridgePairPhoneResponse(null).error).toBeDefined();
+    expect(parseBridgePairPhoneResponse("x").error).toBeDefined();
+  });
+
+  test("normalizeLinkingCode", () => {
+    expect(normalizeLinkingCode("abcdefgh")).toBe("ABCD-EFGH");
+    expect(normalizeLinkingCode(" abcd-efgh ")).toBe("ABCD-EFGH");
+    expect(normalizeLinkingCode("ABC")).toBe("ABC");
   });
 });

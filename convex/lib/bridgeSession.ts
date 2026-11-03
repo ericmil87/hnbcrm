@@ -195,6 +195,53 @@ export function buildBridgeQrRequest(params: { baseUrl: string; token: string })
 }
 
 /**
+ * POST /session/pairphone — pairing by CODE instead of QR (v0.78, reconnect from
+ * Telegram): the person types `XXXX-XXXX` on the phone of the number
+ * (WhatsApp → Linked devices → Link with phone number). Body `{ Phone }` with
+ * digits only (E.164 without "+"). The session must already be connecting
+ * (`/session/connect` first: the upstream handler does not check `IsConnected`).
+ * VALIDAR: against a LIVE gateway — header spelling, `Phone` casing, the exact
+ * field of the code (`LinkingCode`) and how long it stays valid (~160 s assumed,
+ * the whatsmeow login websocket window). This flow was never exercised before v0.78.
+ */
+export function buildBridgePairPhoneRequest(baseUrl: string, token: string, phoneE164Digits: string): BridgeHttpRequest {
+  return {
+    method: "POST",
+    url: `${trimBase(baseUrl)}/session/pairphone`,
+    headers: { token, "Content-Type": "application/json" },
+    body: JSON.stringify({ Phone: phoneE164Digits.replace(/\D/g, "") }),
+  };
+}
+
+export type BridgePairPhoneResult = { linkingCode?: string; loggedIn?: boolean; error?: string };
+
+/** `ABCD1234` / `abcd-1234` → `ABCD-1234`; anything not 8 alphanumerics is returned trimmed/uppercased as-is. */
+export function normalizeLinkingCode(raw: string): string {
+  const compact = raw.replace(/[\s-]/g, "").toUpperCase();
+  return /^[A-Z0-9]{8}$/.test(compact) ? `${compact.slice(0, 4)}-${compact.slice(4)}` : raw.trim().toUpperCase();
+}
+
+/**
+ * Interpret the /session/pairphone response. Tolerant of casing and of
+ * `data`/`Data` nesting (`data.LinkingCode`, `linkingCode`, `code`). Note the
+ * wuzapi envelope's top-level `code` is the HTTP status NUMBER: only a string is a pairing code.
+ * VALIDAR: field spelling against the live gateway.
+ */
+export function parseBridgePairPhoneResponse(json: unknown): BridgePairPhoneResult {
+  if (!json || typeof json !== "object") return { error: "Resposta inválida do gateway" };
+  const b = json as Record<string, any>;
+  const data = (b.data ?? b.Data ?? {}) as Record<string, any>;
+  const loggedIn = pick(data, "LoggedIn", "loggedIn") === true ? true : undefined;
+  const rawCode = pick(data, "LinkingCode", "linkingCode", "Code", "code") ?? (typeof b.code === "string" ? b.code : undefined);
+  const linkingCode = typeof rawCode === "string" && rawCode.trim().length > 0 ? normalizeLinkingCode(rawCode) : undefined;
+  if (linkingCode) return { linkingCode, ...(loggedIn ? { loggedIn } : {}) };
+  if (loggedIn) return { loggedIn };
+  const explicitFail = b.success === false || b.Success === false;
+  const error = strUndef(pick(b, "error", "Error", "message", "Message"));
+  return { error: error ?? (explicitFail ? "O gateway recusou o pareamento por código" : "O gateway não devolveu o código de pareamento") };
+}
+
+/**
  * POST /admin/users — provision a new instance (org = 1 user/token/number) with a
  * per-instance token + a webhook pointing at the CRM's bridge ingress. Uses the
  * ADMIN token (ephemeral, never persisted), NOT a per-instance token.

@@ -102,6 +102,29 @@ export async function loadCardContext(
     if (chatLinks.length > 1) ctx.multiOrg = true;
   }
 
+  // Channel session lost (v0.78): which channel/state, so the card can offer "Reconectar".
+  if (n?.type === "channel_session_lost") {
+    const d = (n.data ?? {}) as { channelConfigId?: unknown; metaConnectionId?: unknown; state?: unknown };
+    const state = typeof d.state === "string" ? d.state : undefined;
+    if (state && typeof d.channelConfigId === "string") {
+      const configId = db.normalizeId("channelConfigs", d.channelConfigId);
+      const config = configId ? await db.get(configId) : null;
+      if (config && config.organizationId === orgId) {
+        const digits = (config.bridgePhone ?? config.displayPhoneNumber ?? "").replace(/\D/g, "");
+        ctx.channelSession = {
+          kind: "bridge",
+          channelConfigId: config._id,
+          // The state that was ALERTED; the reconnect handler re-reads the live one.
+          state,
+          ...(digits.length >= 4 ? { last4: digits.slice(-4) } : {}),
+          ...(config.bridgeSessionExpiresAt ? { expiresAt: config.bridgeSessionExpiresAt } : {}),
+        };
+      }
+    } else if (state && typeof d.metaConnectionId === "string") {
+      ctx.channelSession = { kind: "meta", state };
+    }
+  }
+
   const handoffId = args.handoffId ?? n?.handoffId;
   const handoff = handoffId ? await db.get(handoffId) : null;
   const validHandoff = handoff && handoff.organizationId === orgId ? handoff : null;

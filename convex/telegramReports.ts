@@ -539,6 +539,7 @@ const keyboardValidator = v.array(
     v.union(
       v.object({ text: v.string(), url: v.string() }),
       v.object({ text: v.string(), callback_data: v.string() }),
+      v.object({ text: v.string(), copy_text: v.object({ text: v.string() }) }),
     ),
   ),
 );

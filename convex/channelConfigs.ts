@@ -19,6 +19,15 @@ import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/a
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
+import {
+  BRIDGE_PRESENCE_AFTER_CONNECT_MS,
+  bridgeFetchJson,
+  normalizeBridgeBaseUrl,
+  resolveBridgePhone,
+} from "./lib/bridgeGateway";
+import { runBridgeReconnectStep } from "./lib/channelReconnectCore";
+// Old importers (`channelHealth.ts`) keep `import { bridgeFetchJson } from "./channelConfigs"`.
+export { bridgeFetchJson };
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { deleteFileRow } from "./lib/storageUsage";
@@ -51,26 +60,7 @@ const bridgeSessionStateValidator = v.union(
   v.literal("outdated")
 );
 
-/**
- * Atrasos da presença após o pareamento: 2 s cobre o `Connected` do wuzapi; 30 s
- * cobre o `available` que ele reenvia no `PushNameSetting` / sync de app-state.
- */
-const BRIDGE_PRESENCE_AFTER_CONNECT_MS = [2_000, 30_000];
 
-// Fire one wuzapi REST request (built by the pure adapter) and parse the JSON.
-export async function bridgeFetchJson(
-  req: BridgeHttpRequest,
-  opts?: { timeoutMs?: number }
-): Promise<{ httpOk: boolean; status: number; body: unknown }> {
-  const res = await fetch(req.url, {
-    method: req.method,
-    headers: req.headers,
-    ...(req.body !== undefined ? { body: req.body } : {}),
-    ...(opts?.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
-  });
-  const body = await res.json().catch(() => ({}));
-  return { httpOk: res.ok, status: res.status, body };
-}
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 
@@ -95,20 +85,6 @@ export function configProvider(config: {
   return config.provider === "bridge" ? "bridge" : "meta";
 }
 
-// Validate + normalize a bridge REST base URL (must be http/https). Returns trimmed value.
-function normalizeBridgeBaseUrl(raw: string): string {
-  const trimmed = raw.trim();
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new Error("bridgeBaseUrl inválido — informe uma URL http(s) completa");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("bridgeBaseUrl deve usar http ou https");
-  }
-  return trimmed;
-}
 
 // Masked shape returned to clients — encrypted fields never leave the server.
 // Shape stays backward-compatible for Meta configs; bridge-only fields are null
@@ -768,32 +744,6 @@ export const deleteChannelConfig = mutation({
  * token. Em gateway self-hosted isto devolve undefined e o número acaba sendo
  * aprendido pelo tráfego (primeira mensagem nossa que chega pelo webhook).
  */
-async function resolveBridgePhone(params: {
-  fromStatusJid?: string;
-  baseUrl: string;
-  instanceId?: string;
-}): Promise<string | undefined> {
-  const direct = phoneFromJid(params.fromStatusJid);
-  if (direct) return direct;
-
-  const adminToken = process.env.WA_BRIDGE_ADMIN_TOKEN;
-  const managedUrl = process.env.WA_BRIDGE_DEFAULT_URL;
-  if (!adminToken || !params.instanceId) return undefined;
-  // Só manda o admin token para o gateway que é nosso.
-  if (!managedUrl || normalizeBridgeBaseUrl(managedUrl) !== normalizeBridgeBaseUrl(params.baseUrl)) {
-    return undefined;
-  }
-
-  try {
-    const res = await bridgeFetchJson(
-      buildBridgeAdminUsersRequest({ baseUrl: params.baseUrl, adminToken })
-    );
-    if (!res.httpOk) return undefined;
-    return phoneFromAdminUsers(res.body, params.instanceId);
-  } catch {
-    return undefined;
-  }
-}
 
 // Instagram/Messenger: `debug_token` (mesma observação do cron diário) + leitura do
 // nome/@ da conta com o token da conexão. Token só decifrado aqui, nunca devolvido.
@@ -1060,107 +1010,15 @@ export const getBridgeQrCode = action({
     if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
       throw new Error("QR só se aplica a canais do provider bridge");
     }
-    if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) {
-      return { state: "disconnected", error: "Configuração bridge incompleta — reconfigure o canal" };
-    }
-
-    // Devolve os nomes das contas que perderam o número para este pareamento.
-    const record = async (
-      state: BridgeSessionState,
-      ok: boolean,
-      healthDetail: string,
-      phone?: string
-    ): Promise<string[]> => {
-      return await ctx.runMutation(internal.channelConfigs.internalRecordHealthCheck, {
-        configId: args.configId,
-        ok,
-        displayPhoneNumber: phone ? `+${phone}` : undefined,
-        bridgePhone: phone,
-        healthDetail,
-        bridgeSessionState: state,
-      });
+    // v0.78: one path with the Telegram reconnect (`lib/channelReconnectCore.ts`); same behaviour.
+    const step = await runBridgeReconnectStep(ctx, { config, mode: "qr" });
+    return {
+      state: step.sessionState,
+      ...(step.qrCode ? { qrCode: step.qrCode } : {}),
+      ...(step.displayPhoneNumber ? { displayPhoneNumber: step.displayPhoneNumber } : {}),
+      ...(step.error ? { error: step.error } : {}),
+      ...(step.displacedFrom ? { displacedFrom: step.displacedFrom } : {}),
     };
-
-    // O handler `Connected` do wuzapi anuncia "available" (silencia o celular);
-    // a nossa presença precisa chegar DEPOIS dele.
-    const scheduleApplyPresence = async () => {
-      for (const delayMs of BRIDGE_PRESENCE_AFTER_CONNECT_MS) {
-        await ctx.scheduler.runAfter(delayMs, internal.channelHealth.internalBridgeApplyPresence, {
-          configId: args.configId,
-        });
-      }
-    };
-
-    try {
-      const token = await decryptSecret(config.bridgeTokenEncrypted);
-      const baseUrl = config.bridgeBaseUrl;
-
-      // Already paired + online? Nothing to scan — reflect "connected".
-      const probe = await bridgeFetchJson(buildBridgeStatusRequest({ baseUrl, token }));
-      const status = parseBridgeStatusResponse(probe.httpOk, probe.status, probe.body);
-      const probedJid = status.ok ? status.jid : undefined;
-      if (status.ok && status.loggedIn && status.connected) {
-        const mapped = mapBridgeSessionState({ connected: true, loggedIn: true, jid: status.jid });
-        const phone = await resolveBridgePhone({
-          fromStatusJid: status.jid,
-          baseUrl,
-          instanceId: config.bridgeInstanceId,
-        });
-        const displaced = await record(
-          "connected",
-          true,
-          phone ? `Conectado como +${phone}` : mapped.healthDetail,
-          phone
-        );
-        await scheduleApplyPresence();
-        return {
-          state: "connected",
-          displayPhoneNumber: phone ? `+${phone}` : undefined,
-          ...(displaced.length > 0 ? { displacedFrom: displaced } : {}),
-        };
-      }
-
-      // Not paired (or socket down): bring the session up so a QR is issued, then
-      // fetch it. A connect failure is non-fatal — the QR endpoint may still work.
-      await bridgeFetchJson(buildBridgeConnectRequest({ baseUrl, token })).catch(() => undefined);
-
-      const qrProbe = await bridgeFetchJson(buildBridgeQrRequest({ baseUrl, token }));
-      const qr = parseBridgeQrResponse(qrProbe.httpOk, qrProbe.status, qrProbe.body);
-      if (!qr.ok) {
-        await record("disconnected", false, qr.error);
-        return { state: "disconnected", error: qr.error };
-      }
-      // The instance may have logged in between the two calls.
-      if (qr.loggedIn && !qr.qrCode) {
-        const mapped = mapBridgeSessionState({ connected: true, loggedIn: true, jid: probedJid });
-        // Caminho do pareamento recém-concluído: é AQUI que a exclusividade
-        // precisa valer, então vale a chamada extra para descobrir o número.
-        const phone = await resolveBridgePhone({
-          fromStatusJid: probedJid,
-          baseUrl,
-          instanceId: config.bridgeInstanceId,
-        });
-        const displaced = await record(
-          "connected",
-          true,
-          phone ? `Conectado como +${phone}` : mapped.healthDetail,
-          phone
-        );
-        await scheduleApplyPresence();
-        return {
-          state: "connected",
-          displayPhoneNumber: phone ? `+${phone}` : undefined,
-          ...(displaced.length > 0 ? { displacedFrom: displaced } : {}),
-        };
-      }
-      const mapped = mapBridgeSessionState({ connected: false, loggedIn: false, hasQr: !!qr.qrCode });
-      await record(mapped.state, false, mapped.healthDetail);
-      return { state: mapped.state, qrCode: qr.qrCode, error: qr.qrCode ? undefined : mapped.healthDetail };
-    } catch (e) {
-      const error = e instanceof Error ? e.message : "Falha ao obter o QR do gateway";
-      await record("disconnected", false, error);
-      return { state: "disconnected", error };
-    }
   },
 });
 

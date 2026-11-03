@@ -141,9 +141,11 @@ async function postTelegram<T>(
 // Convenience wrappers
 // ---------------------------------------------------------------------------
 
+/** `copy_text` (Bot API 7.11 `CopyTextButton`): the tap copies `text` (≤ 256 chars) to the clipboard. */
 export type InlineKeyboardButton =
   | { text: string; url: string }
-  | { text: string; callback_data: string };
+  | { text: string; callback_data: string }
+  | { text: string; copy_text: { text: string } };
 
 export type ReplyMarkup =
   | { inline_keyboard: InlineKeyboardButton[][] }
@@ -242,6 +244,36 @@ export async function editMessageText(
     return await callTelegram("editMessageText", params(htmlToPlainText(args.text), null), opts);
   }
   return res;
+}
+
+/**
+ * `editMessageMedia` for a photo uploaded in the request (a rotating QR: the
+ * same message keeps changing its picture). The file travels as an
+ * `attach://file` part. Same outcome contract as the other wrappers
+ * (`not_modified` is a normal result when the picture is identical).
+ */
+export async function editMessageMedia(
+  args: {
+    chatId: number;
+    messageId: number;
+    photo: Blob;
+    fileName?: string;
+    caption?: string;
+    replyMarkup?: { inline_keyboard: InlineKeyboardButton[][] };
+  },
+  opts?: TelegramCallOptions,
+): Promise<TelegramResult<unknown>> {
+  const caption = args.caption ? clipCaption(args.caption) : undefined;
+  const form = new FormData();
+  form.append("chat_id", String(args.chatId));
+  form.append("message_id", String(args.messageId));
+  form.append(
+    "media",
+    JSON.stringify({ type: "photo", media: "attach://file", ...(caption ? { caption, parse_mode: "HTML" } : {}) }),
+  );
+  form.append("file", args.photo, args.fileName ?? "qr.png");
+  if (args.replyMarkup) form.append("reply_markup", JSON.stringify(args.replyMarkup));
+  return await callTelegramMultipart("editMessageMedia", form, { timeoutMs: 60_000, ...opts });
 }
 
 export async function deleteMessage(

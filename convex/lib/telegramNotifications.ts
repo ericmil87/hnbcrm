@@ -16,7 +16,10 @@ import { escapeHtml, expandableQuote, maskDigitRuns } from "./telegramFormat";
 // Types
 // ---------------------------------------------------------------------------
 
-export type CardButton = { text: string; url: string } | { text: string; callback_data: string };
+export type CardButton =
+  | { text: string; url: string }
+  | { text: string; callback_data: string }
+  | { text: string; copy_text: { text: string } };
 export type CardKeyboard = CardButton[][];
 export type CardFocus = { conversationId: string; leadId?: string; handoffId?: string };
 export type CardOutput = { text: string; keyboard: CardKeyboard; focus?: CardFocus };
@@ -32,6 +35,14 @@ export type CardContext = {
   now: number;
   /** The person has more than one active org on this Telegram: the header names the org. */
   multiOrg?: boolean;
+  /** `channel_session_lost`: which channel and in which state (bridge = WhatsApp, meta = Instagram/Messenger). */
+  channelSession?: {
+    kind: "bridge" | "meta";
+    channelConfigId?: string;
+    state: string;
+    last4?: string;
+    expiresAt?: number;
+  };
   lead?: {
     id: string;
     title: string;
@@ -79,6 +90,7 @@ type TemplateKind =
   | "followup"
   | "task"
   | "transferred"
+  | "channel_session"
   | "generic";
 
 /**
@@ -97,7 +109,7 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   task_overdue: "task",
   conversation_transferred: "transferred",
   task_comment_mention: "generic",
-  channel_session_lost: "generic",
+  channel_session_lost: "channel_session",
   ai_spend_warning: "generic",
   ai_spend_reached: "generic",
   campaign_completed: "generic",
@@ -144,6 +156,10 @@ export const CALLBACK_VERBS = [
   "aj", // "✏️ Ajustar": focus + talk to the Copilot about it
   "md", // set the assistant mode (md:suggest / md:auto)
   "vc", // veto a countdown send (D23)
+  // v0.78 (reconnect WhatsApp from Telegram):
+  "rc", // reconnect (pairing code)
+  "rcq", // reconnect by QR instead
+  "rcx", // cancel the reconnection
 ] as const;
 export type CallbackVerb = (typeof CALLBACK_VERBS)[number];
 export const CALLBACK_DATA_MAX_BYTES = 64;
@@ -490,6 +506,8 @@ export function buildNotificationCard(args: {
       return taskCard(n, ctx);
     case "transferred":
       return transferredCard(n, ctx);
+    case "channel_session":
+      return channelSessionCard(n, ctx);
     default:
       return genericCard(n, ctx);
   }
@@ -622,6 +640,147 @@ function transferredCard(n: NotificationInput, ctx: CardContext): CardOutput {
   if (n.body && !ctx.discreet) parts.push(safe(n.body, false, 500));
   if (ctx.lead) parts.push(leadBlock(ctx).join("\n"));
   return { text: blocks(parts), keyboard: nonEmpty([conversationActions(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
+}
+
+// ---------------------------------------------------------------------------
+// Channel session lost (v0.78) and the reconnection screens
+// ---------------------------------------------------------------------------
+
+const channelsLink = (ctx: Pick<CardContext, "appBaseUrl">, text = "🔗 Abrir canais"): CardButton => ({
+  text,
+  url: crmLink(ctx, "/app/configuracoes?secao=channels"),
+});
+
+const whatsappLabel = (last4: string | undefined) => (last4 ? `WhatsApp (…${escapeHtml(last4)})` : "WhatsApp");
+
+/**
+ * `channel_session_lost` by state: bridge `logged_out`/`disconnected` can be
+ * reconnected from here (`rc:`); a temporary ban says until when; `banned` and
+ * `outdated` need support; Meta (Instagram/Messenger) only needs a new login in
+ * the browser. No customer data involved, so discreet mode changes nothing.
+ */
+function channelSessionCard(n: NotificationInput, ctx: CardContext): CardOutput {
+  const cs = ctx.channelSession;
+  if (!cs) return genericCard(n, ctx);
+  const last4 = cs.last4;
+  if (cs.kind === "meta") {
+    const expiring = cs.state === "data_access_expiring";
+    const text = blocks([
+      header(expiring ? "⏳" : "🔴", expiring ? "Instagram/Messenger: acesso perto de expirar" : "Instagram/Messenger precisa de novo login", ctx, n.createdAt),
+      expiring
+        ? "Reconecte a conta para manter o acesso às mensagens."
+        : "O acesso da Página venceu ou foi removido no Facebook.\nO login é feito no navegador.",
+    ]);
+    return { text, keyboard: [[channelsLink(ctx, "🔗 Refazer login")]] };
+  }
+  const name = whatsappLabel(last4);
+  if (cs.state === "temporarily_banned") {
+    const until = cs.expiresAt ? ` até ${formatTime(cs.expiresAt, ctx.timezone)}` : "";
+    return {
+      text: blocks([
+        header("⛔", `${name} banido temporariamente`, ctx, n.createdAt),
+        `O WhatsApp bloqueou o número${until}.\nNão tente reconectar antes disso.`,
+      ]),
+      keyboard: [[channelsLink(ctx)]],
+    };
+  }
+  if (cs.state === "banned" || cs.state === "outdated") {
+    return {
+      text: blocks([
+        header(cs.state === "banned" ? "⛔" : "⚠️", cs.state === "banned" ? `${name} foi banido` : `${name} precisa de atualização`, ctx, n.createdAt),
+        cs.state === "banned"
+          ? "O WhatsApp encerrou este número.\nFale com o suporte."
+          : "A versão do gateway ficou desatualizada.\nFale com o suporte.",
+      ]),
+      keyboard: [[channelsLink(ctx)]],
+    };
+  }
+  const reconnect: CardButton[] = cs.channelConfigId ? [cb("🔄 Reconectar", "rc", cs.channelConfigId)] : [];
+  return {
+    text: blocks([
+      header("🔴", `${name} caiu`, ctx, n.createdAt),
+      "A sessão do número foi encerrada.\nA IA e os envios por esse número estão parados até reconectar.",
+      reconnect.length > 0 ? "Você pode reconectar daqui em 1 minuto, com o celular do número na mão." : "Reconecte pelo CRM.",
+    ]),
+    keyboard: nonEmpty([[...reconnect, channelsLink(ctx)]]),
+  };
+}
+
+/** Pairing-code screen: numbered steps, the code in `<code>`, copy / QR / cancel. */
+export function reconnectCodeCard(args: {
+  channelConfigId: string;
+  last4?: string;
+  code: string;
+  expiresAt: number;
+  tz: string;
+  /** Discreet mode never offers the QR (it is a login credential). Default true. */
+  qrOffered?: boolean;
+}): CardOutput {
+  const text = blocks([
+    `🔄 <b>Reconectando o ${whatsappLabel(args.last4)}</b>`,
+    [
+      "1. No celular do número, abra o WhatsApp",
+      "2. Toque em ⋮ → Aparelhos conectados → Conectar aparelho",
+      "3. Escolha <b>Conectar com número de telefone</b>",
+      "4. Digite o código:",
+    ].join("\n"),
+    `<code>${escapeHtml(args.code)}</code>`,
+    `⏳ Vale até ${formatTime(args.expiresAt, args.tz)}. Acompanho aqui.`,
+  ]);
+  const rows: CardButton[][] = [[{ text: "📋 Copiar código", copy_text: { text: args.code } }]];
+  if (args.qrOffered !== false) rows.push([cb("📷 Prefiro ler um QR", "rcq", args.channelConfigId)]);
+  rows.push([cb("✖ Cancelar", "rcx", args.channelConfigId)]);
+  return { text, keyboard: rows };
+}
+
+/** Caption of the QR photo (it is edited in place while the QR rotates). */
+export function reconnectQrCaption(args: { last4?: string }): string {
+  return blocks([
+    `📷 <b>QR do ${whatsappLabel(args.last4)}</b>`,
+    "Leia com o celular do número:\nWhatsApp → Aparelhos conectados → Conectar aparelho.\nO QR renova sozinho.",
+  ]);
+}
+
+export function reconnectQrKeyboard(channelConfigId: string): CardKeyboard {
+  return [[cb("✖ Cancelar", "rcx", channelConfigId)]];
+}
+
+export function reconnectDoneCard(args: { last4?: string; time: string; displacedFrom?: string }): CardOutput {
+  const lines = [`✅ <b>${whatsappLabel(args.last4)} conectado</b> · ${escapeHtml(args.time)}`];
+  const text = args.displacedFrom
+    ? blocks([lines[0], `O número estava em outra conta (<b>${escapeHtml(args.displacedFrom)}</b>) e foi movido para cá.`])
+    : lines[0]!;
+  return { text, keyboard: [] };
+}
+
+export function reconnectExpiredCard(args: { channelConfigId: string; last4?: string }): CardOutput {
+  return {
+    text: blocks([`⌛ <b>O código venceu.</b>`, `${whatsappLabel(args.last4)} ainda não foi reconectado.`]),
+    keyboard: [[cb("🔄 Tentar de novo", "rc", args.channelConfigId)]],
+  };
+}
+
+export function reconnectLimitCard(args: { nextAt: number; tz: string }): CardOutput {
+  return {
+    text: blocks(["⏳ <b>Já foram 3 tentativas nesta hora.</b>", `Próxima às ${formatTime(args.nextAt, args.tz)}.\nEnquanto isso, use o CRM.`]),
+    keyboard: [],
+  };
+}
+
+/** The state does not allow reconnecting from here (already connected, banned, outdated, Meta…). */
+export function reconnectNotAllowedCard(state: string, appBaseUrl?: string): CardOutput {
+  const text =
+    state === "connected"
+      ? "✅ Este número já está conectado."
+      : state === "temporarily_banned"
+        ? "⛔ O número está banido temporariamente.\nNão tente reconectar antes de o prazo terminar."
+        : state === "banned" || state === "outdated"
+          ? "⛔ Este número não pode ser reconectado daqui.\nFale com o suporte."
+          : "Este canal não pode ser reconectado pelo Telegram.\nUse o CRM.";
+  return {
+    text,
+    keyboard: appBaseUrl && state !== "connected" ? [[channelsLink({ appBaseUrl })]] : [],
+  };
 }
 
 function simpleCard(emoji: string, n: NotificationInput, ctx: CardContext, rows: CardButton[][]): CardOutput {

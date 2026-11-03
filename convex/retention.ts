@@ -18,6 +18,7 @@
  * | telegramRelayBuffer | sobras (o flush apaga em 20 s; isto é rede) | `flushAt`       |   1 d  |
  * | telegramAutoSteps  | passos do modo automático (Desfazer vale 10 min) | `createdAt`  |   1 d  |
  * | telegramSuggestions | sugestão por repasse (reaproveitada por 10 min) | `createdAt`  |   1 d  |
+ * | telegramReconnects | tentativas de reconexão do WhatsApp (teto 3/h) | `updatedAt`  |   7 d  |
  * | telegramOrgQuota   | contador de arquivos por org/dia (só o dia corrente importa) | `_creationTime` | 7 d |
  *
  * As três do Telegram (F0) têm piso próprio (`RETENTION_MIN_DAYS_BY_TABLE`):
@@ -86,6 +87,7 @@ export const RETENTION_TABLES = [
   "telegramAutoSteps",
   "telegramSuggestions",
   "telegramOrgQuota",
+  "telegramReconnects",
 ] as const;
 export type RetentionTable = (typeof RETENTION_TABLES)[number];
 
@@ -103,6 +105,7 @@ export const RETENTION_DEFAULT_DAYS: Record<RetentionTable, number> = {
   telegramAutoSteps: 1,
   telegramSuggestions: 1,
   telegramOrgQuota: 7,
+  telegramReconnects: 7,
 };
 
 /** Env opcional que sobrepõe a janela padrão de cada tabela. */
@@ -119,6 +122,7 @@ export const RETENTION_ENV_DAYS: Record<RetentionTable, string> = {
   telegramAutoSteps: "RETENTION_TELEGRAM_AUTO_STEPS_DAYS",
   telegramSuggestions: "RETENTION_TELEGRAM_SUGGESTIONS_DAYS",
   telegramOrgQuota: "RETENTION_TELEGRAM_ORG_QUOTA_DAYS",
+  telegramReconnects: "RETENTION_TELEGRAM_RECONNECTS_DAYS",
 };
 
 /** Piso de qualquer janela (env ou override): um typo nunca apaga a semana. */
@@ -166,7 +170,8 @@ const tableValidator = v.union(
   v.literal("telegramRelayBuffer"),
   v.literal("telegramAutoSteps"),
   v.literal("telegramSuggestions"),
-  v.literal("telegramOrgQuota")
+  v.literal("telegramOrgQuota"),
+  v.literal("telegramReconnects")
 );
 
 const overridesValidator = v.object({
@@ -182,6 +187,7 @@ const overridesValidator = v.object({
   telegramAutoSteps: v.optional(v.number()),
   telegramSuggestions: v.optional(v.number()),
   telegramOrgQuota: v.optional(v.number()),
+  telegramReconnects: v.optional(v.number()),
 });
 type Overrides = Partial<Record<RetentionTable, number>>;
 
@@ -320,6 +326,13 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
           (
             await db.query("telegramOrgQuota").withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff)).take(limit)
           ).map((d) => ({ id: d._id, ts: d._creationTime })),
+      ];
+    case "telegramReconnects":
+      return [
+        async (limit) =>
+          (
+            await db.query("telegramReconnects").withIndex("by_updated_at", (q) => q.lt("updatedAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.updatedAt })),
       ];
   }
 }

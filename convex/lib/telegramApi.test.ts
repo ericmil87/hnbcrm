@@ -4,7 +4,7 @@
  * stubado, token falso.
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { editMessageText, sendMessageChunks } from "./telegramApi";
+import { editMessageMedia, editMessageText, deleteMessage, sendMessage, sendMessageChunks } from "./telegramApi";
 
 type Call = { method: string; body: Record<string, any> };
 let calls: Call[];
@@ -93,5 +93,65 @@ describe("editMessageText nunca corta dentro de tag (revisão F1 #13)", () => {
     expect(sent.length).toBeLessThanOrEqual(4096);
     expect(sent.endsWith("</blockquote>")).toBe(true);
     expect(sent).not.toMatch(/&[a-z]*$/);
+  });
+});
+
+describe("v0.78: editMessageMedia e copy_text", () => {
+  test("editMessageMedia envia multipart com media attach://file, o arquivo e o teclado", async () => {
+    let seen: { url: string; form: FormData } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        seen = { url: String(url), form: init!.body as FormData };
+        return new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { status: 200 });
+      }),
+    );
+    const res = await editMessageMedia({
+      chatId: 11,
+      messageId: 22,
+      photo: new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" }),
+      caption: "QR <b>novo</b>",
+      replyMarkup: { inline_keyboard: [[{ text: "✖ Cancelar", callback_data: "rcx:abc" }]] },
+    });
+    expect(res.ok).toBe(true);
+    expect(seen!.url.endsWith("/editMessageMedia")).toBe(true);
+    expect(seen!.form).toBeInstanceOf(FormData);
+    expect(seen!.form.get("chat_id")).toBe("11");
+    expect(seen!.form.get("message_id")).toBe("22");
+    const media = JSON.parse(String(seen!.form.get("media")));
+    expect(media).toEqual({ type: "photo", media: "attach://file", caption: "QR <b>novo</b>", parse_mode: "HTML" });
+    expect(String(seen!.form.get("media"))).toContain("attach://file");
+    const file = seen!.form.get("file") as File;
+    expect(file.size).toBe(3);
+    expect(JSON.parse(String(seen!.form.get("reply_markup"))).inline_keyboard[0][0].callback_data).toBe("rcx:abc");
+  });
+
+  test("not_modified (mesma imagem) é resultado normal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ ok: false, error_code: 400, description: "Bad Request: message is not modified" }), { status: 400 }),
+      ),
+    );
+    const res = await editMessageMedia({ chatId: 1, messageId: 2, photo: new Blob([new Uint8Array([1])]) });
+    expect(res).toMatchObject({ ok: false, kind: "not_modified" });
+  });
+
+  test("botão copy_text serializa no reply_markup", async () => {
+    stubFetch(() => OK);
+    await sendMessage({
+      chatId: 5,
+      text: "código",
+      replyMarkup: { inline_keyboard: [[{ text: "📋 Copiar código", copy_text: { text: "ABCD-EFGH" } }]] },
+    });
+    expect(calls[0].body.reply_markup).toEqual({
+      inline_keyboard: [[{ text: "📋 Copiar código", copy_text: { text: "ABCD-EFGH" } }]],
+    });
+  });
+
+  test("deleteMessage chama a Bot API com chat e mensagem", async () => {
+    stubFetch(() => ({ status: 200, json: { ok: true, result: true } }));
+    await deleteMessage({ chatId: 5, messageId: 9 });
+    expect(calls[0]).toEqual({ method: "deleteMessage", body: { chat_id: 5, message_id: 9 } });
   });
 });
