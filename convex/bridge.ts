@@ -44,6 +44,7 @@ import {
   selectHistoryRows,
 } from "./lib/bridgeHistory";
 import { getLeadRef } from "./lib/leadRef";
+import { IMPORTED_FROM_HISTORY_KEY } from "./lib/mediaEnrichment";
 import {
   BridgeConfigSnapshot,
   bridgeConfigSnapshotValidator,
@@ -327,6 +328,12 @@ export const internalIngestBridgeMessage = internalAction({
     /** Snapshot montado pelo webhook. Ausente = job antigo ou chamada direta. */
     config: v.optional(bridgeConfigSnapshotValidator),
     message: parsedBridgeMessageValidator,
+    /**
+     * Veio de `internalImportBridgeHistory`, não do webhook. Vira
+     * `metadata.importedFromHistory: true` e suprime a transcrição automática:
+     * dias de áudio velho num lote só lotariam o Whisper sem servir a ninguém.
+     */
+    fromHistory: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
@@ -350,6 +357,7 @@ export const internalIngestBridgeMessage = internalAction({
     });
 
     const metadata: Record<string, unknown> = { ...(args.message.metadata ?? {}) };
+    if (args.fromHistory === true) metadata[IMPORTED_FROM_HISTORY_KEY] = true;
     let attachments: Id<"files">[] | undefined;
 
     // Resolve an inbound reply's quoted message (by whatsmeow id) to our local
@@ -1083,6 +1091,7 @@ export const internalImportBridgeHistory = internalAction({
         await ctx.runAction(internal.bridge.internalIngestBridgeMessage, {
           configId: args.configId,
           message: event.message,
+          fromHistory: true,
         });
         imported++;
       }

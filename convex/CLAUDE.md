@@ -13,7 +13,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `leads.ts` / `contacts.ts` | Lead CRUD, stage moves (via `lib/leadStageMove.ts`), assignment, qualification / Contact CRUD |
 | `conversations.ts` | Multi-channel conversations + messages, search, archiving, labels, presence, ingest (`internalReceive*`) |
 | `transcription.ts` / `vision.ts` | Whisper voice-note transcription / image description pass (once per image: `messages.imageDescription` + `metadata.vision`) |
-| `lib/mediaEnrichment.ts` | Pure gates: `shouldTranscribeAudio`, `visionEnabledForOrg`, `shouldDescribeImage`, `attendantActive`, `isSticker` |
+| `lib/mediaEnrichment.ts` | Pure gates: `shouldTranscribeAudio`, `shouldScheduleAudioTranscription`, `visionEnabledForOrg`, `shouldDescribeImage`, `attendantActive`, `isSticker`; single scheduling port `scheduleAudioTranscription` (every audio message, inbound or team-sent) |
 | `quickReplies.ts` / `scheduledMessages.ts` | "/" shortcuts in the composer / scheduled sends via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channels (meta\|bridge), encrypted creds, health checks, provisioning, number exclusivity (`claimBridgePhone`) |
 | `whatsapp.ts` | Meta ingress (`/webhooks/whatsapp`) + outbound dispatch by provider; pacing-aware retry; channel freeze on 131048 |

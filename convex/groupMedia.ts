@@ -15,6 +15,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { scheduleAudioTranscription } from "./lib/mediaEnrichment";
 
 /**
  * Quanto tempo um clique segura a trava. O fetch do sob demanda tem timeout
@@ -245,23 +246,27 @@ export const internalCompleteDeferredMedia = internalMutation({
     });
     if (file) await ctx.db.patch(file._id, { messageId: message._id });
 
-    // Mesmo gatilho de `internalReceiveGroupMessage`: só o que veio de membro.
-    // A mensagem que saiu do nosso celular não é enriquecida (regra da v0.56).
+    // Mesmos gatilhos do ingest de grupo: a nota de voz é transcrita nos dois
+    // sentidos (membro ou nosso celular, mesmo gate); a visão segue só para o
+    // que veio de membro (regra da v0.56).
+    await scheduleAudioTranscription(ctx, {
+      messageId: message._id,
+      contentType: message.contentType,
+      attachments: [args.fileId],
+      metadata,
+    });
     if (message.direction === "inbound") {
-      await scheduleEnrichment(ctx, message._id, message.contentType);
+      await scheduleImageEnrichment(ctx, message._id, message.contentType);
     }
     return "attached" as const;
   },
 });
 
-async function scheduleEnrichment(
+async function scheduleImageEnrichment(
   ctx: MutationCtx,
   messageId: Id<"messages">,
   contentType: Doc<"messages">["contentType"]
 ) {
-  if (contentType === "audio") {
-    await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
-  }
   if (contentType === "image") {
     await ctx.scheduler.runAfter(0, internal.vision.autoDescribe, { messageId });
   }

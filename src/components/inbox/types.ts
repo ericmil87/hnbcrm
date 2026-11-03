@@ -282,12 +282,15 @@ export function isMediaPlaceholder(content: string | undefined | null): boolean 
 
 // Voice notes: the unofficial bridge tags them as `bridgeType: "audio"`; the
 // official Cloud API sends an audio mime with a "[mensagem de voz]" placeholder.
+// Audio sent from the inbox has empty content and contentType "audio".
 export function isVoiceNote(message: InboxMessage): boolean {
   if (message.metadata?.bridgeType === "audio") return true;
   const hasAudioAttachment = (message.attachmentFiles ?? []).some((f) =>
     isAudioMime(f.mimeType)
   );
-  return hasAudioAttachment && isMediaPlaceholder(message.content);
+  if (!hasAudioAttachment) return false;
+  // Áudio gravado no HNBCRM nasce com content vazio e contentType "audio", sem bridgeType.
+  return isMediaPlaceholder(message.content) || message.contentType === "audio";
 }
 
 export function isSticker(message: InboxMessage): boolean {

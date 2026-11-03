@@ -14,6 +14,7 @@ import {
   applyCampaignGroupReplyHook,
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
+import { scheduleAudioTranscription } from "./lib/mediaEnrichment";
 import { configProvider } from "./channelConfigs";
 import { ChannelTransport, configTransport } from "./lib/channelTransport";
 import { metaConversationWindow, metaWindowClosesAt, reactionNoteFor } from "./lib/metaSend";
@@ -1183,6 +1184,16 @@ export const sendMessage = mutation({
       await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
+    // Nota de voz do TIME (ou da IA) também é transcrita: o atendente e os
+    // colegas leem o que foi dito em vez de "[áudio enviado]". Mesmo gate do
+    // áudio do cliente (toggle do canal OU atendente ativo), decidido na action.
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      isInternal: args.isInternal,
+    });
+
     return messageId;
   },
 });
@@ -1258,6 +1269,14 @@ export const forwardMessage = mutation({
       attachments = copies.length > 0 ? copies : undefined;
     }
 
+    // Áudio já transcrito: a cópia leva a transcrição junto (mesmo blob, mesmo
+    // texto) em vez de mandar o Whisper ouvir de novo.
+    const sourceTranscription = source.metadata?.transcription as
+      | { status?: string; text?: string }
+      | undefined;
+    const carriesTranscript =
+      source.contentType === "audio" && sourceTranscription?.status === "done";
+
     const messageId = await ctx.db.insert("messages", {
       organizationId: target.organizationId,
       conversationId: target._id,
@@ -1269,7 +1288,14 @@ export const forwardMessage = mutation({
       contentType: source.contentType,
       attachments,
       isInternal: false,
-      metadata: { forwarded: true, forwardedFromMessageId: source._id },
+      metadata: {
+        forwarded: true,
+        forwardedFromMessageId: source._id,
+        ...(carriesTranscript ? { transcription: sourceTranscription } : {}),
+      },
+      ...(carriesTranscript && source.transcriptText
+        ? { transcriptText: source.transcriptText }
+        : {}),
       createdAt: now,
     });
 
@@ -1279,6 +1305,14 @@ export const forwardMessage = mutation({
     }
 
     await applyOutboundMessageSideEffects(ctx, { conversation: target, member, messageId, now });
+
+    if (!carriesTranscript) {
+      await scheduleAudioTranscription(ctx, {
+        messageId,
+        contentType: source.contentType,
+        attachments,
+      });
+    }
 
     return null;
   },
@@ -1633,6 +1667,16 @@ export const internalSendMessage = internalMutation({
       await scheduleOutboundDispatch(ctx, conversation, messageId);
     }
 
+    // Nota de voz do TIME (ou da IA) também é transcrita: o atendente e os
+    // colegas leem o que foi dito em vez de "[áudio enviado]". Mesmo gate do
+    // áudio do cliente (toggle do canal OU atendente ativo), decidido na action.
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      isInternal: args.isInternal,
+    });
+
     return messageId;
   },
 });
@@ -1851,9 +1895,12 @@ export const internalReceiveMessage = internalMutation({
     });
 
     // Voice notes: transcription is a no-op unless the channel config opts in
-    if ((args.contentType === "audio") && args.attachments && args.attachments.length > 0) {
-      await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
-    }
+    // (or the attendant is active) — decided inside autoTranscribe.
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+    });
 
     // Imagens: o passe de visão também é no-op silencioso a menos que o gate
     // (org com IA ativa + aiConfig.visionEnabled + canal/atendente) passe, e
@@ -1885,8 +1932,11 @@ export const internalReceiveMessage = internalMutation({
  *  - NÃO mexe em `lastInboundAt` — a janela de 24h só reabre com mensagem do
  *    contato, e mentir aqui liberaria envio livre fora da janela;
  *  - NÃO incrementa `unreadCount` — não há nada para o time ler;
- *  - NÃO enfileira o atendente IA nem dispara transcrição/visão: o gatilho
- *    desses é mensagem DO CONTATO, e a mensagem já foi entregue (nada a despachar).
+ *  - NÃO enfileira o atendente IA nem dispara visão: o gatilho desses é
+ *    mensagem DO CONTATO, e a mensagem já foi entregue (nada a despachar);
+ *  - TRANSCREVE a nota de voz (mesmo gate do áudio do cliente), para o
+ *    atendente e o time lerem o que foi dito pelo celular — exceto a que veio
+ *    da importação de histórico (`metadata.importedFromHistory`).
  *
  * O eco do que o próprio CRM enviou chega por aqui também; morre na
  * idempotência de `externalId` logo abaixo (gravado por `internalMarkDispatched`).
@@ -2003,6 +2053,14 @@ export const internalReceiveDeviceMessage = internalMutation({
         via: "device",
         externalId: args.externalId,
       },
+    });
+
+    // Áudio gravado no celular: transcrito (histórico importado não — ver lib).
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
     });
 
     return messageId;
@@ -2240,9 +2298,11 @@ export const internalReceiveGroupMessage = internalMutation({
 
     // Mídia: MESMOS gates do 1:1 (decididos dentro de cada action; sem o
     // interruptor ligado são no-op barato).
-    if (args.contentType === "audio" && args.attachments && args.attachments.length > 0) {
-      await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId });
-    }
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+    });
     if (args.contentType === "image" && args.attachments && args.attachments.length > 0) {
       await ctx.scheduler.runAfter(0, internal.vision.autoDescribe, { messageId });
     }
@@ -2307,7 +2367,8 @@ export const internalReceiveGroupMessage = internalMutation({
  * Mensagem que saiu do NOSSO número dentro do grupo — o eco do que o CRM
  * enviou (morre na idempotência de `externalId`) ou o que alguém digitou no app
  * do celular. Mesmas regras do 1:1 (v0.56): `outbound` sem `senderId`, sem
- * mexer em `lastInboundAt` nem em `unreadCount`, sem disparar enriquecimento.
+ * mexer em `lastInboundAt` nem em `unreadCount`, sem visão; a nota de voz é
+ * transcrita (mesmo gate do áudio do membro).
  */
 export const internalReceiveGroupDeviceMessage = internalMutation({
   args: {
@@ -2395,6 +2456,15 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
         updatedAt: now,
       });
     }
+
+    // Áudio adiado (política de mídia) não tem anexo ainda: quem agenda é o
+    // download sob demanda (`groupMedia.internalCompleteDeferredMedia`).
+    await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
+    });
 
     return messageId;
   },

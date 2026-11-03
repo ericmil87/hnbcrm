@@ -10,13 +10,14 @@
 //
 // Two entry points:
 //   - `transcribe`      — public action, user-triggered (permission-checked).
-//   - `autoTranscribe`  — internalAction, meant to be scheduled by the ingest
-//     pipeline right after an inbound audio attachment is saved. It is a no-op
+//   - `autoTranscribe`  — internalAction, scheduled through the single port
+//     `scheduleAudioTranscription` (lib/mediaEnrichment) right after an audio
+//     message is saved — customer audio (ingest) AND team audio (inbox send,
+//     REST/MCP send, forward, phone app via the bridge). It is a no-op
 //     unless the message's channel config has autoTranscribeAudio set OR the
 //     org's AI attendant is active (it needs the transcript to answer what was
-//     said). Called from the ingest with
-//     `ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, { messageId })`
-//     once an audio message + its file are persisted.
+//     said). Internal notes, messages deleted by the customer and bridge
+//     history imports are never auto-transcribed.
 
 import { v } from "convex/values";
 import {
@@ -29,11 +30,15 @@ import {
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
-import { shouldTranscribeAudio } from "./lib/mediaEnrichment";
+import { IMPORTED_FROM_HISTORY_KEY, shouldTranscribeAudio } from "./lib/mediaEnrichment";
 
 const ENGINE = "faster-whisper";
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000; // don't duplicate an in-flight transcription
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // mirrors the Whisper service's own limit
+// Teto do POST /transcribe (download + inferência + leitura do corpo). Sem ele,
+// um Whisper travado segura a action até o limite de 10 min do Convex — e com
+// os áudios do time e do celular também transcritos, isso empilha.
+export const WHISPER_TIMEOUT_MS = 120_000;
 
 type TranscriptionMeta = {
   status: "pending" | "done" | "failed";
@@ -100,6 +105,12 @@ export const autoTranscribe = internalAction({
   },
 });
 
+function isAbortError(e: unknown): boolean {
+  // DOMException nem sempre é `instanceof Error` em todo runtime: olha o nome.
+  const name = typeof e === "object" && e !== null ? (e as { name?: unknown }).name : undefined;
+  return name === "TimeoutError" || name === "AbortError";
+}
+
 // Shared idempotent transcription flow used by both entry points above.
 async function runTranscription(
   ctx: ActionCtx,
@@ -163,9 +174,15 @@ async function runTranscription(
         ...(serviceToken ? { Authorization: `Bearer ${serviceToken}` } : {}),
       },
       body: JSON.stringify({ url: audioUrl }),
+      signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
     });
 
-    const body: any = await response.json().catch(() => ({}));
+    // O timeout também cobre a leitura do corpo: esse abort NÃO pode virar
+    // `{}` (gravaria "done" com texto vazio) — sobe para o catch de falha.
+    const body: any = await response.json().catch((e) => {
+      if (isAbortError(e)) throw e;
+      return {};
+    });
     if (!response.ok) {
       const error = body?.detail ?? body?.error ?? `Whisper service error (HTTP ${response.status})`;
       await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
@@ -189,7 +206,11 @@ async function runTranscription(
     });
     return { status: "done", text, language, durationSec };
   } catch (e) {
-    const error = e instanceof Error ? e.message : "Falha ao chamar o serviço Whisper";
+    const error = isAbortError(e)
+      ? `Serviço Whisper não respondeu em ${WHISPER_TIMEOUT_MS / 1000}s`
+      : e instanceof Error
+        ? e.message
+        : "Falha ao chamar o serviço Whisper";
     await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
       messageId: message.messageId,
       status: "failed",
@@ -254,6 +275,12 @@ export const internalGetAudioMessageIfEligible = internalQuery({
   handler: async (ctx, args) => {
     const message = await ctx.db.get(args.messageId);
     if (!message || message.contentType !== "audio") return null;
+    // Nota interna com áudio não vai ao Whisper; apagada pelo cliente também
+    // não; e áudio velho importado do histórico do aparelho nunca é
+    // transcrito em lote (o botão "Transcrever" continua disponível).
+    if (message.direction === "internal" || message.isInternal) return null;
+    if (message.metadata?.deletedByCustomer === true) return null;
+    if (message.metadata?.[IMPORTED_FROM_HISTORY_KEY] === true) return null;
 
     const fileId = message.attachments?.[0];
     if (!fileId) return null;

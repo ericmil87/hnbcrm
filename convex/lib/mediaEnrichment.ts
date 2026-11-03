@@ -15,9 +15,15 @@
  *   valia, então a v0.52 deixou só o da organização. Ele continua sendo opt-in
  *   explícito (default false), porque cada imagem custa uma chamada paga e a
  *   imagem do cliente — que pode ser RG/CNH — sai da nossa infra.
+ *
+ * Exceção à regra "sem ctx": `scheduleAudioTranscription` (fim do arquivo) é o
+ * PONTO ÚNICO que agenda a transcrição de nota de voz, em qualquer direção.
+ * A decisão continua pura (`shouldScheduleAudioTranscription`).
  */
 
-import { Doc } from "../_generated/dataModel";
+import { Doc, Id } from "../_generated/dataModel";
+import { MutationCtx } from "../_generated/server";
+import { internal } from "../_generated/api";
 import { orgAiActive } from "./agentSecurity";
 
 type OrgDoc = Doc<"organizations"> | null;
@@ -72,4 +78,49 @@ export function isSticker(metadata: Record<string, unknown> | undefined): boolea
     metadata?.metaType === "like_heart" ||
     metadata?.metaType === "sticker"
   );
+}
+
+/** Marcador de mensagem vinda da importação de histórico do bridge. */
+export const IMPORTED_FROM_HISTORY_KEY = "importedFromHistory";
+
+/**
+ * Agendar a transcrição desta mensagem? Só nota de voz com anexo, que não seja
+ * nota interna nem mensagem importada do histórico do aparelho (dias de áudio
+ * velho num lote só lotariam o Whisper sem servir ao atendente). Vale para o
+ * áudio do CLIENTE e o do TIME (inbox, REST/MCP, celular pareado): o gate de
+ * produto — toggle do canal OU atendente ativo — é decidido depois, dentro de
+ * `transcription.autoTranscribe`, e cobre os dois sentidos.
+ */
+export function shouldScheduleAudioTranscription(args: {
+  contentType: string | undefined;
+  attachments: readonly unknown[] | undefined;
+  isInternal?: boolean;
+  metadata?: Record<string, unknown> | undefined;
+}): boolean {
+  if (args.contentType !== "audio") return false;
+  if (!args.attachments || args.attachments.length === 0) return false;
+  if (args.isInternal === true) return false;
+  if (args.metadata?.[IMPORTED_FROM_HISTORY_KEY] === true) return false;
+  return true;
+}
+
+/**
+ * Ponto único de agendamento da transcrição automática. No-op quando
+ * `shouldScheduleAudioTranscription` recusa; o gate de org/canal fica na action.
+ */
+export async function scheduleAudioTranscription(
+  ctx: MutationCtx,
+  args: {
+    messageId: Id<"messages">;
+    contentType: string | undefined;
+    attachments: readonly unknown[] | undefined;
+    isInternal?: boolean;
+    metadata?: Record<string, unknown> | undefined;
+  }
+): Promise<boolean> {
+  if (!shouldScheduleAudioTranscription(args)) return false;
+  await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, {
+    messageId: args.messageId,
+  });
+  return true;
 }
