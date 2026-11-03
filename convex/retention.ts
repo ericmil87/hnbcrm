@@ -2,7 +2,7 @@
  * Retenção de dados que ninguém lê mais (perf Convex I/O, fase 4a).
  *
  * Cron DIÁRIO (`crons.ts`, "data retention", 07:30 UTC) que apaga, por índice
- * e em lotes, cinco tipos de linha HISTÓRICA. Nunca toca dado vivo: cada
+ * e em lotes, oito tipos de linha HISTÓRICA. Nunca toca dado vivo: cada
  * tabela só é lida por um range de índice que já exclui o que está em uso.
  *
  * | tabela        | o que sai                                   | campo de data   | janela |
@@ -12,6 +12,12 @@
  * | agentRuns     | `done`/`error`/`aborted` (nunca `running`)  | `startedAt`     |  90 d  |
  * | formPartials  | `abandoned` (nunca `in_progress`/`converted`) | `lastActivityAt` | 30 d |
  * | auditLogs     | severidade `low`, ação ≠ `delete`           | `createdAt`     | 180 d  |
+ * | telegramUpdates    | todos (dedupe de `update_id` só precisa de horas) | `receivedAt` | 2 d |
+ * | telegramDeliveries | todos (`deleteMessage` só vale ≤ 48 h)       | `sentAt`        |  30 d  |
+ * | telegramLinkCodes  | todos (TTL do código é 10 min)               | `createdAt`     |   1 d  |
+ *
+ * As três do Telegram (F0) têm piso próprio (`RETENTION_MIN_DAYS_BY_TABLE`):
+ * são registros técnicos de vida curta, não histórico de negócio.
  *
  * Por que esses campos: `aiReplyQueue.updatedAt` é obrigatório e é carimbado
  * em toda transição (o item terminal fica parado nele); `agentRuns.finishedAt`
@@ -35,7 +41,7 @@
  *   `converted` ficam para sempre), o denominador perde os abandonos antigos e a
  *   taxa passa a refletir "convertidos de sempre × abandonos dos últimos 30
  *   dias" — tende a subir com o tempo. Efeito aceito, não corrigido.
- * - Nenhuma das cinco tabelas aponta para `_storage` (verificado no schema);
+ * - Nenhuma destas tabelas aponta para `_storage` (verificado no schema);
  *   todas já estão em `EXCLUDED_BACKUP_TABLES`, então o backup JSON não muda.
  * - Ponteiros para item de fila/run apagado (`aiFollowUps.queueItemId`,
  *   `copilotMessages.agentRunId`) só são lidos em caminho em voo, que trata
@@ -69,6 +75,9 @@ export const RETENTION_TABLES = [
   "agentRuns",
   "formPartials",
   "auditLogs",
+  "telegramUpdates",
+  "telegramDeliveries",
+  "telegramLinkCodes",
 ] as const;
 export type RetentionTable = (typeof RETENTION_TABLES)[number];
 
@@ -79,6 +88,9 @@ export const RETENTION_DEFAULT_DAYS: Record<RetentionTable, number> = {
   agentRuns: 90,
   formPartials: 30,
   auditLogs: 180,
+  telegramUpdates: 2,
+  telegramDeliveries: 30,
+  telegramLinkCodes: 1,
 };
 
 /** Env opcional que sobrepõe a janela padrão de cada tabela. */
@@ -88,10 +100,25 @@ export const RETENTION_ENV_DAYS: Record<RetentionTable, string> = {
   agentRuns: "RETENTION_AGENT_RUNS_DAYS",
   formPartials: "RETENTION_FORM_PARTIALS_DAYS",
   auditLogs: "RETENTION_AUDIT_LOGS_DAYS",
+  telegramUpdates: "RETENTION_TELEGRAM_UPDATES_DAYS",
+  telegramDeliveries: "RETENTION_TELEGRAM_DELIVERIES_DAYS",
+  telegramLinkCodes: "RETENTION_TELEGRAM_LINK_CODES_DAYS",
 };
 
 /** Piso de qualquer janela (env ou override): um typo nunca apaga a semana. */
 export const RETENTION_MIN_DAYS = 7;
+/**
+ * Piso por tabela (padrão `RETENTION_MIN_DAYS`). Telegram: técnicas e de vida
+ * curta; `telegramDeliveries` nunca abaixo de 2 d (base do `deleteMessage` ≤ 48 h).
+ */
+export const RETENTION_MIN_DAYS_BY_TABLE: Partial<Record<RetentionTable, number>> = {
+  telegramUpdates: 1,
+  telegramDeliveries: 2,
+  telegramLinkCodes: 1,
+};
+function minDays(table: RetentionTable): number {
+  return RETENTION_MIN_DAYS_BY_TABLE[table] ?? RETENTION_MIN_DAYS;
+}
 /** Linhas por transação. */
 export const RETENTION_BATCH_SIZE = 200;
 /** Teto de linhas apagadas por execução diária (todas as tabelas somadas). */
@@ -113,7 +140,10 @@ const tableValidator = v.union(
   v.literal("aiReplyQueue"),
   v.literal("agentRuns"),
   v.literal("formPartials"),
-  v.literal("auditLogs")
+  v.literal("auditLogs"),
+  v.literal("telegramUpdates"),
+  v.literal("telegramDeliveries"),
+  v.literal("telegramLinkCodes")
 );
 
 const overridesValidator = v.object({
@@ -122,6 +152,9 @@ const overridesValidator = v.object({
   agentRuns: v.optional(v.number()),
   formPartials: v.optional(v.number()),
   auditLogs: v.optional(v.number()),
+  telegramUpdates: v.optional(v.number()),
+  telegramDeliveries: v.optional(v.number()),
+  telegramLinkCodes: v.optional(v.number()),
 });
 type Overrides = Partial<Record<RetentionTable, number>>;
 
@@ -129,15 +162,15 @@ type Overrides = Partial<Record<RetentionTable, number>>;
 export function retentionDays(table: RetentionTable, overrides?: Overrides): number {
   const override = overrides?.[table];
   if (override !== undefined) {
-    if (!Number.isFinite(override) || override < RETENTION_MIN_DAYS) {
-      throw new Error(`Janela de ${table} precisa ser ≥ ${RETENTION_MIN_DAYS} dias (veio ${override})`);
+    if (!Number.isFinite(override) || override < minDays(table)) {
+      throw new Error(`Janela de ${table} precisa ser ≥ ${minDays(table)} dias (veio ${override})`);
     }
     return override;
   }
   const raw = process.env[RETENTION_ENV_DAYS[table]];
   if (raw !== undefined && raw !== "") {
     const n = Number(raw);
-    if (Number.isInteger(n) && n >= RETENTION_MIN_DAYS) return n;
+    if (Number.isInteger(n) && n >= minDays(table)) return n;
     console.warn(JSON.stringify({ event: "retentionInvalidEnv", env: RETENTION_ENV_DAYS[table] }));
   }
   return RETENTION_DEFAULT_DAYS[table];
@@ -212,6 +245,27 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
             .take(limit)
         ).map((d) => ({ id: d._id, ts: d.createdAt }))
       );
+    case "telegramUpdates":
+      return [
+        async (limit) =>
+          (
+            await db.query("telegramUpdates").withIndex("by_received_at", (q) => q.lt("receivedAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.receivedAt })),
+      ];
+    case "telegramDeliveries":
+      return [
+        async (limit) =>
+          (
+            await db.query("telegramDeliveries").withIndex("by_sent_at", (q) => q.lt("sentAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.sentAt })),
+      ];
+    case "telegramLinkCodes":
+      return [
+        async (limit) =>
+          (
+            await db.query("telegramLinkCodes").withIndex("by_created_at", (q) => q.lt("createdAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.createdAt })),
+      ];
   }
 }
 

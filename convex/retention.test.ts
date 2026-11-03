@@ -380,6 +380,16 @@ describe("paginação, teto e travas", () => {
       t.mutation(internal.retention.internalRunRetentionNow, { olderThanOverrides: { auditLogs: 1 } })
     ).rejects.toThrow(/≥ 7/);
   });
+
+  test("tabelas do Telegram têm piso próprio (entregas nunca abaixo de 2 d)", async () => {
+    await expect(
+      t.mutation(internal.retention.internalRunRetentionNow, { olderThanOverrides: { telegramDeliveries: 1 } })
+    ).rejects.toThrow(/≥ 2/);
+    const res = await t.mutation(internal.retention.internalRunRetentionNow, {
+      olderThanOverrides: { telegramUpdates: 1, telegramLinkCodes: 1 },
+    });
+    expect(res.plan.find((p) => p.table === "telegramUpdates")!.days).toBe(1);
+  });
 });
 
 describe("preview", () => {
@@ -394,7 +404,17 @@ describe("preview", () => {
     await insertAudit(b, "low", NOW - 200 * DAY, "delete");
     const out = await t.query(internal.retention.internalRetentionPreview, { now: NOW });
     const byTable = Object.fromEntries(out.map((p) => [p.table, p.count]));
-    expect(byTable).toEqual({ notifications: 1, aiReplyQueue: 1, agentRuns: 0, formPartials: 1, auditLogs: 1 });
+    expect(byTable).toEqual({
+      notifications: 1,
+      aiReplyQueue: 1,
+      agentRuns: 0,
+      formPartials: 1,
+      auditLogs: 1,
+      // Telegram (F0): sem linhas no seed; cobertas em telegramIngress.test.ts.
+      telegramUpdates: 0,
+      telegramDeliveries: 0,
+      telegramLinkCodes: 0,
+    });
     expect(out.every((p) => p.truncated === false)).toBe(true);
     // Override de janela no preview.
     const wider = await t.query(internal.retention.internalRetentionPreview, {

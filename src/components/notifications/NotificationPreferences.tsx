@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Bell } from "lucide-react";
+import { TelegramCard } from "./TelegramCard";
 
 const NOTIFICATION_EVENTS = [
   { key: "invite", label: "Convites de equipe", desc: "Quando você é convidado para uma organização", alwaysOn: true },
@@ -145,6 +146,8 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
   };
 
   return (
+    <div className="space-y-6">
+    <TelegramCard organizationId={organizationId} />
     <Card>
       <div className="p-6">
         <div className="flex items-center gap-3 mb-1">
@@ -189,5 +192,6 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         </div>
       </div>
     </Card>
+    </div>
   );
 }

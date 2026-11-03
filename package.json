@@ -1,7 +1,7 @@
 {
   "name": "hnbcrm",
   "private": true,
-  "version": "0.72.1",
+  "version": "0.73.0",
   "type": "module",
   "scripts": {
     "dev": "npm-run-all --parallel dev:frontend dev:backend",
@@ -26,6 +26,7 @@
     "convex": "^1.31.2",
     "convex-helpers": "^0.1.112",
     "lucide-react": "^0.564.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "react-helmet-async": "^2.0.5",

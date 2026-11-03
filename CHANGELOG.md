@@ -2,6 +2,15 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.73.0] - 2026-11-03
+
+### Copiloto no Telegram — fundação: conecte seu Telegram à sua conta
+
+- **Novo módulo "Telegram para a equipe"** (desligado por padrão; um administrador liga em Configurações → Notificações → card Telegram). Com ele ligado, cada pessoa da equipe conecta o próprio Telegram ao HNBCRM em um toque: botão **Conectar Telegram** gera um link de uso único (vale 10 minutos) e um QR code para quem está no computador; o card muda sozinho para "Conectado" assim que o bot confirma. **Desconectar** no card ou `/sair` no bot desfazem o vínculo e o bot apaga as mensagens que mandou nas últimas 48 h.
+- Bot único da plataforma: `@hnbcrm_bot` em produção e `@hnbcrm_dev_bot` em desenvolvimento. Nesta versão ele só vincula, responde `/ajuda` e `/sair`; repasses com botões, mensagens das conversas, comandos, relatórios diários e o Copiloto por texto e voz chegam nas próximas versões (0.74 a 0.77).
+- Segurança e LGPD: o vínculo exige conta com e-mail; o código nunca é guardado em claro; um Telegram só pode pertencer a uma conta; quem é removido da organização perde o acesso no próximo toque (e numa varredura diária); o bot só fala em chat privado. As preferências "receber mensagens das conversas que eu atendo" e "receber fotos e áudios dos clientes" já aparecem no card (passam a valer na 0.74).
+- Operação: webhook `POST /webhooks/telegram/platform` com segredo por cabeçalho; funções de ops `opsTelegram:internalTelegramSetWebhook` / `internalTelegramSetCommands` / `internalTelegramWebhookInfo` (dry run por padrão; a URL do webhook é sempre a do deployment que roda, então o bot de produção nunca aponta para o DEV). Envs `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET`. Ver `docs/architecture/telegram.md`.
+
 ## [0.72.1] - 2026-11-03
 
 ### Operação: publicação em produção e limpeza do gateway

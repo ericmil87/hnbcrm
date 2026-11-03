@@ -32,6 +32,7 @@ import {
   deletionStatusPage as metaDeletionStatusPage,
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
+import { telegramWebhook } from "./telegramHttp";
 
 const http = httpRouter();
 
@@ -4273,6 +4274,10 @@ http.route({ path: "/oauth/meta/callback", method: "GET", handler: metaOAuthCall
 http.route({ path: "/webhooks/meta-messaging/deauthorize", method: "POST", handler: metaDeauthorizeCallback });
 http.route({ path: "/webhooks/meta-messaging/data-deletion", method: "POST", handler: metaDataDeletionCallback });
 http.route({ path: "/meta/deletion-status", method: "GET", handler: metaDeletionStatusPage });
+
+// ---- Telegram (Copiloto da equipe, F0): bot da plataforma. secret_token no header, fora de /api/v1.
+// O segmento `platform` vira `<botKey>` quando houver bots por org (F6).
+http.route({ path: "/webhooks/telegram/platform", method: "POST", handler: telegramWebhook });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

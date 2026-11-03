@@ -20,6 +20,9 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   // Instagram Login (forma #2 do Meta Messaging): tokens IGAA… / IGQ….
   { name: "Instagram access token", re: /\bIG(?:AA|Q[A-Za-z])[A-Za-z0-9_-]{40,}/ },
   { name: "GitHub token", re: /gh[pousr]_[A-Za-z0-9]{30,}/ },
+  // Token de bot do Telegram: `<bot id>:<35 chars>` (o 2º trecho nem sempre começa
+  // com "AA"). Fixtures ficam curtos: "123456:FAKE-TOKEN-xyz" (14 chars) passa.
+  { name: "Telegram bot token", re: /\b\d{6,12}:[A-Za-z0-9_-]{35}\b/ },
   { name: "private key block", re: /-----BEGIN (RSA )?PRIVATE KEY-----/ },
   // Tokens hex de 64 chars (HMAC do bridge, admin token do wuzapi, Whisper).
   { name: "64-hex token", re: /\b[a-f0-9]{64}\b/ },
@@ -48,4 +51,14 @@ test("nenhum arquivo rastreado contém segredo real-parecido", () => {
     }
   }
   expect(hits, `Possível segredo commitado:\n${hits.join("\n")}`).toEqual([]);
+});
+
+test("padrão do token do Telegram pega o formato real e deixa os fixtures", () => {
+  const re = PATTERNS.find((p) => p.name === "Telegram bot token")!.re;
+  // Montado em tempo de execução para o próprio arquivo não virar achado.
+  const realShape = `9245775500:${"AbCd".repeat(8)}xyz`;
+  expect(realShape.split(":")[1]).toHaveLength(35);
+  expect(re.test(realShape)).toBe(true);
+  expect(re.test(`9245775500:AA${"x".repeat(33)}`)).toBe(true);
+  for (const fixture of ["123456:FAKE-TOKEN-xyz", "123456:FAKE-TOKEN-ops"]) expect(re.test(fixture)).toBe(false);
 });

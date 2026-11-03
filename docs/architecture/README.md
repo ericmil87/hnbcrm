@@ -25,6 +25,7 @@ Cada arquivo tem **Estado atual** (curto) e **Decisões, pegadinhas medidas e hi
 | [`data-export-import.md`](data-export-import.md) | Export/Import de dados | `exports.ts`, `imports.ts`, `importRun.ts`, `lib/csv.ts`, `DataSection.tsx` |
 | [`campaigns.md`](campaigns.md) | Campanhas de WhatsApp (disparo em massa) | `campaigns.ts`, `campaignWorker.ts`, `lib/campaign*.ts`, `optOuts.ts`, `whatsappTemplates.ts` |
 | [`groups.md`](groups.md) | Grupos de WhatsApp (bridge) | `groupChats.ts`, `groupPosts.ts`, `groupPostWorker.ts`, `groupAgent.ts`, `lib/group*.ts`, `src/components/groups/` |
+| [`telegram.md`](telegram.md) | Copiloto no Telegram: bot da plataforma para a equipe (vínculo, webhook, ops) | `telegram.ts`, `telegramHttp.ts`, `opsTelegram.ts`, `lib/telegram*.ts`, módulo `telegram` em `lib/orgModules.ts` |
 | [`central.md`](central.md) | Central de atendimento (unidades, setores, desfecho, atribuição, painel) | `conversationRouting.ts`, `centralAnalytics.ts`, `adSpend.ts`, `demoSim.ts`, `lib/orgModules.ts` |
 | [`frontend.md`](frontend.md) | Frontend — arquitetura, build e SEO | `vite.config.ts`, `src/main.tsx`, rotas, SEO, chunks |
 

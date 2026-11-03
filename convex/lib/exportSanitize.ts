@@ -60,6 +60,16 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "authVerificationCodes",
   "authVerifiers",
   "authRateLimits",
+  // Copiloto no Telegram (F0): vínculos/chat ids de terceiro, códigos de uso
+  // único, registro técnico de updates/envios e contadores — nada disso é dado
+  // de negócio da org, e chat ids/hashes não devem sair num arquivo.
+  "telegramLinks",
+  "telegramChats",
+  "telegramLinkCodes",
+  "telegramUpdates",
+  "telegramDeliveries",
+  "telegramPacing",
+  "telegramOrgQuota",
 ];
 
 /**

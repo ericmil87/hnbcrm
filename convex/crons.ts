@@ -56,4 +56,14 @@ crons.daily("meta messaging health", { hourUTC: 9, minuteUTC: 30 }, internal.met
 // Paginado e com teto diário — ver convex/retention.ts.
 crons.daily("data retention", { hourUTC: 7, minuteUTC: 30 }, internal.retention.internalRunRetention, {});
 
+// Telegram (F0): rede de segurança da revogação — vínculo ativo de membro
+// removido vira `revoked` (o processador e `removeTeamMember` já cortam na hora).
+// `fromCron` ativa a trava CRONS_DISABLED; paginado por cursor.
+crons.daily(
+  "telegram revoke removed members",
+  { hourUTC: 7, minuteUTC: 45 },
+  internal.telegram.internalRevokeForRemovedMembers,
+  { dryRun: false, fromCron: true }
+);
+
 export default crons;

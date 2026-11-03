@@ -562,6 +562,15 @@ export const orgModulesValidator = v.object({
   central: v.optional(v.boolean()), // Painel da Central (/app/central)
   // Instagram + Facebook Messenger (Meta Messaging). NÃO é da Central: fora de assertAnyModule.
   metaMessaging: v.optional(v.boolean()),
+  // Telegram da equipe (Copiloto no Telegram, F0). NÃO é da Central: fora de assertAnyModule.
+  telegram: v.optional(v.boolean()),
+});
+
+// Telegram da equipe (F0+): opções da org. Ausente = padrões (ver docs/architecture/telegram.md).
+export const orgTelegramSettingsValidator = v.object({
+  protectContent: v.optional(v.boolean()), // protect_content nas mensagens do bot (D12)
+  discreet: v.optional(v.boolean()), // modo discreto (D15, F1)
+  allowAutoMode: v.optional(v.boolean()), // modo automático da assistente (D22, F3); ausente = permitido
 });
 
 // Tipo de contato da conversa/lead. Ausente = "lead" — só lead entra em
@@ -667,6 +676,8 @@ const applicationTables = {
       campaignDefaults: v.optional(campaignPacingValidator),
       // MVP Central — módulos opcionais (ausente = todos desligados).
       modules: v.optional(orgModulesValidator),
+      // Telegram da equipe (F0): protect_content / discreto / automático.
+      telegram: v.optional(orgTelegramSettingsValidator),
       // Org de demonstração: habilita `demoSim` e BLOQUEIA todo envio real
       // (o dispatch do WhatsApp marca `delivered` sem chamar rede).
       demoMode: v.optional(v.boolean()),
@@ -3326,6 +3337,208 @@ const applicationTables = {
   })
     .index("by_job", ["jobId"])
     .index("by_organization", ["organizationId"]),
+
+  // ── Copiloto no Telegram (F0, v0.73) — docs/architecture/telegram.md ──
+  // Campos que as fases seguintes preenchem são opcionais (schema aditivo).
+
+  // Vínculo membership ↔ chat privado (D3). Uma linha por vínculo: revogar
+  // mantém a linha (`revoked`) como histórico; vincular de novo cria outra.
+  telegramLinks: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    userId: v.id("users"),
+    chatId: v.number(),
+    telegramUserId: v.number(),
+    username: v.optional(v.string()),
+    firstName: v.optional(v.string()),
+    status: v.union(v.literal("active"), v.literal("blocked"), v.literal("revoked")),
+    mutedUntil: v.optional(v.number()),
+    prefs: v.object({
+      relayAssignedConversations: v.boolean(), // D20, padrão true
+      mediaInbound: v.boolean(), // D21, padrão true
+    }),
+    assistant: v.object({
+      mode: v.union(v.literal("suggest"), v.literal("auto")), // D22
+      suggestOnEvents: v.boolean(),
+      autoSendDelaySeconds: v.number(), // D23, 5–120
+      autoAllowed: v.object({
+        instructAi: v.boolean(),
+        createTask: v.boolean(),
+        moveStage: v.boolean(),
+        acceptHandoff: v.boolean(),
+        replyCustomer: v.boolean(),
+      }),
+      autoActionsThisHour: v.optional(v.number()),
+      autoHourStart: v.optional(v.number()),
+      autoPausedAt: v.optional(v.number()),
+    }),
+    reports: v.object({ enabled: v.boolean(), morningHour: v.number(), eveningHour: v.number() }), // hora local da org (F2)
+    lastMorningReportDate: v.optional(v.string()), // "AAAA-MM-DD" local
+    lastEveningReportDate: v.optional(v.string()),
+    copilotThreadId: v.optional(v.id("copilotThreads")),
+    onboarding: v.optional(v.object({ step: v.number(), doneAt: v.optional(v.number()) })), // D24
+    tipsShown: v.optional(v.array(v.string())),
+    quota: v.optional(
+      v.object({ hourStart: v.number(), filesThisHour: v.number(), dayKey: v.string(), bytesToday: v.number() })
+    ), // D25
+    linkedAt: v.number(),
+    lastSeenAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    revokedReason: v.optional(v.string()), // "unlink" | "sair" | "member_removed" | "relinked" | "moved"
+  })
+    .index("by_member_and_status", ["teamMemberId", "status"])
+    .index("by_chat_id_and_status", ["chatId", "status"])
+    .index("by_organization", ["organizationId"])
+    .index("by_user", ["userId"])
+    .index("by_status", ["status"]),
+
+  // Estado POR CHAT (D3), sem organizationId DE PROPÓSITO: um chat privado é
+  // de uma pessoa e pode ter vínculos com várias orgs; a org "ativa" é um
+  // campo. Plataforma, não tenant (allowlist no guard de tenancy, se houver).
+  telegramChats: defineTable({
+    chatId: v.number(),
+    telegramUserId: v.number(),
+    activeOrganizationId: v.optional(v.id("organizations")),
+    activeTeamMemberId: v.optional(v.id("teamMembers")),
+    focus: v.optional(
+      v.object({
+        conversationId: v.id("conversations"),
+        leadId: v.optional(v.id("leads")),
+        handoffId: v.optional(v.id("handoffs")),
+        setAt: v.number(),
+        source: v.union(v.literal("notification"), v.literal("reply"), v.literal("command")),
+      })
+    ), // D17 (F3)
+    pendingPrompt: v.optional(
+      v.object({
+        kind: v.union(
+          v.literal("instruct_ai"),
+          v.literal("regenerate"),
+          v.literal("reply_customer"),
+          v.literal("copilot_confirm")
+        ),
+        conversationId: v.optional(v.id("conversations")),
+        refId: v.optional(v.string()),
+        promptMessageId: v.number(),
+        expiresAt: v.number(),
+      })
+    ), // F1
+    keyboardShown: v.optional(v.boolean()),
+    pacingAt: v.optional(v.number()), // D25 (F4)
+    updatedAt: v.number(),
+  }).index("by_chat_id", ["chatId"]),
+
+  // Código de uso único do deep link `/start <code>` (D2). Só o HASH SHA-256
+  // fica no banco; o código cru existe apenas no link devolvido ao cliente.
+  telegramLinkCodes: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    userId: v.id("users"),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    usedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_code_hash", ["codeHash"])
+    .index("by_member", ["teamMemberId"])
+    .index("by_created_at", ["createdAt"]),
+
+  // Registro de updates recebidos (D5): dedupe por `update_id` e trilha de
+  // processamento. Plataforma (sem organizationId): o update chega antes de se
+  // saber a org, e um chat sem vínculo não tem org nenhuma. `parsed` é o
+  // recorte mínimo do update (sem a carga crua) e é APAGADO ao terminar.
+  telegramUpdates: defineTable({
+    botKey: v.string(), // "platform"; F6: id do bot da org
+    updateId: v.number(),
+    kind: v.string(),
+    chatId: v.optional(v.number()),
+    receivedAt: v.number(),
+    status: v.union(v.literal("pending"), v.literal("done"), v.literal("error")),
+    error: v.optional(v.string()),
+    parsed: v.optional(
+      v.object({
+        kind: v.union(
+          v.literal("message"),
+          v.literal("callback_query"),
+          v.literal("my_chat_member"),
+          v.literal("stopped_message_generation"),
+          v.literal("other")
+        ),
+        chatId: v.optional(v.number()),
+        chatType: v.optional(v.string()),
+        fromId: v.optional(v.number()),
+        username: v.optional(v.string()),
+        firstName: v.optional(v.string()),
+        text: v.optional(v.string()),
+        messageId: v.optional(v.number()),
+        callbackQueryId: v.optional(v.string()),
+        callbackData: v.optional(v.string()),
+        memberStatus: v.optional(v.string()),
+      })
+    ),
+  })
+    .index("by_bot_and_update_id", ["botKey", "updateId"])
+    .index("by_received_at", ["receivedAt"]),
+
+  // Mensagens que o bot enviou (F1+): base do `deleteMessage` ≤ 48 h na
+  // revogação, de "mensagem vira registro" e do dedupe do relay.
+  telegramDeliveries: defineTable({
+    organizationId: v.id("organizations"),
+    linkId: v.id("telegramLinks"),
+    chatId: v.number(),
+    messageId: v.number(),
+    kind: v.union(
+      v.literal("notification"),
+      v.literal("relay"),
+      v.literal("report"),
+      v.literal("copilot"),
+      v.literal("prompt"),
+      v.literal("auto_record"),
+      v.literal("draft")
+    ),
+    draft: v.optional(
+      v.object({
+        messageId: v.id("messages"),
+        sendAt: v.optional(v.number()),
+        vetoedAt: v.optional(v.number()),
+        sentAt: v.optional(v.number()),
+      })
+    ), // D23
+    undo: v.optional(
+      v.object({
+        steps: v.array(v.object({ kind: v.string(), refId: v.string(), before: v.optional(v.any()) })),
+        expiresAt: v.number(),
+        undoneAt: v.optional(v.number()),
+      })
+    ), // D22
+    notificationId: v.optional(v.id("notifications")),
+    handoffId: v.optional(v.id("handoffs")),
+    conversationId: v.optional(v.id("conversations")),
+    taskId: v.optional(v.id("tasks")),
+    sentAt: v.number(),
+  })
+    .index("by_notification", ["notificationId"])
+    .index("by_handoff", ["handoffId"])
+    .index("by_conversation_and_sent", ["conversationId", "sentAt"])
+    .index("by_link_and_sent", ["linkId", "sentAt"])
+    .index("by_sent_at", ["sentAt"]),
+
+  // Cursor global de envio do deployment (D25, F4), mesmo padrão OCC de
+  // `channelPacing`. Plataforma (sem organizationId): o teto de ~30 msg/s é
+  // do bot, não de uma org.
+  telegramPacing: defineTable({
+    key: v.string(), // "platform"
+    windowStart: v.number(),
+    sentInWindow: v.number(),
+  }).index("by_key", ["key"]),
+
+  // Cota diária de arquivos por org (D25, F4).
+  telegramOrgQuota: defineTable({
+    organizationId: v.id("organizations"),
+    dayKey: v.string(),
+    files: v.number(),
+    bytes: v.number(),
+  }).index("by_organization_and_day", ["organizationId", "dayKey"]),
 };
 
 export default defineSchema({
