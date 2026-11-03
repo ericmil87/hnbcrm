@@ -57,6 +57,12 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
   "deepseek-v4-flash-0731": {
     openrouter: "deepseek/deepseek-v4-flash-0731",
   },
+  // Alias do OpenRouter que SEMPRE aponta para o Flash mais novo da DeepSeek
+  // (em 02/11/2026: V4.1 Flash 1017). Só existe no OpenRouter — ver
+  // OPENROUTER_ONLY_MODELS. O preço é o do modelo-alvo na data da coleta.
+  "deepseek-flash-latest": {
+    openrouter: "~deepseek/deepseek-flash-latest",
+  },
   "deepseek-v4-pro": {
     openrouter: "deepseek/deepseek-v4-pro",
     deepseek: "deepseek-reasoner",
@@ -96,7 +102,10 @@ export const MODEL_EQUIVALENCE: Record<string, Partial<Record<ProviderId, string
 // Modelos que NÃO existem no OpenCode Go: a cadeia da plataforma pula aquele elo
 // (mandar um id desconhecido só produziria um 4xx que esconde o erro real do elo
 // seguinte — foi assim que o 429 do OpenRouter ficou invisível em 19/09/2026).
-export const OPENROUTER_ONLY_MODELS: readonly string[] = ["deepseek-v4-flash-0731"];
+export const OPENROUTER_ONLY_MODELS: readonly string[] = [
+  "deepseek-v4-flash-0731",
+  "deepseek-flash-latest",
+];
 
 // Ids confirmed present on OpenCode Go's /v1/models (identical to canonical).
 // Lista completa (31 ids) conferida contra o GET /v1/models da API VIVA em
@@ -283,6 +292,7 @@ export const MODEL_CAPABILITIES: Record<string, ModelCapabilities> = {
   // DeepSeek / Kimi strict json_schema via OpenCode Go is NOT CONFIRMED.
   "deepseek-v4-flash": { jsonSchemaStrict: false },
   "deepseek-v4-flash-0731": { jsonSchemaStrict: false },
+  "deepseek-flash-latest": { jsonSchemaStrict: false },
   "deepseek-v4-pro": { jsonSchemaStrict: false },
   "kimi-k2.7-code": { jsonSchemaStrict: false },
   "kimi-k3": { jsonSchemaStrict: false },
@@ -497,6 +507,8 @@ export const MODEL_PRICES_COLLECTED_AT = "2026-10-03";
 const PUBLISHED_MODEL_PRICES: Record<string, ModelPrice> = {
   "deepseek-v4-flash": { inPerM: 0.132, outPerM: 0.28, cachedInPerM: 0.0263 }, // mediana(16)
   "deepseek-v4-flash-0731": { inPerM: 0.14, outPerM: 0.528, cachedInPerM: 0.0238 }, // mediana(28)
+  // Alias → deepseek/deepseek-v4.1-flash-1017 em 02/11/2026; mediana dos 44 endpoints do alvo.
+  "deepseek-flash-latest": { inPerM: 0.18, outPerM: 0.72, cachedInPerM: 0.006 }, // mediana(44)
   "deepseek-v4-pro": { inPerM: 1.358, outPerM: 2.9835, cachedInPerM: 0.1375 }, // mediana(16)
   "deepseek-v4-flash-vision-exp": { inPerM: 0.44, outPerM: 1.32, cachedInPerM: 0.021 }, // mediana(4)
   "kimi-k2.7-code": { inPerM: 0.95, outPerM: 4, cachedInPerM: 0.19 }, // oficial:Moonshot

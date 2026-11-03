@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.71.1] - 2026-11-02
+
+### Modelo "DeepSeek Flash (mais recente)" disponível para o atendente
+
+- Novo modelo na lista de Configurações → IA: **`deepseek-flash-latest`**, o apelido do OpenRouter que aponta sempre para a versão mais nova do DeepSeek Flash (hoje a V4.1 Flash de 17/10). Só existe pela rota OpenRouter; o preço na tabela de custos é a mediana dos endpoints do modelo-alvo na data da coleta (02/11/2026)
+- Motivo: numa conta de cliente o `deepseek-v4-flash` começou a entregar mensagens com letras faltando e o nome do titular do Pix trocado; a versão mais nova do Flash é a opção de teste antes de subir para o Pro
+
 ## [0.71.0] - 2026-10-22
 
 ### Instagram Direct e Facebook Messenger chegam ao HNBCRM pela API oficial da Meta
@@ -75,7 +82,6 @@ Um módulo opcional por organização (desligado por padrão; quem não liga nã
 - **Card de cada canal conectado:** nome da Página / `@` do Instagram, estado da conexão, quem conectou, aviso de que neste momento só funcionam contas em que o HNBCRM tem papel de teste (acesso padrão da Meta, sem revisão de app), botões Desconectar e Excluir. Excluir um canal com conversas pede uma confirmação forte (as conversas ficam visíveis, mas só voltam a responder quando a conta for conectada de novo, que religa o histórico); Desconectar é a opção para pausar
 - Campanhas, grupos, templates e "Nova conversa" continuam só para WhatsApp; Instagram e Messenger não permitem iniciar conversa (a pessoa escreve primeiro)
 - Interno: transporte por canal (`configTransport`) decidido pelo canal antes do provedor, porta única de envio (`scheduleOutboundDispatch`, com teste de build) e resolução de canal estrita, sem mudança de comportamento no WhatsApp; webhook `GET/POST /webhooks/meta-messaging` com assinatura verificada antes de qualquer leitura; novas tabelas `metaConnections`, `contactChannelIdentities`, `metaSentMids`, `oauthStates`, `metaOAuthPending` (schema 100% aditivo); envs de plataforma `META_MESSAGING_APP_ID`, `META_MESSAGING_APP_SECRET`, `META_MESSAGING_LOGIN_CONFIG_ID`, `META_MESSAGING_WEBHOOK_VERIFY_TOKEN`
-
 ## [0.70.2] - 2026-10-22
 
 ### Documentação e ferramental para agentes de código

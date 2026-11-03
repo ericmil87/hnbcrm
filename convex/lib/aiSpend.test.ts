@@ -62,6 +62,7 @@ describe("tabela de preços (teste de build)", () => {
   test("casamento EXATO: id do provider resolve pelo canônico; prefixo parecido não casa", () => {
     expect(modelPrice("deepseek/deepseek-v4-flash")).toBe(MODEL_PRICES["deepseek-v4-flash"]);
     expect(modelPrice("deepseek-v4-flash-0731")).toBe(MODEL_PRICES["deepseek-v4-flash-0731"]);
+    expect(modelPrice("deepseek-flash-latest")).toBe(MODEL_PRICES["deepseek-flash-latest"]);
     // `startsWith` cobraria isto como flash — o bug do Deskcomm.
     expect(modelPrice("deepseek-v4-flash-turbo-9000")).toBeNull();
     expect(modelPrice(undefined)).toBeNull();
