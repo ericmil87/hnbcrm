@@ -34,6 +34,7 @@ import {
   History,
   Instagram,
   Facebook,
+  BellRing,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -93,6 +94,8 @@ type ChannelConfig = {
   hasBridgeToken: boolean;
   bridgeSessionState: BridgeSessionState | null;
   autoTranscribeAudio: boolean;
+  // Bridge: aparelho invisível (notificações do WhatsApp seguem no celular). Servidor assume true se ausente.
+  bridgePhoneNotifications?: boolean;
   // Histórico do aparelho (bridge). Números já normalizados pelo servidor.
   bridgeHistoryEnabled: boolean;
   bridgeHistoryLimit: number;
@@ -319,6 +322,15 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
     });
   };
 
+  const handleTogglePhoneNotifications = (config: ChannelConfig) => {
+    const next = !(config.bridgePhoneNotifications ?? true);
+    toast.promise(updateChannelConfig({ configId: config._id, bridgePhoneNotifications: next }), {
+      loading: "Atualizando...",
+      success: next ? "Notificações no celular ativadas" : "Notificações no celular desativadas",
+      error: "Falha ao atualizar notificações no celular",
+    });
+  };
+
   const handleDelete = (configId: Id<"channelConfigs">) => {
     toast.promise(deleteChannelConfig({ configId }), {
       loading: "Excluindo número...",
@@ -442,6 +454,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
                 onEdit={() => openEditForm(config)}
                 onToggle={() => handleToggleStatus(config)}
                 onToggleAutoTranscribe={() => handleToggleAutoTranscribe(config)}
+                onTogglePhoneNotifications={() => handleTogglePhoneNotifications(config)}
                 onDelete={() => setConfirmDeleteId(config._id)}
                 onShowQr={() => setQrConfig(config)}
                 onCopy={handleCopy}
@@ -585,6 +598,7 @@ function ChannelCard({
   onEdit,
   onToggle,
   onToggleAutoTranscribe,
+  onTogglePhoneNotifications,
   onDelete,
   onShowQr,
   onCopy,
@@ -597,11 +611,13 @@ function ChannelCard({
   onEdit: () => void;
   onToggle: () => void;
   onToggleAutoTranscribe: () => void;
+  onTogglePhoneNotifications: () => void;
   onDelete: () => void;
   onShowQr: () => void;
   onCopy: (field: string, value: string, message: string) => void;
 }) {
   const isBridge = config.provider === "bridge";
+  const phoneNotificationsOn = config.bridgePhoneNotifications ?? true;
   // Subtitle: prefer a human phone number; fall back to the provider's routing id.
   const subtitle = config.displayPhoneNumber ?? (isBridge ? config.bridgeInstanceId : config.phoneNumberId);
 
@@ -724,7 +740,9 @@ function ChannelCard({
       <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-base border border-border-subtle p-2.5">
         <div className="min-w-0">
           <span className="text-sm text-text-primary">Transcrever áudios automaticamente</span>
-          <p className="text-xs text-text-muted mt-0.5">Usa Whisper local no seu servidor</p>
+          <p className="text-xs text-text-muted mt-0.5">
+            Transcreve automaticamente os áudios recebidos dos contatos e os enviados pela equipe (pelo HNBCRM ou pelo celular). A transcrição fica no histórico e o Atendente IA a lê.
+          </p>
         </div>
         <PermissionGate
           organizationId={organizationId}
@@ -756,6 +774,60 @@ function ChannelCard({
           </button>
         </PermissionGate>
       </div>
+
+      {isBridge && (
+        <div className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0 flex items-start gap-2">
+              <BellRing size={16} className="mt-0.5 shrink-0 text-text-muted" aria-hidden="true" />
+              <div className="min-w-0">
+                <span className="text-sm text-text-primary">Notificações no celular</span>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {phoneNotificationsOn
+                    ? "O HNBCRM fica invisível como aparelho conectado, então o WhatsApp continua tocando e notificando no telefone. Recomendado."
+                    : "O número aparece \"online\" enquanto o HNBCRM estiver conectado e o WhatsApp silencia as notificações no celular."}
+                </p>
+              </div>
+            </div>
+            <PermissionGate
+              organizationId={organizationId}
+              category="settings"
+              level="manage"
+              fallback={
+                <Badge variant={phoneNotificationsOn ? "success" : "default"}>
+                  {phoneNotificationsOn ? "Ativado" : "Desativado"}
+                </Badge>
+              }
+            >
+              <button
+                type="button"
+                role="switch"
+                aria-checked={phoneNotificationsOn}
+                aria-label="Notificações no celular"
+                onClick={onTogglePhoneNotifications}
+                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <span
+                  className={cn(
+                    "relative inline-flex h-6 w-10 items-center rounded-full transition-colors",
+                    phoneNotificationsOn ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                      phoneNotificationsOn ? "translate-x-5" : "translate-x-1"
+                    )}
+                  />
+                </span>
+              </button>
+            </PermissionGate>
+          </div>
+          <p className="mt-1.5 text-xs text-text-muted">
+            A mudança vale na hora e é reforçada a cada 15 minutos. Abrir uma conversa no inbox continua marcando como lida no WhatsApp.
+          </p>
+        </div>
+      )}
 
       {isBridge && <BridgeHistoryPanel organizationId={organizationId} config={config} />}
 

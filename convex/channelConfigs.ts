@@ -51,6 +51,12 @@ const bridgeSessionStateValidator = v.union(
   v.literal("outdated")
 );
 
+/**
+ * Atrasos da presença após o pareamento: 2 s cobre o `Connected` do wuzapi; 30 s
+ * cobre o `available` que ele reenvia no `PushNameSetting` / sync de app-state.
+ */
+const BRIDGE_PRESENCE_AFTER_CONNECT_MS = [2_000, 30_000];
+
 // Fire one wuzapi REST request (built by the pure adapter) and parse the JSON.
 export async function bridgeFetchJson(
   req: BridgeHttpRequest,
@@ -177,6 +183,8 @@ function maskConfig(config: Doc<"channelConfigs">, meta: MetaMaskExtras = NO_MET
     hasBridgeToken: config.bridgeTokenEncrypted != null,
     bridgeSessionState: config.bridgeSessionState ?? null,
     autoTranscribeAudio: config.autoTranscribeAudio ?? false,
+    // Bridge: o celular continua notificando? Ausente = true (padrão do CRM).
+    bridgePhoneNotifications: config.bridgePhoneNotifications ?? true,
     // Histórico do aparelho (só bridge). Os números vêm já normalizados para os
     // limites aceitos, então a UI mostra o valor que de fato vale em runtime —
     // e não um campo vazio que o servidor silenciosamente trataria como default.
@@ -536,6 +544,8 @@ export const updateChannelConfig = action({
     bridgeBaseUrl: v.optional(v.string()),
     bridgeInstanceId: v.optional(v.string()),
     bridgeToken: v.optional(v.string()),
+    // Bridge only: celular continua tocando (true/ausente) ou legado online (false).
+    bridgePhoneNotifications: v.optional(v.boolean()),
     // Shared (both providers)
     autoTranscribeAudio: v.optional(v.boolean()),
   },
@@ -561,11 +571,21 @@ export const updateChannelConfig = action({
       patch.bridgeTokenLast4 = secretLast4(args.bridgeToken);
     }
     if (args.autoTranscribeAudio !== undefined) patch.autoTranscribeAudio = args.autoTranscribeAudio;
+    if (args.bridgePhoneNotifications !== undefined) {
+      patch.bridgePhoneNotifications = args.bridgePhoneNotifications;
+    }
 
     await ctx.runMutation(internal.channelConfigs.internalPatchConfig, {
       configId: args.configId,
       patch,
     });
+    // O patch só passa em canal bridge (BRIDGE_FIELDS): aplica já no gateway.
+    // Best effort — a action sai calada se o canal não estiver ativo.
+    if (args.bridgePhoneNotifications !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.channelHealth.internalBridgeApplyPresence, {
+        configId: args.configId,
+      });
+    }
     return null;
   },
 });
@@ -952,6 +972,11 @@ export const checkChannelHealth = action({
           healthDetail: phone ? `Conectado como +${phone}` : mapped.healthDetail,
           bridgeSessionState: mapped.state,
         });
+        if (ok) {
+          await ctx.scheduler.runAfter(0, internal.channelHealth.internalBridgeApplyPresence, {
+            configId: args.configId,
+          });
+        }
         return {
           ok,
           displayPhoneNumber: phone ? `+${phone}` : undefined,
@@ -1056,6 +1081,16 @@ export const getBridgeQrCode = action({
       });
     };
 
+    // O handler `Connected` do wuzapi anuncia "available" (silencia o celular);
+    // a nossa presença precisa chegar DEPOIS dele.
+    const scheduleApplyPresence = async () => {
+      for (const delayMs of BRIDGE_PRESENCE_AFTER_CONNECT_MS) {
+        await ctx.scheduler.runAfter(delayMs, internal.channelHealth.internalBridgeApplyPresence, {
+          configId: args.configId,
+        });
+      }
+    };
+
     try {
       const token = await decryptSecret(config.bridgeTokenEncrypted);
       const baseUrl = config.bridgeBaseUrl;
@@ -1077,6 +1112,7 @@ export const getBridgeQrCode = action({
           phone ? `Conectado como +${phone}` : mapped.healthDetail,
           phone
         );
+        await scheduleApplyPresence();
         return {
           state: "connected",
           displayPhoneNumber: phone ? `+${phone}` : undefined,
@@ -1110,6 +1146,7 @@ export const getBridgeQrCode = action({
           phone ? `Conectado como +${phone}` : mapped.healthDetail,
           phone
         );
+        await scheduleApplyPresence();
         return {
           state: "connected",
           displayPhoneNumber: phone ? `+${phone}` : undefined,
@@ -1437,6 +1474,8 @@ export const internalInsertConfig = internalMutation({
   },
 });
 
+const AUDITED_BOOLEAN_FIELDS = ["autoTranscribeAudio", "bridgePhoneNotifications"] as const;
+
 // Internal: patch config (admin-only via caller's auth context; audit logs field names, not values)
 export const internalPatchConfig = internalMutation({
   args: {
@@ -1482,6 +1521,7 @@ export const internalPatchConfig = internalMutation({
     ]);
     const BRIDGE_FIELDS = new Set([
       "bridgeBaseUrl", "bridgeInstanceId", "bridgeTokenEncrypted", "bridgeTokenLast4",
+      "bridgePhoneNotifications",
     ]);
     // Os campos de histórico (bridgeHistory*) NÃO entram aqui de propósito: quem
     // os escreve é `bridge.internalPatchBridgeHistory`, porque gravá-los sem
@@ -1535,6 +1575,16 @@ export const internalPatchConfig = internalMutation({
     const changedFields = Object.keys(args.patch)
       .filter((f) => !f.endsWith("Last4"))
       .map((f) => f.replace(/Encrypted$/, ""));
+    // Interruptores booleanos (não são segredo) entram com antes/depois.
+    const before: Record<string, boolean | null> = {};
+    const after: Record<string, boolean> = {};
+    for (const f of AUDITED_BOOLEAN_FIELDS) {
+      const next = args.patch[f];
+      if (typeof next === "boolean") {
+        before[f] = config[f] ?? null;
+        after[f] = next;
+      }
+    }
     await ctx.db.insert("auditLogs", {
       organizationId: config.organizationId,
       entityType: "channelConfig",
@@ -1542,6 +1592,7 @@ export const internalPatchConfig = internalMutation({
       action: "update",
       actorId: userMember._id,
       actorType: userMember.type === "ai" ? "ai" : "human",
+      ...(Object.keys(after).length > 0 ? { changes: { before, after } } : {}),
       metadata: { name: config.displayName, channel: config.channel, changedFields },
       description: buildAuditDescription({ action: "update", entityType: "channelConfig", metadata: { name: config.displayName } }),
       severity: "high",

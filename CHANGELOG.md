@@ -2,6 +2,19 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.72.0] - 2026-11-03
+
+### O celular volta a tocar com o WhatsApp conectado ao HNBCRM
+
+- **Notificações no celular (canal WhatsApp via bridge):** ao parear um número, o gateway se anunciava como "online" a cada reconexão e o WhatsApp, por regra própria, silenciava as notificações no telefone do titular. Agora o HNBCRM fica **invisível como aparelho conectado** e o celular continua tocando normalmente. Vale para todos os canais bridge, **ligado por padrão**; quem preferir o comportamento antigo (número "online" enquanto o CRM está conectado) desliga em Configurações → Canais → "Notificações no celular". A escolha é aplicada ao parear, ao testar a conexão, ao mudar o toggle e reforçada a cada 15 minutos.
+- Abrir uma conversa no inbox continua marcando as mensagens como lidas no WhatsApp (o cliente vê o visto e a notificação daquele chat sai do celular). O Atendente IA não marca nada como lido.
+
+### Áudios enviados pela equipe também são transcritos
+
+- Notas de voz enviadas pela equipe — pelo HNBCRM ou pelo próprio WhatsApp do celular — passam a ser **transcritas automaticamente**, como já acontecia com os áudios dos contatos. A transcrição aparece no balão e entra no histórico que o Atendente IA lê, então a IA acompanha o que a equipe combinou por áudio sem ninguém clicar em "Transcrever".
+- Mesmo toggle de sempre ("Transcrever áudios automaticamente" no canal, ou atendente ativo). Áudios recuperados pela importação do histórico do aparelho não são transcritos. Encaminhar um áudio já transcrito leva a transcrição junto.
+- Correção: áudio gravado direto no inbox não mostrava o bloco de transcrição no balão.
+
 ## [0.71.1] - 2026-11-02
 
 ### Modelo "DeepSeek Flash (mais recente)" disponível para o atendente

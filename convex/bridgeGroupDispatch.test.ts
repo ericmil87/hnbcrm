@@ -172,7 +172,8 @@ describe("envio de texto para um grupo", () => {
     vi.stubGlobal("fetch", fetchMock);
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Envio + fechamento da presença global (/user/presence "unavailable").
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${BRIDGE_BASE_URL}/chat/send/text`);
     expect(JSON.parse(init.body as string)).toEqual({
