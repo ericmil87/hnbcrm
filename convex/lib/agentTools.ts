@@ -394,13 +394,25 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
   },
   {
     name: "listLeads",
-    description: "Lista leads com filtros (estágio, responsável, temperatura, tags…).",
+    description:
+      "Lista leads com filtros (estágio, responsável, temperatura, prioridade, período de criação). " +
+      "Devolve também count (quantos batem com os filtros), totalValue e currency — use para 'quantos leads chegaram hoje e qual o valor'. " +
+      "Cada lead traz createdAt/updatedAt/lastActivityAt/closedAt como {iso, label} no fuso da organização, origem, etapa, funil, responsável e telefone do contato.",
     parameters: schema(
       {
         stageName: { type: "string" },
         assigneeName: { type: "string" },
         temperature: { type: "string", enum: ["cold", "warm", "hot"] },
         priority: { type: "string", enum: ["low", "medium", "high", "urgent"] },
+        createdAfter: {
+          type: "string",
+          description: "Criados a partir de: 'hoje', 'ontem', 'esta_semana', 'este_mes' ou data ISO (AAAA-MM-DD) / data-hora ISO. Fuso da organização.",
+        },
+        createdBefore: {
+          type: "string",
+          description: "Criados antes do FIM de: 'hoje', 'ontem', 'esta_semana', 'este_mes' ou data ISO (exclusivo).",
+        },
+        orderBy: { type: "string", enum: ["createdAt", "updatedAt", "lastActivityAt"], description: "Ordem decrescente (padrão createdAt)" },
         limit: { type: "number" },
       },
       []
@@ -408,7 +420,7 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     permission: { category: "leads", level: "view_all" },
     audience: "copilot",
     effect: "read",
-    resultFields: ["leads", "totalShown"],
+    resultFields: ["leads", "totalShown", "count", "totalValue", "currency", "capped", "period", "ignoredFilters"],
   },
   {
     name: "getLeadDetail",
@@ -472,10 +484,13 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
   },
   {
     name: "listTasks",
-    description: "Lista tarefas e lembretes (com filtro de status/responsável).",
+    description:
+      "Lista tarefas e lembretes (filtro de status e de vencimento). Datas (dueDate, createdAt, completedAt) vêm como {iso, label} no fuso da organização, com o lead ligado (leadTitle).",
     parameters: schema(
       {
         status: { type: "string", enum: ["pending", "in_progress", "completed", "cancelled"] },
+        dueAfter: { type: "string", description: "Vencimento a partir de: 'hoje', 'ontem', 'esta_semana', 'este_mes' ou data ISO." },
+        dueBefore: { type: "string", description: "Vencimento antes do FIM de: 'hoje', 'esta_semana', 'este_mes' ou data ISO (exclusivo)." },
         limit: { type: "number" },
       },
       []
@@ -483,7 +498,7 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     permission: { category: "tasks", level: "view_all" },
     audience: "copilot",
     effect: "read",
-    resultFields: ["tasks"],
+    resultFields: ["tasks", "period"],
   },
   {
     name: "listCampaigns",

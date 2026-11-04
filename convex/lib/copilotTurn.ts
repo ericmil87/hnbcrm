@@ -108,6 +108,8 @@ export function buildSystemPrompt(
     "Use as ferramentas para consultar dados reais antes de afirmar qualquer",
     "número; nunca invente dados. Se uma ferramenta falhar ou faltar permissão,",
     "diga isso claramente.",
+    "Para perguntas por período ('hoje', 'esta semana') use os filtros createdAfter/createdBefore",
+    "das ferramentas; as datas vêm no fuso da organização.",
     "ESCRITAS: antes de criar/mover/atualizar algo, diga em 1 frase o que vai",
     "fazer. Para várias mudanças de uma vez, mostre um resumo do efeito antes",
     "de executar. Exclusões NUNCA acontecem direto: a ferramenta gera uma",

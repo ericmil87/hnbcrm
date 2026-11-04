@@ -25,6 +25,7 @@ import { otherHumanHolder } from "./conversationHolder";
 import { formatTime } from "./telegramNotifications";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
 import { safeTimezone } from "./promptDateTime";
+import { toolTime } from "./copilotDates";
 import { atLocal } from "./executiveReport";
 
 export type AttendantToolScope = {
@@ -211,9 +212,14 @@ export async function runAttendantCopilotReadTool(
   ctx: { db: Db },
   name: string,
   args: Record<string, unknown>,
-  scope: Pick<AttendantToolScope, "organizationId" | "member" | "focusConversationId" | "turnStartedAt">,
+  scope: Pick<AttendantToolScope, "organizationId" | "member" | "focusConversationId" | "turnStartedAt"> & { now?: number },
 ): Promise<Record<string, unknown>> {
   const db = ctx.db;
+  // v0.78.1: timestamps as {iso, label} in the org timezone.
+  const org = await db.get(scope.organizationId);
+  const tz = safeTimezone(org?.settings.timezone);
+  const now = scope.now ?? scope.turnStartedAt ?? scope.member.updatedAt;
+  const at = (ms: number | undefined | null) => toolTime(ms, now, tz);
   if (name === "listMyOpenTasks") {
     const tasks = await myOpenTasks(db, scope.organizationId, scope.member._id, scope.turnStartedAt);
     const out = [];
@@ -222,9 +228,10 @@ export async function runAttendantCopilotReadTool(
       out.push({
         number: i + 1,
         title: t.title,
-        dueDate: t.dueDate ?? null,
+        dueDate: at(t.dueDate),
+        createdAt: at(t.createdAt),
         status: t.status,
-        lead: lead && lead.organizationId === scope.organizationId ? lead.title : null,
+        leadTitle: lead && lead.organizationId === scope.organizationId ? lead.title : null,
       });
     }
     return { tasks: out };
@@ -251,7 +258,7 @@ export async function runAttendantCopilotReadTool(
         author = names.get(m.senderId)!;
       } else author = "equipe (aparelho)";
     }
-    messages.push({ direction: m.direction, author, at: m.createdAt, text: await historyLine(db, m) });
+    messages.push({ direction: m.direction, author, at: at(m.createdAt), text: await historyLine(db, m) });
   }
   const draft = await pendingDraftOf(db, conversation._id);
   const handoff = await pendingHandoffOf(db, conversation._id);

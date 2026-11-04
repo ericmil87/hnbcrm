@@ -2,6 +2,13 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [0.78.1] - 2026-11-03
+
+### Copiloto — datas e contexto nas leituras; áudio entende o vocabulário do CRM
+
+- As ferramentas de leitura do Copiloto (painel e Telegram) passam a devolver **data de criação, última atividade, fechamento, origem, responsável, etapa, funil, temperatura, prioridade, tags e telefone** de cada lead, e datas de criação/prazo/conclusão das tarefas, sempre no fuso da organização e com rótulo relativo ("há 3 dias"). Perguntas como "quantos leads chegaram hoje e qual o valor?" têm resposta direta: `listLeads` aceita período de criação ("hoje", "ontem", "esta semana", "este mês" ou datas) e devolve contagem e soma.
+- Áudios enviados ao bot do Telegram são transcritos com o vocabulário do CRM (leads, funil, repasse, Copiloto, Pix, nome da organização), reduzindo confusões como "leads" → "líderes". Áudios de clientes não mudam.
+
 ## [0.78.0] - 2026-11-03
 
 ### Copiloto no Telegram — reconecte o WhatsApp pelo celular, sem abrir o computador
