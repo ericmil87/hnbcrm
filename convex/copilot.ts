@@ -56,6 +56,8 @@ import {
 } from "./lib/groupCopilotTools";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { resolvePeriodBound, toolTime, type ToolTime } from "./lib/copilotDates";
+import { safeTimezone } from "./lib/promptDateTime";
 import {
   isAttendantCopilotReadTool,
   isAttendantCopilotWriteTool,
@@ -420,7 +422,7 @@ async function runReadTool(
 ): Promise<Record<string, unknown>> {
   switch (name) {
     case "listCampaigns":
-      return await listCampaignsTool(ctx, organizationId, toolArgs, scope.memberId);
+      return await listCampaignsTool(ctx, organizationId, toolArgs, scope.memberId, scope.now);
     case "getCampaignReport":
       return await getCampaignReportTool(ctx, organizationId, toolArgs, scope.memberId);
     case "previewCampaignAudience":
@@ -428,11 +430,11 @@ async function runReadTool(
     case "getPipelineOverview":
       return await getPipelineOverview(ctx, organizationId, toolArgs);
     case "listLeads":
-      return await listLeadsTool(ctx, organizationId, toolArgs);
+      return await listLeadsTool(ctx, organizationId, toolArgs, await orgClock(ctx, organizationId, scope.now));
     case "getLeadDetail":
-      return await getLeadDetailTool(ctx, organizationId, toolArgs);
+      return await getLeadDetailTool(ctx, organizationId, toolArgs, await orgClock(ctx, organizationId, scope.now));
     case "searchContacts":
-      return await searchContactsTool(ctx, organizationId, toolArgs);
+      return await searchContactsTool(ctx, organizationId, toolArgs, await orgClock(ctx, organizationId, scope.now));
     case "getDashboardStats":
       return await getDashboardStatsTool(ctx, organizationId);
     case "listTeamMembers":
@@ -442,7 +444,7 @@ async function runReadTool(
     case "listQuickReplies":
       return await listQuickRepliesTool(ctx, organizationId);
     case "listTasks":
-      return await listTasksTool(ctx, organizationId, toolArgs);
+      return await listTasksTool(ctx, organizationId, toolArgs, await orgClock(ctx, organizationId, scope.now));
     default:
       // Grupos de WhatsApp (F4) — executores em `lib/groupCopilotTools.ts`.
       if (isGroupReadTool(name)) {
@@ -455,6 +457,7 @@ async function runReadTool(
           member: scope.member,
           focusConversationId: scope.focusConversationId,
           turnStartedAt: scope.turnStartedAt,
+          now: scope.now,
         });
       }
       return { error: `Tool não implementada: ${name}` };
@@ -516,23 +519,48 @@ async function getPipelineOverview(
   return { boards };
 }
 
+/** v0.78.1: every timestamp a read tool returns = ISO in the org tz + a PT-BR relative label. */
+type OrgClock = { tz: string; currency: string; now: number; at: (ms: number | undefined | null) => ToolTime | null };
+async function orgClock(ctx: ReadCtx, organizationId: Id<"organizations">, now: number): Promise<OrgClock> {
+  const org = await ctx.db.get(organizationId);
+  const tz = safeTimezone(org?.settings.timezone);
+  return { tz, currency: org?.settings.currency || "BRL", now, at: (ms) => toolTime(ms, now, tz) };
+}
+
+/** Leads scanned for one listLeads call (bounded; `capped` says the answer may be partial). */
+const LIST_LEADS_SCAN = 500;
+
 async function listLeadsTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
-  toolArgs: Record<string, unknown>
+  toolArgs: Record<string, unknown>,
+  clock: OrgClock
 ): Promise<Record<string, unknown>> {
-  const limit = Math.min(typeof toolArgs.limit === "number" ? toolArgs.limit : 25, 50);
-  const leads = await ctx.db
-    .query("leads")
-    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-    .order("desc")
-    .take(300);
-
-  const [stageMap, memberMap, contactMap] = await Promise.all([
-    batchGet(ctx.db, leads.map((l: Doc<"leads">) => l.stageId)),
-    batchGet(ctx.db, leads.map((l: Doc<"leads">) => l.assignedTo)),
-    batchGet(ctx.db, leads.map((l: Doc<"leads">) => l.contactId)),
-  ]);
+  const limit = Math.min(Math.max(1, typeof toolArgs.limit === "number" ? Math.floor(toolArgs.limit) : 25), 50);
+  // Period (v0.78.1): "hoje" / "ontem" / "esta_semana" / "este_mes" / ISO, resolved in the org tz.
+  const after = toolArgs.createdAfter !== undefined ? resolvePeriodBound(toolArgs.createdAfter, "start", clock.now, clock.tz) : null;
+  const before = toolArgs.createdBefore !== undefined ? resolvePeriodBound(toolArgs.createdBefore, "end", clock.now, clock.tz) : null;
+  const ignoredFilters = [
+    ...(toolArgs.createdAfter !== undefined && after === null ? ["createdAfter"] : []),
+    ...(toolArgs.createdBefore !== undefined && before === null ? ["createdBefore"] : []),
+  ];
+  const byPeriod = after !== null || before !== null;
+  const scanned = byPeriod
+    ? await ctx.db
+        .query("leads")
+        .withIndex("by_organization_and_created", (q) => {
+          const base = q.eq("organizationId", organizationId);
+          if (after !== null && before !== null) return base.gte("createdAt", after).lt("createdAt", before);
+          if (after !== null) return base.gte("createdAt", after);
+          return base.lt("createdAt", before!);
+        })
+        .order("desc")
+        .take(LIST_LEADS_SCAN)
+    : await ctx.db
+        .query("leads")
+        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+        .order("desc")
+        .take(LIST_LEADS_SCAN);
 
   const stageName = typeof toolArgs.stageName === "string" ? toolArgs.stageName.toLowerCase() : undefined;
   const assigneeName =
@@ -540,45 +568,93 @@ async function listLeadsTool(
   const temperature = typeof toolArgs.temperature === "string" ? toolArgs.temperature : undefined;
   const priority = typeof toolArgs.priority === "string" ? toolArgs.priority : undefined;
 
-  const filtered = leads
-    .filter((l: Doc<"leads">) => l.archivedAt === undefined)
-    .filter((l: Doc<"leads">) => {
-      const stage = stageMap.get(l.stageId);
-      const assignee = l.assignedTo ? memberMap.get(l.assignedTo) : null;
-      if (stageName && stage?.name.toLowerCase() !== stageName) return false;
-      if (assigneeName && !assignee?.name.toLowerCase().includes(assigneeName)) return false;
-      if (temperature && l.temperature !== temperature) return false;
-      if (priority && l.priority !== priority) return false;
-      return true;
-    })
-    .slice(0, limit);
+  const [stageMap, memberMap] = await Promise.all([
+    batchGet(ctx.db, scanned.map((l: Doc<"leads">) => l.stageId)),
+    batchGet(ctx.db, scanned.map((l: Doc<"leads">) => l.assignedTo)),
+  ]);
+  const matched = scanned.filter((l: Doc<"leads">) => {
+    if (l.archivedAt !== undefined) return false;
+    const stage = stageMap.get(l.stageId);
+    const assignee = l.assignedTo ? memberMap.get(l.assignedTo) : null;
+    if (stageName && stage?.name.toLowerCase() !== stageName) return false;
+    if (assigneeName && !assignee?.name.toLowerCase().includes(assigneeName)) return false;
+    if (temperature && l.temperature !== temperature) return false;
+    if (priority && l.priority !== priority) return false;
+    return true;
+  });
+  const orderBy = toolArgs.orderBy === "updatedAt" || toolArgs.orderBy === "lastActivityAt" ? toolArgs.orderBy : "createdAt";
+  const sorted = [...matched].sort((a, b) => (b[orderBy] ?? 0) - (a[orderBy] ?? 0));
+  const shown = sorted.slice(0, limit);
+  const [boardMap, contactMap, sourceMap] = await Promise.all([
+    batchGet(ctx.db, shown.map((l: Doc<"leads">) => l.boardId)),
+    batchGet(ctx.db, shown.map((l: Doc<"leads">) => l.contactId)),
+    batchGet(ctx.db, shown.map((l: Doc<"leads">) => l.sourceId)),
+  ]);
 
   return {
-    totalShown: filtered.length,
-    leads: filtered.map((l: Doc<"leads">) => {
-      const contact = l.contactId ? contactMap.get(l.contactId) : null;
-      return {
-        id: l._id,
-        title: l.title,
-        stage: stageMap.get(l.stageId)?.name ?? null,
-        value: l.value,
-        currency: l.currency,
-        priority: l.priority,
-        temperature: l.temperature,
-        assignee: l.assignedTo ? memberMap.get(l.assignedTo)?.name ?? null : null,
-        contactName: contact
-          ? `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim() || null
-          : null,
-        lastActivityAt: l.lastActivityAt,
-      };
-    }),
+    // "Quantos entraram hoje e qual o valor?" in ONE call: count/totalValue over every match.
+    count: matched.length,
+    totalValue: matched.reduce((sum: number, l: Doc<"leads">) => sum + (l.value || 0), 0),
+    currency: clock.currency,
+    capped: scanned.length === LIST_LEADS_SCAN,
+    ...(byPeriod
+      ? { period: { from: after !== null ? clock.at(after) : null, to: before !== null ? clock.at(before) : null, timezone: clock.tz } }
+      : {}),
+    ...(ignoredFilters.length > 0 ? { ignoredFilters } : {}),
+    totalShown: shown.length,
+    leads: shown.map((l: Doc<"leads">) =>
+      leadRow(l, {
+        stage: stageMap.get(l.stageId),
+        board: boardMap.get(l.boardId),
+        assignee: l.assignedTo ? memberMap.get(l.assignedTo) : null,
+        contact: l.contactId ? contactMap.get(l.contactId) : null,
+        source: l.sourceId ? sourceMap.get(l.sourceId) : null,
+        clock,
+      })
+    ),
+  };
+}
+
+/** One lead as the Copilot sees it (v0.78.1): what a human assistant needs, dates in the org tz. */
+function leadRow(
+  l: Doc<"leads">,
+  refs: {
+    stage?: Doc<"stages"> | null;
+    board?: Doc<"boards"> | null;
+    assignee?: Doc<"teamMembers"> | null;
+    contact?: Doc<"contacts"> | null;
+    source?: Doc<"leadSources"> | null;
+    clock: OrgClock;
+  }
+) {
+  const c = refs.contact;
+  return {
+    id: l._id,
+    title: l.title,
+    stageName: refs.stage?.name ?? null,
+    boardName: refs.board?.name ?? null,
+    value: l.value,
+    currency: l.currency,
+    priority: l.priority,
+    temperature: l.temperature,
+    tags: l.tags,
+    assignedToName: refs.assignee?.name ?? null,
+    source: refs.source?.name ?? null,
+    contactName: c ? `${c.firstName ?? ""} ${c.lastName ?? ""}`.trim() || null : null,
+    contactPhone: c ? (c.whatsappNumber ?? c.phone ?? null) : null,
+    createdAt: refs.clock.at(l.createdAt),
+    updatedAt: refs.clock.at(l.updatedAt),
+    lastActivityAt: refs.clock.at(l.lastActivityAt),
+    closedAt: refs.clock.at(l.closedAt),
+    closedType: l.closedType ?? null,
   };
 }
 
 async function getLeadDetailTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
-  toolArgs: Record<string, unknown>
+  toolArgs: Record<string, unknown>,
+  clock: OrgClock
 ): Promise<Record<string, unknown>> {
   const leadId = typeof toolArgs.leadId === "string" ? toolArgs.leadId : null;
   if (!leadId) return { error: "leadId é obrigatório" };
@@ -586,11 +662,12 @@ async function getLeadDetailTool(
   // Guarda de org: id de outra org responde como inexistente.
   if (!lead || lead.organizationId !== organizationId) return { error: "Lead não encontrado" };
 
-  const [contact, stage, board, assignee] = await Promise.all([
+  const [contact, stage, board, assignee, source] = await Promise.all([
     lead.contactId ? ctx.db.get(lead.contactId) : null,
     ctx.db.get(lead.stageId),
     ctx.db.get(lead.boardId),
     lead.assignedTo ? ctx.db.get(lead.assignedTo) : null,
+    lead.sourceId ? ctx.db.get(lead.sourceId) : null,
   ]);
   const activities = await ctx.db
     .query("activities")
@@ -600,22 +677,15 @@ async function getLeadDetailTool(
 
   return {
     lead: {
-      id: lead._id,
-      title: lead.title,
-      board: board?.name ?? null,
-      stage: stage?.name ?? null,
-      value: lead.value,
-      currency: lead.currency,
-      priority: lead.priority,
-      temperature: lead.temperature,
+      ...leadRow(lead, { stage, board, assignee, contact, source, clock }),
       qualification: lead.qualification ?? null,
-      assignee: assignee?.name ?? null,
-      tags: lead.tags,
+      closedReason: lead.closedReason ?? null,
+      stageEnteredAt: clock.at(lead.stageEnteredAt),
       contact: contact
         ? {
             name: `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim() || null,
             email: contact.email ?? null,
-            phone: contact.phone ?? null,
+            phone: contact.whatsappNumber ?? contact.phone ?? null,
             company: contact.company ?? null,
           }
         : null,
@@ -623,7 +693,7 @@ async function getLeadDetailTool(
     timeline: activities.map((a: Doc<"activities">) => ({
       type: a.type,
       content: a.content ?? null,
-      at: a.createdAt,
+      at: clock.at(a.createdAt),
     })),
   };
 }
@@ -631,7 +701,8 @@ async function getLeadDetailTool(
 async function searchContactsTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
-  toolArgs: Record<string, unknown>
+  toolArgs: Record<string, unknown>,
+  clock: OrgClock
 ): Promise<Record<string, unknown>> {
   const query = typeof toolArgs.query === "string" ? toolArgs.query.trim() : "";
   if (query.length < 2) return { error: "Busca precisa de ao menos 2 caracteres" };
@@ -653,6 +724,7 @@ async function searchContactsTool(
       company: c.company ?? null,
       city: c.city ?? null,
       tags: c.tags,
+      createdAt: clock.at(c.createdAt),
     })),
   };
 }
@@ -744,37 +816,71 @@ async function listQuickRepliesTool(
 async function listTasksTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
-  toolArgs: Record<string, unknown>
+  toolArgs: Record<string, unknown>,
+  clock: OrgClock
 ): Promise<Record<string, unknown>> {
-  const limit = Math.min(typeof toolArgs.limit === "number" ? toolArgs.limit : 25, 50);
-  const status = typeof toolArgs.status === "string" ? toolArgs.status : undefined;
+  const limit = Math.min(Math.max(1, typeof toolArgs.limit === "number" ? Math.floor(toolArgs.limit) : 25), 50);
+  const status = typeof toolArgs.status === "string" ? (toolArgs.status as Doc<"tasks">["status"]) : undefined;
+  // Due window (v0.78.1), same tokens as listLeads, resolved in the org tz.
+  const after = toolArgs.dueAfter !== undefined ? resolvePeriodBound(toolArgs.dueAfter, "start", clock.now, clock.tz) : null;
+  const before = toolArgs.dueBefore !== undefined ? resolvePeriodBound(toolArgs.dueBefore, "end", clock.now, clock.tz) : null;
+  const byDue = after !== null || before !== null;
 
-  const tasks = status
-    ? await ctx.db
-        .query("tasks")
-        .withIndex("by_organization_and_status", (q) =>
-          q
-            .eq("organizationId", organizationId)
-            .eq("status", status as Doc<"tasks">["status"])
-        )
-        .order("desc")
-        .take(limit)
-    : await ctx.db
-        .query("tasks")
-        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
-        .order("desc")
-        .take(limit);
+  let tasks: Doc<"tasks">[];
+  if (byDue && status) {
+    tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_organization_and_status_and_due_date", (q) => {
+        const base = q.eq("organizationId", organizationId).eq("status", status);
+        if (after !== null && before !== null) return base.gte("dueDate", after).lt("dueDate", before);
+        if (after !== null) return base.gte("dueDate", after);
+        return base.lt("dueDate", before!);
+      })
+      .take(limit);
+  } else if (byDue) {
+    tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_organization_and_due_date", (q) => {
+        const base = q.eq("organizationId", organizationId);
+        if (after !== null && before !== null) return base.gte("dueDate", after).lt("dueDate", before);
+        if (after !== null) return base.gte("dueDate", after);
+        return base.lt("dueDate", before!);
+      })
+      .take(limit);
+  } else if (status) {
+    tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_organization_and_status", (q) => q.eq("organizationId", organizationId).eq("status", status))
+      .order("desc")
+      .take(limit);
+  } else {
+    tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+      .order("desc")
+      .take(limit);
+  }
 
-  const assigneeMap = await batchGet(ctx.db, tasks.map((t: Doc<"tasks">) => t.assignedTo));
+  const [assigneeMap, leadMap] = await Promise.all([
+    batchGet(ctx.db, tasks.map((t: Doc<"tasks">) => t.assignedTo)),
+    batchGet(ctx.db, tasks.map((t: Doc<"tasks">) => t.leadId)),
+  ]);
   return {
-    tasks: tasks.map((t: Doc<"tasks">) => ({
-      id: t._id,
-      title: t.title,
-      status: t.status,
-      priority: t.priority,
-      dueDate: t.dueDate ?? null,
-      assignee: t.assignedTo ? assigneeMap.get(t.assignedTo)?.name ?? null : null,
-    })),
+    ...(byDue ? { period: { from: after !== null ? clock.at(after) : null, to: before !== null ? clock.at(before) : null, timezone: clock.tz } } : {}),
+    tasks: tasks.map((t: Doc<"tasks">) => {
+      const lead = t.leadId ? leadMap.get(t.leadId) : null;
+      return {
+        id: t._id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        dueDate: clock.at(t.dueDate),
+        createdAt: clock.at(t.createdAt),
+        completedAt: clock.at(t.completedAt),
+        assignee: t.assignedTo ? assigneeMap.get(t.assignedTo)?.name ?? null : null,
+        leadTitle: lead && lead.organizationId === organizationId ? lead.title : null,
+      };
+    }),
   };
 }
 
@@ -790,7 +896,7 @@ const PENDING_ACTION_TTL_MS = 15 * 60 * 1000;
 
 const CAMPAIGN_URL = (id: string) => `/app/campanhas?campanha=${id}`;
 
-function campaignSummary(c: Record<string, any>) {
+function campaignSummary(c: Record<string, any>, fmt?: (ms: number | undefined | null) => ToolTime | null) {
   return {
     campaignId: c._id,
     name: c.name,
@@ -810,8 +916,9 @@ function campaignSummary(c: Record<string, any>) {
       optedOut: c.stats.optedOut,
     },
     pausedReason: c.pausedReason ?? null,
-    startedAt: c.startedAt ?? null,
-    completedAt: c.completedAt ?? null,
+    createdAt: fmt ? fmt(c.createdAt) : (c.createdAt ?? null),
+    startedAt: fmt ? fmt(c.startedAt) : (c.startedAt ?? null),
+    completedAt: fmt ? fmt(c.completedAt) : (c.completedAt ?? null),
     url: CAMPAIGN_URL(c._id),
   };
 }
@@ -820,7 +927,8 @@ async function listCampaignsTool(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
   toolArgs: Record<string, unknown>,
-  memberId: Id<"teamMembers">
+  memberId: Id<"teamMembers">,
+  now: number
 ): Promise<Record<string, unknown>> {
   const status = typeof toolArgs.status === "string" ? (toolArgs.status as any) : undefined;
   const rows = (await listCampaignsHandler(ctx, {
@@ -828,7 +936,8 @@ async function listCampaignsTool(
     ...(status ? { status } : {}),
     actorMemberId: memberId,
   })) as Record<string, any>[];
-  return { campaigns: rows.slice(0, 50).map(campaignSummary) };
+  const clock = await orgClock(ctx, organizationId, now);
+  return { campaigns: rows.slice(0, 50).map((c) => campaignSummary(c, clock.at)) };
 }
 
 async function getCampaignReportTool(

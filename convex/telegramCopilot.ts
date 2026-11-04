@@ -58,6 +58,20 @@ import {
 
 /** ≥ 1 s between `sendMessageDraft` calls (D10; editing faster gets 429). */
 export const DRAFT_THROTTLE_MS = 1000;
+
+/**
+ * v0.78.1: Whisper vocabulary for the MEMBER's voice to the bot (PROD: "leads"
+ * was heard as "líderes"). Plus the org name and the member's first name.
+ * Never used for customer audio (the inbound path sends no prompt).
+ */
+export const VOICE_VOCABULARY = [
+  "HNBCRM", "CRM", "leads", "lead", "funil", "etapa", "repasse", "Copiloto", "Atendente", "WhatsApp", "Telegram",
+  "Pix", "follow-up", "tarefa", "pipeline", "Kenji", "Maracaípe", "Porto de Galinhas",
+];
+export function voicePrompt(orgName: string, memberName: string | undefined): string {
+  const first = memberName?.trim().split(/\s+/)[0];
+  return [...VOICE_VOCABULARY, orgName, ...(first ? [first] : [])].filter(Boolean).join(", ");
+}
 export const DOWNLOAD_TIMEOUT_MS = 15_000;
 export const THINKING_TEXT = "Pensando…";
 
@@ -106,6 +120,7 @@ const runTargetValidator = v.object({
   promptOpen: v.boolean(),
   protectContent: v.boolean(),
   assistantMode: v.union(v.literal("suggest"), v.literal("auto")),
+  memberName: v.optional(v.string()),
 });
 type RunTarget = {
   organizationId: Id<"organizations">;
@@ -119,6 +134,7 @@ type RunTarget = {
   promptOpen: boolean;
   protectContent: boolean;
   assistantMode: "suggest" | "auto";
+  memberName?: string;
 };
 
 async function chatRow(ctx: { db: QueryCtx["db"] }, chatId: number): Promise<Doc<"telegramChats"> | null> {
@@ -159,6 +175,7 @@ export const internalGetCopilotRun = internalQuery({
       promptOpen: prompt !== undefined && prompt.expiresAt > args.now && prompt.organizationId === org._id,
       protectContent: org.settings.telegram?.protectContent === true,
       assistantMode: effectiveAssistantMode(link, org),
+      memberName: member.name,
     };
   },
 });
@@ -387,7 +404,7 @@ async function transcribeVoice(ctx: ActionCtx, target: RunTarget, media: MediaAr
   try {
     const res: { status: "done" | "failed"; text?: string } = await ctx.runAction(
       internal.transcription.internalTranscribeStoredAudio,
-      { storageId: stored.storageId, size: stored.size },
+      { storageId: stored.storageId, size: stored.size, prompt: voicePrompt(target.orgName, target.memberName) },
     );
     if (res.status !== "done" || !res.text?.trim()) {
       await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.voiceFailed });

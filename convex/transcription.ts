@@ -190,10 +190,14 @@ async function runTranscription(
  * shared by the message transcription above and the Telegram voice note
  * (F3, `internalTranscribeStoredAudio`). Never throws.
  */
+/** v0.78.1: vocabulary hint (Whisper `initial_prompt`), clipped; only the member's voice to the bot sends one. */
+export const WHISPER_PROMPT_MAX_CHARS = 400;
+
 async function callWhisper(
   serviceUrl: string,
   serviceToken: string | undefined,
-  audioUrl: string
+  audioUrl: string,
+  opts: { prompt?: string } = {}
 ): Promise<{ status: "done"; text: string; language?: string; durationSec?: number } | { status: "failed"; error: string }> {
   try {
     const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/transcribe`, {
@@ -202,7 +206,10 @@ async function callWhisper(
         "Content-Type": "application/json",
         ...(serviceToken ? { Authorization: `Bearer ${serviceToken}` } : {}),
       },
-      body: JSON.stringify({ url: audioUrl }),
+      body: JSON.stringify({
+        url: audioUrl,
+        ...(opts.prompt ? { prompt: opts.prompt.slice(0, WHISPER_PROMPT_MAX_CHARS) } : {}),
+      }),
       signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
     });
 
@@ -236,7 +243,12 @@ async function callWhisper(
  * the blob afterwards. Same service, same timeout, same 25 MB cap.
  */
 export const internalTranscribeStoredAudio = internalAction({
-  args: { storageId: v.id("_storage"), size: v.number() },
+  args: {
+    storageId: v.id("_storage"),
+    size: v.number(),
+    /** Vocabulary hint for the member's own voice (Telegram); never set for customer audio. */
+    prompt: v.optional(v.string()),
+  },
   returns: v.object({ status: v.union(v.literal("done"), v.literal("failed")), text: v.optional(v.string()), error: v.optional(v.string()) }),
   handler: async (ctx, args) => {
     if (args.size > MAX_AUDIO_BYTES) return { status: "failed" as const, error: "Áudio maior que 25MB" };
@@ -244,7 +256,7 @@ export const internalTranscribeStoredAudio = internalAction({
     if (!serviceUrl) return { status: "failed" as const, error: "WHISPER_SERVICE_URL não configurado no Convex" };
     const audioUrl = await ctx.storage.getUrl(args.storageId);
     if (!audioUrl) return { status: "failed" as const, error: "URL do áudio não encontrada no storage" };
-    const result = await callWhisper(serviceUrl, process.env.WHISPER_SERVICE_TOKEN, audioUrl);
+    const result = await callWhisper(serviceUrl, process.env.WHISPER_SERVICE_TOKEN, audioUrl, args.prompt ? { prompt: args.prompt } : {});
     return result.status === "done" ? { status: "done" as const, text: result.text } : { status: "failed" as const, error: result.error };
   },
 });
