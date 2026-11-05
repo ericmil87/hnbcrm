@@ -58,3 +58,5 @@ Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadore
 ## Modelos por segmento
 
 Funis, campos, sementes de persona, perguntas frequentes, palavras de repasse e perguntas de teste por segmento (`imobiliaria`, `saas`, `servicos`, `saude`, `ecommerce`, `educacao`, `outro`) moram em `convex/lib/onboardingTemplates.ts`, módulo puro sem `_generated`. O front importa de lá (`src/lib/onboardingTemplates.ts` reexporta e mantém o adaptador `INDUSTRY_TEMPLATES` do assistente v1). `personaForIndustry` (`convex/lib/agentPersonas.ts`) lê `personaId` do template quando a chave é um segmento exato; `financeiro` é legado e `segmentTemplate` o mapeia para `servicos`.
+
+Compatibilidade: `personaForIndustry("financeiro")` continua `geral`, enquanto `segmentTemplate("financeiro")` cai em `servicos`.

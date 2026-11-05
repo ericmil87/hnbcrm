@@ -62,9 +62,20 @@ describe("onboardingTemplates", () => {
     expect(full).toContain("Clínica Sol");
     expect(full).toContain("dermatologia");
     expect(full).not.toMatch(/\{(negocio|oferta|tom)\}/);
-    const empty = renderPersonaSeed(t, { negocio: "Clínica Sol" });
-    expect(empty).not.toMatch(/\{|\}/);
-    expect(empty).not.toMatch(/ {2,}/);
+    const onlyName = renderPersonaSeed(t, { negocio: "Clínica Sol" });
+    expect(onlyName).toContain("Clínica Sol");
+    for (const out of [onlyName, renderPersonaSeed(t, {})]) {
+      expect(out).not.toMatch(/\{|\}/);
+      expect(out).not.toMatch(/ {2,}/);
+      expect(out).not.toMatch(/\bde \./);
+      expect(out).not.toMatch(/:\s*\./);
+      expect(out).not.toMatch(/tom[ .,]/);
+    }
+    for (const seg of SEGMENT_TEMPLATES) {
+      const out = renderPersonaSeed(seg, {});
+      expect(out).not.toMatch(/\{|\}| {2,}|\bde \.|:\s*\./);
+      expect(out).toContain("nossa empresa");
+    }
   });
 
   it("sem emoji nos textos", () => {
@@ -73,6 +84,10 @@ describe("onboardingTemplates", () => {
         expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
       }
     }
+  });
+
+  it("todo segmento inclui falar com atendente", () => {
+    for (const t of SEGMENT_TEMPLATES) expect(t.handoffKeywords).toContain("falar com atendente");
   });
 
   it("simulatorPrompts tem 3 itens", () => {

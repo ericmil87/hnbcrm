@@ -37,6 +37,11 @@ export interface SegmentTemplate {
   personaId: string;
   personaSeed: string;
   faqSeed: { q: string; a: string }[];
+  /**
+   * Semente de palavras de falar com a equipe. O consumidor deve unir esta
+   * lista a DEFAULT_HANDOFF_KEYWORDS (convex/lib/handoffKeywords.ts), porque
+   * uma lista configurada substitui a padrão.
+   */
   handoffKeywords: string[];
   simulatorPrompts: string[];
   advanceRules: string;
@@ -94,7 +99,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "Como funciona a visita?", a: "Agendamos o horário e o corretor acompanha você no imóvel. [preencha] com dias e horários de visita." },
       { q: "Qual o valor do condomínio e do IPTU?", a: "Depende do imóvel. [preencha] com a forma de consultar os valores de cada anúncio." },
     ],
-    handoffKeywords: ["visita", "proposta", "negociar", "financiamento aprovado", "falar com corretor"],
+    handoffKeywords: ["falar com atendente", "agendar visita", "quero visitar", "proposta", "negociar", "financiamento aprovado", "falar com corretor"],
     simulatorPrompts: [
       "Queria alugar um apartamento de dois quartos perto do centro. Como funciona?",
       "Quais documentos preciso para alugar?",
@@ -137,7 +142,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "Integra com outras ferramentas?", a: "[preencha] com as integrações disponíveis. Para integração específica, a equipe avalia o caso." },
       { q: "Meus dados estão seguros? Vocês seguem a LGPD?", a: "[preencha] com as práticas de segurança e de proteção de dados." },
     ],
-    handoffKeywords: ["contrato", "desconto", "integração específica", "cancelar", "suporte técnico"],
+    handoffKeywords: ["falar com atendente", "contrato", "desconto", "integração específica", "cancelar", "suporte técnico"],
     simulatorPrompts: [
       "Como o produto funciona e para quem ele é indicado?",
       "Tem teste grátis? Quanto custa depois?",
@@ -179,7 +184,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "O serviço tem garantia?", a: "[preencha] com prazo e condições da garantia." },
       { q: "Qual o horário de atendimento?", a: "[preencha] com dias e horários de funcionamento." },
     ],
-    handoffKeywords: ["orçamento fechado", "reclamação", "urgência", "falar com o responsável"],
+    handoffKeywords: ["falar com atendente", "orçamento fechado", "reclamação", "urgência", "falar com o responsável"],
     simulatorPrompts: [
       "Preciso de um orçamento para um serviço na minha casa.",
       "Vocês atendem no meu bairro? Quais as formas de pagamento?",
@@ -222,7 +227,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "Onde fica a clínica e qual o horário?", a: "[preencha] com endereço, estacionamento e horários." },
       { q: "Posso remarcar minha consulta?", a: "Sim, a equipe confirma um novo horário. [preencha] com a antecedência necessária." },
     ],
-    handoffKeywords: ["dor", "sintoma", "emergência", "resultado de exame", "falar com o doutor"],
+    handoffKeywords: ["falar com atendente", "dor", "sintoma", "emergência", "resultado de exame", "falar com o doutor"],
     simulatorPrompts: [
       "Quero marcar uma consulta. Vocês atendem meu convênio?",
       "Quanto custa a consulta particular?",
@@ -262,7 +267,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "Como funcionam trocas e devoluções?", a: "[preencha] com prazo e condições de troca e devolução." },
       { q: "Quais as formas de pagamento?", a: "[preencha] com Pix, cartão e parcelamento." },
     ],
-    handoffKeywords: ["troca", "devolução", "pedido atrasado", "defeito", "reembolso"],
+    handoffKeywords: ["falar com atendente", "troca", "devolução", "pedido atrasado", "defeito", "reembolso"],
     simulatorPrompts: [
       "Esse produto tem em outro tamanho? Quanto fica o frete para a minha cidade?",
       "Quais as formas de pagamento?",
@@ -303,7 +308,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "O curso dá certificado?", a: "[preencha] com tipo de certificado e carga horária." },
       { q: "O curso é online ou presencial?", a: "[preencha] com as modalidades de cada curso." },
     ],
-    handoffKeywords: ["bolsa", "desconto", "matrícula", "cancelar", "falar com coordenação"],
+    handoffKeywords: ["falar com atendente", "bolsa", "desconto", "fazer matrícula", "quero me matricular", "cancelar", "falar com coordenação"],
     simulatorPrompts: [
       "Quero saber mais sobre os cursos. Qual é indicado para quem está começando?",
       "Quanto custa e quando começa a próxima turma?",
@@ -339,7 +344,7 @@ const SEGMENT_LIST: SegmentTemplate[] = [
       { q: "Como faço para comprar?", a: "[preencha] com o passo a passo da compra ou contratação." },
       { q: "Quais as formas de pagamento?", a: "[preencha] com as formas aceitas." },
     ],
-    handoffKeywords: ["falar com humano", "reclamação"],
+    handoffKeywords: ["falar com atendente", "falar com humano", "reclamação"],
     simulatorPrompts: [
       "Olá, quero saber mais sobre o que vocês oferecem.",
       "Qual o horário de funcionamento?",
@@ -367,24 +372,39 @@ export function segmentTemplate(key: string | undefined | null): SegmentTemplate
   );
 }
 
-/** Substitui {negocio}, {oferta}, {tom}; placeholders vazios somem sem deixar espaço duplo. */
+/**
+ * Substitui {negocio}, {oferta}, {tom}. Negócio ausente vira "nossa empresa";
+ * oferta ou tom ausentes removem a frase inteira que os contém.
+ */
 export function renderPersonaSeed(
   template: SegmentTemplate,
   business: BusinessInfo,
 ): string {
   const values: Record<string, string> = {
-    negocio: (business.negocio ?? "").trim(),
+    negocio: (business.negocio ?? "").trim() || "nossa empresa",
     oferta: (business.oferta ?? "").trim(),
     tom: (business.tom ?? "").trim(),
   };
   return template.personaSeed
-    .replace(/\{(negocio|oferta|tom)\}/g, (_m, name: string) => values[name])
     .split("\n")
-    .map((line) =>
-      line
+    .map((line) => {
+      const sentences = line.match(/[^.!?]+[.!?]+\s*|[^.!?]+$/g) ?? [];
+      return sentences
+        .map((sentence) => {
+          let missing = false;
+          const out = sentence.replace(
+            /\{(negocio|oferta|tom)\}/g,
+            (_m, name: string) => {
+              if (!values[name]) missing = true;
+              return values[name];
+            },
+          );
+          return missing ? "" : out;
+        })
+        .join("")
         .replace(/[ \t]{2,}/g, " ")
-        .replace(/\s+([.,;:!?])/g, "$1")
-        .trim(),
-    )
-    .join("\n");
+        .trim();
+    })
+    .filter((line) => line.length > 0)
+    .join("\n\n");
 }

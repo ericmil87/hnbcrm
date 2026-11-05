@@ -6,7 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Configuração inicial e Copiloto
 
-- Modelos prontos por segmento (imobiliária, startup/SaaS, serviços, clínica, loja e cursos): cada um traz funil com etapas, campos personalizados e uma Atendente IA com persona, perguntas frequentes e palavras de repasse, para você só preencher o que é do seu negócio.
+- Organizações de startup/SaaS e de cursos passam a ter, na ativação em 1 toque, uma Atendente IA com jeito de atender próprio (antes usavam o modelo geral). Também chegam modelos prontos de funil, campos e perguntas frequentes por segmento, com os casos em que a Atendente IA passa a conversa para falar com a equipe.
 
 ## [0.78.1] - 2026-11-03
 
