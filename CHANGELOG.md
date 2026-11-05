@@ -16,6 +16,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - No Funil, o **Modo quadro** ou **Modo lista**, a busca e os filtros (prioridade, temperatura, responsável e unidade) ficam no endereço da página: dá para recarregar, voltar ou compartilhar o link e ver a mesma tela, e **Limpar filtros** zera tudo. A escolha do funil, a configuração dele e os funis arquivados agora ficam em menus que abrem como folha no celular, e o menu da etapa não sai mais da tela.
 - Na Agenda, quando o endereço não diz a visão, o celular abre no dia e o computador na semana.
 - Em **Criar funil**, o botão da tela vazia agora abre o formulário.
+- No celular, os textos pequenos ficaram maiores (12 px no mínimo), a tela inteira acompanha a altura real do navegador e a data de uma mensagem agendada cabe em uma linha.
+- Botões só com ícone agora têm nome para leitores de tela, e as dicas dos botões aparecem ao passar o mouse, ao focar com o teclado e ao manter o dedo pressionado.
+- Interruptores de Equipe, Números conectados e Notificações passam a funcionar igual aos demais (teclado, foco e toque maiores).
+- As mensagens de erro seguem um padrão único ("Não foi possível salvar."), e as telas vazias de Conversas, Funil, Contatos, Tarefas, Campanhas, Grupos, Formulários, Equipe e Histórico explicam o que fazer a seguir.
+- O botão de voltar do navegador agora fecha a tarefa aberta em Tarefas, e as datas do filtro de período do Histórico não mudam mais de dia.
+- Ao conectar um número, a "Configuração manual (avançado)" fica fechada quando há o Servidor do HNBCRM, e o endereço do servidor não aparece mais.
 - Formatos que mudam na tela: o tempo relativo em Formulários passa a aparecer como "há 3 dias" e o valor do pipeline no Painel como "R$ 1,5 mi".
 - Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
 - No painel do lead, a aba Conversa agora é o mesmo chat de Conversas: mesmas bolhas, respostas rápidas, emoji, anexos, nota interna, citação e encaminhamento. Quando o lead tem conversas em mais de um canal, um seletor no topo troca entre elas. Gravar nota de voz e agendar mensagem continuam só em Conversas. Quem não tem permissão para responder vê o aviso de permissão no lugar do campo, também no painel do lead.
