@@ -64,6 +64,8 @@
 | fv2-14/17/15/19 (`2a4ea8a`) | bloqueia: nenhum. 3× tsc ok; suíte 4192 testes; build ok com `theme-init.js`. | Docs desatualizadas: `docs/architecture/frontend.md:53` (ainda diz que `ai-*` estão planejados), `src/CLAUDE.md` (linha 94 "`.light` override" → `[data-theme]`; linha 12 "dark/light" → "dark/light/whatsapp"; `pages/` duplicado; `usePageTitle(null)`) — **corrigir no fv2-22**. Painel `appearance` inacessível por `?secao=` sem `settings:view` (documentado; seletor pela sidebar/"Mais"). Mês inválido no setup do rascunho agora lança (chamador único passa mês válido). |
 | final: fv2-21/22 (`9e0729a`) | bloqueia: nenhum. 3× tsc ok; suíte 4251 testes; build ok com `theme-init.js`; `CLAUDE.md` raiz, `.claude/settings.json`, agents e hooks inalterados; sem atribuição a IA em nenhum commit. Diff total `main...frontend-v2`: 403 arquivos, +26612/−8760. | `src/CLAUDE.md:79` perdeu a menção a `NotFoundPage`/`RouteErrorPage` (documentadas em `docs/architecture/frontend.md`) — acrescentar na próxima sessão. |
 
+| final local: fv2-22b…29b (`088c45c`) | bloqueia: nenhum. 3× tsc ok; suíte 312 arquivos / 4601 testes; `CI=1 vite build` ok (`index-*.js` 126,95 kB gzip); `npx convex dev --once` no DEV ok; `npx convex codegen` sem diff. Compatibilidade com o front antigo confirmada (nenhum arg público removido/obrigatório; `v.any()` dos retornos de progresso/checklist preservam as chaves do v1). Guardas intactas ou endurecidas; `CLAUDE.md`, `.claude/settings.json`, agents e hooks sem mudança; versão do `package.json` igual; 0 atribuições a IA. | Melhorias de acompanhamento: `settingsPanelLinks.test.ts` não casa ids montados dinamicamente (`settingsButton("ai-usage")`, ternários instagram/channels — conferidos à mão); `ORG_AGNOSTIC_PARAMS` sem `temp`/`priority` (enums do Funil; perdem-se na troca de org); `provisionBridgeChannel` ainda aceita `webhookUrl` do cliente (necessário até o front antigo sair de PROD). Janela deploy→merge: no front antigo, `?secao=ai-usage`/`instagram` caem em Geral (cosmético). |
+
 ## Em andamento
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
@@ -80,7 +82,7 @@
 - `gh` não está autenticado nesta sessão (token inválido). PRs de feature não são abertos; integração é local por `git merge --no-ff` com push dos ramos. O PR em rascunho `frontend-v2 → main` será tentado pelo GitHub MCP.
 - Ambiente: ramo de integração `frontend-v2` criado de `origin/main` em `9d7f8af` (05/11/2026); worktrees em `/home/user/wt/fv2-NN` com `node_modules` linkado.
 
-## Pronto para main (rascunho; fecha depois do fv2-29b)
+## Pronto para main (05/11/2026, `frontend-v2` em `088c45c`)
 
 **Ordem de publicação (do Eric, nada disto foi executado nesta sessão):**
 1. `npm run test` verde em `frontend-v2` e `npx convex dev --once` no DEV sem erro (feito a cada PR; refazer no final).
@@ -99,15 +101,15 @@
 
 **Decisões de produto em aberto (não bloqueiam):** teto por org para códigos de pareamento (hoje 3/h por canal, telefone livre); `provisionBridgeChannel` ainda aceita `webhookUrl` do cliente e `getBridgeQrCode` sem e-mail (remover depois que o front de PROD migrar); `color-scheme` por tema (mudaria o Escuro congelado); `spendCap` padrão para orgs novas (Copiloto/persona gastam a chave da plataforma no onboarding).
 
+**Acompanhamento pós-merge (pequeno, não bloqueia):** guarda `settingsPanelLinks` casar `settingsButton("…")` e ternários; `temp`/`priority` em `ORG_AGNOSTIC_PARAMS`; ignorar `webhookUrl` do cliente quando o front antigo sair de PROD; `getBridgeQrCode` exigir e-mail; `TODO(fv2-29)` da 2ª assinatura de `getMessages` no cabeçalho; pills de Tarefas em sentence case; `?lead=` com push marcado. **Smoke em PROD depois do merge:** link antigo `?secao=ai` e novo `ai-usage`; wizard numa org nova; org antiga com leads entrando sem o wizard.
+
 **Opcionais fv2-30 (Inter self-hosted), fv2-31 (vocabulário novo nos textos do backend: Telegram/e-mail/sino), fv2-32 (Escuro acessível), fv2-33 (limpeza `setupPipelineFromWizard`/`requestSampleData`/`seed.ts`):** não iniciados; decisão do Eric.
 
 ## Para retomar
 
-- **Último PR integrado:** fv2-29a (`b56e6ae`, PR #51). Integrados nesta sessão local: fv2-22b/22c/22d/22e, 23, 24, 25, 26, 27, 28, 29a (PRs #41–#51). Suíte em `frontend-v2`: 4593 testes.
-- **PR em andamento:** fv2-29b, implementado em `.claude/worktrees/fv2-29b` (ramo local `feat/fv2-29b-a11y-mobile-vocabulario`, 8 commits, gates verdes, 4601 testes); falta: push do ramo, veredito da revisão, eventual rodada de correção, PR e merge em `frontend-v2`. O Vite auxiliar foi parado; o Vite do checkout principal (porta 5173) pode continuar rodando.
-- **PRs parados:** nenhum.
-- **Opcionais fv2-30 a fv2-33:** não iniciados; decisão do Eric (pergunta feita na mensagem final).
-- **Encerramento pendente (seção 5 do PROMPT-LOCAL):** depois do fv2-29b → `reviewer` numa passada final `main...frontend-v2` (invariantes + deep links + guards); gates completos + `npx convex dev --once` + `npx convex codegen` sem diff no `frontend-v2` final; fechar a seção "Pronto para main" (hoje rascunho); PR #40 continua em rascunho.
-- **Pendências para o dono:** ver "Pronto para main" (envs em PROD, ordem deploy → merge, validações vivas que faltam, textos).
-- **Comando para continuar:** `git fetch && git checkout frontend-v2 && git pull` (worktree do 29b já existe: `git worktree list`); colar `PROMPT-LOCAL.md` apontando para "retomar no fv2-29b".
+- **Escopo local concluído:** fv2-22b/c/d/e, 23, 24, 25, 26, 27, 28, 29a, 29b integrados em `frontend-v2` (PRs #41–#52), `frontend-v2` em `088c45c`, 4601 testes, DEV atualizado. Nenhum PR parado. Nada foi para PROD nem para `main`.
+- **PR #40 (`frontend-v2 → main`): continua em rascunho**, corpo = este arquivo. Publicação é decisão e sequência do Eric (seção "Pronto para main").
+- **Opcionais fv2-30/31/32/33:** não iniciados; aguardam o "quero" do Eric (pergunta feita na mensagem final da sessão de 05/11/2026). Se quiser: mesmo loop (worktree `.claude/worktrees/fv2-NN` a partir de `frontend-v2`, implementador → `reviewer` → gates → PR → merge).
+- **Validações vivas que só o Eric faz:** ver "Pronto para main".
+- **Comando para continuar:** `git fetch && git checkout frontend-v2 && git pull`.
 
