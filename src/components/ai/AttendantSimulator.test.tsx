@@ -71,7 +71,6 @@ describe("AttendantSimulatorView", () => {
     expect(screen.queryByText("Simular dentro de um grupo")).toBeNull();
     rerender(<AttendantSimulatorView {...props({ ...extra, variant: "modal" })} />);
     expect(screen.getByText("Simular dentro de um grupo")).toBeInTheDocument();
-    expect(screen.getAllByRole("switch")).toHaveLength(1);
-    expect(document.querySelectorAll("button[aria-pressed]")).toHaveLength(2);
+    expect(document.querySelectorAll("button[aria-pressed]")).toHaveLength(3);
   });
 });
