@@ -72,6 +72,8 @@ export function AppearancePicker({ value, onValueChange, disabled }: AppearanceP
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-labelledby={`theme-${option.id}-label`}
+            aria-describedby={`theme-${option.id}-desc`}
             tabIndex={selected ? 0 : -1}
             disabled={disabled}
             onClick={() => onValueChange(option.id)}
@@ -84,10 +86,10 @@ export function AppearancePicker({ value, onValueChange, disabled }: AppearanceP
           >
             <ThemeThumbnail preview={option.preview} />
             <span className="flex items-center gap-2">
-              <span className="text-sm font-medium text-text-primary">{option.label}</span>
+              <span id={`theme-${option.id}-label`} className="text-sm font-medium text-text-primary">{option.label}</span>
               {selected && <Check size={16} className="ml-auto shrink-0 text-brand-500" aria-hidden="true" />}
             </span>
-            <span className="text-caption text-text-secondary">{option.description}</span>
+            <span id={`theme-${option.id}-desc`} className="text-caption text-text-secondary">{option.description}</span>
           </button>
         );
       })}
