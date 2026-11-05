@@ -1,12 +1,12 @@
 # Prompt — Claude Code local · Frontend v2: verificar o que a nuvem fez e concluir (fv2-23 a fv2-33)
 
-> Cole TUDO abaixo da linha numa sessão nova do Claude Code **neste repositório, nesta máquina**, modelo Fable. Diferente da nuvem, aqui o Eric está presente e existe deployment DEV do Convex. Mesmo assim o modelo da sessão só orquestra; quem escreve código são os subagentes `frontend-specialist` e `convex-backend` (Sonnet) e quem revisa é o `reviewer` (Opus).
+> Cole TUDO abaixo da linha numa sessão nova do Claude Code **neste repositório, nesta máquina** (plano Max do Eric), modelo Fable. Diferente da nuvem, aqui o Eric está presente e existe deployment DEV do Convex. **Regra desta fase: nada vai para produção.** Só DEV (`tacit-chicken-195`); `main` e PROD (`careful-anaconda-127`) não são tocados. Mesmo assim o modelo da sessão só orquestra; quem escreve código são os subagentes `frontend-specialist` e `convex-backend` (Sonnet) e quem revisa é o `reviewer` (Opus).
 
 ---
 
 Você é o **orquestrador** da conclusão do programa "Frontend v2" do HNBCRM. Uma sessão autônoma na nuvem executou e integrou os PRs **fv2-01 a fv2-22** no ramo `frontend-v2` (05/11/2026, 128 commits, suíte em 4.251 testes, CI verde, PR em rascunho #40 `frontend-v2 → main`). Seu trabalho tem duas partes, nesta ordem: **(A) verificar** o que foi feito; **(B) continuar** pelos PRs **fv2-23 a fv2-33** até concluir, e deixar `frontend-v2` pronto para o Eric mesclar em `main`.
 
-Você NÃO escreve código nem edita arquivos de produto; delega pela ferramenta Agent, lê resumos, decide, briefa, cobra critérios e registra. Pergunte ao Eric só nos pontos marcados **[Eric]** abaixo; o resto decide pelo plano.
+Você NÃO escreve código nem edita arquivos de produto; delega pela ferramenta Agent, lê resumos, decide, briefa, cobra critérios e registra. **Nada desta sessão vai para produção**: nenhum comando com `--prod`, nenhum `npm run deploy:prod`, nenhum merge ou push em `main`, nenhum `gh pr ready`/`gh pr merge` do #40. Todo o trabalho fica em `frontend-v2` e nos ramos `feat/fv2-*`, validado só no DEV. Pergunte ao Eric só nos pontos marcados **[Eric]** abaixo; o resto decide pelo plano.
 
 ## 0. Leitura inicial (você mesmo, uma vez)
 
@@ -14,6 +14,10 @@ Você NÃO escreve código nem edita arquivos de produto; delega pela ferramenta
 2. `.claude/plans/frontend-v2/00-PLANO-MESTRE.md` — seções 3 (princípios), 4 (glossário), 5 (decisões de integração), 6 (ordem; agora interessam fv2-23 a fv2-33), 7 (critérios), 9 (pendências do Eric).
 3. `.claude/plans/frontend-v2/PROMPT-CLOUD.md` seções 2 a 6 — o loop por PR, os gates, as regras de produto e de orçamento valem aqui **sem mudança**, exceto o que a seção 3 deste prompt altera.
 4. Os blocos dos PRs nos arquivos de seção só na hora de executar cada um (`02-onboarding-ia.md` para fv2-23/24; `03-reorganizacao-vocabulario.md` para fv2-25 a 29; `01-temas.md` para fv2-30/32).
+
+## 0b. Se o push falhar
+
+Em 05/11/2026 o GitHub rejeitou pushes com `remote: fatal error in commit_refs_rules` (sem ruleset nem proteção de branch no repositório; falha do lado do GitHub). Se acontecer: continue o trabalho localmente, tente de novo a cada integração, e registre no `STATUS.md` o que ainda não foi enviado. O ramo local `frontend-v2` já está 1 commit à frente de `origin` (este prompt).
 
 ## 1. Preparar o ambiente
 
@@ -58,7 +62,7 @@ Exatamente `PROMPT-CLOUD.md` seções 4, 5 e 6, mais: `npx convex dev --once` pa
 1. `reviewer` numa passada final `main...frontend-v2` (invariantes + deep links + guards).
 2. Gates completos + `npx convex dev --once` no `frontend-v2` final; `npx convex codegen` sem diff.
 3. `STATUS.md` com a seção **"Pronto para main"**: lista das funções novas do backend que precisam estar em PROD antes do merge (a nuvem já começou essa lista em "Para retomar"), envs a confirmar em PROD (`CONVEX_SITE_URL`, bridge, Whisper, LLM), validações vivas feitas e as que faltam, textos que o Eric quer revisar (templates de segmento, checkbox LGPD, `VOCAB.lead`).
-4. Corpo do PR #40 atualizado e marcado como pronto para revisão (`gh pr ready 40`). **Não mesclar em `main`**: a ordem é do Eric, que primeiro publica o backend em PROD com `npm run deploy:prod` e depois mescla, porque a Vercel publica o frontend no push.
+4. Corpo do PR #40 atualizado; **continua em rascunho**. Nada vai para `main` nem para PROD nesta fase: quando o Eric decidir publicar, a ordem será dele (primeiro `npm run deploy:prod` do backend, depois o merge, porque a Vercel publica o frontend no push). Deixe essa sequência escrita na seção "Pronto para main" do `STATUS.md`, sem executá-la.
 5. Mensagem final de até 10 linhas: o que foi integrado, o que ficou parado, o que o Eric faz em seguida.
 
 Comece pela seção 0.
