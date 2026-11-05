@@ -2143,7 +2143,7 @@ function TasksTab({
 
 const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   created: { color: "bg-semantic-success", letter: "C" },
-  stage_change: { color: "bg-purple-500", letter: "S" },
+  stage_change: { color: "bg-ai-500", letter: "S" },
   assignment: { color: "bg-indigo-500", letter: "A" },
   message_sent: { color: "bg-brand-500", letter: "M" },
   message_received: { color: "bg-cyan-500", letter: "R" },

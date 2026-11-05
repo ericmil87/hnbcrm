@@ -66,19 +66,19 @@ export interface WhatsAppPreviewProps {
   showMeta?: boolean;
 }
 
-// Verde do WhatsApp: bolha outbound (dark/light) e header. `.light` é a classe
-// de tema do app (dark é o :root), por isso as variantes `[.light_&]:`.
+// Verde do WhatsApp: bolha outbound (dark/light) e header. O tema escuro é o :root;
+// `light-theme:` cobre os temas Claro e Estilo WhatsApp (`data-theme` no <html>).
 const BUBBLE_CLASS =
-  "bg-[#005c4b] text-[#e9edef] [.light_&]:bg-[#d9fdd3] [.light_&]:text-[#111b21]";
-const BUBBLE_MUTED = "text-[#e9edef]/60 [.light_&]:text-[#111b21]/55";
+  "bg-[#005c4b] text-[#e9edef] light-theme:bg-[#d9fdd3] light-theme:text-[#111b21]";
+const BUBBLE_MUTED = "text-[#e9edef]/60 light-theme:text-[#111b21]/55";
 const WALLPAPER_CLASS =
-  "bg-[#0b141a] [.light_&]:bg-[#efeae2]";
-const HEADER_CLASS = "bg-[#1f2c34] text-[#e9edef] [.light_&]:bg-[#008069] [.light_&]:text-white";
+  "bg-[#0b141a] light-theme:bg-[#efeae2]";
+const HEADER_CLASS = "bg-[#1f2c34] text-[#e9edef] light-theme:bg-[#008069] light-theme:text-white";
 const BUTTON_CLASS =
-  "bg-[#005c4b] text-[#53bdeb] [.light_&]:bg-[#d9fdd3] [.light_&]:text-[#027eb5]";
+  "bg-[#005c4b] text-[#53bdeb] light-theme:bg-[#d9fdd3] light-theme:text-[#027eb5]";
 const TICK_CLASS = "text-[#53bdeb]";
 const DATE_CHIP_CLASS =
-  "bg-[#182229] text-[#8696a0] [.light_&]:bg-white/80 [.light_&]:text-[#54656f]";
+  "bg-[#182229] text-[#8696a0] light-theme:bg-white/80 light-theme:text-[#54656f]";
 
 function initials(name: string): string {
   return name
@@ -109,7 +109,7 @@ function DocumentChip({ name, size, url, mimeType }: WhatsAppPreviewAttachment) 
     <div
       className={cn(
         "flex items-center gap-2.5 px-3 py-2 rounded-lg max-w-[280px]",
-        "bg-black/15 [.light_&]:bg-black/5"
+        "bg-black/15 light-theme:bg-black/5"
       )}
     >
       <DocIcon mimeType={mimeType} />
@@ -237,7 +237,7 @@ export function WhatsAppPreview({
           aria-hidden="true"
           className={cn(
             "absolute -right-1.5 top-0 h-3 w-3 [clip-path:polygon(0_0,100%_0,0_100%)]",
-            "bg-[#005c4b] [.light_&]:bg-[#d9fdd3]"
+            "bg-[#005c4b] light-theme:bg-[#d9fdd3]"
           )}
         />
         <div
@@ -362,11 +362,11 @@ export function WhatsAppPreview({
                 Hoje
               </span>
             </div>
-            <div className="text-[#e9edef] [.light_&]:text-[#111b21]">{bubble}</div>
+            <div className="text-[#e9edef] light-theme:text-[#111b21]">{bubble}</div>
           </div>
           {/* barra do compositor (decorativa) */}
-          <div className={cn("flex items-center gap-2 px-2.5 py-2", "bg-[#1f2c34] [.light_&]:bg-[#f0f2f5]")}>
-            <div className="flex-1 h-9 rounded-full bg-[#2a3942] [.light_&]:bg-white px-3 flex items-center text-xs text-[#8696a0]">
+          <div className={cn("flex items-center gap-2 px-2.5 py-2", "bg-[#1f2c34] light-theme:bg-[#f0f2f5]")}>
+            <div className="flex-1 h-9 rounded-full bg-[#2a3942] light-theme:bg-white px-3 flex items-center text-xs text-[#8696a0]">
               Mensagem
             </div>
             <div className="h-9 w-9 rounded-full bg-[#00a884] flex items-center justify-center text-white">

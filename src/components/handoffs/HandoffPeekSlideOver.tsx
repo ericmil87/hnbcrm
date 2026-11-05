@@ -234,7 +234,7 @@ export function HandoffPeekSlideOver({
         {handoff.summary && (
           <div>
             <h3 className="flex items-center gap-1.5 text-xs font-medium text-text-muted mb-1">
-              <Sparkles size={12} className="text-purple-400" />
+              <Sparkles size={12} className="text-ai-400" />
               Resumo da IA
             </h3>
             <p className="text-sm text-text-secondary whitespace-pre-wrap break-words">
@@ -337,14 +337,14 @@ export function HandoffPeekSlideOver({
                     className={cn(
                       "self-end w-full max-w-md rounded-xl border px-3 py-2",
                       pendingDraft
-                        ? "border-purple-500/40 bg-purple-500/5"
+                        ? "border-ai-500/40 bg-ai-500/5"
                         : "border-border bg-surface-raised"
                     )}
                   >
                     <p
                       className={cn(
                         "flex items-center gap-1.5 text-xs font-medium mb-1",
-                        pendingDraft ? "text-purple-300" : "text-text-muted"
+                        pendingDraft ? "text-ai-300" : "text-text-muted"
                       )}
                     >
                       <Sparkles size={12} />

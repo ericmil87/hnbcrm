@@ -1512,7 +1512,7 @@ function FollowUpCard({
             size={16}
             className={cn(
               "shrink-0 mt-0.5",
-              isNeedsHuman ? "text-semantic-warning" : "text-purple-400"
+              isNeedsHuman ? "text-semantic-warning" : "text-ai-400"
             )}
           />
           <div className="min-w-0 flex-1">

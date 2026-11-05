@@ -104,15 +104,34 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `warning` | `#EAB308` | Avisos (âmbar — distinto do laranja) |
 | `info` | `#3B82F6` | Informações |
 
+#### Três temas (`data-theme` no `<html>`)
+
+Fonte da verdade: `src/index.css` (canais `--rgb-*`) e `src/lib/themeTokens.test.ts`. Escuro é o `:root`; Claro e Estilo WhatsApp são `[data-theme="light"]` e `[data-theme="whatsapp"]`. O seletor de tema chega depois; hoje os dois blocos novos só valem se o atributo for setado no DevTools.
+
+| Grupo | Token | Escuro | Claro | Estilo WhatsApp |
+|---|---|---|---|---|
+| Base | `surface-base` / `raised` / `overlay` / `sunken` | `#0F0F11` / `#18181B` / `#1F1F23` / `#09090B` | `#FAFAFA` / `#FFFFFF` / `#FFFFFF` / `#F4F4F5` | `#F0F2F5` / `#FFFFFF` / `#FFFFFF` / `#E9EDEF` |
+| Base | `border-default` / `subtle` / `strong` | `#27272A` / `#1E1E22` / `#3F3F46` | `#E4E4E7` / `#EBEBED` / `#D4D4D8` | `#D1D7DB` / `#E9EDEF` / `#AEBAC1` |
+| Base | `text-primary` / `secondary` / `muted` | `#FAFAFA` / `#A1A1AA` / `#71717A` | `#18181B` / `#52525B` / `#6B6B74` | `#111B21` / `#3B4A54` / `#54656F` |
+| Marca | `brand-300` / `400` / `500` | `#FDBA74` / `#FB923C` / `#FF6B00` | `#9A3412` / `#C2410C` / `#C2410C` | `#015C4B` / `#017561` / `#017561` |
+| Marca | `brand-600` (botão) | `#EA580C` | `#AD3A0B` | `#008069` |
+| Semântica | `success` / `error` / `warning` / `info` | `#22C55E` / `#EF4444` / `#EAB308` / `#3B82F6` | `#15803D` / `#B91C1C` / `#8A5A00` / `#1D4ED8` | `#166534` / `#B91C1C` / `#8A5A00` / `#1D4ED8` |
+| IA | `ai-300` / `400` / `500` / `600` / `700` | `#D8B4FE` / `#C084FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#6B21A8` / `#7E22CE` / `#9333EA` / `#7E22CE` / `#6B21A8` | igual ao Claro |
+| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#A0350A` / `#7E22CE` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` |
+| Chat | `bubble-out-fg` | `#FFFFFF` | `#FFFFFF` | `#111B21` |
+
+`ai-*` substitui o `purple-*` do Tailwind (proibido em `src`, exceto `developers/JsonHighlighter.tsx`). A tabela completa de chat, bolhas e sombras está no plano `01-temas.md` §3.5-3.6. Divergência do plano: `bubble-out` do Claro é `#A0350A` (plano: `#C2410C`), porque o rodapé a 75% de branco só atinge 3,58:1 com `#C2410C`; com `#A0350A` chega a 4,62:1.
+
 #### Conformidade de Contraste
 
-Todos os pares de texto/fundo atendem WCAG AA:
-- `#FAFAFA` sobre `#0F0F11` → 18.1:1 (AAA)
-- `#A1A1AA` sobre `#0F0F11` → 7.2:1 (AAA)
-- `#71717A` sobre `#0F0F11` → 4.6:1 (AA)
-> Nota: os contrastes do Escuro medidos são 3,96:1 (`text-muted`/base) e 3,56:1 (branco/`brand-600`), listados em `DARK_KNOWN_FAILURES` de `src/lib/themeTokens.test.ts`; a tabela dos 3 temas chega no fv2-10.
+Claro e Estilo WhatsApp passam em todos os pares AA do teste (texto 4,5:1; ícones e tique 3:1). O Escuro é mantido idêntico ao app anterior e falha os pares abaixo (valores medidos; lista `DARK_KNOWN_FAILURES`):
 
-- Botões primários usam `brand-600` (`#EA580C`, 4.6:1 com branco) em vez de `brand-500` para conformidade AA em texto de corpo
+- `text-muted` sobre `surface-base` 3,96, `raised` 3,67, `overlay` 3,40, `sunken` 4,12
+- Branco sobre `brand-600` 3,56, `success` 2,28, `error` 3,76, `warning` 1,92, `info` 3,68
+- Bolha da equipe (`bubble-out`): `bubble-out-fg` 3,56 (a 75%: 2,60), `bubble-out-label` 2,63, `bubble-out-link` 3,56, `tick-read` 1,57
+- `bubble-ai-label` sobre `bubble-ai` 4,06; `badge-unread-fg` 3,56; `bubble-system-fg` 3,40
+
+Esses pares só podem sair da lista quando passarem; pares novos que falhem quebram o teste.
 
 ### 1.3 Configuração TailwindCSS
 
@@ -714,19 +733,12 @@ export function Card({
 
 Os tokens de cor são canais RGB (`--rgb-*`) com alfa funcionando (`bg-surface-base/50`); CSS cru e `style={{}}` usam os aliases `var(--surface-*)`, `var(--text-*)`, `var(--border-*)` e `var(--color-semantic-*)`. Há tokens de chat (`chat-*`, `composer*`, `bubble-*`, `tick-read`, `badge-unread*`) e a escala `ai-300..700`. Os valores do Escuro estão congelados em `src/lib/themeTokens.test.ts`.
 
-O app usa **dark mode como padrão**. Light mode é suportado via classe `.light` no `<html>`:
+O app tem três temas: Escuro (padrão, `:root`), Claro e Estilo WhatsApp. O tema é o atributo `data-theme` no `<html>` (`light` ou `whatsapp`; sem atributo = Escuro). Tem de ser no `<html>`: os aliases (`--surface-*`, `--text-*`...) são resolvidos no elemento onde foram declarados, então um tema em wrapper deixaria os aliases na paleta do Escuro. Os aliases ficam só em `:root`.
 
-```typescript
-// Dark mode (padrão):
-// Background: bg-surface-base (#0F0F11)
-// Cards: bg-surface-raised (#18181B)
-// Texto: text-text-primary (#FAFAFA)
+Use sempre tokens, que mudam sozinhos com o tema. Para o par inevitável claro/escuro (ex.: `WhatsAppPreview`, cores fixas do WhatsApp), use a variante `light-theme:`, que vale para Claro e Estilo WhatsApp:
 
-// Light mode (classe .light no <html>):
-// As CSS custom properties são sobrescritas automaticamente
-// Background: bg-surface-base (#FAFAFA)
-// Cards: bg-surface-raised (#FFFFFF)
-// Texto: cores escuras do Tailwind
+```tsx
+<div className="bg-[#005c4b] light-theme:bg-[#d9fdd3]" />
 ```
 
 ---
