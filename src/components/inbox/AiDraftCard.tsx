@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot } from "lucide-react";
+import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot, Paperclip } from "lucide-react";
+import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
@@ -64,7 +65,7 @@ function isStructuredAction(action: ProposedAction): action is ProposedActionStr
 function actionLabel(raw: string): string {
   const name = raw.split("(")[0];
   const labels: Record<string, string> = {
-    moveThisLead: "Mover o lead de estágio",
+    moveThisLead: "Mover o lead de etapa",
     scheduleFollowUp: "Agendar follow-up",
     qualifyThisLead: "Atualizar qualificação BANT",
     requestHandoff: "Repassar para humano",
@@ -142,10 +143,10 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
         ...(text !== undefined ? { editedText: text } : {}),
         ...(actionIndexes ? { actionIndexes } : {}),
       });
-      toast.success("Resposta enviada ao cliente");
+      toast.success("Resposta enviada");
       setEditing(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao enviar");
+      toast.error(mutationErrorMessage(e, "Não foi possível enviar. Tente de novo."));
     } finally {
       setBusy(false);
     }
@@ -155,9 +156,9 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
     setBusy(true);
     try {
       await discardDraft({ draftMessageId: message._id as Id<"messages"> });
-      toast.success("Sugestão descartada");
+      toast.success("Resposta sugerida descartada");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao descartar");
+      toast.error(mutationErrorMessage(e, "Não foi possível descartar. Tente de novo."));
     } finally {
       setBusy(false);
     }
@@ -174,22 +175,22 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
         sourceDraftId: message._id as Id<"messages">,
       });
       setInstruction("");
-      toast.success("Instrução enviada — a IA está reescrevendo…");
+      toast.success("Instrução enviada. A IA está reescrevendo…");
     } catch (e) {
       setRegenerating(false);
-      toast.error(mutationErrorMessage(e, "Falha ao pedir uma nova versão"));
+      toast.error(mutationErrorMessage(e, "Não foi possível pedir uma nova versão. Tente de novo."));
     }
   };
 
   if (resolved) {
     const resolvedLabel =
       draft.status === "discarded"
-        ? "Sugestão da IA descartada"
+        ? "Resposta sugerida descartada"
         : draft.status === "revised"
-          ? "Substituído por nova versão (instrução do time)"
+          ? "Substituída por nova versão (instrução da equipe)"
           : draft.status === "sent_edited"
-            ? "Sugestão da IA enviada (editada)"
-            : "Sugestão da IA enviada";
+            ? "Resposta sugerida enviada (editada)"
+            : "Resposta sugerida enviada";
     return (
       <div className="flex justify-end">
         <div className="flex flex-col items-end gap-1.5 max-w-md">
@@ -227,13 +228,13 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
         {draft.followUpId && (
           <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-medium text-purple-300/80">
             <Bot size={11} className="shrink-0" />
-            Rascunho de follow-up agendado
+            Follow-up agendado: resposta sugerida
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
           <Sparkles size={14} className="text-purple-400 shrink-0" />
           <span className="flex-1 min-w-0 text-xs font-medium text-purple-300">
-            Sugestão do atendente IA — aguardando sua revisão
+            {VOCAB.attendant.draft} · aguardando sua revisão
           </span>
           {typeof draft.confidence === "number" && (
             <span
@@ -252,7 +253,10 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
             </p>
           )}
           {draft.attachments && draft.attachments.length > 0 && (
-            <p className="mb-1.5 text-xs text-text-muted">📎 Imagem anexada (flyer da agenda) — vai junto, com o texto como legenda.</p>
+            <p className="mb-1.5 flex items-center gap-1 text-xs text-text-muted">
+              <Paperclip size={12} className="shrink-0" aria-hidden="true" />
+              Imagem anexada (flyer da agenda). Vai junto, com o texto como legenda.
+            </p>
           )}
           {editing ? (
             <textarea
@@ -300,7 +304,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
           {regenerating ? (
             <p className="flex items-center gap-2 text-xs text-text-secondary">
               <Spinner size="sm" />
-              IA reescrevendo o rascunho…
+              IA reescrevendo a resposta sugerida…
             </p>
           ) : (
             <>
@@ -330,7 +334,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
                     }
                   }}
                   placeholder={'Instrua a IA: "ofereça 10% de desconto e pergunte o prazo"'}
-                  aria-label="Instrução para a IA reescrever o rascunho"
+                  aria-label="Instrução para a IA reescrever a resposta sugerida"
                   className="min-w-0 flex-1 h-10 px-3 rounded-lg bg-surface-raised border border-border-strong text-text-primary placeholder:text-text-muted text-base md:text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
                 />
                 <Button
@@ -399,7 +403,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
               <Button
                 variant="ghost"
                 disabled={busy || regenerating}
-                aria-label="Descartar sugestão"
+                aria-label="Descartar resposta sugerida"
                 onClick={() => void handleDiscard()}
               >
                 <Trash2 size={14} />
@@ -489,7 +493,7 @@ export function ReturnToAiButton({
     toast.promise(returnToAi({ conversationId, ...(instruction ? { instruction } : {}) }), {
       loading: "Devolvendo…",
       success: "Conversa devolvida à IA",
-      error: (e) => mutationErrorMessage(e, "Falha ao devolver para a IA"),
+      error: (e) => mutationErrorMessage(e, "Não foi possível devolver à IA. Tente de novo."),
     });
   };
 
@@ -498,7 +502,7 @@ export function ReturnToAiButton({
       {variant === "button" ? (
         <Button type="button" variant="ghost" size="sm" onClick={() => setOpen((v) => !v)}>
           <Sparkles size={14} className="mr-1.5" />
-          Devolver para IA
+          Devolver à IA
         </Button>
       ) : (
         <button
@@ -506,12 +510,12 @@ export function ReturnToAiButton({
           onClick={() => setOpen((v) => !v)}
           className="text-xs text-brand-500 hover:text-brand-400 font-medium"
         >
-          Devolver para IA
+          Devolver à IA
         </button>
       )}
       {open && (
         <AiInstructionPopover
-          title="Devolver a conversa para a IA"
+          title="Devolver a conversa à IA"
           placeholder='Instrução para a IA (opcional): responda o que ela precisa — ex. "o Pix é financeiro@empresa.com e o valor é R$ 150" — ou peça uma ação: "faça follow-up amanhã"'
           submitLabel="Devolver"
           onSubmit={submit}
@@ -546,8 +550,8 @@ export function AiConversationControls({
     setAskOpen(false);
     toast.promise(requestDraft({ conversationId, ...(instruction ? { instruction } : {}) }), {
       loading: "Pedindo à IA…",
-      success: "Pedido enviado — a IA vai propor uma resposta",
-      error: (e) => mutationErrorMessage(e, "Falha ao pedir sugestão à IA"),
+      success: "Pedido enviado. A IA vai propor uma resposta",
+      error: (e) => mutationErrorMessage(e, "Não foi possível pedir a sugestão. Tente de novo."),
     });
   };
 
@@ -572,9 +576,9 @@ export function AiConversationControls({
             type="button"
             onClick={() =>
               toast.promise(assumeConversation({ conversationId }), {
-                loading: "Assumindo...",
-                success: "Conversa assumida — IA pausada",
-                error: "Falha ao assumir",
+                loading: "Assumindo…",
+                success: "Conversa assumida. IA pausada",
+                error: (e) => mutationErrorMessage(e, "Não foi possível assumir a conversa. Tente de novo."),
               })
             }
             className="text-xs text-brand-500 hover:text-brand-400 font-medium"
@@ -589,7 +593,7 @@ export function AiConversationControls({
                 className="inline-flex items-center gap-1 text-xs text-brand-500 hover:text-brand-400 font-medium"
               >
                 <Sparkles size={12} />
-                Pedir sugestão à IA
+                Pedir resposta sugerida
               </button>
               {askOpen && (
                 <AiInstructionPopover

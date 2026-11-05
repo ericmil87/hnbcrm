@@ -60,7 +60,7 @@ const DEFAULT_SETTINGS: FormSettings = {
 // Map field type → default label (PT-BR)
 const DEFAULT_LABELS: Record<FormField["type"], string> = {
   text: "Texto",
-  email: "Email",
+  email: "E-mail",
   phone: "Telefone",
   number: "Número",
   select: "Seleção",

@@ -29,7 +29,7 @@ interface FieldTypeEntry {
 
 const INPUT_FIELD_TYPES: FieldTypeEntry[] = [
   { type: "text", label: "Texto", icon: Type },
-  { type: "email", label: "Email", icon: Mail },
+  { type: "email", label: "E-mail", icon: Mail },
   { type: "phone", label: "Telefone", icon: Phone },
   { type: "number", label: "Número", icon: Hash },
   { type: "select", label: "Seleção", icon: ChevronDown },

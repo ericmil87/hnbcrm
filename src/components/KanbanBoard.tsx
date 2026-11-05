@@ -366,9 +366,9 @@ function QuickAddForm({
           temperature: "cold",
         }),
         {
-          loading: "Criando lead...",
-          success: "Lead criado!",
-          error: "Falha ao criar lead",
+          loading: "Criando lead…",
+          success: "Lead criado",
+          error: "Não foi possível criar o lead.",
         }
       );
       onClose();
@@ -384,7 +384,7 @@ function QuickAddForm({
           type="text"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder="Título do lead..."
+          placeholder="Título do lead…"
           className="w-full px-3 py-2 bg-surface-sunken border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted text-sm"
           style={{ fontSize: "16px" }}
           autoFocus
@@ -521,14 +521,14 @@ function StageEditPopover({
             onChange={(e) => {
               onUpdate(stage._id, { isClosedWon: e.target.checked, isClosedLost: false });
             }}
-            label={<span className="text-xs">Fechado - Ganho</span>}
+            label={<span className="text-xs">Fechado - ganho</span>}
           />
           <Checkbox
             checked={stage.isClosedLost || false}
             onChange={(e) => {
               onUpdate(stage._id, { isClosedLost: e.target.checked, isClosedWon: false });
             }}
-            label={<span className="text-xs">Fechado - Perdido</span>}
+            label={<span className="text-xs">Fechado - perdido</span>}
           />
         </div>
 
@@ -539,7 +539,7 @@ function StageEditPopover({
             className="w-full px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 rounded-field transition-colors flex items-center gap-2"
           >
             <Trash2 size={14} />
-            Excluir Etapa
+            Excluir etapa
           </button>
         </div>
 
@@ -550,7 +550,7 @@ function StageEditPopover({
             onDelete(stage._id);
             onClose();
           }}
-          title="Excluir Etapa"
+          title="Excluir etapa"
           description={`Tem certeza que deseja excluir a etapa "${stage.name}"? Leads vinculados precisarão ser movidos primeiro.`}
           confirmLabel="Excluir"
           variant="danger"
@@ -590,7 +590,7 @@ function AddStageColumn({
           className="w-full h-32 bg-surface-sunken rounded-card border-2 border-dashed border-border hover:border-brand-500 text-text-muted hover:text-brand-500 transition-all flex flex-col items-center justify-center gap-2"
         >
           <Plus size={24} />
-          <span className="text-sm font-medium">Adicionar Etapa</span>
+          <span className="text-sm font-medium">Adicionar etapa</span>
         </button>
       </div>
     );
@@ -599,7 +599,7 @@ function AddStageColumn({
   return (
     <div className="flex-shrink-0 w-80">
       <form onSubmit={handleSubmit} className="bg-surface-sunken rounded-card p-4 border border-border">
-        <h4 className="text-sm font-semibold text-text-primary mb-3">Nova Etapa</h4>
+        <h4 className="text-sm font-semibold text-text-primary mb-3">Nova etapa</h4>
         <div className="space-y-3">
           <input
             type="text"
@@ -943,7 +943,7 @@ export function KanbanBoard() {
       toast.success(successMsg(ids.length));
       clearSelection();
     } catch {
-      toast.error("Falha na ação em lote");
+      toast.error("Não foi possível concluir a ação em lote.");
     }
   };
   const guardBulk = (run: () => Promise<void>, title: string, description: string) => {
@@ -1035,8 +1035,8 @@ export function KanbanBoard() {
     // Normal move (non-closed stage). The optimistic update settles the card in
     // the target column instantly, so a simple success/error toast is enough.
     moveLeadToStage({ leadId, stageId })
-      .then(() => toast.success("Lead movido!"))
-      .catch(() => toast.error("Falha ao mover lead"));
+      .then(() => toast.success("Lead movido"))
+      .catch(() => toast.error("Não foi possível mover o lead."));
   };
 
   const handleArchiveBoard = async () => {
@@ -1044,20 +1044,20 @@ export function KanbanBoard() {
 
     try {
       await archiveBoard({ boardId: selectedBoardId });
-      toast.success("Pipeline arquivado!");
+      toast.success("Funil arquivado");
       setSelectedBoardId(null);
       setShowSettingsMenu(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao arquivar pipeline");
+      toast.error(error instanceof Error ? error.message : "Não foi possível arquivar o funil.");
     }
   };
 
   const handleUnarchiveBoard = async (boardId: Id<"boards">) => {
     try {
       await unarchiveBoard({ boardId });
-      toast.success("Pipeline restaurado!");
+      toast.success("Funil restaurado");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao restaurar pipeline");
+      toast.error(error instanceof Error ? error.message : "Não foi possível restaurar o funil.");
     }
   };
 
@@ -1083,7 +1083,7 @@ export function KanbanBoard() {
       setShowBulkDeleteConfirm(false);
       setBulkDeleteContacts(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao excluir leads");
+      toast.error(error instanceof Error ? error.message : "Não foi possível excluir leads.");
     } finally {
       setBulkDeleting(false);
     }
@@ -1115,9 +1115,9 @@ export function KanbanBoard() {
           stages: defaultStages,
         }),
         {
-          loading: "Criando pipeline...",
-          success: "Pipeline criado!",
-          error: "Falha ao criar pipeline",
+          loading: "Criando funil…",
+          success: "Funil criado",
+          error: "Não foi possível criar o funil.",
         }
       );
       setShowCreateBoard(false);
@@ -1140,11 +1140,11 @@ export function KanbanBoard() {
   if (boards.length === 0) {
     return (
       <div className="text-center py-12">
-        <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum pipeline encontrado</h3>
-        <p className="text-text-secondary mb-4">Crie seu primeiro pipeline de vendas para começar.</p>
+        <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum funil ainda</h3>
+        <p className="text-text-secondary mb-4">Crie seu primeiro funil de vendas para começar a acompanhar seus leads.</p>
         <Button onClick={() => setShowCreateBoard(true)} variant="primary" size="md">
           <Plus size={20} />
-          Criar Pipeline
+          Criar funil
         </Button>
       </div>
     );
@@ -1190,14 +1190,14 @@ export function KanbanBoard() {
               <button
                 onClick={() => setShowCreateBoard(true)}
                 className="px-4 py-2 rounded-full font-semibold whitespace-nowrap bg-surface-overlay text-brand-400 hover:bg-surface-raised transition-all duration-150 flex items-center gap-1"
-                aria-label="Criar pipeline"
+                aria-label="Criar funil"
               >
                 <Plus size={16} />
                 Novo
               </button>
             </div>
 
-            {/* Pipelines arquivados */}
+            {/* Funis arquivados */}
             {archivedBoards.length > 0 && (
               <div className="relative">
                 <button
@@ -1208,7 +1208,7 @@ export function KanbanBoard() {
                       ? "bg-brand-600/15 border-brand-500 text-brand-300"
                       : "bg-surface-overlay border-border-strong text-text-secondary hover:text-text-primary"
                   )}
-                  aria-label="Pipelines arquivados"
+                  aria-label="Funis arquivados"
                   aria-expanded={showArchivedBoardsMenu}
                 >
                   <Archive size={15} />
@@ -1237,7 +1237,7 @@ export function KanbanBoard() {
                               <button
                                 onClick={() => handleUnarchiveBoard(board._id)}
                                 className="p-1.5 rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-overlay transition-colors"
-                                aria-label={`Restaurar pipeline ${board.name}`}
+                                aria-label={`Restaurar funil ${board.name}`}
                                 title="Restaurar"
                               >
                                 <ArchiveRestore size={14} />
@@ -1248,7 +1248,7 @@ export function KanbanBoard() {
                                   setShowArchivedBoardsMenu(false);
                                 }}
                                 className="p-1.5 rounded-full text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
-                                aria-label={`Excluir pipeline ${board.name}`}
+                                aria-label={`Excluir funil ${board.name}`}
                                 title="Excluir"
                               >
                                 <Trash2 size={14} />
@@ -1263,13 +1263,13 @@ export function KanbanBoard() {
               </div>
             )}
 
-            {/* Settings Dropdown (only for active pipeline) */}
+            {/* Settings Dropdown (only for active funil) */}
             {selectedBoardId && (
               <div className="relative">
                 <button
                   onClick={() => setShowSettingsMenu(!showSettingsMenu)}
                   className="p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
-                  aria-label="Configurações do pipeline"
+                  aria-label="Configurações do funil"
                 >
                   <Settings2 size={20} />
                 </button>
@@ -1288,7 +1288,7 @@ export function KanbanBoard() {
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
                       >
-                        Editar Pipeline
+                        Editar funil
                       </button>
                       <button
                         onClick={() => {
@@ -1297,7 +1297,7 @@ export function KanbanBoard() {
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
                       >
-                        Gerenciar Etapas
+                        Gerenciar etapas
                       </button>
                       <button
                         onClick={() => {
@@ -1307,7 +1307,7 @@ export function KanbanBoard() {
                         className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors flex items-center gap-2"
                       >
                         <Archive size={14} />
-                        Arquivar Pipeline
+                        Arquivar funil
                       </button>
                       <button
                         onClick={() => {
@@ -1316,7 +1316,7 @@ export function KanbanBoard() {
                         }}
                         className="w-full px-4 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
                       >
-                        Excluir Pipeline
+                        Excluir funil
                       </button>
                     </div>
                   </>
@@ -1332,7 +1332,7 @@ export function KanbanBoard() {
                 className="whitespace-nowrap"
               >
                 <Plus size={20} />
-                Criar Lead
+                Criar lead
               </Button>
             )}
           </div>
@@ -1344,7 +1344,7 @@ export function KanbanBoard() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar leads..."
+            placeholder="Buscar leads…"
             className="flex-1 min-w-[200px] px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted text-sm"
             style={{ fontSize: "16px" }}
           />
@@ -1356,7 +1356,7 @@ export function KanbanBoard() {
               className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas Prioridades</option>
+              <option value="all">Todas prioridades</option>
               <option value="urgent">Urgente</option>
               <option value="high">Alta</option>
               <option value="medium">Média</option>
@@ -1372,7 +1372,7 @@ export function KanbanBoard() {
               className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas Temperaturas</option>
+              <option value="all">Todas temperaturas</option>
               <option value="hot">Quente</option>
               <option value="warm">Morno</option>
               <option value="cold">Frio</option>
@@ -1387,7 +1387,7 @@ export function KanbanBoard() {
               className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todos Responsáveis</option>
+              <option value="all">Todos responsáveis</option>
               <option value="unassigned">Não atribuído</option>
               {teamMembers?.map((member) => (
                 <option key={member._id} value={member._id}>
@@ -1407,7 +1407,7 @@ export function KanbanBoard() {
                 className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
                 style={{ fontSize: "16px" }}
               >
-                <option value="all">Todas Unidades</option>
+                <option value="all">Todas unidades</option>
                 <option value="none">Sem unidade</option>
                 {(units ?? []).map((unit) => (
                   <option key={unit._id} value={unit._id}>
@@ -1430,8 +1430,8 @@ export function KanbanBoard() {
                     ? "bg-brand-600 text-white"
                     : "text-text-secondary hover:text-text-primary"
                 )}
-                aria-label="Visão Kanban"
-                title="Visão Kanban"
+                aria-label="Modo quadro"
+                title="Modo quadro"
               >
                 <LayoutGrid size={16} />
               </button>
@@ -1443,8 +1443,8 @@ export function KanbanBoard() {
                     ? "bg-brand-600 text-white"
                     : "text-text-secondary hover:text-text-primary"
                 )}
-                aria-label="Visão Lista"
-                title="Visão Lista"
+                aria-label="Modo lista"
+                title="Modo lista"
               >
                 <List size={16} />
               </button>
@@ -1518,17 +1518,17 @@ export function KanbanBoard() {
                           toast.promise(
                             updateStage({ stageId, ...updates }),
                             {
-                              loading: "Atualizando...",
-                              success: "Etapa atualizada!",
-                              error: "Falha ao atualizar",
+                              loading: "Atualizando…",
+                              success: "Etapa atualizada",
+                              error: "Não foi possível atualizar.",
                             }
                           );
                         }}
                         onDelete={(stageId) => {
                           toast.promise(deleteStage({ stageId }), {
-                            loading: "Excluindo...",
-                            success: "Etapa excluída!",
-                            error: (e) => e.message || "Falha ao excluir",
+                            loading: "Excluindo…",
+                            success: "Etapa excluída",
+                            error: (e) => e.message || "Não foi possível excluir.",
                           });
                         }}
                       />
@@ -1545,9 +1545,9 @@ export function KanbanBoard() {
                     toast.promise(
                       createStage({ boardId: selectedBoardId, name, color }),
                       {
-                        loading: "Criando etapa...",
-                        success: "Etapa criada!",
-                        error: "Falha ao criar etapa",
+                        loading: "Criando etapa…",
+                        success: "Etapa criada",
+                        error: "Não foi possível criar a etapa.",
                       }
                     );
                   }}
@@ -1597,7 +1597,7 @@ export function KanbanBoard() {
         />
       )}
 
-      {/* Deep-link ?lead= (vindo de Tarefas, Caixa de Entrada, etc.) */}
+      {/* Deep-link ?lead= (vindo de Tarefas, Conversas, etc.) */}
       {leadParam && (
         <ErrorBoundary key={leadParam} fallback={<></>}>
           <LeadDeepLinkResolver
@@ -1650,7 +1650,7 @@ export function KanbanBoard() {
             onClick={() => setShowCreateBoard(false)}
           />
           <div className="relative z-10 w-full bg-surface-overlay border border-border rounded-t-xl sm:rounded-xl sm:max-w-md sm:mx-4 p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Nova Pipeline</h2>
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Novo funil</h2>
             <form onSubmit={handleCreateBoard} className="space-y-4">
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1">
@@ -1701,12 +1701,12 @@ export function KanbanBoard() {
         open={showArchiveBoardConfirm}
         onClose={() => setShowArchiveBoardConfirm(false)}
         onConfirm={handleArchiveBoard}
-        title="Arquivar Pipeline"
-        description={`O pipeline "${selectedBoard?.name ?? ""}" e seus leads somem das listas ativas, mas continuam salvos e podem ser restaurados a qualquer momento.`}
+        title="Arquivar funil"
+        description={`O funil "${selectedBoard?.name ?? ""}" e seus leads somem das listas ativas, mas continuam salvos e podem ser restaurados a qualquer momento.`}
         confirmLabel="Arquivar"
       />
 
-      {/* Delete Board Modal (pipeline ativo ou arquivado) */}
+      {/* Delete Board Modal (funil ativo ou arquivado) */}
       {deleteBoardTarget && (
         <DeleteBoardModal
           boardId={deleteBoardTarget._id}
@@ -1720,7 +1720,7 @@ export function KanbanBoard() {
       <Modal
         open={showBulkDeleteConfirm}
         onClose={() => { if (!bulkDeleting) { setShowBulkDeleteConfirm(false); setBulkDeleteContacts(false); } }}
-        title="Excluir Leads"
+        title="Excluir leads"
       >
         <div className="space-y-4">
           <p className="text-sm text-text-secondary leading-relaxed">
@@ -1749,7 +1749,7 @@ export function KanbanBoard() {
               className="flex-1"
               disabled={bulkDeleting}
             >
-              {bulkDeleting ? "Excluindo..." : "Excluir permanentemente"}
+              {bulkDeleting ? "Excluindo…" : "Excluir permanentemente"}
             </Button>
           </div>
         </div>

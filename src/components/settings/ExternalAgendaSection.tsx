@@ -57,7 +57,7 @@ export function ExternalAgendaSection({
       setApiKey("");
       toast.success("Agenda externa salva");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar a agenda externa");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar a agenda externa.");
     } finally {
       setBusy(false);
     }

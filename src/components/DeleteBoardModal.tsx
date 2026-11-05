@@ -30,10 +30,10 @@ export function DeleteBoardModal({ boardId, boardName, onClose, onDeleted }: Del
     setDeleting(true);
     try {
       await deleteBoard({ boardId, deleteLeads: true, deleteContacts });
-      toast.success("Pipeline excluído!");
+      toast.success("Funil excluído");
       onDeleted();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao excluir pipeline");
+      toast.error(error instanceof Error ? error.message : "Não foi possível excluir o funil.");
       setDeleting(false);
     }
   };
@@ -41,14 +41,14 @@ export function DeleteBoardModal({ boardId, boardName, onClose, onDeleted }: Del
   const leadCountLabel = impact ? (impact.capped ? "1000+" : String(impact.leadCount)) : null;
 
   return (
-    <Modal open={true} onClose={onClose} title="Excluir Pipeline">
+    <Modal open={true} onClose={onClose} title="Excluir funil">
       <div className="space-y-4">
         <div className="flex gap-3">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-semantic-error/10 flex items-center justify-center">
             <AlertTriangle size={20} className="text-semantic-error" />
           </div>
           <p className="text-sm text-text-secondary leading-relaxed pt-2">
-            Esta ação não pode ser desfeita. O pipeline{" "}
+            Esta ação não pode ser desfeita. O funil{" "}
             <strong className="text-text-primary">&ldquo;{boardName}&rdquo;</strong>, suas etapas e{" "}
             {leadCountLabel === null ? (
               <Spinner size="sm" className="inline-block align-middle" />
@@ -66,7 +66,7 @@ export function DeleteBoardModal({ boardId, boardName, onClose, onDeleted }: Del
           <Checkbox
             checked={deleteContacts}
             onChange={(e) => setDeleteContacts(e.target.checked)}
-            label={`Excluir também os ${impact.exclusiveContactCount} contato(s) vinculados apenas a este pipeline`}
+            label={`Excluir também os ${impact.exclusiveContactCount} contato(s) vinculados apenas a este funil`}
           />
         )}
 

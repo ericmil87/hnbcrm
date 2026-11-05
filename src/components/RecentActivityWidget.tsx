@@ -383,7 +383,7 @@ export function RecentActivityWidget({
                 className="w-full"
                 onClick={() => navigate("/app/auditoria")}
               >
-                Ver mais na Auditoria
+                Ver mais no histórico de alterações
                 <ChevronRight size={14} />
               </Button>
             </div>

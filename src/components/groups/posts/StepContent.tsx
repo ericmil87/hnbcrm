@@ -191,7 +191,7 @@ export function StepContent({
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="ai-persona">
-                Persona
+                Jeito de atender
               </label>
               <select
                 id="ai-persona"
@@ -225,7 +225,7 @@ export function StepContent({
           {draft.ai.persona === "custom" && (
             <div>
               <label className="mb-1.5 block text-[13px] font-medium text-text-secondary" htmlFor="ai-custom">
-                Persona personalizada
+                Jeito de atender personalizado
               </label>
               <textarea
                 id="ai-custom"

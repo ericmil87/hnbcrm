@@ -6,6 +6,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
+import { VOCAB } from "@/lib/vocab";
 import { toast } from "sonner";
 import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus, BarChart3, MapPin, UserRound, Calendar, Link2, Phone, HelpCircle, Images, MousePointerClick } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -516,7 +517,7 @@ export function Inbox() {
       groupMentions.reset();
       stopTyping();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Falha ao agendar");
+      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Não foi possível agendar.");
     }
   };
 
@@ -525,7 +526,7 @@ export function Inbox() {
       await cancelScheduled({ scheduledMessageId: id as Id<"scheduledMessages"> });
       toast.success("Agendamento cancelado");
     } catch {
-      toast.error("Falha ao cancelar agendamento");
+      toast.error("Não foi possível cancelar o agendamento.");
     }
   };
 
@@ -881,9 +882,9 @@ export function Inbox() {
     toast.promise(acceptHandoff({ handoffId: pendingHandoff._id as Id<"handoffs"> }), {
       loading: "Assumindo conversa…",
       success: isGroupConversation
-        ? "Repasse assumido — a IA da sala fica em silêncio por 24 h"
-        : "Conversa assumida — IA pausada",
-      error: (e) => mutationErrorMessage(e, "Falha ao assumir o repasse"),
+        ? "Conversa assumida. A IA da sala fica em silêncio por 24 h"
+        : "Conversa assumida. IA pausada",
+      error: (e) => mutationErrorMessage(e, "Não foi possível assumir a conversa. Tente de novo."),
     });
   };
 
@@ -1005,7 +1006,7 @@ export function Inbox() {
       await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
       toast.success("Conversa devolvida à IA");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao devolver para a IA"));
+      toast.error(mutationErrorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
     } finally {
       setReturningFromBot(false);
     }
@@ -1017,7 +1018,7 @@ export function Inbox() {
       await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
       toast.success("A IA volta a responder quando for mencionada na sala");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao devolver à IA"));
+      toast.error(mutationErrorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
     }
   };
 
@@ -1031,7 +1032,7 @@ export function Inbox() {
       handleBackToList();
       toast.success("Parou de acompanhar o grupo — a conversa foi arquivada");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+      toast.error(mutationErrorMessage(error, "Não foi possível parar de acompanhar."));
     }
   };
 
@@ -1042,7 +1043,7 @@ export function Inbox() {
       handleBackToList();
       toast.success(result.detail);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao sair do grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível sair do grupo."));
     }
   };
 
@@ -1184,7 +1185,7 @@ export function Inbox() {
       groupMentions.reset();
       stopTyping();
     } catch (error) {
-      toast.error("Falha ao enviar mensagem");
+      toast.error("Não foi possível enviar a mensagem. Tente de novo.");
     }
   };
 
@@ -1207,7 +1208,7 @@ export function Inbox() {
     try {
       await reactToMessage({ messageId: message._id as Id<"messages">, emoji: next });
     } catch {
-      toast.error("Falha ao reagir à mensagem");
+      toast.error("Não foi possível reagir à mensagem.");
     }
   };
 
@@ -1215,9 +1216,9 @@ export function Inbox() {
     setTranscribingIds((prev) => new Set(prev).add(message._id));
     try {
       const result = await transcribe({ organizationId, messageId: message._id as Id<"messages"> });
-      if (result.status === "failed") toast.error("Falha na transcrição");
+      if (result.status === "failed") toast.error("Não foi possível transcrever o áudio.");
     } catch {
-      toast.error("Falha na transcrição");
+      toast.error("Não foi possível transcrever o áudio.");
     } finally {
       setTranscribingIds((prev) => {
         const nextSet = new Set(prev);
@@ -1517,7 +1518,7 @@ export function Inbox() {
       );
       exitSelection();
     } catch {
-      toast.error("Falha na ação em lote");
+      toast.error("Não foi possível concluir a ação em lote.");
     }
   };
 
@@ -1532,7 +1533,7 @@ export function Inbox() {
       toast.success(`Etiqueta aplicada a ${ids.length} conversa${ids.length === 1 ? "" : "s"}`);
       exitSelection();
     } catch {
-      toast.error("Falha ao aplicar etiqueta");
+      toast.error("Não foi possível aplicar a etiqueta.");
     }
   };
 
@@ -1754,7 +1755,7 @@ export function Inbox() {
               type="search"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar nas mensagens..."
+              placeholder="Buscar nas mensagens…"
               className={cn(
                 "w-full h-9 pl-9 pr-8 rounded-full text-sm bg-surface-sunken border border-border-strong",
                 "text-text-primary placeholder:text-text-muted",
@@ -2130,10 +2131,10 @@ export function Inbox() {
                     {isHandoffPending(conversation.lead.handoffState) && (
                       <span
                         className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-semantic-warning"
-                        title="Repasse pendente — aguardando um humano assumir"
+                        title="Pedido de ajuda pendente: aguardando alguém da equipe assumir"
                       >
                         <ArrowLeftRight size={12} />
-                        Repasse
+                        Pediu ajuda
                       </span>
                     )}
                     {activeBotSuspicion(conversation as any) && (
@@ -2162,7 +2163,7 @@ export function Inbox() {
                     <div className="mb-1.5 flex min-w-0 items-center gap-1">
                       {attribution && <AttributionIcon attribution={attribution} />}
                       {unit && <ColorChip name={unit.name} color={unit.color} title={`Unidade: ${unit.name}`} />}
-                      {dept && <ColorChip name={dept.name} color={dept.color} title={`Setor: ${dept.name}`} />}
+                      {dept && <ColorChip name={dept.name} color={dept.color} title={`Departamento: ${dept.name}`} />}
                     </div>
                   );
                 })()}
@@ -2511,7 +2512,7 @@ export function Inbox() {
                   <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
                     <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
                     <span className="min-w-0">
-                      <span className="font-medium text-semantic-warning">Repasse pendente</span>
+                      <span className="font-medium text-semantic-warning">A IA pediu ajuda</span>
                       {handoffReason && (
                         <span className="text-text-secondary"> — {handoffReason}</span>
                       )}
@@ -2525,7 +2526,7 @@ export function Inbox() {
                         disabled={!pendingHandoff}
                         onClick={handleAcceptHandoff}
                       >
-                        Aceitar e assumir
+                        {VOCAB.attention.accept}
                       </Button>
                       {pendingHandoff && (
                         <Button
@@ -2536,7 +2537,7 @@ export function Inbox() {
                             navigate(`${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`)
                           }
                         >
-                          Ver repasse
+                          {VOCAB.attention.view}
                         </Button>
                       )}
                       {currentConversation && (
@@ -2590,7 +2591,7 @@ export function Inbox() {
                           )
                         }
                       >
-                        Ver repasse
+                        {VOCAB.attention.view}
                       </Button>
                     </div>
                   )}

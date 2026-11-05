@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
+import { VOCAB } from "@/lib/vocab";
 import {
   Shield,
   Download,
@@ -261,7 +262,7 @@ export function AuditLogs() {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
         <Shield size={48} className="text-text-muted" />
-        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os logs de auditoria.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para ver o histórico de alterações.</p>
       </div>
     );
   }
@@ -276,10 +277,10 @@ export function AuditLogs() {
           </div>
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-text-primary">
-              Logs de Auditoria
+              {VOCAB.audit.title}
             </h2>
             <p className="text-sm text-text-secondary">
-              Monitore todas as atividades da sua organização
+              Veja quem fez o quê na sua organização
             </p>
           </div>
         </div>
@@ -357,7 +358,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todos os Atores</option>
+              <option value="all">Todos os atores</option>
               {filters?.actors.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.type === "ai" ? "IA" : "Humano"})
@@ -375,7 +376,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Ações</option>
+              <option value="all">Todas as ações</option>
               {filters?.actions.map((a) => (
                 <option key={a.value} value={a.value}>
                   {a.label}
@@ -393,7 +394,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todos os Tipos</option>
+              <option value="all">Todos os tipos</option>
               {filters?.entityTypes.map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
@@ -411,7 +412,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Severidades</option>
+              <option value="all">Todas as severidades</option>
               <option value="low">Baixa</option>
               <option value="medium">Média</option>
               <option value="high">Alta</option>
@@ -481,13 +482,13 @@ export function AuditLogs() {
             </div>
             <h3 className="text-lg font-semibold text-text-primary mb-2">
               {activeFilters.length > 0
-                ? "Nenhum log encontrado"
-                : "Nenhum log de auditoria"}
+                ? "Nenhuma alteração encontrada"
+                : "Nenhuma alteração registrada"}
             </h3>
             <p className="text-sm text-text-secondary text-center max-w-md">
               {activeFilters.length > 0
                 ? "Tente ajustar os filtros ou expandir o período de datas."
-                : "Os logs de auditoria aparecerão aqui automaticamente conforme as atividades da organização."}
+                : "As alterações aparecem aqui automaticamente conforme sua equipe e a IA trabalham."}
             </p>
             {activeFilters.length > 0 && (
               <Button
@@ -496,7 +497,7 @@ export function AuditLogs() {
                 className="mt-4"
                 onClick={clearAllFilters}
               >
-                Limpar Filtros
+                Limpar filtros
               </Button>
             )}
           </div>

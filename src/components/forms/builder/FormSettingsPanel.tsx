@@ -165,7 +165,7 @@ function TagEditor({
   return (
     <div>
       <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-        Tags
+        Etiquetas
       </label>
       <div
         className={cn(
@@ -259,7 +259,7 @@ export function FormSettingsPanel({
           </div>
 
           <SelectField
-            label="Pipeline"
+            label="Funil"
             value={settings.boardId ?? ""}
             onChange={(v) =>
               update({ boardId: v || undefined, stageId: undefined })
@@ -274,12 +274,12 @@ export function FormSettingsPanel({
           </SelectField>
 
           <SelectField
-            label="Estágio"
+            label="Etapa"
             value={settings.stageId ?? ""}
             onChange={(v) => update({ stageId: v || undefined })}
             disabled={!settings.boardId}
           >
-            <option value="">Primeiro estágio</option>
+            <option value="">Primeira etapa</option>
             {stages?.map((s: any) => (
               <option key={s._id} value={s._id}>
                 {s.name}
@@ -528,8 +528,8 @@ export function FormSettingsPanel({
       </section>
 
       {/* ── 5. Email de confirmacao ──────────────────────────── */}
-      <section aria-label="Email de confirmação">
-        <SectionHeader>Email de confirmação</SectionHeader>
+      <section aria-label="E-mail de confirmação">
+        <SectionHeader>E-mail de confirmação</SectionHeader>
         <div className="space-y-4">
           <ToggleRow
             label="Enviar email de confirmacao"

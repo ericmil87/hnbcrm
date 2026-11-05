@@ -74,7 +74,7 @@ export function ForwardModal({
       toast.success("Mensagem encaminhada");
       onClose();
     } catch {
-      toast.error("Falha ao encaminhar mensagem");
+      toast.error("Não foi possível encaminhar a mensagem.");
     } finally {
       setSendingTo(null);
     }
@@ -92,7 +92,7 @@ export function ForwardModal({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar conversa..."
+            placeholder="Buscar conversa…"
             className="w-full h-11 pl-9 pr-3 text-base md:text-sm bg-surface-sunken border border-border-strong text-text-primary rounded-lg focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
             aria-label="Buscar conversa"
           />

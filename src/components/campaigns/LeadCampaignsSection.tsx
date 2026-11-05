@@ -67,7 +67,7 @@ export function LeadCampaignsSection({ leadId }: { leadId: Id<"leads"> }) {
           <div className="flex items-center gap-2 flex-wrap text-xs text-text-muted">
             <span>{CAMPAIGN_STATUS_LABELS[r.campaignStatus]}</span>
             <span>·</span>
-            <span>{r.provider === "bridge" ? "Bridge" : "Cloud API"}</span>
+            <span>{r.provider === "bridge" ? "WhatsApp por QR code" : "WhatsApp oficial (Meta)"}</span>
             {r.sentAt && (
               <>
                 <span>·</span>

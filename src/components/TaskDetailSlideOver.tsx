@@ -196,7 +196,7 @@ export function TaskDetailSlideOver({
   const leadOptions = useQuery(api.leads.getLeads, { organizationId, limit: 200 }) as
     | { _id: Id<"leads">; title: string }[]
     | undefined;
-  // Conversa do lead: alimenta o atalho "Conversa" (abre a Caixa de Entrada
+  // Conversa do lead: alimenta o atalho "Conversa" (abre Conversas
   // já na conversa certa). Só a mais recente interessa.
   const leadConversations = useQuery(
     api.conversations.getConversations,
@@ -297,10 +297,10 @@ export function TaskDetailSlideOver({
       if (isBlocked) {
         toast.warning("Tarefa concluída, mas ainda há dependências pendentes.");
       } else {
-        toast.success("Tarefa concluída!");
+        toast.success("Tarefa concluída");
       }
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -309,7 +309,7 @@ export function TaskDetailSlideOver({
       await cancelTask({ taskId: activeTaskId });
       toast.success("Tarefa cancelada");
     } catch {
-      toast.error("Falha ao cancelar tarefa");
+      toast.error("Não foi possível cancelar a tarefa.");
     }
   };
 
@@ -323,7 +323,7 @@ export function TaskDetailSlideOver({
         onClose();
       }
     } catch {
-      toast.error("Falha ao excluir tarefa");
+      toast.error("Não foi possível excluir a tarefa.");
     }
   };
 
@@ -338,7 +338,7 @@ export function TaskDetailSlideOver({
       setSnoozeDate("");
       setSnoozeTime("");
     } catch {
-      toast.error("Falha ao salvar lembrete");
+      toast.error("Não foi possível salvar lembrete.");
     }
   };
 
@@ -348,7 +348,7 @@ export function TaskDetailSlideOver({
       await updateTask({ taskId: activeTaskId, title: titleValue.trim() });
       setEditingTitle(false);
     } catch {
-      toast.error("Falha ao atualizar título");
+      toast.error("Não foi possível atualizar título.");
     }
   };
 
@@ -357,7 +357,7 @@ export function TaskDetailSlideOver({
       await updateTask({ taskId: activeTaskId, description: descriptionValue.trim() || undefined });
       setEditingDescription(false);
     } catch {
-      toast.error("Falha ao atualizar descrição");
+      toast.error("Não foi possível atualizar descrição.");
     }
   };
 
@@ -365,7 +365,7 @@ export function TaskDetailSlideOver({
     try {
       await setAssignees({ taskId: activeTaskId, memberIds });
     } catch {
-      toast.error("Falha ao atualizar responsáveis");
+      toast.error("Não foi possível atualizar responsáveis.");
     }
   };
 
@@ -373,7 +373,7 @@ export function TaskDetailSlideOver({
     try {
       await updateTask({ taskId: activeTaskId, labelIds });
     } catch {
-      toast.error("Falha ao atualizar etiquetas");
+      toast.error("Não foi possível atualizar etiquetas.");
     }
   };
 
@@ -383,7 +383,7 @@ export function TaskDetailSlideOver({
       // de "sem lembrete" (schedulePreDueReminder ignora valores <= 0).
       await updateTask({ taskId: activeTaskId, reminderMinutesBefore: minutes ?? 0 });
     } catch {
-      toast.error("Falha ao atualizar lembrete");
+      toast.error("Não foi possível atualizar lembrete.");
     }
   };
 
@@ -391,7 +391,7 @@ export function TaskDetailSlideOver({
     try {
       await updateTask({ taskId: activeTaskId, blockedBy });
     } catch {
-      toast.error("Falha ao atualizar dependências");
+      toast.error("Não foi possível atualizar dependências.");
     }
   };
 
@@ -402,7 +402,7 @@ export function TaskDetailSlideOver({
         projectId: value ? (value as Id<"taskProjects">) : null,
       });
     } catch {
-      toast.error("Falha ao mover de projeto");
+      toast.error("Não foi possível mover de projeto.");
     }
   };
 
@@ -415,7 +415,7 @@ export function TaskDetailSlideOver({
       });
       toast.success(value ? "Lead vinculado à tarefa" : "Vínculo com o lead removido");
     } catch {
-      toast.error("Falha ao atualizar o vínculo com o lead");
+      toast.error("Não foi possível atualizar o vínculo com o lead.");
     }
   };
 
@@ -437,7 +437,7 @@ export function TaskDetailSlideOver({
         );
       }
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao pedir a execução agora"));
+      toast.error(mutationErrorMessage(e, "Não foi possível pedir a execução agora."));
     } finally {
       setFollowUpRunBusy(false);
     }
@@ -451,7 +451,7 @@ export function TaskDetailSlideOver({
       toast.success("Execução automática desligada — a tarefa continua com você");
       setFollowUpCancelConfirm(false);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao desligar a execução automática"));
+      toast.error(mutationErrorMessage(e, "Não foi possível desligar a execução automática."));
     } finally {
       setFollowUpCancelBusy(false);
     }
@@ -467,7 +467,7 @@ export function TaskDetailSlideOver({
         toast.error(result.reason);
       }
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao pedir para a IA executar"));
+      toast.error(mutationErrorMessage(e, "Não foi possível pedir para a IA executar."));
     } finally {
       setFollowUpAdoptBusy(false);
     }
@@ -478,7 +478,7 @@ export function TaskDetailSlideOver({
     try {
       await moveTaskToColumn({ taskId: activeTaskId, columnId: columnId as Id<"taskColumns"> });
     } catch {
-      toast.error("Falha ao mover de coluna");
+      toast.error("Não foi possível mover de coluna.");
     }
   };
 
@@ -489,7 +489,7 @@ export function TaskDetailSlideOver({
         priority: priority as "low" | "medium" | "high" | "urgent",
       });
     } catch {
-      toast.error("Falha ao alterar prioridade");
+      toast.error("Não foi possível alterar prioridade.");
     }
   };
 
@@ -500,7 +500,7 @@ export function TaskDetailSlideOver({
         status: status as "pending" | "in_progress" | "completed" | "cancelled",
       });
     } catch {
-      toast.error("Falha ao alterar status");
+      toast.error("Não foi possível alterar status.");
     }
   };
 
@@ -508,7 +508,7 @@ export function TaskDetailSlideOver({
     try {
       await toggleChecklistItem({ taskId: activeTaskId, itemId });
     } catch {
-      toast.error("Falha ao atualizar item");
+      toast.error("Não foi possível atualizar item.");
     }
   };
 
@@ -522,7 +522,7 @@ export function TaskDetailSlideOver({
       await updateChecklist({ taskId: activeTaskId, checklist: newItems });
       setNewChecklistItem("");
     } catch {
-      toast.error("Falha ao adicionar item");
+      toast.error("Não foi possível adicionar item.");
     }
   };
 
@@ -533,7 +533,7 @@ export function TaskDetailSlideOver({
       await updateChecklist({ taskId: activeTaskId, checklist: newItems });
       setNewChecklistItem("");
     } catch {
-      toast.error("Falha ao adicionar item");
+      toast.error("Não foi possível adicionar item.");
     }
   };
 
@@ -543,7 +543,7 @@ export function TaskDetailSlideOver({
     try {
       await updateChecklist({ taskId: activeTaskId, checklist: newItems });
     } catch {
-      toast.error("Falha ao remover item");
+      toast.error("Não foi possível remover item.");
     }
   };
 
@@ -561,7 +561,7 @@ export function TaskDetailSlideOver({
       setMentionQuery(null);
       setMentionStartIndex(null);
     } catch {
-      toast.error("Falha ao adicionar comentário");
+      toast.error("Não foi possível adicionar comentário.");
     } finally {
       setSendingComment(false);
     }
@@ -647,7 +647,7 @@ export function TaskDetailSlideOver({
     <SlideOver
       open={isOpen}
       onClose={onClose}
-      title="Detalhes da Tarefa"
+      title="Detalhes da tarefa"
       titleIcon={
         navStack.length > 0 ? (
           <button
@@ -737,7 +737,7 @@ export function TaskDetailSlideOver({
                       className="w-full flex items-center gap-2 px-3 py-2 text-sm text-semantic-warning rounded-lg hover:bg-surface-raised transition-colors"
                     >
                       <Ban size={14} />
-                      Cancelar Tarefa
+                      Cancelar tarefa
                     </button>
                   )}
                   <button
@@ -922,7 +922,7 @@ export function TaskDetailSlideOver({
               style={{ fontSize: "16px" }}
             >
               <option value="pending">Pendente</option>
-              <option value="in_progress">Em Progresso</option>
+              <option value="in_progress">Em progresso</option>
               <option value="completed">Concluída</option>
               <option value="cancelled">Cancelada</option>
             </select>
@@ -1060,9 +1060,9 @@ export function TaskDetailSlideOver({
             </FieldRow>
           )}
 
-          {/* Tags */}
+          {/* Etiquetas */}
           {task.tags && task.tags.length > 0 && (
-            <FieldRow label="Tags">
+            <FieldRow label="Etiquetas">
               <div className="flex flex-wrap gap-1">
                 {task.tags.map((tag: string) => (
                   <span
@@ -1208,7 +1208,7 @@ export function TaskDetailSlideOver({
                   task.checklist ? handleAddChecklistItem() : handleAddChecklistItemNoList();
                 }
               }}
-              placeholder="Adicionar item..."
+              placeholder="Adicionar item…"
               className="flex-1 px-3 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 placeholder:text-text-muted"
               style={{ fontSize: "16px" }}
             />
@@ -1312,7 +1312,7 @@ export function TaskDetailSlideOver({
                 ref={commentInputRef}
                 value={commentText}
                 onChange={handleCommentTextChange}
-                placeholder="Adicionar comentário... (use @ para mencionar)"
+                placeholder="Adicionar comentário… (use @ para mencionar)"
                 rows={2}
                 className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none placeholder:text-text-muted"
                 style={{ fontSize: "16px" }}
@@ -1388,7 +1388,7 @@ export function TaskDetailSlideOver({
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDelete}
-        title="Excluir Tarefa"
+        title="Excluir tarefa"
         description="Esta ação não pode ser desfeita. Deseja excluir esta tarefa permanentemente?"
         confirmLabel="Excluir"
         variant="danger"

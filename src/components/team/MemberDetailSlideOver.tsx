@@ -59,9 +59,9 @@ interface MemberDetailSlideOverProps {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
   ai: "IA",
 };
 

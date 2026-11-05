@@ -8,9 +8,9 @@ import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { Check, Users as UsersIcon } from "lucide-react";
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
   ai: "IA",
 };
 

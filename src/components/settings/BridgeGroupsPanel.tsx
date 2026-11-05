@@ -116,7 +116,7 @@ export function BridgeGroupsPanel({
       const result = await syncGroups({ channelConfigId: config._id });
       if (!silent) toast.success(result.detail);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao sincronizar os grupos"));
+      toast.error(mutationErrorMessage(error, "Não foi possível sincronizar os grupos."));
     } finally {
       setSyncing(false);
     }
@@ -149,7 +149,7 @@ export function BridgeGroupsPanel({
         void runSync(true);
       }
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao mudar o interruptor"));
+      toast.error(mutationErrorMessage(error, "Não foi possível mudar o interruptor."));
     } finally {
       setBusy(false);
     }
@@ -165,7 +165,7 @@ export function BridgeGroupsPanel({
       toast.success("Grupos ligados — buscando a lista de salas");
       void runSync(true);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao registrar o aceite"));
+      toast.error(mutationErrorMessage(error, "Não foi possível registrar o aceite."));
     } finally {
       setBusy(false);
     }
@@ -184,7 +184,7 @@ export function BridgeGroupsPanel({
           : `Acompanhando '${group.subject}'`
       );
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao mudar o acompanhamento"));
+      toast.error(mutationErrorMessage(error, "Não foi possível mudar o acompanhamento."));
     } finally {
       setPendingId(null);
     }
@@ -202,9 +202,9 @@ export function BridgeGroupsPanel({
         await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
         count++;
       }
-      toast.success(`${count} grupo(s) na Caixa de Entrada`);
+      toast.success(`${count} grupo(s) em Conversas`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao acompanhar os grupos"));
+      toast.error(mutationErrorMessage(error, "Não foi possível acompanhar os grupos."));
     } finally {
       setFollowAllBusy(false);
     }
@@ -236,7 +236,7 @@ export function BridgeGroupsPanel({
       setJoinPreview(null);
       void runSync(true);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao entrar no grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível entrar no grupo."));
     } finally {
       setJoinBusy(false);
     }
@@ -247,7 +247,7 @@ export function BridgeGroupsPanel({
       const result = await leaveGroup({ groupChatId: group._id as Id<"groupChats"> });
       toast.success(result.detail);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao sair do grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível sair do grupo."));
     }
   };
 
@@ -357,7 +357,7 @@ export function BridgeGroupsPanel({
 
               {/* Falta um passo: a lista já chegou, mas ninguém escolheu
                   acompanhar nada — sem isto o admin liga o número, vê os
-                  grupos aqui e não entende por que a Caixa de Entrada
+                  grupos aqui e não entende por que Conversas
                   continua vazia. */}
               {groups !== undefined && visible.length > 0 && monitoredCount === 0 && (
                 <div className="flex gap-2.5 rounded-lg border border-brand-500/40 bg-brand-500/5 p-3">
@@ -368,7 +368,7 @@ export function BridgeGroupsPanel({
                         Falta um passo: escolha os grupos
                       </p>
                       <p className="mt-0.5 text-xs text-text-secondary leading-relaxed">
-                        Só os grupos que você acompanha aparecem na Caixa de Entrada,
+                        Só os grupos que você acompanha aparecem em Conversas,
                         podem receber publicações programadas e ter a IA ligada. Os
                         demais ficam só listados — nada é lido nem guardado.
                       </p>
@@ -437,7 +437,7 @@ export function BridgeGroupsPanel({
                           </p>
                           {!group.monitored && (
                             <p className="mt-0.5 text-[11px] text-text-muted">
-                              Fora da Caixa de Entrada
+                              Fora de Conversas
                             </p>
                           )}
                         </div>

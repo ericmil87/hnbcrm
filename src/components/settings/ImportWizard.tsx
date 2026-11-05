@@ -358,7 +358,7 @@ export function ImportWizard({
         headers: { "Content-Type": mimeType },
         body: file,
       });
-      if (!response.ok) throw new Error("Falha ao enviar o arquivo");
+      if (!response.ok) throw new Error("Não foi possível enviar o arquivo.");
       const { storageId } = await response.json();
 
       const fileId = await saveFile({
@@ -378,9 +378,9 @@ export function ImportWizard({
         duplicateStrategy,
       });
       setJobId(newJobId);
-      toast.success("Arquivo enviado — detectando as colunas...");
+      toast.success("Arquivo enviado — detectando as colunas…");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao iniciar a importação"));
+      toast.error(mutationErrorMessage(error, "Não foi possível iniciar a importação."));
     } finally {
       setBusy(false);
     }
@@ -398,7 +398,7 @@ export function ImportWizard({
       await runPreview({ organizationId, jobId });
       setEditingMapping(false);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar o mapeamento"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar o mapeamento."));
     } finally {
       setBusy(false);
     }
@@ -411,7 +411,7 @@ export function ImportWizard({
       await confirmImport({ organizationId, jobId });
       toast.success("Importação iniciada");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao confirmar a importação"));
+      toast.error(mutationErrorMessage(error, "Não foi possível confirmar a importação."));
     } finally {
       setBusy(false);
     }
@@ -426,7 +426,7 @@ export function ImportWizard({
       resetWizard();
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao cancelar a importação"));
+      toast.error(mutationErrorMessage(error, "Não foi possível cancelar a importação."));
     } finally {
       setBusy(false);
     }
@@ -444,7 +444,7 @@ export function ImportWizard({
       downloadTextFile(csv, `erros-${job.fileName}`, "text/csv;charset=utf-8");
       toast.success("Arquivo com as linhas de erro baixado");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao gerar o arquivo de erros"));
+      toast.error(mutationErrorMessage(error, "Não foi possível gerar o arquivo de erros."));
     } finally {
       setBusy(false);
     }
@@ -536,7 +536,7 @@ const ENTITY_CHOICES: Array<{
   {
     value: "leads",
     label: "Leads",
-    description: "Negócios no funil: título, valor, estágio e contato vinculado.",
+    description: "Negócios no funil: título, valor, etapa e contato vinculado.",
     icon: Target,
   },
 ];
@@ -723,7 +723,7 @@ function StepMapping({
     return (
       <div className="flex flex-col items-center gap-3 py-10">
         <Spinner size="lg" />
-        <p className="text-sm text-text-secondary">Lendo o arquivo e detectando as colunas...</p>
+        <p className="text-sm text-text-secondary">Lendo o arquivo e detectando as colunas…</p>
       </div>
     );
   }
@@ -883,7 +883,7 @@ function StepPreview({
     return (
       <div className="flex flex-col items-center gap-3 py-10">
         <Spinner size="lg" />
-        <p className="text-sm text-text-secondary">Validando as linhas do arquivo...</p>
+        <p className="text-sm text-text-secondary">Validando as linhas do arquivo…</p>
       </div>
     );
   }

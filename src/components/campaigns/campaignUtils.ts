@@ -40,7 +40,7 @@ export const RECIPIENT_STATUS_LABELS: Record<RecipientStatus, string> = {
   replied: "Respondeu",
   failed: "Falhou",
   skipped: "Pulado",
-  opted_out: "Opt-out",
+  opted_out: "Descadastrado",
 };
 
 export const RECIPIENT_STATUS_VARIANT: Record<RecipientStatus, BadgeVariant> = {
@@ -67,14 +67,14 @@ export const RECIPIENT_STATUS_ORDER: RecipientStatus[] = [
   "opted_out",
 ];
 
-export const PROVIDER_LABELS = { meta: "Cloud API (Meta)", bridge: "Bridge (não oficial)" } as const;
+export const PROVIDER_LABELS = { meta: "WhatsApp oficial (Meta)", bridge: "WhatsApp por QR code" } as const;
 
 export const SKIP_REASON_LABELS: Record<string, string> = {
   not_on_whatsapp: "Número sem WhatsApp",
   canceled: "Campanha cancelada",
   no_phone: "Sem telefone",
   invalid_phone: "Telefone inválido",
-  suppressed: "Na lista de supressão",
+  suppressed: "Descadastrado",
   outro: "Outro",
 };
 

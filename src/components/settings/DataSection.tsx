@@ -136,7 +136,7 @@ const EXPORT_ACTIONS: ExportAction[] = [
   {
     key: "leads",
     label: "Leads",
-    description: "CSV com funil, estágio, responsável e origem por extenso.",
+    description: "CSV com funil, etapa, responsável e origem por extenso.",
     icon: Target,
     format: "csv",
     scope: "entity",
@@ -204,9 +204,9 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
       return;
     }
     toast.promise(downloadFromUrl(downloadUrl, fileName), {
-      loading: "Baixando arquivo...",
+      loading: "Baixando arquivo…",
       success: "Download concluído",
-      error: (error: unknown) => mutationErrorMessage(error, "Falha ao baixar o arquivo"),
+      error: (error: unknown) => mutationErrorMessage(error, "Não foi possível baixar o arquivo."),
     });
   }, [downloadJobId, downloadUrl, exportJobs]);
 
@@ -240,27 +240,27 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
         entity: action.entity,
       }),
       {
-        loading: "Preparando a exportação...",
+        loading: "Preparando a exportação…",
         success: "Exportação iniciada — o arquivo aparece no histórico em instantes.",
-        error: (error: unknown) => mutationErrorMessage(error, "Falha ao iniciar a exportação"),
+        error: (error: unknown) => mutationErrorMessage(error, "Não foi possível iniciar a exportação."),
       }
     );
   };
 
   const handleRollback = (job: ImportJobDoc) => {
     toast.promise(rollbackImport({ organizationId, jobId: job._id }), {
-      loading: "Desfazendo a importação...",
+      loading: "Desfazendo a importação…",
       success: "Desfazendo — o histórico é atualizado ao terminar.",
-      error: (error: unknown) => mutationErrorMessage(error, "Falha ao desfazer a importação"),
+      error: (error: unknown) => mutationErrorMessage(error, "Não foi possível desfazer a importação."),
     });
     setRollbackJob(null);
   };
 
   const handleCancelImport = (job: ImportJobDoc) => {
     toast.promise(cancelImport({ organizationId, jobId: job._id }), {
-      loading: "Cancelando...",
+      loading: "Cancelando…",
       success: "Importação cancelada",
-      error: (error: unknown) => mutationErrorMessage(error, "Falha ao cancelar a importação"),
+      error: (error: unknown) => mutationErrorMessage(error, "Não foi possível cancelar a importação."),
     });
   };
 
@@ -272,10 +272,10 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
         downloadTextFile(csv, `erros-${job.fileName}`, "text/csv;charset=utf-8");
       })(),
       {
-        loading: "Gerando o arquivo de erros...",
+        loading: "Gerando o arquivo de erros…",
         success: "Arquivo com as linhas de erro baixado",
         error: (error: unknown) =>
-          mutationErrorMessage(error, "Falha ao gerar o arquivo de erros"),
+          mutationErrorMessage(error, "Não foi possível gerar o arquivo de erros."),
       }
     );
   };
@@ -568,7 +568,7 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
         <Database size={14} className="mt-0.5 shrink-0" />
         <p>
           Arquivos CSV saem com BOM (abrem direto no Excel e no LibreOffice) e datas em formato ISO.
-          Toda exportação e importação fica registrada na Auditoria.
+          Toda exportação e importação fica registrada no histórico de alterações.
         </p>
       </div>
 

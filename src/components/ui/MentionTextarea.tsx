@@ -27,9 +27,9 @@ interface MentionTextareaProps {
 
 const ROLE_LABELS: Record<string, string> = {
   ai: "IA",
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
 };
 
 function getRoleLabel(member: TeamMember): string {

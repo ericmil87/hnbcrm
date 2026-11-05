@@ -787,19 +787,23 @@ Todo texto voltado ao usuário será em Português (BR):
 | Chave | Label |
 |---|---|
 | `dashboard` | Painel |
-| `board` | Pipeline |
-| `inbox` | Caixa de Entrada |
-| `handoffs` | Repasses |
+| `board` | Funil |
+| `inbox` | Conversas |
+| `handoffs` | Requer atenção |
+| `calendar` | Agenda |
+| `central` | Relatórios |
 | `team` | Equipe |
-| `audit` | Auditoria |
+| `audit` | Histórico de alterações |
 | `settings` | Configurações |
+
+Os ids (chaves) e as rotas não mudam; só o rótulo. A fonte é `src/lib/vocab.ts` (`VOCAB`).
 
 ### Autenticação
 | Chave | Texto |
 |---|---|
 | `signIn` | Entrar |
 | `signUp` | Cadastrar |
-| `email` | Email |
+| `email` | E-mail |
 | `password` | Senha |
 | `signInAnonymous` | Entrar anonimamente |
 | `or` | ou |
@@ -839,7 +843,20 @@ Todo texto voltado ao usuário será em Português (BR):
 | `search` | Buscar |
 | `filter` | Filtrar |
 | `export` | Exportar |
-| `loading` | Carregando... |
+| `loading` | Carregando… |
 | `noResults` | Nenhum resultado encontrado |
 | `confirm` | Confirmar |
 | `back` | Voltar |
+
+### Capitalização e pontuação
+- **Sentence case** em tudo (menu, títulos, abas, botões, cabeçalhos de card, opções de select): "Adicionar nota", "Novo funil", "Campos personalizados". Só nomes próprios e siglas ficam em maiúscula: WhatsApp, Instagram, Messenger, Telegram, Meta, Google, LGPD, Pix, QR code, CSV, UTM, IA.
+- "E-mail" com hífen. Reticências com um caractere ("Salvando…"). A IA é feminina ("a IA", "ela responde"); texto na segunda pessoa ("você", "sua equipe").
+- Critério de emoji: `grep -rn "📎" src --exclude=EmojiPickerButton.tsx` deve ficar vazio (o seletor de emoji da conversa oferece 📎 como conteúdo, não como ícone da interface).
+- `vocabGuard.test.ts` confere os botões e os rótulos de navegação do escopo (`SENTENCE_CASE_SCOPE`).
+
+### Toasts
+- **Sucesso:** particípio, sem "com sucesso" e sem exclamação: "Lead criado", "Etapa excluída".
+- **Erro:** "Não foi possível {verbo}." + o que fazer, quando houver: "Não foi possível salvar. Tente de novo." A mensagem de `ConvexError` do servidor tem prioridade e aparece como está (`mutationErrorMessage`).
+
+### Glossário resumido
+Um nome por conceito, definido em `src/lib/vocab.ts`: **Conversas** (era Caixa de Entrada), **Requer atenção** (Repasses; cada item é um "pedido de ajuda"; ações "Assumir conversa" e "Devolver à IA"), **Funil** e **Etapa** (Pipeline, Board, Estágio), **Atendente IA** (Atendente virtual), **Copiloto** (assistente da equipe), **Sugerir respostas** / **Responder sozinha** (Autopilot), **Resposta sugerida** (rascunho da IA), **WhatsApp oficial (Meta)** e **WhatsApp por QR code** (Cloud API, bridge), **Conectar número**, **Etiqueta** (Tag), **Origem**, **Histórico de alterações** (Auditoria), **Relatórios** (Central), **Agenda** (Calendário), **Descadastrados** (Opt-out), **Ramo de atividade** (Setor do negócio) e **Departamento**, **Atendente** / **Administrador** / **Gerente** (papéis), **Modo quadro** / **Modo lista** e **Filtros salvos** (Visão). Termos técnicos (Webhooks, Chaves de integração, Modelo de IA) só em Configurações › Avançado e em `/developers`. Tabela completa e justificativas: `.claude/plans/frontend-v2/03-reorganizacao-vocabulario.md` §1.2.

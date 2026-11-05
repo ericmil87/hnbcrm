@@ -156,7 +156,7 @@ export function ForgotPasswordForm({
         // Ignorado de propósito — ver comentário acima.
       }
 
-      toast.success("Senha redefinida com sucesso!");
+      toast.success("Senha redefinida");
       // A partir daqui o usuário já está autenticado (signIn efetiva a sessão);
       // quem cuida do redirecionamento é o AuthPage, reagindo ao isAuthenticated.
     } catch (error) {
@@ -207,14 +207,14 @@ export function ForgotPasswordForm({
             className="auth-input-field"
             type="email"
             name="email"
-            placeholder="Email"
-            aria-label="Email"
+            placeholder="E-mail"
+            aria-label="E-mail"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
           />
           <button className="auth-button" type="submit" disabled={sendingCode}>
-            {sendingCode ? "Enviando..." : "Enviar código"}
+            {sendingCode ? "Enviando…" : "Enviar código"}
           </button>
         </form>
       </div>
@@ -298,7 +298,7 @@ export function ForgotPasswordForm({
         </div>
 
         <button className="auth-button" type="submit" disabled={resetting}>
-          {resetting ? "Redefinindo..." : "Redefinir senha"}
+          {resetting ? "Redefinindo…" : "Redefinir senha"}
         </button>
 
         <div className="flex items-center justify-between text-sm">

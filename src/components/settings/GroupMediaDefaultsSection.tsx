@@ -62,7 +62,7 @@ export function GroupMediaDefaultsSection({
     try {
       await setGroupMediaDefaults({ organizationId, channelConfigId, policy: next });
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar a mídia dos grupos"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar a mídia dos grupos."));
     } finally {
       setDraft(null);
       setSaving(false);

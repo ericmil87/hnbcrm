@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
-import { Eye, Users } from "lucide-react";
+import { CheckCircle2, Eye, Users } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
@@ -15,6 +15,8 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { VOCAB } from "@/lib/vocab";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
@@ -114,7 +116,7 @@ export function HandoffQueue() {
   if (!can("inbox", "view_own")) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
-        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os repasses.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para ver o que requer atenção.</p>
       </div>
     );
   }
@@ -127,13 +129,13 @@ export function HandoffQueue() {
       })) as { conversationId?: string | null } | null;
 
       if (result?.conversationId) {
-        toast.success("Repasse aceito — abrindo a conversa");
+        toast.success("Conversa assumida — abrindo");
         navigate(`${TAB_ROUTES.inbox}?conversation=${result.conversationId}`);
       } else {
-        toast.success("Repasse aceito com sucesso");
+        toast.success("Conversa assumida");
       }
     } catch (error) {
-      toast.error(errorMessage(error, "Falha ao aceitar repasse"));
+      toast.error(errorMessage(error, "Não foi possível assumir a conversa. Tente de novo."));
     }
   };
 
@@ -154,13 +156,13 @@ export function HandoffQueue() {
       toast.success(
         instruction
           ? isGroup
-            ? "Devolvido à IA — sua orientação vale a partir da próxima menção na sala"
-            : "Devolvido à IA — ela vai responder o cliente com a sua orientação"
-          : "Repasse rejeitado — a IA volta a atender"
+            ? "Devolvido à IA. Sua orientação vale a partir da próxima menção na sala"
+            : "Devolvido à IA. Ela vai responder o cliente com a sua orientação"
+          : "Devolvido à IA. Ela volta a atender"
       );
       return true;
     } catch (error) {
-      toast.error(errorMessage(error, "Falha ao rejeitar repasse"));
+      toast.error(errorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
       return false;
     }
   };
@@ -201,7 +203,8 @@ export function HandoffQueue() {
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
 
       <PageHeader
-        title="Fila de Repasses"
+        title={VOCAB.attention.title}
+        subtitle={VOCAB.attention.subtitle}
         badge={
           <Badge variant="warning">
             <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
@@ -210,10 +213,11 @@ export function HandoffQueue() {
       />
 
       {handoffs.length === 0 ? (
-        <div className="text-center py-12">
-          <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum repasse pendente</h3>
-          <p className="text-text-secondary">Todos os repasses foram processados.</p>
-        </div>
+        <EmptyState
+          icon={CheckCircle2}
+          title={VOCAB.attention.emptyTitle}
+          description={VOCAB.attention.emptyHint}
+        />
       ) : (
         <div className="grid gap-6">
           {handoffs.map((handoff) => (
@@ -289,8 +293,9 @@ export function HandoffQueue() {
               </div>
 
               <div className="mb-4">
-                <h4 className="text-sm font-medium text-text-primary mb-2">Motivo</h4>
-                <p className="text-sm text-text-secondary">{handoff.reason}</p>
+                <h4 className="text-sm font-medium text-text-primary mb-2">
+                  {handoff.fromMember?.type === "ai" ? "A IA pediu ajuda" : "Pedido de ajuda"} · {handoff.reason}
+                </h4>
               </div>
 
               {handoff.summary && (
@@ -302,7 +307,7 @@ export function HandoffQueue() {
 
               {handoff.suggestedActions.length > 0 && (
                 <div className="mb-6">
-                  <h4 className="text-sm font-medium text-text-primary mb-2">Ações Sugeridas</h4>
+                  <h4 className="text-sm font-medium text-text-primary mb-2">Ações sugeridas</h4>
                   <ul className="space-y-1">
                     {handoff.suggestedActions.map((action, index) => (
                       <li key={index} className="text-sm text-text-secondary flex items-start gap-2">
@@ -331,7 +336,7 @@ export function HandoffQueue() {
                     className="w-full sm:w-auto whitespace-nowrap"
                   >
                     <Eye size={16} />
-                    Espiar conversa
+                    {VOCAB.attention.view}
                   </Button>
                   <div className="relative w-full sm:w-auto">
                     <Button
@@ -342,19 +347,19 @@ export function HandoffQueue() {
                       size="md"
                       className="w-full sm:w-auto whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
                     >
-                      Devolver à IA
+                      {VOCAB.attention.giveBack}
                     </Button>
                     {returnPopoverFor === handoff._id && (
                       <AiInstructionPopover
                         title={
                           handoff.isGroup
-                            ? "Devolver à IA — o que ela precisa saber (opcional)"
-                            : "Devolver à IA — responda o que ela precisa (opcional)"
+                            ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                            : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
                         }
                         placeholder={
                           handoff.isGroup
-                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só rejeitar.'
-                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
                         }
                         submitLabel="Devolver"
                         direction="up"
@@ -372,7 +377,7 @@ export function HandoffQueue() {
                     size="md"
                     className="w-full sm:w-auto"
                   >
-                    Aceitar
+                    {VOCAB.attention.accept}
                   </Button>
                 </div>
               </div>

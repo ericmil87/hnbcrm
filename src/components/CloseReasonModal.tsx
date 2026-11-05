@@ -49,9 +49,9 @@ export function CloseReasonModal({
           finalValue,
         }),
         {
-          loading: isWon ? "Fechando como ganho..." : "Fechando como perdido...",
-          success: isWon ? "Lead fechado como ganho!" : "Lead fechado como perdido!",
-          error: "Falha ao fechar lead",
+          loading: isWon ? "Fechando como ganho…" : "Fechando como perdido…",
+          success: isWon ? "Lead fechado como ganho" : "Lead fechado como perdido",
+          error: "Não foi possível fechar o lead.",
         }
       );
 

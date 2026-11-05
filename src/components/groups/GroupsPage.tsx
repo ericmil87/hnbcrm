@@ -87,7 +87,7 @@ export function GroupsPage() {
   const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
   // Segue o mesmo padrão do painel de canais: um id em voo trava só a LINHA
   // dele, e o "parar de acompanhar" pede confirmação por ser mais destrutivo
-  // (some da Caixa de Entrada e apaga a lista de membros).
+  // (some de Conversas e apaga a lista de membros).
   const [followingId, setFollowingId] = useState<string | null>(null);
   const [unfollowTarget, setUnfollowTarget] = useState<GroupChatDoc | null>(null);
   const [mediaTarget, setMediaTarget] = useState<GroupChatDoc | null>(null);
@@ -228,7 +228,7 @@ export function GroupsPage() {
           description={
             anyChannelEnabled
               ? "Sincronize a lista de salas no card do número em Configurações → Canais."
-              : "Ligue os grupos num número bridge em Configurações → Canais para o CRM listar as salas."
+              : "Ligue os grupos num número por QR code em Configurações → Canais para o CRM listar as salas."
           }
           action={{ label: "Abrir Canais", onClick: goToChannels }}
         />
@@ -242,7 +242,7 @@ export function GroupsPage() {
               Escolha os grupos para acompanhar
             </h2>
             <p className="mt-1 max-w-xl text-sm text-text-secondary">
-              Só os grupos que você acompanha aparecem na Caixa de Entrada, podem
+              Só os grupos que você acompanha aparecem em Conversas, podem
               receber publicações programadas e ter a IA ligada. Os demais ficam só
               listados — nada é lido nem guardado.
             </p>
@@ -266,7 +266,7 @@ export function GroupsPage() {
               >
                 <GroupTitle group={group} />
                 <p className="text-xs text-text-muted tabular-nums">
-                  {channelName.get(group.channelConfigId) ?? "Número bridge"} ·{" "}
+                  {channelName.get(group.channelConfigId) ?? "Número por QR code"} ·{" "}
                   {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"} ·{" "}
                   {activityLabel(group.lastMessageAt)}
                 </p>
@@ -380,7 +380,7 @@ export function GroupsPage() {
           if (target) void handleUnfollow(target);
         }}
         title={unfollowTarget ? `Parar de acompanhar '${unfollowTarget.subject}'?` : "Parar de acompanhar?"}
-        description="A conversa do grupo sai da Caixa de Entrada e a lista de membros é apagada do CRM. As mensagens já recebidas continuam guardadas. Publicações programadas para este grupo param de funcionar."
+        description="A conversa do grupo sai de Conversas e a lista de membros é apagada do CRM. As mensagens já recebidas continuam guardadas. Publicações programadas para este grupo param de funcionar."
         confirmLabel="Parar de acompanhar"
         variant="danger"
       />
@@ -532,7 +532,7 @@ function UnmonitoredGroupsSection({
             <div className="min-w-0">
               <GroupTitle group={group} />
               <p className="mt-0.5 text-xs text-text-muted tabular-nums">
-                {channelName.get(group.channelConfigId) ?? "Número bridge"} ·{" "}
+                {channelName.get(group.channelConfigId) ?? "Número por QR code"} ·{" "}
                 {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"}
               </p>
             </div>

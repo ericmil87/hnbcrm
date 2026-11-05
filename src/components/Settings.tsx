@@ -1,5 +1,7 @@
 import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../convex/lib/orgPhone";
 import { countryLabel } from "@/lib/defaultCountry";
+import { timezoneOptions } from "@/lib/timezones";
+import { VOCAB } from "@/lib/vocab";
 import { useEffect, useRef, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
@@ -33,14 +35,14 @@ type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "we
 const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
   { id: "general", name: "Geral" },
   { id: "ai", name: "IA" },
-  { id: "apikeys", name: "Chaves API" },
-  { id: "fields", name: "Campos Personalizados" },
-  { id: "sources", name: "Fontes de Leads" },
+  { id: "apikeys", name: VOCAB.apiKeys },
+  { id: "fields", name: "Campos personalizados" },
+  { id: "sources", name: VOCAB.origin.leadSources },
   { id: "webhooks", name: "Webhooks" },
   { id: "channels", name: "Canais" },
   { id: "data", name: "Dados" },
   { id: "notifications", name: "Notificações" },
-  { id: "central", name: "Central" },
+  { id: "central", name: VOCAB.unitsAndDepartments },
 ];
 
 function isSettingsSection(value: string | null): value is SettingsSection {
@@ -154,19 +156,19 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
         // lida antes sobrescreveria mudanças feitas em outra aba.
         settings: { timezone, currency, defaultCountryCode: countryCode },
       });
-      toast.success("Organização atualizada com sucesso");
+      toast.success("Organização atualizada");
     } catch (error) {
-      toast.error("Falha ao atualizar organização");
+      toast.error("Não foi possível atualizar organização.");
     }
     setSaving(false);
   };
 
   return (
     <Card>
-      <h3 className="text-lg font-semibold text-text-primary mb-4">Perfil da Organização</h3>
+      <h3 className="text-lg font-semibold text-text-primary mb-4">Perfil da organização</h3>
       <div className="space-y-4 max-w-md">
         <Input
-          label="Nome da Organização"
+          label="Nome da organização"
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -174,20 +176,10 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
 
         <div>
           <Select
-            label="Fuso Horário"
+            label="Fuso horário"
             value={timezone}
             onValueChange={setTimezone}
-            options={[
-              { value: "UTC", label: "UTC" },
-              { value: "America/New_York", label: "Eastern Time" },
-              { value: "America/Chicago", label: "Central Time" },
-              { value: "America/Denver", label: "Mountain Time" },
-              { value: "America/Los_Angeles", label: "Pacific Time" },
-              { value: "America/Sao_Paulo", label: "São Paulo" },
-              { value: "Europe/London", label: "London" },
-              { value: "Europe/Berlin", label: "Berlin" },
-              { value: "Asia/Tokyo", label: "Tokyo" },
-            ]}
+            options={timezoneOptions(timezone)}
           />
         </div>
 
@@ -258,7 +250,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
 
     const agentId = selectedAgentId || aiAgents[0]?._id;
     if (!agentId) {
-      toast.error("Nenhum agente IA encontrado. Crie um membro IA primeiro.");
+      toast.error("Nenhum agente de IA encontrado. Crie um membro IA primeiro.");
       return;
     }
 
@@ -276,7 +268,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
       setExpiresAt("");
       setShowCreateApiKey(false);
     } catch (error) {
-      toast.error("Falha ao criar chave API");
+      toast.error("Não foi possível criar a chave de integração.");
     }
   };
 
@@ -286,19 +278,19 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
         apiKeyId: apiKeyId as Id<"apiKeys">,
         organizationId,
       });
-      toast.success("Chave revogada com sucesso");
+      toast.success("Chave revogada");
       setConfirmRevokeId(null);
     } catch (error) {
-      toast.error("Falha ao revogar chave");
+      toast.error("Não foi possível revogar chave.");
     }
   };
 
   return (
     <Card>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Chaves API</h3>
+        <h3 className="text-lg font-semibold text-text-primary">Chaves de integração</h3>
         <Button onClick={() => setShowCreateApiKey(true)}>
-          Criar Chave
+          Criar chave
         </Button>
       </div>
 
@@ -338,7 +330,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           ))}
         </div>
       ) : apiKeys ? (
-        <p className="text-text-secondary">Nenhuma chave API criada.</p>
+        <p className="text-text-secondary">Nenhuma chave de integração criada.</p>
       ) : null}
 
       <ConfirmDialog
@@ -347,7 +339,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
         onConfirm={() => {
           if (confirmRevokeId) handleRevoke(confirmRevokeId);
         }}
-        title="Revogar Chave API"
+        title="Revogar chave de integração"
         description="Tem certeza que deseja revogar esta chave? Todas as integrações que a utilizam pararão de funcionar imediatamente."
         confirmLabel="Revogar"
         variant="danger"
@@ -356,11 +348,11 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
       <Modal
         open={showCreateApiKey}
         onClose={() => setShowCreateApiKey(false)}
-        title="Criar Chave API"
+        title="Criar chave de integração"
       >
         <form onSubmit={handleCreateApiKey} className="space-y-4">
           <Input
-            label="Nome da Chave"
+            label="Nome da chave"
             type="text"
             value={newApiKeyName}
             onChange={(e) => setNewApiKeyName(e.target.value)}
@@ -370,7 +362,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           {aiAgents.length > 1 && (
             <div>
               <Select
-                label="Agente IA"
+                label="Agente de IA"
                 value={selectedAgentId}
                 onValueChange={setSelectedAgentId}
                 options={aiAgents.map((agent) => ({ value: agent._id, label: agent.name }))}
@@ -392,7 +384,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           </div>
           {aiAgents.length === 0 && (
             <p className="text-sm text-semantic-warning">
-              Nenhum agente IA encontrado. Crie um membro IA na página de Equipe primeiro.
+              Nenhum agente de IA encontrado. Crie um membro IA na página de Equipe primeiro.
             </p>
           )}
           <div className="flex gap-2 pt-4">
@@ -405,7 +397,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
               Cancelar
             </Button>
             <Button type="submit" className="flex-1" disabled={aiAgents.length === 0}>
-              Criar Chave
+              Criar chave
             </Button>
           </div>
         </form>
@@ -493,11 +485,11 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
   return (
     <Card>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Campos Personalizados</h3>
+        <h3 className="text-lg font-semibold text-text-primary">Campos personalizados</h3>
         <Button
           onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", key: "", type: "text", options: "", isRequired: false }); }}
         >
-          Adicionar Campo
+          Adicionar campo
         </Button>
       </div>
 
@@ -552,7 +544,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
         onConfirm={() => {
           if (confirmDeleteId) handleDelete(confirmDeleteId);
         }}
-        title="Excluir Campo Personalizado"
+        title="Excluir campo personalizado"
         description="Tem certeza que deseja excluir este campo personalizado? Esta ação não pode ser desfeita."
         confirmLabel="Excluir"
         variant="danger"
@@ -561,7 +553,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
       <Modal
         open={showForm}
         onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar Campo Personalizado" : "Adicionar Campo Personalizado"}
+        title={editingId ? "Editar campo personalizado" : "Adicionar campo personalizado"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
@@ -587,12 +579,12 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
             value={form.type}
             onValueChange={(type) => setForm({ ...form, type })}
             options={[
-              { value: "text", label: "Text" },
-              { value: "number", label: "Number" },
-              { value: "boolean", label: "Boolean" },
-              { value: "date", label: "Date" },
-              { value: "select", label: "Select" },
-              { value: "multiselect", label: "Multi-select" },
+              { value: "text", label: "Texto" },
+              { value: "number", label: "Número" },
+              { value: "boolean", label: "Sim ou não" },
+              { value: "date", label: "Data" },
+              { value: "select", label: "Lista de opções" },
+              { value: "multiselect", label: "Lista de várias opções" },
             ]}
           />
           </div>
@@ -675,11 +667,11 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
   return (
     <Card>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Fontes de Leads</h3>
+        <h3 className="text-lg font-semibold text-text-primary">{VOCAB.origin.leadSources}</h3>
         <Button
           onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", type: "website" }); }}
         >
-          Adicionar Fonte
+          Adicionar origem
         </Button>
       </div>
 
@@ -708,7 +700,7 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
           ))}
         </div>
       ) : sources ? (
-        <p className="text-text-secondary">Nenhuma fonte de leads configurada.</p>
+        <p className="text-text-secondary">Nenhuma origem de lead configurada.</p>
       ) : null}
 
       <ConfirmDialog
@@ -717,8 +709,8 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
         onConfirm={() => {
           if (confirmDeleteId) handleDelete(confirmDeleteId);
         }}
-        title="Excluir Fonte de Leads"
-        description="Tem certeza que deseja excluir esta fonte de leads? Esta ação não pode ser desfeita."
+        title="Excluir origem do lead"
+        description="Tem certeza que deseja excluir esta origem do lead? Esta ação não pode ser desfeita."
         confirmLabel="Excluir"
         variant="danger"
       />
@@ -726,7 +718,7 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
       <Modal
         open={showForm}
         onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar Fonte de Leads" : "Adicionar Fonte de Leads"}
+        title={editingId ? "Editar origem do lead" : "Adicionar origem do lead"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
@@ -742,13 +734,13 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
             value={form.type}
             onValueChange={(type) => setForm({ ...form, type })}
             options={[
-              { value: "website", label: "Website" },
-              { value: "social", label: "Social" },
-              { value: "email", label: "Email" },
-              { value: "phone", label: "Phone" },
-              { value: "referral", label: "Referral" },
+              { value: "website", label: "Site" },
+              { value: "social", label: "Redes sociais" },
+              { value: "email", label: "E-mail" },
+              { value: "phone", label: "Telefone" },
+              { value: "referral", label: "Indicação" },
               { value: "api", label: "API" },
-              { value: "other", label: "Other" },
+              { value: "other", label: "Outra" },
             ]}
           />
           </div>

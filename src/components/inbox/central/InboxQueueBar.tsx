@@ -5,7 +5,7 @@ import { Id } from "../../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { hexAlpha } from "./centralMeta";
 
-/** Fila escolhida no inbox: "all" | "mine" | "none" (sem setor) | id do setor. */
+/** Fila escolhida no inbox: "all" | "mine" | "none" (sem departamento) | id do departamento. */
 export type QueueSelection = "all" | "mine" | "none" | Id<"departments">;
 
 export interface InboxQueueFilter {
@@ -102,8 +102,8 @@ interface InboxQueueBarProps {
 }
 
 /**
- * Filas da Central acima da lista de conversas: "Todas · Minhas · Sem setor ·
- * <setores>" (módulo departments) e chips de unidade (módulo units). Uma linha
+ * Filas da Central acima da lista de conversas: "Todas · Minhas · Sem departamento ·
+ * <departamentos>" (módulo departments) e chips de unidade (módulo units). Uma linha
  * por grupo, com rolagem horizontal no mobile.
  */
 export function InboxQueueBar({
@@ -119,7 +119,7 @@ export function InboxQueueBar({
   const setQueue = (queue: QueueSelection) => onChange({ ...value, queue });
   const rowClass =
     // Celular: uma linha com rolagem horizontal. Desktop: quebra em linhas —
-    // na coluna de 320/384 px a rolagem escondia metade dos setores.
+    // na coluna de 320/384 px a rolagem escondia metade dos departamentos.
     "flex items-center gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible";
 
   return (
@@ -143,7 +143,7 @@ export function InboxQueueBar({
             active={value.queue === "none"}
             onClick={() => setQueue("none")}
             icon={<CircleDashed size={12} aria-hidden />}
-            label="Sem setor"
+            label="Sem departamento"
             count={queues.noDepartmentCount}
           />
           {departments.length > 0 && <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />}

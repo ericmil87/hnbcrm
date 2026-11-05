@@ -105,9 +105,9 @@ export function AvatarUpload({
 
       // 4. Notify parent
       onPhotoChange(fileId);
-      toast.success("Foto atualizada!");
+      toast.success("Foto atualizada");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao enviar foto.");
+      toast.error(error.message || "Não foi possível enviar a foto.");
     } finally {
       setUploading(false);
     }

@@ -69,7 +69,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
       !phone.trim() &&
       !company.trim()
     ) {
-      toast.error("Forneça pelo menos um nome, email, telefone ou empresa");
+      toast.error("Forneça pelo menos um nome, e-mail, telefone ou empresa");
       return;
     }
 
@@ -115,12 +115,12 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
     });
 
     toast.promise(createPromise, {
-      loading: "Criando contato...",
+      loading: "Criando contato…",
       success: () => {
         onClose();
         return "Contato criado com sucesso";
       },
-      error: "Falha ao criar contato",
+      error: "Não foi possível criar o contato.",
     });
 
     try {
@@ -131,7 +131,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
   };
 
   return (
-    <Modal open={true} onClose={onClose} title="Criar Novo Contato">
+    <Modal open={true} onClose={onClose} title="Criar novo contato">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -162,7 +162,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
 
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
-            Email
+            E-mail
           </label>
           <input
             type="email"
@@ -241,7 +241,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
 
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
-            Tags (separadas por vírgula)
+            Etiquetas (separadas por vírgula)
           </label>
           <input
             type="text"
@@ -257,7 +257,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
         {requiredFields.length > 0 && (
           <div className="space-y-3">
             <div className="text-sm font-semibold text-text-primary border-t border-border pt-3">
-              Campos Obrigatórios
+              Campos obrigatórios
             </div>
             <CustomFieldsRenderer
               fieldDefinitions={requiredFields}
@@ -288,7 +288,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
           <div className="space-y-4 animate-in fade-in duration-200">
             {/* Social Section */}
             <div className="space-y-3">
-              <div className="text-sm font-semibold text-text-primary">Redes Sociais</div>
+              <div className="text-sm font-semibold text-text-primary">Redes sociais</div>
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1">
                   LinkedIn
@@ -388,10 +388,10 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
 
             {/* Professional Section */}
             <div className="space-y-3">
-              <div className="text-sm font-semibold text-text-primary">Dados Profissionais</div>
+              <div className="text-sm font-semibold text-text-primary">Dados profissionais</div>
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1">
-                  Setor
+                  Ramo de atividade
                 </label>
                 <input
                   type="text"
@@ -404,7 +404,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
               </div>
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1">
-                  Tamanho da Empresa
+                  Tamanho da empresa
                 </label>
                 <select
                   value={companySize}
@@ -412,7 +412,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
                   className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                   style={{ fontSize: "16px" }}
                 >
-                  <option value="">Selecionar...</option>
+                  <option value="">Selecionar…</option>
                   <option value="1-10">1-10 funcionários</option>
                   <option value="11-50">11-50 funcionários</option>
                   <option value="51-200">51-200 funcionários</option>
@@ -435,7 +435,7 @@ export function CreateContactModal({ organizationId, onClose }: CreateContactMod
               </div>
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1">
-                  Site da Empresa
+                  Site da empresa
                 </label>
                 <input
                   type="url"

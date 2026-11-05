@@ -91,7 +91,7 @@ export function OutcomeModal({
       }
       onClose();
     } catch (err) {
-      toast.error(mutationErrorMessage(err, "Falha ao registrar o desfecho"));
+      toast.error(mutationErrorMessage(err, "Não foi possível registrar o desfecho."));
     } finally {
       setSubmitting(false);
     }
@@ -226,7 +226,7 @@ export function OutcomeModal({
             )}
             <p className="flex items-start gap-2 text-xs text-text-muted">
               <CircleX size={14} className="mt-px shrink-0" aria-hidden />
-              O lead vai para o estágio de Perdido do funil, com o motivo registrado para o painel.
+              O lead vai para a etapa Perdido do funil, com o motivo registrado para o painel.
             </p>
           </>
         )}

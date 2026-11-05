@@ -366,7 +366,7 @@ export function StepLimits({ draft, setDraft, now, editable }: StepLimitsProps) 
               disabled={!editable}
               onChange={(e) => setDraft((d) => ({ ...d, safety: { ...d.safety, checkNumbersFirst: e.target.checked } }))}
               label="Verificar se o número tem WhatsApp antes de enviar"
-              description="Grátis no bridge. Enviar para número inexistente é sinal de lista comprada."
+              description="Grátis no WhatsApp por QR code. Enviar para número inexistente é sinal de lista comprada."
             />
           )}
         </div>

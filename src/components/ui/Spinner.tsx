@@ -21,7 +21,7 @@ export function Spinner({ size = "md", className }: SpinnerProps) {
       )}
       role="status"
     >
-      <span className="sr-only">Carregando...</span>
+      <span className="sr-only">Carregando…</span>
     </div>
   );
 }

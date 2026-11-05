@@ -191,13 +191,13 @@ export function OnboardingWizard({
     switch (currentStep) {
       case 0:
         if (!industry) {
-          toast.error("Por favor, selecione um setor");
+          toast.error("Selecione o ramo de atividade");
           return false;
         }
         return true;
       case 1:
         if (!boardName || stages.length === 0) {
-          toast.error("Configure o pipeline antes de continuar");
+          toast.error("Configure o funil antes de continuar");
           return false;
         }
         return true;
@@ -291,7 +291,7 @@ export function OnboardingWizard({
               await createTeamMember({ organizationId, name, role: "ai", type: "ai" });
               results.push({ key, name, kind: "ai" });
             } catch (error) {
-              results.push({ key, name, kind: "failed", error: mutationErrorMessage(error, "Falha ao convidar") });
+              results.push({ key, name, kind: "failed", error: mutationErrorMessage(error, "Não foi possível convidar.") });
             }
             continue;
           }
@@ -315,7 +315,7 @@ export function OnboardingWizard({
               pendingPasswordChange: !result.isNewUser && result.pendingPasswordChange,
             });
           } catch (error) {
-            const message = mutationErrorMessage(error, "Falha ao convidar");
+            const message = mutationErrorMessage(error, "Não foi possível convidar.");
             results.push({
               key,
               name,
@@ -364,7 +364,7 @@ export function OnboardingWizard({
       onComplete();
     } catch (error) {
       console.error("Failed to complete wizard:", error);
-      toast.error("Erro ao finalizar configuração");
+      toast.error("Não foi possível finalizar configuração.");
     }
   };
 

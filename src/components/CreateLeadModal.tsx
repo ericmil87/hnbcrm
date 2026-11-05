@@ -94,15 +94,15 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
 
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao criar lead");
-      setError(err instanceof Error ? err.message : "Falha ao criar lead.");
+      toast.error(err instanceof Error ? err.message : "Não foi possível criar o lead.");
+      setError(err instanceof Error ? err.message : "Não foi possível criar o lead.");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal open={true} onClose={onClose} title="Criar Novo Lead">
+    <Modal open={true} onClose={onClose} title="Criar novo lead">
       {error && (
         <div className="mb-4 p-3 bg-semantic-error/10 text-semantic-error text-sm rounded-lg border border-semantic-error/20">
           {error}
@@ -187,7 +187,7 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
                 className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                 style={{ fontSize: "16px" }}
               >
-                <option value="">Selecione um contato...</option>
+                <option value="">Selecione um contato…</option>
                 {contacts?.map((contact) => (
                   <option key={contact._id} value={contact._id}>
                     {[contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.email || contact.phone || "Sem nome"}
@@ -228,7 +228,7 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">Email</label>
+                <label className="block text-xs font-medium text-text-secondary mb-1">E-mail</label>
                 <input
                   type="email"
                   value={email}

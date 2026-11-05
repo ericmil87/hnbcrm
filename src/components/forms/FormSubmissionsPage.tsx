@@ -867,7 +867,7 @@ export function FormSubmissionsPage() {
                       scope="col"
                       className="px-4 py-3 text-left text-xs font-semibold text-text-muted uppercase tracking-wide"
                     >
-                      Nome / Email
+                      Nome e e-mail
                     </th>
                     <th
                       scope="col"

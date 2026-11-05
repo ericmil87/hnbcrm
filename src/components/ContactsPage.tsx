@@ -29,14 +29,14 @@ interface ColumnDefinition {
 const AVAILABLE_COLUMNS: ColumnDefinition[] = [
   { key: "contact", label: "Contato", fixed: true },
   { key: "company", label: "Empresa" },
-  { key: "email", label: "Email" },
+  { key: "email", label: "E-mail" },
   { key: "phone", label: "Telefone" },
-  { key: "tags", label: "Tags" },
+  { key: "tags", label: "Etiquetas" },
   { key: "city", label: "Cidade" },
   { key: "state", label: "Estado" },
   { key: "country", label: "País" },
   { key: "industry", label: "Indústria" },
-  { key: "social", label: "Redes Sociais" },
+  { key: "social", label: "Redes sociais" },
   { key: "companySize", label: "Porte" },
   { key: "acquisitionChannel", label: "Canal" },
 ];
@@ -307,7 +307,7 @@ export function ContactsPage() {
                 className="shrink-0"
               >
                 <Plus size={20} className="mr-2" />
-                Novo Contato
+                Novo contato
               </Button>
             )}
           </div>
@@ -320,7 +320,7 @@ export function ContactsPage() {
                 type="text"
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
-                placeholder="Buscar por nome, email, empresa..."
+                placeholder="Buscar por nome, e-mail, empresa…"
                 className="w-full pl-10 pr-4 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
                 style={{ fontSize: "16px" }}
               />
@@ -340,7 +340,7 @@ export function ContactsPage() {
                 <div className="absolute right-0 top-full mt-2 w-64 bg-surface-overlay border border-border rounded-xl shadow-lg z-50 overflow-hidden">
                   <div className="p-3 border-b border-border">
                     <h3 className="text-sm font-semibold text-text-primary">
-                      Colunas Visíveis
+                      Colunas visíveis
                     </h3>
                   </div>
                   <div className="max-h-80 overflow-y-auto">
@@ -399,7 +399,7 @@ export function ContactsPage() {
             {!debouncedSearch && can("contacts", "edit") && (
               <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)}>
                 <Plus size={20} className="mr-2" />
-                Criar Contato
+                Criar contato
               </Button>
             )}
           </div>

@@ -38,7 +38,7 @@ export const ACTION_LABELS: Record<string, { label: string; variant: string }> =
   delete: { label: "Excluir", variant: "error" },
   move: { label: "Mover", variant: "brand" },
   assign: { label: "Atribuir", variant: "info" },
-  handoff: { label: "Repassar", variant: "warning" },
+  handoff: { label: "Pedir ajuda", variant: "warning" },
 };
 
 // Field label mapping for diff table
@@ -50,11 +50,11 @@ export const FIELD_LABELS: Record<string, string> = {
   title: "Título",
   name: "Nome",
   value: "Valor",
-  email: "Email",
+  email: "E-mail",
   phone: "Telefone",
   company: "Empresa",
   temperature: "Temperatura",
-  tags: "Tags",
+  tags: "Etiquetas",
   qualification: "Qualificação",
   contactId: "Contato",
 };
@@ -98,7 +98,7 @@ export const ACTION_VERBS_PTBR: Record<string, string> = {
   delete: "Excluiu",
   move: "Moveu",
   assign: "Atribuiu",
-  handoff: "Repassou",
+  handoff: "Pediu ajuda",
 };
 
 export const ENTITY_LABELS_PTBR: Record<string, { article: string; label: string }> = {
@@ -106,7 +106,7 @@ export const ENTITY_LABELS_PTBR: Record<string, { article: string; label: string
   contact: { article: "o", label: "contato" },
   organization: { article: "a", label: "organização" },
   teamMember: { article: "o", label: "membro" },
-  handoff: { article: "o", label: "repasse" },
+  handoff: { article: "o", label: "pedido de ajuda" },
   message: { article: "a", label: "mensagem" },
   board: { article: "o", label: "quadro" },
   stage: { article: "a", label: "etapa" },

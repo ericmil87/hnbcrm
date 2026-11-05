@@ -26,6 +26,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import { TAB_ROUTES, activeTabForPath } from "@/lib/routes";
+import { VOCAB } from "@/lib/vocab";
 import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 
 export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns" | "groups" | "central";
@@ -41,20 +42,20 @@ interface NavItem {
 
 /** Primary tabs shown in the bottom bar */
 const primaryTabs: NavItem[] = [
-  { id: "dashboard", label: "Painel", icon: LayoutDashboard },
-  { id: "board", label: "Pipeline", icon: Kanban, permission: { category: "leads", level: "view_own" } },
-  { id: "calendar", label: "Calendário", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
-  { id: "inbox", label: "Entrada", icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
+  { id: "dashboard", label: VOCAB.dashboard.nav, icon: LayoutDashboard },
+  { id: "board", label: VOCAB.funnel.nav, icon: Kanban, permission: { category: "leads", level: "view_own" } },
+  { id: "calendar", label: VOCAB.agenda.nav, icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
+  { id: "inbox", label: VOCAB.conversations.nav, icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
   { id: "tasks", label: "Tarefas", icon: CheckSquare, permission: { category: "tasks", level: "view_own" } },
 ];
 
 /** Overflow tabs shown in the "More" menu */
 const moreTabs: NavItem[] = [
-  { id: "central", label: "Central", icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
+  { id: "central", label: VOCAB.reports.nav, icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
   { id: "contacts", label: "Contatos", icon: Contact2, permission: { category: "contacts", level: "view" } },
-  { id: "handoffs", label: "Repasses", icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
+  { id: "handoffs", label: VOCAB.attention.nav, icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
-  { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
+  { id: "audit", label: VOCAB.audit.nav, icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
   { id: "groups", label: "Grupos", icon: Users2, permission: { category: "inbox", level: "view_own" } },

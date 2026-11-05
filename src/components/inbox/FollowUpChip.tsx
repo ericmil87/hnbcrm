@@ -61,7 +61,7 @@ export function FollowUpChip({ conversationId }: { conversationId: Id<"conversat
       await cancelAuto({ followUpId });
       toast.success("Execução automática desligada");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao cancelar o follow-up"));
+      toast.error(mutationErrorMessage(e, "Não foi possível cancelar o follow-up."));
     } finally {
       setCancelingId(null);
     }

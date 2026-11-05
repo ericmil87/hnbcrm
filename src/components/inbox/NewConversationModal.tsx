@@ -583,7 +583,7 @@ export function NewConversationModal({
                 >
                   <span className="flex-1 min-w-0">
                     <span className="block text-text-secondary">
-                      Funil e estágio:{" "}
+                      Funil e etapa:{" "}
                       <strong className="text-text-primary">
                         {boardName ?? "—"} › {resolvedStage?.name ?? "—"}
                       </strong>
@@ -618,7 +618,7 @@ export function NewConversationModal({
                       value={resolvedStage?.id ?? ""}
                       onChange={(e) => setStageId(e.target.value as Id<"stages">)}
                       className={fieldClass}
-                      aria-label="Estágio"
+                      aria-label="Etapa"
                       disabled={stages === undefined}
                     >
                       {((stages ?? []) as Array<{ _id: Id<"stages">; name: string }>).map((s) => (
@@ -664,7 +664,7 @@ export function NewConversationModal({
           <div className="rounded-lg border border-semantic-warning/30 bg-semantic-warning/10 p-3 space-y-2">
             <p className="flex items-start gap-2 text-sm text-semantic-warning">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              Este número pediu para não receber mensagens (opt-out). Enviar mesmo assim é responsabilidade da equipe.
+              Este número pediu para não receber mensagens. Enviar mesmo assim é responsabilidade da equipe.
             </p>
             <Checkbox
               id="new-conv-optout-ack"

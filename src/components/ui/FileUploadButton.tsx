@@ -143,7 +143,7 @@ export function FileUploadButton({
 
       onFilesUploaded(newFiles);
     } catch (error: any) {
-      toast.error(error.message || "Falha ao enviar arquivo");
+      toast.error(error.message || "Não foi possível enviar o arquivo.");
     } finally {
       setUploading(false);
       setProgress(0);
