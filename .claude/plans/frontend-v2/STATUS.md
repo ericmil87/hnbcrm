@@ -6,14 +6,15 @@
 
 | fv2 | Título | Ramo | Merge | Testes (total) | Achados de revisão relevantes | Decisões fora do plano |
 |---|---|---|---|---|---|---|
+| 01 | Testes de componente (jsdom + Testing Library), 404/`errorElement`, lazy das páginas públicas, `activeTabForPath`, Agenda `?view=&date=&event=`, `src/lib/format.ts`, CI em `frontend-v2` | `feat/fv2-01-testes-componente-roteador` | `a3e91ed` (05/11/2026) | 3398 (backend-e-lib 3391 + componentes 7) | 3 bloqueios corrigidos em 2 rodadas: loop infinito do curinga `/app/*` (Navigate relativo → absoluto + teste `appFallbackRoute.test.tsx`); `?event=` inválido derrubava o app (ErrorBoundary com fallback que limpa o param); `errorElement` faltava em `/termos`, `/privacidade`, `/f/:slug`. | `formatRelative` segue `ContactDetailPanel` (Formulários passam a "há 3 dias"); Painel "R$ 1.5M" → "R$ 1,5 mi"; `formatDueRelative` novo para tarefas; `formatBRL` de `centralFormat`/`centralMeta` viraram wrappers (apagar depois); toast "Página não encontrada" ficou de fora; `RouteErrorPage` em `src/pages/`; `apiRegistry` aparece 1× em `index-*.js` só como nome de chunk no preload (objetivo atingido). |
 | 02 | Templates por segmento (`convex/lib/onboardingTemplates.ts`) | `feat/fv2-02-templates-segmento` | `3086e07` (05/11/2026) | 3367 | Sem bloqueio. Melhorias aplicadas: `renderPersonaSeed` remove frase com placeholder vazio; palavras de repasse por intenção ("agendar visita", "fazer matrícula"); "falar com atendente" em todo segmento; JSDoc: consumidor une a `DEFAULT_HANDOFF_KEYWORDS`. | `INDUSTRY_TEMPLATES` do wizard v1 mantido literal (não derivado) para preservar comportamento; `FieldSeed = {key,label,type:"text"|"select",options?}`; `personaForIndustry("financeiro")` segue `geral`. `vite build`/`tsc node` não re-rodados após o commit de ajustes (só texto/dados). |
 
 ## Em andamento
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
-| 01 | `feat/fv2-01-testes-componente-roteador` | frontend-specialist | implementado, em revisão (worktree `/home/user/wt/fv2-01`) | integrar |
-| 04 | `feat/fv2-04-portas-config` | convex-backend | implementação (worktree `/home/user/wt/fv2-04`) | revisão |
+| 03 | `feat/fv2-03-primitivos-formulario` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-03`) | revisão |
+| 04 | `feat/fv2-04-portas-config` | convex-backend | implementado (e4d04fc), em revisão | integrar |
 
 ## Parados (não integrar sem decisão do dono)
 
@@ -27,5 +28,6 @@
 
 ## Para retomar
 
-- Próximo PR da ordem: **fv2-01** (em revisão), depois fv2-03
+- Próximo PR da ordem: **fv2-03** (em implementação) e **fv2-04** (em revisão)
+- PR em rascunho para acompanhamento: https://github.com/ericmil87/hnbcrm/pull/40
 - Ramo em andamento: nenhum
