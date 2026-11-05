@@ -46,4 +46,13 @@ describe("deriveOnboardingStatus", () => {
     expect(r.bridgeAckPending).toBe(true);
     expect(deriveOnboardingStatus({ ...EMPTY, hasAttendant: true }).bridgeAckPending).toBe(false);
   });
+
+  it("org legada conta business e test como feitos; org v2 não", () => {
+    const legacy = deriveOnboardingStatus({ ...EMPTY, legacyOrg: true, legacyWizardCompleted: true });
+    expect(legacy.steps.business).toBe("done");
+    expect(legacy.steps.test).toBe("done");
+    const v2 = deriveOnboardingStatus({ ...EMPTY, legacyOrg: false, legacyWizardCompleted: true });
+    expect(v2.steps.business).toBe("pending");
+    expect(v2.steps.test).toBe("pending");
+  });
 });

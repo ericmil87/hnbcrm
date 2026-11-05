@@ -301,6 +301,8 @@ test("org legada com wizardCompletedAt não vê wizard", async () => {
   expect(st.shouldShowWizard).toBe(false);
   expect(st.legacy).toBe(true);
   expect(st.steps?.funnel).toBe("done");
+  expect(st.steps?.business).toBe("done");
+  expect(st.steps?.test).toBe("done");
 });
 
 test("completeWizard v2 grava wizardVersion e preserva o perfil", async () => {

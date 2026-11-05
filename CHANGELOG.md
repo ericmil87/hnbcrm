@@ -37,6 +37,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Configuração inicial e Copiloto
 
+- Organizações antigas, que já concluíram a configuração inicial, não ficam mais com "Conte sobre seu negócio" e "Teste seu atendente" pendentes para sempre na lista de primeiros passos.
 - Corrigido um erro interno que impedia publicar a consulta de progresso da Configuração inicial.
 - Organizações de startup/SaaS e de cursos passam a ter, na ativação em 1 toque, uma Atendente IA com jeito de atender próprio (antes usavam o modelo geral). Também chegam modelos prontos de funil, campos e perguntas frequentes por segmento, com os casos em que a Atendente IA passa a conversa para falar com a equipe.
 - Salvar o Atendente IA, ligar os recursos da IA e criar ou provisionar um canal de WhatsApp agora exigem uma conta com e-mail (ler o QR em Configurações também passa a exigir, pois a tela usa o mesmo caminho do código de conexão). Contas de acesso antigo, sem e-mail, veem um aviso pedindo para entrar com e-mail e senha.

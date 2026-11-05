@@ -77,8 +77,8 @@ export const DOWNLOAD_TIMEOUT_MS = 15_000;
 export const THINKING_TEXT = "Pensando…";
 
 export const COPILOT_COPY = {
-  aiOff: (org: string) => `🤖 A IA não está ativada na ${escapeHtml(org)}. Um admin ativa em Configurações → IA.`,
-  copilotOff: (org: string) => `🤖 O Copiloto está desligado na ${escapeHtml(org)}. Um admin liga em Configurações → IA.`,
+  aiOff: (org: string) => `🤖 A IA não está ativada na ${escapeHtml(org)}. Um admin ativa em Configurações › Atendente IA.`,
+  copilotOff: (org: string) => `🤖 O Copiloto está desligado na ${escapeHtml(org)}. Um admin liga em Configurações › Atendente IA.`,
   spendCap: (org: string) =>
     `💸 A ${escapeHtml(org)} atingiu o teto de gastos de IA do mês. Notificações e botões continuam; o Copiloto e o modo automático voltam quando o teto for ajustado.`,
   noRoute: "⚠️ Nenhum provedor de IA disponível agora. Tente de novo em instantes.",
