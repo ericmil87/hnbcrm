@@ -1,8 +1,9 @@
 import React from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Clock } from "lucide-react";
+import { Clock, Flame } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
 import { formatMoney, formatRelative } from "@/lib/format";
 import {
@@ -11,6 +12,12 @@ import {
   getTemperatureLabel,
   getTemperatureVariant,
 } from "@/lib/funnelFilters";
+import {
+  DEFAULT_FUNNEL_CARD_PREFS,
+  isFieldVisible,
+  type FunnelCardField,
+  type FunnelCardPrefs,
+} from "@/lib/funnelCardPrefs";
 import type { Lead } from "./types";
 
 // Presentational lead card — shared by the in-column DraggableCard and the
@@ -22,15 +29,48 @@ export interface LeadLastMessage {
   fromContact: boolean;
 }
 
+const DOT_COLOR = {
+  error: "bg-semantic-error",
+  warning: "bg-semantic-warning",
+  info: "bg-semantic-info",
+  default: "bg-text-muted",
+} as const;
+
+const ICON_COLOR = {
+  error: "text-semantic-error",
+  warning: "text-semantic-warning",
+  info: "text-semantic-info",
+  default: "text-text-muted",
+} as const;
+
+/** Marcador compacto: a forma (bolinha ou chama) diz o campo, a cor diz o valor; o texto vai para leitor de tela e dica. */
+function Marker({ kind, variant, label }: { kind: "dot" | "flame"; variant: keyof typeof DOT_COLOR; label: string }) {
+  return (
+    <Tooltip content={label}>
+      <span className="inline-flex shrink-0 items-center">
+        {kind === "dot" ? (
+          <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", DOT_COLOR[variant])} />
+        ) : (
+          <Flame size={10} aria-hidden="true" className={ICON_COLOR[variant]} />
+        )}
+        <span className="sr-only">{label}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
 export function LeadCardView({
   lead,
   variant = "default",
   lastMessage,
+  prefs = DEFAULT_FUNNEL_CARD_PREFS,
 }: {
   lead: Lead;
   variant?: "default" | "placeholder" | "overlay";
   /** Prévia da última mensagem da conversa; sem valor, o cartão fica como sempre foi. */
   lastMessage?: LeadLastMessage;
+  /** Densidade e campos visíveis (preferência pessoal); sem valor, o padrão compacto. */
+  prefs?: FunnelCardPrefs;
 }) {
   const priorityColor = {
     urgent: "bg-semantic-error",
@@ -48,77 +88,166 @@ export function LeadCardView({
       ? "text-semantic-warning"
       : "text-semantic-success";
 
-  return (
-    <div
-      className={cn(
-        "bg-surface-raised p-4 rounded-card border relative transition-all",
-        variant === "default" && "border-border hover:border-border-strong hover:shadow-card-hover",
-        variant === "placeholder" && "opacity-40 border-dashed border-border-strong",
-        variant === "overlay" && "w-80 border-brand-500 rotate-2 scale-[1.03] shadow-elevated cursor-grabbing",
-      )}
+  const compact = prefs.density === "compact";
+  const show = (field: FunnelCardField) => isFieldVisible(prefs, field);
+  const contactName = lead.contact
+    ? `${lead.contact.firstName ?? ""} ${lead.contact.lastName ?? ""}`.trim()
+    : "";
+  const tags = lead.tags ?? [];
+
+  const frame = cn(
+    "bg-surface-raised rounded-card border relative transition-all",
+    compact ? "py-2 pl-3.5 pr-2.5" : "p-4",
+    variant === "default" && "border-border hover:border-border-strong hover:shadow-card-hover",
+    variant === "placeholder" && "opacity-40 border-dashed border-border-strong",
+    variant === "overlay" && "w-80 border-brand-500 rotate-2 scale-[1.03] shadow-elevated cursor-grabbing",
+  );
+
+  const stripe = <div className={cn("absolute left-0 top-0 bottom-0 w-1 rounded-l-card", priorityColor)} />;
+
+  const age = show("age") && (
+    <div className={cn("flex shrink-0 items-center gap-1 text-caption font-medium", agingColor)}>
+      <Clock size={12} aria-hidden="true" />
+      <span className="tabular-nums">{agingLabel}</span>
+    </div>
+  );
+
+  const lastMessageEl = show("lastMessage") && lastMessage && (
+    <p
+      className={cn("text-caption text-text-muted", compact ? "truncate" : "mb-2 pl-2 line-clamp-2")}
+      data-testid="lead-last-message"
     >
-      {/* Priority Color Bar */}
-      <div className={cn("absolute left-0 top-0 bottom-0 w-1 rounded-l-card", priorityColor)} />
+      {lastMessage.fromContact ? "" : "Você: "}
+      {lastMessage.text}
+      <span className="ml-1 tabular-nums">· {formatRelative(lastMessage.at, Date.now())}</span>
+    </p>
+  );
 
-      <h4 className="font-medium text-text-primary mb-2 pl-2">{lead.title}</h4>
+  if (compact) {
+    const hasMetaRow =
+      show("contact") ||
+      (show("value") && lead.value > 0) ||
+      show("priority") ||
+      show("temperature") ||
+      (show("assignee") && !!lead.assignee) ||
+      (show("tags") && tags.length > 0);
+    return (
+      <div className={frame} data-density="compact">
+        {stripe}
+        <div className="flex items-center gap-2">
+          <h4 className="min-w-0 flex-1 truncate text-sm font-medium leading-5 text-text-primary" title={lead.title}>
+            {lead.title}
+          </h4>
+          {age}
+        </div>
 
-      {lead.contact ? (
-        <p className="text-sm text-text-secondary mb-2 pl-2">
-          {lead.contact.firstName} {lead.contact.lastName}
-          {lead.contact.company && ` • ${lead.contact.company}`}
-        </p>
-      ) : (
-        <p className="text-xs text-text-muted mb-2 pl-2 italic">Sem contato</p>
-      )}
-
-      {lastMessage && (
-        <p className="text-caption text-text-muted mb-2 pl-2 line-clamp-2" data-testid="lead-last-message">
-          {lastMessage.fromContact ? "" : "Você: "}
-          {lastMessage.text}
-          <span className="ml-1 tabular-nums">· {formatRelative(lastMessage.at, Date.now())}</span>
-        </p>
-      )}
-
-      <div className="flex items-center justify-between mb-3 pl-2">
-        <span className="text-lg font-semibold text-brand-400 tabular-nums">
-          {formatMoney(lead.value, "BRL", { fractionDigits: 0 })}
-        </span>
-
-        {lead.assignee && (
-          <Avatar name={lead.assignee.name} type={lead.assignee.type} size="sm" />
-        )}
-      </div>
-
-      <div className="flex items-center justify-between gap-2 flex-wrap pl-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={getPriorityVariant(lead.priority)}>
-            {getPriorityLabel(lead.priority)}
-          </Badge>
-
-          <Badge variant={getTemperatureVariant(lead.temperature)}>
-            {getTemperatureLabel(lead.temperature)}
-          </Badge>
-
-          {lead.tags && lead.tags.length > 0 && (
-            <>
-              {lead.tags.slice(0, 2).map((tag, idx) => (
-                <Badge key={idx} variant="default">
-                  {tag}
-                </Badge>
+        {hasMetaRow && (
+          <div className="mt-0.5 flex min-h-6 items-center gap-2">
+            {show("contact") &&
+              (contactName ? (
+                <span className="min-w-0 flex-1 truncate text-caption text-text-secondary" title={lead.contact?.company ? `${contactName} • ${lead.contact.company}` : contactName}>
+                  {contactName}
+                  {lead.contact?.company && ` • ${lead.contact.company}`}
+                </span>
+              ) : (
+                <span className="min-w-0 flex-1 truncate text-caption italic text-text-muted">Sem contato</span>
               ))}
-              {lead.tags.length > 2 && (
-                <span className="text-xs text-text-muted">+{lead.tags.length - 2} mais</span>
-              )}
-            </>
+            {!show("contact") && <span className="flex-1" />}
+            {show("value") && lead.value > 0 && (
+              <span className="shrink-0 text-caption font-medium text-text-secondary tabular-nums">
+                {formatMoney(lead.value, "BRL", { fractionDigits: 0 })}
+              </span>
+            )}
+            {show("priority") && (
+              <Marker kind="dot" variant={getPriorityVariant(lead.priority)} label={`Prioridade: ${getPriorityLabel(lead.priority)}`} />
+            )}
+            {show("temperature") && (
+              <Marker
+                kind="flame"
+                variant={getTemperatureVariant(lead.temperature)}
+                label={`Temperatura: ${getTemperatureLabel(lead.temperature)}`}
+              />
+            )}
+            {show("tags") && tags.length > 0 && (
+              <Badge variant="default" className="max-w-[6rem] shrink-0 px-1.5 py-0 text-micro">
+                <span className="truncate" title={tags[0]}>{tags[0]}</span>
+                {tags.length > 1 && <span className="shrink-0">&nbsp;+{tags.length - 1}</span>}
+              </Badge>
+            )}
+            {show("assignee") && lead.assignee && (
+              <Avatar name={lead.assignee.name} type={lead.assignee.type} size="xs" />
+            )}
+          </div>
+        )}
+
+        {lastMessageEl}
+      </div>
+    );
+  }
+
+  const showValueRow = show("value") || (show("assignee") && !!lead.assignee);
+  const showBadgeRow = show("priority") || show("temperature") || (show("tags") && tags.length > 0) || show("age");
+
+  return (
+    <div className={frame} data-density="comfortable">
+      {stripe}
+
+      <h4 className="font-medium text-text-primary mb-2 pl-2 line-clamp-2">{lead.title}</h4>
+
+      {show("contact") &&
+        (lead.contact ? (
+          <p className="text-sm text-text-secondary mb-2 pl-2">
+            {lead.contact.firstName} {lead.contact.lastName}
+            {lead.contact.company && ` • ${lead.contact.company}`}
+          </p>
+        ) : (
+          <p className="text-xs text-text-muted mb-2 pl-2 italic">Sem contato</p>
+        ))}
+
+      {lastMessageEl}
+
+      {showValueRow && (
+        <div className="flex items-center justify-between mb-3 pl-2">
+          {show("value") ? (
+            <span className="text-lg font-semibold text-brand-400 tabular-nums">
+              {formatMoney(lead.value, "BRL", { fractionDigits: 0 })}
+            </span>
+          ) : (
+            <span />
+          )}
+
+          {show("assignee") && lead.assignee && (
+            <Avatar name={lead.assignee.name} type={lead.assignee.type} size="sm" />
           )}
         </div>
+      )}
 
-        {/* Days in Stage Indicator */}
-        <div className={cn("flex items-center gap-1 text-xs font-medium", agingColor)}>
-          <Clock size={12} aria-hidden="true" />
-          <span>{agingLabel}</span>
+      {showBadgeRow && (
+        <div className="flex items-center justify-between gap-2 flex-wrap pl-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {show("priority") && (
+              <Badge variant={getPriorityVariant(lead.priority)}>{getPriorityLabel(lead.priority)}</Badge>
+            )}
+
+            {show("temperature") && (
+              <Badge variant={getTemperatureVariant(lead.temperature)}>{getTemperatureLabel(lead.temperature)}</Badge>
+            )}
+
+            {show("tags") && tags.length > 0 && (
+              <>
+                {tags.slice(0, 2).map((tag, idx) => (
+                  <Badge key={idx} variant="default">
+                    {tag}
+                  </Badge>
+                ))}
+                {tags.length > 2 && <span className="text-xs text-text-muted">+{tags.length - 2} mais</span>}
+              </>
+            )}
+          </div>
+
+          {age}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -128,10 +257,12 @@ export function DraggableCard({
   lead,
   onClick,
   justDraggedRef,
+  prefs,
 }: {
   lead: Lead;
   onClick: () => void;
   justDraggedRef: React.MutableRefObject<boolean>;
+  prefs?: FunnelCardPrefs;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead._id,
@@ -151,7 +282,7 @@ export function DraggableCard({
       onClick={handleClick}
       className="cursor-pointer touch-manipulation select-none"
     >
-      <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} />
+      <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
     </div>
   );
 }

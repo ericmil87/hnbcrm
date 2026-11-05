@@ -4,6 +4,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Funil
+
+- Os cards do Funil ficaram compactos: título em uma linha, contato e valor numa linha de apoio, prioridade e temperatura em bolinhas coloridas, e o responsável em um avatar pequeno. Cabem bem mais leads por coluna. O botão **Exibição dos cards** (ao lado de Arquivados) deixa escolher entre **Compacto** e **Confortável** e marcar quais campos aparecem (Contato, Valor, Prioridade, Temperatura, Etiquetas, Responsável, Tempo e Última mensagem). A escolha é pessoal, vale para cada organização e fica salva neste navegador.
+
 ### Requer atenção
 
 - A lista agora é compacta: cada pedido ocupa uma linha com o nome, o motivo, há quanto tempo foi pedido e o resumo em uma linha. **Assumir conversa**, **Devolver à IA** e **Ver conversa** ficam na própria linha, e a seta abre as ações sugeridas. Em **Completo**, no topo da página, o cartão volta a ser como antes; a escolha fica salva neste navegador. O contador agora aparece como "37 pendentes".

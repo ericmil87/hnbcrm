@@ -25,6 +25,7 @@ import { usePageTitle } from "@/hooks/usePageTitle";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { useFunnelUrlState } from "@/hooks/useFunnelUrlState";
+import { useFunnelCardPrefs } from "@/hooks/useFunnelCardPrefs";
 import { VOCAB } from "@/lib/vocab";
 import { assignableMembers } from "@/lib/teamMembers";
 import { defaultSortOrder, filterLeads, normalizeFunnelFilters, sortLeads, type SortOrder } from "@/lib/funnelFilters";
@@ -79,6 +80,7 @@ export function FunnelPage() {
     handleDeepLinkLead,
   } = useFunnelUrlState(organizationId, boards);
   const viewMode = urlFilters.view;
+  const [cardPrefs, setCardPrefs] = useFunnelCardPrefs(organizationId);
 
   const [dialog, setDialog] = useState<FunnelDialog | null>(null);
   const [quickAddStageId, setQuickAddStageId] = useState<Id<"stages"> | null>(null);
@@ -297,6 +299,8 @@ export function FunnelPage() {
           filters={filters}
           onFiltersChange={setFilters}
           onClearFilters={clearFilters}
+          cardPrefs={cardPrefs}
+          onCardPrefsChange={setCardPrefs}
           teamMembers={teamMembers}
           units={orgModules.units ? (units ?? null) : null}
           showArchived={showArchived}
@@ -337,6 +341,7 @@ export function FunnelPage() {
                       totalValue={totalValue}
                       isDragActive={draggedLeadId !== null}
                       justDraggedRef={justDraggedRef}
+                      cardPrefs={cardPrefs}
                       onLeadClick={(leadId) => openLeadPanel(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}
                       onStageMenu={(e: React.MouseEvent) => {
@@ -413,7 +418,7 @@ export function FunnelPage() {
 
         {/* Drag Overlay */}
         <DragOverlay>
-          {draggedLead ? <LeadCardView lead={draggedLead} variant="overlay" /> : null}
+          {draggedLead ? <LeadCardView lead={draggedLead} variant="overlay" prefs={cardPrefs} /> : null}
         </DragOverlay>
       </div>
 
