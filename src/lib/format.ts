@@ -125,6 +125,12 @@ export function formatMoney(
   }
 }
 
+/** Custo em dólar; abaixo de 1 centavo (e acima de zero) vira "menos de US$ 0,01". */
+export function formatUsd(value: number): string {
+  if (value > 0 && value < 0.01) return "menos de US$ 0,01";
+  return formatMoney(value, "USD");
+}
+
 /** Inteiro com separador de milhar: 1.234.567. */
 export function formatCount(n: number): string {
   return n.toLocaleString(LOCALE);
