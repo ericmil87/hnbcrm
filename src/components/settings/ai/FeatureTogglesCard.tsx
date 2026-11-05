@@ -283,7 +283,7 @@ export function FeatureTogglesCard({
               value={status.products.telegramCopilot?.model ?? ""}
               onValueChange={(v) => saveRouting("telegramCopilot", { model: v })}
               options={[
-                { value: "", label: "Padrão (DeepSeek Flash via OpenRouter)" },
+                { value: "", label: "Padrão (DeepSeek flash via OpenRouter)" },
                 ...(modelOptions ?? []).map((m) => ({ value: m.id, label: m.id })),
               ]}
             />
