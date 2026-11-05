@@ -1,7 +1,23 @@
 import { Bot } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/Input";
+import { Select, type SelectOption } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { EMPTY, formatDate } from "@/lib/format";
 
-// View field with optional enrichment indicator
+export interface EnrichMeta {
+  source: string;
+  updatedAt: number;
+  confidence?: number;
+}
+
+/** Texto de origem de um dado enriquecido: "Fonte: x | 09/03/2025 | Confiança: 80%". */
+export function enrichmentLabel(meta: EnrichMeta): string {
+  const confidence = meta.confidence != null ? ` | Confiança: ${Math.round(meta.confidence * 100)}%` : "";
+  return `Fonte: ${meta.source} | ${formatDate(meta.updatedAt)}${confidence}`;
+}
+
+/** Campo somente leitura; um ícone indica dado preenchido por enriquecimento (não manual). */
 export function ViewField({
   label,
   value,
@@ -10,7 +26,7 @@ export function ViewField({
 }: {
   label: string;
   value?: string;
-  enrichMeta?: { source: string; updatedAt: number; confidence?: number };
+  enrichMeta?: EnrichMeta;
   link?: boolean;
 }) {
   return (
@@ -18,9 +34,11 @@ export function ViewField({
       <div className="flex items-center gap-1.5 mb-1">
         <span className="text-xs font-medium text-text-secondary">{label}</span>
         {enrichMeta && enrichMeta.source !== "manual" && (
-          <span title={`Fonte: ${enrichMeta.source} | ${new Date(enrichMeta.updatedAt).toLocaleDateString("pt-BR")}${enrichMeta.confidence != null ? ` | Confianca: ${Math.round(enrichMeta.confidence * 100)}%` : ""}`}>
-            <Bot size={12} className="text-brand-400" />
-          </span>
+          <Tooltip content={enrichmentLabel(enrichMeta)} asInfo>
+            <span tabIndex={0} role="img" aria-label={enrichmentLabel(enrichMeta)} className="inline-flex">
+              <Bot size={12} className="text-brand-400" aria-hidden="true" />
+            </span>
+          </Tooltip>
         )}
       </div>
       {link && value ? (
@@ -33,13 +51,13 @@ export function ViewField({
           {value}
         </a>
       ) : (
-        <div className="text-sm text-text-primary">{value || "\u2014"}</div>
+        <div className="text-sm text-text-primary">{value || EMPTY}</div>
       )}
     </div>
   );
 }
 
-// Edit field input
+/** Campo de edição (texto, número ou área de texto) com rótulo ligado ao controle. */
 export function EditField({
   label,
   value,
@@ -55,32 +73,46 @@ export function EditField({
   placeholder?: string;
   multiline?: boolean;
 }) {
-  const inputClass =
-    "w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500";
-
+  if (multiline) {
+    return (
+      <Textarea
+        label={label}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={3}
+      />
+    );
+  }
   return (
-    <div>
-      <label className="block text-xs font-medium text-text-secondary mb-1">{label}</label>
-      {multiline ? (
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          rows={3}
-          className={cn(inputClass, "resize-none")}
-          style={{ fontSize: "16px" }}
-        />
-      ) : (
-        <input
-          type={type}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
-          className={inputClass}
-          style={{ fontSize: "16px" }}
-        />
-      )}
-    </div>
+    <Input
+      label={label}
+      type={type}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+    />
   );
 }
 
+/** Lista suspensa de edição com a opção vazia "Selecionar…". */
+export function EditSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: SelectOption[];
+}) {
+  return (
+    <Select
+      label={label}
+      value={value}
+      onValueChange={onChange}
+      options={[{ value: "", label: "Selecionar…" }, ...options]}
+    />
+  );
+}

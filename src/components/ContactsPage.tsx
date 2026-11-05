@@ -1,20 +1,25 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
 import { useState, useEffect, useRef } from "react";
-import { useOutletContext } from "react-router";
+import { useLocation, useNavigate, useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
-import { Contact2, Search, Plus, Settings2 } from "lucide-react";
+import { Contact2, Plus, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Pagination } from "@/components/ui/Pagination";
-import { ContactDetailPanel } from "./ContactDetailPanel";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { numberParam, stringParam } from "@/lib/searchParamState";
+import { ContactDetailPanel } from "./contacts/detail/ContactDetailPanel";
 import { CreateContactModal } from "./CreateContactModal";
 import { SocialIcons } from "@/components/SocialIcons";
 import { cn } from "@/lib/utils";
@@ -45,13 +50,26 @@ const AVAILABLE_COLUMNS: ColumnDefinition[] = [
 
 const DEFAULT_COLUMNS: ColumnKey[] = ["contact", "company", "email", "tags"];
 
+const CONTACTS_PAGE_SIZE = 50;
+/** `?page=` é 1-based na URL (a primeira página sai da URL). Codec constante do módulo. */
+const PAGE_PARAM = numberParam({ min: 1 });
+/** Marca a entrada de histórico criada por um push nosso ao abrir um contato. */
+const OWN_ENTRY = { contactPushed: true };
+
 export function ContactsPage() {
   usePageTitle(VOCAB.contact.nav);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const [searchText, setSearchText] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [selectedContactId, setSelectedContactId] = useState<Id<"contacts"> | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
+  // A URL é a fonte da verdade: contato aberto (push), busca e página (replace).
+  const contactParam = useSearchParamState("contact", stringParam, { history: "push" });
+  const searchParam = useSearchParamState("q", stringParam);
+  const pageParam = useSearchParamState("page", PAGE_PARAM);
+  const selectedContactId = contactParam.value as Id<"contacts"> | null;
+  const debouncedSearch = searchParam.value ?? "";
+  const requestedPage = (pageParam.value ?? 1) - 1;
+  const ownsEntry = (location.state as { contactPushed?: boolean } | null)?.contactPushed === true;
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const columnSelectorRef = useRef<HTMLDivElement>(null);
@@ -101,14 +119,6 @@ export function ContactsPage() {
     }
   }, [activeColumns, organizationId]);
 
-  // Debounce search input
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(searchText);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchText]);
-
   // Close column selector on outside click
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -141,23 +151,45 @@ export function ContactsPage() {
 
   const contacts = debouncedSearch.length >= 2 ? searchResults : allContacts;
 
-  const [contactPage, setContactPage] = useState(0);
-  const CONTACTS_PAGE_SIZE = 50;
-
-  useEffect(() => { setContactPage(0); }, [debouncedSearch]);
-
   const totalContacts = contacts?.length ?? 0;
+  // Página pedida além do fim (a lista encolheu): mostra a última.
+  const contactPage = Math.min(requestedPage, Math.max(0, Math.ceil(totalContacts / CONTACTS_PAGE_SIZE) - 1));
   const paginatedContacts = contacts?.slice(
     contactPage * CONTACTS_PAGE_SIZE,
     (contactPage + 1) * CONTACTS_PAGE_SIZE
   );
 
-  const handleRowClick = (contactId: Id<"contacts">) => {
-    setSelectedContactId(contactId);
+  const handleSearchChange = (value: string) => {
+    searchParam.set(value, { also: { page: null } });
   };
 
+  const handlePageChange = (page: number) => {
+    pageParam.set(page === 0 ? null : page + 1);
+  };
+
+  // Abrir um contato empilha uma entrada (o "voltar" fecha); trocar de contato
+  // com o painel aberto só substitui. Abrir outro contato limpa a aba antiga.
+  const handleRowClick = (contactId: Id<"contacts">) => {
+    const push = contactParam.raw === null;
+    contactParam.set(contactId, {
+      also: { contactTab: null },
+      history: push ? "push" : "replace",
+      ...(push || ownsEntry ? { state: OWN_ENTRY } : {}),
+    });
+  };
+
+  // Entrada criada por nós: volta uma entrada; deep link ou recarga: substitui.
+  const closeRequested = useRef<string | null>(null);
   const handleClosePanel = () => {
-    setSelectedContactId(null);
+    if (contactParam.raw === null) return;
+    if (ownsEntry) {
+      if (closeRequested.current === location.key) return;
+      closeRequested.current = location.key;
+      contactParam.expectWrite(null);
+      navigate(-1);
+    } else {
+      contactParam.set(null, { history: "replace", also: { contactTab: null } });
+    }
   };
 
   const handleCloseCreateModal = () => {
@@ -293,43 +325,31 @@ export function ContactsPage() {
       <div className="max-w-7xl">
         <SpotlightTooltip spotlightId="contacts" organizationId={organizationId} />
 
-        {/* Header */}
         <div className="flex flex-col gap-4 mb-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-text-primary">Contatos</h1>
-              <p className="text-sm text-text-secondary mt-1">
-                Gerencie seus contatos e relacionamentos
-              </p>
-            </div>
-            {can("contacts", "edit") && (
-              <Button
-                variant="primary"
-                size="md"
-                onClick={() => setShowCreateModal(true)}
-                className="shrink-0"
-              >
-                <Plus size={20} className="mr-2" />
-                Novo contato
-              </Button>
-            )}
-          </div>
+          <PageHeader
+            title={VOCAB.contact.nav}
+            subtitle="Gerencie seus contatos e relacionamentos"
+            actions={
+              can("contacts", "edit") ? (
+                <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)} className="shrink-0">
+                  <Plus size={20} aria-hidden="true" />
+                  {VOCAB.contact.new}
+                </Button>
+              ) : undefined
+            }
+          />
 
-          {/* Search + Column Selector */}
+          {/* Busca e seletor de colunas */}
           <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-              <input
-                type="text"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                placeholder="Buscar por nome, e-mail, empresa…"
-                className="w-full pl-10 pr-4 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
-                style={{ fontSize: "16px" }}
-              />
-            </div>
+            <SearchInput
+              className="flex-1"
+              value={debouncedSearch}
+              onValueChange={handleSearchChange}
+              placeholder="Buscar por nome, e-mail ou empresa…"
+              ariaLabel="Buscar contatos"
+            />
 
-            {/* Column Selector (Desktop only) */}
+            {/* Seletor de colunas (só no desktop) */}
             <div className="relative hidden md:block" ref={columnSelectorRef}>
               <button
                 onClick={() => setShowColumnSelector(!showColumnSelector)}
@@ -495,7 +515,7 @@ export function ContactsPage() {
                 pageSize={CONTACTS_PAGE_SIZE}
                 total={totalContacts}
                 hasMore={false}
-                onPageChange={setContactPage}
+                onPageChange={handlePageChange}
                 className="border-t border-border"
               />
             )}
@@ -512,7 +532,10 @@ export function ContactsPage() {
 
       {/* Contact Detail Panel */}
       {selectedContactId && (
-        <ContactDetailPanel contactId={selectedContactId} onClose={handleClosePanel} />
+        // Um id inválido na URL faz a query lançar: o boundary some com o painel.
+        <ErrorBoundary key={selectedContactId} fallback={<></>}>
+          <ContactDetailPanel contactId={selectedContactId} onClose={handleClosePanel} />
+        </ErrorBoundary>
       )}
 
       {/* Create Contact Modal */}

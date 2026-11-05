@@ -6,6 +6,8 @@ import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { usePermissions } from "@/hooks/usePermissions";
+import { mutationErrorMessage } from "@/lib/errors";
+import { formatDate } from "@/lib/format";
 
 // Lista de supressão de campanhas: quem está aqui nunca recebe disparo em massa.
 // Adicionar exige campaigns:manage OU contacts:edit (regra do backend);
@@ -24,11 +26,11 @@ export function ContactOptOutControl({
   if (optOut === undefined) return null;
   if (optOut) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-sm text-text-primary">
+      <div className="flex items-center gap-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-sm text-text-primary">
         <BellOff size={16} className="text-semantic-warning shrink-0" />
         <span className="flex-1">
-          Em supressão — não recebe campanhas
-          <span className="text-text-muted"> (desde {new Date(optOut.createdAt).toLocaleDateString("pt-BR")})</span>
+          Em supressão: não recebe campanhas
+          <span className="text-text-muted"> (desde {formatDate(optOut.createdAt)})</span>
         </span>
       </div>
     );
@@ -46,7 +48,7 @@ export function ContactOptOutControl({
           await addOptOut({ organizationId, contactId, reason: "manual" });
           toast.success("Contato adicionado à lista de supressão");
         } catch (e) {
-          toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível marcar.");
+          toast.error(mutationErrorMessage(e, "Não foi possível adicionar à lista de supressão."));
         } finally {
           setBusy(false);
         }
