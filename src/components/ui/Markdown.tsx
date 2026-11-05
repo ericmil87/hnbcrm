@@ -117,7 +117,7 @@ const ALIGN_CLASS: Record<Exclude<TableAlign, null>, string> = {
 
 function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-surface-base/40">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="bg-surface-sunken">
@@ -136,12 +136,12 @@ function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
         </thead>
         <tbody>
           {node.rows.map((row, r) => (
-            <tr key={r} className="even:bg-surface-overlay/40">
+            <tr key={r}>
               {row.map((cell, c) => (
                 <td
                   key={c}
                   className={cn(
-                    "whitespace-nowrap border-b border-border/50 px-2.5 py-1.5 text-text-primary",
+                    "whitespace-nowrap border-b px-2.5 py-1.5 text-text-primary",
                     ALIGN_CLASS[node.align[c] ?? "left"]
                   )}
                 >
@@ -257,7 +257,7 @@ function Inline({ node }: { node: InlineNode }) {
 
     case "codeSpan":
       return (
-        <code className="rounded border border-border/70 bg-surface-sunken px-1 py-0.5 font-mono text-[0.85em] text-text-primary">
+        <code className="rounded border bg-surface-sunken px-1 py-0.5 font-mono text-[0.85em] text-text-primary">
           {node.value}
         </code>
       );

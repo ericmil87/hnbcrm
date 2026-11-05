@@ -25,7 +25,7 @@ export function PrivacyPage() {
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
-        <header className="sticky top-0 z-30 bg-surface-base/80 backdrop-blur-md border-b border-border">
+        <header className="sticky top-0 z-30 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <Link to="/" className="flex items-center gap-2">
               <img

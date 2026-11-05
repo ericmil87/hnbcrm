@@ -37,7 +37,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       {/* Main content area */}
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
         {/* Header — org atual (só mobile; no desktop fica na sidebar) + sino */}
-        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-between md:justify-end gap-3 px-4 md:px-6 bg-surface-raised/95 backdrop-blur border-b border-border">
+        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-between md:justify-end gap-3 px-4 md:px-6 backdrop-blur border-b border-border">
           <button
             type="button"
             onClick={onOpenOrgSwitcher}

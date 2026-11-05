@@ -476,7 +476,7 @@ export function MessageBubble({
               aria-label="Versões anteriores"
               className={cn(
                 "flex flex-col gap-1 rounded-md px-2 py-1.5 text-[11px]",
-                style.variant === "outbound" ? "bg-white/10 text-white/85" : "bg-surface-sunken/60 text-text-secondary"
+                style.variant === "outbound" ? "bg-white/10 text-white/85" : "text-text-secondary"
               )}
             >
               {editHistory.map((v, i) => (

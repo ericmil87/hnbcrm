@@ -126,7 +126,7 @@ export function MessageAttachments({
               "flex items-center gap-2.5 px-3 py-2 rounded-lg max-w-[280px] transition-colors",
               outbound
                 ? "bg-white/15 text-white hover:bg-white/25"
-                : "bg-surface-sunken/70 text-text-secondary hover:bg-surface-sunken"
+                : "text-text-secondary hover:bg-surface-sunken"
             )}
           >
             <DocumentIcon mimeType={file.mimeType} />

@@ -710,6 +710,8 @@ export function Card({
 
 ### 8.3 Tema
 
+Os tokens de cor são canais RGB (`--rgb-*`) com alfa funcionando (`bg-surface-base/50`); CSS cru e `style={{}}` usam os aliases `var(--surface-*)`, `var(--text-*)`, `var(--border-*)` e `var(--color-semantic-*)`. Há tokens de chat (`chat-*`, `composer*`, `bubble-*`, `tick-read`, `badge-unread*`) e a escala `ai-300..700`. Os valores do Escuro estão congelados em `src/lib/themeTokens.test.ts`.
+
 O app usa **dark mode como padrão**. Light mode é suportado via classe `.light` no `<html>`:
 
 ```typescript

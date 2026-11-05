@@ -401,7 +401,7 @@ export function UpcomingTasksWidget({
                 {/* Group header */}
                 <button
                   onClick={() => toggleGroup(group.key)}
-                  className="w-full flex items-center gap-3 py-2 hover:bg-surface-overlay/50 transition-colors rounded-lg px-1"
+                  className="w-full flex items-center gap-3 py-2 transition-colors rounded-lg px-1"
                 >
                   <ChevronDown
                     size={14}
@@ -476,7 +476,7 @@ function TaskRow({
   const priorityBadge = PRIORITY_BADGE[task.priority];
 
   return (
-    <div className="flex items-center gap-2 md:gap-3 py-2.5 px-1 hover:bg-surface-overlay/50 transition-colors rounded-lg">
+    <div className="flex items-center gap-2 md:gap-3 py-2.5 px-1 transition-colors rounded-lg">
       {/* Complete checkbox */}
       <button
         onClick={(e) => {

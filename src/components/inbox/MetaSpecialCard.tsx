@@ -26,7 +26,7 @@ export function MetaSpecialCard({ info, variant, hasMedia }: MetaSpecialCardProp
 
   return (
     <div
-      className={cn("flex min-w-0 flex-col gap-2 rounded-lg p-2.5", outbound ? "bg-white/10" : "bg-surface-sunken/60")}
+      className={cn("flex min-w-0 flex-col gap-2 rounded-lg p-2.5", outbound ? "bg-white/10" : "")}
     >
       <div className="flex min-w-0 items-start gap-2">
         <span
@@ -70,7 +70,7 @@ export function StoryReplyStrip({ href, variant }: { href: string | null; varian
     <div
       className={cn(
         "flex min-h-8 items-center justify-between gap-2 rounded-md border-l-2 px-2 py-1 text-xs",
-        outbound ? "border-white/60 bg-white/10 text-white/90" : "border-brand-500 bg-surface-sunken/60 text-text-secondary"
+        outbound ? "border-white/60 bg-white/10 text-white/90" : "border-brand-500 text-text-secondary"
       )}
     >
       <span className="flex items-center gap-1.5">

@@ -524,7 +524,7 @@ export function MemberDetailSlideOver({
                         "flex items-center justify-between p-2.5 rounded-lg border",
                         key.isActive
                           ? "bg-surface-sunken border-border"
-                          : "bg-surface-sunken/50 border-border-subtle opacity-60"
+                          : "border-border-subtle opacity-60"
                       )}
                     >
                       <div className="min-w-0 flex-1">

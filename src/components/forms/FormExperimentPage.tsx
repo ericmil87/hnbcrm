@@ -770,7 +770,7 @@ export function FormExperimentPage() {
                           "transition-colors",
                           isLeading && status === "running"
                             ? "bg-brand-500/5"
-                            : "hover:bg-surface-overlay/50"
+                            : ""
                         )}
                       >
                         <td className="px-6 py-4">
