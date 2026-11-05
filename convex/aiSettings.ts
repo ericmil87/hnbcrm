@@ -725,6 +725,8 @@ export const updateAgentProfile = mutation({
     agentMemberId: v.id("teamMembers"),
     patch: agentProfilePatchValidator,
     autopilotRiskAck: v.optional(v.boolean()),
+    /** Novo nome do atendente (até 60 caracteres, uma linha; validado no core). */
+    rename: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -741,6 +743,7 @@ export const updateAgentProfile = mutation({
       patch: args.patch,
       autopilotRiskAck: args.autopilotRiskAck,
       via: "settings",
+      ...(args.rename !== undefined ? { rename: args.rename } : {}),
     });
   },
 });

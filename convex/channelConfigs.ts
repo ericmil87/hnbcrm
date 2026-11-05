@@ -28,6 +28,7 @@ import {
   resolveBridgePhone,
 } from "./lib/bridgeGateway";
 import { runBridgeReconnectStep, type ReconnectStep } from "./lib/channelReconnectCore";
+import { friendlyPairingError } from "./lib/pairingErrors";
 import { consumePairingAttempt } from "./lib/pairingQuota";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
@@ -1024,7 +1025,11 @@ function pairingResultFromStep(step: ReconnectStep, mode: PairingMode, attemptsL
     ...(attemptsLeft !== undefined ? { attemptsLeft } : {}),
   };
   if (step.state === "connected") return { state: "connected", ...base };
-  if (step.state === "error") return { state: "error", error: step.error ?? "Falha ao falar com o gateway", ...base };
+  if (step.state === "error") {
+    // Detalhe técnico só no log do servidor; ao cliente vai a mensagem traduzida.
+    console.warn(`[pairing] ${mode} falhou: ${step.error ?? "sem detalhe"}`);
+    return { state: "error", error: friendlyPairingError(step.error), ...base };
+  }
   return {
     // "waiting" (nenhum QR/código ainda) é espera, não erro: segue no modo pedido, sem `error`.
     // A UI mantém o último `linkingCode`/`qrCode` entre polls (o poll de código nunca o reenvia).

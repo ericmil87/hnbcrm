@@ -236,6 +236,16 @@ describe("goldens (§4)", () => {
     expect(card.keyboard.flat().some((b) => "callback_data" in b && b.callback_data.startsWith("ah:"))).toBe(false);
   });
 
+  test("link do ponteiro: gasto de IA abre Uso da IA; Meta abre Instagram", () => {
+    const base = ctx({ lead: undefined, conversation: undefined, handoff: undefined, lastInbound: undefined });
+    const link = (type: string, extra = {}) =>
+      buildNotificationCard({ notification: { _id: "n9", type, title: "t", createdAt: NOW }, context: { ...base, ...extra } } as never).keyboard.flat()[0];
+    expect(link("ai_spend_warning")).toMatchObject({ url: "https://app.example.test/app/configuracoes?secao=ai-usage" });
+    expect(link("channel_session_lost", { channelSession: { kind: "meta", state: "token_expired" } })).toMatchObject({
+      url: "https://app.example.test/app/configuracoes?secao=instagram",
+    });
+  });
+
   test("genérico: título/corpo + Abrir no CRM pelo ponteiro", () => {
     const card = buildNotificationCard({
       notification: { _id: "n5", type: "channel_session_lost", title: "WhatsApp (…1234) caiu", createdAt: NOW },
@@ -422,7 +432,7 @@ describe("canal caiu por estado (v0.78)", () => {
     const meta = lost({ kind: "meta", state: "reauth_required" });
     expect(meta.text).toContain("<b>Instagram/Messenger precisa de novo login</b>");
     expect(meta.text).toContain("O login é feito no navegador.");
-    expect(meta.keyboard).toEqual([[{ text: "🔗 Refazer login", url: "https://app.example.test/app/configuracoes?secao=channels" }]]);
+    expect(meta.keyboard).toEqual([[{ text: "🔗 Refazer login", url: "https://app.example.test/app/configuracoes?secao=instagram" }]]);
   });
 
   test("modo discreto: mesmo texto (nada de cliente); sem canal conhecido cai no genérico", () => {
