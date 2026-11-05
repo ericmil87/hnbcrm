@@ -125,7 +125,7 @@ describe("shellPageTitle", () => {
     expect(shellPageTitle("/app/configuracoes")).toBeNull();
   });
   it("rota com item usa o título do item", () => {
-    expect(shellPageTitle("/app/entrada")).toBe(VOCAB.inbox.title);
+    expect(shellPageTitle("/app/entrada")).toBe(VOCAB.conversations.title);
   });
   it("rota desconhecida cai no nome do app", () => {
     expect(shellPageTitle("/app/nao-existe")).toBe("HNBCRM");
