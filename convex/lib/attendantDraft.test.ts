@@ -103,5 +103,13 @@ describe("attendantDraft (puro)", () => {
     expect(merged.endsWith(`${GREETING_MARKER} Oi! Sou a Aurora.`)).toBe(true);
     expect(mergeGreetingIntoPersona(merged, "Olá!").match(/Primeira mensagem ao cliente:/g)).toHaveLength(1);
     expect(mergeGreetingIntoPersona("Persona", "")).toBe("Persona");
+    // Marcador com conteúdo depois: o bloco não é removido.
+    const mid = mergeGreetingIntoPersona("A\n\nPrimeira mensagem ao cliente: X\n\nMais regras", "Y");
+    expect(mid).toContain("Mais regras");
+    // Persona final nunca passa de 8 000.
+    expect(mergeGreetingIntoPersona("p".repeat(8000), "Oi!").length).toBeLessThanOrEqual(8000);
+    // Nome sem quebra de linha.
+    const d = parseAttendantDraft(JSON.stringify({ ...GOOD, name: "Au\nrora\t X" }), template, business);
+    expect(d.name).toBe("Au rora X");
   });
 });

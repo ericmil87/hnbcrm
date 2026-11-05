@@ -24,12 +24,14 @@ import {
   mergeGreetingIntoPersona,
   parseAttendantDraft,
   templateFallbackDraft,
+  TONE_LABEL,
   type DraftBusiness,
 } from "./lib/attendantDraft";
 
+// 45 s é POR TENTATIVA: chatWithFallback tenta até 2 vezes por rota (e passa à próxima rota).
 const DRAFT_TIMEOUT_MS = 45_000;
 const DRAFT_TEMPERATURE = 0.4;
-const DRAFT_MAX_TOKENS = 3_000;
+const DRAFT_MAX_TOKENS = 6_000;
 
 const businessValidator = v.object({
   displayName: v.optional(v.string()),
@@ -133,6 +135,7 @@ export const generateAttendantDraft = action({
         personaSeed: renderPersonaSeed(template, {
           negocio: business.displayName,
           oferta: business.offer,
+          tom: business.tone ? TONE_LABEL[business.tone] : undefined,
         }),
         faqSeed: template.faqSeed,
         handoffSeed: template.handoffKeywords,
@@ -152,6 +155,9 @@ export const generateAttendantDraft = action({
       );
       addUsage(usage, resp.usage, resp.usedRoute, model);
       const draft = parseAttendantDraft(resp.message.content ?? "", template, business);
+      if (resp.finishReason === "length") {
+        draft.warnings.push("A resposta da IA foi cortada; revise o texto.");
+      }
       await ctx.runMutation(internal.agentRuns.internalFinishRun, {
         runId,
         status: "done",
@@ -162,19 +168,26 @@ export const generateAttendantDraft = action({
       });
       return finish(draft);
     } catch (e) {
-      const message = sanitizeLlmError(e instanceof Error ? e.message : "Erro inesperado");
-      await ctx.runMutation(internal.agentRuns.internalFinishRun, {
-        runId,
-        status: "error",
-        requestCount: 1,
-        ...finishRunCostFields(usage),
-        error: message,
-      });
+      const timedOut = e instanceof Error && (e.name === "AbortError" || /timed out/i.test(e.message));
+      const message = timedOut
+        ? "A IA não respondeu a tempo"
+        : `A IA falhou: ${sanitizeLlmError(e instanceof Error ? e.message : "Erro inesperado")}`;
+      try {
+        await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+          runId,
+          status: "error",
+          requestCount: 1,
+          ...finishRunCostFields(usage),
+          error: message,
+        });
+      } catch {
+        // Registrar a run não pode impedir o rascunho do template.
+      }
       return finish(
         templateFallbackDraft(
           template,
           business,
-          "A IA não respondeu a tempo; usamos o modelo do segmento. Você pode tentar de novo.",
+          `${message}; usamos o modelo do segmento. Você pode tentar de novo.`,
         ),
       );
     }

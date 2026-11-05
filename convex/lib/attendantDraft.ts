@@ -46,7 +46,7 @@ export interface AttendantDraft {
   warnings: string[];
 }
 
-const TONE_LABEL: Record<NonNullable<DraftBusiness["tone"]>, string> = {
+export const TONE_LABEL: Record<NonNullable<DraftBusiness["tone"]>, string> = {
   formal: "formal e educado",
   amigavel: "amigável e acolhedor",
   descontraido: "descontraído e leve",
@@ -102,9 +102,13 @@ export function mergeGreetingIntoPersona(persona: string, greeting: string): str
   const g = greeting.trim();
   if (!g) return persona;
   // Evita duplicar o bloco se a persona já o traz.
-  const idx = persona.indexOf(GREETING_MARKER);
-  const base = (idx >= 0 ? persona.slice(0, idx) : persona).trimEnd();
-  return `${base}\n\n${GREETING_MARKER} ${g}`;
+  // Só remove o bloco quando o marcador é o último (sem conteúdo depois).
+  const idx = persona.lastIndexOf(GREETING_MARKER);
+  const tail = idx >= 0 ? persona.slice(idx + GREETING_MARKER.length) : "";
+  const trailing = idx >= 0 && !tail.includes("\n");
+  const block = `\n\n${GREETING_MARKER} ${g}`;
+  const base = (trailing ? persona.slice(0, idx) : persona).trimEnd();
+  return `${base.slice(0, Math.max(0, DRAFT_MAX_PERSONA - block.length)).trimEnd()}${block}`;
 }
 
 /** Texto do fallback de conhecimento a partir das perguntas frequentes do template. */
@@ -199,7 +203,8 @@ export function parseAttendantDraft(
     };
   }
 
-  const name = cleanText(obj.name, DRAFT_MAX_NAME, "Nome", warnings) ?? fb.name;
+  const rawName = typeof obj.name === "string" ? obj.name.replace(/\s+/g, " ") : obj.name;
+  const name = cleanText(rawName, DRAFT_MAX_NAME, "Nome", warnings) ?? fb.name;
   const persona = cleanText(obj.persona, DRAFT_MAX_PERSONA, "Jeito de atender", warnings) ?? fb.persona;
   const knowledge = cleanText(obj.knowledge, DRAFT_MAX_KNOWLEDGE, "Conhecimento", warnings) ?? fb.knowledge;
   const greetingRaw = obj.greeting;
