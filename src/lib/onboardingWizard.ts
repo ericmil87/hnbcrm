@@ -59,6 +59,19 @@ export const NO_BRIDGE_NOTICE =
 export const NO_LLM_NOTICE = "A IA ainda não está disponível neste servidor.";
 export const FUNNEL_WITH_LEADS_NOTICE = "Seu funil atual tem contatos, criamos um novo ao lado.";
 
+/** Rota do assistente; `?passo=` é a fonte de verdade do passo aberto (links do Painel). */
+export const WIZARD_STEP_PARAM = "passo";
+
+export function wizardStepHref(step: WizardStepId): string {
+  return `/app/configuracao-inicial?${WIZARD_STEP_PARAM}=${step}`;
+}
+
+/** Valor de `?passo=` válido e visível neste servidor (sem IA o "test" não existe); senão `null`. */
+export function parseStepParam(raw: string | null | undefined, status?: StatusLike): WizardStepId | null {
+  if (!raw) return null;
+  return visibleWizardSteps(status).find((s) => s.id === raw)?.id ?? null;
+}
+
 export function stepIndex(id: WizardStepId): number {
   return WIZARD_STEPS.findIndex((s) => s.id === id);
 }
@@ -387,4 +400,67 @@ export function readWizardData(raw: unknown): WizardData {
 /** Marca de versão que acompanha toda gravação, para o v1 não ser lido como posição do v2. */
 export function wizardDataPatch(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return { wizardVersion: WIZARD_VERSION, ...extra };
+}
+
+
+// ── Passos 5 a 8 ────────────────────────────────────────────────────────────
+
+/**
+ * O que gravar ao seguir adiante de "Teste", "Extras" ou "Equipe": só o que
+ * ainda está pendente vira "pulou". Passo já feito (derivado ou testado) não é
+ * tocado, e o servidor não aceita "feito" para extras e equipe.
+ */
+export function markOnContinue(step: WizardStepId, status: Pick<OnboardingStatus, "steps"> | undefined): "skipped" | null {
+  if (step !== "test" && step !== "extras" && step !== "team") return null;
+  return status?.steps?.[step] === "pending" ? "skipped" : null;
+}
+
+export const EXTRAS_COSTS = {
+  audio: "Incluído no plano.",
+  vision: "Cerca de R$ 0,002 por imagem.",
+} as const;
+export const TRANSCRIPTION_UNAVAILABLE = "Indisponível neste servidor";
+export const VISION_NEEDS_AI = "Ligue o Atendente IA primeiro";
+
+export interface ExtrasAvailability {
+  audio: { available: boolean; reason?: string };
+  vision: { available: boolean; reason?: string };
+}
+
+export function extrasAvailability(
+  status: Pick<OnboardingStatus, "capabilities"> | undefined,
+  aiActive: boolean,
+): ExtrasAvailability {
+  const transcription = status?.capabilities?.transcription !== false;
+  return {
+    audio: transcription ? { available: true } : { available: false, reason: TRANSCRIPTION_UNAVAILABLE },
+    vision: aiActive ? { available: true } : { available: false, reason: VISION_NEEDS_AI },
+  };
+}
+
+export interface DoneSummaryItem {
+  id: TrackedStepId;
+  label: string;
+  state: "done" | "skipped" | "pending";
+}
+
+/** Resumo do passo "Pronto": um item por passo visível (menos o próprio "Pronto"). */
+export function doneSummary(status: StatusLike | undefined): {
+  items: DoneSummaryItem[];
+  configured: DoneSummaryItem[];
+  missing: DoneSummaryItem[];
+} {
+  const steps = status?.steps;
+  const items = visibleWizardSteps(status)
+    .filter((s) => s.id !== "done")
+    .map((s) => ({
+      id: s.id as TrackedStepId,
+      label: s.label,
+      state: (steps?.[s.id as TrackedStepId] ?? "pending") as DoneSummaryItem["state"],
+    }));
+  return {
+    items,
+    configured: items.filter((i) => i.state === "done"),
+    missing: items.filter((i) => i.state !== "done"),
+  };
 }

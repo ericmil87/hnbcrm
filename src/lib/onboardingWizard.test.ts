@@ -10,15 +10,20 @@ import {
   businessDraftFromStatus,
   businessSavePlan,
   canAdvance,
+  doneSummary,
+  extrasAvailability,
   firstOpenStageId,
   firstPendingStep,
+  markOnContinue,
   nextStepId,
+  parseStepParam,
   readWizardData,
   savedStepFromProgress,
   skipIsPersisted,
   stepAvailability,
   visibleWizardSteps,
   wizardDataPatch,
+  wizardStepHref,
   type OnboardingStatus,
 } from "./onboardingWizard";
 
@@ -249,5 +254,53 @@ describe("dados do membro", () => {
       setupThreadId: "t",
     });
     expect(readWizardData(null)).toEqual({});
+  });
+});
+
+describe("?passo= (URL como fonte do passo)", () => {
+  it("lê só passos conhecidos e visíveis", () => {
+    expect(parseStepParam("whatsapp", status())).toBe("whatsapp");
+    expect(parseStepParam("done", status())).toBe("done");
+    expect(parseStepParam("inexistente", status())).toBeNull();
+    expect(parseStepParam(null, status())).toBeNull();
+    expect(parseStepParam("", status())).toBeNull();
+  });
+
+  it("passo 5 fica escondido sem LLM no servidor", () => {
+    const noLlm = status({ capabilities: { managedBridge: true, transcription: true, llm: false, metaMessaging: false } });
+    expect(parseStepParam("test", noLlm)).toBeNull();
+    expect(parseStepParam("test", status())).toBe("test");
+  });
+
+  it("monta o link do passo", () => {
+    expect(wizardStepHref("extras")).toBe("/app/configuracao-inicial?passo=extras");
+  });
+});
+
+describe("passos 5 a 8", () => {
+  it("seguir adiante só grava pulo do que ainda está pendente", () => {
+    expect(markOnContinue("test", status())).toBe("skipped");
+    expect(markOnContinue("extras", status({ steps: { ...allPending, extras: "done" } }))).toBeNull();
+    expect(markOnContinue("team", status({ steps: { ...allPending, team: "skipped" } }))).toBeNull();
+    expect(markOnContinue("attendant", status())).toBeNull();
+  });
+
+  it("extras: áudio depende do servidor e imagem da IA ligada", () => {
+    expect(extrasAvailability(status(), true)).toEqual({ audio: { available: true }, vision: { available: true } });
+    const noWhisper = status({ capabilities: { managedBridge: true, transcription: false, llm: true, metaMessaging: false } });
+    expect(extrasAvailability(noWhisper, false)).toEqual({
+      audio: { available: false, reason: "Indisponível neste servidor" },
+      vision: { available: false, reason: "Ligue o Atendente IA primeiro" },
+    });
+  });
+
+  it("resumo do pronto separa configurado de pendente e omite o teste sem IA", () => {
+    const s = status({ steps: { ...allPending, business: "done", funnel: "done", whatsapp: "skipped" } });
+    const sum = doneSummary(s);
+    expect(sum.items).toHaveLength(7);
+    expect(sum.configured.map((i) => i.id)).toEqual(["business", "funnel"]);
+    expect(sum.missing[0]).toMatchObject({ id: "whatsapp", state: "skipped" });
+    const noLlm = status({ capabilities: { managedBridge: true, transcription: true, llm: false, metaMessaging: false } });
+    expect(doneSummary(noLlm).items.some((i) => i.id === "test")).toBe(false);
   });
 });
