@@ -59,6 +59,11 @@ export default {
       },
       screens: {
         xs: '375px',
+        coarse: { raw: '(pointer: coarse)' },
+      },
+      fontSize: {
+        caption: ['12px', { lineHeight: '16px' }],
+        micro: ['11px', { lineHeight: '14px' }],
       },
       animation: {
         'fade-in':       'fadeIn 200ms ease-out',

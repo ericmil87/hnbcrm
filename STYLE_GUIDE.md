@@ -236,6 +236,8 @@ Small:    13px / 18px / Regular (400)                → Mantém
 Caption:  11px / 14px / Medium (500)                 → md: 12px / 16px
 ```
 
+Utilitários Tailwind: `text-caption` (12px / 16px, mínimo legível para texto de apoio) e `text-micro` (11px / 14px, só para selos e marcadores). Para alvos de toque use a variante `coarse:` (`(pointer: coarse)`), por exemplo `coarse:min-h-11` (44px).
+
 ### 2.2 Pesos Utilizados
 
 | Peso | Nome | Uso |
@@ -283,6 +285,10 @@ Todos os botões seguem o formato **pill** (bordas totalmente arredondadas).
 | `sm` | 32px | 12px | 13px | Ações inline, tabelas |
 | `md` | 40px | 16px | 14px | Padrão desktop |
 | `lg` | 48px | 24px | 16px | CTAs mobile (touch target) |
+
+`sm` e `md` ganham `coarse:min-h-11` (44px em telas de toque); `iconOnly` é um quadrado de 40px (`coarse:` 44px) e exige `aria-label`; `loading` mostra spinner, `aria-busy` e desabilita. O anel de foco usa `focus-visible:` (aparece só ao navegar por teclado).
+
+**Estrutura de página:** `PageHeader` (único `<h1>`, voltar com `aria-label="Voltar"`, selo e ações que quebram para baixo no mobile); `SectionCard` (`<section aria-labelledby>` com `<h2>`, descrição, ícone e ações); `EmptyState` (ícone, título `h2`/`h3`, descrição, ação principal e secundária, `size` `sm`/`md`).
 
 **Especificações:**
 - Border-radius: `rounded-full` (pill)

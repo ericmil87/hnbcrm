@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
@@ -199,12 +200,14 @@ export function HandoffQueue() {
     <div className="space-y-6">
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl md:text-2xl font-bold text-text-primary">Fila de Repasses</h2>
-        <Badge variant="warning">
-          <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
-        </Badge>
-      </div>
+      <PageHeader
+        title="Fila de Repasses"
+        badge={
+          <Badge variant="warning">
+            <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
+          </Badge>
+        }
+      />
 
       {handoffs.length === 0 ? (
         <div className="text-center py-12">

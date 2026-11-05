@@ -21,6 +21,7 @@ import { LeadCampaignsSection } from "@/components/campaigns/LeadCampaignsSectio
 import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
+import { Menu } from "@/components/ui/Menu";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -187,28 +188,8 @@ function LeadActionsMenu({
   const lead = useQuery(api.leads.getLead, { leadId });
   const archiveLeads = useMutation(api.leads.bulkArchiveLeads);
 
-  const [open, setOpen] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointer = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointer);
-    document.addEventListener("touchstart", handlePointer);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      document.removeEventListener("touchstart", handlePointer);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
 
   const canArchive = can("leads", "edit_own");
   const canDelete = can("leads", "full");
@@ -222,7 +203,6 @@ function LeadActionsMenu({
     try {
       await archiveLeads({ organizationId, leadIds: [leadId], archived: !archived });
       toast.success(archived ? "Lead restaurado" : "Lead arquivado");
-      setOpen(false);
     } catch (error) {
       toast.error(
         mutationErrorMessage(error, archived ? "Falha ao restaurar o lead" : "Falha ao arquivar o lead")
@@ -233,56 +213,46 @@ function LeadActionsMenu({
   };
 
   return (
-    <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className={cn(
-          "flex items-center justify-center min-h-[44px] min-w-[44px] -my-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors",
-          open && "text-text-primary bg-surface-overlay"
+    <div className="shrink-0">
+      <Menu
+        ariaLabel="Ações do lead"
+        trigger={(triggerProps, { open }) => (
+          <button
+            type="button"
+            {...triggerProps}
+            className={cn(
+              "flex items-center justify-center min-h-[44px] min-w-[44px] -my-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+              open && "text-text-primary bg-surface-overlay"
+            )}
+            aria-label="Ações do lead"
+          >
+            <MoreVertical size={18} />
+          </button>
         )}
-        aria-label="Ações do lead"
-        aria-expanded={open}
-      >
-        <MoreVertical size={18} />
-      </button>
-
-      {open && (
-        <div className="absolute top-full right-0 mt-1 z-40 w-64 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
-          {canArchive && (
-            <button
-              type="button"
-              onClick={handleArchive}
-              disabled={!lead || archiving}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors disabled:opacity-50"
-            >
-              {archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
-              {archiving
-                ? "Salvando…"
-                : archived
-                  ? "Restaurar lead"
-                  : "Arquivar lead"}
-            </button>
-          )}
-
-          {canDelete && (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                setConfirmDelete(true);
-              }}
-              className={cn(
-                "w-full flex items-center gap-2.5 px-3 py-2.5 text-left text-sm text-semantic-error hover:bg-surface-raised transition-colors",
-                canArchive && "border-t border-border mt-1"
-              )}
-            >
-              <Trash2 size={15} />
-              Excluir permanentemente
-            </button>
-          )}
-        </div>
-      )}
+        items={[
+          ...(canArchive
+            ? [
+                {
+                  label: archived ? "Restaurar lead" : "Arquivar lead",
+                  icon: archived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
+                  onSelect: handleArchive,
+                  disabled: !lead || archiving,
+                },
+              ]
+            : []),
+          ...(canDelete
+            ? [
+                {
+                  label: "Excluir permanentemente",
+                  icon: <Trash2 size={15} />,
+                  onSelect: () => setConfirmDelete(true),
+                  danger: true,
+                  separatorBefore: canArchive,
+                },
+              ]
+            : []),
+        ]}
+      />
 
       {confirmDelete && (
         <DeleteLeadDialog

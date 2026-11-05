@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import {
   AlertTriangle,
   ArrowRight,
-  Check,
   CheckCircle2,
   Download,
   RotateCcw,
@@ -14,6 +13,7 @@ import {
   Users,
   XCircle,
 } from "lucide-react";
+import { Stepper } from "@/components/ui/Stepper";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -189,40 +189,17 @@ function stepFromStatus(status: ImportStatus | undefined): number {
   }
 }
 
+const WIZARD_STEPS = STEPS.map((label, index) => ({ id: String(index), label }));
+
 function StepTrail({ current }: { current: number }) {
   return (
-    <ol className="mb-5 flex items-center gap-1.5" aria-label="Etapas da importação">
-      {STEPS.map((label, index) => {
-        const done = index < current;
-        const active = index === current;
-        return (
-          <li key={label} className="flex flex-1 items-center gap-1.5 last:flex-none">
-            <span
-              aria-current={active ? "step" : undefined}
-              className={cn(
-                "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold",
-                done && "bg-brand-500/20 text-brand-400",
-                active && "bg-brand-600 text-white",
-                !done && !active && "border border-border bg-surface-overlay text-text-muted"
-              )}
-            >
-              {done ? <Check size={12} /> : index + 1}
-            </span>
-            <span
-              className={cn(
-                "hidden text-xs sm:block",
-                active ? "font-medium text-text-primary" : "text-text-muted"
-              )}
-            >
-              {label}
-            </span>
-            {index < STEPS.length - 1 && (
-              <span className={cn("h-px flex-1", done ? "bg-brand-500/50" : "bg-border")} />
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <Stepper
+      steps={WIZARD_STEPS}
+      current={String(current)}
+      completed={WIZARD_STEPS.slice(0, current).map((s) => s.id)}
+      ariaLabel="Etapas da importação"
+      className="mb-5"
+    />
   );
 }
 

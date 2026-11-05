@@ -23,9 +23,11 @@ paths:
 - Conditional classes via `cn()` from `@/lib/utils`.
 
 ## UI primitives (`src/components/ui/`): reuse, do not recreate
-- `Button`: variants `primary` (CTA), `secondary`, `ghost` (tertiary/links), `dark`, `danger` (destructive); sizes `sm` 32px, `md` 40px, `lg` 48px (use `lg` for mobile CTAs).
+- `Button`: variants `primary` (CTA), `secondary`, `ghost` (tertiary/links), `dark`, `danger` (destructive); sizes `sm` 32px, `md` 40px, `lg` 48px (use `lg` for mobile CTAs); `sm`/`md` grow to 44px on touch (`coarse:min-h-11`). `loading` shows a spinner, sets `aria-busy` and disables. `iconOnly` is typed to require `aria-label`.
 - `Input`, `Checkbox`: bordered style with label/error/icon. Inputs are `text-base md:text-sm` (16px minimum on mobile or iOS zooms).
 - Form controls: `Switch` (`role="switch"`, `hideLabel` when the visible text is elsewhere), `Select` (native `<select>`, `options` or `groups`), `SegmentedControl` (`radiogroup`), `Tabs` + `TabPanel` (roving tabindex, arrows/Home/End, horizontal scroll on mobile), `FormField` (label/hint/error wiring), `Textarea` (`autoGrow`, `maxLength` counter). `useMediaQuery` (`src/hooks`) replaces manual `window.innerWidth` checks.
+- Structure primitives: `PageHeader` (the single `<h1>`; `back`, `badge`, `actions`), `SectionCard` (`<section aria-labelledby>` + `<h2>`), `EmptyState` (`action.href` renders a `Link`, `secondaryAction`, `size`), `Stepper` (`aria-current="step"`, "Passo 2 de 5" on mobile), `SearchInput` (debounced, "Limpar busca"), `Popover` (portal, flip/clamp via `src/lib/popoverPosition.ts`, Esc/outside click, returns focus), `Menu` (`role="menu"`, arrows/Home/End; bottom sheet under 768px), `Tooltip` (wraps the child in an `inline-flex` span; pass `wrapperClassName` for block/full-width triggers; hover + focus; touch: long press 500 ms, or a single tap with `asInfo`/disabled trigger).
+- `title=` only on truncated text, never on a control; icon-only controls need `aria-label`; hint text for controls goes in `Tooltip`. Use `coarse:` (pointer: coarse) for 44px targets; `text-caption` (12px) is the minimum readable size, `text-micro` (11px) only for badges/markers.
 - No raw `<select>`, hand-made switch or ad-hoc tab buttons in new code; use the primitives above.
 - `Badge`: `default | brand | success | error | warning | info`. `Card`: `default | sunken | interactive`.
 - `Modal`: bottom sheet on mobile, centered dialog on sm+. It renders in a portal on `body`; do not wrap it in your own z-index hacks.
@@ -37,7 +39,7 @@ paths:
 - Write base styles for mobile, then `md:`/`lg:`. Breakpoints: xs 375, sm 640, md 768, lg 1024, xl 1280. Verify at 375, 768, 1024.
 - Touch targets at least 44x44px. Bottom-anchored UI (sheets, FABs, composers) uses `pb-safe` or `env(safe-area-inset-*)`.
 - Window scrolls naturally; do not add nested scroll containers for page content. Kanban on mobile scrolls horizontally with snap.
-- Respect `prefers-reduced-motion`. Focus ring: `focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base`.
+- Respect `prefers-reduced-motion`. Focus ring (keyboard only): `focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base`; animate with `motion-safe:`.
 
 ## Data, org and permissions
 - Page components get the org with `useOutletContext<AppOutletContext>()` (type from `AuthLayout.tsx`). Every query takes `organizationId`.
