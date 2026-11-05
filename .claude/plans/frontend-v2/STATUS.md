@@ -67,7 +67,7 @@
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
-| 29b | `feat/fv2-29b-a11y-mobile-vocabulario` | frontend-specialist | **IMPLEMENTADO e commitado (8 commits, 4601 testes, gates verdes), NÃO integrado**: revisão (`reviewer`) estava em curso quando a sessão atingiu o limite de uso. Worktree `.claude/worktrees/fv2-29b` (ramo não pushado). Smoke parcial no Chrome: Histórico (`?severity=` replace sem rolar; `?log=` push; voltar mantém o filtro) ok. | pushar o ramo, ler o veredito da revisão (ou refazê-la), corrigir, gates, PR → `frontend-v2`; notar que os pills de Tarefas ("Minha Semana", "Sem Responsável") ainda estão em title case |
+| 29b | `feat/fv2-29b-a11y-mobile-vocabulario` | frontend-specialist | revisão concluída: sem bloqueio, 5 melhorias pequenas em aplicação (artigo nos toasts, rótulo curto "Novo" em Formulários, label do Switch em Grupos, Tooltip vazio, fallback do Copiloto embutido); ramo pushado | commit das melhorias → gates → PR → merge → encerramento |
 
 ## Parados (não integrar sem decisão do dono)
 
