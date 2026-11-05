@@ -141,6 +141,12 @@ const stepKeyValidator = v.union(
   v.literal("team"),
 );
 
+const stepStatusValidator = v.union(
+  v.literal("done"),
+  v.literal("skipped"),
+  v.literal("pending"),
+);
+
 const capabilitiesValidator = v.object({
   managedBridge: v.boolean(),
   transcription: v.boolean(),
@@ -366,8 +372,17 @@ const statusDetailValidator = v.object({
     }),
   ),
   aiAssisted: v.optional(v.boolean()),
+  // v.object (não v.record): v.record só aceita chaves v.string()/v.id() no push.
   steps: v.optional(
-    v.record(stepKeyValidator, v.union(v.literal("done"), v.literal("skipped"), v.literal("pending"))),
+    v.object({
+      business: stepStatusValidator,
+      funnel: stepStatusValidator,
+      whatsapp: stepStatusValidator,
+      attendant: stepStatusValidator,
+      test: stepStatusValidator,
+      extras: stepStatusValidator,
+      team: stepStatusValidator,
+    }),
   ),
   nextStep: v.optional(v.union(stepKeyValidator, v.null())),
   bridgeAckPending: v.optional(v.boolean()),
