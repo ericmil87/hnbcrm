@@ -1,3 +1,8 @@
+// Modelos por segmento moram em convex/lib/onboardingTemplates.ts (fonte única).
+// Este arquivo reexporta e mantém o adaptador legado do assistente v1, cujos
+// dados (nomes de etapas, `financeiro`) seguem inalterados.
+export * from "../../convex/lib/onboardingTemplates";
+
 export interface IndustryTemplate {
   key: string;
   label: string;

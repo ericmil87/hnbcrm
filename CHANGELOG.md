@@ -2,6 +2,12 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado — Frontend v2]
+
+### Configuração inicial e Copiloto
+
+- Modelos prontos por segmento (imobiliária, startup/SaaS, serviços, clínica, loja e cursos): cada um traz funil com etapas, campos personalizados e uma Atendente IA com persona, perguntas frequentes e palavras de repasse, para você só preencher o que é do seu negócio.
+
 ## [0.78.1] - 2026-11-03
 
 ### Copiloto — datas e contexto nas leituras; áudio entende o vocabulário do CRM
