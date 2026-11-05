@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import type { SearchParamState } from "@/hooks/useSearchParamState";
 import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import {
@@ -12,6 +13,15 @@ import {
 } from "@/lib/auditFilters";
 
 const NOSCROLL = { preventScrollReset: true } as const;
+
+/**
+ * Filtrar recolhe o item aberto na mesma escrita: o `?log=` não fica órfão
+ * quando a linha sai da lista e, principalmente, fechar depois (`navigate(-1)`
+ * da entrada que abrimos) não desfaz o filtro.
+ */
+function filterSetter<T>(param: SearchParamState<T>) {
+  return (next: T) => param.set(next, { also: { log: null } });
+}
 
 /**
  * Estado do Histórico de alterações que vive na URL: filtros
@@ -30,17 +40,17 @@ export function useAuditUrlState() {
 
   const { set: setSeverityParam } = severity;
   const { set: setFromParam } = from;
-  
+
   /** Limpa todos os filtros numa navegação só (dois `set` seguidos não se compõem). */
   const clearAll = useCallback(() => {
     setSeverityParam(ALL, {
-      also: { entity: null, action: null, actor: null, from: null, to: null },
+      also: { entity: null, action: null, actor: null, from: null, to: null, log: null },
     });
   }, [setSeverityParam]);
 
   /** Limpa o período numa navegação só. */
   const clearDates = useCallback(() => {
-    setFromParam("", { also: { to: null } });
+    setFromParam("", { also: { to: null, log: null } });
   }, [setFromParam]);
 
   /** Abre (push, o "voltar" fecha) ou fecha (volta a entrada que abrimos). */
@@ -52,17 +62,17 @@ export function useAuditUrlState() {
 
   return {
     severity: severity.value,
-    setSeverity: severity.set,
+    setSeverity: filterSetter(severity),
     entity: entity.value,
-    setEntity: entity.set,
+    setEntity: filterSetter(entity),
     action: action.value,
-    setAction: action.set,
+    setAction: filterSetter(action),
     actor: actor.value,
-    setActor: actor.set,
+    setActor: filterSetter(actor),
     from: from.value,
-    setFrom: from.set,
+    setFrom: filterSetter(from),
     to: to.value,
-    setTo: to.set,
+    setTo: filterSetter(to),
     openLogId: log.id,
     setOpenLog,
     clearAll,

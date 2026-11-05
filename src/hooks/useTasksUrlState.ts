@@ -50,8 +50,8 @@ export function useTasksUrlState() {
   stateRef.current = locationState;
   const update = useCallback(
     (patch: Partial<TasksUrlState>) => {
-      // Só as chaves do `patch` entram na escrita, sobre a URL VIVA (`prev`):
-      // uma mudança de filtro feita durante um `await` não é desfeita.
+      // Só as chaves do `patch` entram na escrita; as demais seguem como estão na
+      // URL (`prev` é a URL do último render do router, não uma leitura ao vivo).
       const writes = tasksUrlWrites({ ...DEFAULT_TASKS_URL_STATE, ...patch });
       const keys: Record<keyof TasksUrlState, string> = {
         view: "view",
