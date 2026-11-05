@@ -2,6 +2,12 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado]
+
+### Requer atenção
+
+- A lista agora é compacta: cada pedido ocupa uma linha com o nome, o motivo, há quanto tempo foi pedido e o resumo em uma linha. **Assumir conversa**, **Devolver à IA** e **Ver conversa** ficam na própria linha, e a seta abre as ações sugeridas. Em **Completo**, no topo da página, o cartão volta a ser como antes; a escolha fica salva neste navegador. O contador agora aparece como "37 pendentes".
+
 ## [Não lançado — Frontend v2]
 
 ### Navegação e Configurações
