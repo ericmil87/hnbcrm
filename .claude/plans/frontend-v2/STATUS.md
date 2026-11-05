@@ -65,7 +65,8 @@
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
-| 27 | `feat/fv2-27-paineis-detalhe` | frontend-specialist | fase 1 (contatos, tarefas) commitada; fase 2 (lead) após o fv2-26 | merge do frontend-v2 → fase 2 → revisão → gates → merge |
+| 27 | `feat/fv2-27-paineis-detalhe` | frontend-specialist | fase 1 (contatos, tarefas) commitada; fase 2 (lead) em andamento sobre o fv2-26 | revisão → gates → merge |
+| 29a | `feat/fv2-29a-url-demais-telas` | frontend-specialist | filtros na URL (Tarefas, Histórico, Campanhas, Equipe) — PR 14 dividido em 29a (URL) e 29b (a11y/mobile/vocabulário) | revisão → gates → merge; depois 29b |
 
 ## Parados (não integrar sem decisão do dono)
 
