@@ -22,6 +22,10 @@ interface CopilotPanelBaseProps {
   organizationId: Id<"organizations">;
   /** "setup": conversa de configuração inicial (thread próprio). */
   purpose?: "setup";
+  /** Thread guardada fora do navegador (o wizard grava em `wizardData`). */
+  initialThreadId?: string | null;
+  /** A thread mudou (criada ou descartada): quem usa o painel pode guardá-la. */
+  onThreadChange?: (threadId: string | null) => void;
 }
 
 type CopilotPanelProps =
@@ -52,7 +56,9 @@ export function CopilotPanel(props: CopilotPanelProps) {
     startNewThread,
   } = useCopilotStream(
     organizationId,
-    purpose ? { purpose } : undefined
+    purpose || props.initialThreadId || props.onThreadChange
+      ? { purpose, initialThreadId: props.initialThreadId, onThreadChange: props.onThreadChange }
+      : undefined
   );
 
   // Painel FECHADO não assina o histórico: a query reativa seria reexecutada a

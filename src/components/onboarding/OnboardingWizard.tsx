@@ -165,6 +165,8 @@ export function OnboardingWizard({
   // Persist wizard state
   const persistState = async (stepOverride?: number) => {
     const wizardData = {
+      // Apaga a marca do assistente v2 (o servidor faz merge raso): a posição do v1 não vale no v2.
+      wizardVersion: null,
       currentStep: stepOverride ?? currentStep,
       industry,
       companySize,

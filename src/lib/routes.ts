@@ -33,6 +33,9 @@ export const TAB_ROUTES: Record<Tab, string> = {
   settings: "/app/configuracoes",
 };
 
+/** Configuração inicial (assistente v2). Fora do menu: abre por URL, pelo Painel e por Configurações. */
+export const ONBOARDING_ROUTE = "/app/configuracao-inicial";
+
 /**
  * Aba ativa de um caminho, pelo prefixo mais longo: sub-rotas como
  * `/app/formularios/:formId/submissoes` ativam a aba da raiz (`forms`).

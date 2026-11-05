@@ -58,17 +58,30 @@ interface UseCopilotStreamResult {
   startNewThread: () => void;
 }
 
+export interface UseCopilotStreamOptions {
+  purpose?: "setup";
+  /** Thread guardada no servidor (usada se o navegador não tiver uma). */
+  initialThreadId?: string | null;
+  /** A thread da conversa mudou (criada ou descartada). */
+  onThreadChange?: (threadId: string | null) => void;
+}
+
 export function useCopilotStream(
   organizationId: Id<"organizations">,
-  options?: { purpose?: "setup" }
+  options?: UseCopilotStreamOptions
 ): UseCopilotStreamResult {
   const purpose = options?.purpose;
   const token = useAuthToken();
+  // Thread guardada fora do navegador (ex.: wizard de configuração): vale quando o
+  // localStorage não tem nenhuma.
+  const initialThreadRef = useRef(options?.initialThreadId ?? null);
+  const onThreadChangeRef = useRef(options?.onThreadChange);
+  onThreadChangeRef.current = options?.onThreadChange;
 
   const [threadId, setThreadId] = useState<Id<"copilotThreads"> | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
-    return (stored as Id<"copilotThreads"> | null) ?? null;
+    return (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null);
   });
   const [streamingText, setStreamingText] = useState("");
   const [activeTools, setActiveTools] = useState<string[]>([]);
@@ -81,8 +94,18 @@ export function useCopilotStream(
   // Cada organização tem sua própria thread persistida — recarrega ao trocar de org.
   useEffect(() => {
     const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
-    setThreadId((stored as Id<"copilotThreads"> | null) ?? null);
+    setThreadId(
+      (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null),
+    );
   }, [organizationId, purpose]);
+
+  // Avisa quem guarda a thread fora do navegador, só quando ela muda de fato.
+  const reportedThreadRef = useRef<string | null>(initialThreadRef.current);
+  useEffect(() => {
+    if (reportedThreadRef.current === threadId) return;
+    reportedThreadRef.current = threadId;
+    onThreadChangeRef.current?.(threadId);
+  }, [threadId]);
 
   const startNewThread = useCallback(() => {
     window.localStorage.removeItem(threadStorageKey(organizationId, purpose));

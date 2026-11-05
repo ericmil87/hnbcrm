@@ -16,6 +16,20 @@ const EMPTY: OnboardingSnapshot = {
 };
 
 describe("deriveOnboardingStatus", () => {
+  it("funil pulado vira skipped e o próximo passo avança; funil aplicado vence", () => {
+    const base = { ...EMPTY, hasBusinessOffer: true };
+    const skipped = deriveOnboardingStatus({ ...base, saved: { funnel: "skipped" } });
+    expect(skipped.steps.funnel).toBe("skipped");
+    expect(skipped.nextStep).toBe("whatsapp");
+    const legacy = deriveOnboardingStatus({
+      ...base,
+      legacyWizardCompleted: true,
+      saved: { funnel: "skipped" },
+    });
+    expect(legacy.steps.funnel).toBe("done");
+    expect(deriveOnboardingStatus({ ...base, saved: { funnel: "done" } }).steps.funnel).toBe("done");
+  });
+
   it("deriveOnboardingStatus escolhe o próximo passo", () => {
     expect(deriveOnboardingStatus(EMPTY).nextStep).toBe("business");
     const r = deriveOnboardingStatus({

@@ -73,7 +73,11 @@ export function deriveOnboardingStatus(s: OnboardingSnapshot): OnboardingStatusR
     business:
       s.legacyOrg || s.hasBusinessOffer || saved(s, "business") === "done" ? "done" : "pending",
     funnel:
-      saved(s, "funnel") === "done" || s.legacyWizardCompleted ? "done" : "pending",
+      saved(s, "funnel") === "done" || s.legacyWizardCompleted
+        ? "done"
+        : saved(s, "funnel") === "skipped"
+          ? "skipped"
+          : "pending",
     whatsapp: s.whatsappConnected ? "done" : saved(s, "whatsapp") === "skipped" ? "skipped" : "pending",
     attendant:
       s.aiActive && s.hasAttendant

@@ -674,6 +674,19 @@ export const activateOneFlow = mutation({
           removedBy: undefined,
           updatedAt: now,
         });
+        // O wizard promete "nunca autopilot": um atendente removido que estava
+        // em autopilot não volta respondendo sozinho. A regra do wizard depende
+        // deste reset, que vale SÓ na reativação (atendente ativo mantém o modo).
+        // A mutation é compartilhada com o 1-toque das Configurações, então a
+        // origem é a neutra "settings". Passa pelo port de perfil (auditoria).
+        if (existing.agentProfile?.mode !== "suggest") {
+          await updateAgentProfileCore(ctx, {
+            agent: (await ctx.db.get(existing._id))!,
+            member,
+            via: "settings",
+            patch: { mode: "suggest" },
+          });
+        }
       }
     } else {
       const orgFresh = (await ctx.db.get(args.organizationId))!;

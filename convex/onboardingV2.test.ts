@@ -379,6 +379,18 @@ test("getOnboardingStatus de membro agent não expõe business", async () => {
   expect(asAdmin.steps?.business).toBe("done");
 });
 
+test("markWizardStep aceita funil pulado, mas recusa funil feito", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  const admin = as(t, s.adminUserId);
+  await admin.mutation(api.onboarding.markWizardStep, { organizationId: s.organizationId, step: "funnel", status: "skipped" });
+  await expect(
+    admin.mutation(api.onboarding.markWizardStep, { organizationId: s.organizationId, step: "funnel", status: "done" }),
+  ).rejects.toThrow(/calculado/);
+  const st = await admin.query(api.onboarding.getOnboardingStatus, { organizationId: s.organizationId });
+  expect(st.steps?.funnel).toBe("skipped");
+});
+
 test("markWizardStep só aceita passos não deriváveis", async () => {
   const t = convexTest(schema, modules);
   const s = await seed(t);
@@ -438,4 +450,18 @@ test("applyFunnelTemplate exige primeira etapa aberta", async () => {
       organizationId: s.organizationId, ...FUNNEL, stages: [FUNNEL.stages[2], FUNNEL.stages[0]],
     }),
   ).rejects.toThrow(/primeira etapa/);
+});
+
+test("initOnboardingProgress: org antiga com dados nasce concluída; org vazia segue mostrando", async () => {
+  const t = convexTest(schema, modules);
+  const old = await seed(t);
+  await addLead(t, old);
+  await as(t, old.adminUserId).mutation(api.onboarding.initOnboardingProgress, { organizationId: old.organizationId });
+  const p1 = await as(t, old.adminUserId).query(api.onboarding.getOnboardingProgress, { organizationId: old.organizationId });
+  expect(p1.shouldShowWizard).toBe(false);
+
+  const fresh = await seed(t);
+  await as(t, fresh.adminUserId).mutation(api.onboarding.initOnboardingProgress, { organizationId: fresh.organizationId });
+  const p2 = await as(t, fresh.adminUserId).query(api.onboarding.getOnboardingProgress, { organizationId: fresh.organizationId });
+  expect(p2.shouldShowWizard).toBe(true);
 });

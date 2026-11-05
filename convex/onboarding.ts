@@ -927,7 +927,7 @@ async function repointAttendants(
 }
 
 // Marca só o que NÃO dá para derivar de dados: "testou", "revisou" e "pulou"
-// de WhatsApp/equipe/extras. Business e funil têm mutation própria.
+// de funil/WhatsApp/equipe/extras. Business e o "feito" do funil têm mutation própria.
 export const markWizardStep = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -939,6 +939,7 @@ export const markWizardStep = mutation({
     await requirePermission(ctx, args.organizationId, "settings", "manage");
     const markable: Record<string, SavedStepStatus[]> = {
       test: ["done", "skipped"],
+      funnel: ["skipped"], // "done" do funil vem de applyFunnelTemplate
       attendant: ["skipped"],
       whatsapp: ["skipped"],
       team: ["skipped"],
@@ -1017,10 +1018,23 @@ export const initOnboardingProgress = mutation({
 
     const now = Date.now();
 
+    // Org que NÃO mostraria o wizard a quem não tem registro (já tem leads/
+    // contatos, ou foi concluída/legada) nasce com o registro concluído. Sem
+    // isso, o `false` aqui faria o wizard v1 reaparecer por cima do app em toda
+    // org antiga sem `wizardCompletedAt`. `isAdmin`/`deferred` ficam neutros:
+    // quem decide isso é o papel atual e "Continuar depois", não o registro.
+    const org = await ctx.db.get(args.organizationId);
+    const wouldShow = await computeShouldShowWizard(ctx, {
+      organizationId: args.organizationId,
+      isAdmin: true,
+      orgWizardCompleted: !!org?.onboardingMeta?.wizardCompletedAt,
+      memberWizardCompleted: null,
+    });
+
     const progressId = await ctx.db.insert("onboardingProgress", {
       organizationId: args.organizationId,
       teamMemberId: userMember._id,
-      wizardCompleted: false,
+      wizardCompleted: !wouldShow,
       wizardCurrentStep: 0,
       checklistDismissed: false,
       seenSpotlights: [],
