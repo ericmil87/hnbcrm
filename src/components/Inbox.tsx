@@ -1,6 +1,6 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutletContext, useNavigate, useSearchParams, useLocation } from "react-router";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useOutletContext, useNavigate } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -9,28 +9,13 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { VOCAB } from "@/lib/vocab";
 import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus, BarChart3, MapPin, UserRound, Calendar, Link2, Phone, HelpCircle, Images, MousePointerClick } from "lucide-react";
+import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Badge } from "@/components/ui/Badge";
-import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
-import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
-import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
-import {
-  INBOX_FILTER_STORAGE_KEY,
-  accountFullLabel,
-  accountChipOptions,
-  type InboxFilterState,
-  channelIcon,
-  channelLabel,
-  parseStoredInboxFilter,
-  sanitizeInboxFilter,
-  shouldShowAccount,
-  showChannelChip,
-  viaLabel,
-} from "@/lib/channelAccounts";
+import { shouldShowAccount } from "@/lib/channelAccounts";
 import {
   channelSupports,
   formatTextCounter,
@@ -47,17 +32,18 @@ import {
   getServiceWindowInfo,
   isComposerBlockedByWindow,
 } from "@/lib/serviceWindow";
-import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { useKeepPrevious } from "@/hooks/useKeepPrevious";
 import { useInfiniteSentinel } from "@/hooks/useInfiniteSentinel";
+import { useInboxFilters } from "@/hooks/useInboxFilters";
+import { useConversationList } from "@/hooks/useConversationList";
+import { useConversationSelection } from "@/hooks/useConversationSelection";
+import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
 import {
-  CONVERSATIONS_DEFAULT_LIMIT,
-  CONVERSATIONS_MAX_LIMIT,
-  LOAD_MORE_STEP,
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
+  LOAD_MORE_STEP,
   SEARCH_JUMP_STEP,
   canLoadMore,
   limitForKey,
@@ -68,6 +54,7 @@ import { MentionTextarea } from "@/components/ui/MentionTextarea";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { extractMentionIds } from "@/lib/mentions";
+import { filterConversations } from "@/lib/inboxState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { FileUploadButton, type UploadedFile } from "@/components/ui/FileUploadButton";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
@@ -76,42 +63,22 @@ import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
-import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
-import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { AttentionBanner, usePendingAttentionCount } from "@/components/inbox/AttentionBanner";
+import { ConversationHeader } from "@/components/inbox/ConversationHeader";
+import { ConversationList } from "@/components/inbox/ConversationList";
+import type { ConversationListEntry } from "@/components/inbox/ConversationListItem";
+import { GroupConversationPanels, useGroupPanels } from "@/components/inbox/GroupConversationPanels";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { ScheduledPendingRow } from "@/components/inbox/ScheduledPendingRow";
-import { FollowUpChip } from "@/components/inbox/FollowUpChip";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { ContactDetailPanel } from "@/components/ContactDetailPanel";
-import { GroupMembersPanel, GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
-import { GroupSummaryModal } from "@/components/inbox/GroupSummaryModal";
 import { mentionTokensFor } from "@/components/inbox/GroupMentionText";
-import {
-  useGroupMentions,
-  GroupMentionDropdown,
-} from "@/components/inbox/GroupMentionComposer";
-import { useOrgModules } from "@/hooks/useOrgModules";
-import {
-  InboxQueueBar,
-  EMPTY_QUEUE_FILTER,
-  queueFilterArgs,
-  type InboxQueueFilter,
-} from "@/components/inbox/central/InboxQueueBar";
-import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
+import { useGroupMentions, GroupMentionDropdown } from "@/components/inbox/GroupMentionComposer";
+import { InboxQueueBar } from "@/components/inbox/central/InboxQueueBar";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
-import {
-  type ConversationKindFilter,
-  KIND_FILTERS,
-  KIND_FILTER_KEY,
-  type LeadHandoffState,
-  activeBotSuspicion,
-  aiStateChipInfo,
-  isHandoffPending,
-  readKindFilter,
-} from "@/lib/inboxState";
-import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
-import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
-import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
+import { TransferEvent } from "@/components/inbox/central/CentralChips";
+import { getReactions, isMediaPlaceholder, isVoiceNote, type InboxMessage } from "@/components/inbox/types";
 
 /**
  * Resolve o `?conversation=` que não está na lista carregada (fora do lote carregado
@@ -138,91 +105,49 @@ export function Inbox() {
   usePageTitle(VOCAB.conversations.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
-  const conversationParam = searchParams.get("conversation");
   const { can, member } = usePermissions(organizationId);
   const currentMemberId = member?._id ?? null;
-  // "Nova conversa": `?nova=1` abre o modal vazio, `?nova=<contactId>` já com
-  // o contato. A URL é a fonte da verdade (fechar o modal limpa o param).
-  const novaParam = searchParams.get("nova");
-  const novaContactId =
-    novaParam && novaParam !== "1" && /^[a-z0-9]{25,40}$/.test(novaParam)
-      ? (novaParam as Id<"contacts">)
-      : null;
   const canStartConversation = can("inbox", "reply");
   const sendableChannels = useQuery(
     api.startConversation.listSendableWhatsappChannels,
     canStartConversation ? { organizationId } : "skip"
   );
   const showNewConversation = canStartConversation && (sendableChannels?.length ?? 0) > 0;
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState("");
   const [isInternal, setIsInternal] = useState(false);
-  const [showMessages, setShowMessages] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<UploadedFile[]>([]);
   const [now, setNow] = useState(() => Date.now());
 
-  // Arquivadas + filtro por etiqueta na lista de conversas.
-  const [showArchived, setShowArchived] = useState(false);
-  const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
-  // Diretas x grupos (v0.57). Persistido porque quem acompanha 30 grupos quase
-  // sempre quer a mesma aba de novo; leitura e escrita protegidas porque o
-  // localStorage lança em janela anônima e com dados de site bloqueados.
-  const [kindFilter, setKindFilter] = useState<ConversationKindFilter>(() => readKindFilter());
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(KIND_FILTER_KEY, kindFilter);
-    } catch {
-      /* sem persistência é só perder a preferência, não quebrar a tela */
-    }
-  }, [kindFilter]);
-
-  // Chips Canal e Conta (D11; valem para WhatsApp com 2+ números, sem módulo
-  // Meta). Persistidos com try/catch, como o filtro acima. O valor salvo é
-  // validado contra as contas atuais antes de virar arg da query.
-  const { accounts: channelAccounts, byId: accountById } = useInboxChannelAccounts(organizationId);
-  const [storedChannelFilter, setStoredChannelFilter] = useState<InboxFilterState>(() => {
-    try {
-      return parseStoredInboxFilter(window.localStorage.getItem(INBOX_FILTER_STORAGE_KEY));
-    } catch {
-      return { channel: null, configId: null };
-    }
-  });
-  const sanitizedFilter = sanitizeInboxFilter(channelAccounts, storedChannelFilter);
-  const channelChipVisible = showChannelChip(channelAccounts);
-  const accountChoices = accountChipOptions(channelAccounts, sanitizedFilter.channel);
-  // Filtro escondido (chip invisível) nunca fica ativo às cegas.
-  const channelFilter: InboxFilterState = {
-    channel: channelChipVisible ? sanitizedFilter.channel : null,
-    configId: accountChoices.length > 0 ? sanitizedFilter.configId : null,
-  };
-  const updateChannelFilter = (next: InboxFilterState) => {
-    setStoredChannelFilter(next);
-    try {
-      window.localStorage.setItem(INBOX_FILTER_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* sem persistência é só perder a preferência */
-    }
-  };
-  const channelOptions = Array.from(new Set(channelAccounts.map((a) => a.channel)));
-
-  // Conversa alcançada por deep-link que não está na lista carregada — o
-  // resolver abaixo mantém este estado em dia (o documento continua reativo).
-  const [linkedConversation, setLinkedConversation] = useState<Record<string, any> | null>(null);
-
-  // Seleção múltipla na lista (arquivar/etiquetar em lote).
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
-  const [confirmBulk, setConfirmBulk] = useState<
-    null | { action: "archive" | "label"; labelId?: string }
-  >(null);
-
-  // Busca em mensagens (lista de conversas vira lista de resultados).
+  // Busca em mensagens (a lista vira lista de resultados). O termo já chega
+  // com debounce do SearchInput.
   const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedTerm, setDebouncedTerm] = useState("");
   const [searchMonth, setSearchMonth] = useState(""); // "YYYY-MM" ou ""
+  const isSearching = searchTerm.trim().length >= 2;
+
+  // Filtros (URL: arquivadas e etiqueta; localStorage: tipo e canal; Central: fila),
+  // lista em lotes, conversa aberta (`?conversation=`, `?nova=`) e seleção em lote.
+  const filters = useInboxFilters(organizationId);
+  const { showArchived, kindFilter, filterLabelId, conversationLabels, centralModules, centralEnabled } = filters;
+  const list = useConversationList({
+    organizationId,
+    showArchived,
+    queueArgs: filters.queueArgs,
+    channelArgs: filters.channelArgs,
+    isSearching,
+  });
+  const { validConversations } = list;
+  const selection = useConversationSelection({
+    validConversations,
+    listLoaded: list.conversations !== undefined,
+    showArchived,
+    setShowArchived: filters.setShowArchived,
+    kindFilter,
+    onSelectionChange: () => resetConversationState(),
+    onDraft: setNewMessage,
+  });
+  const { selectedConversation, showMessages, currentConversation } = selection;
+  const bulk = useBulkConversationSelection({ organizationId, showArchived });
+  const attentionCount = usePendingAttentionCount(organizationId, can("inbox", "view_own"));
 
   // Onda 2 interaction state.
   const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
@@ -236,100 +161,22 @@ export function Inbox() {
   // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
   const [showLeadPanel, setShowLeadPanel] = useState(false);
   const [showContactPanel, setShowContactPanel] = useState(false);
-  // Grupo: painel de membros e o contato de um membro (D3 — pode não existir).
-  const [showMembersPanel, setShowMembersPanel] = useState(false);
-  const [showGroupSummary, setShowGroupSummary] = useState(false);
-  const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
-  const [confirmGroupAction, setConfirmGroupAction] = useState<null | "unmonitor" | "leave">(null);
   useEffect(() => {
     setShowLeadPanel(false);
     setShowContactPanel(false);
-    setShowMembersPanel(false);
-    // Faltava: o modal de resumo ficava aberto ao trocar de conversa, mostrando
-    // o resumo da sala ANTERIOR (achado menor do review de correção).
-    setShowGroupSummary(false);
-    setMemberContactId(null);
-    setConfirmGroupAction(null);
   }, [selectedConversation]);
+  // Grupo: membros, resumo, contato de um membro e confirmações (também fecham ao trocar).
+  const groupPanels = useGroupPanels(selectedConversation);
 
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(interval);
   }, []);
 
-  // Debounce da busca para não disparar uma query por tecla.
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedTerm(searchTerm), 300);
-    return () => window.clearTimeout(timer);
-  }, [searchTerm]);
-
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
-  // MVP "Central" (opcional por org): filas por setor/unidade, chips e o
-  // roteamento no header. Com os módulos desligados nada disto aparece e
-  // `getConversations` recebe exatamente os args de antes.
-  const { modules: centralModules, anyEnabled: centralEnabled } = useOrgModules(organizationId);
-  const queuesEnabled = centralModules.departments || centralModules.units;
-  const [queueFilter, setQueueFilter] = useState<InboxQueueFilter>(EMPTY_QUEUE_FILTER);
-  const inboxQueues = useQuery(
-    api.conversationRouting.getInboxQueues,
-    queuesEnabled ? { organizationId } : "skip"
-  );
-  const queueArgs = queueFilterArgs(queueFilter, centralModules);
-  const queueFilterActive = Object.keys(queueArgs).length > 0;
-  const unitById = new Map((inboxQueues?.units ?? []).map((u) => [u._id as string, u]));
-  const departmentById = new Map((inboxQueues?.departments ?? []).map((d) => [d._id as string, d]));
+
   // IA da org (opt-in): controla os controles de IA no header + rascunhos.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
-  // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
-  const aiConvState = useQuery(
-    api.attendant.getConversationAiState,
-    selectedConversation && aiStatus?.active
-      ? { conversationId: selectedConversation as Id<"conversations"> }
-      : "skip"
-  );
-
-  // Lista em lotes de 50 ("Carregar mais conversas", até 500 — perf Convex
-  // I/O, fase 2). O limite vale para a combinação de filtros do SERVIDOR
-  // (arquivadas + fila); trocar o filtro volta a 50. Os filtros só de tela
-  // (Diretas/Grupos, etiqueta) não mudam a query e mantêm o limite.
-  const channelArgs = {
-    ...(channelFilter.channel
-      ? { channel: channelFilter.channel as "whatsapp" | "instagram" | "messenger" }
-      : {}),
-    ...(channelFilter.configId
-      ? { channelConfigId: channelFilter.configId as Id<"channelConfigs"> }
-      : {}),
-  };
-  const listFilterKey = `${showArchived ? "archived" : "active"}|${JSON.stringify(queueArgs)}|${JSON.stringify(channelArgs)}`;
-  const [listPage, setListPage] = useState<{ key: string | null; limit: number }>(() => ({
-    key: null,
-    limit: CONVERSATIONS_DEFAULT_LIMIT,
-  }));
-  const listLimit = limitForKey(listPage, listFilterKey, CONVERSATIONS_DEFAULT_LIMIT);
-  const conversationsRaw = useQuery(api.conversations.getConversations, {
-    organizationId,
-    ...(showArchived ? { archived: true } : {}),
-    ...queueArgs,
-    ...channelArgs,
-    limit: listLimit,
-  });
-  // Mantém a lista na tela enquanto o lote maior carrega.
-  const conversations = useKeepPrevious(conversationsRaw, listFilterKey);
-  const loadingMoreConversations = conversationsRaw === undefined && conversations !== undefined;
-  // Enquanto o lote maior carrega, o lote MANTIDO (menor que o limite novo)
-  // daria false — o botão sumiria em vez de mostrar "Carregando…".
-  const canLoadMoreConversations =
-    !!conversations &&
-    (loadingMoreConversations ||
-      canLoadMore(conversations.length, listLimit, CONVERSATIONS_MAX_LIMIT));
-  const handleLoadMoreConversations = () =>
-    setListPage({
-      key: listFilterKey,
-      limit: nextLimit(listLimit, LOAD_MORE_STEP, CONVERSATIONS_MAX_LIMIT),
-    });
-
-  const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
-
   // Thread: as 50 mensagens mais RECENTES; "Carregar mensagens anteriores"
   // sobe de 50 em 50 até 500. O limite é por conversa (trocar volta a 50).
   const [messagePage, setMessagePage] = useState<{ key: string | null; limit: number }>(() => ({
@@ -356,26 +203,12 @@ export function Inbox() {
     };
   })();
 
-  const isSearching = debouncedTerm.trim().length >= 2;
-
-  // Scroll infinito: o sentinela no fim da lista chama o MESMO handler do
-  // botão quando o usuário rola até lá (o botão fica como fallback — lista
-  // menor que a tela não carrega sozinha, ver lib/infiniteScroll).
-  const conversationListScrollRef = useRef<HTMLDivElement>(null);
-  const conversationListSentinelRef = useInfiniteSentinel({
-    enabled: canLoadMoreConversations && !loadingMoreConversations && !isSearching,
-    loading: loadingMoreConversations,
-    onReach: handleLoadMoreConversations,
-    root: conversationListScrollRef,
-    resetKey: listFilterKey,
-  });
-
   const searchResults = useQuery(
     api.conversations.searchMessages,
     isSearching
       ? {
           organizationId,
-          searchQuery: debouncedTerm,
+          searchQuery: searchTerm,
           ...(monthRange ?? {}),
         }
       : "skip"
@@ -387,9 +220,6 @@ export function Inbox() {
   );
   const scheduleMessage = useMutation(api.scheduledMessages.schedule);
   const cancelScheduled = useMutation(api.scheduledMessages.cancel);
-
-  const bulkArchiveConversations = useMutation(api.conversations.bulkSetConversationsArchived);
-  const bulkLabelConversations = useMutation(api.conversations.bulkApplyConversationLabel);
 
   const sendMessage = useMutation(api.conversations.sendMessage);
   const reactToMessage = useMutation(api.conversations.reactToMessage);
@@ -570,9 +400,6 @@ export function Inbox() {
     if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [messages, messagesRaw, messageLimit, selectedConversation]);
 
-  const validConversations = (conversations ?? []).filter(
-    (c): c is NonNullable<typeof c> => c !== null
-  );
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
   // Os chips aparecem quando há grupo na lista OU quando o filtro guardado não
   // é "Todas" (review de correção nº 17). Sem a segunda condição, um filtro
@@ -581,38 +408,13 @@ export function Inbox() {
   // sem controle na tela para voltar.
   const hasGroupConversations =
     validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
-  const filteredConversations = validConversations.filter((c) => {
-    if (filterLabelId && !((c.labelIds ?? []) as string[]).includes(filterLabelId)) return false;
-    if (kindFilter === "group") return c.kind === "group";
-    if (kindFilter === "direct") return c.kind !== "group";
-    return true;
+  const filteredConversations = filterConversations(validConversations, {
+    kind: kindFilter,
+    labelId: filterLabelId,
   });
-
-  // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
-  // fora da lista carregada (fora do lote carregado, ou arquivada ainda carregando).
-  const conversationInList =
-    conversationParam !== null && validConversations.some((c) => c._id === conversationParam);
-  // Só fixa se ela PERTENCE à aba/filtro em tela: uma conversa ativa aberta por
-  // link aparecia no topo de "Arquivadas" (e um 1:1 no topo de "Grupos") só por
-  // não estar na lista carregada — parecia arquivada sem estar.
-  const linkedMatchesView =
-    !!linkedConversation &&
-    Boolean(linkedConversation.archivedAt) === showArchived &&
-    (kindFilter === "all" ||
-      (kindFilter === "group" ? linkedConversation.kind === "group" : linkedConversation.kind !== "group"));
-  const pinnedConversation =
-    linkedConversation &&
-    linkedMatchesView &&
-    linkedConversation._id === selectedConversation &&
-    !validConversations.some((c) => c._id === linkedConversation._id)
-      ? linkedConversation
-      : null;
-  const listedConversations = pinnedConversation
-    ? [pinnedConversation, ...filteredConversations]
+  const listedConversations: ConversationListEntry[] = selection.pinnedConversation
+    ? [selection.pinnedConversation as ConversationListEntry, ...filteredConversations]
     : filteredConversations;
-  const currentConversation =
-    validConversations.find((c) => c._id === selectedConversation) ??
-    (linkedConversation?._id === selectedConversation ? linkedConversation : undefined);
   // Capacidades do canal da conversa aberta (matriz em lib/channelCapabilities).
   const convChannel: string | undefined = currentConversation?.channel;
   const convTransport: string | undefined = currentConversation?.channelProvider;
@@ -634,9 +436,6 @@ export function Inbox() {
     groupParticipantsCount,
     groupNameByKey,
   } = useGroupMode(currentConversation, messages);
-
-  const setGroupMonitored = useMutation(api.groupChats.setMonitored);
-  const leaveGroup = useAction(api.groupChats.leaveGroup);
   // Mexer na sala (acompanhar, entrar, sair) é `settings:manage` (D11).
   const canManageGroups = can("settings", "manage");
   // Disparar para os membros é campanha (F5), não configuração de canal.
@@ -670,297 +469,13 @@ export function Inbox() {
   });
 
   const openContactId = currentConversation?.contact?._id as Id<"contacts"> | undefined;
-  const contactHeadingText = currentConversation ? contactName || "Sem nome" : "";
-
-  const renderContactHeading = (className: string) =>
-    isGroupConversation ? (
-      <h2 className={className}>
-        <span className="flex items-center gap-2 min-w-0">
-          <Users size={16} className="shrink-0 text-text-muted" aria-hidden />
-          <span className="truncate">{groupSubject}</span>
-        </span>
-      </h2>
-    ) : openContactId && currentConversation?.contact ? (
-      <h2 className={className}>
-        {/* Nome editável ali mesmo: clicar no nome abre o contato; o lápis (ou
-            o próprio "Sem nome") renomeia sem passar pelo painel do lead. */}
-        <InlineNameEditor
-          contact={currentConversation.contact as InlineNameContact}
-          lead={currentConversation.lead as InlineNameLead}
-          onOpen={() => setShowContactPanel(true)}
-          openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
-        />
-      </h2>
-    ) : (
-      <h2 className={className}>{contactHeadingText}</h2>
-    );
-
-  // Funil do lead da conversa aberta (C2): "Funil: <board> → <estágio>" + lead.
   const openLeadId = currentConversation?.leadId as Id<"leads"> | undefined;
-  const leadBoardId = currentConversation?.lead?.boardId as Id<"boards"> | undefined;
-  const leadStageId = currentConversation?.lead?.stageId as Id<"stages"> | undefined;
-  const leadBoards = useQuery(
-    api.boards.getBoards,
-    leadBoardId ? { organizationId, includeArchived: true } : "skip"
-  ) as
-    | { _id: Id<"boards">; name: string }[]
-    | undefined;
-  const leadStages = useQuery(
-    api.boards.getStages,
-    leadBoardId ? { boardId: leadBoardId } : "skip"
-  ) as { _id: Id<"stages">; name: string }[] | undefined;
-  const leadBoardName = leadBoards?.find((b) => b._id === leadBoardId)?.name;
-  const leadStageName = leadStages?.find((s) => s._id === leadStageId)?.name;
-  const funnelText = (
-    <>
-      Funil: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
-      {" → "}
-      <span className="text-text-secondary font-medium">{leadStageName ?? "…"}</span>
-    </>
-  );
-  const funnelLine = leadBoardId ? (
-    <div className="flex items-center gap-1 min-w-0">
-      {openLeadId ? (
-        <button
-          type="button"
-          onClick={() => setShowLeadPanel(true)}
-          className="flex-1 min-w-0 truncate py-2 -my-2 text-left text-xs text-text-muted hover:text-brand-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
-          aria-label="Ver detalhes do lead"
-        >
-          {funnelText}
-          <span className="ml-1.5 text-brand-500">Ver lead</span>
-        </button>
-      ) : (
-        <span className="flex-1 min-w-0 truncate text-xs text-text-muted">{funnelText}</span>
-      )}
-      <button
-        type="button"
-        onClick={() =>
-          navigate(
-            `${TAB_ROUTES.board}?board=${leadBoardId}` +
-              (openLeadId ? `&lead=${openLeadId}` : "")
-          )
-        }
-        title="Abrir no funil"
-        aria-label="Abrir no funil"
-        className="shrink-0 flex items-center justify-center min-h-[44px] min-w-[44px] -my-3 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
-      >
-        <ExternalLink size={14} />
-      </button>
-    </div>
-  ) : null;
-
-  // Repasse pendente do lead da conversa aberta → banner com ação inline.
-  const openHandoffState = currentConversation?.lead?.handoffState as LeadHandoffState;
-  const leadHandoffPending = isHandoffPending(openHandoffState);
-  const pendingLeadHandoff = useQuery(
-    api.handoffs.getPendingHandoffForLead,
-    leadHandoffPending && openLeadId ? { leadId: openLeadId } : "skip"
-  ) as { _id: string } | null | undefined;
-
-  // SALA DE GRUPO não tem lead, e o banner âmbar saía de
-  // `conversation.lead.handoffState`: numa sala o operador não via nem que
-  // havia repasse aberto nem o botão de aceitar inline. A fonte aqui é a
-  // CONVERSA (índice `by_conversation_and_status`).
-  const pendingGroupHandoff = useQuery(
-    api.handoffs.getPendingHandoffForConversation,
-    isGroupConversation && currentConversation
-      ? { conversationId: currentConversation._id as Id<"conversations"> }
-      : "skip"
-  ) as { _id: string; reason?: string } | null | undefined;
-
-  const pendingHandoff = isGroupConversation ? pendingGroupHandoff : pendingLeadHandoff;
-  const handoffPending = isGroupConversation ? !!pendingGroupHandoff : leadHandoffPending;
-  const handoffReason = isGroupConversation
-    ? pendingGroupHandoff?.reason
-    : openHandoffState?.reason;
-
-  const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
-  const returnToAi = useMutation(api.attendant.returnToAi);
-
-  // A sala está com a IA em silêncio? (aceitar repasse pausa por 24 h)
-  const groupAiPaused =
-    isGroupConversation &&
-    typeof currentConversation?.aiPausedUntil === "number" &&
-    currentConversation.aiPausedUntil > Date.now();
-
-  const handleAcceptHandoff = () => {
-    if (!pendingHandoff) return;
-    toast.promise(acceptHandoff({ handoffId: pendingHandoff._id as Id<"handoffs"> }), {
-      loading: "Assumindo conversa…",
-      success: isGroupConversation
-        ? "Conversa assumida. A IA da sala fica em silêncio por 24 h"
-        : "Conversa assumida. IA pausada",
-      error: (e) => mutationErrorMessage(e, "Não foi possível assumir a conversa. Tente de novo."),
-    });
-  };
-
-  /**
-   * Itens de grupo no menu "⋮" da conversa. Parar de acompanhar e sair pedem
-   * confirmação (sair é irreversível pelo CRM — voltar exige convite novo) e
-   * exigem `settings:manage`, o mesmo gate do backend.
-   */
-  const renderGroupMenuItems = (close: () => void) => (
-    <>
-      <button
-        type="button"
-        onClick={() => {
-          close();
-          setShowMembersPanel(true);
-        }}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-      >
-        <Users size={15} />
-        Ver membros
-      </button>
-      {/*
-        Resumo por IA (F4). Fica visível mesmo com a IA de grupos desligada,
-        mas desabilitado com o motivo — esconder o item faria a pessoa procurar
-        um recurso que existe e ela não sabe como ligar.
-      */}
-      <button
-        type="button"
-        disabled={!groupAiEnabled}
-        title={
-          groupAiEnabled
-            ? undefined
-            : "Ative a IA em grupos em Configurações → IA para usar o resumo"
-        }
-        onClick={() => {
-          close();
-          setShowGroupSummary(true);
-        }}
-        className={
-          groupAiEnabled
-            ? "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-            : "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
-        }
-      >
-        <Sparkles size={15} />
-        Resumo por IA
-        {!groupAiEnabled && (
-          <span className="ml-auto text-[10px] uppercase tracking-wide">IA desligada</span>
-        )}
-      </button>
-      {canManageCampaigns && (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            dispatchToGroupMembers("group_members");
-          }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-        >
-          <Send size={15} />
-          Disparar 1 a 1 para os membros
-        </button>
-      )}
-      {/*
-        "Devolver à IA" numa sala (review de correção nº 6). Aceitar um repasse
-        de grupo silencia a IA por 24 h; sem este item, não havia como devolver
-        antes disso — o único caminho era esperar. Só aparece quando a sala está
-        de fato pausada.
-      */}
-      {can("inbox", "reply") && groupAiPaused && (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            void handleReturnGroupToAi();
-          }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-        >
-          <Sparkles size={15} />
-          Devolver à IA
-        </button>
-      )}
-      {canManageGroups && (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              setConfirmGroupAction("unmonitor");
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-          >
-            <EyeOff size={15} />
-            Parar de acompanhar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              setConfirmGroupAction("leave");
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
-          >
-            <LogOut size={15} />
-            Sair do grupo
-          </button>
-        </>
-      )}
-    </>
-  );
-
-  // Suspeita de robô na conversa aberta (só 1 a 1).
-  const botSuspicion = isGroupConversation ? null : activeBotSuspicion(currentConversation as any);
-  const [returningFromBot, setReturningFromBot] = useState(false);
-  const handleNotABot = async () => {
-    if (!currentConversation) return;
-    setReturningFromBot(true);
-    try {
-      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
-      toast.success("Conversa devolvida à IA");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
-    } finally {
-      setReturningFromBot(false);
-    }
-  };
-
-  const handleReturnGroupToAi = async () => {
-    if (!currentConversation) return;
-    try {
-      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
-      toast.success("A IA volta a responder quando for mencionada na sala");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
-    }
-  };
-
-  // Sem `toast.promise` aqui: o formatador de sucesso dele roda durante a
-  // renderização do toast, e voltar para a lista é `setState` — o efeito
-  // colateral fica no `then`, não no render.
-  const handleStopMonitoring = async () => {
-    if (!groupChatId) return;
-    try {
-      await setGroupMonitored({ groupChatId, monitored: false });
-      handleBackToList();
-      toast.success("Parou de acompanhar o grupo — a conversa foi arquivada");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível parar de acompanhar."));
-    }
-  };
-
-  const handleLeaveGroup = async () => {
-    if (!groupChatId) return;
-    try {
-      const result = await leaveGroup({ groupChatId });
-      handleBackToList();
-      toast.success(result.detail);
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível sair do grupo."));
-    }
-  };
 
   // Com um rascunho já aguardando revisão, pedir outra sugestão não faz
   // sentido (o backend recusa um segundo turno enfileirado na mesma conversa).
   const hasPendingDraft = ((messages ?? []) as InboxMessage[]).some(
     (m) => getAiDraft(m)?.status === "pending"
   );
-
-  const aiChip = aiStateChipInfo(aiConvState);
 
   // "digitando..." do contato — TTL de 12s no cliente (o "paused" pode se perder).
   // Fase 4b: a presença saiu do doc da conversa (cada "digitando" reexecutava a
@@ -1252,213 +767,21 @@ export function Inbox() {
     lastReadSigRef.current = null;
   };
 
-  // Escrita nossa no `?conversation=` ainda em voo: o router aplica o
-  // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
-  // que `selectedConversation` já é a conversa nova e o param ainda é a antiga.
-  // `target` é o valor que pedimos e `stale` o que estava na URL na hora —
-  // enquanto a URL mostrar `stale`, o efeito URL → estado tem de ficar quieto
-  // (reaplicar o valor antigo desfazia o clique e travava a caixa no link).
-  const conversationParamSyncRef = useRef<{ target: string | null; stale: string | null } | null>(
-    null
-  );
+  const handleSelectConversation = (conversationId: string) => selection.select(conversationId);
+  const handleBackToList = selection.close;
 
-  // A conversa aberta vive na URL (`?conversation=`), para dar/receber
-  // deep-link de outras telas (detalhe da tarefa, painel do lead).
-  const syncConversationParam = useCallback(
-    (conversationId: string | null) => {
-      conversationParamSyncRef.current = { target: conversationId, stale: conversationParam };
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (conversationId) next.set("conversation", conversationId);
-          else next.delete("conversation");
-          // Abrir uma conversa encerra o fluxo "Nova conversa" (`?nova=`):
-          // limpar aqui junta as duas escritas numa só (dois setSearchParams
-          // funcionais seguidos não se compõem — o segundo venceria).
-          if (conversationId) next.delete("nova");
-          return next;
-        },
-        { replace: true }
-      );
-    },
-    [conversationParam, setSearchParams]
-  );
-
-  const handleSelectConversation = (conversationId: string) => {
-    stopTyping();
-    setSelectedConversation(conversationId);
-    setShowMessages(true);
-    setStagedFiles([]);
-    setReplyTo(null);
-    setNewMessage("");
-    setRecorderActive(false);
-    groupMentions.reset();
-    lastReadSigRef.current = null;
-    syncConversationParam(conversationId);
-  };
-
-  // Rascunho vindo de outra tela (F4: "Criar lead + abrir no privado" do sino).
-  // Chega em `location.state` e NÃO é enviado por ninguém automaticamente — só
-  // preenche o compositor. Consumido uma vez: o state é limpo em seguida, para
-  // o rascunho não voltar sozinho a cada re-render ou ao usar o back.
-  const consumedDraftRef = useRef<string | null>(null);
-  useEffect(() => {
-    const draft = (location.state as { draftMessage?: string } | null)?.draftMessage;
-    if (!draft || consumedDraftRef.current === draft) return;
-    consumedDraftRef.current = draft;
-    setNewMessage(draft);
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [location.state, location.pathname, location.search, navigate]);
-
-  const openNewConversation = () => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("nova", "1");
-        return next;
-      },
-      { replace: true }
-    );
-  };
-  const closeNewConversation = () => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("nova");
-        return next;
-      },
-      { replace: true }
-    );
-  };
   // Conversa iniciada/reaberta: abre no mesmo caminho do deep-link, inclusive
-  // no mobile (lista → mensagens). A aba volta para "ativas" e um filtro
-  // "Grupos" é desfeito — senão a conversa abriria sem aparecer na lista.
+  // no mobile (lista → mensagens). A aba volta para "ativas" (na mesma escrita
+  // da URL) e um filtro "Grupos" é desfeito — senão a conversa abriria sem
+  // aparecer na lista.
   const handleNewConversationStarted = (conversationId: Id<"conversations">) => {
-    setShowArchived(false);
-    if (kindFilter === "group") setKindFilter("all");
-    handleSelectConversation(conversationId);
-  };
-
-  const handleBackToList = () => {
-    resetConversationState();
-    setShowMessages(false);
-    setSelectedConversation(null);
-    syncConversationParam(null);
-  };
-
-  // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
-  // (arquivada ou além do lote carregado), o resolver busca o documento avulso:
-  // arquivada troca a aba da lista, ativa entra fixada no topo e um id
-  // inexistente sai da URL em silêncio.
-  useEffect(() => {
-    // Antes de qualquer coisa: o param em mãos pode ser o eco velho de uma
-    // escrita nossa que o router ainda não aplicou (ver `conversationParamSyncRef`).
-    const pendingWrite = conversationParamSyncRef.current;
-    if (pendingWrite) {
-      if (conversationParam === pendingWrite.target) {
-        conversationParamSyncRef.current = null; // a URL alcançou o que pedimos
-      } else if (conversationParam === pendingWrite.stale) {
-        return; // ainda em voo — o param é o valor antigo, ignorar
-      } else {
-        conversationParamSyncRef.current = null; // mudou por fora no meio do caminho
-      }
-    }
-
-    if (!conversationParam || conversationParam === selectedConversation) return;
-    if (conversations === undefined) return;
-
-    if (conversationInList) {
-      handleSelectConversation(conversationParam);
-      return;
-    }
-    // aguarda o resolver responder sobre o id que está na URL
-    if (!linkedConversation || linkedConversation._id !== conversationParam) return;
-    // A aba da lista acompanha a conversa que chegou por link — só nesta
-    // abertura, para não arrastar o filtro do usuário depois.
-    const linkedArchived = Boolean(linkedConversation.archivedAt);
-    if (linkedArchived !== showArchived) setShowArchived(linkedArchived);
-    handleSelectConversation(conversationParam);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationParam, conversations, conversationInList, linkedConversation, selectedConversation, showArchived]);
-
-  // O resolver responde para o id que está na URL agora; um `null` significa
-  // conversa inexistente (ou apagada) — o param sai da URL.
-  const handleResolveLinkedConversation = useCallback(
-    (conversation: Record<string, any> | null) => {
-      if (!conversation) {
-        setLinkedConversation(null);
-        syncConversationParam(null);
-        return;
-      }
-      setLinkedConversation(conversation);
-    },
-    [syncConversationParam]
-  );
-
-  // ── Seleção múltipla: arquivar/etiquetar em lote ──
-
-  const exitSelection = () => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-    setBulkLabelOpen(false);
-  };
-
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const runBulkArchive = async () => {
-    const ids = Array.from(selectedIds) as Id<"conversations">[];
-    try {
-      await bulkArchiveConversations({
-        organizationId,
-        conversationIds: ids,
-        archived: !showArchived,
-      });
-      toast.success(
-        `${ids.length} conversa${ids.length === 1 ? "" : "s"} ${showArchived ? "desarquivada" : "arquivada"}${ids.length === 1 ? "" : "s"}`
-      );
-      exitSelection();
-    } catch {
-      toast.error("Não foi possível concluir a ação em lote.");
-    }
-  };
-
-  const runBulkLabel = async (labelId: string) => {
-    const ids = Array.from(selectedIds) as Id<"conversations">[];
-    try {
-      await bulkLabelConversations({
-        organizationId,
-        conversationIds: ids,
-        labelId: labelId as Id<"conversationLabels">,
-      });
-      toast.success(`Etiqueta aplicada a ${ids.length} conversa${ids.length === 1 ? "" : "s"}`);
-      exitSelection();
-    } catch {
-      toast.error("Não foi possível aplicar a etiqueta.");
-    }
-  };
-
-  // Acima de 5 conversas, pede confirmação antes de executar.
-  const handleBulkArchiveClick = () => {
-    if (selectedIds.size > 5) setConfirmBulk({ action: "archive" });
-    else void runBulkArchive();
-  };
-
-  const handleBulkLabelClick = (labelId: string) => {
-    setBulkLabelOpen(false);
-    if (selectedIds.size > 5) setConfirmBulk({ action: "label", labelId });
-    else void runBulkLabel(labelId);
+    if (kindFilter === "group") filters.setKindFilter("all");
+    selection.select(conversationId, { archived: null });
   };
 
   const handleOpenSearchResult = (result: { _id: string; conversationId: string }) => {
     if (result.conversationId === selectedConversation) {
-      setShowMessages(true);
+      selection.setShowMessages(true);
       handleJumpToMessage(result._id);
       return;
     }
@@ -1466,57 +789,13 @@ export function Inbox() {
     handleSelectConversation(result.conversationId);
   };
 
-  const clearSearch = () => {
-    setSearchTerm("");
-    setDebouncedTerm("");
-    setSearchMonth("");
-  };
-
-  // Trecho do resultado com o termo destacado (janela em volta do 1º match).
-  const renderSnippet = (content: string, term: string) => {
-    const idx = content.toLowerCase().indexOf(term.toLowerCase());
-    if (idx === -1) return content.slice(0, 90);
-    const start = Math.max(0, idx - 24);
-    return (
-      <>
-        {start > 0 ? "…" : ""}
-        {content.slice(start, idx)}
-        <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">
-          {content.slice(idx, idx + term.length)}
-        </mark>
-        {content.slice(idx + term.length, idx + term.length + 60)}
-      </>
-    );
-  };
-
-  if (!conversations) {
+  if (!list.conversations) {
     return (
       <div className="flex justify-center items-center h-64">
         <Spinner size="lg" />
       </div>
     );
   }
-
-  // Media icon for the last-message preview in the conversation list
-  const getPreviewIcon = (contentType: string | null, bridgeType: string | null) => {
-    if (contentType === "audio" || bridgeType === "audio") return Mic;
-    if (contentType === "image" || bridgeType === "sticker" || bridgeType === "image") return ImageIcon;
-    if (bridgeType === "video") return Video;
-    if (contentType === "file") return FileText;
-    switch (bridgeType) {
-      case "album": return Images;
-      case "poll": return BarChart3;
-      case "location":
-      case "live_location": return MapPin;
-      case "contact": return UserRound;
-      case "event": return Calendar;
-      case "group_invite": return Link2;
-      case "call_log": return Phone;
-      case "interactive_reply": return MousePointerClick;
-      case "unknown": return HelpCircle;
-    }
-    return null;
-  };
 
   // Janela de serviço por canal. `template` = WhatsApp Cloud API (24h, requer
   // template); `wait` = Instagram/Messenger (só o cliente reabre). Bridge
@@ -1535,39 +814,6 @@ export function Inbox() {
         tone: windowResult.closed ? ("text-semantic-warning" as const) : ("text-text-secondary" as const),
       }
     : null;
-  // Origem no cabeçalho: ícone + conta completa + "via <canal>".
-  const currentAccount = currentConversation?.channelConfigId
-    ? accountById.get(currentConversation.channelConfigId as string)
-    : undefined;
-  const originShown =
-    !!currentConversation &&
-    !!convChannel &&
-    (convChannel === "instagram" ||
-      convChannel === "messenger" ||
-      (!!currentAccount && shouldShowAccount(channelAccounts, convChannel)));
-  const originFullLabel = accountFullLabel(currentAccount);
-  const originText = originFullLabel
-    ? originFullLabel.toLowerCase().startsWith(channelLabel(convChannel ?? "").toLowerCase())
-      ? originFullLabel
-      : `${originFullLabel} · ${viaLabel(convChannel ?? "")}`
-    : viaLabel(convChannel ?? "");
-  const OriginIcon = channelIcon(convChannel ?? "", convTransport);
-  const originLine = originShown ? (
-    <span className="inline-flex items-center gap-1 min-w-0 text-xs text-text-muted">
-      {currentAccount?.avatarUrl ? (
-        <ChannelAvatar
-          channel={convChannel ?? ""}
-          transport={convTransport}
-          avatarUrl={currentAccount.avatarUrl}
-          size={28}
-        />
-      ) : (
-        <OriginIcon size={12} aria-hidden="true" className="shrink-0" />
-      )}
-      <span className="truncate">{originText}</span>
-    </span>
-  ) : null;
-
   // Instagram/Messenger com janela fechada: o composer fica bloqueado (nota interna segue livre).
   const composerBlocked = isComposerBlockedByWindow(windowKind, windowExpiresAt, now) && !isInternal;
 
@@ -1595,6 +841,9 @@ export function Inbox() {
   // atendente — não mexe na janela de 24h/templates do composer acima.
   const aiControlsAllowed =
     currentConversation?.serviceWindowApplies !== false || aiStatus?.bridgeAiAckDone === true;
+  const showAiControls = Boolean(
+    aiStatus?.active && canUseAiAttendant && aiControlsAllowed && !isGroupConversation
+  );
 
   const canReply = can("inbox", "reply");
   // Voice recorder / mic replaces the send button when there's nothing typed.
@@ -1625,600 +874,94 @@ export function Inbox() {
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-      {/* Conversations List */}
-      <div
+      <ConversationList
         className={cn(
-          "w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0",
           // Central ligada: a coluna não encolhe (a barra de filas e a de
           // roteamento disputavam espaço e a lista caía para ~230 px).
           centralEnabled && "md:shrink-0",
           showMessages && "hidden md:flex"
         )}
-      >
-        <div className="p-4 border-b border-border space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-text-primary">Conversas</h2>
-            {showNewConversation && (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={openNewConversation}
-                className="h-11 w-11 p-0 md:h-8 md:w-auto md:px-3"
-                aria-label="Nova conversa"
-                title="Nova conversa"
-              >
-                <MessageSquarePlus size={16} />
-                <span className="hidden md:inline">Nova conversa</span>
-              </Button>
-            )}
-          </div>
-          <div className="relative">
-            <Search
-              size={15}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-            />
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar nas mensagens…"
-              className={cn(
-                "w-full h-9 pl-9 pr-8 rounded-full text-sm bg-surface-sunken border border-border-strong",
-                "text-text-primary placeholder:text-text-muted",
-                "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-                "[&::-webkit-search-cancel-button]:hidden"
-              )}
-              aria-label="Buscar nas mensagens"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
-                aria-label="Limpar busca"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-          {!isSearching && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                type="button"
-                onClick={() => setShowArchived(false)}
-                className={cn(
-                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  !showArchived
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-              >
-                Ativas
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowArchived(true)}
-                className={cn(
-                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  showArchived
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-              >
-                Arquivadas
-              </button>
-              {/* Diretas x grupos — só aparece quando a org tem grupo algum. */}
-              {hasGroupConversations && (
-                <>
-                  <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-                  {KIND_FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setKindFilter(f.id)}
-                      className={cn(
-                        "shrink-0 flex items-center gap-1 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                        kindFilter === f.id
-                          ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                          : "border-border-strong text-text-muted hover:text-text-primary"
-                      )}
-                      aria-pressed={kindFilter === f.id}
-                    >
-                      {f.id === "group" && <Users size={11} />}
-                      {f.label}
-                    </button>
-                  ))}
-                </>
-              )}
-              {/* Canal e Conta (D11): valem também para WhatsApp com 2+ números. */}
-              {(channelChipVisible || accountChoices.length > 0) && (
-                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-              )}
-              {channelChipVisible && (
-                <select
-                  value={channelFilter.channel ?? ""}
-                  onChange={(e) =>
-                    updateChannelFilter({ channel: e.target.value || null, configId: null })
-                  }
-                  aria-label="Filtrar por canal"
-                  className={cn(
-                    "shrink-0 h-7 max-w-[10rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
-                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    channelFilter.channel
-                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <option value="">Canal</option>
-                  {channelOptions.map((ch) => (
-                    <option key={ch} value={ch}>
-                      {channelLabel(ch)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {accountChoices.length > 0 && (
-                <select
-                  value={channelFilter.configId ?? ""}
-                  onChange={(e) =>
-                    updateChannelFilter({
-                      channel: channelFilter.channel,
-                      configId: e.target.value || null,
-                    })
-                  }
-                  aria-label="Filtrar por conta"
-                  className={cn(
-                    "shrink-0 h-7 max-w-[11rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
-                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    channelFilter.configId
-                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <option value="">Conta</option>
-                  {accountChoices.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {accountFullLabel(a)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {conversationLabels && conversationLabels.length > 0 && (
-                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-              )}
-              {(conversationLabels ?? []).map((label) => (
-                <button
-                  key={label._id}
-                  type="button"
-                  onClick={() =>
-                    setFilterLabelId((cur) => (cur === label._id ? null : label._id))
-                  }
-                  className={cn(
-                    "shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                    filterLabelId === label._id
-                      ? "bg-surface-overlay border-border-strong text-text-primary font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: label.color }}
-                  />
-                  {label.name}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
-                className={cn(
-                  "ml-auto shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  selectionMode
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-                title="Selecionar várias conversas"
-              >
-                <CheckSquare size={12} />
-                {selectionMode ? "Cancelar" : "Selecionar"}
-              </button>
-            </div>
-          )}
-          {!isSearching && queuesEnabled && (
+        conversations={listedConversations}
+        selectedId={selectedConversation}
+        labelById={labelById}
+        accountFor={(c) => (c.channelConfigId ? filters.accountById.get(c.channelConfigId) ?? null : null)}
+        showAccountFor={(c) => shouldShowAccount(filters.channelAccounts, c.channel)}
+        centralFor={
+          centralEnabled
+            ? (c) => {
+                if (c.kind === "group") return undefined;
+                return {
+                  unit: centralModules.units && c.unitId ? filters.unitById.get(c.unitId) : undefined,
+                  department:
+                    centralModules.departments && c.departmentId
+                      ? filters.departmentById.get(c.departmentId)
+                      : undefined,
+                  attribution: centralModules.attribution ? c.lead?.attribution ?? undefined : undefined,
+                };
+              }
+            : undefined
+        }
+        onSelect={handleSelectConversation}
+        onNewConversation={showNewConversation ? selection.openNewConversation : undefined}
+        attentionBanner={<AttentionBanner count={attentionCount} />}
+        queueBar={
+          filters.queuesEnabled ? (
             <InboxQueueBar
-              queues={inboxQueues}
+              queues={filters.inboxQueues}
               showDepartments={centralModules.departments}
               showUnits={centralModules.units}
-              value={queueFilter}
-              onChange={setQueueFilter}
+              value={filters.queueFilter}
+              onChange={filters.setQueueFilter}
             />
-          )}
-          {isSearching && (
-            <div className="flex items-center gap-2">
-              <input
-                type="month"
-                value={searchMonth}
-                onChange={(e) => setSearchMonth(e.target.value)}
-                className={cn(
-                  "h-8 px-2.5 rounded-full text-xs bg-surface-sunken border border-border-strong text-text-secondary",
-                  "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-                  searchMonth && "border-brand-500 text-text-primary"
-                )}
-                aria-label="Filtrar por mês"
-              />
-              {searchMonth && (
-                <button
-                  type="button"
-                  onClick={() => setSearchMonth("")}
-                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
-                >
-                  Limpar mês
-                </button>
-              )}
-              <span className="ml-auto text-xs text-text-muted tabular-nums">
-                {searchResults === undefined ? "…" : `${searchResults.length} resultado${searchResults.length === 1 ? "" : "s"}`}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div ref={conversationListScrollRef} className="overflow-y-auto flex-1">
-          {isSearching ? (
-            searchResults === undefined ? (
-              <div className="p-6 flex justify-center">
-                <Spinner size="md" />
-              </div>
-            ) : searchResults.length === 0 ? (
-              <div className="p-4 text-center text-text-muted text-sm">
-                Nada encontrado{searchMonth ? " nesse mês" : ""} para "{debouncedTerm}"
-              </div>
-            ) : (
-              searchResults.map((result) => (
-                <button
-                  key={result._id}
-                  type="button"
-                  onClick={() => handleOpenSearchResult(result)}
-                  className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-sm font-medium text-text-primary truncate">
-                      {result.contactName}
-                      {result.direction !== "inbound" && (
-                        <span className="text-text-muted font-normal"> · você</span>
-                      )}
-                    </span>
-                    <span className="shrink-0 text-xs text-text-muted tabular-nums">
-                      {new Date(result.createdAt).toLocaleDateString("pt-BR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-xs text-text-secondary truncate flex items-center gap-1">
-                    {result.matchedTranscript && (
-                      <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
-                    )}
-                    {result.matchedImage && (
-                      <ImageIcon
-                        size={11}
-                        className="shrink-0 text-text-muted"
-                        aria-label="Encontrado na leitura da imagem"
-                      />
-                    )}
-                    <span className="truncate">
-                      {renderSnippet(result.snippetText, debouncedTerm.trim())}
-                    </span>
-                  </p>
-                </button>
-              ))
-            )
-          ) : listedConversations.length === 0 ? (
-            <div className="p-4 text-center text-text-muted">
-              {/* O filtro Diretas/Grupos vem ANTES de "arquivadas" na cadeia
-                  (review de correção nº 17): com o filtro em "Grupos" e nenhum
-                  grupo arquivado, a tela dizia "Nenhuma conversa arquivada" —
-                  mentindo, porque havia conversas diretas arquivadas
-                  escondidas pelo filtro. */}
-              {kindFilter === "group" ? (
-                showArchived ? (
-                  "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas"
-                ) : (
-                  <div className="space-y-1.5">
-                    <p>Nenhum grupo acompanhado</p>
-                    <Button variant="ghost" size="sm" onClick={() => navigate(TAB_ROUTES.groups)}>
-                      Escolher grupos
-                    </Button>
-                  </div>
-                )
-              ) : kindFilter === "direct"
-                  ? showArchived
-                    ? "Nenhuma conversa direta arquivada"
-                    : "Nenhuma conversa direta"
-                  : queueFilterActive
-                    ? showArchived
-                      ? "Nenhuma conversa arquivada nesta fila"
-                      : "Nenhuma conversa nesta fila"
-                  : showArchived
-                    ? "Nenhuma conversa arquivada"
-                    : filterLabelId
-                      ? "Nenhuma conversa com essa etiqueta"
-                      : "Nenhuma conversa ainda"}
-            </div>
-          ) : (
-            listedConversations.map((conversation) => (
-              <div
-                key={conversation._id}
-                onClick={() =>
-                  selectionMode
-                    ? toggleSelected(conversation._id)
-                    : handleSelectConversation(conversation._id)
-                }
-                className={cn(
-                  "p-4 border-b border-border cursor-pointer transition-colors",
-                  "hover:bg-surface-overlay active:bg-surface-overlay",
-                  (conversation.unreadCount ?? 0) > 0 &&
-                    selectedConversation !== conversation._id &&
-                    "bg-brand-500/5",
-                  !selectionMode &&
-                    selectedConversation === conversation._id &&
-                    "bg-brand-500/10 border-l-2 border-l-brand-500",
-                  selectionMode && selectedIds.has(conversation._id) && "bg-brand-500/10"
-                )}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  {selectionMode && (
-                    <span
-                      className={cn(
-                        "mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                        selectedIds.has(conversation._id)
-                          ? "bg-brand-500 border-brand-500 text-white"
-                          : "border-border-strong"
-                      )}
-                      aria-hidden
-                    >
-                      {selectedIds.has(conversation._id) && <Check size={11} />}
-                    </span>
-                  )}
-                  <h3
-                    className={cn(
-                      "flex items-center gap-1.5 min-w-0 flex-1 text-text-primary truncate",
-                      (conversation.unreadCount ?? 0) > 0 ? "font-semibold" : "font-medium"
-                    )}
-                  >
-                    {conversation.kind === "group" && (
-                      <Users
-                        size={14}
-                        className="shrink-0 text-text-muted"
-                        aria-label="Conversa de grupo"
-                      />
-                    )}
-                    <span className="truncate">
-                      {conversation.kind === "group"
-                        ? conversation.groupChat?.subject ?? "Grupo"
-                        : `${conversation.contact?.firstName ?? ""} ${conversation.contact?.lastName ?? ""}`.trim() ||
-                          "Sem nome"}
-                    </span>
-                    {((conversation.labelIds ?? []) as string[]).map((labelId) => {
-                      const label = labelById.get(labelId);
-                      return label ? (
-                        <span
-                          key={labelId}
-                          className="h-2 w-2 rounded-full shrink-0"
-                          style={{ backgroundColor: label.color }}
-                          title={label.name}
-                        />
-                      ) : null;
-                    })}
-                  </h3>
-                  <ChannelOriginBadge
-                    channel={conversation.channel}
-                    transport={conversation.channelProvider}
-                    account={
-                      conversation.channelConfigId
-                        ? accountById.get(conversation.channelConfigId as string)
-                        : null
-                    }
-                    showAccount={shouldShowAccount(channelAccounts, conversation.channel)}
-                  />
-                </div>
-
-                {conversation.kind === "group" && (
-                  <p className="mb-1 text-sm text-text-secondary tabular-nums">
-                    {conversation.groupChat?.participantsCount ?? 0} membro
-                    {(conversation.groupChat?.participantsCount ?? 0) === 1 ? "" : "s"}
-                  </p>
-                )}
-
-                {conversation.lead && (
-                  <div className="flex items-center gap-1.5 mb-1 min-w-0">
-                    <p className="flex-1 min-w-0 text-sm text-text-secondary truncate">
-                      {conversation.lead.title}
-                    </p>
-                    {isHandoffPending(conversation.lead.handoffState) && (
-                      <span
-                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-semantic-warning"
-                        title="Pedido de ajuda pendente: aguardando alguém da equipe assumir"
-                      >
-                        <ArrowLeftRight size={12} />
-                        Pediu ajuda
-                      </span>
-                    )}
-                    {activeBotSuspicion(conversation as any) && (
-                      <span
-                        className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
-                        title="Suspeita de robô"
-                        aria-label="Suspeita de robô"
-                        role="img"
-                      >
-                        <Bot size={12} aria-hidden />
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {centralEnabled && conversation.kind !== "group" && (() => {
-                  const unit = centralModules.units && conversation.unitId
-                    ? unitById.get(conversation.unitId as string)
-                    : undefined;
-                  const dept = centralModules.departments && conversation.departmentId
-                    ? departmentById.get(conversation.departmentId as string)
-                    : undefined;
-                  const attribution = centralModules.attribution ? conversation.lead?.attribution : undefined;
-                  if (!unit && !dept && !attribution) return null;
-                  return (
-                    <div className="mb-1.5 flex min-w-0 items-center gap-1">
-                      {attribution && <AttributionIcon attribution={attribution} />}
-                      {unit && <ColorChip name={unit.name} color={unit.color} title={`Unidade: ${unit.name}`} />}
-                      {dept && <ColorChip name={dept.name} color={dept.color} title={`Departamento: ${dept.name}`} />}
-                    </div>
-                  );
-                })()}
-
-                <div className="flex items-center justify-between gap-2">
-                  {conversation.lastMessagePreview ? (
-                    <span
-                      className={cn(
-                        "flex items-center gap-1 min-w-0 text-xs",
-                        (conversation.unreadCount ?? 0) > 0
-                          ? "text-text-primary font-medium"
-                          : "text-text-muted"
-                      )}
-                    >
-                      {(() => {
-                        const PreviewIcon = getPreviewIcon(
-                          conversation.lastMessageContentType ?? null,
-                          conversation.lastMessageBridgeType ?? null
-                        );
-                        return PreviewIcon ? <PreviewIcon className="w-3.5 h-3.5 shrink-0" /> : null;
-                      })()}
-                      <span className="truncate">
-                        {conversation.lastMessageDirection === "outbound" ? "Você: " : ""}
-                        {conversationPreviewText(
-                          conversation.lastMessagePreview,
-                          conversation.lastMessageBridgeType ?? null,
-                          conversation.lastMessageRevoked === true
-                        )}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-xs text-text-muted tabular-nums">
-                      {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {conversation.assignee && (
-                      <Avatar
-                        name={conversation.assignee.name || "?"}
-                        type={conversation.assignee.type === "ai" ? "ai" : "human"}
-                        size="sm"
-                      />
-                    )}
-                    {conversation.lastMessageAt && (
-                      <span
-                        className={cn(
-                          "text-xs tabular-nums",
-                          (conversation.unreadCount ?? 0) > 0
-                            ? "text-brand-500 font-medium"
-                            : "text-text-muted"
-                        )}
-                      >
-                        {new Date(conversation.lastMessageAt).toLocaleDateString("pt-BR")}
-                      </span>
-                    )}
-                    {(conversation.unreadCount ?? 0) > 0 && (
-                      <span
-                        className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-[10px] font-semibold leading-none tabular-nums"
-                        aria-label={`${conversation.unreadCount} mensagens não lidas`}
-                      >
-                        {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-          {!isSearching && canLoadMoreConversations ? (
-            <div className="text-center py-3">
-              <div ref={conversationListSentinelRef} aria-hidden="true" className="h-px" />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLoadMoreConversations}
-                disabled={loadingMoreConversations}
-                aria-busy={loadingMoreConversations}
-              >
-                {loadingMoreConversations ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Spinner size="sm" />
-                    Carregando mais conversas…
-                  </span>
-                ) : (
-                  "Carregar mais conversas"
-                )}
-              </Button>
-            </div>
-          ) : !isSearching && conversations && conversations.length >= CONVERSATIONS_MAX_LIMIT ? (
-            <div className="text-center py-2">
-              <span className="text-xs text-text-muted">
-                Mostrando as {CONVERSATIONS_MAX_LIMIT} conversas mais recentes
-              </span>
-            </div>
-          ) : null}
-        </div>
-
-        {selectionMode && (
-          <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex items-center gap-2">
-            <span className="flex-1 text-xs text-text-secondary tabular-nums">
-              {selectedIds.size} selecionada{selectedIds.size === 1 ? "" : "s"}
-            </span>
-            <div className="relative">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={selectedIds.size === 0}
-                onClick={() => setBulkLabelOpen((v) => !v)}
-              >
-                Etiquetar
-              </Button>
-              {bulkLabelOpen && (
-                <div className="absolute bottom-full right-0 mb-1 z-40 w-52 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
-                  {(conversationLabels ?? []).length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-text-muted">
-                      Nenhuma etiqueta — crie uma no menu ⋯ de uma conversa
-                    </p>
-                  ) : (
-                    (conversationLabels ?? []).map((label) => (
-                      <button
-                        key={label._id}
-                        type="button"
-                        onClick={() => handleBulkLabelClick(label._id)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-                      >
-                        <span
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: label.color }}
-                        />
-                        {label.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={selectedIds.size === 0}
-              onClick={handleBulkArchiveClick}
-            >
-              {showArchived ? "Desarquivar" : "Arquivar"}
-            </Button>
-          </div>
-        )}
-      </div>
+          ) : undefined
+        }
+        search={{
+          term: searchTerm,
+          onTermChange: (term) => {
+            setSearchTerm(term);
+            if (!term) setSearchMonth("");
+          },
+          active: isSearching,
+          month: searchMonth,
+          onMonthChange: setSearchMonth,
+          results: searchResults,
+          onOpenResult: handleOpenSearchResult,
+        }}
+        filters={{
+          showArchived,
+          onShowArchivedChange: filters.setShowArchived,
+          kind: kindFilter,
+          onKindChange: filters.setKindFilter,
+          showKindFilter: hasGroupConversations,
+          channel: filters.channelFilter,
+          onChannelChange: filters.updateChannelFilter,
+          channelChipVisible: filters.channelChipVisible,
+          channelOptions: filters.channelOptions,
+          accountChoices: filters.accountChoices,
+          labels: conversationLabels ?? [],
+          labelId: filterLabelId,
+          onLabelChange: filters.setFilterLabelId,
+          queueFilterActive: filters.queueFilterActive,
+        }}
+        selection={{
+          mode: bulk.selectionMode,
+          onToggleMode: () => (bulk.selectionMode ? bulk.exitSelection() : bulk.setSelectionMode(true)),
+          selectedIds: bulk.selectedIds,
+          onToggle: bulk.toggleSelected,
+          onArchive: bulk.handleBulkArchiveClick,
+          onLabel: bulk.handleBulkLabelClick,
+        }}
+        paging={{
+          canLoadMore: list.canLoadMore,
+          loadingMore: list.loadingMore,
+          reachedMax: list.reachedMax,
+          maxLimit: list.maxLimit,
+          onLoadMore: list.loadMore,
+          scrollRef: list.scrollRef,
+          sentinelRef: list.sentinelRef,
+        }}
+        onChooseGroups={() => navigate(TAB_ROUTES.groups)}
+      />
 
       {/* Messages */}
       <div
@@ -2230,153 +973,46 @@ export function Inbox() {
       >
         {selectedConversation ? (
           <>
-            {/* Mobile header with back button */}
-            <div className="md:hidden shrink-0 p-4 border-b border-border bg-chat-header flex flex-col gap-1">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleBackToList}
-                  className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
-                  aria-label="Voltar"
-                >
-                  <ArrowLeft size={20} />
-                </button>
-                {renderContactHeading(
-                  "flex-1 min-w-0 truncate text-base font-semibold text-text-primary"
-                )}
-                {currentConversation && (
-                  <ConversationActionsMenu
-                    organizationId={organizationId}
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    archivedAt={currentConversation.archivedAt}
-                    labelIds={(currentConversation.labelIds ?? []) as string[]}
-                    onArchivedChange={(archived) => {
-                      if (archived && !showArchived) handleBackToList();
-                    }}
-                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
-                    leadId={
-                      !isGroupConversation && currentConversation.leadId
-                        ? (currentConversation.leadId as Id<"leads">)
-                        : undefined
-                    }
-                    onLeadDeleted={handleBackToList}
-                  />
-                )}
-              </div>
-              {funnelLine && <div className="pl-11">{funnelLine}</div>}
-              {isGroupConversation && (
-                <div className="pl-11">
-                  <GroupMembersButton
-                    participantsCount={groupParticipantsCount}
-                    onClick={() => setShowMembersPanel(true)}
-                  />
-                </div>
-              )}
-              {originLine && <div className="pl-11 flex">{originLine}</div>}
-              {contactTyping && (
-                <span className="pl-11 text-xs text-brand-500 animate-pulse">
-                  {isGroupConversation ? "alguém está digitando…" : "digitando…"}
-                </span>
-              )}
-              {aiStatus?.active && currentConversation && canUseAiAttendant &&
-                aiControlsAllowed && !isGroupConversation && (
-                <div className="pl-11 flex flex-wrap items-center gap-2">
-                  <AiConversationControls
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
-                    hasPendingDraft={hasPendingDraft}
-                  />
-                  {aiChip && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                        aiChip.tone === "processing"
-                          ? "bg-brand-500/10 text-brand-400"
-                          : "bg-surface-overlay text-text-muted"
-                      )}
-                    >
-                      {aiChip.label}
-                    </span>
-                  )}
-                  <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
-                </div>
-              )}
-              {windowInfo && (
-                <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
-                  <Clock className="h-3.5 w-3.5 shrink-0" />
-                  {windowInfo.text}
-                </div>
-              )}
-            </div>
-
-            {/* Desktop header */}
-            <div className="hidden md:flex shrink-0 p-4 border-b border-border bg-surface-raised items-center justify-between">
-              <div className="min-w-0">
-                {renderContactHeading("text-base font-semibold text-text-primary truncate")}
-                {funnelLine}
-                {isGroupConversation && (
-                  <GroupMembersButton
-                    participantsCount={groupParticipantsCount}
-                    onClick={() => setShowMembersPanel(true)}
-                  />
-                )}
-                {originLine && <div className="flex">{originLine}</div>}
-                {contactTyping && (
-                  <span className="text-xs text-brand-500 animate-pulse">
-                    {isGroupConversation ? "alguém está digitando…" : "digitando…"}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {aiStatus?.active && currentConversation && canUseAiAttendant &&
-                aiControlsAllowed && !isGroupConversation && (
-                  <>
-                    <AiConversationControls
-                      conversationId={currentConversation._id as Id<"conversations">}
-                      aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
-                      hasPendingDraft={hasPendingDraft}
-                    />
-                    {aiChip && (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                          aiChip.tone === "processing"
-                            ? "bg-brand-500/10 text-brand-400"
-                            : "bg-surface-overlay text-text-muted"
-                        )}
-                      >
-                        {aiChip.label}
-                      </span>
-                    )}
-                    <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
-                  </>
-                )}
-                {windowInfo && (
-                  <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
-                    <Clock className="h-4 w-4 shrink-0" />
-                    {windowInfo.text}
-                  </div>
-                )}
-                {currentConversation && (
-                  <ConversationActionsMenu
-                    organizationId={organizationId}
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    archivedAt={currentConversation.archivedAt}
-                    labelIds={(currentConversation.labelIds ?? []) as string[]}
-                    onArchivedChange={(archived) => {
-                      if (archived && !showArchived) handleBackToList();
-                    }}
-                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
-                    leadId={
-                      !isGroupConversation && currentConversation.leadId
-                        ? (currentConversation.leadId as Id<"leads">)
-                        : undefined
-                    }
-                    onLeadDeleted={handleBackToList}
-                  />
-                )}
-              </div>
-            </div>
-
+            {currentConversation ? (
+              <ConversationHeader
+                key={currentConversation._id}
+                organizationId={organizationId}
+                conversation={currentConversation}
+                canReply={canReply}
+                isGroup={isGroupConversation}
+                groupSubject={groupSubject}
+                groupParticipantsCount={groupParticipantsCount}
+                groupMenu={
+                  isGroupConversation
+                    ? {
+                        canManageGroups,
+                        canManageCampaigns,
+                        canReply,
+                        groupAiEnabled,
+                        onOpenMembers: () => groupPanels.setShowMembersPanel(true),
+                        onOpenSummary: () => groupPanels.setShowGroupSummary(true),
+                        onUnmonitor: () => groupPanels.setConfirmGroupAction("unmonitor"),
+                        onLeave: () => groupPanels.setConfirmGroupAction("leave"),
+                        onDispatch: () => dispatchToGroupMembers("group_members"),
+                      }
+                    : undefined
+                }
+                channelAccounts={filters.channelAccounts}
+                accountById={filters.accountById}
+                aiActive={Boolean(aiStatus?.active)}
+                showAiControls={showAiControls}
+                hasPendingDraft={hasPendingDraft}
+                contactTyping={contactTyping}
+                windowInfo={windowInfo}
+                onBack={handleBackToList}
+                onOpenContact={() => setShowContactPanel(true)}
+                onOpenLead={() => setShowLeadPanel(true)}
+                onOpenMembers={() => groupPanels.setShowMembersPanel(true)}
+                onArchivedChange={(archived) => {
+                  if (archived && !showArchived) handleBackToList();
+                }}
+                onLeadDeleted={handleBackToList}
+              >
             {/* Central (opcional): unidade/setor/responsável/tipo/desfecho + origem */}
             {centralEnabled && currentConversation && !isGroupConversation && (
               <ConversationRoutingBar
@@ -2412,97 +1048,17 @@ export function Inbox() {
               </div>
             )}
 
-            {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
-            {handoffPending && (
-              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-                    <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
-                    <span className="min-w-0">
-                      <span className="font-medium text-semantic-warning">A IA pediu ajuda</span>
-                      {handoffReason && (
-                        <span className="text-text-secondary"> — {handoffReason}</span>
-                      )}
-                    </span>
-                  </p>
-                  {canReply && (
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={!pendingHandoff}
-                        onClick={handleAcceptHandoff}
-                      >
-                        {VOCAB.attention.accept}
-                      </Button>
-                      {pendingHandoff && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            navigate(`${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`)
-                          }
-                        >
-                          {VOCAB.attention.view}
-                        </Button>
-                      )}
-                      {currentConversation && (
-                        <ReturnToAiButton
-                          conversationId={currentConversation._id as Id<"conversations">}
-                          variant="button"
-                        />
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Suspeita de robô (v0.65) — adicional ao banner de repasse */}
-            {botSuspicion && currentConversation && !isGroupConversation && (
-              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-                    <Bot size={16} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
-                    <span className="min-w-0">
-                      <span className="block font-medium text-semantic-warning">
-                        A IA parou de responder: o outro lado parece um robô ou mensagem automática
-                      </span>
-                      {botSuspicion.reason && (
-                        <span className="block text-xs text-text-secondary mt-0.5 break-words">
-                          {botSuspicion.reason}
-                        </span>
-                      )}
-                    </span>
-                  </p>
-                  {canReply && (
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={returningFromBot}
-                        onClick={() => void handleNotABot()}
-                      >
-                        É uma pessoa — devolver para a IA
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          navigate(
-                            pendingHandoff
-                              ? `${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`
-                              : TAB_ROUTES.handoffs
-                          )
-                        }
-                      >
-                        {VOCAB.attention.view}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+              </ConversationHeader>
+            ) : (
+              <div className="md:hidden shrink-0 p-2 border-b border-border bg-chat-header">
+                <button
+                  type="button"
+                  onClick={handleBackToList}
+                  className="flex h-11 w-11 items-center justify-center text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
+                  aria-label="Voltar"
+                >
+                  <ArrowLeft size={20} />
+                </button>
               </div>
             )}
 
@@ -2573,7 +1129,7 @@ export function Inbox() {
                           ? {
                               mentionTokens: mentionTokensFor(message.mentions, groupNameByKey),
                               onOpenContact: (contactId) =>
-                                setMemberContactId(contactId as Id<"contacts">),
+                                groupPanels.setMemberContactId(contactId as Id<"contacts">),
                             }
                           : undefined
                       }
@@ -2811,11 +1367,11 @@ export function Inbox() {
     </div>
 
       {/* Deep-link ?conversation= fora da lista carregada (arquivada ou antiga) */}
-      {conversationParam && !conversationInList && (
-        <ErrorBoundary key={conversationParam} fallback={<></>}>
+      {selection.deepLinkId && (
+        <ErrorBoundary key={selection.deepLinkId} fallback={<></>}>
           <ConversationDeepLinkResolver
-            conversationId={conversationParam as Id<"conversations">}
-            onResolve={handleResolveLinkedConversation}
+            conversationId={selection.deepLinkId as Id<"conversations">}
+            onResolve={selection.handleResolveLinkedConversation}
           />
         </ErrorBoundary>
       )}
@@ -2833,22 +1389,16 @@ export function Inbox() {
         onClose={() => quickReplies.setManageOpen(false)}
       />
       <ConfirmDialog
-        open={!!confirmBulk}
-        onClose={() => setConfirmBulk(null)}
-        onConfirm={() => {
-          const pending = confirmBulk;
-          setConfirmBulk(null);
-          if (!pending) return;
-          if (pending.action === "archive") void runBulkArchive();
-          else if (pending.labelId) void runBulkLabel(pending.labelId);
-        }}
+        open={!!bulk.confirmBulk}
+        onClose={() => bulk.setConfirmBulk(null)}
+        onConfirm={bulk.confirmPending}
         title={
-          confirmBulk?.action === "archive"
-            ? `${showArchived ? "Desarquivar" : "Arquivar"} ${selectedIds.size} conversas?`
-            : `Etiquetar ${selectedIds.size} conversas?`
+          bulk.confirmBulk?.action === "archive"
+            ? `${showArchived ? "Desarquivar" : "Arquivar"} ${bulk.selectedIds.size} conversas?`
+            : `Etiquetar ${bulk.selectedIds.size} conversas?`
         }
         description={
-          confirmBulk?.action === "archive"
+          bulk.confirmBulk?.action === "archive"
             ? showArchived
               ? "As conversas selecionadas voltam para a lista de ativas."
               : "As conversas selecionadas saem da lista de ativas. Dá para desarquivar depois."
@@ -2860,9 +1410,9 @@ export function Inbox() {
       {showNewConversation && (
         <NewConversationModal
           organizationId={organizationId}
-          open={novaParam !== null}
-          onClose={closeNewConversation}
-          initialContactId={novaContactId}
+          open={selection.novaOpen}
+          onClose={selection.closeNewConversation}
+          initialContactId={selection.novaContactId}
           onStarted={handleNewConversationStarted}
         />
       )}
@@ -2883,64 +1433,20 @@ export function Inbox() {
         />
       )}
 
-      {/* Grupo: resumo por IA (F4) */}
-      {isGroupConversation && groupChatId && showGroupSummary && (
-        <GroupSummaryModal
-          open
+      {/* Grupo: resumo por IA, membros (e o contato de um membro) e confirmações */}
+      {isGroupConversation && groupChatId && (
+        <GroupConversationPanels
+          organizationId={organizationId}
           groupChatId={groupChatId}
           groupSubject={groupSubject}
-          initial={groupChat?.summary ?? null}
-          onClose={() => setShowGroupSummary(false)}
+          groupChat={groupChat}
+          panels={groupPanels}
+          onDispatchSelected={
+            canManageCampaigns ? (phones) => dispatchToGroupMembers("manual", phones) : undefined
+          }
+          onLeft={handleBackToList}
         />
       )}
-
-      {/* Grupo: membros da sala + o contato de um membro, sobrepostos */}
-      {isGroupConversation && groupChatId && (
-        <GroupMembersPanel
-          // `key` por sala: sem ela a busca e a seleção vazavam de um grupo
-          // para outro ("3 selecionado(s)" sem nada marcado).
-          key={groupChatId}
-          open={showMembersPanel}
-          groupChatId={groupChatId}
-          organizationId={organizationId}
-          onClose={() => setShowMembersPanel(false)}
-          onOpenContact={(contactId) => setMemberContactId(contactId)}
-          {...(canManageCampaigns
-            ? { onDispatchSelected: (phones: string[]) => dispatchToGroupMembers("manual", phones) }
-            : {})}
-        />
-      )}
-      {/* Montado DEPOIS do painel de membros para ficar por cima (v0.48). */}
-      {memberContactId && (
-        <ContactDetailPanel
-          contactId={memberContactId}
-          onClose={() => setMemberContactId(null)}
-        />
-      )}
-
-      <ConfirmDialog
-        open={confirmGroupAction === "unmonitor"}
-        onClose={() => setConfirmGroupAction(null)}
-        onConfirm={() => {
-          setConfirmGroupAction(null);
-          void handleStopMonitoring();
-        }}
-        title={`Parar de acompanhar '${groupSubject}'?`}
-        description="O CRM deixa de receber as mensagens desta sala e a conversa é arquivada. O histórico já ingerido continua aqui, e dá para voltar a acompanhar depois."
-        confirmLabel="Parar de acompanhar"
-      />
-      <ConfirmDialog
-        open={confirmGroupAction === "leave"}
-        onClose={() => setConfirmGroupAction(null)}
-        onConfirm={() => {
-          setConfirmGroupAction(null);
-          void handleLeaveGroup();
-        }}
-        title={`Sair de '${groupSubject}'?`}
-        description="O número sai do grupo de verdade, no WhatsApp — os membros veem a saída. Voltar exige um convite novo. Esta ação é registrada na auditoria."
-        confirmLabel="Sair do grupo"
-        variant="danger"
-      />
     </div>
   );
 }

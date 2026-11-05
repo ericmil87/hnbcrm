@@ -44,7 +44,7 @@ interface ConversationHeaderProps {
   groupSubject: string;
   groupParticipantsCount: number;
   /** Ações do menu "⋮" de uma sala (ausente fora de grupo). */
-  groupMenu?: GroupMenuActions;
+  groupMenu?: Omit<GroupMenuActions, "groupAiPaused">;
   channelAccounts: readonly InboxChannelAccount[];
   accountById: ReadonlyMap<string, InboxChannelAccount>;
   /** IA ativa na org: liga a consulta do estado do atendente nesta conversa. */
