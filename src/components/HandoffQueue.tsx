@@ -1,6 +1,6 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useOutletContext, useSearchParams } from "react-router";
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate, useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { CheckCircle2, Eye, Users } from "lucide-react";
 import { api } from "../../convex/_generated/api";
@@ -18,6 +18,8 @@ import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { VOCAB } from "@/lib/vocab";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { stringParam } from "@/lib/searchParamState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
@@ -27,8 +29,11 @@ export function HandoffQueue() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const handoffParam = searchParams.get("handoff");
+  // O repasse aberto vive na URL (`?handoff=`, destino do sino de notificações).
+  const { value: handoffParam, set: setHandoffParam, isInFlight } = useSearchParamState(
+    "handoff",
+    stringParam
+  );
 
   // getHandoffs agora exige inbox:view_own no servidor — sem o skip, um membro
   // sem permissão que cole a URL derrubaria a página no ErrorBoundary genérico
@@ -50,42 +55,13 @@ export function HandoffQueue() {
   // Popover "Devolver à IA" aberto em qual card (um por vez).
   const [returnPopoverFor, setReturnPopoverFor] = useState<string | null>(null);
 
-  // Escrita nossa no `?handoff=` ainda em voo: o router aplica o
-  // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
-  // que o peek já mudou e o param ainda é o valor antigo. `target` é o que
-  // pedimos e `stale` o que estava na URL na hora — enquanto a URL mostrar
-  // `stale`, o efeito URL → estado fica quieto (senão fechar o peek o reabria).
-  const handoffParamSyncRef = useRef<{ target: string | null; stale: string | null } | null>(null);
-
-  const syncHandoffParam = useCallback(
-    (handoffId: string | null) => {
-      handoffParamSyncRef.current = { target: handoffId, stale: handoffParam };
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (handoffId) next.set("handoff", handoffId);
-          else next.delete("handoff");
-          return next;
-        },
-        { replace: true }
-      );
-    },
-    [handoffParam, setSearchParams]
-  );
+  const syncHandoffParam = setHandoffParam;
 
   // URL → estado. Um id que não está na fila (repasse já resolvido, inválido ou
   // de outra org) sai da URL em silêncio.
   useEffect(() => {
-    const pendingWrite = handoffParamSyncRef.current;
-    if (pendingWrite) {
-      if (handoffParam === pendingWrite.target) {
-        handoffParamSyncRef.current = null; // a URL alcançou o que pedimos
-      } else if (handoffParam === pendingWrite.stale) {
-        return; // ainda em voo — o param é o valor antigo, ignorar
-      } else {
-        handoffParamSyncRef.current = null; // mudou por fora no meio do caminho
-      }
-    }
+    // Escrita nossa ainda em voo (o param é o valor antigo): o efeito fica quieto.
+    if (isInFlight()) return;
 
     if (!handoffParam || handoffParam === peekHandoffId) return;
     if (handoffs === undefined) return;
@@ -94,7 +70,7 @@ export function HandoffQueue() {
     } else {
       syncHandoffParam(null);
     }
-  }, [handoffParam, handoffs, peekHandoffId, syncHandoffParam]);
+  }, [handoffParam, handoffs, peekHandoffId, syncHandoffParam, isInFlight]);
 
   // O repasse aberto pode ser resolvido por outra pessoa enquanto está na tela.
   useEffect(() => {

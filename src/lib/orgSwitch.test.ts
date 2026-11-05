@@ -21,6 +21,13 @@ describe("pathAfterOrgSwitch", () => {
     expect(pathAfterOrgSwitch("/app/grupos", "?aba=posts&post=p1")).toBe("/app/grupos?aba=posts");
   });
 
+  it("mantém o filtro de arquivadas e derruba a etiqueta (id da org anterior)", () => {
+    expect(pathAfterOrgSwitch("/app/entrada", "?archived=1&label=k17abc&conversation=c1")).toBe(
+      "/app/entrada?archived=1"
+    );
+    expect(pathAfterOrgSwitch("/app/entrada", "?label=k17abc")).toBe("/app/entrada");
+  });
+
   it("sobe para a raiz da aba quando o caminho carrega id", () => {
     expect(pathAfterOrgSwitch("/app/formularios/f1/submissoes", "?x=1")).toBe("/app/formularios");
   });
