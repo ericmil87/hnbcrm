@@ -28,4 +28,13 @@ describe("themeLegacy", () => {
   it("tailwind.config.js has no darkMode", () => {
     expect(read("tailwind.config.js")).not.toContain("darkMode");
   });
+
+  it("index.html has no class=\"dark\" and loads /theme-init.js before the CSS and main.tsx", () => {
+    const html = read("index.html");
+    expect(html).not.toContain('class="dark"');
+    const init = html.indexOf('src="/theme-init.js"');
+    expect(init).toBeGreaterThan(-1);
+    expect(init).toBeLessThan(html.indexOf("/src/index.css"));
+    expect(init).toBeLessThan(html.indexOf("/src/main.tsx"));
+  });
 });

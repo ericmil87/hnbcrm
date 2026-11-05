@@ -902,7 +902,7 @@ function ConversationTab({
             disabled={(!messageText.trim() && stagedFiles.length === 0) || sending || composerBlocked}
             variant={isInternal ? "secondary" : "primary"}
             size="md"
-            className={cn("shrink-0", isInternal && "bg-semantic-warning hover:bg-amber-600 text-white")}
+            className={cn("shrink-0", isInternal && "bg-semantic-warning hover:bg-semantic-warning/90 text-white")}
             aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
           >
             <Send size={16} />

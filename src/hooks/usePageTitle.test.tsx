@@ -23,6 +23,11 @@ describe("usePageTitle", () => {
     expect(document.title).toBe("Agenda · HNBCRM");
   });
 
+  it("sem título de página, mostra só o nome do app", () => {
+    expect(pageDocumentTitle("HNBCRM")).toBe("HNBCRM");
+    expect(pageDocumentTitle("")).toBe("HNBCRM");
+  });
+
   it("formata o título", () => {
     expect(pageDocumentTitle("Equipe")).toBe("Equipe · HNBCRM");
   });

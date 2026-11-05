@@ -58,7 +58,7 @@ export function AttachmentPreview({
                 <img
                   src={file.url}
                   alt={file.name}
-                  className="max-w-[240px] max-h-[180px] rounded-md object-cover border"
+                  className="max-w-[240px] max-h-[180px] rounded-md object-cover border border-border/50"
                   loading="lazy"
                 />
               </a>

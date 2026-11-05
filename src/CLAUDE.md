@@ -14,15 +14,23 @@ src/
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
 ├── lib/nav.ts                  # NAV_ITEMS/NAV_GROUPS (single nav model), visibleNavItems(), splitMobile(), badge helpers; test next to it
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
+├── lib/settingsNav.ts          # Settings: resolveSettingsPanel(), visibleSettingsPanels(), groupOf(), groupSettingsPanels(); test next to it
+├── lib/settingsSearch.ts       # searchSettingsPanels(): label + keywords + description, accent/case-insensitive; test next to it
+├── lib/inlineCrud.ts           # pure reducer for list + modal form + delete confirm (useInlineCrud); test next to it
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
 ├── lib/themeTokens.test.ts     # reads index.css: dark palette frozen (--rgb-* channels), aliases, AA pairs + DARK_KNOWN_FAILURES
-├── lib/themeLegacy.test.ts     # guard: no .light in index.css, no [.light_&] in src, no darkMode in tailwind.config.js
+├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR); test next to it
+├── lib/themeDom.ts             # applyTheme/clearTheme on <html> + meta theme-color; subscribe/getAppliedTheme
+├── hooks/useUiTheme.ts         # AuthLayout only: syncs theme with teamMembers.uiTheme + localStorage; exposes {theme, setTheme}
+├── lib/themeLegacy.test.ts     # guard: no .light in index.css, no [.light_&] in src, no darkMode in tailwind.config.js, index.html without class="dark" and with /theme-init.js first
+├── lib/rawColorsGuard.test.ts  # ratchet: raw Tailwind palette classes / [#hex] per file (ALLOWLIST ceilings only go down); purple- only in JsonHighlighter
 ├── lib/timezones.ts            # time zones with PT-BR names (value = IANA id, unchanged)
 ├── test/                       # setup.ts (jest-dom, matchMedia/ResizeObserver stubs), render.tsx (renderWithRouter) for *.test.tsx
 ├── pages/                      # Public/route pages (Developers, Playground, Terms, Privacy, PublicForm, NotFoundPage, RouteErrorPage)
 ├── hooks/useNavBadges.ts       # sidebar/tab bar counts (inboxUnread, pendingAttention, pausedCampaigns); "skip" for hidden items (badgeQueriesFor)
 ├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount
+├── hooks/useInlineCrud.ts      # useReducer over lib/inlineCrud (showForm/editingId/form/confirmDeleteId + actions)
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
@@ -43,11 +51,12 @@ src/
     ├── Inbox.tsx               # Inbox (/app/entrada): search, labels, scheduling, bulk select, pending-handoff banner, ?conversation=<id> (getConversationById fallback)
     ├── inbox/                  # MessageBubble, VoiceRecorder, VoiceTranscription, EmojiPickerButton, QuickReplies ("/"), ConversationActionsMenu,
     │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), ReactionPicker, ForwardModal, AudioPlayer…
+    │                           #   (bubbleStyle.test.ts: getBubbleStyle only uses chat/bubble tokens)
     ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id>; accepting navigates to /app/entrada?conversation=<id>
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
     ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
-    ├── Settings.tsx            # /app/configuracoes, deep-link ?secao=<id>
-    ├── settings/               # AiSection, ChannelsSection (Meta + bridge, QR), ChannelHealthPanel (7-day stats), DataSection (export/import), ImportWizard (5 steps)
+    ├── Settings.tsx            # /app/configuracoes shell (two levels: 6 groups > panels). Panel = ?secao=<id> (push on click); group is derived. Mobile: ajustes-style list + search; desktop: sidebar + panel
+    ├── settings/               # registry.ts (SETTINGS_GROUPS/SETTINGS_PANELS: one entry per panel, lazy Component or href; PLANNED_PANEL_IDS), SettingsNavView (presentational), OrgProfilePanel, CustomFieldsPanel, LeadSourcesPanel, advanced/ (ApiKeysPanel, WebhooksPanel: technical terms allowed here), AiSection, ChannelsSection (Meta + bridge, QR), ChannelHealthPanel (7-day stats), DataSection (export/import), ImportWizard (5 steps)
     │   ├── settings/ai/        # AI section cards: ActivationWizardCard, ActivationCard, FeatureTogglesCard, BridgeAiCard, AttendantCard, SimulatorModal, UsagePanel (AiSection.tsx only orchestrates, order from `aiSectionOrder`)
     │   ├── settings/attendant/ # AttendantConfig (editor, still monolithic until fv2-19), fields (FieldGroup, WarningNote, FollowUpModeCard), types
     │   └── settings/advanced/AiModelsPanel.tsx  # model routing selects, ProductRow, PrivacyCard (technical terms allowed here)

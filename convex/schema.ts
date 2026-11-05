@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
+import { uiThemeValidator } from "./lib/uiTheme";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -762,6 +763,8 @@ const applicationTables = {
     // Perfil do agente IA (persona, modo suggest/autopilot, escopo, guardrails).
     agentProfile: v.optional(agentProfileValidator),
     mustChangePassword: v.optional(v.boolean()),
+    // Tema de interface da pessoa (fv2-14); replicado nas associações humanas.
+    uiTheme: v.optional(uiThemeValidator),
     invitedBy: v.optional(v.id("teamMembers")),
     // Vínculo com a org. `status` é PRESENÇA (active/busy); a remoção grava
     // `removedAt` e corta o acesso (lib/auth.ts → isMembershipRevoked). O
