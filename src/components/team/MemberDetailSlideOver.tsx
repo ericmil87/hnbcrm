@@ -166,7 +166,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro atualizado!");
       setIsEditing(false);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao atualizar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível atualizar membro."));
     } finally {
       setIsSaving(false);
     }
@@ -178,7 +178,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro removido.");
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao remover membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível remover membro."));
     }
   };
 
@@ -206,7 +206,7 @@ export function MemberDetailSlideOver({
         kind === "new" ? "Convite reenviado." : `${member.name} já tinha conta e entrou na organização.`
       );
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao reenviar convite."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reenviar convite."));
     } finally {
       setIsResending(false);
     }
@@ -217,7 +217,7 @@ export function MemberDetailSlideOver({
       await reactivateMember({ teamMemberId: member._id });
       toast.success("Membro reativado!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao reativar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reativar membro."));
     }
   };
 
@@ -241,7 +241,7 @@ export function MemberDetailSlideOver({
       setNewKeyName("");
       toast.success("Chave API criada!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao criar chave API."));
+      toast.error(mutationErrorMessage(error, "Não foi possível criar chave API."));
     } finally {
       setCreatingKey(false);
     }
@@ -254,7 +254,7 @@ export function MemberDetailSlideOver({
       toast.success("Chave API revogada!");
       setRevokeKeyId(null);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao revogar chave."));
+      toast.error(mutationErrorMessage(error, "Não foi possível revogar chave."));
     }
   };
 
@@ -630,7 +630,7 @@ export function MemberDetailSlideOver({
                     className="w-full"
                   >
                     <Pencil size={16} />
-                    Editar Membro
+                    Editar membro
                   </Button>
 
                   {isInactive ? (
@@ -640,7 +640,7 @@ export function MemberDetailSlideOver({
                       className="w-full"
                     >
                       <RotateCcw size={16} />
-                      Reativar Membro
+                      Reativar membro
                     </Button>
                   ) : (
                     !isSelf && (
@@ -650,7 +650,7 @@ export function MemberDetailSlideOver({
                         className="w-full"
                       >
                         <Trash2 size={16} />
-                        Remover Membro
+                        Remover membro
                       </Button>
                     )
                   )}
@@ -665,7 +665,7 @@ export function MemberDetailSlideOver({
         open={showRemoveConfirm}
         onClose={() => setShowRemoveConfirm(false)}
         onConfirm={handleRemove}
-        title="Remover Membro"
+        title="Remover membro"
         description={`Remover ${member.name} da equipe? O acesso a esta organização (e às chaves API do membro) é cortado na hora. O histórico fica, e dá para reativar depois.`}
         confirmLabel="Remover"
         variant="danger"

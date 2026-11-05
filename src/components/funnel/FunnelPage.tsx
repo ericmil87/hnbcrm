@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import React, { useState, useMemo, useRef, useCallback } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -16,7 +17,7 @@ import {
   type CollisionDetection,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
-import { Plus } from "lucide-react";
+import { Kanban, Plus } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
@@ -248,14 +249,12 @@ export function FunnelPage() {
   if (boards.length === 0) {
     return (
       <>
-        <div className="text-center py-12">
-          <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum funil ainda</h3>
-          <p className="text-text-secondary mb-4">Crie seu primeiro funil de vendas para começar a acompanhar seus leads.</p>
-          <Button onClick={() => openDialog({ kind: "createBoard" })} variant="primary" size="md">
-            <Plus size={20} />
-            Criar funil
-          </Button>
-        </div>
+        <EmptyState
+          icon={Kanban}
+          title={VOCAB.funnel.empty.title}
+          description={VOCAB.funnel.empty.hint}
+          action={{ label: "Criar funil", onClick: () => openDialog({ kind: "createBoard" }) }}
+        />
         <FunnelDialogs
           organizationId={organizationId}
           selectedBoardId={selectedBoardId}

@@ -111,7 +111,7 @@ export function SavedFiltersMenu({
       setName("");
       setIsShared(false);
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao salvar filtro");
+      toast.error(error?.message || "Não foi possível salvar filtro.");
     } finally {
       setSaving(false);
     }
@@ -126,7 +126,7 @@ export function SavedFiltersMenu({
       await deleteSavedView({ viewId });
       toast.success("Filtro excluído");
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao excluir filtro");
+      toast.error(error?.message || "Não foi possível excluir filtro.");
     }
   };
 

@@ -94,7 +94,7 @@ export function ProjectFormModal({
       }
       onClose();
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao salvar projeto");
+      toast.error(error?.message || "Não foi possível salvar projeto.");
     } finally {
       setSaving(false);
     }

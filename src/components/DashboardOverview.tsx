@@ -378,7 +378,7 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
     return (
       <Card>
         <h3 className="text-lg font-semibold text-text-primary mb-4">Resumo dos funis</h3>
-        <p className="text-text-muted">Nenhum lead no pipeline ainda.</p>
+        <p className="text-text-muted">Nenhum lead nos funis ainda.</p>
       </Card>
     );
   }

@@ -1,3 +1,4 @@
+import { VOCAB } from "./vocab";
 import { aiStateReasonLabel } from "./aiStateReasons";
 
 // Lógica pura da tela de Conversas (sem React): suspeita de robô, repasse
@@ -190,5 +191,5 @@ export function emptyListMessage(input: {
   }
   if (showArchived) return { text: "Nenhuma conversa arquivada", chooseGroups: false };
   if (labelId) return { text: "Nenhuma conversa com essa etiqueta", chooseGroups: false };
-  return { text: "Nenhuma conversa ainda", chooseGroups: false };
+  return { text: VOCAB.conversations.empty.title, chooseGroups: false };
 }

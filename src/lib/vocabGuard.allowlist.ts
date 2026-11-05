@@ -48,6 +48,18 @@ export const SENTENCE_CASE_SCOPE: readonly string[] = [
   "src/components/HandoffQueue.tsx",
   "src/components/funnel/",
   "src/components/onboarding/",
+  "src/components/TeamPage.tsx",
+  "src/components/team/",
+  "src/components/ContactsPage.tsx",
+  "src/components/AuditLogs.tsx",
+  "src/components/TasksPage.tsx",
+  "src/components/tasks/",
+  "src/components/CampaignsPage.tsx",
+  "src/components/groups/",
+  "src/components/central/",
+  "src/components/forms/FormListPage.tsx",
+  "src/components/Settings.tsx",
+  "src/components/notifications/",
 ];
 
 export function matchesPath(file: string, pattern: string): boolean {

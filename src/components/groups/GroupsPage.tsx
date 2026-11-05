@@ -134,7 +134,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
       toast.success(`Acompanhando '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao acompanhar o grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível acompanhar o grupo."));
     } finally {
       setFollowingId(null);
     }
@@ -145,7 +145,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: false });
       toast.success(`Parou de acompanhar '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+      toast.error(mutationErrorMessage(error, "Não foi possível parar de acompanhar."));
     }
   };
 
@@ -227,13 +227,13 @@ export function GroupsPage() {
       ) : monitored.length === 0 && unmonitored.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={anyChannelEnabled ? "Nenhum grupo neste número" : "Grupos desligados nos seus números"}
+          title={anyChannelEnabled ? VOCAB.groups.empty.title : "Grupos desligados nos seus números"}
           description={
             anyChannelEnabled
               ? "Sincronize a lista de salas no card do número em Configurações → Canais."
               : "Ligue os grupos num número por QR code em Configurações → Canais para o CRM listar as salas."
           }
-          action={{ label: "Abrir Canais", onClick: goToChannels }}
+          action={{ label: "Abrir canais", onClick: goToChannels }}
         />
       ) : monitored.length === 0 ? (
         // Já sabemos de sala — só falta escolher. Fica no lugar do estado

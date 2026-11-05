@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
@@ -490,35 +491,16 @@ export function AuditLogs() {
 
         {/* Empty state */}
         {auditLogs && auditLogs.logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="w-16 h-16 rounded-2xl bg-surface-overlay flex items-center justify-center mb-4">
-              {activeFilters.length > 0 ? (
-                <Search size={32} className="text-text-muted" />
-              ) : (
-                <Shield size={32} className="text-text-muted" />
-              )}
-            </div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              {activeFilters.length > 0
-                ? "Nenhuma alteração encontrada"
-                : "Nenhuma alteração registrada"}
-            </h3>
-            <p className="text-sm text-text-secondary text-center max-w-md">
-              {activeFilters.length > 0
-                ? "Tente ajustar os filtros ou expandir o período de datas."
-                : "As alterações aparecem aqui automaticamente conforme sua equipe e a IA trabalham."}
-            </p>
-            {activeFilters.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-4"
-                onClick={clearAllFilters}
-              >
-                Limpar filtros
-              </Button>
-            )}
-          </div>
+          <EmptyState
+            icon={activeFilters.length > 0 ? Search : Shield}
+            title={activeFilters.length > 0 ? "Nenhuma alteração encontrada" : VOCAB.audit.empty.title}
+            description={
+              activeFilters.length > 0
+                ? "Tente ajustar os filtros ou ampliar o período."
+                : VOCAB.audit.empty.hint
+            }
+            action={activeFilters.length > 0 ? { label: "Limpar filtros", onClick: clearAllFilters } : undefined}
+          />
         )}
 
         {/* Log entries with date grouping */}

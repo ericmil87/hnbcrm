@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
 import { useState, useMemo } from "react";
@@ -188,7 +189,7 @@ export function TeamPage() {
         >
           <Button onClick={() => setShowInvite(true)}>
             <UserPlus size={18} />
-            Adicionar Membro
+            Adicionar membro
           </Button>
         </PermissionGate>
       </div>
@@ -329,7 +330,7 @@ export function TeamPage() {
             {hasActiveFilters && (
               <div className="flex items-end">
                 <Button variant="ghost" size="sm" onClick={clearFilters}>
-                  Limpar Filtros
+                  Limpar filtros
                 </Button>
               </div>
             )}
@@ -339,19 +340,12 @@ export function TeamPage() {
 
       {/* Members grid */}
       {filteredMembers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Users size={48} className="text-text-muted mb-4" />
-          <p className="text-text-secondary text-sm">
-            {search || hasActiveFilters
-              ? "Nenhum membro encontrado com os filtros atuais."
-              : "Nenhum membro na equipe ainda."}
-          </p>
-          {(search || hasActiveFilters) && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} className="mt-2">
-              Limpar Filtros
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          icon={Users}
+          title={search || hasActiveFilters ? "Nenhum membro encontrado" : VOCAB.team.empty.title}
+          description={search || hasActiveFilters ? "Tente ajustar a busca ou os filtros." : VOCAB.team.empty.hint}
+          action={search || hasActiveFilters ? { label: "Limpar filtros", onClick: clearFilters } : undefined}
+        />
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {filteredMembers.map((member) => {

@@ -398,6 +398,7 @@ export function ConversationList({
             icon={MessageSquare}
             size="sm"
             title={empty.text}
+            description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
             action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
           />
         ) : (

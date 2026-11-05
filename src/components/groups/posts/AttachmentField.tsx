@@ -68,7 +68,7 @@ export function AttachmentField({ organizationId, fileId, onChange, disabled }: 
         headers: { "Content-Type": file.type },
         body: file,
       });
-      if (!response.ok) throw new Error(`Falha ao enviar ${file.name}`);
+      if (!response.ok) throw new Error(`Não foi possível enviar ${file.name}.`);
       const { storageId } = await response.json();
       const savedId = await saveFile({
         organizationId,

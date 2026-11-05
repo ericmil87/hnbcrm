@@ -250,8 +250,8 @@ export function CentralPage() {
       ) : !hasActivity ? (
         <EmptyState
           icon={BarChart3}
-          title="Sem movimento neste período"
-          description="Assim que chegarem conversas no WhatsApp, o painel se preenche sozinho. Tente um período maior ou outra unidade."
+          title={VOCAB.reports.empty.title}
+          description={`${VOCAB.reports.empty.hint} Tente um período maior ou outra unidade.`}
         />
       ) : (
         <div className={cn("w-full transition-opacity", refreshing && "opacity-60")} aria-busy={refreshing}>

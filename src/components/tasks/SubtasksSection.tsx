@@ -46,7 +46,7 @@ export function SubtasksSection({
         await completeTask({ taskId: subtask._id });
       }
     } catch {
-      toast.error("Falha ao atualizar subtarefa");
+      toast.error("Não foi possível atualizar subtarefa.");
     }
   };
 
@@ -66,7 +66,7 @@ export function SubtasksSection({
       });
       setNewTitle("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao criar subtarefa");
+      toast.error(err instanceof Error ? err.message : "Não foi possível criar subtarefa.");
     } finally {
       setAdding(false);
     }

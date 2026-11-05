@@ -72,7 +72,7 @@ export function GroupMediaPolicyModal({
       toast.success(`Mídia de '${group.subject}' salva`);
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar a mídia do grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar a mídia do grupo."));
     } finally {
       setSaving(false);
     }

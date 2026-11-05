@@ -114,7 +114,7 @@ export function GroupAiPolicyModal({
       toast.success("Política de IA salva");
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar a política"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar a política."));
     } finally {
       setSaving(false);
     }
@@ -222,7 +222,7 @@ export function GroupAiPolicyModal({
                     // deixar a sala em sugestão por esquecimento.
                     await handleSave();
                   } catch (error) {
-                    toast.error(mutationErrorMessage(error, "Falha ao registrar o aceite"));
+                    toast.error(mutationErrorMessage(error, "Não foi possível registrar o aceite."));
                   } finally {
                     setAckBusy(false);
                   }

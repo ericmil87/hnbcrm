@@ -116,7 +116,7 @@ export function FileUploadButton({
         });
 
         if (!response.ok) {
-          throw new Error(`Falha ao enviar ${file.name}`);
+          throw new Error(`Não foi possível enviar ${file.name}.`);
         }
 
         const { storageId } = await response.json();

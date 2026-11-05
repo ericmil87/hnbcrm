@@ -88,7 +88,7 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
       await fn();
       toast.success(label);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na ação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível concluir a ação."));
     } finally {
       setBusy(false);
     }

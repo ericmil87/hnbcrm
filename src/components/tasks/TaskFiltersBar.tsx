@@ -129,7 +129,7 @@ export function TaskFiltersBar({
             >
               <option value="">Todos</option>
               <option value="pending">Pendente</option>
-              <option value="in_progress">Em Progresso</option>
+              <option value="in_progress">Em progresso</option>
               <option value="completed">Concluída</option>
               <option value="cancelled">Cancelada</option>
             </select>

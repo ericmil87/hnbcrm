@@ -4,7 +4,7 @@
  * mudam. Detalhes e justificativas: `.claude/plans/frontend-v2/03-reorganizacao-vocabulario.md` § 1.2.
  */
 export const VOCAB = {
-  conversations: { one: "conversa", many: "conversas", nav: "Conversas", title: "Conversas" },
+  conversations: { one: "conversa", many: "conversas", nav: "Conversas", title: "Conversas", empty: { title: "Nenhuma conversa ainda", hint: "As conversas aparecem aqui quando um cliente manda mensagem para o seu WhatsApp." } },
   attention: {
     nav: "Requer atenção",
     title: "Requer atenção",
@@ -16,10 +16,10 @@ export const VOCAB = {
     emptyTitle: "Tudo em dia",
     emptyHint: "Quando a IA precisar de alguém da equipe, a conversa aparece aqui.",
   },
-  funnel: { one: "funil", many: "funis", nav: "Funil", title: "Funil de vendas", new: "Novo funil" },
+  funnel: { one: "funil", many: "funis", nav: "Funil", title: "Funil de vendas", new: "Novo funil", empty: { title: "Nenhum funil ainda", hint: "Crie o primeiro funil para acompanhar cada lead da primeira conversa até a venda." } },
   stage: { one: "etapa", many: "etapas", new: "Nova etapa" },
   lead: { one: "lead", many: "leads", new: "Novo lead", article: "o" },
-  contact: { one: "contato", many: "contatos", nav: "Contatos", new: "Novo contato" },
+  contact: { one: "contato", many: "contatos", nav: "Contatos", new: "Novo contato", empty: { title: "Nenhum contato ainda", hint: "Os contatos surgem quando alguém escreve para você, ou adicione o primeiro." } },
   attendant: {
     name: "Atendente IA",
     short: "a IA",
@@ -48,8 +48,8 @@ export const VOCAB = {
     timeline: "Prazo",
   },
   viewMode: { board: "Modo quadro", list: "Modo lista", saved: "Filtros salvos" },
-  audit: { nav: "Histórico de alterações", title: "Histórico de alterações" },
-  reports: { nav: "Relatórios", title: "Relatórios" },
+  audit: { nav: "Histórico de alterações", title: "Histórico de alterações", empty: { title: "Nenhuma alteração registrada", hint: "As alterações aparecem aqui conforme a equipe e a IA trabalham." } },
+  reports: { nav: "Relatórios", title: "Relatórios", empty: { title: "Sem movimento neste período", hint: "Quando chegarem conversas no WhatsApp, os relatórios se preenchem sozinhos." } },
   unitsAndDepartments: "Unidades e departamentos",
   department: { one: "departamento", many: "departamentos", title: "Departamento" },
   industry: "Ramo de atividade",
@@ -60,14 +60,14 @@ export const VOCAB = {
   modelAi: "Modelo de IA",
   apiKeys: "Chaves de integração",
   webhooks: { name: "Webhooks", hint: "avisos automáticos para outros sistemas" },
-  agenda: { nav: "Agenda", title: "Agenda" },
-  dashboard: { nav: "Painel", title: "Painel" },
-  tasks: { nav: "Tarefas", title: "Tarefas" },
-  groups: { nav: "Grupos", title: "Grupos" },
-  forms: { nav: "Formulários", title: "Formulários" },
-  campaigns: { nav: "Campanhas", title: "Campanhas" },
-  team: { nav: "Equipe", title: "Equipe" },
-  settings: { nav: "Configurações", title: "Configurações" },
+  agenda: { nav: "Agenda", title: "Agenda", empty: { title: "Nada na agenda", hint: "Crie um evento ou uma tarefa com data para ver tudo aqui." } },
+  dashboard: { nav: "Painel", title: "Painel", empty: { title: "Seu painel ainda está vazio", hint: "Quando chegarem conversas e leads, os números aparecem aqui." } },
+  tasks: { nav: "Tarefas", title: "Tarefas", empty: { title: "Nenhuma tarefa ainda", hint: "Crie a primeira tarefa para organizar o trabalho da equipe." } },
+  groups: { nav: "Grupos", title: "Grupos", empty: { title: "Nenhum grupo acompanhado", hint: "Escolha os grupos do WhatsApp que a equipe vai acompanhar." } },
+  forms: { nav: "Formulários", title: "Formulários", empty: { title: "Nenhum formulário ainda", hint: "Crie um formulário para captar leads direto do seu site ou de um link." } },
+  campaigns: { nav: "Campanhas", title: "Campanhas", empty: { title: "Nenhuma campanha ainda", hint: "Dispare mensagens para uma lista de contatos, com limites de envio e relatório por destinatário." } },
+  team: { nav: "Equipe", title: "Equipe", empty: { title: "Nenhum membro na equipe ainda", hint: "Convide pessoas para trabalhar com você no HNBCRM." } },
+  settings: { nav: "Configurações", title: "Configurações", empty: { title: "Nada encontrado", hint: "Tente outra palavra, como “número” ou “chave”." } },
 } as const;
 
 /** Termos que não podem aparecer em texto visível fora da allowlist. */

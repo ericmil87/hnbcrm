@@ -86,7 +86,7 @@ export function AvatarUpload({
       });
 
       if (!response.ok) {
-        throw new Error("Falha no upload");
+        throw new Error("Não foi possível enviar a imagem.");
       }
 
       const { storageId } = await response.json();

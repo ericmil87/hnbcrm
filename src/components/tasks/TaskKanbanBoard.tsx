@@ -149,7 +149,7 @@ export const PRIORITY_BADGE: Record<
 
 export const STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
-  in_progress: "Em Progresso",
+  in_progress: "Em progresso",
   completed: "Concluída",
   cancelled: "Cancelada",
 };
@@ -442,7 +442,7 @@ export function TaskKanbanBoard({
         if (destColumn?.isDoneColumn) toast.success("Tarefa concluída!");
       }
     } catch {
-      toast.error("Falha ao mover tarefa");
+      toast.error("Não foi possível mover tarefa.");
     }
   };
 

@@ -328,7 +328,7 @@ export function AttendantSimulator({
         }
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha na simulação");
+      toast.error(e instanceof Error ? e.message : "Não foi possível simular.");
     } finally {
       setBusy(false);
     }

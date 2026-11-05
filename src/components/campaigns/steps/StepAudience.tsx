@@ -459,7 +459,7 @@ function ImportTab({
       setSummary(result);
       setPhase("check");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na validação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível validar a audiência."));
     } finally {
       setBusy(false);
     }

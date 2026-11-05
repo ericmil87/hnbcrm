@@ -71,7 +71,7 @@ export function VoiceTranscription({
     return (
       <div className="flex items-center gap-2">
         <span className={cn("text-xs italic", outbound ? "text-bubble-out-fg/75" : "text-semantic-error")}>
-          Falha na transcrição
+          Não foi possível transcrever
         </span>
         <button
           type="button"

@@ -341,9 +341,9 @@ export function TasksPage() {
     }[] = [
       { key: "overdue", label: "Atrasadas", tasks: [], color: "text-semantic-error", defaultOpen: true },
       { key: "today", label: "Hoje", tasks: [], color: "text-brand-500", defaultOpen: true },
-      { key: "week", label: "Esta Semana", tasks: [], defaultOpen: true },
+      { key: "week", label: "Esta semana", tasks: [], defaultOpen: true },
       { key: "future", label: "Futuras", tasks: [], defaultOpen: true },
-      { key: "noDate", label: "Sem Data", tasks: [], defaultOpen: true },
+      { key: "noDate", label: "Sem data", tasks: [], defaultOpen: true },
       { key: "completed", label: "Concluídas", tasks: [], defaultOpen: false },
     ];
 
@@ -415,7 +415,7 @@ export function TasksPage() {
       await completeTask({ taskId });
       toast.success("Tarefa concluída!");
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir tarefa.");
     }
   };
 
@@ -437,7 +437,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas concluídas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Falha ao concluir tarefas");
+      toast.error("Não foi possível concluir tarefas.");
     }
   };
 
@@ -450,7 +450,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas canceladas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Falha ao cancelar tarefas");
+      toast.error("Não foi possível cancelar tarefas.");
     }
   };
 
@@ -475,7 +475,7 @@ export function TasksPage() {
       }
       if (selectedProjectId === project._id) updateUrl({ projectId: null });
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao atualizar projeto");
+      toast.error(error?.message || "Não foi possível atualizar projeto.");
     } finally {
       setPendingProjectAction(null);
     }
@@ -564,7 +564,7 @@ export function TasksPage() {
               onClick={() => setShowCreateModal(true)}
             >
               <Plus size={16} />
-              <span className="hidden md:inline">Nova Tarefa</span>
+              <span className="hidden md:inline">Nova tarefa</span>
             </Button>
           )}
         </div>
@@ -694,17 +694,17 @@ export function TasksPage() {
       ) : filteredTasks.length === 0 ? (
         <EmptyState
           icon={CheckSquare}
-          title="Nenhuma tarefa encontrada"
+          title={hasActiveQuery ? "Nenhuma tarefa encontrada" : VOCAB.tasks.empty.title}
           description={
             hasActiveQuery
               ? "Tente ajustar os filtros ou a busca."
               : selectedProject
                 ? `Nenhuma tarefa em ${selectedProject.name} ainda.`
-                : "Crie sua primeira tarefa para organizar seu trabalho."
+                : VOCAB.tasks.empty.hint
           }
           action={
             !hasActiveQuery && canEdit
-              ? { label: "Nova Tarefa", onClick: () => setShowCreateModal(true) }
+              ? { label: "Nova tarefa", onClick: () => setShowCreateModal(true) }
               : undefined
           }
         />
@@ -1112,7 +1112,7 @@ function StatusBoardView({
 
   const columns: { status: TaskStatus; label: string; color: string }[] = [
     { status: "pending", label: "Pendente", color: "bg-semantic-warning" },
-    { status: "in_progress", label: "Em Progresso", color: "bg-semantic-info" },
+    { status: "in_progress", label: "Em progresso", color: "bg-semantic-info" },
     { status: "completed", label: "Concluída", color: "bg-semantic-success" },
   ];
 
@@ -1146,7 +1146,7 @@ function StatusBoardView({
     try {
       await updateTask({ taskId, status: newStatus });
     } catch {
-      toast.error("Falha ao mover tarefa");
+      toast.error("Não foi possível mover tarefa.");
     }
   };
 

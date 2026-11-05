@@ -193,7 +193,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     try {
       await markAllRead({ organizationId });
     } catch {
-      toast.error("Falha ao marcar notificações como lidas");
+      toast.error("Não foi possível marcar notificações como lidas.");
     }
   };
 
@@ -225,7 +225,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       });
       toast.success("Lead criado — a conversa privada está aberta");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Falha ao criar o lead");
+      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Não foi possível criar o lead.");
     } finally {
       setConvertingId(null);
     }

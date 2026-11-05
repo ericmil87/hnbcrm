@@ -138,7 +138,7 @@ export function CampaignsPage() {
       await fn();
       toast.success(label);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na ação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível concluir a ação."));
     }
   };
 
@@ -210,10 +210,10 @@ export function CampaignsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Megaphone}
-          title={campaigns.length === 0 ? "Nenhuma campanha ainda" : "Nada com esse filtro"}
+          title={campaigns.length === 0 ? VOCAB.campaigns.empty.title : "Nada com esse filtro"}
           description={
             campaigns.length === 0
-              ? "Dispare mensagens segmentadas ou importe uma lista de números, com limites anti-ban e relatório por destinatário."
+              ? VOCAB.campaigns.empty.hint
               : undefined
           }
           action={canManage && campaigns.length === 0 ? { label: "Criar a primeira", onClick: () => setWizardId("new") } : undefined}

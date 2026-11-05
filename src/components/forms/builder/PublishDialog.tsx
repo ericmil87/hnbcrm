@@ -127,7 +127,7 @@ export function PublishDialog({
       await onPublish();
       toast.success("Formulário publicado com sucesso!");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Erro ao publicar";
+      const message = err instanceof Error ? err.message : "Não foi possível publicar.";
       toast.error(message);
     } finally {
       setIsLoading(false);
@@ -140,7 +140,7 @@ export function PublishDialog({
       await onUnpublish();
       toast.success("Formulário despublicado");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Erro ao despublicar";
+      const message = err instanceof Error ? err.message : "Não foi possível despublicar.";
       toast.error(message);
     } finally {
       setIsLoading(false);

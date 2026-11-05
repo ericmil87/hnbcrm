@@ -111,7 +111,7 @@ export function Settings() {
         <PageHeader title={VOCAB.settings.title} />
         <SearchInput value={query} onValueChange={setQuery} placeholder="Buscar nas configurações" ariaLabel="Buscar nas configurações" />
         {found.length === 0 ? (
-          <EmptyState icon={SearchX} size="sm" title="Nada encontrado" description="Tente outra palavra, como “número” ou “chave”." />
+          <EmptyState icon={SearchX} size="sm" title={VOCAB.settings.empty.title} description={VOCAB.settings.empty.hint} />
         ) : (
           <SettingsNavView groups={navItems(found)} active={null} onSelect={select} variant="list" />
         )}

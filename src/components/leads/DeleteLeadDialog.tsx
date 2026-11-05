@@ -38,7 +38,7 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
       onClose();
       onDeleted();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao excluir o lead"));
+      toast.error(mutationErrorMessage(error, "Não foi possível excluir o lead."));
       setDeleting(false);
     }
   };
