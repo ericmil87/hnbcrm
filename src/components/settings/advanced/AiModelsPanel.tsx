@@ -1,220 +1,23 @@
 import { useState } from "react";
-import { useMutation, useAction } from "convex/react";
+import { useMutation, useAction, useQuery } from "convex/react";
 import { toast } from "sonner";
-import { ShieldCheck, ChevronDown, AlertTriangle, Check } from "lucide-react";
+import { ShieldCheck, AlertTriangle, Check } from "lucide-react";
 import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Checkbox } from "@/components/ui/Checkbox";
-import { cn } from "@/lib/utils";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
+import { Spinner } from "@/components/ui/Spinner";
+import { usePermissions } from "@/hooks/usePermissions";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { AiStatus } from "../ai/aiTypes";
-
-// ── Produtos de IA ──────────────────────────────────────────────────────────
-//
-// Cada produto carrega a PRÓPRIA configuração: o interruptor, o modelo e a
-// rota. Antes o interruptor ficava aqui e o modelo num card lá embaixo, e a
-// leitura de imagens ainda exigia um segundo interruptor em Configurações →
-// Canais — três lugares para configurar duas coisas. O card de baixo agora
-// guarda só o que é mesmo da organização inteira: rota padrão, chave própria e
-// privacidade.
-
-export type ProductKey =
-  | "copilot"
-  | "attendant"
-  | "vision"
-  | "groupPosts"
-  | "groupAgent"
-  | "telegramCopilot";
-
-export type ModelOption = {
-  id: string;
-  route: { zdrCapable: boolean; dataResidency: string; retention: string };
-};
-
-export type VisionModelOption = {
-  id: string;
-  providers: string[];
-  latencyMs: number;
-  inputTokens: number;
-  accuracy: string;
-  note?: string;
-};
-
-export const PROVIDER_LABEL: Record<string, string> = {
-  "opencode-go": "OpenCode Go",
-  openrouter: "OpenRouter",
-};
-
-export function secondsLabel(ms: number): string {
-  return `${(ms / 1000).toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} s`;
-}
-
-/** Nota de privacidade da rota escolhida — a mesma linguagem do card de baixo. */
-export function RouteNote({ route }: { route: ModelOption["route"] | undefined }) {
-  if (!route) return null;
-  return (
-    <p className="flex items-center gap-1.5 text-xs mt-1.5">
-      {route.zdrCapable ? (
-        <>
-          <ShieldCheck size={13} className="text-semantic-success" />
-          <span className="text-text-muted">Zero-retention · residência {route.dataResidency}</span>
-        </>
-      ) : (
-        <span className="text-semantic-warning">
-          Retém dados ({route.retention}) · residência {route.dataResidency}
-        </span>
-      )}
-    </p>
-  );
-}
-
-/** Seletor de rota por produto. "inherit" mostra qual padrão da org está herdando. */
-export function RoutingSelect({
-  value,
-  orgOrder,
-  byoProvider,
-  onChange,
-}: {
-  value: string;
-  orgOrder: string;
-  byoProvider: string | null;
-  onChange: (v: string) => void;
-}) {
-  const orgLabel =
-    PLATFORM_ORDER_OPTIONS.find((o) => o.value === orgOrder)?.label ?? "padrão da organização";
-  if (byoProvider) {
-    return (
-      <div>
-        <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-          Roteamento
-        </label>
-        <div className="rounded-field border border-border bg-surface-sunken px-3.5 py-2.5 text-sm text-text-muted">
-          Chave própria da organização ({byoProvider})
-        </div>
-        <p className="text-xs text-text-muted mt-1.5">
-          No modo BYO a rota é uma só, para todos os produtos — e sem fallback.
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Roteamento</label>
-      <Select
-        value={value}
-        onValueChange={onChange}
-        options={[
-          { value: "inherit", label: `Herdar da organização — ${orgLabel}` },
-          ...PLATFORM_ORDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-        ]}
-      />
-    </div>
-  );
-}
-
-/** O mesmo seletor de rota, com um rótulo próprio (dois num só card). */
-export function RoutingSelectLabeled({
-  label,
-  value,
-  orgOrder,
-  byoProvider,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  orgOrder: string;
-  byoProvider: string | null;
-  onChange: (v: string) => void;
-}) {
-  const orgLabel =
-    PLATFORM_ORDER_OPTIONS.find((o) => o.value === orgOrder)?.label ?? "padrão da organização";
-  if (byoProvider) return null;
-  return (
-    <div>
-      <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{label}</label>
-      <Select
-        value={value}
-        onValueChange={onChange}
-        options={[
-          { value: "inherit", label: `Herdar da organização — ${orgLabel}` },
-          ...PLATFORM_ORDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-        ]}
-      />
-    </div>
-  );
-}
-
-/** Linha de um produto: interruptor + painel de configuração recolhível. */
-export function ProductRow({
-  title,
-  description,
-  enabled,
-  busy,
-  onToggle,
-  first,
-  children,
-}: {
-  title: string;
-  description: string;
-  enabled: boolean;
-  busy: boolean;
-  /** Sem onToggle o produto não tem interruptor próprio (ex.: liga pelo módulo). */
-  onToggle?: () => void;
-  first?: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className={first ? "" : "pt-4 border-t border-border"}>
-      <div className="flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-text-primary">{title}</p>
-          <p className="text-xs text-text-muted mt-0.5">{description}</p>
-        </div>
-        {onToggle && (
-          <Switch
-            checked={enabled}
-            onCheckedChange={() => onToggle()}
-            label={title}
-            hideLabel
-            disabled={busy}
-          />
-        )}
-      </div>
-      {enabled && (
-        <>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-400"
-          >
-            <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
-            {open ? "Ocultar modelo e roteamento" : "Modelo e roteamento"}
-          </button>
-          {open && (
-            <div className="mt-3 grid gap-4 sm:grid-cols-2 rounded-lg border border-border bg-surface-sunken p-3.5">
-              {children}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
+import { ModelRoutingCard } from "./ModelRoutingCard";
+import { PLATFORM_ORDER_OPTIONS } from "./ModelRoutingParts";
 
 // ── Provider, modelos e privacidade (roteamento + BYO + selo ZDR) ──
-
-export const PLATFORM_ORDER_OPTIONS = [
-  { value: "auto", label: "Auto — OpenCode Go, fallback OpenRouter (padrão)" },
-  { value: "openrouter-first", label: "OpenRouter primeiro, fallback OpenCode Go" },
-  { value: "openrouter-only", label: "Somente OpenRouter (sem fallback)" },
-  { value: "opencode-only", label: "Somente OpenCode Go (sem fallback)" },
-] as const;
 
 export const BYO_PROVIDERS = [
   { value: "openrouter", label: "OpenRouter" },
@@ -517,5 +320,33 @@ export function PrivacyCard({
         label="Modo estrito: recusar qualquer rota que retenha dados (compliance rígida)"
       />
     </Card>
+  );
+}
+
+/** Painel `ai-models` (Avançado): modelo e rota por produto, privacidade e chave própria. */
+export function AiModelsPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
+  const status = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const { can, isLoading } = usePermissions(organizationId);
+  if (isLoading || !status) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+  if (!can("settings", "manage")) {
+    return (
+      <EmptyState
+        icon={ShieldCheck}
+        title="Só quem gerencia as configurações vê isto"
+        description="Peça a uma pessoa com permissão de gerenciar as configurações para ajustar o modelo e a privacidade."
+      />
+    );
+  }
+  return (
+    <div className="space-y-6">
+      <ModelRoutingCard organizationId={organizationId} status={status} />
+      <PrivacyCard organizationId={organizationId} status={status} />
+    </div>
   );
 }

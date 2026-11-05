@@ -1,5 +1,8 @@
 import { AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FormField } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
+import { Switch } from "@/components/ui/Switch";
 
 // Grupo de campos do editor do atendente: título + descrição curta, separado do
 // grupo anterior por uma linha (o primeiro não precisa — o bloco já tem borda).
@@ -82,5 +85,81 @@ export function FollowUpModeCard({
       </span>
       <span className="mt-1 block text-xs text-text-muted">{subtitle}</span>
     </button>
+  );
+}
+
+
+/** Campo numérico/texto curto em string (vazio = padrão do servidor), com rótulo, dica e erro ligados por id. */
+export function NumberField({
+  label,
+  value,
+  onChange,
+  hint,
+  error,
+  placeholder,
+  min,
+  max,
+  disabled,
+  className,
+  type = "number",
+  maxLength,
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  hint?: string;
+  error?: string;
+  placeholder?: string;
+  min?: number;
+  max?: number;
+  disabled?: boolean;
+  className?: string;
+  type?: "number" | "text";
+  maxLength?: number;
+}) {
+  return (
+    <FormField label={label} hint={hint} error={error} className={className}>
+      {(aria) => (
+        <Input
+          {...aria}
+          type={type}
+          inputMode={type === "number" ? "numeric" : undefined}
+          min={min}
+          max={max}
+          maxLength={maxLength}
+          step={type === "number" ? 1 : undefined}
+          value={value}
+          placeholder={placeholder}
+          disabled={disabled}
+          className={error ? "border-semantic-error" : undefined}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </FormField>
+  );
+}
+
+/** Linha com título, descrição opcional e Switch (rótulo só para leitores de tela). */
+export function SwitchRow({
+  title,
+  description,
+  checked,
+  onChange,
+  disabled,
+}: {
+  title: string;
+  description?: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-text-primary">{title}</p>
+        {description && <p className="text-xs text-text-muted mt-0.5">{description}</p>}
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} label={title} hideLabel disabled={disabled} />
+    </div>
   );
 }

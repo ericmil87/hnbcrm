@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Gauge, AlertTriangle } from "lucide-react";
 import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
+import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ export const USAGE_KIND_LABELS: Record<string, string> = {
   group_summary: "Resumos de grupo",
   group_radar: "Radar de oportunidades",
   simulator: "Simulador",
+  attendant_draft: "Rascunho do atendente",
 };
 
 export const SPEND_MODE_OPTIONS = [
@@ -35,7 +37,8 @@ export const SPEND_MODE_OPTIONS = [
 
 export type SpendMode = (typeof SPEND_MODE_OPTIONS)[number]["value"];
 
-export function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) {
+/** Painel `ai-usage`: uso do mês e limites de gasto. */
+export function UsagePanel({ organizationId }: { organizationId: Id<"organizations"> }) {
   // Mês corrente (UTC, mesma régua do backend) calculado UMA vez — nunca
   // Date.now() direto em args de query.
   const [month] = useState(() => new Date().toISOString().slice(0, 7));
@@ -51,7 +54,13 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
   } | null>(null);
   const [savingCap, setSavingCap] = useState(false);
 
-  if (!usage) return null;
+  if (!usage) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
   const cap = usage.spendCap;
   const draft = capDraft ?? {
     mode: cap.mode,

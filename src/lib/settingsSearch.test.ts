@@ -33,4 +33,20 @@ describe("searchSettingsPanels", () => {
     expect(ids("chaves webhook")).toEqual([]);
     expect(ids("chaves integração")).toContain("apikeys");
   });
+
+  it('"transcrição" acha Recursos da IA e canais; "imagem" só os recursos', () => {
+    expect(ids("transcrição")).toEqual(expect.arrayContaining(["ai-features", "channels"]));
+    expect(ids("imagem")).toContain("ai-features");
+  });
+
+  it('"persona" e "horário" acham Jeito de atender', () => {
+    expect(ids("persona")).toContain("ai-attendant");
+    expect(ids("horário")).toContain("ai-attendant");
+  });
+
+  it("os painéis do Atendente IA estão registrados", () => {
+    for (const id of ["ai", "ai-attendant", "ai-conversation", "ai-handoff", "ai-followup", "ai-features", "ai-usage", "ai-models"]) {
+      expect(ids("")).toContain(id);
+    }
+  });
 });
