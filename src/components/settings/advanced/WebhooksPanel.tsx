@@ -1,3 +1,4 @@
+import { useInlineCrud } from "@/hooks/useInlineCrud";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -11,11 +12,11 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
 
 
+const EMPTY_FORM = { name: "", url: "", events: "", secret: "" };
+
 export function WebhooksPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", url: "", events: "", secret: "" });
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const { showForm, editingId, form, startCreate, startEdit, cancel, saved, patchForm, askDelete, cancelDelete, confirmDeleteId } =
+    useInlineCrud(EMPTY_FORM);
 
   const webhooks = useQuery(api.webhooks.getWebhooks, {
     organizationId,
@@ -44,18 +45,14 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
           secret: form.secret || `whsec_${Math.random().toString(36).substring(2, 15)}`,
         });
       }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", url: "", events: "", secret: "" });
+      saved();
     } catch (error) {
       console.error("Failed to save webhook:", error);
     }
   };
 
   const handleEdit = (webhook: any) => {
-    setEditingId(webhook._id);
-    setForm({ name: webhook.name, url: webhook.url, events: webhook.events.join(", "), secret: "" });
-    setShowForm(true);
+    startEdit(webhook._id, { name: webhook.name, url: webhook.url, events: webhook.events.join(", "), secret: "" });
   };
 
   const handleDelete = async (id: string) => {
@@ -71,7 +68,7 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-text-primary">Webhooks</h3>
         <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", url: "", events: "", secret: "" }); }}
+          onClick={() => startCreate()}
         >
           Adicionar Webhook
         </Button>
@@ -97,7 +94,7 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
                     {webhook.isActive ? "Ativo" : "Inativo"}
                   </Badge>
                   <button onClick={() => handleEdit(webhook)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                  <button onClick={() => setConfirmDeleteId(webhook._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                  <button onClick={() => askDelete(webhook._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
                 </div>
               </div>
               <div className="flex gap-1 flex-wrap">
@@ -114,7 +111,7 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
 
       <ConfirmDialog
         open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
+        onClose={cancelDelete}
         onConfirm={() => {
           if (confirmDeleteId) handleDelete(confirmDeleteId);
         }}
@@ -126,7 +123,7 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
 
       <Modal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
+        onClose={() => cancel()}
         title={editingId ? "Editar Webhook" : "Adicionar Webhook"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -134,14 +131,14 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
             label="Nome"
             type="text"
             value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            onChange={(e) => patchForm({ name: e.target.value })}
             required
           />
           <Input
             label="URL"
             type="url"
             value={form.url}
-            onChange={(e) => setForm({ ...form, url: e.target.value })}
+            onChange={(e) => patchForm({ url: e.target.value })}
             placeholder="https://exemplo.com/webhook"
             required
           />
@@ -149,7 +146,7 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
             label="Eventos (separados por vírgula)"
             type="text"
             value={form.events}
-            onChange={(e) => setForm({ ...form, events: e.target.value })}
+            onChange={(e) => patchForm({ events: e.target.value })}
             placeholder="lead.created, lead.stage_changed, message.sent"
             required
           />
@@ -158,12 +155,12 @@ export function WebhooksPanel({ organizationId }: { organizationId: Id<"organiza
               label="Segredo (gerado automaticamente se vazio)"
               type="text"
               value={form.secret}
-              onChange={(e) => setForm({ ...form, secret: e.target.value })}
+              onChange={(e) => patchForm({ secret: e.target.value })}
               placeholder="Auto-gerado"
             />
           )}
           <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
+            <Button type="button" variant="secondary" onClick={() => cancel()} className="flex-1">Cancelar</Button>
             <Button type="submit" className="flex-1">Salvar</Button>
           </div>
         </form>

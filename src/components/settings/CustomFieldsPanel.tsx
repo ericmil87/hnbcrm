@@ -1,3 +1,4 @@
+import { useInlineCrud } from "@/hooks/useInlineCrud";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -14,12 +15,12 @@ import { Select } from "@/components/ui/Select";
 import { Tabs, TabPanel } from "@/components/ui/Tabs";
 
 
+const EMPTY_FORM = { name: "", key: "", type: "text" as string, options: "", isRequired: false };
+
 export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", key: "", type: "text" as string, options: "", isRequired: false });
+  const { showForm, editingId, form, startCreate, startEdit, cancel, saved, patchForm, askDelete, cancelDelete, confirmDeleteId } =
+    useInlineCrud(EMPTY_FORM);
   const [entityTab, setEntityTab] = useState<"lead" | "contact">("lead");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const fieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
     organizationId,
@@ -53,24 +54,20 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
           order: fieldDefs?.length || 0,
         });
       }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", key: "", type: "text", options: "", isRequired: false });
+      saved();
     } catch (error) {
       console.error("Failed to save field definition:", error);
     }
   };
 
   const handleEdit = (field: any) => {
-    setEditingId(field._id);
-    setForm({
+    startEdit(field._id, {
       name: field.name,
       key: field.key,
       type: field.type,
       options: field.options?.join(", ") || "",
       isRequired: field.isRequired,
     });
-    setShowForm(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -86,7 +83,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-text-primary">Campos personalizados</h3>
         <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", key: "", type: "text", options: "", isRequired: false }); }}
+          onClick={() => startCreate()}
         >
           Adicionar campo
         </Button>
@@ -127,7 +124,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEdit(field)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => setConfirmDeleteId(field._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                <button onClick={() => askDelete(field._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
               </div>
             </div>
           ))}
@@ -139,7 +136,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
 
       <ConfirmDialog
         open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
+        onClose={cancelDelete}
         onConfirm={() => {
           if (confirmDeleteId) handleDelete(confirmDeleteId);
         }}
@@ -151,7 +148,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
 
       <Modal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
+        onClose={() => cancel()}
         title={editingId ? "Editar campo personalizado" : "Adicionar campo personalizado"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -159,7 +156,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
             label="Nome"
             type="text"
             value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            onChange={(e) => patchForm({ name: e.target.value })}
             required
           />
           {!editingId && (
@@ -167,7 +164,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
               label="Chave"
               type="text"
               value={form.key}
-              onChange={(e) => setForm({ ...form, key: e.target.value })}
+              onChange={(e) => patchForm({ key: e.target.value })}
               placeholder="unique_key"
               required
             />
@@ -176,7 +173,7 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
             <Select
             label="Tipo"
             value={form.type}
-            onValueChange={(type) => setForm({ ...form, type })}
+            onValueChange={(type) => patchForm({ type })}
             options={[
               { value: "text", label: "Texto" },
               { value: "number", label: "Número" },
@@ -192,17 +189,17 @@ export function CustomFieldsPanel({ organizationId }: { organizationId: Id<"orga
               label="Opções (separadas por vírgula)"
               type="text"
               value={form.options}
-              onChange={(e) => setForm({ ...form, options: e.target.value })}
+              onChange={(e) => patchForm({ options: e.target.value })}
               placeholder="Opção 1, Opção 2, Opção 3"
             />
           )}
           <Checkbox
             checked={form.isRequired}
-            onChange={(e) => setForm({ ...form, isRequired: e.target.checked })}
+            onChange={(e) => patchForm({ isRequired: e.target.checked })}
             label="Obrigatório"
           />
           <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
+            <Button type="button" variant="secondary" onClick={() => cancel()} className="flex-1">Cancelar</Button>
             <Button type="submit" className="flex-1">Salvar</Button>
           </div>
         </form>

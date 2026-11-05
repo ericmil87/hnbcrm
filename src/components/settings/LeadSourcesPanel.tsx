@@ -1,3 +1,4 @@
+import { useInlineCrud } from "@/hooks/useInlineCrud";
 import { VOCAB } from "@/lib/vocab";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
@@ -13,11 +14,11 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Select } from "@/components/ui/Select";
 
 
+const EMPTY_FORM = { name: "", type: "website" as string };
+
 export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", type: "website" as string });
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const { showForm, editingId, form, startCreate, startEdit, cancel, saved, patchForm, askDelete, cancelDelete, confirmDeleteId } =
+    useInlineCrud(EMPTY_FORM);
 
   const sources = useQuery(api.leadSources.getLeadSources, {
     organizationId,
@@ -42,18 +43,14 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
           type: form.type as any,
         });
       }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", type: "website" });
+      saved();
     } catch (error) {
       console.error("Failed to save lead source:", error);
     }
   };
 
   const handleEdit = (source: any) => {
-    setEditingId(source._id);
-    setForm({ name: source.name, type: source.type });
-    setShowForm(true);
+    startEdit(source._id, { name: source.name, type: source.type });
   };
 
   const handleDelete = async (id: string) => {
@@ -69,7 +66,7 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-text-primary">{VOCAB.origin.leadSources}</h3>
         <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", type: "website" }); }}
+          onClick={() => startCreate()}
         >
           Adicionar origem
         </Button>
@@ -94,7 +91,7 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
               </div>
               <div className="flex gap-2">
                 <button onClick={() => handleEdit(source)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => setConfirmDeleteId(source._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
+                <button onClick={() => askDelete(source._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
               </div>
             </div>
           ))}
@@ -105,7 +102,7 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
 
       <ConfirmDialog
         open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
+        onClose={cancelDelete}
         onConfirm={() => {
           if (confirmDeleteId) handleDelete(confirmDeleteId);
         }}
@@ -117,7 +114,7 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
 
       <Modal
         open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
+        onClose={() => cancel()}
         title={editingId ? "Editar origem do lead" : "Adicionar origem do lead"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -125,14 +122,14 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
             label="Nome"
             type="text"
             value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            onChange={(e) => patchForm({ name: e.target.value })}
             required
           />
           <div>
             <Select
             label="Tipo"
             value={form.type}
-            onValueChange={(type) => setForm({ ...form, type })}
+            onValueChange={(type) => patchForm({ type })}
             options={[
               { value: "website", label: "Site" },
               { value: "social", label: "Redes sociais" },
@@ -145,7 +142,7 @@ export function LeadSourcesPanel({ organizationId }: { organizationId: Id<"organ
           />
           </div>
           <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
+            <Button type="button" variant="secondary" onClick={() => cancel()} className="flex-1">Cancelar</Button>
             <Button type="submit" className="flex-1">Salvar</Button>
           </div>
         </form>

@@ -15,9 +15,9 @@ describe("retorno do OAuth da Meta aponta para uma tela real", () => {
   const url = new URL(redirectUrlFor("https://app.example.test", "ok"));
   const section = url.searchParams.get("secao");
 
-  test("a seção usada existe em Settings.tsx", () => {
+  test("a seção usada existe no registro de Configurações", () => {
     expect(section).toBe("channels");
-    expect(read("src/components/Settings.tsx")).toMatch(new RegExp(`\\{\\s*id:\\s*"${section}"`));
+    expect(read("src/components/settings/registry.ts")).toMatch(new RegExp(`\\{\\s*id:\\s*"${section}"`));
   });
 
   test("o caminho está sob /app/configuracoes, como o roteador do app", () => {

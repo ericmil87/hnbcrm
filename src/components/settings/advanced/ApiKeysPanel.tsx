@@ -1,3 +1,4 @@
+import { useInlineCrud } from "@/hooks/useInlineCrud";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -14,13 +15,21 @@ import { Spinner } from "@/components/ui/Spinner";
 import { Select } from "@/components/ui/Select";
 
 
+const EMPTY_FORM = { name: "", agentId: "", expiresAt: "" };
+
 export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showCreateApiKey, setShowCreateApiKey] = useState(false);
-  const [newApiKeyName, setNewApiKeyName] = useState("");
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
-  const [expiresAt, setExpiresAt] = useState<string>("");
+  const {
+    showForm: showCreateApiKey,
+    form: { name: newApiKeyName, agentId: selectedAgentId, expiresAt },
+    confirmDeleteId: confirmRevokeId,
+    startCreate,
+    cancel,
+    saved,
+    patchForm,
+    askDelete,
+    cancelDelete,
+  } = useInlineCrud(EMPTY_FORM);
   const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
-  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
 
   const apiKeys = useQuery(api.apiKeys.listApiKeysWithMembers, {
     organizationId,
@@ -55,10 +64,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
       });
 
       setRevealedApiKey(result.apiKey);
-      setNewApiKeyName("");
-      setSelectedAgentId("");
-      setExpiresAt("");
-      setShowCreateApiKey(false);
+      saved();
     } catch (error) {
       toast.error("Não foi possível criar a chave de integração.");
     }
@@ -71,7 +77,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
         organizationId,
       });
       toast.success("Chave revogada");
-      setConfirmRevokeId(null);
+      cancelDelete();
     } catch (error) {
       toast.error("Não foi possível revogar chave.");
     }
@@ -81,7 +87,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
     <Card>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-text-primary">Chaves de integração</h3>
-        <Button onClick={() => setShowCreateApiKey(true)}>
+        <Button onClick={() => startCreate()}>
           Criar chave
         </Button>
       </div>
@@ -111,7 +117,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
                 </Badge>
                 {key.isActive && (
                   <button
-                    onClick={() => setConfirmRevokeId(key._id)}
+                    onClick={() => askDelete(key._id)}
                     className="text-sm text-semantic-error hover:text-semantic-error/80"
                   >
                     Revogar
@@ -127,7 +133,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
 
       <ConfirmDialog
         open={!!confirmRevokeId}
-        onClose={() => setConfirmRevokeId(null)}
+        onClose={() => cancelDelete()}
         onConfirm={() => {
           if (confirmRevokeId) handleRevoke(confirmRevokeId);
         }}
@@ -139,7 +145,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
 
       <Modal
         open={showCreateApiKey}
-        onClose={() => setShowCreateApiKey(false)}
+        onClose={() => cancel()}
         title="Criar chave de integração"
       >
         <form onSubmit={handleCreateApiKey} className="space-y-4">
@@ -147,7 +153,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
             label="Nome da chave"
             type="text"
             value={newApiKeyName}
-            onChange={(e) => setNewApiKeyName(e.target.value)}
+            onChange={(e) => patchForm({ name: e.target.value })}
             placeholder="ex: Chave de Produção"
             required
           />
@@ -156,7 +162,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
               <Select
                 label="Agente de IA"
                 value={selectedAgentId}
-                onValueChange={setSelectedAgentId}
+                onValueChange={(agentId) => patchForm({ agentId })}
                 options={aiAgents.map((agent) => ({ value: agent._id, label: agent.name }))}
               />
             </div>
@@ -168,7 +174,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
             <input
               type="date"
               value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
+              onChange={(e) => patchForm({ expiresAt: e.target.value })}
               min={new Date().toISOString().split("T")[0]}
               className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
@@ -183,7 +189,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
             <Button
               type="button"
               variant="secondary"
-              onClick={() => setShowCreateApiKey(false)}
+              onClick={() => cancel()}
               className="flex-1"
             >
               Cancelar

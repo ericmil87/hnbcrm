@@ -1,61 +1,54 @@
-import { usePageTitle } from "@/hooks/usePageTitle";
-import { VOCAB } from "@/lib/vocab";
-import { useEffect, useRef, useState } from "react";
-import { useOutletContext, useSearchParams } from "react-router";
+import { Suspense, useMemo, useState } from "react";
+import { Navigate, useLocation, useNavigate, useOutletContext, useSearchParams } from "react-router";
+import { SearchX, ShieldAlert } from "lucide-react";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
-import { usePermissions } from "@/hooks/usePermissions";
-import { cn } from "@/lib/utils";
-import { ShieldAlert } from "lucide-react";
-import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
-import { ChannelsSection } from "@/components/settings/ChannelsSection";
-import { AiSection } from "@/components/settings/AiSection";
-import { DataSection } from "@/components/settings/DataSection";
-import { CentralSection } from "@/components/settings/CentralSection";
-import { OrgProfilePanel } from "@/components/settings/OrgProfilePanel";
-import { CustomFieldsPanel } from "@/components/settings/CustomFieldsPanel";
-import { LeadSourcesPanel } from "@/components/settings/LeadSourcesPanel";
-import { ApiKeysPanel } from "@/components/settings/advanced/ApiKeysPanel";
-import { WebhooksPanel } from "@/components/settings/advanced/WebhooksPanel";
+import { Card } from "@/components/ui/Card";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { SettingsNavView } from "@/components/settings/SettingsNavView";
+import { DEFAULT_SETTINGS_PANEL_ID, SETTINGS_PANELS } from "@/components/settings/registry";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { usePermissions } from "@/hooks/usePermissions";
+import { groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels } from "@/lib/settingsNav";
+import { searchSettingsPanels } from "@/lib/settingsSearch";
+import { VOCAB } from "@/lib/vocab";
 
-type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "data" | "notifications" | "central";
-
-const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
-  { id: "general", name: "Geral" },
-  { id: "ai", name: "IA" },
-  { id: "apikeys", name: VOCAB.apiKeys },
-  { id: "fields", name: "Campos personalizados" },
-  { id: "sources", name: VOCAB.origin.leadSources },
-  { id: "webhooks", name: "Webhooks" },
-  { id: "channels", name: "Canais" },
-  { id: "data", name: "Dados" },
-  { id: "notifications", name: "Notificações" },
-  { id: "central", name: VOCAB.unitsAndDepartments },
-];
-
-export function isSettingsSection(value: string | null): value is SettingsSection {
-  return SETTINGS_SECTIONS.some((section) => section.id === value);
+/** Fallback estático dos painéis lazy (sem spinner piscando). */
+function PanelSkeleton() {
+  return (
+    <Card aria-busy="true">
+      <Skeleton className="mb-4 h-6 w-48" />
+      <Skeleton className="mb-2 h-4 w-full" />
+      <Skeleton className="h-4 w-2/3" />
+    </Card>
+  );
 }
 
+/**
+ * Configurações em dois níveis. A URL (`?secao=<painel>`) é o estado: clicar num
+ * painel escreve o parâmetro (push). Painéis e grupos vêm de `settings/registry.ts`.
+ */
 export function Settings() {
-  usePageTitle(VOCAB.settings.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const { anyEnabled: anyModuleEnabled } = useOrgModules(organizationId);
+  const { modules } = useOrgModules(organizationId);
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState("");
 
-  // Deep-link `/app/configuracoes?secao=<id>` (usado pelo Painel).
-  const [searchParams] = useSearchParams();
-  const sectionParam = searchParams.get("secao");
-  const [activeSection, setActiveSection] = useState<SettingsSection>(
-    isSettingsSection(sectionParam) ? sectionParam : "general"
-  );
-  const lastParamRef = useRef<string | null>(sectionParam);
+  const visible = useMemo(() => visibleSettingsPanels({ can, modules }), [can, modules]);
+  // Param desconhecido: lista (celular) ou `general` (desktop), sem erro.
+  const resolved = resolveSettingsPanel(searchParams.get("secao"), visible);
+  const active =
+    resolved ?? (isMobile ? null : (visible.find((p) => p.id === DEFAULT_SETTINGS_PANEL_ID) ?? visible.find((p) => p.Component) ?? null));
 
-  useEffect(() => {
-    if (lastParamRef.current === sectionParam) return;
-    lastParamRef.current = sectionParam;
-    if (isSettingsSection(sectionParam)) setActiveSection(sectionParam);
-  }, [sectionParam]);
+  usePageTitle(active ? `${VOCAB.settings.title} · ${active.label}` : VOCAB.settings.title);
 
   if (!can("settings", "view")) {
     return (
@@ -66,43 +59,59 @@ export function Settings() {
     );
   }
 
-  // "Central" (módulos opcionais): quem pode ligar vê sempre; os demais só
-  // depois que algum módulo estiver ligado.
-  const showCentral = can("settings", "manage") || anyModuleEnabled;
-  const sections = SETTINGS_SECTIONS.filter((section) => section.id !== "central" || showCentral);
+  // Push: o "voltar" do navegador retorna à lista. Params de outro painel (ex.: `meta`) não acompanham.
+  const select = (id: string) => {
+    const panel = SETTINGS_PANELS.find((p) => p.id === id);
+    if (panel?.href) return navigate(panel.href);
+    setSearchParams({ secao: id }, { state: { fromList: true } });
+  };
+  const goBack = () => {
+    if ((location.state as { fromList?: boolean } | null)?.fromList) navigate(-1);
+    else setSearchParams({}, { replace: true });
+  };
+
+  if (active?.href) return <Navigate to={active.href} replace />;
+
+  const Panel = active?.Component;
+  const navItems = (panels: typeof visible) => groupSettingsPanels(panels);
+
+  if (isMobile && !active) {
+    const found = searchSettingsPanels(visible, query);
+    return (
+      <div className="space-y-4">
+        <PageHeader title={VOCAB.settings.title} />
+        <SearchInput value={query} onValueChange={setQuery} placeholder="Buscar nas configurações" ariaLabel="Buscar nas configurações" />
+        {found.length === 0 ? (
+          <EmptyState icon={SearchX} size="sm" title="Nada encontrado" description="Tente outra palavra, como “número” ou “chave”." />
+        ) : (
+          <SettingsNavView groups={navItems(found)} active={null} onSelect={select} variant="list" />
+        )}
+      </div>
+    );
+  }
+
+  const body = Panel && (
+    <Suspense fallback={<PanelSkeleton />}>
+      <Panel key={active.id} organizationId={organizationId} />
+    </Suspense>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title={active!.label} back={{ onClick: goBack }} />
+        {body}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-text-primary">Configurações</h2>
-
-      {/* Section tabs */}
-      <div className="flex gap-2 flex-wrap">
-        {sections.map((section) => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            className={cn(
-              "px-4 py-2 rounded-full text-sm font-medium transition-colors",
-              activeSection === section.id
-                ? "bg-brand-600 text-white"
-                : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
-            )}
-          >
-            {section.name}
-          </button>
-        ))}
+      <PageHeader title={VOCAB.settings.title} />
+      <div className="grid grid-cols-[14rem_minmax(0,1fr)] items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
+        <SettingsNavView groups={navItems(visible)} active={active?.id ?? null} onSelect={select} />
+        <div className="min-w-0">{body}</div>
       </div>
-
-      {activeSection === "general" && <OrgProfilePanel organizationId={organizationId} />}
-      {activeSection === "ai" && <AiSection organizationId={organizationId} />}
-      {activeSection === "apikeys" && <ApiKeysPanel organizationId={organizationId} />}
-      {activeSection === "fields" && <CustomFieldsPanel organizationId={organizationId} />}
-      {activeSection === "sources" && <LeadSourcesPanel organizationId={organizationId} />}
-      {activeSection === "webhooks" && <WebhooksPanel organizationId={organizationId} />}
-      {activeSection === "channels" && <ChannelsSection organizationId={organizationId} />}
-      {activeSection === "data" && <DataSection organizationId={organizationId} />}
-      {activeSection === "notifications" && <NotificationsSection organizationId={organizationId} />}
-      {activeSection === "central" && showCentral && <CentralSection organizationId={organizationId} />}
     </div>
   );
 }
