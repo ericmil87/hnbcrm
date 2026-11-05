@@ -5,7 +5,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { hasAccountEmail, isMembershipRevoked, requireAuth, requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
-import { createBoardWithStagesCore } from "./lib/boardOps";
+import { canReplaceDefaultBoard, createBoardWithStagesCore } from "./lib/boardOps";
 import { updateAgentProfileCore } from "./lib/attendantConfigOps";
 import { SEGMENT_TEMPLATES } from "./lib/onboardingTemplates";
 import {
@@ -230,6 +230,7 @@ async function loadOnboardingSnapshot(
   return {
     hasBusinessOffer: !!meta?.business?.offer?.trim(),
     legacyWizardCompleted: !!meta?.wizardCompletedAt,
+    legacyOrg: !!meta?.wizardCompletedAt && meta.wizardVersion !== 2,
     whatsappConnected,
     hasBridgeChannel,
     bridgeAiAckDone: aiConfig?.bridgeAiAck !== undefined,
@@ -265,6 +266,8 @@ async function resolveShouldShowWizard(
     memberWizardCompleted: progress ? progress.wizardCompleted : null,
   });
 }
+
+const REFERENCE_SCAN_LIMIT = 200;
 
 // "Primeiros passos" do Painel (A.7): itens derivados de dados reais. Mantém o
 // formato lido pelo front v1 (items[].id/label/completed, completedCount,
@@ -713,12 +716,16 @@ export const applyFunnelTemplate = mutation({
         const forms = await ctx.db
           .query("forms")
           .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-          .take(200);
+          .take(REFERENCE_SCAN_LIMIT);
         if (forms.some((f) => isOld(f.settings.stageId))) canReplace = false;
         const campaigns = await ctx.db
           .query("campaigns")
           .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-          .take(200);
+          .take(REFERENCE_SCAN_LIMIT);
+        // Lista cheia: pode haver referência além do limite; recusa a troca.
+        if (!canReplaceDefaultBoard({ forms, campaigns, limit: REFERENCE_SCAN_LIMIT })) {
+          canReplace = false;
+        }
         if (
           campaigns.some(
             (c) =>

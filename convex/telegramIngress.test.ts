@@ -409,7 +409,7 @@ describe("comandos e chat sem vínculo", () => {
     for (const section of ["<b>Ver</b>", "<b>Agir</b>", "<b>Configurar</b>"]) expect(help.body.text).toContain(section);
     expect(help.body.text.split("\n").length).toBeGreaterThan(12);
     // F3: free text is a Copilot turn; with the org's AI off it says so (§4.10).
-    expect(other.body.text).toBe("🤖 A IA não está ativada na Acme Corp. Um admin ativa em Configurações → IA.");
+    expect(other.body.text).toBe("🤖 A IA não está ativada na Acme Corp. Um admin ativa em Configurações › Atendente IA.");
   });
 
   test("/sair revoga todos os vínculos do chat e remove o teclado", async () => {

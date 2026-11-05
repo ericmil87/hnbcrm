@@ -118,7 +118,7 @@ async function resolveAttendant(db: Db, organizationId: Id<"organizations">, nam
   if (attendants.length === 0) {
     return {
       fail: humanAction(
-        "Esta organização ainda não tem Atendente IA. Crie um em Configurações › IA (o Copiloto não cria atendentes).",
+        "Esta organização ainda não tem Atendente IA. Crie um em Configurações › Atendente IA (o Copiloto não cria atendentes).",
         AI_SETTINGS_URL
       ),
     };
@@ -468,7 +468,7 @@ export async function runConfigCopilotWriteTool(
           return humanAction(
             `O autopilot só é liberado com ${MIN_REVIEWED} sugestões revisadas e ${Math.round(MIN_ACCEPTANCE * 100)}% de aceitação ` +
               `(hoje: ${gate.reviewed} revisadas, ${Math.round(gate.rate * 100)}% aceitas). Para ativar antes disso, abra ` +
-              `Configurações › IA, escolha "Ativar o autopilot antes do gate" e confirme o aceite de risco. O Copiloto não faz esse aceite.`,
+              `Configurações › Atendente IA, escolha "Ativar o autopilot antes do gate" e confirme o aceite de risco. O Copiloto não faz esse aceite.`,
             AI_SETTINGS_URL
           );
         }
@@ -556,7 +556,7 @@ export async function runConfigCopilotWriteTool(
         if (typeof args.vision !== "boolean") return { error: "vision deve ser verdadeiro ou falso" };
         if (!orgAiActive(org)) {
           return humanAction(
-            "A IA da organização está desligada. Para ligar a leitura de imagens, primeiro ative a IA em Configurações › IA (aceite LGPD). O Copiloto não faz esse aceite.",
+            "A IA da organização está desligada. Para ligar a leitura de imagens, primeiro ative a IA em Configurações › Atendente IA (aceite LGPD). O Copiloto não faz esse aceite.",
             AI_SETTINGS_URL
           );
         }
@@ -566,7 +566,7 @@ export async function runConfigCopilotWriteTool(
         if (typeof t !== "object" || t === null || typeof t.enabled !== "boolean") return { error: "transcription.enabled deve ser verdadeiro ou falso" };
         const wa = (await whatsappChannels(ctx.db, scope.organizationId)).filter((c) => c.channel === "whatsapp");
         if (wa.length === 0) {
-          return humanAction("Não há canal de WhatsApp conectado. Conecte um em Configurações › Canais.", CHANNELS_URL);
+          return humanAction("Não há canal de WhatsApp conectado. Conecte um em Configurações › WhatsApp e canais.", CHANNELS_URL);
         }
         let chosen = wa;
         if (t.all !== true) {
@@ -688,7 +688,7 @@ export async function executeConfigPendingAction(
     }
   }
   if (plan.visionEnabled !== undefined && !orgAiActive(org)) {
-    return fail("Ative a IA primeiro (Configurações › IA)");
+    return fail("Ative a IA primeiro (Configurações › Atendente IA)");
   }
 
   const current = await currentSnapshot(ctx, org, agent, plan);

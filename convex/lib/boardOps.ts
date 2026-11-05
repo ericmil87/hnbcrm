@@ -82,3 +82,16 @@ export async function createBoardWithStagesCore(
 
   return boardId;
 }
+
+/**
+ * Fail-closed da troca do board padrão: formulários e campanhas são lidos com
+ * `take(limit)`. Se qualquer lista veio cheia, pode haver referência a uma
+ * etapa além do limite, então a troca em lugar é recusada.
+ */
+export function canReplaceDefaultBoard(args: {
+  forms: ReadonlyArray<unknown>;
+  campaigns: ReadonlyArray<unknown>;
+  limit: number;
+}): boolean {
+  return args.forms.length < args.limit && args.campaigns.length < args.limit;
+}

@@ -315,7 +315,7 @@ describe("turno do Copiloto pelo Telegram (D9/D10)", () => {
   test("copilotEnabled:false e teto de gastos: cópias da §4.10, sem chamar o modelo", async () => {
     await seed({ copilotEnabled: false });
     await say("oi");
-    expect(sends()[0].body.text).toBe("🤖 O Copiloto está desligado na Acme Corp. Um admin liga em Configurações → IA.");
+    expect(sends()[0].body.text).toBe("🤖 O Copiloto está desligado na Acme Corp. Um admin liga em Configurações › Atendente IA.");
     expect(llmCalls).toHaveLength(0);
   });
 

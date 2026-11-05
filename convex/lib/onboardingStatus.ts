@@ -25,6 +25,11 @@ export interface OnboardingSnapshot {
   hasBusinessOffer: boolean;
   /** `onboardingMeta.wizardCompletedAt` (org legada que já concluiu o wizard v1). */
   legacyWizardCompleted: boolean;
+  /**
+   * Org legada: concluiu o wizard v1 (`wizardCompletedAt` sem `wizardVersion` 2).
+   * Nunca vê o wizard v2, então `business` e `test` não teriam como ser feitos.
+   */
+  legacyOrg?: boolean;
   /** Canal WhatsApp bridge `connected` ou Meta `active`. */
   whatsappConnected: boolean;
   /** Existe canal bridge ativo (o aceite só vale para ele). */
@@ -63,7 +68,10 @@ function saved(
 
 export function deriveOnboardingStatus(s: OnboardingSnapshot): OnboardingStatusResult {
   const steps: Record<OnboardingStepKey, OnboardingStepStatus> = {
-    business: s.hasBusinessOffer || saved(s, "business") === "done" ? "done" : "pending",
+    // Org legada nunca passa pelo wizard v2: `business` e `test` só se completam
+    // nele, então contam como feitos para o checklist não ficar preso.
+    business:
+      s.legacyOrg || s.hasBusinessOffer || saved(s, "business") === "done" ? "done" : "pending",
     funnel:
       saved(s, "funnel") === "done" || s.legacyWizardCompleted ? "done" : "pending",
     whatsapp: s.whatsappConnected ? "done" : saved(s, "whatsapp") === "skipped" ? "skipped" : "pending",
@@ -73,7 +81,7 @@ export function deriveOnboardingStatus(s: OnboardingSnapshot): OnboardingStatusR
         : saved(s, "attendant") === "skipped"
           ? "skipped"
           : "pending",
-    test: saved(s, "test") ?? "pending",
+    test: s.legacyOrg ? "done" : (saved(s, "test") ?? "pending"),
     extras: s.extrasEnabled ? "done" : saved(s, "extras") === "skipped" ? "skipped" : "pending",
     team: s.humanMemberCount > 1 ? "done" : saved(s, "team") === "skipped" ? "skipped" : "pending",
   };
