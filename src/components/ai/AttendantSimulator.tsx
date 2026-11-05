@@ -364,7 +364,7 @@ export function AttendantSimulator({
       <Modal
         open
         onClose={onClose ?? (() => {})}
-        title={groupMode ? "Simulador — testar num grupo" : "Simulador — testar a Atendente IA"}
+        title={groupMode ? "Simulador — testar num grupo" : "Simulador — testar o Atendente IA"}
       >
         {view}
       </Modal>

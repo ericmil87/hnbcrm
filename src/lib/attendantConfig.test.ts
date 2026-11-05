@@ -8,7 +8,16 @@ import {
   conversationFromProfile,
   conversationToPatch,
   conversationWarnings,
-  customizationToPatch,
+  behaviorErrors,
+  buildPanelPatch,
+  behaviorFromProfile,
+  behaviorToPatch,
+  followUpErrors,
+  isSameForm,
+  knowledgeFromTexts,
+  knowledgeToPatch,
+  pipelineErrors,
+  scheduleErrors,
   debounceWarning,
   followUpFromProfile,
   followUpResetDefaults,
@@ -16,6 +25,7 @@ import {
   handoffFromProfile,
   handoffToPatch,
   modeFromProfile,
+  modeToPatch,
   nextMode,
   personaFromTexts,
   personaToPatch,
@@ -30,10 +40,8 @@ import {
   scheduleFromProfile,
   scheduleToPatch,
   validateBotGuard,
-  validateCustomization,
   validateFollowUp,
   validateConversation,
-  type CustomizationForms,
 } from "./attendantConfig";
 
 const ok = (value: number | undefined) => ({ ok: true, value });
@@ -199,33 +207,92 @@ describe("proteção contra robôs", () => {
 
 describe("persona e conhecimento (safety net)", () => {
   it("toPatch NUNCA inclui os textos se não foram carregados", () => {
-    const f = personaFromTexts(undefined);
-    expect(f.loaded).toBe(false);
-    expect(personaToPatch(f)).toEqual({});
-    expect(personaToPatch({ systemPrompt: "x", knowledge: "y", loaded: false })).toEqual({});
+    const p = personaFromTexts(undefined);
+    expect(p.loaded).toBe(false);
+    expect(personaToPatch(p)).toEqual({});
+    expect(personaToPatch({ systemPrompt: "x", loaded: false })).toEqual({});
+    const k = knowledgeFromTexts(undefined);
+    expect(knowledgeToPatch(k)).toEqual({});
+    expect(knowledgeToPatch({ knowledge: "y", loaded: false })).toEqual({});
   });
-  it("carregados: manda ambos, inclusive vazios de propósito", () => {
-    expect(personaToPatch(personaFromTexts({ systemPrompt: "s", knowledge: null }))).toEqual({
-      systemPrompt: "s",
-      knowledge: "",
-    });
+  it("carregados: cada formulário manda só a própria chave, inclusive vazia de propósito", () => {
+    const texts = { systemPrompt: "s", knowledge: null };
+    expect(personaToPatch(personaFromTexts(texts))).toEqual({ systemPrompt: "s" });
+    expect(knowledgeToPatch(knowledgeFromTexts(texts))).toEqual({ knowledge: "" });
   });
-  it("o patch composto herda a regra", () => {
-    const patch = customizationToPatch({ ...forms(), persona: personaFromTexts(undefined) });
-    expect("systemPrompt" in patch).toBe(false);
-    expect("knowledge" in patch).toBe(false);
-    const withTexts = customizationToPatch({
-      ...forms(),
-      persona: personaFromTexts({ systemPrompt: "s", knowledge: "k" }),
-    });
-    expect(withTexts).toMatchObject({ systemPrompt: "s", knowledge: "k" });
+});
+
+describe("toPatch devolve só as chaves do formulário", () => {
+  const keys = (o: object) => Object.keys(o).sort();
+  const p = {};
+  it("horário, repasse, comportamento, follow-up, funil e modo", () => {
+    expect(keys(scheduleToPatch(scheduleFromProfile(p)))).toEqual(["schedule"]);
+    expect(keys(handoffToPatch(handoffFromProfile(p)))).toEqual(["handoffKeywords"]);
+    expect(keys(behaviorToPatch(behaviorFromProfile(p)))).toEqual([
+      "botGuard",
+      "includeCurrentDateTime",
+      "maxRepliesPerConversation",
+      "maxRepliesPerHour",
+      "messageDebounceSeconds",
+    ]);
+    expect(keys(followUpToPatch(followUpFromProfile(p)))).toEqual(["followUps"]);
+    expect(keys(pipelineToPatch(pipelineFromProfile(p)))).toEqual(["pipelineConfig"]);
+    expect(modeToPatch("autopilot")).toEqual({ mode: "autopilot" });
+  });
+});
+
+describe("erros por campo", () => {
+  it("horário: faixa e ordem", () => {
+    expect(scheduleErrors({ startHour: 9, endHour: 18 })).toEqual({});
+    expect(scheduleErrors({ startHour: 18, endHour: 9 }).endHour).toBeTruthy();
+    expect(scheduleErrors({ startHour: 24, endHour: 25 })).toHaveProperty("startHour");
+    expect(scheduleErrors({ startHour: 9, endHour: 0 })).toHaveProperty("endHour");
+    expect(scheduleErrors({ startHour: 18, endHour: 9 }).endHour).toBe("Horário: o fim precisa ser depois do início.");
+    expect(scheduleErrors({ allDay: true, startHour: 18, endHour: 9 })).toEqual({});
+  });
+  it("comportamento: aponta o campo certo e a etiqueta só com a proteção ligada", () => {
+    const base = behaviorFromProfile({});
+    expect(behaviorErrors(base)).toEqual({});
+    const bad = { ...base, debounceSeconds: "500", maxPerHour: "-1", botGuardTag: "" };
+    expect(Object.keys(behaviorErrors(bad)).sort()).toEqual(["botGuardTag", "debounceSeconds", "maxPerHour"]);
+    expect(behaviorErrors({ ...bad, botGuardEnabled: false })).not.toHaveProperty("botGuardTag");
+  });
+  it("follow-up: campo e janela", () => {
+    const base = followUpFromProfile({});
+    expect(followUpErrors(base)).toEqual({});
+    expect(followUpErrors({ ...base, maxChain: "9" })).toHaveProperty("maxChain");
+    expect(followUpErrors({ ...base, quietStart: "20", quietEnd: "8" })).toHaveProperty("quietEnd");
+  });
+  it("funil: limiar de 1 a 4", () => {
+    const base = pipelineFromProfile({});
+    expect(pipelineErrors(base)).toEqual({});
+    expect(pipelineErrors({ ...base, qualifyThreshold: 5 })).toHaveProperty("qualifyThreshold");
+  });
+});
+
+describe("isSameForm", () => {
+  it("compara por valor", () => {
+    expect(isSameForm({ a: 1 }, { a: 1 })).toBe(true);
+    expect(isSameForm({ a: 1 }, { a: 2 })).toBe(false);
   });
 });
 
 describe("horário, repasse e funil", () => {
-  it("horário padrão 9–18 em São Paulo", () => {
-    expect(scheduleToPatch(scheduleFromProfile({}))).toEqual({
+  it("sem horário salvo = 24 horas (schedule: null); desmarcar usa 9–18 em São Paulo", () => {
+    const form = scheduleFromProfile({});
+    expect(form.allDay).toBe(true);
+    expect(scheduleToPatch(form)).toEqual({ schedule: null });
+    expect(scheduleToPatch({ ...form, allDay: false })).toEqual({
       schedule: { timezone: "America/Sao_Paulo", startHour: 9, endHour: 18 },
+    });
+  });
+  it("horário salvo preserva fuso e dias no patch", () => {
+    const form = scheduleFromProfile({
+      schedule: { timezone: "America/Manaus", startHour: 8, endHour: 17, days: [1, 2, 3] },
+    });
+    expect(form.allDay).toBe(false);
+    expect(scheduleToPatch({ ...form, endHour: 19 })).toEqual({
+      schedule: { timezone: "America/Manaus", startHour: 8, endHour: 19, days: [1, 2, 3] },
     });
   });
   it("palavras-chave: separa por vírgula, apara e ignora vazias", () => {
@@ -296,27 +363,8 @@ describe("follow-up: patch e modo", () => {
   });
 });
 
-describe("validateCustomization", () => {
-  it("formulário padrão é válido", () =>
-    expect(validateCustomization(forms())).toEqual({ ok: true }));
-  it("ordem: conversa antes de follow-up antes da proteção contra robôs", () => {
-    const f = forms();
-    f.botGuard = { enabled: true, tag: "" };
-    f.followUp = { ...f.followUp, maxChain: "9" };
-    f.conversation = { ...f.conversation, debounceSeconds: "500" };
-    let r = validateCustomization(f);
-    expect(r.ok === false && r.message).toMatch(/^Agrupar mensagens por/);
-    f.conversation = conversationFromProfile({});
-    r = validateCustomization(f);
-    expect(r.ok === false && r.message).toMatch(/^Máximo de follow-ups/);
-    f.followUp = followUpFromProfile({});
-    r = validateCustomization(f);
-    expect(r.ok === false && r.message).toMatch(/^Proteção contra robôs/);
-  });
-});
-
 describe("aiSectionOrder", () => {
-  const FULL = ["activation", "featureToggles", "bridgeAi", "attendant", "usage", "privacy"];
+  const FULL = ["activation", "attendant"];
   it("inativa: só o wizard", () => {
     expect(aiSectionOrder({ active: false, hasAttendant: false })).toEqual(["wizard"]);
     expect(aiSectionOrder({ active: false, hasAttendant: true })).toEqual(["wizard"]);
@@ -324,20 +372,34 @@ describe("aiSectionOrder", () => {
   it("ativa sem atendente: só o wizard", () => {
     expect(aiSectionOrder({ active: true, hasAttendant: false })).toEqual(["wizard"]);
   });
-  it("ativa com atendente: cartões na ordem de sempre", () => {
+  it("ativa com atendente: ativação e atendente (o resto vive nos painéis próprios)", () => {
     expect(aiSectionOrder({ active: true, hasAttendant: true })).toEqual(FULL);
   });
 });
 
-function forms(): CustomizationForms {
-  const p = {};
-  return {
-    persona: personaFromTexts(undefined),
-    schedule: scheduleFromProfile(p),
-    handoff: handoffFromProfile(p),
-    conversation: conversationFromProfile(p),
-    botGuard: botGuardFromProfile(p),
-    followUp: followUpFromProfile(p),
-    pipeline: pipelineFromProfile(p),
-  };
-}
+describe("buildPanelPatch", () => {
+  const part = (dirty: boolean, patch: Record<string, unknown>, errors: Record<string, string> = {}) => ({
+    dirty,
+    errors,
+    patch: () => patch,
+  });
+  it("une só as chaves dos formulários alterados", () => {
+    const r = buildPanelPatch([part(true, { a: 1 }), part(false, { b: 2 }), part(true, { c: 3 })]);
+    expect(r).toEqual({ ok: true, patch: { a: 1, c: 3 } });
+  });
+  it("nada alterado = patch vazio", () => {
+    expect(buildPanelPatch([part(false, { a: 1 })])).toEqual({ ok: true, patch: {} });
+  });
+  it("o primeiro erro corta o salvar; erro de formulário intocado é ignorado", () => {
+    expect(buildPanelPatch([part(true, { a: 1 }, { x: "Follow-ups: erro" }), part(true, { b: 2 })])).toEqual({
+      ok: false,
+      message: "Follow-ups: erro",
+    });
+    expect(buildPanelPatch([part(false, { a: 1 }, { x: "ignorado" }), part(true, { b: 2 })]).ok).toBe(true);
+  });
+  it("mensagens trazem o rótulo do campo", () => {
+    const bad = { ...behaviorFromProfile({}), botGuardTag: "" };
+    expect(behaviorErrors(bad).botGuardTag).toMatch(/^Proteção contra robôs: /);
+    expect(followUpErrors({ ...followUpFromProfile({}), quietStart: "20", quietEnd: "8" }).quietEnd).toMatch(/^Follow-ups: /);
+  });
+});
