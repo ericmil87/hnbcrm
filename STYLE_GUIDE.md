@@ -117,10 +117,10 @@ Fonte da verdade: `src/index.css` (canais `--rgb-*`) e `src/lib/themeTokens.test
 | Marca | `brand-600` (botão) | `#EA580C` | `#AD3A0B` | `#008069` |
 | Semântica | `success` / `error` / `warning` / `info` | `#22C55E` / `#EF4444` / `#EAB308` / `#3B82F6` | `#15803D` / `#B91C1C` / `#8A5A00` / `#1D4ED8` | `#166534` / `#B91C1C` / `#8A5A00` / `#1D4ED8` |
 | IA | `ai-300` / `400` / `500` / `600` / `700` | `#D8B4FE` / `#C084FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#6B21A8` / `#7E22CE` / `#9333EA` / `#7E22CE` / `#6B21A8` | igual ao Claro |
-| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#A0350A` / `#7E22CE` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` |
+| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#9A3412` / `#7E22CE` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` |
 | Chat | `bubble-out-fg` | `#FFFFFF` | `#FFFFFF` | `#111B21` |
 
-`ai-*` substitui o `purple-*` do Tailwind (proibido em `src`, exceto `developers/JsonHighlighter.tsx`). A tabela completa de chat, bolhas e sombras está no plano `01-temas.md` §3.5-3.6. Divergência do plano: `bubble-out` do Claro é `#A0350A` (plano: `#C2410C`), porque o rodapé a 75% de branco só atinge 3,58:1 com `#C2410C`; com `#A0350A` chega a 4,62:1.
+`ai-*` substitui o `purple-*` do Tailwind (proibido em `src`, exceto `developers/JsonHighlighter.tsx`). A tabela completa de chat, bolhas e sombras está no plano `01-temas.md` §3.5-3.6. Divergência do plano: `bubble-out` do Claro é `#9A3412` (= `brand-700` do Claro), não `#C2410C`, porque o rodapé a 75% de branco só atinge 3,58:1 com `#C2410C`; com `#9A3412` chega a 4,80:1 (7,31 com branco pleno, 6,38 com o rótulo). A tabela 3.5 do plano continua com `#C2410C`, mas o valor ajustado vale e não deve ser revertido. Nessa bolha `bubble-out-fg/70` dá 4,20 e `/60` 3,49: use essas opacidades só em ícones, não em texto.
 
 #### Conformidade de Contraste
 

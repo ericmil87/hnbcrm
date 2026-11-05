@@ -15,7 +15,7 @@ function walk(dir: string): string[] {
 
 describe("themeLegacy", () => {
   it("src/index.css has no .light selector", () => {
-    expect(read("src/index.css")).not.toMatch(/(^|[\s,}])\.light\b/m);
+    expect(read("src/index.css")).not.toMatch(/\.light\b(?!-)/);
   });
 
   it("no file in src uses the [.light_&] variant", () => {
