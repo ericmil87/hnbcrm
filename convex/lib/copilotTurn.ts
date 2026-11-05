@@ -223,6 +223,8 @@ export type CopilotTurnOptions = {
   systemPrompt?: string;
   /** D17: bloco de contexto da conversa em foco — 2ª mensagem system, não persiste na thread. */
   contextBlock?: string;
+  /** Título forçado da thread nova (ex.: "Configuração guiada"); default = 1ª mensagem. */
+  threadTitle?: string;
   /** D22: restringe a lista de ferramentas deste turno (nunca amplia). */
   toolFilter?: (spec: AgentToolSpec) => boolean;
   /** Injetado nos executores (ex.: conversa em foco); o modelo nunca o vê. */
@@ -306,7 +308,7 @@ export async function runCopilotTurn(
   if (!loaded?.thread?.title) {
     await ctx.runMutation(internal.copilot.internalSetThreadTitle, {
       threadId,
-      title: userText.slice(0, 60),
+      title: opts.threadTitle ?? userText.slice(0, 60),
     });
   }
 

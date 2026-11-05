@@ -22,6 +22,7 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { ResolvedRoute } from "./lib/llm";
+import { buildSetupContextBlock } from "./lib/onboardingSetupContext";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import { SPEND_CAP_BLOCKED_MESSAGE, monthKeyUtc } from "./lib/aiSpend";
 import {
@@ -44,7 +45,7 @@ export const copilotStream = httpAction(async (ctx, request) => {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
   };
 
-  let body: { organizationId?: string; threadId?: string; message?: string };
+  let body: { organizationId?: string; threadId?: string; message?: string; purpose?: unknown };
   try {
     body = await request.json();
   } catch {
@@ -62,6 +63,9 @@ export const copilotStream = httpAction(async (ctx, request) => {
     });
   }
 
+  // `purpose`: só "setup" é reconhecido; qualquer outro valor = sem purpose.
+  const isSetup = body.purpose === "setup";
+
   // Autenticação + gate de ativação — a auth do request propaga pro runQuery.
   let session: CopilotSession;
   try {
@@ -70,8 +74,13 @@ export const copilotStream = httpAction(async (ctx, request) => {
     const message = e instanceof Error ? e.message : "Não autenticado";
     // "IA não está ativada" e "Copiloto está desativado" são gates da org
     // (403); o resto é sessão inválida (401).
-    const status = /não está ativada|desativad/i.test(message) ? 403 : 401;
-    return new Response(JSON.stringify({ error: message }), {
+    const gate = /não está ativada|desativad/i.test(message);
+    const status = gate ? 403 : 401;
+    const hint =
+      isSetup && /não está ativada/i.test(message)
+        ? " Marque 'Quero que a IA me ajude' no passo 1."
+        : "";
+    return new Response(JSON.stringify({ error: message + hint }), {
       status,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });
@@ -107,6 +116,16 @@ export const copilotStream = httpAction(async (ctx, request) => {
     );
   }
 
+  // Contexto do modo setup: montado AQUI, de dados da org da sessão. O cliente
+  // só manda `purpose`; nunca texto de contexto.
+  let contextBlock: string | undefined;
+  if (isSetup) {
+    const setup = await ctx.runQuery(internal.onboarding.internalGetSetupContext, {
+      organizationId,
+    });
+    if (setup) contextBlock = buildSetupContextBlock(setup);
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       const send = (payload: Record<string, unknown>) =>
@@ -120,6 +139,7 @@ export const copilotStream = httpAction(async (ctx, request) => {
           threadId: body.threadId as Id<"copilotThreads"> | undefined,
           text: userText,
           kind: "copilot",
+          ...(isSetup ? { contextBlock, threadTitle: "Configuração guiada" } : {}),
           onThread: (threadId) => send({ type: "thread", threadId }),
           onDelta: (text) => send({ type: "delta", text }),
           onTool: (name) => send({ type: "tool", name }),

@@ -31,6 +31,8 @@ export interface OnboardingSnapshot {
   hasBridgeChannel: boolean;
   bridgeAiAckDone: boolean;
   hasAttendant: boolean;
+  /** Atendente ativo (só para o contexto do Copiloto; opcional). */
+  attendant?: { name: string; mode: "suggest" | "autopilot" } | null;
   /** `getAiStatus.active`: IA ligada E aceite LGPD. */
   aiActive: boolean;
   /** `autoTranscribeAudio` em algum canal ou `visionEnabled`. */

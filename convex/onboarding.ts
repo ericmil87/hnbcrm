@@ -193,9 +193,10 @@ async function loadOnboardingSnapshot(
       q.eq("organizationId", organizationId).eq("type", "ai"),
     )
     .take(50);
-  const hasAttendant = aiMembers.some(
+  const attendantMember = aiMembers.find(
     (m) => m.status === "active" && m.agentProfile?.kind === "attendant",
   );
+  const hasAttendant = !!attendantMember;
 
   const humans = await ctx.db
     .query("teamMembers")
@@ -227,6 +228,9 @@ async function loadOnboardingSnapshot(
     hasBridgeChannel,
     bridgeAiAckDone: aiConfig?.bridgeAiAck !== undefined,
     hasAttendant,
+    attendant: attendantMember?.agentProfile
+      ? { name: attendantMember.name, mode: attendantMember.agentProfile.mode }
+      : null,
     aiActive: aiConfig?.enabled === true && aiConfig?.lgpdAck !== undefined,
     extrasEnabled:
       aiConfig?.visionEnabled === true || channels.some((c) => c.autoTranscribeAudio === true),
@@ -377,9 +381,10 @@ export async function buildStatusDetail(
   org: Doc<"organizations">,
   shouldShowWizard: boolean,
   accountHasEmail: boolean,
+  snapshot?: OnboardingSnapshot,
 ): Promise<StatusDetail> {
   const meta = org.onboardingMeta;
-  const derived = deriveOnboardingStatus(await loadOnboardingSnapshot(ctx, org));
+  const derived = deriveOnboardingStatus(snapshot ?? (await loadOnboardingSnapshot(ctx, org)));
   return {
     shouldShowWizard,
     accountHasEmail,
@@ -434,16 +439,25 @@ export const internalGetSetupContext = internalQuery({
     v.object({
       organizationName: v.string(),
       timezone: v.string(),
+      // Estado mascarado (fv2-20): só booleano/nome/modo; nunca telefone nem id.
+      whatsappConnected: v.boolean(),
+      attendant: v.union(
+        v.null(),
+        v.object({ name: v.string(), mode: v.union(v.literal("suggest"), v.literal("autopilot")) }),
+      ),
       ...statusDetailValidator.fields,
     }),
   ),
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
     if (!org) return null;
-    const detail = await buildStatusDetail(ctx, org, false, true);
+    const snapshot = await loadOnboardingSnapshot(ctx, org);
+    const detail = await buildStatusDetail(ctx, org, false, true, snapshot);
     return {
       organizationName: org.name,
       timezone: org.settings.timezone,
+      whatsappConnected: snapshot.whatsappConnected,
+      attendant: snapshot.attendant ?? null,
       ...detail,
     };
   },

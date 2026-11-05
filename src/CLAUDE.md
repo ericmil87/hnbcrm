@@ -31,6 +31,7 @@ src/
     │                           #   structure: PageHeader, SectionCard, EmptyState, Stepper, SearchInput, Popover, Menu, Tooltip (+ lib/popoverPosition.ts)
     ├── notifications/          # NotificationBell (unread count) → NotificationPanel (list, opens item pointer, mark read); NotificationPreferences (Settings)
     ├── copilot/CopilotPanel.tsx  # Copilot chat SlideOver: streams via useCopilotStream, renders tool calls + pendingAction confirmations
+    ├── copilot/ConfigPreview.tsx # Pure "Antes/Depois" preview of a pendingAction (bold labels, -/+ diff colors)
     ├── SEO.tsx, StructuredData.tsx  # Dynamic meta tags (react-helmet-async); JSON-LD
     ├── layout/                 # AuthLayout (auth → org → onboarding → ScrollRestoration → AppShell + Outlet), AppShell (Sidebar md+ / BottomTabBar mobile), Sidebar, BottomTabBar
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar

@@ -34,8 +34,8 @@ const SITE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
   ".convex.site"
 );
 
-function threadStorageKey(organizationId: string): string {
-  return `hnbcrm_copilot_thread_${organizationId}`;
+function threadStorageKey(organizationId: string, purpose?: string): string {
+  return `hnbcrm_copilot_thread_${purpose ? `${purpose}_` : ""}${organizationId}`;
 }
 
 type CopilotSSEEvent =
@@ -59,13 +59,15 @@ interface UseCopilotStreamResult {
 }
 
 export function useCopilotStream(
-  organizationId: Id<"organizations">
+  organizationId: Id<"organizations">,
+  options?: { purpose?: "setup" }
 ): UseCopilotStreamResult {
+  const purpose = options?.purpose;
   const token = useAuthToken();
 
   const [threadId, setThreadId] = useState<Id<"copilotThreads"> | null>(() => {
     if (typeof window === "undefined") return null;
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId));
+    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
     return (stored as Id<"copilotThreads"> | null) ?? null;
   });
   const [streamingText, setStreamingText] = useState("");
@@ -78,17 +80,17 @@ export function useCopilotStream(
 
   // Cada organização tem sua própria thread persistida — recarrega ao trocar de org.
   useEffect(() => {
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId));
+    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
     setThreadId((stored as Id<"copilotThreads"> | null) ?? null);
-  }, [organizationId]);
+  }, [organizationId, purpose]);
 
   const startNewThread = useCallback(() => {
-    window.localStorage.removeItem(threadStorageKey(organizationId));
+    window.localStorage.removeItem(threadStorageKey(organizationId, purpose));
     setThreadId(null);
     setStreamingText("");
     setActiveTools([]);
     setError(null);
-  }, [organizationId]);
+  }, [organizationId, purpose]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -115,6 +117,7 @@ export function useCopilotStream(
             organizationId,
             threadId: threadIdRef.current ?? undefined,
             message: trimmed,
+            ...(purpose ? { purpose } : {}),
           }),
         });
 
@@ -158,7 +161,7 @@ export function useCopilotStream(
               case "thread":
                 setThreadId(event.threadId as Id<"copilotThreads">);
                 window.localStorage.setItem(
-                  threadStorageKey(organizationId),
+                  threadStorageKey(organizationId, purpose),
                   event.threadId
                 );
                 break;
@@ -188,7 +191,7 @@ export function useCopilotStream(
         setIsStreaming(false);
       }
     },
-    [isStreaming, organizationId, token]
+    [isStreaming, organizationId, token, purpose]
   );
 
   return {
