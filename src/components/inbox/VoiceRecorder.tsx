@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -198,19 +199,20 @@ export function VoiceRecorder({
 
   if (mode === "idle") {
     return (
-      <button
-        type="button"
-        onClick={startRecording}
-        disabled={disabled}
-        className={cn(
-          "shrink-0 p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
-          "disabled:opacity-40 disabled:cursor-not-allowed"
-        )}
-        aria-label="Gravar nota de voz"
-        title="Gravar nota de voz"
-      >
-        <Mic size={18} />
-      </button>
+      <Tooltip content="Gravar nota de voz">
+        <button
+          type="button"
+          onClick={startRecording}
+          disabled={disabled}
+          className={cn(
+            "shrink-0 p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "disabled:opacity-40 disabled:cursor-not-allowed"
+          )}
+          aria-label="Gravar nota de voz"
+        >
+          <Mic size={18} />
+        </button>
+      </Tooltip>
     );
   }
 

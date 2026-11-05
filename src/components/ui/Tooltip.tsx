@@ -91,7 +91,7 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
             })}
       </span>
       <Popover
-        open={open}
+        open={open && Boolean(content)}
         onOpenChange={setOpen}
         anchor={anchorRef}
         side={side}

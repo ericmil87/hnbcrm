@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import {
   Ban,
@@ -46,27 +47,28 @@ interface SpecialMessageCardProps {
 function CopyButton({ value, outbound }: { value: string; outbound: boolean }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(value);
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        } catch {
-          /* clipboard indisponível: sem feedback */
-        }
-      }}
-      className={cn(
-        "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-        outbound ? "text-bubble-out-fg/80 hover:bg-bubble-out-fg/15" : "text-text-muted hover:bg-surface-overlay hover:text-text-primary"
-      )}
-      aria-label={copied ? "Telefone copiado" : `Copiar telefone ${value}`}
-      title={copied ? "Copiado" : "Copiar"}
-    >
-      {copied ? <Check size={16} /> : <Copy size={16} />}
-    </button>
+    <Tooltip content={copied ? "Copiado" : "Copiar"}>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(value);
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          } catch {
+            /* clipboard indisponível: sem feedback */
+          }
+        }}
+        className={cn(
+          "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+          outbound ? "text-bubble-out-fg/80 hover:bg-bubble-out-fg/15" : "text-text-muted hover:bg-surface-overlay hover:text-text-primary"
+        )}
+        aria-label={copied ? "Telefone copiado" : `Copiar telefone ${value}`}
+      >
+        {copied ? <Check size={16} /> : <Copy size={16} />}
+      </button>
+    </Tooltip>
   );
 }
 

@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { Check, CheckCheck, AlertCircle, AlertTriangle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -525,15 +526,16 @@ export function MessageBubble({
                   {groupSender.name}
                 </span>
                 {groupSender.contactId && group?.onOpenContact && (
-                  <button
-                    type="button"
-                    onClick={() => group.onOpenContact?.(groupSender.contactId!)}
-                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-micro font-medium text-bubble-in-link transition-colors hover:bg-brand-500/25"
-                    title="Abrir contato"
-                  >
-                    <UserRound size={9} />
-                    Contato
-                  </button>
+                  <Tooltip content="Abrir contato">
+                    <button
+                      type="button"
+                      onClick={() => group.onOpenContact?.(groupSender.contactId!)}
+                      className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-micro font-medium text-bubble-in-link transition-colors hover:bg-brand-500/25"
+                    >
+                      <UserRound size={9} />
+                      Contato
+                    </button>
+                  </Tooltip>
                 )}
               </>
             ) : (

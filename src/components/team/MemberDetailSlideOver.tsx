@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -474,12 +475,15 @@ export function MemberDetailSlideOver({
                     <code className="flex-1 text-xs font-mono text-text-primary break-all select-all">
                       {keyRevealed ? newKeyValue : newKeyValue.slice(0, 10) + "\u2022".repeat(20) + newKeyValue.slice(-4)}
                     </code>
-                    <button
-                      onClick={() => setKeyRevealed(!keyRevealed)}
-                      className="flex-shrink-0 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
-                    >
-                      {keyRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                    <Tooltip content={keyRevealed ? "Ocultar chave" : "Mostrar chave"}>
+                      <button
+                        aria-label={keyRevealed ? "Ocultar chave" : "Mostrar chave"}
+                        onClick={() => setKeyRevealed(!keyRevealed)}
+                        className="flex-shrink-0 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {keyRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </Tooltip>
                   </div>
                   <Button
                     size="sm"
@@ -537,13 +541,15 @@ export function MemberDetailSlideOver({
                         </p>
                       </div>
                       {canManage && key.isActive && (
-                        <button
-                          onClick={() => setRevokeKeyId(key._id)}
-                          className="flex-shrink-0 p-1.5 rounded-md text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
-                          title="Revogar chave"
-                        >
-                          <Ban size={14} />
-                        </button>
+                        <Tooltip content="Revogar chave">
+                          <button
+                            aria-label="Revogar chave"
+                            onClick={() => setRevokeKeyId(key._id)}
+                            className="flex-shrink-0 p-1.5 rounded-md text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
+                          >
+                            <Ban size={14} />
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
                   ))}

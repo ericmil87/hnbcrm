@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useMemo, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -115,44 +116,45 @@ export function ForwardModal({
                   isComposerBlockedByWindow(c.serviceWindowKind, c.serviceWindowExpiresAt, now);
                 return (
                   <li key={c._id}>
-                    <button
-                      type="button"
-                      onClick={() => handleForward(c._id)}
-                      disabled={!!sendingTo || windowClosed}
-                      title={windowClosed ? "Janela fechada — aguarde o cliente escrever de novo" : undefined}
-                      className={cn(
-                        "w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors",
-                        "hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500",
-                        "disabled:opacity-60 disabled:cursor-not-allowed"
-                      )}
-                    >
-                      <Avatar
-                        name={`${c.contact?.firstName ?? "?"} ${c.contact?.lastName ?? ""}`.trim() || "?"}
-                        size="sm"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-text-primary truncate">
-                          {c.contact?.firstName} {c.contact?.lastName}
-                        </p>
-                        {c.lead?.title && (
-                          <p className="text-xs text-text-muted truncate">{c.lead.title}</p>
+                    <Tooltip content={windowClosed ? "Janela fechada — aguarde o cliente escrever de novo" : undefined} asInfo>
+                      <button
+                        type="button"
+                        onClick={() => handleForward(c._id)}
+                        disabled={!!sendingTo || windowClosed}
+                        className={cn(
+                          "w-full flex items-center gap-3 p-3 rounded-lg text-left transition-colors",
+                          "hover:bg-surface-raised focus:outline-none focus:ring-2 focus:ring-brand-500",
+                          "disabled:opacity-60 disabled:cursor-not-allowed"
                         )}
-                        {windowClosed && (
-                          <p className="text-xs text-semantic-warning truncate">Janela fechada</p>
+                      >
+                        <Avatar
+                          name={`${c.contact?.firstName ?? "?"} ${c.contact?.lastName ?? ""}`.trim() || "?"}
+                          size="sm"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-text-primary truncate">
+                            {c.contact?.firstName} {c.contact?.lastName}
+                          </p>
+                          {c.lead?.title && (
+                            <p className="text-xs text-text-muted truncate">{c.lead.title}</p>
+                          )}
+                          {windowClosed && (
+                            <p className="text-xs text-semantic-warning truncate">Janela fechada</p>
+                          )}
+                        </div>
+                        <ChannelOriginBadge
+                          channel={c.channel}
+                          transport={c.channelProvider}
+                          account={c.channelConfigId ? byId.get(c.channelConfigId as string) : null}
+                          showAccount={shouldShowAccount(accounts, c.channel)}
+                        />
+                        {sending ? (
+                          <Loader2 size={16} className="animate-spin text-brand-500 shrink-0" />
+                        ) : (
+                          <Forward size={16} className="text-text-muted shrink-0" />
                         )}
-                      </div>
-                      <ChannelOriginBadge
-                        channel={c.channel}
-                        transport={c.channelProvider}
-                        account={c.channelConfigId ? byId.get(c.channelConfigId as string) : null}
-                        showAccount={shouldShowAccount(accounts, c.channel)}
-                      />
-                      {sending ? (
-                        <Loader2 size={16} className="animate-spin text-brand-500 shrink-0" />
-                      ) : (
-                        <Forward size={16} className="text-text-muted shrink-0" />
-                      )}
-                    </button>
+                      </button>
+                    </Tooltip>
                   </li>
                 );
               })}

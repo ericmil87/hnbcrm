@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useRef, useState } from "react";
 import { Smile } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -101,21 +102,22 @@ export function EmojiPickerButton({ onPick, disabled }: EmojiPickerButtonProps) 
 
   return (
     <div ref={rootRef} className="relative shrink-0">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-        className={cn(
-          "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
-          "disabled:opacity-40 disabled:cursor-not-allowed",
-          open && "text-brand-500 bg-brand-500/10"
-        )}
-        aria-label="Inserir emoji"
-        aria-expanded={open}
-        title="Inserir emoji"
-      >
-        <Smile size={18} />
-      </button>
+      <Tooltip content="Inserir emoji">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled}
+          className={cn(
+            "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "disabled:opacity-40 disabled:cursor-not-allowed",
+            open && "text-brand-500 bg-brand-500/10"
+          )}
+          aria-label="Inserir emoji"
+          aria-expanded={open}
+        >
+          <Smile size={18} />
+        </button>
+      </Tooltip>
 
       {open && (
         <div

@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
@@ -359,34 +360,32 @@ export function GroupMembersPanel({
                   Limpar
                 </Button>
                 {canCreateLead && (
+                  <Tooltip content={selectedWithoutLead.length === 0
+                        ? "Os selecionados já são contatos (ou não expõem telefone)"
+                        : undefined} asInfo>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={selectedWithoutLead.length === 0 || bulkProgress !== null}
+                      onClick={() => void handleBulkCreateLeads()}
+                    >
+                      {bulkProgress ? <Spinner size="sm" /> : <UserPlus size={14} />}
+                      Criar leads dos selecionados ({selectedWithoutLead.length})
+                    </Button>
+                  </Tooltip>
+                )}
+                <Tooltip content={onDispatchSelected
+                      ? "Abre uma campanha com os números selecionados"
+                      : "Precisa de permissão para gerenciar campanhas"} asInfo>
                   <Button
                     size="sm"
-                    variant="secondary"
-                    disabled={selectedWithoutLead.length === 0 || bulkProgress !== null}
-                    onClick={() => void handleBulkCreateLeads()}
-                    title={
-                      selectedWithoutLead.length === 0
-                        ? "Os selecionados já são contatos (ou não expõem telefone)"
-                        : undefined
-                    }
+                    disabled={!onDispatchSelected || selectedPhones.length === 0}
+                    onClick={() => onDispatchSelected?.(selectedPhones, groupChatId)}
                   >
-                    {bulkProgress ? <Spinner size="sm" /> : <UserPlus size={14} />}
-                    Criar leads dos selecionados ({selectedWithoutLead.length})
+                    <Send size={14} />
+                    Disparar para selecionados
                   </Button>
-                )}
-                <Button
-                  size="sm"
-                  disabled={!onDispatchSelected || selectedPhones.length === 0}
-                  onClick={() => onDispatchSelected?.(selectedPhones, groupChatId)}
-                  title={
-                    onDispatchSelected
-                      ? "Abre uma campanha com os números selecionados"
-                      : "Precisa de permissão para gerenciar campanhas"
-                  }
-                >
-                  <Send size={14} />
-                  Disparar para selecionados
-                </Button>
+                </Tooltip>
               </div>
               {!onDispatchSelected && (
                 <p className="mt-1.5 text-caption text-text-muted">

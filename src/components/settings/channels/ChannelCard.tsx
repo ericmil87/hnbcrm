@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { useQuery, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -132,16 +133,17 @@ export function ChannelCard({
               Testar conexão
             </Button>
             {!isBridge && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleSyncTemplates()}
-                disabled={syncingTemplates}
-                title="Sincroniza os templates de mensagem aprovados na Meta (usados nas campanhas)"
-              >
-                {syncingTemplates ? <Spinner size="sm" /> : <LayoutTemplate size={14} />}
-                Templates{templates !== undefined ? ` (${approvedCount})` : ""}
-              </Button>
+              <Tooltip content="Sincroniza os templates de mensagem aprovados na Meta (usados nas campanhas)" asInfo>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleSyncTemplates()}
+                  disabled={syncingTemplates}
+                >
+                  {syncingTemplates ? <Spinner size="sm" /> : <LayoutTemplate size={14} />}
+                  Templates{templates !== undefined ? ` (${approvedCount})` : ""}
+                </Button>
+              </Tooltip>
             )}
             <Button variant="ghost" size="sm" onClick={onEdit}>
               Editar
