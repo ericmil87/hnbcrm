@@ -17,6 +17,20 @@ export const TAB_ROUTES: Record<Tab, string> = {
   settings: "/app/configuracoes",
 };
 
-export const PATH_TO_TAB: Record<string, Tab> = Object.fromEntries(
-  Object.entries(TAB_ROUTES).map(([tab, path]) => [path, tab as Tab])
-) as Record<string, Tab>;
+/**
+ * Aba ativa de um caminho, pelo prefixo mais longo: sub-rotas como
+ * `/app/formularios/:formId/submissoes` ativam a aba da raiz (`forms`).
+ * Caminho fora das abas devolve `undefined`.
+ */
+export function activeTabForPath(pathname: string): Tab | undefined {
+  let best: Tab | undefined;
+  let bestLength = -1;
+  for (const [tab, root] of Object.entries(TAB_ROUTES) as [Tab, string][]) {
+    const matches = pathname === root || pathname.startsWith(root + "/");
+    if (matches && root.length > bestLength) {
+      best = tab;
+      bestLength = root.length;
+    }
+  }
+  return best;
+}

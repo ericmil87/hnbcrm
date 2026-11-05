@@ -29,7 +29,6 @@ import {
   ACTIVITY_ICONS,
   ACTIVITY_LABELS,
   PRIORITY_BADGE,
-  formatRelativeDate,
   type TaskColumnDoc,
   type TaskListItem,
 } from "@/components/tasks/TaskKanbanBoard";
@@ -68,6 +67,7 @@ import {
   useDroppable,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
+import { formatDueRelative } from "@/lib/format";
 
 // ============================================================================
 // Types & Constants
@@ -1030,7 +1030,7 @@ function TaskRow({
                   : "text-text-secondary"
           )}
         >
-          {formatRelativeDate(task.dueDate, now)}
+          {formatDueRelative(task.dueDate, now)}
         </span>
       )}
     </div>
@@ -1266,7 +1266,7 @@ function StatusCard({
                   : "text-text-muted"
               )}
             >
-              {formatRelativeDate(task.dueDate, now)}
+              {formatDueRelative(task.dueDate, now)}
             </span>
           )}
           <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />

@@ -41,6 +41,7 @@ import {
   ChevronRight,
   BarChart3,
 } from "lucide-react";
+import { formatMoney } from "@/lib/format";
 
 export function DashboardOverview() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -97,7 +98,7 @@ export function DashboardOverview() {
         <StatCard
           icon={DollarSign}
           label="Valor do Pipeline"
-          value={formatCurrency(totalPipelineValue)}
+          value={formatMoney(totalPipelineValue, "BRL", { compact: true })}
           colorClass="bg-semantic-success/10 text-semantic-success"
         />
         <StatCard
@@ -664,7 +665,7 @@ function existingFeatures(
       icon: Target,
       title: "Gestão de Leads",
       description: "Qualificação BANT, temperatura, prioridade e campos personalizados",
-      dataBadge: formatCurrency(totalPipelineValue),
+      dataBadge: formatMoney(totalPipelineValue, "BRL", { compact: true }),
       tab: "board" as Tab,
       onClick: () => onTabChange("board"),
     },
@@ -762,8 +763,3 @@ function comingSoonFeatures(onOpenAiSettings: () => void, onOpenDataSettings: ()
   ];
 }
 
-function formatCurrency(value: number): string {
-  if (value >= 1_000_000) return `R$ ${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `R$ ${(value / 1_000).toFixed(1)}k`;
-  return `R$ ${value.toLocaleString("pt-BR")}`;
-}

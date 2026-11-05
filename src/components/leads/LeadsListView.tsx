@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatRelativeTime } from "@/lib/auditUtils";
+import { formatMoney } from "@/lib/format";
 
 // Tabela de leads (view "Lista" do pipeline) + variante em cards para mobile.
 // Componente puramente apresentacional: não faz nenhuma query/mutation —
@@ -74,18 +75,6 @@ function getTemperatureVariant(temperature: LeadTemperature): "error" | "warning
   if (temperature === "hot") return "error";
   if (temperature === "warm") return "warning";
   return "info";
-}
-
-function formatCurrency(value: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat("pt-BR", {
-      style: "currency",
-      currency: currency || "BRL",
-      maximumFractionDigits: 0,
-    }).format(value);
-  } catch {
-    return `R$ ${value.toLocaleString("pt-BR")}`;
-  }
 }
 
 interface SortableHeaderProps {
@@ -194,7 +183,7 @@ export function LeadsListView({
                     </div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm font-semibold tabular-nums text-brand-400">
-                    {formatCurrency(lead.value, lead.currency)}
+                    {formatMoney(lead.value, lead.currency, { fractionDigits: 0 })}
                   </td>
                   <td className="px-4 py-3">
                     <Badge variant={getPriorityVariant(lead.priority)}>{PRIORITY_LABELS[lead.priority]}</Badge>
@@ -257,7 +246,7 @@ export function LeadsListView({
                   </span>
                   <span>•</span>
                   <span className="font-semibold tabular-nums text-brand-400">
-                    {formatCurrency(lead.value, lead.currency)}
+                    {formatMoney(lead.value, lead.currency, { fractionDigits: 0 })}
                   </span>
                 </div>
                 <div className="mt-2 flex items-center gap-1.5">

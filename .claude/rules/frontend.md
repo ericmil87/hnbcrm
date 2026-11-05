@@ -56,6 +56,8 @@ paths:
 - No raw hex colors when a token exists; no emoji icons; no English UI strings.
 
 ## Where logic goes
+- Component tests (`*.test.tsx`) run in the `componentes` vitest project (jsdom + Testing Library, `src/test/`); only presentational components fed by props, never mock `useQuery`. A test that reads from disk needs `// @vitest-environment node` (and a `.test.ts` name so it runs in `backend-e-lib`).
+- Date/time/relative/money/count formatting always comes from `src/lib/format.ts`; never `toLocale*String` or a local `formatCurrency`/`timeAgo` in a component.
 - Non-trivial pure logic goes in `src/lib/*.ts` with a sibling `*.test.ts` (vitest includes `src/**/*.test.ts`); components stay thin. Examples: `src/lib/contactName.ts`, `src/lib/fabPosition.ts`.
 - Rules shared with the backend are imported from `convex/lib/*` (single source), never copied.
 - New components: named export, `PascalCase.tsx`, `interface XProps`, placed in the feature folder (`inbox/`, `tasks/`, `settings/`...) or `ui/` if generic.

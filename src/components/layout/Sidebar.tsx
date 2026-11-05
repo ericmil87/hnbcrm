@@ -24,7 +24,7 @@ import {
   BarChart3,
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
-import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
+import { TAB_ROUTES, activeTabForPath } from "@/lib/routes";
 import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 
@@ -65,7 +65,7 @@ interface SidebarProps {
 export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher }: SidebarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const activeTab = PATH_TO_TAB[location.pathname];
+  const activeTab = activeTabForPath(location.pathname);
   const { can } = usePermissions(organizationId);
   const { modules } = useOrgModules(organizationId);
 

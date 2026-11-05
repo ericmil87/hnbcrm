@@ -32,12 +32,14 @@ export function CalendarPage() {
     navigateNext,
     goToToday,
     selectDay,
+    eventParam,
+    setSelectedEvent,
   } = useCalendarState();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [selectedEventSource, setSelectedEventSource] = useState<"event" | "task" | null>(null);
+  // Evento aberto pela URL (`?event=`); tarefas continuam em estado local.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [initialDate, setInitialDate] = useState<Date | undefined>();
   const [initialHour, setInitialHour] = useState<number | undefined>();
   const [initialMinute, setInitialMinute] = useState<number | undefined>();
@@ -145,8 +147,8 @@ export function CalendarPage() {
   };
 
   const handleEventClick = (eventId: string, source: "event" | "task") => {
-    setSelectedEventId(eventId);
-    setSelectedEventSource(source);
+    if (source === "event") setSelectedEvent(eventId);
+    else setSelectedTaskId(eventId);
   };
 
   const handleSlotClick = (date: Date, hour: number, minute: number) => {
@@ -271,26 +273,20 @@ export function CalendarPage() {
         initialMinute={initialMinute}
       />
 
-      {selectedEventSource === "event" && (
+      {eventParam && (
         <EventDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          eventId={selectedEventId}
+          open
+          onClose={() => setSelectedEvent(null)}
+          eventId={eventParam}
           onEdit={handleEditEvent}
         />
       )}
 
-      {selectedEventSource === "task" && (
+      {selectedTaskId && (
         <TaskDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          taskId={selectedEventId}
+          open
+          onClose={() => setSelectedTaskId(null)}
+          taskId={selectedTaskId}
         />
       )}
     </DndContext>

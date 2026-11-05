@@ -26,6 +26,7 @@ import {
   Inbox,
   FlaskConical,
 } from "lucide-react";
+import { formatRelative } from "@/lib/format";
 
 type FormDoc = {
   _id: Id<"forms">;
@@ -34,23 +35,6 @@ type FormDoc = {
   submissionCount?: number;
   lastSubmissionAt?: number;
 };
-
-function formatRelativeDate(timestamp: number): string {
-  const now = Date.now();
-  const diffMs = now - timestamp;
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffDay > 30) {
-    return new Date(timestamp).toLocaleDateString("pt-BR");
-  }
-  if (diffDay >= 1) return `${diffDay}d atrás`;
-  if (diffHour >= 1) return `${diffHour}h atrás`;
-  if (diffMin >= 1) return `${diffMin}min atrás`;
-  return "agora";
-}
 
 function statusLabel(status: FormDoc["status"]): { label: string; variant: "warning" | "success" | "default" } {
   switch (status) {
@@ -361,7 +345,7 @@ export function FormListPage() {
                     </span>
                     <span className="text-xs text-text-muted">
                       {lastSub
-                        ? formatRelativeDate(lastSub)
+                        ? formatRelative(lastSub, Date.now())
                         : "Nenhuma"}
                     </span>
                   </div>
