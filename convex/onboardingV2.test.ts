@@ -379,6 +379,18 @@ test("getOnboardingStatus de membro agent não expõe business", async () => {
   expect(asAdmin.steps?.business).toBe("done");
 });
 
+test("markWizardStep aceita funil pulado, mas recusa funil feito", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  const admin = as(t, s.adminUserId);
+  await admin.mutation(api.onboarding.markWizardStep, { organizationId: s.organizationId, step: "funnel", status: "skipped" });
+  await expect(
+    admin.mutation(api.onboarding.markWizardStep, { organizationId: s.organizationId, step: "funnel", status: "done" }),
+  ).rejects.toThrow(/calculado/);
+  const st = await admin.query(api.onboarding.getOnboardingStatus, { organizationId: s.organizationId });
+  expect(st.steps?.funnel).toBe("skipped");
+});
+
 test("markWizardStep só aceita passos não deriváveis", async () => {
   const t = convexTest(schema, modules);
   const s = await seed(t);

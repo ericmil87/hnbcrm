@@ -927,7 +927,7 @@ async function repointAttendants(
 }
 
 // Marca só o que NÃO dá para derivar de dados: "testou", "revisou" e "pulou"
-// de WhatsApp/equipe/extras. Business e funil têm mutation própria.
+// de funil/WhatsApp/equipe/extras. Business e o "feito" do funil têm mutation própria.
 export const markWizardStep = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -939,6 +939,7 @@ export const markWizardStep = mutation({
     await requirePermission(ctx, args.organizationId, "settings", "manage");
     const markable: Record<string, SavedStepStatus[]> = {
       test: ["done", "skipped"],
+      funnel: ["skipped"], // "done" do funil vem de applyFunnelTemplate
       attendant: ["skipped"],
       whatsapp: ["skipped"],
       team: ["skipped"],
