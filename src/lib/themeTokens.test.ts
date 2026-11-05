@@ -122,6 +122,9 @@ describe("themeTokens: aliases", () => {
   it.each(["success", "error", "warning", "info"])("--color-semantic-%s references its channel", (name) => {
     expect(root[`--color-semantic-${name}`]).toBe(`rgb(var(--rgb-semantic-${name}))`);
   });
+  it("--color-brand-500 references its channel", () => {
+    expect(root["--color-brand-500"]).toBe("rgb(var(--rgb-brand-500))");
+  });
   it("defines wallpaper, shadows and shimmer for the dark theme", () => {
     expect(root["--chat-wallpaper"]).toBe("none");
     expect(root["--shadow-bubble"]).toBe("none");

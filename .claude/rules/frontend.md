@@ -20,6 +20,7 @@ paths:
 - In raw CSS or `style={{}}` use the full-color aliases (`var(--surface-base)`, `var(--text-muted)`, `var(--border-default)`, `var(--color-semantic-error)`); never `var(--rgb-*)` outside `index.css` and `tailwind.config.js`.
 - The theme attribute lives on `<html>` (aliases are resolved on the element where they are declared; a wrapper-level theme would leave them on the root palette).
 - Chat tokens exist and must be used in new conversation code: `bg-chat-bg|chat-header|chat-send`, `bg-composer`, `bg-composer-field`, `bg-bubble-in|out|ai|note|system`, `text-bubble-out-fg|out-label|ai-label|note-label|in-link|out-link|system-fg`, `border-bubble-note-border`, `text-tick-read`, `bg-badge-unread` + `text-badge-unread-fg`, `shadow-bubble`, and the `.chat-wallpaper` utility. `ai-300..700` mirrors the current purple scale.
+- `shadow-card|card-hover|elevated|glow|bubble` point to CSS variables and do NOT combine with `shadow-<color>` (Tailwind cannot split the color out of the value).
 - Contrast helper: `src/lib/contrast.ts`; `src/lib/themeTokens.test.ts` freezes the dark palette and lists the AA pairs dark already fails.
 - Surfaces: `bg-surface-base` (page), `bg-surface-raised` (cards), `bg-surface-overlay` (modals, dropdowns), `bg-surface-sunken` (kanban columns, inset areas).
 - Text: `text-text-primary`, `text-text-secondary`, `text-text-muted`.

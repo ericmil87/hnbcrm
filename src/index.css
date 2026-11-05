@@ -89,6 +89,7 @@
   --color-semantic-error:   rgb(var(--rgb-semantic-error));
   --color-semantic-warning: rgb(var(--rgb-semantic-warning));
   --color-semantic-info:    rgb(var(--rgb-semantic-info));
+  --color-brand-500:        rgb(var(--rgb-brand-500));
 
   --chat-wallpaper: none;
 
@@ -127,6 +128,7 @@
   --text-primary:    rgb(var(--rgb-text-primary));
   --text-secondary:  rgb(var(--rgb-text-secondary));
   --text-muted:      rgb(var(--rgb-text-muted));
+  --color-brand-500: rgb(var(--rgb-brand-500));
 }
 /* === Prevent double-tap zoom on mobile === */
 html {
