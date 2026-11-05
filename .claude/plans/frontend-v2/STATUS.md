@@ -39,7 +39,9 @@
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
 | 15 | `feat/fv2-15-seletor-aparencia` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-15`) | revisão |
-| 17 | `feat/fv2-17-atendente-divisao` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-17`) | revisão |
+| 17 | `feat/fv2-17-atendente-divisao` | frontend-specialist | implementado (4542e70, 80fda9e, af7035c), em revisão | integrar |
+| 19 | `feat/fv2-19-atendente-formularios` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-19`, ramo criado a partir do fv2-17; faz merge de frontend-v2 antes dos gates) | revisão |
+| 21 | `feat/fv2-21-canais` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-21`; não cria `ChannelTranscriptionToggle`, que é do fv2-19; merge de frontend-v2 antes dos gates) | revisão |
 
 ## Parados (não integrar sem decisão do dono)
 
@@ -55,6 +57,6 @@
 ## Para retomar
 
 - Paralelismo ampliado a pedido do dono (05/11/2026, mensagem na sessão: "pode colocar mais agentes em paralelo"): PRs com arquivos disjuntos correm juntos; cada ramo faz merge de `frontend-v2` antes dos gates finais quando a base avançou.
-- Em curso: fv2-15 e fv2-17 (implementação). Depois: 19 (após 17), 21 (após 19), 22 (após 19/21). Depois: 15 (após 12/13/14), 19 (após 17), 21 (após 19), 22 (após 19/21)
+- Em curso: fv2-15, fv2-19, fv2-21 (implementação) e fv2-17 (revisão). fv2-22 entra após 19 e 21 (reaproveita `src/lib/channelConnect.ts` do fv2-21 no lugar de `pairingUi.ts`). Depois: 15 (após 12/13/14), 19 (após 17), 21 (após 19), 22 (após 19/21)
 - PR em rascunho para acompanhamento: https://github.com/ericmil87/hnbcrm/pull/40
 - Ramo em andamento: nenhum
