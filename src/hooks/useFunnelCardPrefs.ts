@@ -35,5 +35,7 @@ export function useFunnelCardPrefs(organizationId: string) {
     [organizationId]
   );
 
-  return [state.prefs, setPrefs] as const;
+  // Na troca de org, o primeiro render já usa a preferência da nova org (sem piscar a antiga).
+  const prefs = state.organizationId === organizationId ? state.prefs : read(organizationId);
+  return [prefs, setPrefs] as const;
 }

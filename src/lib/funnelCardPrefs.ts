@@ -24,7 +24,7 @@ export const FUNNEL_CARD_FIELD_LABELS: Record<FunnelCardField, string> = {
   temperature: "Temperatura",
   tags: "Etiquetas",
   assignee: "Responsável",
-  age: "Tempo",
+  age: "Tempo na etapa",
   lastMessage: "Última mensagem",
 };
 

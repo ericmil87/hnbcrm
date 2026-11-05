@@ -1,8 +1,9 @@
 import React from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Clock } from "lucide-react";
+import { Clock, Flame } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
 import { formatMoney, formatRelative } from "@/lib/format";
 import {
@@ -35,13 +36,26 @@ const DOT_COLOR = {
   default: "bg-text-muted",
 } as const;
 
-/** Bolinha colorida com o nome por extenso para leitores de tela. */
-function Dot({ variant, srLabel }: { variant: keyof typeof DOT_COLOR; srLabel: string }) {
+const ICON_COLOR = {
+  error: "text-semantic-error",
+  warning: "text-semantic-warning",
+  info: "text-semantic-info",
+  default: "text-text-muted",
+} as const;
+
+/** Marcador compacto: a forma (bolinha ou chama) diz o campo, a cor diz o valor; o texto vai para leitor de tela e dica. */
+function Marker({ kind, variant, label }: { kind: "dot" | "flame"; variant: keyof typeof DOT_COLOR; label: string }) {
   return (
-    <span className="inline-flex shrink-0 items-center">
-      <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", DOT_COLOR[variant])} />
-      <span className="sr-only">{srLabel}</span>
-    </span>
+    <Tooltip content={label}>
+      <span className="inline-flex shrink-0 items-center">
+        {kind === "dot" ? (
+          <span aria-hidden="true" className={cn("h-2 w-2 rounded-full", DOT_COLOR[variant])} />
+        ) : (
+          <Flame size={10} aria-hidden="true" className={ICON_COLOR[variant]} />
+        )}
+        <span className="sr-only">{label}</span>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -111,7 +125,12 @@ export function LeadCardView({
 
   if (compact) {
     const hasMetaRow =
-      show("contact") || show("value") || show("priority") || show("temperature") || show("assignee") || (show("tags") && tags.length > 0);
+      show("contact") ||
+      (show("value") && lead.value > 0) ||
+      show("priority") ||
+      show("temperature") ||
+      (show("assignee") && !!lead.assignee) ||
+      (show("tags") && tags.length > 0);
     return (
       <div className={frame} data-density="compact">
         {stripe}
@@ -126,7 +145,7 @@ export function LeadCardView({
           <div className="mt-0.5 flex min-h-6 items-center gap-2">
             {show("contact") &&
               (contactName ? (
-                <span className="min-w-0 flex-1 truncate text-caption text-text-secondary" title={contactName}>
+                <span className="min-w-0 flex-1 truncate text-caption text-text-secondary" title={lead.contact?.company ? `${contactName} • ${lead.contact.company}` : contactName}>
                   {contactName}
                   {lead.contact?.company && ` • ${lead.contact.company}`}
                 </span>
@@ -140,18 +159,19 @@ export function LeadCardView({
               </span>
             )}
             {show("priority") && (
-              <Dot variant={getPriorityVariant(lead.priority)} srLabel={`Prioridade: ${getPriorityLabel(lead.priority)}`} />
+              <Marker kind="dot" variant={getPriorityVariant(lead.priority)} label={`Prioridade: ${getPriorityLabel(lead.priority)}`} />
             )}
             {show("temperature") && (
-              <Dot
+              <Marker
+                kind="flame"
                 variant={getTemperatureVariant(lead.temperature)}
-                srLabel={`Temperatura: ${getTemperatureLabel(lead.temperature)}`}
+                label={`Temperatura: ${getTemperatureLabel(lead.temperature)}`}
               />
             )}
             {show("tags") && tags.length > 0 && (
-              <Badge variant="default" className="max-w-[5rem] shrink-0 truncate px-1.5 py-0 text-micro">
-                {tags[0]}
-                {tags.length > 1 && ` +${tags.length - 1}`}
+              <Badge variant="default" className="max-w-[6rem] shrink-0 px-1.5 py-0 text-micro">
+                <span className="truncate" title={tags[0]}>{tags[0]}</span>
+                {tags.length > 1 && <span className="shrink-0">&nbsp;+{tags.length - 1}</span>}
               </Badge>
             )}
             {show("assignee") && lead.assignee && (

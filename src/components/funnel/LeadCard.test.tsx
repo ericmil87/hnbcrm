@@ -91,7 +91,8 @@ describe("LeadCardView", () => {
 
     it("etiquetas ligadas mostram a primeira com contagem do resto", () => {
       render(<LeadCardView lead={{ ...lead, tags: ["vip", "b2b"] } as Lead} prefs={{ density: "compact", fields: ["tags"] }} />);
-      expect(screen.getByText(/vip \+1/)).toBeInTheDocument();
+      expect(screen.getByText("vip")).toHaveClass("truncate");
+      expect(screen.getByText(/\+1/)).toBeInTheDocument();
     });
 
     it("última mensagem: só com o campo ligado e o dado presente, em uma linha", () => {
@@ -128,5 +129,19 @@ describe("LeadCardView", () => {
       expect(screen.queryByText(/Ana Souza/)).not.toBeInTheDocument();
       expect(screen.queryByText("vip")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("LeadCardView compacto: linha de apoio", () => {
+  it("sem dados nos campos ligados não renderiza linha vazia", () => {
+    const { container } = render(
+      <LeadCardView lead={{ ...lead, value: 0, assignee: null }} prefs={{ density: "compact", fields: ["value", "assignee"] }} />
+    );
+    expect(container.querySelector(".min-h-6")).toBeNull();
+  });
+
+  it("temperatura usa chama e prioridade usa bolinha", () => {
+    const { container } = render(<LeadCardView lead={lead} />);
+    expect(container.querySelectorAll("svg.lucide-flame")).toHaveLength(1);
   });
 });
