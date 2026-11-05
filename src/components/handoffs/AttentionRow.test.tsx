@@ -81,4 +81,39 @@ describe("AttentionRow", () => {
     setup({ handoff: { ...handoff, summary: null, isGroup: true, suggestedActions: [] } });
     expect(screen.getByText("Grupo de WhatsApp")).toBeInTheDocument();
   });
+
+  it("compacto deixa todo contêiner de texto encolher (sem estourar o cartão no celular)", () => {
+    const { container } = render(
+      <AttentionRow
+        handoff={{ ...handoff, title: "Nome muito comprido ".repeat(8), reason: "Motivo ".repeat(20) }}
+        density="compact"
+        now={NOW}
+        expanded={false}
+        onToggleExpanded={vi.fn()}
+        onView={vi.fn()}
+        onAccept={vi.fn()}
+        onToggleGiveBack={vi.fn()}
+      />
+    );
+    const card = container.firstElementChild as HTMLElement;
+    expect(card).toHaveClass("w-full", "max-w-full", "min-w-0", "overflow-hidden");
+    expect(screen.getByRole("heading", { level: 3 })).toHaveClass("min-w-0", "truncate");
+    expect(screen.getByText(/^Motivo/)).toHaveClass("min-w-0", "max-w-full", "truncate");
+    expect(screen.getByText(/guarda-chuva/)).toHaveClass("min-w-0", "break-words");
+    // O solicitante só aparece de md para cima; abaixo disso vai nos detalhes.
+    expect(screen.getByText("Atendente IA").parentElement).toHaveClass("hidden", "md:inline-flex");
+    // Linha de ações quebra em vez de rolar na horizontal.
+    expect(screen.getByRole("button", { name: "Assumir conversa" }).parentElement).toHaveClass("flex-wrap");
+  });
+
+  it("entrega o botão Devolver à IA como âncora do popover", () => {
+    const seen: Array<HTMLElement | null> = [];
+    setup({
+      renderGiveBackPopover: (anchor) => {
+        seen.push(anchor.current);
+        return null;
+      },
+    });
+    expect(screen.getByRole("button", { name: "Devolver à IA" })).toBeInTheDocument();
+  });
 });

@@ -202,7 +202,7 @@ export function HandoffQueue() {
     : undefined;
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="min-w-0 space-y-4 pb-safe md:space-y-6">
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
 
       <PageHeader
@@ -235,7 +235,7 @@ export function HandoffQueue() {
           description={VOCAB.attention.emptyHint}
         />
       ) : (
-        <div className={density === "compact" ? "grid gap-2" : "grid gap-6"}>
+        <div className={density === "compact" ? "grid min-w-0 gap-2" : "grid min-w-0 gap-6"}>
           {handoffs.map((handoff) => (
             <AttentionRow
               key={handoff._id}
@@ -249,29 +249,28 @@ export function HandoffQueue() {
               onToggleGiveBack={() =>
                 setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
               }
-              giveBackPopover={
-                returnPopoverFor === handoff._id ? (
-                  <AiInstructionPopover
-                    title={
-                      handoff.isGroup
-                        ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
-                        : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
-                    }
-                    placeholder={
-                      handoff.isGroup
-                        ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
-                        : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
-                    }
-                    submitLabel="Devolver"
-                    direction="up"
-                    onSubmit={(instruction) => {
-                      setReturnPopoverFor(null);
-                      void handleReject(handoff._id, instruction, handoff.isGroup);
-                    }}
-                    onClose={() => setReturnPopoverFor(null)}
-                  />
-                ) : undefined
-              }
+              renderGiveBackPopover={(anchor) => (
+                <AiInstructionPopover
+                  open={returnPopoverFor === handoff._id}
+                  anchor={anchor}
+                  title={
+                    handoff.isGroup
+                      ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                      : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
+                  }
+                  placeholder={
+                    handoff.isGroup
+                      ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                      : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
+                  }
+                  submitLabel="Devolver"
+                  onSubmit={(instruction) => {
+                    setReturnPopoverFor(null);
+                    void handleReject(handoff._id, instruction, handoff.isGroup);
+                  }}
+                  onClose={() => setReturnPopoverFor(null)}
+                />
+              )}
             />
           ))}
         </div>
