@@ -57,17 +57,18 @@ export function StageColumn({
           <div className="flex items-center gap-2">
             <button
               onClick={onStageMenu}
-              className="p-1 rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-raised transition-colors"
+              className="flex h-8 w-8 coarse:h-11 coarse:w-11 items-center justify-center rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               aria-label="Menu da etapa"
+              aria-haspopup="dialog"
             >
-              <MoreHorizontal size={16} />
+              <MoreHorizontal size={16} aria-hidden="true" />
             </button>
             <button
               onClick={onQuickAdd}
-              className="p-1 rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-raised transition-colors"
+              className="flex h-8 w-8 coarse:h-11 coarse:w-11 items-center justify-center rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-raised transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               aria-label="Adicionar lead rápido"
             >
-              <Plus size={16} />
+              <Plus size={16} aria-hidden="true" />
             </button>
           </div>
         </div>

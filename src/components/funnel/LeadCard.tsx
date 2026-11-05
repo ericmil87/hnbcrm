@@ -17,9 +17,12 @@ import type { Lead } from "./types";
 export function LeadCardView({
   lead,
   variant = "default",
+  lastMessage,
 }: {
   lead: Lead;
   variant?: "default" | "placeholder" | "overlay";
+  /** Prévia da última mensagem da conversa; sem valor, o cartão fica como sempre foi. */
+  lastMessage?: string;
 }) {
   const priorityColor = {
     urgent: "bg-semantic-error",
@@ -60,6 +63,12 @@ export function LeadCardView({
         <p className="text-xs text-text-muted mb-2 pl-2 italic">Sem contato</p>
       )}
 
+      {lastMessage && (
+        <p className="text-caption text-text-muted mb-2 pl-2 line-clamp-2" data-testid="lead-last-message">
+          {lastMessage}
+        </p>
+      )}
+
       <div className="flex items-center justify-between mb-3 pl-2">
         <span className="text-lg font-semibold text-brand-400 tabular-nums">
           R$ {lead.value.toLocaleString("pt-BR")}
@@ -96,7 +105,7 @@ export function LeadCardView({
 
         {/* Days in Stage Indicator */}
         <div className={cn("flex items-center gap-1 text-xs font-medium", agingColor)}>
-          <Clock size={12} />
+          <Clock size={12} aria-hidden="true" />
           <span>{agingLabel}</span>
         </div>
       </div>
