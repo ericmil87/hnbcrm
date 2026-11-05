@@ -5,6 +5,8 @@
  * Curadoria humana esperada antes do autopilot (v2 §8).
  */
 
+import { SEGMENT_TEMPLATES } from "./onboardingTemplates";
+
 export interface AgentPersona {
   id: string;
   label: string;
@@ -86,6 +88,32 @@ export const AGENT_PERSONAS: AgentPersona[] = [
       "Quando o lead aceitar uma call ou reunião, mova para o estágio de reunião " +
       "agendada. Quando pedir proposta formal, avance para proposta.",
   },
+  {
+    id: "saas",
+    label: "Startup / SaaS",
+    systemPrompt:
+      "Você é o assistente comercial virtual de uma empresa de software no " +
+      "WhatsApp. Entenda o problema do lead, o porte da empresa e a urgência, e proponha " +
+      "uma demonstração. NUNCA prometa funcionalidade, preço ou prazo que não esteja no " +
+      `conhecimento. Contrato, desconto e integração específica: escale para a equipe. ${BASE_RULES}`,
+    handoffKeywords: ["humano", "atendente", "contrato", "desconto", "cancelar"],
+    advanceRules:
+      "Quando o lead aceitar uma demonstração, mova para o etapa de demonstração. " +
+      "Quando pedir proposta ou preço fechado, avance para proposta.",
+  },
+  {
+    id: "educacao",
+    label: "Educação / cursos",
+    systemPrompt:
+      "Você é consultor de matrículas virtual de uma escola ou curso no WhatsApp. Entenda " +
+      "o objetivo do aluno, recomende o curso, informe datas e valores conforme o " +
+      "conhecimento e convide para uma aula experimental. Bolsa, desconto e cancelamento: " +
+      `escale para a coordenação. ${BASE_RULES}`,
+    handoffKeywords: ["humano", "atendente", "bolsa", "desconto", "cancelar"],
+    advanceRules:
+      "Quando o aluno aceitar uma aula experimental, mova para o etapa de aula " +
+      "experimental. Quando decidir se matricular, avance para matrícula.",
+  },
 ];
 
 export function personaById(id: string): AgentPersona {
@@ -96,6 +124,9 @@ export function personaById(id: string): AgentPersona {
 export function personaForIndustry(industry: string | undefined | null): AgentPersona {
   if (!industry) return AGENT_PERSONAS[0];
   const normalized = industry.toLowerCase();
+  // Chave exata de segmento (saas, educacao...) lê o mapa do template.
+  const seg = SEGMENT_TEMPLATES.find((t) => t.key === normalized);
+  if (seg) return personaById(seg.personaId);
   if (/(imobili|imóve|imove)/.test(normalized)) return personaById("imobiliaria");
   if (/(clínic|clinic|saúde|saude|médic|medic|dent)/.test(normalized)) return personaById("clinica");
   if (/(commerce|loja|varejo)/.test(normalized)) return personaById("ecommerce");

@@ -54,3 +54,9 @@ Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadore
 ### Pedido vindo do Telegram força rascunho (v0.77.2, 03/11/2026)
 
 `aiReplyQueue` ganhou `requestedVia` (`telegram` | `telegram_auto`, junto de `instructedBy`), gravado quando a instrução ou a regeneração nasce no bot do Telegram (`returnToAiCore`/`requestAiDraftCore` com `via`). No claim, `forceSuggest` fica ligado para item `return_to_ai` com `requestedVia` telegram* (o `coach` já forçava), então a resposta vira rascunho mesmo com o perfil em `autopilot`. O commit copia a origem para `metadata.aiDraft.requestedVia` (base do auto-envio com veto) e, na resposta enviada, para `metadata.aiReply` (base do relay da IA). Devolução pelo app, sem Telegram, segue o modo do perfil. Detalhes: `docs/architecture/telegram.md`.
+
+## Modelos por segmento
+
+Funis, campos, sementes de persona, perguntas frequentes, palavras de repasse e perguntas de teste por segmento (`imobiliaria`, `saas`, `servicos`, `saude`, `ecommerce`, `educacao`, `outro`) moram em `convex/lib/onboardingTemplates.ts`, módulo puro sem `_generated`. O front importa de lá (`src/lib/onboardingTemplates.ts` reexporta e mantém o adaptador `INDUSTRY_TEMPLATES` do assistente v1). `personaForIndustry` (`convex/lib/agentPersonas.ts`) lê `personaId` do template quando a chave é um segmento exato; `financeiro` é legado e `segmentTemplate` o mapeia para `servicos`.
+
+Compatibilidade: `personaForIndustry("financeiro")` continua `geral`, enquanto `segmentTemplate("financeiro")` cai em `servicos`.
