@@ -32,6 +32,7 @@ const TasksPage = lazy(() => import("./components/TasksPage").then(m => ({ defau
 const CalendarPage = lazy(() => import("./components/calendar/CalendarPage").then(m => ({ default: m.CalendarPage })));
 const TeamPage = lazy(() => import("./components/TeamPage").then(m => ({ default: m.TeamPage })));
 const AuditLogs = lazy(() => import("./components/AuditLogs").then(m => ({ default: m.AuditLogs })));
+const OnboardingWizardV2 = lazy(() => import("./components/onboarding/v2/OnboardingWizardV2").then(m => ({ default: m.OnboardingWizardV2 })));
 const Settings = lazy(() => import("./components/Settings").then(m => ({ default: m.Settings })));
 const FormListPage = lazy(() => import("./components/forms/FormListPage").then(m => ({ default: m.FormListPage })));
 const FormBuilderPage = lazy(() => import("./components/forms/FormBuilderPage").then(m => ({ default: m.FormBuilderPage })));
@@ -84,6 +85,7 @@ const router = createBrowserRouter([
       { path: "campanhas", element: <LazyRoute Component={CampaignsPage} /> },
       { path: "grupos", element: <LazyRoute Component={GroupsPage} /> },
       { path: "central", element: <LazyRoute Component={CentralPage} /> },
+      { path: "configuracao-inicial", element: <LazyRoute Component={OnboardingWizardV2} /> },
       { path: "configuracoes", element: <LazyRoute Component={Settings} /> },
       { path: "*", element: <Navigate to={TAB_ROUTES.dashboard} replace /> },
     ],

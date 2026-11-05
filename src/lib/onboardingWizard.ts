@@ -103,6 +103,15 @@ export function firstPendingStep(status: StatusLike | undefined, savedStep?: num
   return savedStep > stepIndex(fromStatus) ? saved.id : fromStatus;
 }
 
+/**
+ * `markWizardStep` só grava "pulou" nestes passos. "Seu funil" não grava (o servidor
+ * só o marca como feito ao aplicar o funil): pular lá apenas avança, e a retomada
+ * usa a posição salva do membro.
+ */
+export function skipIsPersisted(step: WizardStepId): boolean {
+  return step === "whatsapp" || step === "attendant" || step === "test" || step === "extras" || step === "team";
+}
+
 export function nextStepId(current: WizardStepId, status?: StatusLike): WizardStepId | null {
   const visible = visibleWizardSteps(status);
   const i = visible.findIndex((s) => s.id === current);
@@ -251,14 +260,16 @@ export function stepAvailability(
 // ── Passo 4: Atendente IA ───────────────────────────────────────────────────
 
 export interface AttendantGateInput {
-  status: Pick<OnboardingStatus, "accountHasEmail" | "capabilities" | "bridgeAckPending"> | undefined;
+  status: Pick<OnboardingStatus, "accountHasEmail" | "capabilities"> | undefined;
   aiActive: boolean;
+  /** Há número por QR code e o aceite de risco da IA ainda não foi dado (`getAiStatus`). */
+  bridgeAckNeeded: boolean;
   hasAttendant: boolean;
   lgpdChecked: boolean;
 }
 
 /** Quais controles o passo mostra e quais estão liberados. Nunca inclui o modo automático. */
-export function attendantGate({ status, aiActive, hasAttendant, lgpdChecked }: AttendantGateInput) {
+export function attendantGate({ status, aiActive, bridgeAckNeeded, hasAttendant, lgpdChecked }: AttendantGateInput) {
   const emailOk = status?.accountHasEmail !== false;
   const llm = status?.capabilities?.llm !== false;
   return {
@@ -266,7 +277,7 @@ export function attendantGate({ status, aiActive, hasAttendant, lgpdChecked }: A
     /** O aceite marcado agora, ou já gravado antes. */
     lgpdAck: aiActive || lgpdChecked,
     canCreate: emailOk && !hasAttendant && (aiActive || lgpdChecked),
-    showBridgeAck: hasAttendant || aiActive || lgpdChecked ? status?.bridgeAckPending === true : false,
+    showBridgeAck: bridgeAckNeeded,
     /** "Escrever com IA" só existe com IA no servidor e IA ligada. */
     showWriteWithAi: llm && aiActive,
     /** Gerar exige o aceite já gravado: com a caixa só marcada, ainda não. */

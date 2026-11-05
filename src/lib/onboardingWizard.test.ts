@@ -15,6 +15,7 @@ import {
   nextStepId,
   readWizardData,
   savedStepFromProgress,
+  skipIsPersisted,
   stepAvailability,
   visibleWizardSteps,
   wizardDataPatch,
@@ -80,6 +81,15 @@ describe("passos", () => {
   });
 });
 
+describe("pular", () => {
+  it("só grava o pulo onde o servidor aceita", () => {
+    expect(skipIsPersisted("whatsapp")).toBe(true);
+    expect(skipIsPersisted("attendant")).toBe(true);
+    expect(skipIsPersisted("funnel")).toBe(false);
+    expect(skipIsPersisted("business")).toBe(false);
+  });
+});
+
 describe("passo 1", () => {
   const base = { ...businessDraftFromStatus(undefined), segment: "saas", offer: "Software de gestão" };
 
@@ -134,7 +144,7 @@ describe("disponibilidade", () => {
 
 describe("passo 4", () => {
   const gate = (over = {}) =>
-    attendantGate({ status: status(), aiActive: false, hasAttendant: false, lgpdChecked: false, ...over });
+    attendantGate({ status: status(), aiActive: false, bridgeAckNeeded: false, hasAttendant: false, lgpdChecked: false, ...over });
 
   it("passo 4 exige aceite antes de gerar", () => {
     expect(gate().canGenerate).toBe(false);
@@ -147,13 +157,13 @@ describe("passo 4", () => {
 
   it("sem capacidade de LLM esconde Escrever com IA", () => {
     const s = status({ capabilities: { managedBridge: true, transcription: false, llm: false, metaMessaging: false } });
-    expect(attendantGate({ status: s, aiActive: true, hasAttendant: true, lgpdChecked: false }).showWriteWithAi).toBe(false);
+    expect(attendantGate({ status: s, aiActive: true, bridgeAckNeeded: false, hasAttendant: true, lgpdChecked: false }).showWriteWithAi).toBe(false);
     expect(gate({ aiActive: true }).showWriteWithAi).toBe(true);
     expect(gate().showWriteWithAi).toBe(false);
   });
 
   it("mostra o aceite do QR code só quando pendente", () => {
-    expect(attendantGate({ status: status({ bridgeAckPending: true }), aiActive: true, hasAttendant: true, lgpdChecked: false }).showBridgeAck).toBe(true);
+    expect(gate({ aiActive: true, hasAttendant: true, bridgeAckNeeded: true }).showBridgeAck).toBe(true);
     expect(gate({ aiActive: true }).showBridgeAck).toBe(false);
   });
 
