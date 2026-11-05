@@ -44,8 +44,8 @@ export function ChannelCard({
 }) {
   const isBridge = config.provider === "bridge";
   const phoneNotificationsOn = config.bridgePhoneNotifications ?? true;
-  // Subtitle: prefer a human phone number; fall back to the provider's routing id.
-  const subtitle = config.displayPhoneNumber ?? (isBridge ? config.bridgeInstanceId : config.phoneNumberId);
+  // Subtitle: prefer a human phone number; sem número ainda, "Aguardando conexão".
+  const subtitle = config.displayPhoneNumber ?? (isBridge ? "Aguardando conexão" : config.phoneNumberId);
 
   // Templates da Meta (campanhas): sync sob demanda, cache em whatsappTemplates.
   const syncTemplates = useAction(api.whatsappTemplates.syncMetaTemplates);

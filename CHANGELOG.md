@@ -46,7 +46,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Conecte o número do WhatsApp pelo celular com um código de conexão: você informa o número, digita o código no WhatsApp (Aparelhos conectados › Conectar um aparelho › Conectar com número de telefone) e não precisa de outro aparelho para ler o QR code. No computador, o QR code continua sendo o padrão e se renova sozinho. O código vale por cerca de 2 minutos e você pode gerar outro depois de 2 minutos e meio.
 - Número desconectado agora mostra "Mostrar QR code" em destaque no próprio cartão. "Conectar número" passa a ser um único fluxo (WhatsApp oficial (Meta) ou WhatsApp por QR code), com aviso de risco de banimento e aceite obrigatório; os campos de configuração manual ficam recolhidos em "Configuração manual (avançado)".
 - Instagram e Messenger ganham um painel próprio em Configurações, separado de "Números conectados".
-- Pendência de publicação: a variável `CONVEX_SITE_URL` precisa existir no deployment de PROD antes de publicar. A tela deixa de enviar o endereço de recebimento de mensagens (`webhookUrl`) e o servidor passa a montá-lo com `CONVEX_SITE_URL`.
+- Pendência de publicação: confirmar que `CONVEX_SITE_URL` resolve em PROD (variável de sistema do Convex) antes de publicar. A tela deixa de enviar o endereço de recebimento de mensagens (`webhookUrl`) e o servidor passa a montá-lo com `CONVEX_SITE_URL`.
 
 ## [0.78.1] - 2026-11-03
 

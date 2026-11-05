@@ -22,7 +22,6 @@ import type { ChannelConfig } from "./types";
 // Desligado por padrão: enquanto estiver assim o CRM não chama nenhum endpoint
 // de histórico do servidor de conexão.
 
-import { historyApplied } from "./historyApplied";
 
 const HISTORY_LIMIT_MIN = 10;
 const HISTORY_LIMIT_MAX = 500;
@@ -65,7 +64,7 @@ export function BridgeHistoryPanel({
       const result = await setHistoryConfig({ configId: config._id, ...patch });
       // `applied: false` = preferência salva mas o servidor não confirmou.
       // É um aviso, não um erro: a próxima sincronização reenvia o teto.
-      if (historyApplied(result)) toast.success(result.detail);
+      if (result.gatewayApplied) toast.success(result.detail);
       else toast.warning(result.detail);
     } catch (e: any) {
       toast.error(e?.message ?? "Não foi possível salvar");

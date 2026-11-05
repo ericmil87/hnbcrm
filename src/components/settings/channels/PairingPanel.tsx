@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConvexError } from "convex/values";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   CODE_REGENERATE_AFTER_MS,
   PAIRING_POLL_INTERVAL_MS,
   canRequestNewCode,
-  codePollExpired,
+  codePollWindowEnd,
+  friendlyPairingError,
   codeSecondsLeft,
   formatCountdown,
   formatLinkingCode,
@@ -186,6 +188,7 @@ function QrTab({ configId, startPairing, pollPairing, onArtifact, onConnected }:
   const [error, setError] = useState<string | null>(null);
   // Incrementa para pedir um QR novo (botão "Gerar novo QR code").
   const [round, setRound] = useState(0);
+  const [fatal, setFatal] = useState(false);
   const callbacks = useRef({ onArtifact, onConnected });
   callbacks.current = { onArtifact, onConnected };
 
@@ -208,7 +211,7 @@ function QrTab({ configId, startPairing, pollPairing, onArtifact, onConnected }:
           setQr(r.qrCode);
           callbacks.current.onArtifact();
         }
-        setError(r.state === "error" ? (r.error ?? "Não foi possível obter o QR code.") : null);
+        setError(r.state === "error" ? friendlyPairingError(r.error, "Não foi possível obter o QR code.") : null);
         if (r.state === "connected") {
           stop();
           callbacks.current.onConnected(r);
@@ -217,13 +220,19 @@ function QrTab({ configId, startPairing, pollPairing, onArtifact, onConnected }:
         // Mantém o QR que já está na tela e tenta de novo no próximo ciclo.
         if (!cancelled) {
           setLoading(false);
-          setError(mutationErrorMessage(e, "Não foi possível consultar a conexão. Tentando de novo…"));
+          setError(friendlyPairingError(mutationErrorMessage(e, "Não foi possível consultar a conexão. Tentando de novo…")));
+          // Erro de permissão ou de conta (ConvexError) não se resolve sozinho: para de consultar.
+          if (e instanceof ConvexError) {
+            setFatal(true);
+            stop();
+          }
         }
       } finally {
         inFlight = false;
       }
     };
     setLoading(true);
+    setFatal(false);
     void run(() => startPairing({ configId, mode: "qr" }));
     // O poll renova o QR sozinho enquanto a aba estiver aberta.
     timer = setInterval(() => void run(() => pollPairing({ configId, mode: "qr" })), PAIRING_POLL_INTERVAL_MS);
@@ -250,7 +259,7 @@ function QrTab({ configId, startPairing, pollPairing, onArtifact, onConnected }:
             </p>
             {error && <p className="max-w-xs text-center text-xs text-semantic-warning">{error}</p>}
           </div>
-        ) : loading ? (
+        ) : loading || !error ? (
           <div className="flex flex-col items-center gap-3 text-text-muted">
             <Spinner />
             <span className="text-sm">Consultando a conexão…</span>
@@ -265,9 +274,9 @@ function QrTab({ configId, startPairing, pollPairing, onArtifact, onConnected }:
           </div>
         )}
       </div>
-      <Button variant="secondary" className="w-full" onClick={() => setRound((n) => n + 1)} disabled={loading}>
+      <Button variant="secondary" className="w-full" onClick={() => setRound((n) => n + 1)} disabled={loading && !fatal}>
         <RefreshCw size={16} />
-        Gerar novo QR code
+        {fatal ? "Tentar de novo" : "Gerar novo QR code"}
       </Button>
     </div>
   );
@@ -284,6 +293,8 @@ function CodeTab({
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState<string | undefined>();
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  // "Já digitei o código": o poll volta por mais 1 minuto.
+  const [resumedAt, setResumedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -294,7 +305,8 @@ function CodeTab({
 
   const phoneDigits = phone.replace(/\D/g, "");
   const elapsed = startedAt === null ? 0 : now - startedAt;
-  const expired = startedAt !== null && codePollExpired(elapsed);
+  const windowEnd = startedAt === null ? 0 : codePollWindowEnd(startedAt, resumedAt);
+  const expired = startedAt !== null && now >= windowEnd;
 
   const generate = async () => {
     setStarting(true);
@@ -307,37 +319,32 @@ function CodeTab({
         return;
       }
       if (r.state === "error" || !r.linkingCode) {
-        setError(r.error ?? "Não foi possível gerar o código de conexão.");
+        setError(friendlyPairingError(r.error, "Não foi possível gerar o código de conexão."));
         return;
       }
       setCode((prev) => keepLinkingCode(prev, r.linkingCode));
       setPollWarning(null);
       const t = Date.now();
       setNow(t);
+      setResumedAt(null);
       setStartedAt(t);
       callbacks.current.onArtifact();
     } catch (e) {
-      setError(mutationErrorMessage(e, "Não foi possível gerar o código de conexão."));
+      setError(friendlyPairingError(mutationErrorMessage(e, "Não foi possível gerar o código de conexão.")));
     } finally {
       setStarting(false);
     }
   };
 
-  // Contagem a cada segundo; consulta o estado a cada 4 s por até 3 minutos.
+  // Contagem a cada segundo; consulta o estado a cada 4 s por até 3 minutos (mais 1 depois de "Já digitei").
   useEffect(() => {
     if (startedAt === null) return;
     let cancelled = false;
     let inFlight = false;
+    let finalDone = false;
     let lastPoll = startedAt;
-    const timer = setInterval(() => {
-      const t = Date.now();
-      setNow(t);
-      if (codePollExpired(t - startedAt)) {
-        clearInterval(timer);
-        return;
-      }
-      if (inFlight || t - lastPoll < PAIRING_POLL_INTERVAL_MS) return;
-      lastPoll = t;
+    const end = codePollWindowEnd(startedAt, resumedAt);
+    const doPoll = () => {
       inFlight = true;
       void pollPairing({ configId, mode: "code" })
         .then((r) => {
@@ -349,20 +356,37 @@ function CodeTab({
           }
           // O poll não reenvia o código: mantém o último.
           setCode((prev) => keepLinkingCode(prev, r.linkingCode));
-          setPollWarning(r.state === "error" ? (r.error ?? null) : null);
+          setPollWarning(r.state === "error" ? friendlyPairingError(r.error) : null);
         })
         .catch((e) => {
-          if (!cancelled) setPollWarning(mutationErrorMessage(e, "Não foi possível consultar a conexão. Tentando de novo…"));
+          if (!cancelled)
+            setPollWarning(friendlyPairingError(mutationErrorMessage(e, "Não foi possível consultar a conexão. Tentando de novo…")));
         })
         .finally(() => {
           inFlight = false;
         });
+    };
+    const timer = setInterval(() => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= end) {
+        // Um poll final antes de parar.
+        if (!finalDone) {
+          finalDone = true;
+          if (!inFlight) doPoll();
+        }
+        clearInterval(timer);
+        return;
+      }
+      if (inFlight || t - lastPoll < PAIRING_POLL_INTERVAL_MS) return;
+      lastPoll = t;
+      doPoll();
     }, 1000);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [startedAt, configId, pollPairing]);
+  }, [startedAt, resumedAt, configId, pollPairing]);
 
   const canAnother = startedAt !== null && canRequestNewCode(elapsed);
   const secondsLeft = codeSecondsLeft(elapsed);
@@ -418,7 +442,9 @@ function CodeTab({
             </Button>
             <p className="flex items-center gap-1.5 text-xs text-text-muted" role="status">
               {expired ? (
-                "Este código venceu. Gere outro código para tentar de novo."
+                "Paramos de consultar. Se já digitou o código, toque em “Já digitei o código”; senão, gere outro."
+              ) : secondsLeft === 0 ? (
+                "O código pode ter vencido. Gere outro."
               ) : (
                 <>
                   <RefreshCw size={12} className="animate-spin" />
@@ -436,6 +462,19 @@ function CodeTab({
               Toque em <span className="text-text-primary">Conectar com número de telefone</span> e digite o código.
             </li>
           </ol>
+          {expired && (
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => {
+                const t = Date.now();
+                setNow(t);
+                setResumedAt(t);
+              }}
+            >
+              Já digitei o código
+            </Button>
+          )}
           <Button
             variant="secondary"
             className="w-full"

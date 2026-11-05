@@ -170,7 +170,7 @@ export function QrCodeConnectForm({
         required
       />
 
-      <CollapsibleSection title="Configuração manual (avançado)" defaultOpen={isEditing || !managedAvailable}>
+      <CollapsibleSection title="Configuração manual (avançado)" defaultOpen={isEditing || !managedAvailable || source !== "managed"}>
         <div className="space-y-4">
           {!isEditing && (
             <SegmentedControl
@@ -217,6 +217,7 @@ export function QrCodeConnectForm({
               <Input
                 label="Token da conexão"
                 type="password"
+                autoComplete="new-password"
                 value={form.bridgeToken}
                 onChange={(e) => setForm({ ...form, bridgeToken: e.target.value })}
                 placeholder={isEditing ? "•••• (cole para substituir)" : "Token da conexão"}
@@ -236,6 +237,7 @@ export function QrCodeConnectForm({
               <Input
                 label="Token de administrador do servidor"
                 type="password"
+                autoComplete="new-password"
                 value={form.adminToken}
                 onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
                 placeholder="Token de administração do servidor"

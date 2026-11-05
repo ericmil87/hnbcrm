@@ -9,6 +9,9 @@ import {
   formatCountdown,
   formatLinkingCode,
   keepLinkingCode,
+  codePollWindowEnd,
+  friendlyPairingError,
+  GENERIC_PAIRING_ERROR,
 } from "./channelConnect";
 
 describe("channelConnect", () => {
@@ -48,5 +51,17 @@ describe("channelConnect", () => {
     expect(keepLinkingCode("ABCD1234", undefined)).toBe("ABCD1234");
     expect(keepLinkingCode("ABCD1234", "WXYZ9876")).toBe("WXYZ9876");
     expect(keepLinkingCode(undefined, undefined)).toBeUndefined();
+  });
+
+  it("a janela do poll é de 3 min, ou 1 min depois de Já digitei o código", () => {
+    expect(codePollWindowEnd(1000, null)).toBe(1000 + CODE_POLL_MAX_MS);
+    expect(codePollWindowEnd(1000, 500_000)).toBe(560_000);
+  });
+
+  it("troca erros técnicos por um texto genérico", () => {
+    expect(friendlyPairingError("gateway HTTP 502")).toBe(GENERIC_PAIRING_ERROR);
+    expect(friendlyPairingError("Erro do bridge")).toBe(GENERIC_PAIRING_ERROR);
+    expect(friendlyPairingError("Número inválido. Informe o número com DDD.")).toBe("Número inválido. Informe o número com DDD.");
+    expect(friendlyPairingError(undefined, "Falhou")).toBe("Falhou");
   });
 });

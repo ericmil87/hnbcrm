@@ -92,3 +92,19 @@ describe("ChannelConnectCardView", () => {
     expect(screen.getByText(/Restam 2 códigos/)).toBeInTheDocument();
   });
 });
+
+describe("ChannelConnectCardView: configuração manual", () => {
+  it("campos manuais aparecem só no bloco avançado, conforme a origem", async () => {
+    const user = userEvent.setup();
+    setup({ defaults: { managedAvailable: true } });
+    await user.click(screen.getByRole("button", { name: /WhatsApp por QR code/ }));
+    await user.click(screen.getByRole("radio", { name: "Criar no meu servidor" }));
+    expect(screen.getByLabelText("Token de administrador do servidor")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText("URL do servidor de conexão")).toBeInTheDocument();
+    expect(screen.queryByLabelText("ID da conexão")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Conexão existente" }));
+    expect(screen.getByLabelText("ID da conexão")).toBeInTheDocument();
+    expect(screen.getByLabelText("Token da conexão")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.queryByLabelText("Token de administrador do servidor")).not.toBeInTheDocument();
+  });
+});

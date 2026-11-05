@@ -55,3 +55,20 @@ export function codePollExpired(elapsedMs: number): boolean {
 export function keepLinkingCode(previous: string | undefined, next: string | undefined): string | undefined {
   return next && next.length > 0 ? next : previous;
 }
+
+/** Depois de "Já digitei o código", o poll volta por mais 1 minuto. */
+export const CODE_RESUME_MS = 60_000;
+
+/** Fim da janela de consulta do código: 3 min do pedido, ou 1 min depois de "Já digitei o código". */
+export function codePollWindowEnd(startedAt: number, resumedAt: number | null): number {
+  return resumedAt !== null ? resumedAt + CODE_RESUME_MS : startedAt + CODE_POLL_MAX_MS;
+}
+
+export const GENERIC_PAIRING_ERROR = "Não foi possível conectar agora. Tente de novo em instantes.";
+
+/** Erros com termos técnicos (gateway, bridge, HTTP 5xx) viram um texto genérico em PT-BR. */
+export function friendlyPairingError(message: string | null | undefined, fallback?: string): string {
+  const m = (message ?? "").trim();
+  if (!m) return fallback ?? GENERIC_PAIRING_ERROR;
+  return /gateway|bridge|HTTP \d/i.test(m) ? GENERIC_PAIRING_ERROR : m;
+}

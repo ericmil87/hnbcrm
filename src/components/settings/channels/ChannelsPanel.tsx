@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -45,6 +45,9 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
     | undefined;
   // WhatsApp (oficial e por QR code) segue no fluxo de sempre; Instagram/Messenger ficam em InstagramPanel.
   const configs = allConfigs?.filter((c): c is ChannelConfig => c.channel === "whatsapp");
+  const metaNotActive = (allConfigs ?? []).filter(
+    (c) => c.channel !== "whatsapp" && (c as { status?: string }).status !== "active"
+  ).length;
 
   // Volta do OAuth da Meta: /app/configuracoes?secao=channels&meta=<code>[&pendente=<id>].
   const [searchParams, setSearchParams] = useSearchParams();
@@ -67,6 +70,8 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
         const next = new URLSearchParams(prev);
         next.delete("meta");
         next.delete("pendente");
+        // Conectado: as contas moram em "Instagram e Messenger".
+        if (metaCode === "ok") next.set("secao", "instagram");
         return next;
       },
       { replace: true }
@@ -111,6 +116,16 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
           if (kind === "success") toast.success(text);
           else if (kind === "info") toast.info(text);
           else toast.error(text);
+          if (kind === "success") {
+            setSearchParams(
+              (prev) => {
+                const next = new URLSearchParams(prev);
+                next.set("secao", "instagram");
+                return next;
+              },
+              { replace: true }
+            );
+          }
         }
       } catch {
         setFinalizeError(true);
@@ -258,6 +273,22 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
           </Button>
         </div>
       )}
+      {metaNotActive > 0 && (
+        <div
+          role="status"
+          className="flex flex-col gap-2 rounded-card border border-semantic-warning/30 bg-semantic-warning/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <p className="text-text-primary">
+            {metaNotActive === 1
+              ? "Uma conta do Instagram ou Messenger não está ativa."
+              : `${metaNotActive} contas do Instagram ou Messenger não estão ativas.`}
+          </p>
+          <Link to="?secao=instagram" className="inline-flex min-h-11 items-center font-medium text-brand-500 underline hover:text-brand-400">
+            Reconectar em Instagram e Messenger
+          </Link>
+        </div>
+      )}
+
       <Card>
         <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
           <div className="flex items-center gap-3">
