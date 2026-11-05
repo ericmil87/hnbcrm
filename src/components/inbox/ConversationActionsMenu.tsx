@@ -158,7 +158,7 @@ export function ConversationActionsMenu({
             {archived ? "Desarquivar conversa" : "Arquivar conversa"}
           </button>
 
-          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted border-t border-border mt-1">
+          <p className="px-3 pt-2 pb-1 text-caption font-semibold uppercase tracking-wide text-text-muted border-t border-border mt-1">
             Etiquetas
           </p>
           {labels === undefined ? (

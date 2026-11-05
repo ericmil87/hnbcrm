@@ -75,7 +75,7 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
             key={date.toISOString()}
             className="flex-1 text-center py-1 md:py-2 border-r border-border last:border-r-0 min-w-0"
           >
-            <div className="text-[10px] md:text-xs text-text-muted font-medium leading-tight">
+            <div className="text-caption md:text-xs text-text-muted font-medium leading-tight">
               {WEEKDAYS_SHORT[date.getDay()]}
             </div>
             <div className={cn(
@@ -92,7 +92,7 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
       {allDayEventsByDay.some((day) => day.length > 0) && (
         <div className="flex border-b border-border bg-surface-raised max-h-16 md:max-h-24 overflow-y-auto">
           <div className="w-10 md:w-14 shrink-0 border-r border-border px-0.5 md:px-1 py-1 md:py-2">
-            <div className="text-[8px] md:text-[10px] text-text-muted font-medium leading-tight">
+            <div className="text-[8px] md:text-caption text-text-muted font-medium leading-tight">
               Dia Inteiro
             </div>
           </div>
@@ -106,7 +106,7 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
                   <div
                     key={event._id}
                     onClick={() => onEventClick(event._id, event._source || "event")}
-                    className="text-[10px] md:text-xs px-1 py-0.5 rounded bg-surface-overlay border border-border cursor-pointer hover:bg-surface-sunken transition-colors truncate"
+                    className="text-caption md:text-xs px-1 py-0.5 rounded bg-surface-overlay border border-border cursor-pointer hover:bg-surface-sunken transition-colors truncate"
                   >
                     {event.title}
                   </div>

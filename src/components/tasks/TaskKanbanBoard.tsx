@@ -186,7 +186,7 @@ export function TaskLeadChip({
         aria-label={`Abrir o lead ${lead.title} no funil`}
         className={cn(
           "inline-flex items-center gap-1 max-w-[140px] min-h-[24px] px-1.5 -mx-1.5 rounded-full",
-          "text-[10px] text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+          "text-caption text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
           "focus:outline-none focus:ring-2 focus:ring-brand-500",
           className
         )}
@@ -205,7 +205,7 @@ export function TaskLeadChip({
     return (
       <span
         className={cn(
-          "inline-flex items-center gap-1 max-w-[140px] text-[10px] text-text-muted",
+          "inline-flex items-center gap-1 max-w-[140px] text-caption text-text-muted",
           className
         )}
         title={name}
@@ -237,7 +237,7 @@ export function TaskLabelChips({
       {visible.map((label) => (
         <span
           key={label._id}
-          className="inline-flex items-center gap-1 max-w-[110px] rounded-full px-2 py-0.5 text-[10px] font-medium border truncate"
+          className="inline-flex items-center gap-1 max-w-[110px] rounded-full px-2 py-0.5 text-micro font-medium border truncate"
           style={{
             color: label.color,
             borderColor: `${label.color}59`,
@@ -250,7 +250,7 @@ export function TaskLabelChips({
       ))}
       {hidden > 0 && (
         <span
-          className="text-[10px] font-medium text-text-muted tabular-nums"
+          className="text-caption font-medium text-text-muted tabular-nums"
           title={labels
             .slice(max)
             .map((l) => l.name)
@@ -295,7 +295,7 @@ export function TaskAssigneeStack({
         ))}
       </div>
       {hidden > 0 && (
-        <span className="ml-1 text-[10px] font-medium text-text-muted tabular-nums">
+        <span className="ml-1 text-caption font-medium text-text-muted tabular-nums">
           +{hidden}
         </span>
       )}
@@ -708,18 +708,18 @@ export function TaskCard({
         <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={priorityBadge.variant} className="text-[10px]">
+          <Badge variant={priorityBadge.variant} className="text-caption">
             {priorityBadge.label}
           </Badge>
           {checklistTotal > 0 && (
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className="text-caption text-text-muted tabular-nums">
               {checklistDone}/{checklistTotal}
             </span>
           )}
           {task.dueDate && (
             <span
               className={cn(
-                "text-[10px] font-medium tabular-nums",
+                "text-caption font-medium tabular-nums",
                 task.dueDate < now && !isClosed
                   ? "text-semantic-error"
                   : "text-text-muted"

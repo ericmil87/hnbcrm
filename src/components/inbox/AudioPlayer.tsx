@@ -150,14 +150,14 @@ export function AudioPlayer({
           </div>
         </div>
         <div className="flex items-center justify-between">
-          <span className={cn("text-[10px] tabular-nums", tone.text)}>
+          <span className={cn("text-caption tabular-nums", tone.text)}>
             {formatTime(currentTime || 0)} / {formatTime(duration)}
           </span>
           <button
             type="button"
             onClick={cycleSpeed}
             className={cn(
-              "shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold tabular-nums transition-colors",
+              "shrink-0 px-1.5 py-0.5 rounded-full text-micro font-semibold tabular-nums transition-colors",
               tone.speed
             )}
             aria-label="Alterar velocidade de reprodução"

@@ -306,7 +306,7 @@ export function GroupMembersPanel({
                                 onOpenContact?.(participant.contactId as Id<"contacts">)
                               }
                               disabled={!onOpenContact}
-                              className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2 py-0.5 text-[11px] font-medium text-brand-400 transition-colors hover:bg-brand-500/25 disabled:opacity-60"
+                              className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2 py-0.5 text-caption font-medium text-brand-400 transition-colors hover:bg-brand-500/25 disabled:opacity-60"
                             >
                               <UserRound size={11} />
                               Abrir contato
@@ -316,7 +316,7 @@ export function GroupMembersPanel({
                               type="button"
                               onClick={() => void handleCreateLead(participant)}
                               disabled={busyKey === key || bulkProgress !== null}
-                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption font-medium text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
                             >
                               {busyKey === key ? <Spinner size="sm" /> : <UserPlus size={11} />}
                               Criar lead deste membro
@@ -389,7 +389,7 @@ export function GroupMembersPanel({
                 </Button>
               </div>
               {!onDispatchSelected && (
-                <p className="mt-1.5 text-[11px] text-text-muted">
+                <p className="mt-1.5 text-caption text-text-muted">
                   Disparar para membros exige permissão de campanhas.
                 </p>
               )}

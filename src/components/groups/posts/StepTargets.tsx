@@ -120,7 +120,7 @@ export function StepTargets({ draft, setDraft, groups, channels, onGoToGroups }:
                     )}
                     {groupsOff && <Badge variant="error">grupos desligados</Badge>}
                     {channelLocked && (
-                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-muted">
+                      <span className="ml-auto inline-flex items-center gap-1 text-caption text-text-muted">
                         <Lock size={11} /> outro número já escolhido
                       </span>
                     )}

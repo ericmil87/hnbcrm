@@ -411,7 +411,7 @@ function LibraryItemEditor({
                 })
               }
             />
-            <span className="ml-auto text-[11px] tabular-nums text-text-muted">
+            <span className="ml-auto text-caption tabular-nums text-text-muted">
               {item.text.length}/{MAX_POST_TEXT_CHARS}
             </span>
           </div>

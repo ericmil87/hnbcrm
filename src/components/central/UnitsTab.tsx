@@ -73,7 +73,7 @@ export function UnitsTab({
           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: r.color }} />
           <span className="font-medium text-text-primary">{r.name}</span>
           {r.onboarding && (
-            <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-[11px] font-medium text-text-muted">
+            <span className="rounded-full bg-surface-overlay px-2 py-0.5 text-caption font-medium text-text-muted">
               em implantação
             </span>
           )}

@@ -176,7 +176,7 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
                       <Badge variant={meta.variant}>{meta.label}</Badge>
                     </div>
                     {row.reason && <p className="text-xs text-text-secondary mt-0.5 break-words">{row.reason}</p>}
-                    <p className="text-[11px] text-text-muted mt-0.5">{formatDateTime(row.createdAt)}</p>
+                    <p className="text-caption text-text-muted mt-0.5">{formatDateTime(row.createdAt)}</p>
                   </div>
                   {canFull && (
                     <button

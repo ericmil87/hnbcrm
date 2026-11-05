@@ -1036,7 +1036,7 @@ function TaskRow({
         {(task.labels?.length || project || task.lead || task.contact) && (
           <div className="mt-1 flex items-center gap-2 flex-wrap">
             {project && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
+              <span className="inline-flex items-center gap-1 text-caption text-text-muted">
                 <span
                   className="w-1.5 h-1.5 rounded-full"
                   style={{ backgroundColor: project.color || "#71717A" }}
@@ -1059,7 +1059,7 @@ function TaskRow({
 
       <Badge
         variant={priorityBadge.variant}
-        className="hidden md:inline-flex shrink-0 text-[10px]"
+        className="hidden md:inline-flex shrink-0 text-caption"
       >
         {priorityBadge.label}
       </Badge>
@@ -1301,18 +1301,18 @@ function StatusCard({
         <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={priorityBadge.variant} className="text-[10px]">
+          <Badge variant={priorityBadge.variant} className="text-caption">
             {priorityBadge.label}
           </Badge>
           {checklistTotal > 0 && (
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className="text-caption text-text-muted tabular-nums">
               {checklistDone}/{checklistTotal}
             </span>
           )}
           {task.dueDate && (
             <span
               className={cn(
-                "text-[10px] font-medium tabular-nums",
+                "text-caption font-medium tabular-nums",
                 task.dueDate < now && task.status !== "completed"
                   ? "text-semantic-error"
                   : "text-text-muted"

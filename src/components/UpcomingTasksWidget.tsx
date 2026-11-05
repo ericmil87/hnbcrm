@@ -303,7 +303,7 @@ export function UpcomingTasksWidget({
                 {count > 0 && (
                   <span
                     className={cn(
-                      "text-[10px] font-bold tabular-nums",
+                      "text-caption font-bold tabular-nums",
                       smartFilter === filter.value
                         ? "text-brand-400"
                         : filter.value === "overdue"
@@ -410,11 +410,11 @@ export function UpcomingTasksWidget({
                       isCollapsed && "-rotate-90"
                     )}
                   />
-                  <span className={cn("text-[11px] font-semibold uppercase tracking-wider", group.color)}>
+                  <span className={cn("text-caption font-semibold uppercase tracking-wider", group.color)}>
                     {group.label}
                   </span>
                   <div className="flex-1 h-px bg-border" />
-                  <span className="text-[10px] text-text-muted tabular-nums">
+                  <span className="text-caption text-text-muted tabular-nums">
                     {group.tasks.length}
                   </span>
                 </button>
@@ -501,7 +501,7 @@ function TaskRow({
       </button>
 
       {/* Priority badge (desktop) */}
-      <Badge variant={priorityBadge.variant} className="hidden md:inline-flex shrink-0 text-[10px]">
+      <Badge variant={priorityBadge.variant} className="hidden md:inline-flex shrink-0 text-caption">
         {priorityBadge.label}
       </Badge>
 

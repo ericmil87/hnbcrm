@@ -88,7 +88,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{event.label}</span>
             {isAlwaysOn && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
+              <span className="text-caption px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
                 Sempre ativo
               </span>
             )}

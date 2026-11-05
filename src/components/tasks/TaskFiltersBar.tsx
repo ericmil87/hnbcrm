@@ -91,7 +91,7 @@ export function TaskFiltersBar({
           />
           Filtros
           {activeCount > 0 && (
-            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-500 text-[10px] font-bold tabular-nums">
+            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-brand-500/15 text-brand-500 text-micro font-bold tabular-nums">
               {activeCount}
             </span>
           )}

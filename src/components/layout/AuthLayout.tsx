@@ -445,7 +445,7 @@ export function AuthLayout() {
 
 function FullScreenSpinner() {
   return (
-    <div className="flex justify-center items-center h-screen bg-surface-base">
+    <div className="flex justify-center items-center h-screen supports-[height:100dvh]:h-[100dvh] bg-surface-base">
       <Spinner size="lg" />
     </div>
   );
@@ -467,7 +467,7 @@ function WelcomeScreen({
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   return (
-    <div className="flex items-center justify-center min-h-screen px-4 py-8">
+    <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
           <img

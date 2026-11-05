@@ -160,7 +160,7 @@ function CodeBlock({ lang, value }: { lang: string | null; value: string }) {
   return (
     <div className="group relative overflow-hidden rounded-lg border border-border bg-surface-sunken">
       {lang && (
-        <div className="border-b border-border px-3 py-1 font-mono text-[11px] text-text-muted">
+        <div className="border-b border-border px-3 py-1 font-mono text-caption text-text-muted">
           {lang}
         </div>
       )}

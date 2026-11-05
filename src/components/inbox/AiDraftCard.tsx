@@ -205,7 +205,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
                   key={a.index}
                   title={a.error}
                   className={cn(
-                    "inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full",
+                    "inline-flex items-center gap-1 text-caption px-2 py-1 rounded-full",
                     a.ok
                       ? "bg-semantic-success/10 text-semantic-success"
                       : "bg-semantic-error/10 text-semantic-error"
@@ -226,7 +226,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
     <div className="flex justify-end">
       <div className="w-full max-w-md rounded-xl border border-ai-500/40 bg-ai-500/5 overflow-hidden">
         {draft.followUpId && (
-          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-medium text-ai-300/80">
+          <div className="flex items-center gap-1.5 px-4 pt-3 text-caption font-medium text-ai-300/80">
             <Bot size={11} className="shrink-0" />
             Follow-up agendado: resposta sugerida
           </div>
@@ -238,7 +238,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
           </span>
           {typeof draft.confidence === "number" && (
             <span
-              className="ml-auto shrink-0 rounded-full bg-ai-500/15 px-2 py-0.5 text-[11px] font-medium text-ai-300 tabular-nums"
+              className="ml-auto shrink-0 rounded-full bg-ai-500/15 px-2 py-0.5 text-caption font-medium text-ai-300 tabular-nums"
               title="Confiança que a IA declarou nesta resposta"
             >
               confiança {Math.round(draft.confidence * 100)}%
@@ -315,7 +315,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
                     key={chip.label}
                     type="button"
                     onClick={() => setInstruction(chip.instruction)}
-                    className="rounded-full border border-border-strong px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-ai-500/60 hover:text-ai-300 transition-colors"
+                    className="rounded-full border border-border-strong px-2.5 py-1 text-caption font-medium text-text-secondary hover:border-ai-500/60 hover:text-ai-300 transition-colors"
                   >
                     {chip.label}
                   </button>

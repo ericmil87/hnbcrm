@@ -264,7 +264,7 @@ export function HandoffPeekSlideOver({
               <span
                 key={key}
                 className={cn(
-                  "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium border",
+                  "inline-flex items-center rounded-full px-2 py-0.5 text-caption font-medium border",
                   on
                     ? "border-semantic-success/40 bg-semantic-success/10 text-semantic-success"
                     : "border-border text-text-muted"
@@ -275,7 +275,7 @@ export function HandoffPeekSlideOver({
             );
           })}
           {typeof qualification?.score === "number" && (
-            <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-0.5 text-[11px] font-medium text-text-secondary tabular-nums">
+            <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-0.5 text-caption font-medium text-text-secondary tabular-nums">
               {qualification.score}/4
             </span>
           )}
@@ -285,7 +285,7 @@ export function HandoffPeekSlideOver({
             </Badge>
           )}
           {value > 0 && (
-            <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-0.5 text-[11px] font-medium text-text-primary tabular-nums">
+            <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-0.5 text-caption font-medium text-text-primary tabular-nums">
               {currencyFormatter.format(value)}
             </span>
           )}

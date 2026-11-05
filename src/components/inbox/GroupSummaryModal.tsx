@@ -128,7 +128,7 @@ export function GroupSummaryModal({
             <>
               <p className="whitespace-pre-wrap text-sm text-text-primary leading-relaxed">{text}</p>
               {at && (
-                <p className="mt-3 text-[11px] text-text-muted">
+                <p className="mt-3 text-caption text-text-muted">
                   Gerado em {new Date(at).toLocaleString("pt-BR")} · últimas{" "}
                   {hours === 168 ? "168 h" : "24 h"}
                 </p>

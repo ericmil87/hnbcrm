@@ -70,7 +70,7 @@ export function PlaygroundSidebar({
                   <span className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
                     {category}
                   </span>
-                  <Badge variant="default" className="text-[10px] px-1.5 py-0">
+                  <Badge variant="default" className="text-caption px-1.5 py-0">
                     {endpoints.length}
                   </Badge>
                 </div>
@@ -90,14 +90,14 @@ export function PlaygroundSidebar({
                       )}
                     >
                       <div className="flex items-center gap-2">
-                        <Badge variant={getMethodColor(endpoint.method)} className="text-[10px] px-1.5 py-0 flex-shrink-0">
+                        <Badge variant={getMethodColor(endpoint.method)} className="text-caption px-1.5 py-0 flex-shrink-0">
                           {endpoint.method}
                         </Badge>
                         <span className="text-[12px] font-medium truncate">
                           {endpoint.title}
                         </span>
                       </div>
-                      <p className="text-[11px] text-text-muted font-mono mt-0.5 truncate pl-[42px]">
+                      <p className="text-caption text-text-muted font-mono mt-0.5 truncate pl-[42px]">
                         {getShortPath(endpoint.path)}
                       </p>
                     </button>

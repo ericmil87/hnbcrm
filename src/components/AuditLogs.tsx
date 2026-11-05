@@ -726,7 +726,7 @@ export function AuditLogs() {
 
                               {/* IP + User Agent (for HTTP API calls) */}
                               {(log.ipAddress || log.userAgent) && (
-                                <div className="flex items-center gap-3 mt-2 text-[10px] text-text-muted">
+                                <div className="flex items-center gap-3 mt-2 text-caption text-text-muted">
                                   {log.ipAddress && (
                                     <span className="flex items-center gap-1">
                                       <Monitor size={10} /> {log.ipAddress}

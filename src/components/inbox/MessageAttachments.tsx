@@ -132,7 +132,7 @@ export function MessageAttachments({
             <DocumentIcon mimeType={file.mimeType} />
             <div className="flex-1 min-w-0">
               <span className="block text-xs font-medium truncate">{file.name}</span>
-              <span className={cn("text-[10px]", outbound ? "text-bubble-out-fg/75" : "text-text-muted")}>
+              <span className={cn("text-caption", outbound ? "text-bubble-out-fg/75" : "text-text-muted")}>
                 {formatFileSize(file.size)}
               </span>
             </div>

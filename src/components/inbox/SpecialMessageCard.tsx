@@ -94,7 +94,7 @@ export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
         </span>
         <div className="min-w-0 flex-1">
           {info.kind === "poll" && (
-            <span className={cn("block text-[10px] font-semibold uppercase tracking-wide", muted)}>Enquete</span>
+            <span className={cn("block text-caption font-semibold uppercase tracking-wide", muted)}>Enquete</span>
           )}
           <p className={cn("break-words text-sm font-medium", unknown && muted)}>{info.title}</p>
           {info.lines.map((line, i) => (
@@ -154,7 +154,7 @@ export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
       ))}
 
       {info.note && info.kind !== "poll" && (
-        <p className={cn("break-words text-[11px]", muted, unknown && "italic")}>{info.note}</p>
+        <p className={cn("break-words text-caption", muted, unknown && "italic")}>{info.note}</p>
       )}
     </div>
   );

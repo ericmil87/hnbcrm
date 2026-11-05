@@ -195,11 +195,11 @@ export function StepReview({
 function SummaryTile({ icon: Icon, label, value, sub }: { icon: React.ElementType; label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-border bg-surface-sunken px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+      <div className="flex items-center gap-1.5 text-caption text-text-muted">
         <Icon size={12} /> {label}
       </div>
       <p className="text-sm font-semibold text-text-primary mt-0.5 truncate">{value}</p>
-      {sub && <p className="text-[11px] text-text-muted truncate">{sub}</p>}
+      {sub && <p className="text-caption text-text-muted truncate">{sub}</p>}
     </div>
   );
 }

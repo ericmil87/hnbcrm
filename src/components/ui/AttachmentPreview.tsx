@@ -63,10 +63,10 @@ export function AttachmentPreview({
                 />
               </a>
               <div className="flex items-center gap-1 mt-0.5">
-                <span className="text-[10px] text-text-muted truncate max-w-[180px]">
+                <span className="text-caption text-text-muted truncate max-w-[180px]">
                   {file.name}
                 </span>
-                <span className="text-[10px] text-text-muted">
+                <span className="text-caption text-text-muted">
                   ({formatSize(file.size)})
                 </span>
                 {file.url && (
@@ -104,7 +104,7 @@ export function AttachmentPreview({
               <span className="text-xs text-text-secondary truncate block">
                 {file.name}
               </span>
-              <span className="text-[10px] text-text-muted">
+              <span className="text-caption text-text-muted">
                 {formatSize(file.size)}
               </span>
             </div>

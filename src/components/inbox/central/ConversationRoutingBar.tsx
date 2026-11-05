@@ -348,7 +348,7 @@ export function ConversationRoutingBar({
             </div>
           )}
           {!isSalesLead && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-text-muted md:ml-auto">
+            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-text-muted md:ml-auto">
               <Tag size={11} aria-hidden />
               fora das métricas de venda
             </span>

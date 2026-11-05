@@ -481,7 +481,7 @@ function VariantEditor({
             onRecorded={(file) => onAttachments([file])}
           />
         )}
-        <span className="text-[11px] text-text-muted">
+        <span className="text-caption text-text-muted">
           Imagem, vídeo (mp4 ≤16 MB), áudio ou documento. Só o primeiro anexo vai na mensagem.
           {usedVars.length > 0 ? ` · variáveis: ${usedVars.join(", ")}` : ""}
         </span>
@@ -534,7 +534,7 @@ function VarMenu({ vars, onPick, disabled }: { vars: string[]; onPick: (k: strin
                 </button>
               );
             })}
-            <p className="px-3 py-1.5 text-[11px] text-text-muted">
+            <p className="px-3 py-1.5 text-caption text-text-muted">
               Fallback: <span className="font-mono">{"{{nome|cliente}}"}</span>
             </p>
           </div>
@@ -709,7 +709,7 @@ function TemplateEditor({
               ))}
             </div>
           )}
-          <p className="text-[11px] text-text-muted">
+          <p className="text-caption text-text-muted">
             Template de marketing é cobrado por mensagem entregue; utility dentro da janela é grátis. A Meta pode segurar templates novos
             (pacing) e pausa os que caem para qualidade vermelha.
           </p>

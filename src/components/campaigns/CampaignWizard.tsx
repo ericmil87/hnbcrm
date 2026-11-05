@@ -342,7 +342,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
                   )}
                   aria-current={active ? "step" : undefined}
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/20 text-[10px]">
+                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/20 text-micro">
                     {done ? <Check size={10} /> : i + 1}
                   </span>
                   {WIZARD_STEP_LABELS[s]}

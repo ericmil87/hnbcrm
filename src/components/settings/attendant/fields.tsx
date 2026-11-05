@@ -82,7 +82,7 @@ export function FollowUpModeCard({
         <Icon size={15} className={active ? "text-brand-500" : "text-text-muted"} />
         {title}
         {badge && (
-          <span className="ml-auto shrink-0 rounded-full bg-semantic-success/10 px-1.5 py-0.5 text-[10px] font-medium text-semantic-success">
+          <span className="ml-auto shrink-0 rounded-full bg-semantic-success/10 px-1.5 py-0.5 text-micro font-medium text-semantic-success">
             {badge}
           </span>
         )}

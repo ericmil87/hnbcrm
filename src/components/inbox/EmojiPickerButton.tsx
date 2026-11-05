@@ -128,7 +128,7 @@ export function EmojiPickerButton({ onPick, disabled }: EmojiPickerButtonProps) 
         >
           {sections.map((section) => (
             <div key={section.label} className="mb-1.5 last:mb-0">
-              <p className="px-1 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+              <p className="px-1 pt-1 pb-0.5 text-caption font-semibold uppercase tracking-wide text-text-muted">
                 {section.label}
               </p>
               <div className="grid grid-cols-8">

@@ -776,7 +776,7 @@ export function FormSubmissionsPage() {
             Parciais
             {partialStats && partialStats.total > 0 && (
               <span className={cn(
-                "inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold",
+                "inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-caption font-bold",
                 mainTab === "partials"
                   ? "bg-brand-500/20 text-brand-400"
                   : "bg-surface-overlay text-text-muted"
@@ -1244,7 +1244,7 @@ export function FormSubmissionsPage() {
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-card border border-border bg-surface-raised p-3">
-      <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide">{label}</p>
+      <p className="text-caption font-medium text-text-muted uppercase tracking-wide">{label}</p>
       <p className="text-lg font-bold text-text-primary mt-0.5 tabular-nums">{String(value)}</p>
     </div>
   );

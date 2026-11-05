@@ -322,7 +322,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
                         {n.body && (
                           <span className="block text-xs text-text-secondary truncate mt-0.5">{n.body}</span>
                         )}
-                        <span className="block text-[11px] text-text-muted mt-1">
+                        <span className="block text-caption text-text-muted mt-1">
                           {formatRelativeTime(n.createdAt)}
                         </span>
                       </span>

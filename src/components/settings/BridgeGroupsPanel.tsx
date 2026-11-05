@@ -436,7 +436,7 @@ export function BridgeGroupsPanel({
                             {relativeTime(group.lastMessageAt)}
                           </p>
                           {!group.monitored && (
-                            <p className="mt-0.5 text-[11px] text-text-muted">
+                            <p className="mt-0.5 text-caption text-text-muted">
                               Fora de Conversas
                             </p>
                           )}
@@ -496,7 +496,7 @@ export function BridgeGroupsPanel({
                             onClick={() =>
                               navigate(`${TAB_ROUTES.inbox}?conversation=${group.conversationId}`)
                             }
-                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
                           >
                             <MessageSquare size={11} />
                             Abrir no inbox
@@ -510,7 +510,7 @@ export function BridgeGroupsPanel({
                           <button
                             type="button"
                             onClick={() => setAiGroup(group)}
-                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
                           >
                             <Sparkles size={11} />
                             IA{group.ai?.mode === "mention" ? " · mencionada" : ""}
@@ -519,7 +519,7 @@ export function BridgeGroupsPanel({
                             <button
                               type="button"
                               onClick={() => setMediaGroup(group)}
-                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
                             >
                               <HardDrive size={11} />
                               Mídia
@@ -531,7 +531,7 @@ export function BridgeGroupsPanel({
                           <button
                             type="button"
                             onClick={() => setConfirmLeave(group)}
-                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
+                            className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
                           >
                             <LogOut size={11} />
                             Sair

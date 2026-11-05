@@ -29,7 +29,7 @@ export function CollapsibleSection({
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-text-primary">{title}</span>
           {filledCount !== undefined && totalCount !== undefined && totalCount > 0 && (
-            <span className="text-[11px] font-medium text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded-full">
+            <span className="text-caption font-medium text-text-muted bg-surface-overlay px-1.5 py-0.5 rounded-full">
               {filledCount}/{totalCount}
             </span>
           )}

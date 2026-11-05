@@ -136,7 +136,7 @@ export function GroupMediaDefaultsSection({
             ))}
           </div>
 
-          <ul className="list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-text-muted">
+          <ul className="list-disc space-y-1 pl-4 text-caption leading-relaxed text-text-muted">
             <li>
               Mídia não baixada não ocupa espaço e pode ser baixada depois, na
               própria conversa, por até 14 dias.

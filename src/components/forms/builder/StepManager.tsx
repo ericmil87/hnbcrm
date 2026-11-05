@@ -134,7 +134,7 @@ function StepCard({
         </span>
 
         {/* Step number badge */}
-        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-500/10 text-brand-400 text-[11px] font-bold flex items-center justify-center tabular-nums select-none">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-500/10 text-brand-400 text-caption font-bold flex items-center justify-center tabular-nums select-none">
           {index + 1}
         </span>
 
@@ -155,7 +155,7 @@ function StepCard({
         />
 
         {/* Field count pill */}
-        <span className="flex-shrink-0 px-2 py-0.5 rounded-full bg-surface-overlay text-text-secondary text-[11px] font-medium tabular-nums">
+        <span className="flex-shrink-0 px-2 py-0.5 rounded-full bg-surface-overlay text-text-secondary text-caption font-medium tabular-nums">
           {step.fieldIds.length} {step.fieldIds.length === 1 ? "campo" : "campos"}
         </span>
 

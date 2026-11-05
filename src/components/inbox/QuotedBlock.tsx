@@ -28,7 +28,7 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
     >
       <span
         className={cn(
-          "text-[11px] font-semibold",
+          "text-caption font-semibold",
           outbound ? "text-bubble-out-fg/90" : "text-bubble-in-link"
         )}
       >

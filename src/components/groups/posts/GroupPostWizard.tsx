@@ -267,7 +267,7 @@ export function GroupPostWizard({
             >
               <span
                 className={cn(
-                  "inline-flex h-5 w-5 items-center justify-center rounded-full border text-[10px] tabular-nums",
+                  "inline-flex h-5 w-5 items-center justify-center rounded-full border text-micro tabular-nums",
                   current
                     ? "border-brand-500 text-brand-400"
                     : done

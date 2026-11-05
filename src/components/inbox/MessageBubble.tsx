@@ -410,7 +410,7 @@ export function MessageBubble({
     <div className={cn("flex items-center justify-end gap-1 mt-1", style.footerText)}>
       {edited && (
         <span
-          className="text-[10px] italic"
+          className="text-caption italic"
           title={
             typeof message.metadata?.previousContent === "string"
               ? `Texto anterior: ${message.metadata.previousContent.slice(0, 500)}`
@@ -425,12 +425,12 @@ export function MessageBubble({
           type="button"
           onClick={() => setHistoryOpen((v) => !v)}
           aria-expanded={historyOpen}
-          className="inline-flex min-h-11 items-center text-[10px] underline md:min-h-5"
+          className="inline-flex min-h-11 items-center text-caption underline md:min-h-5"
         >
           {historyOpen ? "ocultar histórico" : "ver histórico"}
         </button>
       )}
-      <span className="text-[10px] tabular-nums">{timestamp}</span>
+      <span className="text-caption tabular-nums">{timestamp}</span>
       {showDeliveryTick && (
         <span
           className="inline-flex items-center"
@@ -440,7 +440,7 @@ export function MessageBubble({
         </span>
       )}
       {viaDevice && (
-        <span className="text-[10px]" title="Enviada fora do HNBCRM">
+        <span className="text-caption" title="Enviada fora do HNBCRM">
           {deviceViaLabel(message.metadata?.viaApp, channel)}
         </span>
       )}
@@ -475,7 +475,7 @@ export function MessageBubble({
             <ol
               aria-label="Versões anteriores"
               className={cn(
-                "flex flex-col gap-1 rounded-md px-2 py-1.5 text-[11px]",
+                "flex flex-col gap-1 rounded-md px-2 py-1.5 text-caption",
                 style.variant === "outbound" ? "bg-bubble-out-fg/10 text-bubble-out-fg/85" : "text-text-secondary"
               )}
             >
@@ -515,7 +515,7 @@ export function MessageBubble({
               <>
                 <span
                   // Cor de dado (remetente de grupo, só inbound): branco fixo, não migrar para bubble-out-fg.
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-micro font-bold"
                   style={{ backgroundColor: groupSender.color, color: "#fff" }}
                   aria-hidden
                 >
@@ -528,7 +528,7 @@ export function MessageBubble({
                   <button
                     type="button"
                     onClick={() => group.onOpenContact?.(groupSender.contactId!)}
-                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-[10px] font-medium text-bubble-in-link transition-colors hover:bg-brand-500/25"
+                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-micro font-medium text-bubble-in-link transition-colors hover:bg-brand-500/25"
                     title="Abrir contato"
                   >
                     <UserRound size={9} />
@@ -548,7 +548,7 @@ export function MessageBubble({
             )}
             {message.metadata?.campaign && (
               <span
-                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-[10px] font-medium opacity-80"
+                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-micro font-medium opacity-80"
                 title="Enviada por campanha"
               >
                 <Megaphone size={9} /> Campanha
@@ -556,7 +556,7 @@ export function MessageBubble({
             )}
             {message.metadata?.followUp && (
               <span
-                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-[10px] font-medium opacity-80"
+                className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-black/15 px-1.5 py-px text-micro font-medium opacity-80"
                 title="Follow-up executado pela IA"
               >
                 <Bot size={9} /> follow-up
@@ -640,7 +640,7 @@ export function MessageBubble({
           {viewOnce && hasAttachments && (
             <span
               className={cn(
-                "inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                "inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-micro font-medium",
                 style.variant === "outbound" ? "bg-bubble-out-fg/15 text-bubble-out-fg/90" : "bg-surface-sunken text-text-secondary"
               )}
             >
@@ -666,7 +666,7 @@ export function MessageBubble({
 
           {special?.kind === "interactive_reply" && (
             <span
-              className={cn("text-[10px] font-medium uppercase tracking-wide", style.variant === "outbound" ? "text-bubble-out-fg/75" : "text-text-muted")}
+              className={cn("text-caption font-medium uppercase tracking-wide", style.variant === "outbound" ? "text-bubble-out-fg/75" : "text-text-muted")}
             >
               resposta de botão
             </span>
@@ -685,13 +685,13 @@ export function MessageBubble({
           {footer}
 
           {isFailed && message.metadata?.deliveryError && (
-            <p className={cn("text-[10px]", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}>
+            <p className={cn("text-caption", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}>
               {message.metadata.deliveryError}
             </p>
           )}
           {/* Falha parcial / "só o texto saiu": aparece mesmo sem status failed. */}
           {!message.isInternal && typeof message.metadata?.dispatchNote === "string" && message.metadata.dispatchNote && (
-            <p className={cn("mt-1 flex items-start gap-1 text-[11px]", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-warning")}>
+            <p className={cn("mt-1 flex items-start gap-1 text-caption", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-warning")}>
               <AlertTriangle className="size-3 mt-0.5 shrink-0" aria-hidden="true" />
               <span>{message.metadata.dispatchNote}</span>
             </p>
@@ -699,7 +699,7 @@ export function MessageBubble({
         </div>
         {reactionChips}
         {reactionNote && reactions.length > 0 && (
-          <p className="px-1 text-[10px] text-text-muted">{reactionNote}</p>
+          <p className="px-1 text-caption text-text-muted">{reactionNote}</p>
         )}
       </div>
     </div>
