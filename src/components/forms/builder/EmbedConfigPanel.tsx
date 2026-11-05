@@ -146,7 +146,7 @@ export function EmbedConfigPanel({ slug, siteUrl }: EmbedConfigPanelProps) {
             >
               <Icon size={20} />
               <span className="text-sm font-medium">{label}</span>
-              <span className="text-[11px] text-text-muted">{description}</span>
+              <span className="text-caption text-text-muted">{description}</span>
             </button>
           ))}
         </div>

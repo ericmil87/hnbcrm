@@ -68,7 +68,7 @@ export function AttachmentField({ organizationId, fileId, onChange, disabled }: 
         headers: { "Content-Type": file.type },
         body: file,
       });
-      if (!response.ok) throw new Error(`Falha ao enviar ${file.name}`);
+      if (!response.ok) throw new Error(`Não foi possível enviar ${file.name}.`);
       const { storageId } = await response.json();
       const savedId = await saveFile({
         organizationId,
@@ -124,7 +124,7 @@ export function AttachmentField({ organizationId, fileId, onChange, disabled }: 
         type="button"
         disabled={disabled || uploading}
         onClick={() => inputRef.current?.click()}
-        className="inline-flex items-center gap-1.5 rounded-full border border-border-strong px-2.5 py-1 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border-strong px-2.5 py-1 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
       >
         {uploading ? <Loader2 size={12} className="animate-spin" /> : <Paperclip size={12} />}
         {uploading ? "Enviando…" : "Anexar arquivo"}

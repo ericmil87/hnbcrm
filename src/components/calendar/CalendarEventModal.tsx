@@ -154,7 +154,7 @@ export function CalendarEventModal({
 
       onClose();
     } catch (error) {
-      toast.error("Erro ao salvar evento");
+      toast.error("Não foi possível salvar o evento.");
       console.error(error);
     } finally {
       setIsSubmitting(false);

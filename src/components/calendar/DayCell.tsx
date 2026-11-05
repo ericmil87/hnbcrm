@@ -52,7 +52,7 @@ export function DayCell({ date, events, isToday, isCurrentMonth, onSelectDay }: 
           />
         ))}
         {overflowCount > 0 && (
-          <div className="text-[10px] text-text-muted font-medium">
+          <div className="text-caption text-text-muted font-medium">
             +{overflowCount} mais
           </div>
         )}

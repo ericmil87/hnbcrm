@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
 import { useState, useRef, useEffect } from "react";
@@ -184,7 +185,7 @@ export function FormListPage() {
       {
         loading: "Criando formulário...",
         success: "Formulário criado!",
-        error: "Erro ao criar formulário",
+        error: "Não foi possível criar o formulário.",
       }
     );
   }
@@ -198,7 +199,7 @@ export function FormListPage() {
       {
         loading: "Duplicando formulário...",
         success: "Formulário duplicado!",
-        error: "Erro ao duplicar formulário",
+        error: "Não foi possível duplicar o formulário.",
       }
     );
   }
@@ -211,7 +212,7 @@ export function FormListPage() {
         form.status === "archived"
           ? "Formulário desarquivado!"
           : "Formulário arquivado!",
-      error: "Erro ao arquivar formulário",
+      error: "Não foi possível arquivar o formulário.",
     });
   }
 
@@ -220,7 +221,7 @@ export function FormListPage() {
     toast.promise(deleteForm({ formId: deleteTarget._id }), {
       loading: "Excluindo formulário...",
       success: "Formulário excluído!",
-      error: "Erro ao excluir formulário",
+      error: "Não foi possível excluir o formulário.",
     });
     setDeleteTarget(null);
   }
@@ -246,10 +247,10 @@ export function FormListPage() {
             size="md"
             onClick={() => setShowCreateModal(true)}
             className="shrink-0"
+            aria-label="Novo formulário"
           >
             <Plus size={18} />
-            <span className="hidden sm:inline">Novo Formulário</span>
-            <span className="sm:hidden">Novo</span>
+            <span className="hidden sm:inline">Novo formulário</span>
           </Button>
         </header>
 
@@ -262,21 +263,12 @@ export function FormListPage() {
 
         {/* Empty state */}
         {!isLoading && forms.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-surface-raised border border-border flex items-center justify-center mb-4">
-              <FileText size={28} className="text-text-muted" />
-            </div>
-            <h2 className="text-base font-semibold text-text-primary mb-1">
-              Nenhum formulário criado
-            </h2>
-            <p className="text-sm text-text-secondary max-w-xs mb-6">
-              Crie seu primeiro formulário para começar a capturar leads automaticamente.
-            </p>
-            <Button variant="primary" onClick={() => setShowCreateModal(true)}>
-              <Plus size={18} />
-              Criar primeiro formulário
-            </Button>
-          </div>
+          <EmptyState
+            icon={FileText}
+            title={VOCAB.forms.empty.title}
+            description={VOCAB.forms.empty.hint}
+            action={{ label: "Criar primeiro formulário", onClick: () => setShowCreateModal(true) }}
+          />
         )}
 
         {/* Grid */}
@@ -395,7 +387,7 @@ export function FormListPage() {
             setNewFormName("");
           }
         }}
-        title="Novo Formulário"
+        title="Novo formulário"
       >
         <div className="space-y-4">
           <Input

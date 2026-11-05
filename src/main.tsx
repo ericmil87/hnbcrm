@@ -46,7 +46,7 @@ const FormExperimentPage = lazy(() => import("./components/forms/FormExperimentP
 // Wrapper component for Suspense boundaries
 function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => React.JSX.Element> }) {
   return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center"><Spinner size="lg" /></div>}>
+    <Suspense fallback={<div className="flex h-screen supports-[height:100dvh]:h-[100dvh] items-center justify-center"><Spinner size="lg" /></div>}>
       <Component />
     </Suspense>
   );

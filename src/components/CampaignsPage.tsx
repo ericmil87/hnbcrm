@@ -138,7 +138,7 @@ export function CampaignsPage() {
       await fn();
       toast.success(label);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na ação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível concluir a ação."));
     }
   };
 
@@ -210,10 +210,10 @@ export function CampaignsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Megaphone}
-          title={campaigns.length === 0 ? "Nenhuma campanha ainda" : "Nada com esse filtro"}
+          title={campaigns.length === 0 ? VOCAB.campaigns.empty.title : "Nada com esse filtro"}
           description={
             campaigns.length === 0
-              ? "Dispare mensagens segmentadas ou importe uma lista de números, com limites anti-ban e relatório por destinatário."
+              ? VOCAB.campaigns.empty.hint
               : undefined
           }
           action={canManage && campaigns.length === 0 ? { label: "Criar a primeira", onClick: () => setWizardId("new") } : undefined}
@@ -244,7 +244,7 @@ export function CampaignsPage() {
           <div className="hidden md:block rounded-card border border-border bg-surface-raised overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-text-muted border-b border-border">
+                <tr className="text-left text-caption uppercase tracking-wide text-text-muted border-b border-border">
                   <th className="px-4 py-2.5 font-medium">Campanha</th>
                   <th className="px-3 py-2.5 font-medium">Canal</th>
                   <th className="px-3 py-2.5 font-medium">Status</th>
@@ -399,7 +399,7 @@ function ProgressBar({ item }: { item: CampaignListItem }) {
       <div className="flex-1 bg-surface-sunken rounded-full h-1.5 overflow-hidden">
         <div className="h-1.5 rounded-full bg-brand-600" style={{ width: `${Math.min(100, Math.max(done, s.total > 0 ? 1 : 0))}%` }} />
       </div>
-      <span className="text-[11px] text-text-muted tabular-nums w-9 text-right">{Math.round(done)}%</span>
+      <span className="text-caption text-text-muted tabular-nums w-9 text-right">{Math.round(done)}%</span>
     </div>
   );
 }

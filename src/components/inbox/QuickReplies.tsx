@@ -131,7 +131,7 @@ export function QuickReplyDropdown({ open, items, activeIndex, onPick, onManage 
               e.preventDefault();
               onManage();
             }}
-            className="w-full px-3 py-1.5 text-left text-[11px] text-text-muted hover:text-text-primary border-t border-border transition-colors"
+            className="w-full px-3 py-1.5 text-left text-caption text-text-muted hover:text-text-primary border-t border-border transition-colors"
           >
             Gerenciar respostas rápidas
           </button>

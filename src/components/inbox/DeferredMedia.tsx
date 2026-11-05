@@ -106,7 +106,7 @@ export function DeferredMedia({
         {details && (
           <p
             className={cn(
-              "truncate text-[11px] tabular-nums",
+              "truncate text-caption tabular-nums",
               outbound ? "text-bubble-out-fg/75" : "text-text-muted"
             )}
             title={details}

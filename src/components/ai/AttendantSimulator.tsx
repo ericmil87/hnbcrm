@@ -99,7 +99,7 @@ export function AttendantSimulatorView({
                 aria-label="Nome do membro que está falando"
                 className="w-40 rounded-field border border-border-strong bg-surface-raised px-2.5 py-1.5 text-xs text-text-primary focus:border-brand-500 focus:outline-none"
               />
-              <span className="text-[11px] text-text-muted">
+              <span className="text-caption text-text-muted">
                 Usa as regras da sala: sem dado de outro cliente, sem confirmar pagamento, assunto
                 individual vai para o privado.
               </span>
@@ -121,7 +121,7 @@ export function AttendantSimulatorView({
             options={SIM_TRANSPORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
           />
           {plainTextChannel && (
-            <span className="text-[11px] text-text-muted">
+            <span className="text-caption text-text-muted">
               Neste canal a resposta sai em texto puro, sem a formatação do WhatsApp (negrito,
               itálico, listas com marcadores).
             </span>
@@ -156,7 +156,7 @@ export function AttendantSimulatorView({
                 const meta = SIM_KINDS.find((k) => m[k.kind]);
                 if (!meta) return null;
                 return (
-                  <span className="mb-1 flex items-center gap-1 text-[11px] opacity-80">
+                  <span className="mb-1 flex items-center gap-1 text-caption opacity-80">
                     <meta.Icon size={11} /> {meta.label}
                   </span>
                 );
@@ -164,7 +164,7 @@ export function AttendantSimulatorView({
               {m.content}
               {m.actions && m.actions.length > 0 && (
                 <div className="mt-2 border-t border-ai-500/30 pt-2">
-                  <p className="mb-1 text-[11px] font-medium text-text-muted">A IA faria:</p>
+                  <p className="mb-1 text-caption font-medium text-text-muted">A IA faria:</p>
                   {m.actions.map((a, j) => (
                     <p key={j} className="text-xs text-ai-300">
                       {/* O backend manda rótulo humano com os VALORES; o formato legado name(args) cai no nome limpo. */}
@@ -213,8 +213,7 @@ export function AttendantSimulatorView({
             <button
               key={k}
               type="button"
-              role="switch"
-              aria-checked={kind === k}
+              aria-pressed={kind === k}
               aria-label={hint}
               onClick={() => onKindChange(kind === k ? "text" : k)}
               className={cn(
@@ -329,7 +328,7 @@ export function AttendantSimulator({
         }
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha na simulação");
+      toast.error(e instanceof Error ? e.message : "Não foi possível simular.");
     } finally {
       setBusy(false);
     }

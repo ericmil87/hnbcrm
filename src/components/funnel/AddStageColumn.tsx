@@ -75,9 +75,10 @@ export function AddStageColumn({
                 setColor("#3B82F6");
               }}
               variant="secondary"
+              aria-label="Cancelar"
               size="sm"
             >
-              <X size={16} />
+              <X size={16} aria-hidden />
             </Button>
           </div>
         </div>

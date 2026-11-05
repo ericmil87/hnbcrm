@@ -239,7 +239,7 @@ function ChannelHealth({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-surface-raised border border-border px-3 py-2">
-      <p className="text-[11px] text-text-muted">{label}</p>
+      <p className="text-caption text-text-muted">{label}</p>
       <p className="font-semibold text-text-primary tabular-nums">{value}</p>
     </div>
   );

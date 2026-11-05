@@ -63,10 +63,10 @@ export function ResponseViewer({
           {response.status > 0 ? `${response.status}` : "Erro"}
         </Badge>
         <span className="text-xs text-text-muted tabular-nums">{response.time}ms</span>
-        <Badge variant="default" className="text-[10px] px-1.5 py-0">
+        <Badge variant="default" className="text-caption px-1.5 py-0">
           {lineCount} linhas
         </Badge>
-        <span className="text-[10px] text-text-muted tabular-nums">{formatBytes(byteSize)}</span>
+        <span className="text-caption text-text-muted tabular-nums">{formatBytes(byteSize)}</span>
         <div className="flex-1" />
         <Button variant="ghost" size="sm" onClick={handleCopy}>
           {copied ? <Check size={14} /> : <Copy size={14} />}

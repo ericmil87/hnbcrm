@@ -316,7 +316,6 @@ export function ConversationRoutingBar({
                       onClick={() => setConfirmReopen(true)}
                       className="-mr-1.5 ml-0.5 inline-flex h-7 items-center gap-1 rounded-full px-2 text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-500"
                       aria-label="Desfazer desfecho"
-                      title="Desfazer desfecho"
                     >
                       <Undo2 size={13} aria-hidden />
                       <span className="hidden sm:inline">Desfazer</span>
@@ -348,7 +347,7 @@ export function ConversationRoutingBar({
             </div>
           )}
           {!isSalesLead && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-text-muted md:ml-auto">
+            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-text-muted md:ml-auto">
               <Tag size={11} aria-hidden />
               fora das métricas de venda
             </span>

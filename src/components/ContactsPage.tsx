@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
 import { useState, useEffect, useRef } from "react";
@@ -389,25 +390,16 @@ export function ContactsPage() {
             <Spinner size="lg" />
           </div>
         ) : contacts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 px-4">
-            <div className="w-16 h-16 rounded-full bg-surface-overlay flex items-center justify-center mb-4">
-              <Contact2 size={32} className="text-text-muted" />
-            </div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              {debouncedSearch ? "Nenhum contato encontrado" : "Nenhum contato"}
-            </h3>
-            <p className="text-sm text-text-secondary mb-6 text-center max-w-md">
-              {debouncedSearch
-                ? "Tente ajustar sua busca ou adicione um novo contato"
-                : "Adicione seu primeiro contato para começar"}
-            </p>
-            {!debouncedSearch && can("contacts", "edit") && (
-              <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)}>
-                <Plus size={20} className="mr-2" />
-                Criar contato
-              </Button>
-            )}
-          </div>
+          <EmptyState
+            icon={Contact2}
+            title={debouncedSearch ? "Nenhum contato encontrado" : VOCAB.contact.empty.title}
+            description={debouncedSearch ? "Tente ajustar a busca ou adicione um novo contato." : VOCAB.contact.empty.hint}
+            action={
+              !debouncedSearch && can("contacts", "edit")
+                ? { label: "Criar contato", onClick: () => setShowCreateModal(true) }
+                : undefined
+            }
+          />
         ) : (
           <>
           <div className="bg-surface-raised border border-border rounded-card overflow-hidden">

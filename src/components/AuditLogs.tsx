@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/EmptyState";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
@@ -16,6 +17,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
+import { formatDate, formatDateTime } from "@/lib/format";
 import {
   Shield,
   Download,
@@ -84,7 +86,7 @@ export function AuditLogs() {
       return { startTimestamp: now - 30 * 86400000, endTimestamp: now };
     if (datePreset === "custom") {
       return {
-        startTimestamp: startDate ? new Date(startDate).getTime() : 0,
+        startTimestamp: startDate ? new Date(startDate + "T00:00:00").getTime() : 0,
         endTimestamp: endDate
           ? new Date(endDate + "T23:59:59").getTime()
           : 0,
@@ -174,10 +176,10 @@ export function AuditLogs() {
 
     if (startDate || endDate) {
       const start = startDate
-        ? new Date(startDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(startDate + "T00:00:00").getTime())
         : "início";
       const end = endDate
-        ? new Date(endDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(endDate + "T00:00:00").getTime())
         : "agora";
       result.push({ key: "date", label: `Período: ${start} até ${end}` });
     }
@@ -256,7 +258,7 @@ export function AuditLogs() {
     const rows = auditLogs.logs.map((log) => {
       const desc = log.description || buildClientDescription(log);
       return [
-        new Date(log.createdAt).toLocaleString("pt-BR"),
+        formatDateTime(log.createdAt),
         log.action,
         log.entityType,
         log.entityId,
@@ -490,35 +492,16 @@ export function AuditLogs() {
 
         {/* Empty state */}
         {auditLogs && auditLogs.logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="w-16 h-16 rounded-2xl bg-surface-overlay flex items-center justify-center mb-4">
-              {activeFilters.length > 0 ? (
-                <Search size={32} className="text-text-muted" />
-              ) : (
-                <Shield size={32} className="text-text-muted" />
-              )}
-            </div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              {activeFilters.length > 0
-                ? "Nenhuma alteração encontrada"
-                : "Nenhuma alteração registrada"}
-            </h3>
-            <p className="text-sm text-text-secondary text-center max-w-md">
-              {activeFilters.length > 0
-                ? "Tente ajustar os filtros ou expandir o período de datas."
-                : "As alterações aparecem aqui automaticamente conforme sua equipe e a IA trabalham."}
-            </p>
-            {activeFilters.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-4"
-                onClick={clearAllFilters}
-              >
-                Limpar filtros
-              </Button>
-            )}
-          </div>
+          <EmptyState
+            icon={activeFilters.length > 0 ? Search : Shield}
+            title={activeFilters.length > 0 ? "Nenhuma alteração encontrada" : VOCAB.audit.empty.title}
+            description={
+              activeFilters.length > 0
+                ? "Tente ajustar os filtros ou ampliar o período."
+                : VOCAB.audit.empty.hint
+            }
+            action={activeFilters.length > 0 ? { label: "Limpar filtros", onClick: clearAllFilters } : undefined}
+          />
         )}
 
         {/* Log entries with date grouping */}
@@ -630,9 +613,7 @@ export function AuditLogs() {
                             <div className="flex flex-col items-end gap-1 shrink-0">
                               <span
                                 className="text-xs text-text-muted"
-                                title={new Date(log.createdAt).toLocaleString(
-                                  "pt-BR"
-                                )}
+                                title={formatDateTime(log.createdAt)}
                               >
                                 {formatRelativeTime(log.createdAt)}
                               </span>
@@ -726,7 +707,7 @@ export function AuditLogs() {
 
                               {/* IP + User Agent (for HTTP API calls) */}
                               {(log.ipAddress || log.userAgent) && (
-                                <div className="flex items-center gap-3 mt-2 text-[10px] text-text-muted">
+                                <div className="flex items-center gap-3 mt-2 text-caption text-text-muted">
                                   {log.ipAddress && (
                                     <span className="flex items-center gap-1">
                                       <Monitor size={10} /> {log.ipAddress}

@@ -63,7 +63,7 @@ export function GroupMediaModeSelector<T extends string>({
               />
               <span>{option.label}</span>
               {option.recommended && (
-                <span className="rounded-full bg-brand-500/15 px-1.5 py-px text-[10px] font-medium text-brand-400">
+                <span className="rounded-full bg-brand-500/15 px-1.5 py-px text-micro font-medium text-brand-400">
                   recomendado
                 </span>
               )}

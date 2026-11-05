@@ -82,7 +82,7 @@ export function SidebarView({
             className={cn("space-y-1", index > 0 && "mt-3 pt-3 border-t border-border")}
           >
             {group.label && (
-              <p className="hidden lg:block px-3 pb-1 text-[11px] font-medium text-text-muted">
+              <p className="hidden lg:block px-3 pb-1 text-caption font-medium text-text-muted">
                 {group.label}
               </p>
             )}
@@ -115,14 +115,14 @@ export function SidebarView({
                         <>
                           {/* Sidebar expandida: pill no fim da linha */}
                           <span
-                            className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                            className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
                             aria-hidden="true"
                           >
                             {badgeLabel}
                           </span>
                           {/* Sidebar colapsada (só ícones): pill sobre o ícone */}
                           <span
-                            className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                            className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
                             aria-hidden="true"
                           >
                             {badgeLabel}

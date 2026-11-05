@@ -24,7 +24,7 @@ export function ColorChip({ name, color, title, className }: ColorChipProps) {
     <span
       title={title ?? name}
       className={cn(
-        "inline-flex max-w-[9rem] items-center gap-1 rounded-full border border-border-strong px-1.5 py-px text-[11px] font-medium leading-4 text-text-secondary",
+        "inline-flex max-w-[9rem] items-center gap-1 rounded-full border border-border-strong px-1.5 py-px text-caption font-medium leading-4 text-text-secondary",
         className
       )}
       style={{
@@ -83,7 +83,7 @@ export function AttributionStrip({ attribution }: { attribution: LeadAttribution
           </span>
         )}
         {clickId && (
-          <span className="hidden shrink-0 font-mono text-[10px] text-text-muted sm:inline">
+          <span className="hidden shrink-0 font-mono text-caption text-text-muted sm:inline">
             {clickId}
           </span>
         )}

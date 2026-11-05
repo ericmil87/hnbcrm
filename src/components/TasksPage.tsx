@@ -1,7 +1,8 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useOutletContext, useSearchParams } from "react-router";
+import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -94,8 +95,9 @@ export function TasksPage() {
   const canEdit = can("tasks", "edit_own");
   const canManageProjects = role === "admin" || role === "manager";
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const selectedTaskId = (searchParams.get("task") as Id<"tasks"> | null) ?? null;
+  // `?task=`: abrir = push marcado; fechar = voltar quando a entrada é nossa, replace nos demais casos.
+  const taskParam = useOpenEntityParam("task");
+  const selectedTaskId = (taskParam.id as Id<"tasks"> | null) ?? null;
 
   // Modo, filtro rápido, status, responsável, etiquetas e projeto moram na URL;
   // prioridade, tipo e o select de projeto da visão "Todas" seguem locais.
@@ -245,30 +247,9 @@ export function TasksPage() {
   }, [projects]);
 
   // Deep-link ?task=<id> — o sino e os e-mails apontam para /app/tarefas?task=…
-  const openTaskDetail = useCallback(
-    (taskId: Id<"tasks">) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("task", taskId);
-          return next;
-        },
-        { preventScrollReset: true }
-      );
-    },
-    [setSearchParams]
-  );
-
-  const closeTaskDetail = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("task");
-        return next;
-      },
-      { replace: true, preventScrollReset: true }
-    );
-  }, [setSearchParams]);
+  const { open: openTask, close: closeTask } = taskParam;
+  const openTaskDetail = useCallback((taskId: Id<"tasks">) => openTask(taskId), [openTask]);
+  const closeTaskDetail = closeTask;
 
   // Smart filters continuam no cliente (dependem do relógio local)
   const filteredTasks = useMemo(() => {
@@ -341,9 +322,9 @@ export function TasksPage() {
     }[] = [
       { key: "overdue", label: "Atrasadas", tasks: [], color: "text-semantic-error", defaultOpen: true },
       { key: "today", label: "Hoje", tasks: [], color: "text-brand-500", defaultOpen: true },
-      { key: "week", label: "Esta Semana", tasks: [], defaultOpen: true },
+      { key: "week", label: "Esta semana", tasks: [], defaultOpen: true },
       { key: "future", label: "Futuras", tasks: [], defaultOpen: true },
-      { key: "noDate", label: "Sem Data", tasks: [], defaultOpen: true },
+      { key: "noDate", label: "Sem data", tasks: [], defaultOpen: true },
       { key: "completed", label: "Concluídas", tasks: [], defaultOpen: false },
     ];
 
@@ -415,7 +396,7 @@ export function TasksPage() {
       await completeTask({ taskId });
       toast.success("Tarefa concluída!");
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -437,7 +418,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas concluídas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Falha ao concluir tarefas");
+      toast.error("Não foi possível concluir as tarefas.");
     }
   };
 
@@ -450,7 +431,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas canceladas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Falha ao cancelar tarefas");
+      toast.error("Não foi possível cancelar as tarefas.");
     }
   };
 
@@ -475,7 +456,7 @@ export function TasksPage() {
       }
       if (selectedProjectId === project._id) updateUrl({ projectId: null });
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao atualizar projeto");
+      toast.error(error?.message || "Não foi possível atualizar o projeto.");
     } finally {
       setPendingProjectAction(null);
     }
@@ -564,7 +545,7 @@ export function TasksPage() {
               onClick={() => setShowCreateModal(true)}
             >
               <Plus size={16} />
-              <span className="hidden md:inline">Nova Tarefa</span>
+              <span className="hidden md:inline">Nova tarefa</span>
             </Button>
           )}
         </div>
@@ -694,17 +675,17 @@ export function TasksPage() {
       ) : filteredTasks.length === 0 ? (
         <EmptyState
           icon={CheckSquare}
-          title="Nenhuma tarefa encontrada"
+          title={hasActiveQuery ? "Nenhuma tarefa encontrada" : VOCAB.tasks.empty.title}
           description={
             hasActiveQuery
               ? "Tente ajustar os filtros ou a busca."
               : selectedProject
                 ? `Nenhuma tarefa em ${selectedProject.name} ainda.`
-                : "Crie sua primeira tarefa para organizar seu trabalho."
+                : VOCAB.tasks.empty.hint
           }
           action={
             !hasActiveQuery && canEdit
-              ? { label: "Nova Tarefa", onClick: () => setShowCreateModal(true) }
+              ? { label: "Nova tarefa", onClick: () => setShowCreateModal(true) }
               : undefined
           }
         />
@@ -1036,7 +1017,7 @@ function TaskRow({
         {(task.labels?.length || project || task.lead || task.contact) && (
           <div className="mt-1 flex items-center gap-2 flex-wrap">
             {project && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-text-muted">
+              <span className="inline-flex items-center gap-1 text-caption text-text-muted">
                 <span
                   className="w-1.5 h-1.5 rounded-full"
                   style={{ backgroundColor: project.color || "#71717A" }}
@@ -1059,7 +1040,7 @@ function TaskRow({
 
       <Badge
         variant={priorityBadge.variant}
-        className="hidden md:inline-flex shrink-0 text-[10px]"
+        className="hidden md:inline-flex shrink-0 text-caption"
       >
         {priorityBadge.label}
       </Badge>
@@ -1112,7 +1093,7 @@ function StatusBoardView({
 
   const columns: { status: TaskStatus; label: string; color: string }[] = [
     { status: "pending", label: "Pendente", color: "bg-semantic-warning" },
-    { status: "in_progress", label: "Em Progresso", color: "bg-semantic-info" },
+    { status: "in_progress", label: "Em progresso", color: "bg-semantic-info" },
     { status: "completed", label: "Concluída", color: "bg-semantic-success" },
   ];
 
@@ -1146,7 +1127,7 @@ function StatusBoardView({
     try {
       await updateTask({ taskId, status: newStatus });
     } catch {
-      toast.error("Falha ao mover tarefa");
+      toast.error("Não foi possível mover a tarefa.");
     }
   };
 
@@ -1301,18 +1282,18 @@ function StatusCard({
         <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={priorityBadge.variant} className="text-[10px]">
+          <Badge variant={priorityBadge.variant} className="text-caption">
             {priorityBadge.label}
           </Badge>
           {checklistTotal > 0 && (
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className="text-caption text-text-muted tabular-nums">
               {checklistDone}/{checklistTotal}
             </span>
           )}
           {task.dueDate && (
             <span
               className={cn(
-                "text-[10px] font-medium tabular-nums",
+                "text-caption font-medium tabular-nums",
                 task.dueDate < now && task.status !== "completed"
                   ? "text-semantic-error"
                   : "text-text-muted"

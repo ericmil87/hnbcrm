@@ -5,7 +5,7 @@ import { Building2, ChevronsUpDown } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
-import { CopilotPanel } from "@/components/copilot/CopilotPanel";
+import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { activeTabForPath } from "@/lib/routes";
 import { navItemFor, shellPageTitle } from "@/lib/nav";
@@ -101,7 +101,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       {aiStatus?.active && aiStatus.copilotEnabled && (
         <>
           <CopilotFab onOpen={() => setCopilotOpen(true)} hidden={copilotOpen} />
-          <CopilotPanel
+          <LazyCopilotPanel
             organizationId={organizationId}
             open={copilotOpen}
             onClose={() => setCopilotOpen(false)}

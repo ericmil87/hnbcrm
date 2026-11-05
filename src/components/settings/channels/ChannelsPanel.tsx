@@ -196,7 +196,7 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
     toast.promise(updateChannelConfig({ configId: config._id, bridgePhoneNotifications: next }), {
       loading: "Atualizando…",
       success: next ? "Notificações no celular ativadas" : "Notificações no celular desativadas",
-      error: "Não foi possível atualizar notificações no celular.",
+      error: "Não foi possível atualizar as notificações no celular.",
     });
   };
 
@@ -220,10 +220,10 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
             : `Conectado: ${result.verifiedName ?? config.displayName} (${result.displayPhoneNumber ?? config.phoneNumberId})`
         );
       } else {
-        toast.error(result.error ?? "Não foi possível testar conexão.");
+        toast.error(result.error ?? "Não foi possível testar a conexão.");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível testar conexão.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível testar a conexão.");
     } finally {
       setTestingId(null);
     }

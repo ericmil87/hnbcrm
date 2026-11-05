@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -88,7 +89,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{event.label}</span>
             {isAlwaysOn && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
+              <span className="text-caption px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
                 Sempre ativo
               </span>
             )}
@@ -97,26 +98,13 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         </div>
 
         <div className="flex md:justify-center">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isOn}
-            aria-label={`Notificação por e-mail: ${event.label}`}
+          <Switch
+            checked={isOn}
+            onCheckedChange={() => handleToggle(event.key)}
+            label={`Notificação por e-mail: ${event.label}`}
+            hideLabel
             disabled={isAlwaysOn}
-            onClick={() => !isAlwaysOn && handleToggle(event.key)}
-            className={cn(
-              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-              isOn ? "bg-brand-500" : "bg-surface-overlay border border-border-strong",
-              isAlwaysOn && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <span
-              className={cn(
-                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                isOn ? "translate-x-5" : "translate-x-1"
-              )}
-            />
-          </button>
+          />
         </div>
       </div>
     );

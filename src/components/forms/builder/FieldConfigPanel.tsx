@@ -68,7 +68,7 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-3 pb-2 border-b border-border-subtle">
+    <h3 className="text-caption font-semibold text-text-muted uppercase tracking-wide mb-3 pb-2 border-b border-border-subtle">
       {children}
     </h3>
   );

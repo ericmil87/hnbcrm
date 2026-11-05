@@ -145,7 +145,7 @@ export function useCopilotStream(
         });
 
         if (!res.ok || !res.body) {
-          let message = "Falha ao conectar com o copiloto";
+          let message = "Não foi possível conectar com o copiloto.";
           try {
             const data = await res.json();
             if (typeof data?.error === "string") message = data.error;

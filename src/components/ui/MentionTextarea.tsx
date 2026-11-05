@@ -209,7 +209,7 @@ export function MentionTextarea({
                     <span className="text-sm font-medium text-text-primary truncate">
                       {member.name}
                     </span>
-                    <Badge variant={member.type === "ai" ? "info" : "default"} className="text-[10px] shrink-0">
+                    <Badge variant={member.type === "ai" ? "info" : "default"} className="text-caption shrink-0">
                       {getRoleLabel(member)}
                     </Badge>
                   </div>

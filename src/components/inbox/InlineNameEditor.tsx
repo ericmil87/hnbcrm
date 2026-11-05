@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Pencil } from "lucide-react";
@@ -154,31 +155,33 @@ export function InlineNameEditor({
   }
 
   const pencil = (
-    <button
-      type="button"
-      onClick={startEditing}
-      aria-label="Editar nome"
-      title="Editar nome"
-      className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
-    >
-      <Pencil size={13} aria-hidden />
-    </button>
+    <Tooltip content="Editar nome">
+      <button
+        type="button"
+        onClick={startEditing}
+        aria-label="Editar nome"
+        className="shrink-0 inline-flex items-center justify-center h-7 w-7 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
+      >
+        <Pencil size={13} aria-hidden />
+      </button>
+    </Tooltip>
   );
 
   return (
     <span className={cn("flex items-center gap-1 min-w-0 max-w-full", className)}>
       {!currentName ? (
-        <button
-          type="button"
-          onClick={startEditing}
-          title="Dar um nome a este contato"
-          className={cn(
-            "min-w-0 truncate text-left italic text-text-muted transition-colors hover:text-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 rounded",
-            textClassName
-          )}
-        >
-          {placeholder}
-        </button>
+        <Tooltip content="Dar um nome a este contato" wrapperClassName="min-w-0">
+          <button
+            type="button"
+            onClick={startEditing}
+            className={cn(
+              "min-w-0 truncate text-left italic text-text-muted transition-colors hover:text-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 rounded",
+              textClassName
+            )}
+          >
+            {placeholder}
+          </button>
+        </Tooltip>
       ) : onOpen ? (
         <button
           type="button"

@@ -87,7 +87,7 @@ export function ImageDescription({
         {fields.length > 0 && (
           <dl
             className={cn(
-              "mt-0.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]",
+              "mt-0.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-caption",
               outbound ? "text-bubble-out-fg/75" : "text-text-muted"
             )}
           >
@@ -104,7 +104,7 @@ export function ImageDescription({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className={cn(
-              "flex items-center gap-0.5 self-start text-[11px] font-medium",
+              "flex items-center gap-0.5 self-start text-caption font-medium",
               outbound ? "text-bubble-out-fg/75 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
             )}
           >
@@ -127,7 +127,7 @@ export function ImageDescription({
             type="button"
             onClick={onDescribe}
             className={cn(
-              "flex items-center gap-1 text-[11px] font-medium",
+              "flex items-center gap-1 text-caption font-medium",
               outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
             )}
           >
@@ -150,7 +150,7 @@ export function ImageDescription({
       type="button"
       onClick={onDescribe}
       className={cn(
-        "flex items-center gap-1 self-start text-[11px] font-medium",
+        "flex items-center gap-1 self-start text-caption font-medium",
         outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
       )}
     >

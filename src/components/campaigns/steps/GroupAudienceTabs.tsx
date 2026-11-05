@@ -175,7 +175,7 @@ function GroupPicker({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-text-primary">{g.subject}</span>
-                  <span className="block text-[11px] text-text-muted tabular-nums">
+                  <span className="block text-caption text-text-muted tabular-nums">
                     {g.participantsCount} membro{g.participantsCount === 1 ? "" : "s"}
                     {g.conversationId ? "" : " · sem conversa no inbox"}
                   </span>
@@ -193,7 +193,7 @@ function ExclusionList({ excluded, labels }: { excluded: Record<string, number>;
   const entries = Object.entries(excluded ?? {}).filter(([, n]) => n > 0);
   if (entries.length === 0) return null;
   return (
-    <ul className="mt-2 space-y-0.5 text-[11px] text-text-muted">
+    <ul className="mt-2 space-y-0.5 text-caption text-text-muted">
       {entries.map(([reason, n]) => (
         <li key={reason} className="flex justify-between gap-2">
           <span>{labels[reason] ?? reason}</span>
@@ -369,7 +369,7 @@ export function GroupMembersTab({ organizationId, draft, setDraft, isDraft, now 
             disabled={!isDraft}
             emptyHint='Nenhum grupo acompanhado neste número. Ligue "Acompanhar" em Configurações → Canais → Grupos.'
           />
-          <p className="mt-1 text-[11px] text-text-muted">
+          <p className="mt-1 text-caption text-text-muted">
             Quem estiver em mais de um grupo recebe uma vez só, pelo primeiro grupo da lista.
           </p>
         </div>
@@ -448,7 +448,7 @@ export function GroupMembersTab({ organizationId, draft, setDraft, isDraft, now 
                         })
                       }
                       className={cn(
-                        "rounded-full border px-2.5 py-1 text-[11px] transition-colors",
+                        "rounded-full border px-2.5 py-1 text-caption transition-colors",
                         on
                           ? "border-brand-500 bg-brand-500/10 text-brand-400"
                           : "border-border text-text-secondary hover:border-border-strong",
@@ -502,7 +502,7 @@ export function GroupMembersTab({ organizationId, draft, setDraft, isDraft, now 
             </p>
           )}
           {preview?.truncated && (
-            <p className="mt-1 text-[11px] text-semantic-warning">
+            <p className="mt-1 text-caption text-semantic-warning">
               Público maior que o teto de {(preview.limit ?? 0).toLocaleString("pt-BR")} por
               campanha: {(preview.overLimit ?? 0).toLocaleString("pt-BR")} pessoa(s) ficam de fora.
               Aperte os filtros ou divida em campanhas por grupo.
@@ -535,7 +535,7 @@ export function GroupMembersTab({ organizationId, draft, setDraft, isDraft, now 
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-[11px] text-text-muted">
+            <p className="mt-2 text-caption text-text-muted">
               Telefones mascarados: são terceiros que ainda não falaram com a empresa.
             </p>
           </div>
@@ -661,7 +661,7 @@ function MemberSelection({
           Quem vai receber
           {refreshing && <Spinner size="sm" />}
         </p>
-        <p className="text-[11px] text-text-muted tabular-nums">
+        <p className="text-caption text-text-muted tabular-nums">
           {selectedCount.toLocaleString("pt-BR")} selecionado{selectedCount === 1 ? "" : "s"} de{" "}
           {eligibleKeys.length.toLocaleString("pt-BR")} elegíve{eligibleKeys.length === 1 ? "l" : "is"}
         </p>
@@ -679,7 +679,7 @@ function MemberSelection({
           type="button"
           disabled={!canSelect}
           onClick={() => write(eligibleKeys)}
-          className="rounded-full border border-border px-2.5 py-1 text-[11px] text-text-secondary transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full border border-border px-2.5 py-1 text-caption text-text-secondary transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           Selecionar todos os elegíveis
         </button>
@@ -687,14 +687,14 @@ function MemberSelection({
           type="button"
           disabled={!canSelect || !hasSelection}
           onClick={() => updateFilters({ includeKeys: undefined })}
-          className="rounded-full border border-border px-2.5 py-1 text-[11px] text-text-secondary transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
+          className="rounded-full border border-border px-2.5 py-1 text-caption text-text-secondary transition-colors hover:border-border-strong disabled:cursor-not-allowed disabled:opacity-50"
         >
           Limpar seleção
         </button>
       </div>
 
       {truncated && (
-        <p className="flex items-start gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-2.5 text-[11px] text-text-secondary">
+        <p className="flex items-start gap-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-2.5 text-caption text-text-secondary">
           <AlertTriangle size={13} className="mt-0.5 shrink-0 text-semantic-warning" />
           Mostrando as primeiras {(shown.membersLimit ?? members.length).toLocaleString("pt-BR")} de{" "}
           {(shown.membersTotal ?? members.length).toLocaleString("pt-BR")} pessoas. Escolher uma a
@@ -746,20 +746,20 @@ function MemberSelection({
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="truncate text-sm text-text-primary">{memberLabel(m)}</span>
                     {m.isAdmin && (
-                      <span className="inline-flex items-center gap-0.5 rounded-full bg-semantic-warning/15 px-1.5 py-0.5 text-[10px] text-semantic-warning">
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-semantic-warning/15 px-1.5 py-0.5 text-micro text-semantic-warning">
                         <Crown size={9} />
                         admin
                       </span>
                     )}
                     {m.isContact && (
-                      <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-0.5 text-[10px] text-brand-400">
+                      <span className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-0.5 text-micro text-brand-400">
                         <UserRound size={9} />
                         contato
                       </span>
                     )}
                   </span>
                   {subtitle && (
-                    <span className="mt-0.5 block truncate text-[11px] text-text-muted">{subtitle}</span>
+                    <span className="mt-0.5 block truncate text-caption text-text-muted">{subtitle}</span>
                   )}
                 </span>
               </label>
@@ -768,7 +768,7 @@ function MemberSelection({
         })}
       </ul>
 
-      <p className="text-[11px] text-text-muted">
+      <p className="text-caption text-text-muted">
         Sem ninguém marcado a campanha vai para todos os elegíveis. Quem está esmaecido não recebe —
         o motivo aparece ao lado do nome.
       </p>

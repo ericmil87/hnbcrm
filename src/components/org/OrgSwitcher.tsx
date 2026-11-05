@@ -91,7 +91,7 @@ export function CreateOrganizationForm({
       toast.error(
         /slug/i.test(message)
           ? "Esse identificador já está em uso. Escolha outro."
-          : "Falha ao criar organização. Tente novamente."
+          : "Não foi possível criar a organização. Tente novamente."
       );
     } finally {
       setIsCreating(false);

@@ -55,7 +55,7 @@ export function VoiceTranscription({
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className={cn(
-              "flex items-center gap-0.5 self-start text-[11px] font-medium",
+              "flex items-center gap-0.5 self-start text-caption font-medium",
               outbound ? "text-bubble-out-fg/75 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
             )}
           >
@@ -71,13 +71,13 @@ export function VoiceTranscription({
     return (
       <div className="flex items-center gap-2">
         <span className={cn("text-xs italic", outbound ? "text-bubble-out-fg/75" : "text-semantic-error")}>
-          Falha na transcrição
+          Não foi possível transcrever
         </span>
         <button
           type="button"
           onClick={onTranscribe}
           className={cn(
-            "flex items-center gap-1 text-[11px] font-medium",
+            "flex items-center gap-1 text-caption font-medium",
             outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
           )}
         >
@@ -97,7 +97,7 @@ export function VoiceTranscription({
       type="button"
       onClick={onTranscribe}
       className={cn(
-        "flex items-center gap-1 self-start text-[11px] font-medium",
+        "flex items-center gap-1 self-start text-caption font-medium",
         outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
       )}
     >

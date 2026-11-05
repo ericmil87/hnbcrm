@@ -269,7 +269,7 @@ export function GroupMentionDropdown({
           )}
         >
           <span
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-micro font-bold text-white"
             style={{ backgroundColor: groupSenderColor(row.key) }}
             aria-hidden
           >
@@ -278,7 +278,7 @@ export function GroupMentionDropdown({
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-text-primary">{row.label}</span>
             {row.participant.phone && (
-              <span className="block text-[11px] text-text-muted tabular-nums">
+              <span className="block text-caption text-text-muted tabular-nums">
                 {maskPhone(row.participant.phone)}
               </span>
             )}

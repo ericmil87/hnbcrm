@@ -35,7 +35,7 @@ interface BottomTabBarViewProps {
 }
 
 const BADGE_PILL =
-  "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums";
+  "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums";
 
 /** Barra inferior pura: 4 primários + "Mais" (folha por grupos). */
 export function BottomTabBarView({
@@ -64,7 +64,7 @@ export function BottomTabBarView({
           {sections.map((section) => (
             <section key={section.id} aria-label={section.label ?? undefined}>
               {section.label && (
-                <h3 className="px-1 pb-2 text-[11px] font-medium text-text-muted">{section.label}</h3>
+                <h3 className="px-1 pb-2 text-caption font-medium text-text-muted">{section.label}</h3>
               )}
               <ul className="grid grid-cols-3 gap-2">
                 {section.items.map((item) => {
@@ -123,7 +123,7 @@ export function BottomTabBarView({
             >
               <Building2 size={18} className="shrink-0 text-brand-500" aria-hidden="true" />
               <span className="flex-1 min-w-0 text-left">
-                <span className="block text-[11px] text-text-muted">Organização</span>
+                <span className="block text-caption text-text-muted">Organização</span>
                 <span className="block truncate text-text-primary">{orgName}</span>
               </span>
             </button>
@@ -182,7 +182,7 @@ export function BottomTabBarView({
                     </span>
                   )}
                 </span>
-                <span className="text-[11px] font-medium" aria-hidden="true">{item.label}</span>
+                <span className="text-caption font-medium" aria-hidden="true">{item.label}</span>
               </button>
             );
           })}
@@ -205,7 +205,7 @@ export function BottomTabBarView({
                 <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-brand-600" aria-hidden="true" />
               )}
             </span>
-            <span className="text-[11px] font-medium" aria-hidden="true">Mais</span>
+            <span className="text-caption font-medium" aria-hidden="true">Mais</span>
           </button>
         </div>
       </nav>

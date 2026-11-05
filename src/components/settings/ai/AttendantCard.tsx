@@ -39,7 +39,7 @@ export function AttendantCard({ organizationId }: { organizationId: Id<"organiza
       });
       toast.success("Atendente IA criado em modo Sugerir respostas");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível criar atendente.");
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar o atendente.");
     } finally {
       setBusy(false);
     }

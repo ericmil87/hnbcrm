@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { useQuery, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
@@ -5,6 +6,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Copy, Check, RefreshCw, Power, Trash2, QrCode, Cloud, Radio, LayoutTemplate, BellRing } from "lucide-react";
@@ -60,7 +62,7 @@ export function ChannelCard({
       const r = await syncTemplates({ channelConfigId: config._id });
       toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível sincronizar templates.");
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível sincronizar os templates.");
     } finally {
       setSyncingTemplates(false);
     }
@@ -131,16 +133,17 @@ export function ChannelCard({
               Testar conexão
             </Button>
             {!isBridge && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void handleSyncTemplates()}
-                disabled={syncingTemplates}
-                title="Sincroniza os templates de mensagem aprovados na Meta (usados nas campanhas)"
-              >
-                {syncingTemplates ? <Spinner size="sm" /> : <LayoutTemplate size={14} />}
-                Templates{templates !== undefined ? ` (${approvedCount})` : ""}
-              </Button>
+              <Tooltip content="Sincroniza os templates de mensagem aprovados na Meta (usados nas campanhas)" asInfo>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void handleSyncTemplates()}
+                  disabled={syncingTemplates}
+                >
+                  {syncingTemplates ? <Spinner size="sm" /> : <LayoutTemplate size={14} />}
+                  Templates{templates !== undefined ? ` (${approvedCount})` : ""}
+                </Button>
+              </Tooltip>
             )}
             <Button variant="ghost" size="sm" onClick={onEdit}>
               Editar
@@ -196,28 +199,12 @@ export function ChannelCard({
                 </Badge>
               }
             >
-              <button
-                type="button"
-                role="switch"
-                aria-checked={phoneNotificationsOn}
-                aria-label="Notificações no celular"
-                onClick={onTogglePhoneNotifications}
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              >
-                <span
-                  className={cn(
-                    "relative inline-flex h-6 w-10 items-center rounded-full transition-colors",
-                    phoneNotificationsOn ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      phoneNotificationsOn ? "translate-x-5" : "translate-x-1"
-                    )}
-                  />
-                </span>
-              </button>
+              <Switch
+                checked={phoneNotificationsOn}
+                onCheckedChange={onTogglePhoneNotifications}
+                label="Notificações no celular"
+                hideLabel
+              />
             </PermissionGate>
           </div>
           <p className="mt-1.5 text-xs text-text-muted">

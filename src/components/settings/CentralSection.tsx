@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -693,23 +694,24 @@ function DepartmentModal({
           <span className={labelClass}>Ícone</span>
           <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Ícone do departamento">
             {Object.entries(DEPARTMENT_ICONS).map(([key, { icon: Icon, label }]) => (
-              <button
-                key={key}
-                type="button"
-                role="radio"
-                aria-checked={icon === key}
-                aria-label={label}
-                title={label}
-                onClick={() => setIcon(key)}
-                className={cn(
-                  "flex h-11 w-11 items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-                  icon === key
-                    ? "border-brand-500 bg-brand-500/10 text-brand-500"
-                    : "border-border text-text-muted hover:text-text-primary"
-                )}
-              >
-                <Icon size={18} aria-hidden="true" />
-              </button>
+              <Tooltip content={label}>
+                <button
+                  key={key}
+                  type="button"
+                  role="radio"
+                  aria-checked={icon === key}
+                  aria-label={label}
+                  onClick={() => setIcon(key)}
+                  className={cn(
+                    "flex h-11 w-11 items-center justify-center rounded-lg border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+                    icon === key
+                      ? "border-brand-500 bg-brand-500/10 text-brand-500"
+                      : "border-border text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  <Icon size={18} aria-hidden="true" />
+                </button>
+              </Tooltip>
             ))}
           </div>
         </div>

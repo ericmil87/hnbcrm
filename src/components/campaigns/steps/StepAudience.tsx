@@ -97,7 +97,7 @@ export function StepAudience({ organizationId, campaignId, draft, setDraft, isDr
                 <Icon size={15} />
                 {tab.label}
               </div>
-              <p className="text-[11px] text-text-muted mt-0.5 hidden sm:block">{tab.hint}</p>
+              <p className="text-caption text-text-muted mt-0.5 hidden sm:block">{tab.hint}</p>
             </button>
           );
         })}
@@ -381,7 +381,7 @@ function SegmentTab({
             )}
           </>
         )}
-        <p className="text-[11px] text-text-muted">
+        <p className="text-caption text-text-muted">
           O público é congelado no lançamento: mudar o filtro depois não altera uma campanha em andamento.
         </p>
       </aside>
@@ -459,7 +459,7 @@ function ImportTab({
       setSummary(result);
       setPhase("check");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na validação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível validar a audiência."));
     } finally {
       setBusy(false);
     }
@@ -653,7 +653,7 @@ function MappingSelect({
 function ImportStat({ label, value, tone }: { label: string; value: number; tone?: "success" | "error" | "warning" }) {
   return (
     <div className="rounded-lg bg-surface-raised border border-border px-3 py-2">
-      <p className="text-[11px] text-text-muted">{label}</p>
+      <p className="text-caption text-text-muted">{label}</p>
       <p
         className={cn(
           "text-lg font-semibold tabular-nums",
@@ -930,7 +930,7 @@ function TargetSection({
         />
       </div>
       {draft.audience.source === "segment" && (
-        <p className="text-[11px] text-text-muted flex items-start gap-1.5">
+        <p className="text-caption text-text-muted flex items-start gap-1.5">
           <AlertTriangle size={12} className="shrink-0 mt-0.5" />
           Num segmento todos já são leads; o destino só vale para números novos de importação/manual.
         </p>

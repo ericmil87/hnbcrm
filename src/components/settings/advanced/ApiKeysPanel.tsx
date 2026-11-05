@@ -79,7 +79,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
       toast.success("Chave revogada");
       cancelDelete();
     } catch (error) {
-      toast.error("Não foi possível revogar chave.");
+      toast.error("Não foi possível revogar a chave.");
     }
   };
 

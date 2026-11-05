@@ -50,11 +50,11 @@ export function LeadCentralSection({ organizationId, lead }: LeadCentralSectionP
         {modules.units && unit && (
           <ColorChip name={unit.name} color={unit.color} title={`Unidade: ${unit.name}`} className="max-w-[14rem]" />
         )}
-        <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-px text-[11px] font-medium text-text-secondary">
+        <span className="inline-flex items-center rounded-full bg-surface-overlay px-2 py-px text-caption font-medium text-text-secondary">
           {contactKindLabel(lead.contactKind)}
         </span>
         {stay && (
-          <span className="inline-flex items-center rounded-full bg-semantic-success/10 px-2 py-px text-[11px] font-medium text-semantic-success tabular-nums">
+          <span className="inline-flex items-center rounded-full bg-semantic-success/10 px-2 py-px text-caption font-medium text-semantic-success tabular-nums">
             Estadia {stay}
             {typeof guests === "number" || typeof guests === "string" ? ` · ${guests} hósp.` : ""}
           </span>

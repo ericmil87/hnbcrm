@@ -134,7 +134,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
       toast.success(`Acompanhando '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao acompanhar o grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível acompanhar o grupo."));
     } finally {
       setFollowingId(null);
     }
@@ -145,7 +145,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: false });
       toast.success(`Parou de acompanhar '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+      toast.error(mutationErrorMessage(error, "Não foi possível parar de acompanhar."));
     }
   };
 
@@ -233,7 +233,7 @@ export function GroupsPage() {
               ? "Sincronize a lista de salas no card do número em Configurações → Canais."
               : "Ligue os grupos num número por QR code em Configurações → Canais para o CRM listar as salas."
           }
-          action={{ label: "Abrir Canais", onClick: goToChannels }}
+          action={{ label: "Abrir canais", onClick: goToChannels }}
         />
       ) : monitored.length === 0 ? (
         // Já sabemos de sala — só falta escolher. Fica no lugar do estado
@@ -457,7 +457,7 @@ function GroupActions({
         type="button"
         onClick={onOpenInbox}
         disabled={!group.conversationId}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
       >
         <MessageSquare size={11} />
         Abrir no inbox
@@ -465,7 +465,7 @@ function GroupActions({
       <button
         type="button"
         onClick={onMembers}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
       >
         <Users size={11} />
         Membros
@@ -473,7 +473,7 @@ function GroupActions({
       <button
         type="button"
         onClick={onMedia}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
       >
         <HardDrive size={11} />
         Mídia
@@ -487,7 +487,7 @@ function GroupActions({
             ? "Cria uma campanha de mensagem privada para os membros deste grupo"
             : "Precisa de permissão para gerenciar campanhas"
         }
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Send size={11} />
         Disparar 1 a 1 para os membros
@@ -496,7 +496,7 @@ function GroupActions({
         <button
           type="button"
           onClick={onUnfollow}
-          className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
+          className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
         >
           <EyeOff size={11} />
           Parar de acompanhar

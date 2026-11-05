@@ -252,7 +252,7 @@ function PendingActionsCard({ organizationId }: { organizationId: Id<"organizati
                   loading: "Executando...",
                   success: "Ação executada",
                   error: (e) =>
-                    e instanceof Error ? e.message : "Falha ao executar a ação",
+                    e instanceof Error ? e.message : "Não foi possível executar a ação.",
                 })
               }
               className="flex-1"

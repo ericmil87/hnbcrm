@@ -41,7 +41,7 @@ export function EventBlock({ event, onClick, compact }: EventBlockProps) {
       title={`${timeString} ${event.title}`}
       className={cn(
         "rounded border cursor-pointer transition-all h-full overflow-hidden",
-        compact ? "rounded-sm px-0.5 py-0.5 text-[9px]" : "rounded-lg px-2 py-1 text-xs",
+        compact ? "rounded-sm px-0.5 py-0.5 text-caption" : "rounded-lg px-2 py-1 text-xs",
         colors.bg,
         colors.border,
         isTask && "border-dashed",
@@ -66,7 +66,7 @@ export function EventBlock({ event, onClick, compact }: EventBlockProps) {
             <div className={cn("font-medium truncate", colors.text)}>
               {timeString}
             </div>
-            <div className="text-text-primary truncate text-[11px] leading-tight">
+            <div className="text-text-primary truncate text-caption leading-tight">
               {event.title}
             </div>
           </div>

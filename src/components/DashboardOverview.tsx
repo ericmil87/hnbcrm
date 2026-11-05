@@ -323,7 +323,7 @@ function MyTasksWidget({
                     <TaskLabelChips labels={task.labels} max={3} className="mt-0.5 flex-wrap" />
                   )}
                 </div>
-                <Badge variant={pb.variant} className="text-[10px] shrink-0">{pb.label}</Badge>
+                <Badge variant={pb.variant} className="text-caption shrink-0">{pb.label}</Badge>
                 {task.dueDate && (
                   <span
                     className={cn(
@@ -378,7 +378,7 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
     return (
       <Card>
         <h3 className="text-lg font-semibold text-text-primary mb-4">Resumo dos funis</h3>
-        <p className="text-text-muted">Nenhum lead no pipeline ainda.</p>
+        <p className="text-text-muted">Nenhum lead nos funis ainda.</p>
       </Card>
     );
   }
@@ -440,12 +440,12 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-text-primary">{stage.stageName}</span>
                   {stage.isClosedWon && (
-                    <Badge variant="success" className="text-[10px] px-1.5 py-0">
+                    <Badge variant="success" className="text-caption px-1.5 py-0">
                       Ganho
                     </Badge>
                   )}
                   {stage.isClosedLost && (
-                    <Badge variant="error" className="text-[10px] px-1.5 py-0">
+                    <Badge variant="error" className="text-caption px-1.5 py-0">
                       Perdido
                     </Badge>
                   )}

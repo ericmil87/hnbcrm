@@ -35,12 +35,13 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
   useEffect(() => clearTimer, [clearTimer]);
 
   const disabled = children.props.disabled === true;
+  const hasContent = Boolean(content);
   const touchSimple = asInfo || disabled;
 
   const onTouchStart = () => {
     lastTouch.current = Date.now();
     longPressed.current = false;
-    if (touchSimple) return;
+    if (touchSimple || !hasContent) return;
     clearTimer();
     timer.current = window.setTimeout(() => {
       longPressed.current = true;
@@ -63,7 +64,7 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
         tabIndex={disabled ? 0 : undefined}
         role={disabled ? "button" : undefined}
         aria-disabled={disabled || undefined}
-        aria-describedby={disabled && open ? id : undefined}
+        aria-describedby={disabled && open && hasContent ? id : undefined}
         onClickCapture={(e) => {
           if (longPressed.current) {
             longPressed.current = false;
@@ -85,13 +86,13 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
         {disabled
           ? children
           : cloneElement(children, {
-              "aria-describedby": open
+              "aria-describedby": open && hasContent
                 ? [children.props["aria-describedby"], id].filter(Boolean).join(" ")
                 : children.props["aria-describedby"],
             })}
       </span>
       <Popover
-        open={open}
+        open={open && hasContent}
         onOpenChange={setOpen}
         anchor={anchorRef}
         side={side}

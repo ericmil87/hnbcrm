@@ -184,11 +184,7 @@ export function QrCodeConnectForm({
 
           {!isEditing && source === "managed" && (
             <p className="text-xs text-text-secondary">
-              A conexão será criada automaticamente no servidor do HNBCRM{" "}
-              {defaults?.managedGatewayUrl && (
-                <span className="break-all font-mono">({defaults.managedGatewayUrl})</span>
-              )}{" "}
-              , sem URL nem token para configurar.
+              A conexão será criada automaticamente no Servidor do HNBCRM, sem URL nem token para configurar.
             </p>
           )}
 

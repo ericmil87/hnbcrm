@@ -525,7 +525,7 @@ export function NewConversationModal({
                       </span>
                     </span>
                     {!c.connected && (
-                      <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-2 py-0.5 text-[11px] font-medium text-semantic-warning">
+                      <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-2 py-0.5 text-caption font-medium text-semantic-warning">
                         <AlertTriangle size={11} /> Desconectado
                       </span>
                     )}

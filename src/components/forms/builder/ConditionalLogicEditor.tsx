@@ -123,7 +123,7 @@ function ConditionRow({
     >
       {/* Row header: condition index + remove button */}
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wide">
+        <span className="text-caption font-semibold text-text-muted uppercase tracking-wide">
           Condição {index + 1}
         </span>
         <button

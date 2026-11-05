@@ -424,7 +424,7 @@ export function FormBuilderPage() {
       {
         loading: "Salvando...",
         success: "Formulário salvo!",
-        error: "Erro ao salvar formulário",
+        error: "Não foi possível salvar o formulário.",
       }
     );
   }, [formId, isDirty, name, description, slug, fields, steps, theme, settings, updateForm]);
@@ -455,7 +455,7 @@ export function FormBuilderPage() {
     toast.promise(unpublishForm({ formId: formId as Id<"forms"> }), {
       loading: "Despublicando...",
       success: "Formulário despublicado!",
-      error: "Erro ao despublicar",
+      error: "Não foi possível despublicar o formulário.",
     });
   }, [formId, unpublishForm]);
 
@@ -469,7 +469,7 @@ export function FormBuilderPage() {
       {
         loading: "Excluindo formulário...",
         success: "Formulário excluído!",
-        error: "Erro ao excluir formulário",
+        error: "Não foi possível excluir o formulário.",
       }
     );
     setShowDeleteConfirm(false);

@@ -96,7 +96,7 @@ export function LabelPicker({ organizationId, selectedIds, onChange, className }
       setCreating(false);
       toast.success("Etiqueta criada");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao criar etiqueta");
+      toast.error(err instanceof Error ? err.message : "Não foi possível criar a etiqueta.");
     }
   };
 
