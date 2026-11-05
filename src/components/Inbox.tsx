@@ -97,72 +97,19 @@ import {
 } from "@/components/inbox/central/InboxQueueBar";
 import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
-import { aiStateReasonLabel } from "@/lib/aiStateReasons";
+import {
+  type ConversationKindFilter,
+  KIND_FILTERS,
+  KIND_FILTER_KEY,
+  type LeadHandoffState,
+  activeBotSuspicion,
+  aiStateChipInfo,
+  isHandoffPending,
+  readKindFilter,
+} from "@/lib/inboxState";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
 import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
-
-// Guardrail anti-bot (v0.65): `conversations.botSuspicion` sem `clearedAt` =
-// a IA parou de responder porque o outro lado parece um robô. "Devolver para
-// IA" (ou rejeitar o repasse) limpa no backend.
-type BotSuspicion = {
-  at: number;
-  source: "heuristic" | "model";
-  reason: string;
-  clearedAt?: number;
-};
-
-function activeBotSuspicion(conversation: { botSuspicion?: BotSuspicion } | null | undefined): BotSuspicion | null {
-  const s = conversation?.botSuspicion;
-  return s && s.clearedAt === undefined ? s : null;
-}
-
-// `lead.handoffState` some quando nunca houve repasse; "completed" é repasse
-// já resolvido. Qualquer outro estado = alguém precisa assumir a conversa.
-type LeadHandoffState = { status: string; reason?: string } | undefined | null;
-
-function isHandoffPending(state: LeadHandoffState): boolean {
-  return !!state && state.status !== "completed";
-}
-
-type AiConvState = {
-  status: string;
-  reason: string | null;
-  at: number;
-  afterLastInbound: boolean;
-} | null | undefined;
-
-// "done" ou item antigo (já superado por uma mensagem inbound mais nova) → sem chip.
-function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing" | "waiting" } | null {
-  if (!state || state.status === "done") return null;
-  if (state.status === "pending" || state.status === "processing") {
-    return { label: "IA preparando resposta…", tone: "processing" };
-  }
-  if ((state.status === "skipped" || state.status === "failed") && state.afterLastInbound) {
-    const reasonLabel = state.reason ? aiStateReasonLabel(state.reason) : "motivo desconhecido";
-    return { label: `IA em espera: ${reasonLabel}`, tone: "waiting" };
-  }
-  return null;
-}
-
-// Filtro "Todas / Diretas / Grupos" da lista de conversas.
-type ConversationKindFilter = "all" | "direct" | "group";
-const KIND_FILTER_KEY = "hnbcrm.inbox.kindFilter";
-const KIND_FILTERS: { id: ConversationKindFilter; label: string }[] = [
-  { id: "all", label: "Todas" },
-  { id: "direct", label: "Diretas" },
-  { id: "group", label: "Grupos" },
-];
-
-function readKindFilter(): ConversationKindFilter {
-  try {
-    const stored = window.localStorage.getItem(KIND_FILTER_KEY);
-    if (stored === "direct" || stored === "group" || stored === "all") return stored;
-  } catch {
-    /* localStorage bloqueado (janela anônima, dados de site desligados) */
-  }
-  return "all";
-}
 
 /**
  * Resolve o `?conversation=` que não está na lista carregada (fora do lote carregado
