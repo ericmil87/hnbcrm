@@ -29,6 +29,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Com mais de um atendente ativo, os painéis editam o primeiro ativo e avisam qual é.
 - Abrir uma seção sem permissão agora mostra um aviso dizendo qual seção foi pedida e qual está sendo mostrada.
 - Em Atendente IA › Visão geral há o atalho "Uso e limites de gasto", e a descrição de Modelo de IA e privacidade ficou em linguagem simples.
+- Em **Conversas**, uma faixa no topo da lista avisa "3 conversas precisam de você · Ver" quando a IA pediu ajuda (leva a **Requer atenção**) e some quando não há nada pendente.
+- Na conversa com pedido de ajuda pendente, os botões **Assumir conversa** e **Devolver à IA** ficam sempre à vista no topo, tanto em conversa direta quanto em grupo.
+- Os filtros **Arquivadas** e **Etiqueta** da lista de Conversas ficam no endereço da página: dá para recarregar, compartilhar o link e voltar do navegador sem perder o filtro. Abrir uma conversa agora também entra no histórico (o "voltar" do navegador, inclusive no celular, fecha a conversa e volta à lista). Os filtros de canal, conta e Diretas/Grupos continuam guardados só neste aparelho.
+- Os filtros da lista de Conversas (Ativas/Arquivadas, Todas/Diretas/Grupos, canal, conta e etiqueta) usam os mesmos seletores do resto do app, com área de toque maior no celular.
 
 ### Aparência: escolha entre Escuro, Claro e Estilo WhatsApp
 
