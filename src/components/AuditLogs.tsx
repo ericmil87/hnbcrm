@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -34,6 +35,7 @@ import {
 } from "@/lib/auditUtils";
 
 export function AuditLogs() {
+  usePageTitle(VOCAB.audit.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
 

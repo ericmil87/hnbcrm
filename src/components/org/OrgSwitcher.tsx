@@ -257,7 +257,8 @@ function OrgSwitcherModalContent({
 
 // --- Gatilho da sidebar ---
 
-interface OrgSwitcherTriggerProps {
+interface OrgSwitcherTriggerProps
+  extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "type"> {
   orgName: string;
   onClick: () => void;
   className?: string;
@@ -267,12 +268,12 @@ interface OrgSwitcherTriggerProps {
  * Botão que mostra a org atual e abre o seletor. Na sidebar colapsada (md,
  * 64 px) vira só o ícone — o nome inteiro fica no modal, não num select espremido.
  */
-export function OrgSwitcherTrigger({ orgName, onClick, className }: OrgSwitcherTriggerProps) {
+export function OrgSwitcherTrigger({ orgName, onClick, className, ...rest }: OrgSwitcherTriggerProps) {
   return (
     <button
+      {...rest}
       type="button"
       onClick={onClick}
-      title={`Organização: ${orgName}`}
       aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]",

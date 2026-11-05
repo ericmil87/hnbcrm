@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../convex/lib/orgPhone";
 import { countryLabel } from "@/lib/defaultCountry";
 import { timezoneOptions } from "@/lib/timezones";
@@ -50,6 +51,7 @@ function isSettingsSection(value: string | null): value is SettingsSection {
 }
 
 export function Settings() {
+  usePageTitle(VOCAB.settings.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
   const { anyEnabled: anyModuleEnabled } = useOrgModules(organizationId);

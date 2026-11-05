@@ -12,6 +12,9 @@ export interface OrgModules {
   metaMessaging: boolean;
 }
 
+/** Módulos ligáveis por org (tudo menos `demoMode`). */
+export type OrgModuleKey = keyof Omit<OrgModules, "demoMode">;
+
 const ALL_OFF: OrgModules = {
   units: false,
   departments: false,

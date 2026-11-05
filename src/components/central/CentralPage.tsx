@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
@@ -33,6 +34,7 @@ const selectClass =
   "min-h-[44px] w-full sm:w-auto bg-surface-raised border border-border-strong text-text-primary rounded-field px-3 py-2 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20";
 
 export function CentralPage() {
+  usePageTitle(VOCAB.reports.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can, isLoading: permsLoading } = usePermissions(organizationId);

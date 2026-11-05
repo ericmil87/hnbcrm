@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -36,6 +38,7 @@ const STATUS_FILTERS: { id: CampaignStatus | "all" | "active"; label: string }[]
 ];
 
 export function CampaignsPage() {
+  usePageTitle(VOCAB.campaigns.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can, isLoading } = usePermissions(organizationId);
   const canView = can("campaigns", "view");

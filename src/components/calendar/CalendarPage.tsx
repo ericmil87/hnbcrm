@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useMemo, useEffect } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -32,6 +34,7 @@ function ClearEventParam({ onClear }: { onClear: () => void }) {
 }
 
 export function CalendarPage() {
+  usePageTitle(VOCAB.agenda.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const {
     view,

@@ -12,6 +12,7 @@ src/
 ├── index.css                   # --rgb-* color channels + full-color aliases (dark/light), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
+├── lib/nav.ts                  # NAV_ITEMS/NAV_GROUPS (single nav model), visibleNavItems(), splitMobile(), badge helpers; test next to it
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
@@ -19,6 +20,8 @@ src/
 ├── lib/timezones.ts            # time zones with PT-BR names (value = IANA id, unchanged)
 ├── test/                       # setup.ts (jest-dom, matchMedia/ResizeObserver stubs), render.tsx (renderWithRouter) for *.test.tsx
 ├── pages/                      # Public/route pages (Developers, Playground, Terms, Privacy, PublicForm, NotFoundPage, RouteErrorPage)
+├── hooks/useNavBadges.ts       # sidebar/tab bar counts (inboxUnread, pendingAttention, pausedCampaigns); "skip" for hidden items (badgeQueriesFor)
+├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
@@ -62,7 +65,7 @@ src/
 - **Data:** `useQuery(api.module.fn, ready ? { organizationId } : "skip")`; mutations via `useMutation` + `toast.promise` from `sonner`; loading = `<Spinner size="lg" />`.
 - **Auth/org:** `AuthLayout` (`useConvexAuth()`) redirects unauthenticated users to `/entrar`, gates org/onboarding, and passes `<Outlet context={{ organizationId }}>`;
   pages read it with `useOutletContext<AppOutletContext>()`.
-- **Navigation:** URL-based; `Sidebar`/`BottomTabBar` derive active state from `useLocation()` via `TAB_ROUTES`/`activeTabForPath()`; `Tab` type exported from `BottomTabBar.tsx`.
+- **Navigation:** URL-based; `Sidebar`/`BottomTabBar` derive active state from `useLocation()` via `TAB_ROUTES`/`activeTabForPath()`; `Tab` lives in `lib/routes.ts`; `Sidebar` and `BottomTabBar` only render `NAV_ITEMS` (`lib/nav.ts`, 4 groups; bar = 4 primary items + "Mais" sheet); active item by `activeTabForPath()`; every menu page calls `usePageTitle(VOCAB.x.title)`.
 - **Public pages:** render `<SEO title description keywords ogImage />` from `@/components/SEO`.
 - **Lazy routes:** `lazy(() => import("./components/X").then(m => ({ default: m.X })))` wrapped in `LazyRoute` (Suspense + `<Spinner size="lg" />`); the Suspense fallback must be static.
 - **Scroll:** `<ScrollRestoration />` lives in `AuthLayout.tsx`; the window scrolls (no nested scroll containers).

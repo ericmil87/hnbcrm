@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useOutletContext, useNavigate, useSearchParams, useLocation } from "react-router";
 import { useQuery, useMutation, useAction } from "convex/react";
@@ -185,6 +186,7 @@ function ConversationDeepLinkResolver({
 }
 
 export function Inbox() {
+  usePageTitle(VOCAB.conversations.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();

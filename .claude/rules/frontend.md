@@ -48,6 +48,7 @@ paths:
 ## Mobile-first
 - Write base styles for mobile, then `md:`/`lg:`. Breakpoints: xs 375, sm 640, md 768, lg 1024, xl 1280. Verify at 375, 768, 1024.
 - Touch targets at least 44x44px. Bottom-anchored UI (sheets, FABs, composers) uses `pb-safe` or `env(safe-area-inset-*)`.
+- Viewport height: `dvh` always via `supports-[height:100dvh]:` after the `vh` class (e.g. `min-h-screen supports-[height:100dvh]:min-h-[100dvh]`); two plain utilities in a row make `vh` win.
 - Window scrolls naturally; do not add nested scroll containers for page content. Kanban on mobile scrolls horizontally with snap.
 - Respect `prefers-reduced-motion`. Focus ring (keyboard only): `focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base`; animate with `motion-safe:`.
 
@@ -59,6 +60,8 @@ paths:
 - Mutations: `useMutation` plus `sonner` toasts (`toast.promise`). Convex user errors are `ConvexError` with PT-BR text; show it.
 
 ## Routing and deep links
+
+- Navigation menu: `src/lib/nav.ts` (`NAV_ITEMS`) is the only list. A new menu item = one line in `NAV_ITEMS` (label from `VOCAB`, icon, group, permission, module, badge, `mobile: "primary" | "more"`) plus its `TAB_ROUTES` entry; never add a second list in `Sidebar`/`BottomTabBar`. The bar holds at most 4 primary items. Menu pages call `usePageTitle(...)`.
 - Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `activeTabForPath`); navigate with `useNavigate`, derive active state from `useLocation`.
 - Authenticated routes are lazy (`React.lazy`) under `AuthLayout`. Public pages call `<SEO />` (`src/components/SEO.tsx`).
 - The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`, and the Agenda's `?view=`, `?date=`, `?event=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).

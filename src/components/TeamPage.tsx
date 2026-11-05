@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -62,6 +64,7 @@ function memberStatus(m: {
 }
 
 export function TeamPage() {
+  usePageTitle(VOCAB.team.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can, member: currentMember } = usePermissions(organizationId);
   const canManage = can("team", "manage");
