@@ -2,13 +2,13 @@ import { activeTabForPath, TAB_ROUTES } from "./routes";
 
 /**
  * Parâmetros de busca que só controlam a UI (seção/aba) e valem em qualquer
- * org. `view` e `q` são o modo e a busca do Funil/Agenda. Todo o resto (`owner`, `unit`,
+ * org. `view`, `q` e `date` são o modo, a busca e o dia do Funil/Agenda. Todo o resto (`owner`, `unit`,
  * `?conversation=`, `?task=`, `?lead=`, `?handoff=`,
  * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as
  * queries autorizam pela org da entidade, então a tela da org nova mostraria
  * o registro da antiga ao lado das listas dela.
  */
-const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba", "view", "q"]);
+const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba", "view", "q", "date"]);
 
 /**
  * Destino da navegação ao trocar de organização: mesma aba, sem deep-link de

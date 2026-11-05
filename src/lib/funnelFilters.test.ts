@@ -9,6 +9,7 @@ import {
   getTemperatureLabel,
   getTemperatureVariant,
   lastBoardStorageKey,
+  normalizeFunnelFilters,
   parseFunnelFilters,
   pickInitialBoardId,
   sortLeads,
@@ -203,5 +204,26 @@ describe("funil inicial", () => {
 
   it("a chave do localStorage é por organização", () => {
     expect(lastBoardStorageKey("org1")).toBe("hnbcrm.lastBoard.org1");
+  });
+});
+
+describe("normalizeFunnelFilters", () => {
+  const f = { ...DEFAULT_FUNNEL_FILTERS, owner: "gone", unit: "gone" };
+
+  it("id inexistente vira todos", () => {
+    const r = normalizeFunnelFilters(f, { memberIds: ["m1"], unitIds: ["u1"] });
+    expect(r.owner).toBe("all");
+    expect(r.unit).toBe("all");
+  });
+
+  it("ids válidos e valores especiais ficam", () => {
+    const keep = { ...DEFAULT_FUNNEL_FILTERS, owner: "m1", unit: "none" };
+    expect(normalizeFunnelFilters(keep, { memberIds: ["m1"], unitIds: [] })).toBe(keep);
+    const un = { ...DEFAULT_FUNNEL_FILTERS, owner: "unassigned" };
+    expect(normalizeFunnelFilters(un, { memberIds: [] })).toBe(un);
+  });
+
+  it("lista não carregada não invalida", () => {
+    expect(normalizeFunnelFilters(f, {})).toBe(f);
   });
 });

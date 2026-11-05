@@ -26,7 +26,7 @@ describe("pathAfterOrgSwitch", () => {
       pathAfterOrgSwitch("/app/pipeline", "?view=list&q=acme&owner=m1&unit=u1&board=b1&lead=l1&temp=hot")
     ).toBe("/app/pipeline?view=list&q=acme");
     expect(pathAfterOrgSwitch("/app/calendario", "?view=week&date=2026-11-04&event=e1")).toBe(
-      "/app/calendario?view=week"
+      "/app/calendario?view=week&date=2026-11-04"
     );
   });
 

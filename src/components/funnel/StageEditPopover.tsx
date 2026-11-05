@@ -54,11 +54,12 @@ export function StageEditPopover({
   };
 
   return (
+    <>
+    {/* Com a confirmação aberta o popover some; o diálogo fica fora dele (Esc e foco do Modal funcionam). */}
     <Popover
-      open
-      // Com a confirmação de exclusão aberta, o clique nela cai "fora" do popover: não fecha.
+      open={!showDeleteConfirm}
       onOpenChange={(open) => {
-        if (!open && !showDeleteConfirm) onClose();
+        if (!open) onClose();
       }}
       anchor={anchor}
       side="bottom"
@@ -66,7 +67,7 @@ export function StageEditPopover({
       role="dialog"
       aria-label={`Editar etapa ${stage.name}`}
       className="w-72 max-w-[calc(100vw-1rem)] rounded-card p-4 space-y-4"
-  >
+    >
       {/* Name field */}
       <div>
         <label className="block text-xs font-medium text-text-secondary mb-1.5">Nome</label>
@@ -141,19 +142,19 @@ export function StageEditPopover({
           Excluir etapa
         </button>
       </div>
-
-      <ConfirmDialog
-        open={showDeleteConfirm}
-        onClose={() => setShowDeleteConfirm(false)}
-        onConfirm={() => {
-          onDelete(stage._id);
-          onClose();
-        }}
-        title="Excluir etapa"
-        description={`Tem certeza que deseja excluir a etapa "${stage.name}"? Leads vinculados precisarão ser movidos primeiro.`}
-        confirmLabel="Excluir"
-        variant="danger"
-      />
     </Popover>
+    <ConfirmDialog
+      open={showDeleteConfirm}
+      onClose={() => setShowDeleteConfirm(false)}
+      onConfirm={() => {
+        onDelete(stage._id);
+        onClose();
+      }}
+      title="Excluir etapa"
+      description={`Tem certeza que deseja excluir a etapa "${stage.name}"? Leads vinculados precisarão ser movidos primeiro.`}
+      confirmLabel="Excluir"
+      variant="danger"
+    />
+    </>
   );
 }

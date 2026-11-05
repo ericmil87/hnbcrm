@@ -91,6 +91,32 @@ export function writeFunnelFilters(
   return next;
 }
 
+/**
+ * `?owner=`/`?unit=` com id que não existe mais (membro removido, unidade
+ * excluída, link antigo) valem como "todos", igual ao que o Select mostra.
+ * Lista ainda não carregada (`undefined`) não invalida nada.
+ */
+export function normalizeFunnelFilters(
+  filters: FunnelFilters,
+  known: { memberIds?: readonly string[]; unitIds?: readonly string[] }
+): FunnelFilters {
+  const owner =
+    known.memberIds &&
+    filters.owner !== "all" &&
+    filters.owner !== "unassigned" &&
+    !known.memberIds.includes(filters.owner)
+      ? "all"
+      : filters.owner;
+  const unit =
+    known.unitIds &&
+    filters.unit !== "all" &&
+    filters.unit !== "none" &&
+    !known.unitIds.includes(filters.unit)
+      ? "all"
+      : filters.unit;
+  return owner === filters.owner && unit === filters.unit ? filters : { ...filters, owner, unit };
+}
+
 /** Quantos filtros (sem contar o modo) estão ativos. */
 export function activeFilterCount(filters: FunnelFilters): number {
   return (

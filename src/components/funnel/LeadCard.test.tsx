@@ -32,9 +32,17 @@ describe("LeadCardView", () => {
     expect(screen.queryByTestId("lead-last-message")).not.toBeInTheDocument();
   });
 
-  it("com lastMessage mostra a prévia", () => {
-    render(<LeadCardView lead={lead} lastMessage="Pode me enviar a proposta?" />);
-    expect(screen.getByTestId("lead-last-message")).toHaveTextContent("Pode me enviar a proposta?");
+  it("com lastMessage do contato mostra texto e tempo, sem prefixo", () => {
+    render(<LeadCardView lead={lead} lastMessage={{ text: "Pode me enviar a proposta?", at: Date.now() - 3 * 3600_000, fromContact: true }} />);
+    const el = screen.getByTestId("lead-last-message");
+    expect(el).toHaveTextContent("Pode me enviar a proposta?");
+    expect(el).toHaveTextContent("há 3h");
+    expect(el).not.toHaveTextContent("Você:");
+  });
+
+  it("mensagem enviada pela equipe leva o prefixo Você:", () => {
+    render(<LeadCardView lead={lead} lastMessage={{ text: "Enviei agora", at: Date.now(), fromContact: false }} />);
+    expect(screen.getByTestId("lead-last-message")).toHaveTextContent("Você: Enviei agora");
   });
 
   it("lead sem contato mostra o aviso", () => {

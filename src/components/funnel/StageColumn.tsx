@@ -3,6 +3,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
+import { formatMoney } from "@/lib/format";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DraggableCard } from "./LeadCard";
 import type { Lead, Stage } from "./types";
@@ -73,7 +74,7 @@ export function StageColumn({
           </div>
         </div>
         <div className="text-xs text-text-muted tabular-nums">
-          {leads.length} leads · R$ {totalValue.toLocaleString("pt-BR")}
+          {leads.length} leads · {formatMoney(totalValue, "BRL", { fractionDigits: 0 })}
         </div>
       </div>
 

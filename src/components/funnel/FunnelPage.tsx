@@ -26,7 +26,7 @@ import { useOrgModules } from "@/hooks/useOrgModules";
 import { useFunnelUrlState } from "@/hooks/useFunnelUrlState";
 import { VOCAB } from "@/lib/vocab";
 import { assignableMembers } from "@/lib/teamMembers";
-import { defaultSortOrder, filterLeads, sortLeads, type SortOrder } from "@/lib/funnelFilters";
+import { defaultSortOrder, filterLeads, normalizeFunnelFilters, sortLeads, type SortOrder } from "@/lib/funnelFilters";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -66,7 +66,7 @@ export function FunnelPage() {
 
   const boards = useQuery(api.boards.getBoards, { organizationId });
   const {
-    filters,
+    filters: urlFilters,
     setFilters,
     clearFilters,
     leadParam,
@@ -77,7 +77,7 @@ export function FunnelPage() {
     closeLeadPanel,
     handleDeepLinkLead,
   } = useFunnelUrlState(organizationId, boards);
-  const viewMode = filters.view;
+  const viewMode = urlFilters.view;
 
   const [dialog, setDialog] = useState<FunnelDialog | null>(null);
   const [quickAddStageId, setQuickAddStageId] = useState<Id<"stages"> | null>(null);
@@ -93,6 +93,18 @@ export function FunnelPage() {
   // Unidade (MVP Central — só com o módulo `units` ligado na org).
   const { modules: orgModules } = useOrgModules(organizationId);
   const units = useQuery(api.units.listUnits, orgModules.units ? { organizationId } : "skip");
+
+  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
+
+  // Id de responsável/unidade que não existe mais na org vale como "todos".
+  const filters = useMemo(
+    () =>
+      normalizeFunnelFilters(urlFilters, {
+        memberIds: teamMembers?.map((m) => m._id),
+        unitIds: orgModules.units ? units?.map((u) => u._id) : undefined,
+      }),
+    [urlFilters, teamMembers, units, orgModules.units]
+  );
 
   const bulk = useFunnelBulkActions(organizationId, showArchived);
 
@@ -120,7 +132,6 @@ export function FunnelPage() {
       ? { organizationId, boardId: selectedBoardId, archivedOnly: showArchived }
       : "skip"
   );
-  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
   const moveLeadToStage = useMutation(api.leads.moveLeadToStage).withOptimisticUpdate(
     (localStore, args) => {

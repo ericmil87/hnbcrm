@@ -4,6 +4,7 @@ import { Clock } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
+import { formatMoney, formatRelative } from "@/lib/format";
 import {
   getPriorityLabel,
   getPriorityVariant,
@@ -14,6 +15,13 @@ import type { Lead } from "./types";
 
 // Presentational lead card — shared by the in-column DraggableCard and the
 // DragOverlay so the dragged card looks identical to the real one.
+export interface LeadLastMessage {
+  text: string;
+  /** Timestamp da mensagem (ms). */
+  at: number;
+  fromContact: boolean;
+}
+
 export function LeadCardView({
   lead,
   variant = "default",
@@ -22,7 +30,7 @@ export function LeadCardView({
   lead: Lead;
   variant?: "default" | "placeholder" | "overlay";
   /** Prévia da última mensagem da conversa; sem valor, o cartão fica como sempre foi. */
-  lastMessage?: string;
+  lastMessage?: LeadLastMessage;
 }) {
   const priorityColor = {
     urgent: "bg-semantic-error",
@@ -65,13 +73,15 @@ export function LeadCardView({
 
       {lastMessage && (
         <p className="text-caption text-text-muted mb-2 pl-2 line-clamp-2" data-testid="lead-last-message">
-          {lastMessage}
+          {lastMessage.fromContact ? "" : "Você: "}
+          {lastMessage.text}
+          <span className="ml-1 tabular-nums">· {formatRelative(lastMessage.at, Date.now())}</span>
         </p>
       )}
 
       <div className="flex items-center justify-between mb-3 pl-2">
         <span className="text-lg font-semibold text-brand-400 tabular-nums">
-          R$ {lead.value.toLocaleString("pt-BR")}
+          {formatMoney(lead.value, "BRL", { fractionDigits: 0 })}
         </span>
 
         {lead.assignee && (
