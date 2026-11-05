@@ -507,13 +507,14 @@ export function MessageBubble({
             style.bg,
             style.rounded,
             isFailed && "ring-1 ring-semantic-error/60",
-            highlighted && "ring-2 ring-brand-500 ring-offset-2 ring-offset-surface-base transition-shadow"
+            highlighted && "ring-2 ring-brand-500 ring-offset-2 ring-offset-chat-bg transition-shadow"
           )}
         >
           <div className={cn("flex items-center gap-1.5 text-xs font-medium", style.labelColor)}>
             {groupSender ? (
               <>
                 <span
+                  // Cor de dado (remetente de grupo, só inbound): branco fixo, não migrar para bubble-out-fg.
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
                   style={{ backgroundColor: groupSender.color, color: "#fff" }}
                   aria-hidden

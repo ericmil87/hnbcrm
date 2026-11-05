@@ -21,11 +21,31 @@ describe("getBubbleStyle", () => {
     });
   }
 
-  it("mapeia cada tipo para os tokens do tema", () => {
-    expect(getBubbleStyle(CASES["nota interna"]).bg).toContain("bg-bubble-note");
-    expect(getBubbleStyle(CASES.entrada).bg).toContain("bg-bubble-in");
-    expect(getBubbleStyle(CASES.ia).bg).toContain("bg-bubble-ai");
-    expect(getBubbleStyle(CASES.equipe).bg).toContain("bg-bubble-out");
+  it("mapeia cada tipo para os valores exatos do plano", () => {
+    const pick = (m: InboxMessage) => {
+      const { bg, labelColor, footerText } = getBubbleStyle(m);
+      return { bg, labelColor, footerText };
+    };
+    expect(pick(CASES["nota interna"])).toEqual({
+      bg: "bg-bubble-note border border-dashed border-bubble-note-border/30 text-text-primary",
+      labelColor: "text-bubble-note-label",
+      footerText: "text-text-muted",
+    });
+    expect(pick(CASES.entrada)).toEqual({
+      bg: "bg-bubble-in text-text-primary shadow-bubble",
+      labelColor: "text-text-secondary",
+      footerText: "text-text-muted",
+    });
+    expect(pick(CASES.ia)).toEqual({
+      bg: "bg-bubble-ai text-bubble-out-fg shadow-bubble",
+      labelColor: "text-bubble-ai-label",
+      footerText: "text-bubble-out-fg/75",
+    });
+    expect(pick(CASES.equipe)).toEqual({
+      bg: "bg-bubble-out text-bubble-out-fg shadow-bubble",
+      labelColor: "text-bubble-out-label",
+      footerText: "text-bubble-out-fg/75",
+    });
   });
 
   it("rodapé de bolha de saída nunca usa /70 ou /60 (contraste AA no Claro)", () => {
