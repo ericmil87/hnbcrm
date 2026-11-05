@@ -75,7 +75,10 @@ src/
     │                           #   (bubbleStyle.test.ts: getBubbleStyle only uses chat/bubble tokens)
     ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useSearchParamState; accepting navigates to /app/entrada?conversation=<id>
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
-    ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
+    ├── TeamPage.tsx, AuditLogs.tsx  # /app/equipe, /app/auditoria
+    ├── ContactsPage.tsx        # /app/contatos: `?contact=<id>` (push; own entry marked in location.state, close = navigate(-1)), `?q=` and `?page=` (1-based, replace)
+    ├── ContactDetailPanel.tsx  # re-export of contacts/detail/ContactDetailPanel (also opened from Conversas, Grupos and the lead panel)
+    ├── contacts/detail/        # ContactDetailPanel (shell: Tabs `?contactTab=info|leads|groups`, replace), ContactInfoTab (4 sections: Dados, Endereço e empresa, Origem, Etiquetas e notas), ContactLeadsTab (LinkedLeadCard), ContactGroupsTab, ContactOptOutControl, ContactFields (ViewField/EditField/EditSelect); pure form in lib/contactForm.ts
     ├── Settings.tsx            # /app/configuracoes shell (two levels: 6 groups > panels). Panel = ?secao=<id> (push on click); group is derived. Mobile: ajustes-style list + search; desktop: sidebar + panel
     ├── onboarding/v2/          # Setup wizard v2 (`/app/configuracao-inicial`, steps 1-8, `?passo=` = current step; also rendered full screen by AuthLayout when shouldShowWizard): OnboardingWizardV2 (container: status/progress/AI queries, resume, defer, complete, Copilot "Configurar conversando"), OnboardingWizardV2View + WizardNav (presentational shell), StepBusiness, StepFunnel, StepWhatsapp (ChannelConnectCard variant="wizard"), StepAttendant, StepTest (AttendantSimulator inline), StepExtras (FeatureToggleCard x2), StepTeam, StepDone. `onboarding/OnboardingChecklist.tsx` = Painel "Primeiros passos" v2; `onboarding/WizardInviteResults.tsx` is shared with the team slide-over. The v1 wizard is gone
     ├── pipeline/FunnelEditor.tsx  # controlled funnel editor (name + stages, "Restaurar sugestão"), no Convex; shared by the v2 setup wizard and Settings
@@ -86,11 +89,13 @@ src/
     │   ├── settings/advanced/  # AiModelsPanel (`ai-models`: ModelRoutingCard + PrivacyCard), ModelRoutingParts (technical terms allowed here)
     │   └── settings/channels/  # ChannelTranscriptionToggle (per-channel audio transcription; used by `ai-features` and ChannelCard)
     ├── TasksPage.tsx           # /app/tarefas, list/kanban per project, ?task=<id>
-    ├── CreateTaskModal.tsx, TaskDetailSlideOver.tsx  # Task creation / detail (subtasks, dependencies, mentions, Lead section)
+    ├── CreateTaskModal.tsx     # Task creation modal
+    ├── TaskDetailSlideOver.tsx # re-export of tasks/detail/TaskDetailSlideOver (`export { } from`, never a second `export function`)
+    ├── tasks/detail/           # TaskDetailSlideOver (shell + stack navigation), TaskActionsBar (presentational; Menu), TaskFields, TaskAiFollowUp (+ FollowUpCard), TaskChecklist, TaskComments (own "@Name" mention format; detectMentionTrigger lives in lib/mentions.ts)
     ├── tasks/                  # ProjectSwitcher, ProjectFormModal, ColumnsEditorModal, TaskKanbanBoard, TaskFiltersBar, SavedFiltersMenu, LabelPicker,
     │                           #   AssigneesPicker, ReminderSelect, SubtasksSection, DependenciesSection
     ├── calendar/               # CalendarPage (state, DnD), CalendarHeader, MonthView, WeekView, DayView, TimeGrid, EventBlock (useDraggable), EventDot, DayCell (useDroppable),
-    │                           #   CalendarEventModal, EventDetailSlideOver, CalendarFilters, useCalendarState.ts, constants.ts
+    │                           #   CalendarEventModal, EventDetailSlideOver, TaskQuickView (task summary with "Abrir tarefa" -> /app/tarefas?task=<id>), CalendarFilters, useCalendarState.ts, constants.ts
     ├── forms/                  # FormListPage (/app/formularios), FormBuilderPage (/app/formularios/:id)
     │   ├── builder/            # types.ts, FieldPalette, FieldCard, FieldCanvas, FieldConfigPanel, CrmMappingSelect, FormSettingsPanel, ThemePanel, PublishDialog
     │   └── renderer/           # FormRenderer, FormField, FormSuccess (public renderer)

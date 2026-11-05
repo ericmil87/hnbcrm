@@ -36,6 +36,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Na conversa com pedido de ajuda pendente, os botões **Assumir conversa** e **Devolver à IA** ficam sempre à vista no topo, tanto em conversa direta quanto em grupo.
 - Os filtros **Arquivadas** e **Etiqueta** da lista de Conversas ficam no endereço da página: dá para recarregar, compartilhar o link e voltar do navegador sem perder o filtro. Abrir uma conversa agora também entra no histórico (o "voltar" do navegador, inclusive no celular, fecha a conversa e volta à lista). Os filtros de canal, conta e Diretas/Grupos continuam guardados só neste aparelho.
 - Os filtros da lista de Conversas (Ativas/Arquivadas, Todas/Diretas/Grupos, canal, conta e etiqueta) usam os mesmos seletores do resto do app, com área de toque maior no celular.
+- Em **Contatos**, o contato aberto, a busca e a página ficam no endereço da tela: dá para recarregar, compartilhar o link e usar o botão de voltar do navegador para fechar o painel. As abas do contato (**Informações**, **Leads** e **Grupos**) também ficam no endereço. As informações do contato foram reunidas em quatro seções: Dados, Endereço e empresa, Origem, e Etiquetas e notas.
+- Na **Agenda**, o resumo de uma tarefa ganhou o botão **Abrir tarefa**, que leva direto para a tarefa em Tarefas.
+- Corrigido: abrir um contato que foi excluído, ou que é de outra organização, agora mostra "Contato não encontrado" em vez de uma tela de carregamento sem fim.
 
 ### Aparência: escolha entre Escuro, Claro e Estilo WhatsApp
 
