@@ -228,6 +228,7 @@ async function loadOnboardingSnapshot(
   }
 
   return {
+    llmAvailable: platformCapabilities(org).llm,
     hasBusinessOffer: !!meta?.business?.offer?.trim(),
     legacyWizardCompleted: !!meta?.wizardCompletedAt,
     legacyOrg: !!meta?.wizardCompletedAt && meta.wizardVersion !== 2,
@@ -320,8 +321,12 @@ export const getOnboardingChecklist = query({
         target: "settings_ai",
       });
     }
+    // Sem rota de LLM no servidor o teste nunca roda: o item some para o
+    // checklist poder completar (o status derivado já trata `test` como skipped).
+    if (platformCapabilities(org).llm) {
+      items.push(stepItem("test", "Teste seu atendente", "test"));
+    }
     items.push(
-      stepItem("test", "Teste seu atendente", "test"),
       stepItem("extras", "Ouça áudios e leia imagens", "extras"),
       stepItem("teamMemberInvited", "Convide sua equipe", "team"),
       {
@@ -1144,8 +1149,11 @@ export const completeWizard = mutation({
       // Merge: o resto de settings (optOutKeywords, campaignDefaults…) fica.
       settings: {
         ...(existingOrg?.settings ?? {}),
-        timezone: wizardData?.timezone ?? "America/Sao_Paulo",
-        currency: wizardData?.currency ?? "BRL",
+        // v2 não coleta fuso/moeda no wizard: só o que o wizard trouxe vence;
+        // senão fica o que a org já tem (ex.: ajustado em Configurações com o
+        // wizard adiado). O padrão só vale para org sem valor algum.
+        timezone: wizardData?.timezone ?? existingOrg?.settings.timezone ?? "America/Sao_Paulo",
+        currency: wizardData?.currency ?? existingOrg?.settings.currency ?? "BRL",
         // DDI padrão dos telefones (v0.67): só dígitos, 1–3; fora disso é
         // ignorado e fica o que a org já tinha (ausente = 55, ver lib/orgPhone).
         ...(typeof wizardData?.defaultCountryCode === "string" && /^\d{1,3}$/.test(wizardData.defaultCountryCode)

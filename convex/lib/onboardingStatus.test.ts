@@ -69,4 +69,13 @@ describe("deriveOnboardingStatus", () => {
     expect(v2.steps.business).toBe("pending");
     expect(v2.steps.test).toBe("pending");
   });
+
+  it("sem LLM no servidor o test vira skipped e não bloqueia o próximo passo", () => {
+    const base = { ...EMPTY, legacyOrg: false, hasBusinessOffer: true, legacyWizardCompleted: true };
+    const noLlm = deriveOnboardingStatus({ ...base, llmAvailable: false });
+    expect(noLlm.steps.test).toBe("skipped");
+    expect(deriveOnboardingStatus({ ...base, llmAvailable: false, saved: { test: "done" } }).steps.test).toBe("done");
+    expect(deriveOnboardingStatus({ ...base, llmAvailable: true }).steps.test).toBe("pending");
+    expect(deriveOnboardingStatus(base).steps.test).toBe("pending");
+  });
 });

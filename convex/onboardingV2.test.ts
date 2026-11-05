@@ -319,6 +319,35 @@ test("completeWizard v2 grava wizardVersion e preserva o perfil", async () => {
   expect(meta?.wizardCompletedAt).toBeTypeOf("number");
 });
 
+test("completeWizard v2 não sobrescreve fuso e moeda ajustados em Configurações", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await t.run(async (ctx) => {
+    const org = await ctx.db.get(s.organizationId);
+    await ctx.db.patch(s.organizationId, { settings: { ...org!.settings, timezone: "America/Manaus", currency: "USD" } });
+  });
+  const admin = as(t, s.adminUserId);
+  await admin.mutation(api.onboarding.initOnboardingProgress, { organizationId: s.organizationId });
+  await admin.mutation(api.onboarding.completeWizard, { organizationId: s.organizationId, version: 2 });
+  const org = await t.run((ctx) => ctx.db.get(s.organizationId));
+  expect(org?.settings.timezone).toBe("America/Manaus");
+  expect(org?.settings.currency).toBe("USD");
+});
+
+test("checklist: sem rota de LLM o item de teste some", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  const ids = async () =>
+    (await as(t, s.adminUserId).query(api.onboarding.getOnboardingChecklist, { organizationId: s.organizationId }))
+      .items.map((i: { id: string }) => i.id);
+  vi.stubEnv("OPENROUTER_API_KEY", "");
+  vi.stubEnv("OPENCODE_GO_API", "");
+  expect(await ids()).not.toContain("test");
+  vi.stubEnv("OPENROUTER_API_KEY", "sk-test-x");
+  expect(await ids()).toContain("test");
+  vi.unstubAllEnvs();
+});
+
 test("checklist: WhatsApp conectado marca o item", async () => {
   const t = convexTest(schema, modules);
   const s = await seed(t);

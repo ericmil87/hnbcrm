@@ -18,7 +18,7 @@ import {
 import type { PermissionCategory } from "../../convex/lib/permissions";
 import type { OrgModuleKey } from "@/hooks/useOrgModules";
 import { VOCAB } from "./vocab";
-import { activeTabForPath, type Tab } from "./routes";
+import { ONBOARDING_ROUTE, activeTabForPath, type Tab } from "./routes";
 
 export type NavGroupId = "atendimento" | "organizacao" | "divulgacao" | "gestao";
 export type NavBadgeSource = "inboxUnread" | "pendingAttention" | "pausedCampaigns";
@@ -111,7 +111,8 @@ export function navItemFor(tab: Tab | undefined): NavItemDef | undefined {
  */
 export function shellPageTitle(pathname: string): string | null {
   const tab = activeTabForPath(pathname);
-  if (tab === "settings") return null;
+  // Configurações e o assistente de configuração inicial definem o próprio título.
+  if (tab === "settings" || pathname === ONBOARDING_ROUTE || pathname.startsWith(ONBOARDING_ROUTE + "/")) return null;
   return navItemFor(tab)?.title ?? "HNBCRM";
 }
 

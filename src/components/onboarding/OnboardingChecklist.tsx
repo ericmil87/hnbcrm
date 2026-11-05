@@ -1,51 +1,66 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
-import { useQuery, useMutation } from "convex/react";
-import { Check, X, ChevronDown, ChevronUp, ArrowRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router";
+import { useMutation, useQuery } from "convex/react";
+import { ArrowRight, Check, ChevronDown, ChevronUp, PartyPopper, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
-import { Id } from "../../../convex/_generated/dataModel";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
+import {
+  CHECKLIST_MILESTONE,
+  checklistAction,
+  checklistTotals,
+  hasWizardWork,
+  orderChecklistItems,
+  type ChecklistItemInput,
+} from "@/lib/onboardingChecklist";
+import { ONBOARDING_ROUTE } from "@/lib/routes";
 import { cn } from "@/lib/utils";
-import type { Tab } from "@/lib/routes";
-import { TAB_ROUTES } from "@/lib/routes";
 
 interface OnboardingChecklistProps {
   organizationId: Id<"organizations">;
 }
 
-const ITEM_NAV: Record<string, { tab: Tab; label: string }> = {
-  pipelineCustomized: { tab: "board", label: "Concluído" },
-  firstLeadCreated: { tab: "board", label: "Funil" },
-  firstContactAdded: { tab: "contacts", label: "Contatos" },
-  teamMemberInvited: { tab: "team", label: "Equipe" },
-  webhookOrApiKey: { tab: "settings", label: "Config" },
-  customFieldsExplored: { tab: "settings", label: "Config" },
-  // Itens da configuração inicial v2 (provisório até o novo Painel, fv2-24).
-  business: { tab: "settings", label: "Config" },
-  whatsapp: { tab: "settings", label: "Config" },
-  attendant: { tab: "settings", label: "Config" },
-  bridgeAiAck: { tab: "settings", label: "Config" },
-  test: { tab: "inbox", label: "Entrada" },
-  extras: { tab: "settings", label: "Config" },
-  firstAiReply: { tab: "inbox", label: "Entrada" },
-};
-
-export function OnboardingChecklist({
-  organizationId,
-}: OnboardingChecklistProps) {
-  const navigate = useNavigate();
+/** "Primeiros passos" no Painel: itens derivados de dados reais; some sozinho (com uma comemoração) quando tudo está feito. */
+export function OnboardingChecklist({ organizationId }: OnboardingChecklistProps) {
   const [expanded, setExpanded] = useState(true);
-
-  const checklist = useQuery(api.onboarding.getOnboardingChecklist, {
-    organizationId,
-  });
+  const checklist = useQuery(api.onboarding.getOnboardingChecklist, { organizationId });
   const dismissChecklist = useMutation(api.onboarding.dismissChecklist);
+  const markCelebrated = useMutation(api.onboarding.markMilestoneCelebrated);
+
+  const items = orderChecklistItems((checklist?.items ?? []) as ChecklistItemInput[]);
+  const { completed, total, percent, allDone } = checklistTotals(items);
+  const alreadyCelebrated = (checklist?.celebratedMilestones ?? []).includes(CHECKLIST_MILESTONE);
+
+  // Comemora uma única vez: marca o marco e, no próximo carregamento, o cartão não volta.
+  const [celebrating, setCelebrating] = useState(false);
+  const shouldCelebrate = !!checklist && allDone && !alreadyCelebrated;
+  useEffect(() => {
+    if (!shouldCelebrate) return;
+    setCelebrating(true);
+    markCelebrated({ organizationId, milestoneId: CHECKLIST_MILESTONE }).catch(() => {});
+  }, [shouldCelebrate, markCelebrated, organizationId]);
 
   if (!checklist || checklist.dismissed) return null;
+  if (allDone && alreadyCelebrated && !celebrating) return null;
 
-  const { items, completedCount, totalCount } = checklist;
-  const progressPct = Math.round((completedCount / totalCount) * 100);
-  const allDone = completedCount === totalCount;
+  if (allDone) {
+    return (
+      <Card className="mb-6 animate-fade-in-up">
+        <div className="flex items-center gap-3">
+          <PartyPopper size={20} className="shrink-0 text-semantic-success" aria-hidden="true" />
+          <p className="flex-1 text-sm font-medium text-semantic-success">Parabéns! Tudo configurado.</p>
+          <button
+            type="button"
+            onClick={() => setCelebrating(false)}
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted hover:bg-surface-overlay hover:text-text-primary"
+            aria-label="Fechar"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+      </Card>
+    );
+  }
 
   const handleDismiss = () => {
     dismissChecklist({ organizationId }).catch(() => {});
@@ -53,114 +68,100 @@ export function OnboardingChecklist({
 
   return (
     <Card className="mb-6 animate-fade-in-up">
-      {/* Header */}
       <div className="flex items-center justify-between gap-3">
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-text-primary">
-              Primeiros passos
-            </h3>
-            <span className="text-xs text-text-muted">
-              {completedCount}/{totalCount}
+            <h3 className="text-base font-semibold text-text-primary">Primeiros passos</h3>
+            <span className="text-xs tabular-nums text-text-muted">
+              {completed}/{total}
             </span>
           </div>
-          {/* Progress bar */}
-          <div className="mt-2 w-full h-1.5 bg-surface-overlay rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500 ease-out"
-              style={{
-                width: `${progressPct}%`,
-                backgroundColor: allDone ? "#22C55E" : "#FF6B00",
-              }}
-            />
+          <div
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-overlay"
+            role="progressbar"
+            aria-valuenow={percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Progresso dos primeiros passos"
+          >
+            <div className="h-full rounded-full bg-brand-500 transition-all duration-500 ease-out" style={{ width: `${percent}%` }} />
           </div>
         </div>
-
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {/* Mobile collapse toggle */}
+        <div className="flex shrink-0 items-center gap-1">
           <button
+            type="button"
             onClick={() => setExpanded(!expanded)}
-            className="md:hidden p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary md:hidden"
             aria-label={expanded ? "Recolher" : "Expandir"}
+            aria-expanded={expanded}
           >
-            {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+            {expanded ? <ChevronUp size={18} aria-hidden="true" /> : <ChevronDown size={18} aria-hidden="true" />}
           </button>
-
-          {/* Dismiss button */}
           <button
+            type="button"
             onClick={handleDismiss}
-            className="p-1.5 text-text-muted hover:text-text-primary rounded-lg hover:bg-surface-overlay transition-colors"
+            className="flex h-11 w-11 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary"
             aria-label="Dispensar"
           >
-            <X size={18} />
+            <X size={18} aria-hidden="true" />
           </button>
         </div>
       </div>
 
-      {/* Items — always visible on desktop, collapsible on mobile */}
-      <div className={cn("mt-4 space-y-1", !expanded && "hidden md:block")}>
-        {items.map((item: { id: string; label: string; completed: boolean }) => {
-          const nav = ITEM_NAV[item.id];
-          const isCompleted = item.completed;
-
-          return (
-            <button
-              key={item.id}
-              onClick={() => {
-                if (!isCompleted && nav) navigate(TAB_ROUTES[nav.tab]);
-              }}
-              disabled={isCompleted}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors",
-                isCompleted
-                  ? "opacity-60 cursor-default"
-                  : "hover:bg-surface-overlay cursor-pointer"
-              )}
-            >
-              {/* Check circle */}
-              <div
-                className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 border transition-colors",
-                  isCompleted
-                    ? "bg-semantic-success border-semantic-success"
-                    : "border-border-strong"
-                )}
-              >
-                {isCompleted && <Check size={12} className="text-white" />}
-              </div>
-
-              {/* Label */}
+      <ul className={cn("mt-3 space-y-1", !expanded && "hidden md:block")}>
+        {items.map((item) => {
+          const action = checklistAction(item);
+          const row = (
+            <>
               <span
                 className={cn(
-                  "text-sm flex-1",
-                  isCompleted ? "text-text-muted line-through" : "text-text-primary"
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                  item.completed ? "border-semantic-success bg-semantic-success" : "border-border-strong",
                 )}
+                aria-hidden="true"
               >
+                {item.completed && <Check size={12} className="text-surface-base" />}
+              </span>
+              <span className={cn("flex-1 text-sm", item.completed ? "text-text-muted line-through" : "text-text-primary")}>
                 {item.label}
               </span>
-
-              {/* Action */}
-              {isCompleted ? (
-                <span className="text-xs text-semantic-success font-medium">
-                  Concluído
-                </span>
-              ) : nav ? (
-                <span className="flex items-center gap-1 text-xs text-brand-500 font-medium">
-                  {nav.label}
-                  <ArrowRight size={12} />
+              {item.completed ? (
+                <span className="text-xs font-medium text-semantic-success">Concluído</span>
+              ) : action ? (
+                <span className="flex items-center gap-1 text-xs font-medium text-brand-500">
+                  {action.label}
+                  <ArrowRight size={12} aria-hidden="true" />
                 </span>
               ) : null}
-            </button>
+            </>
+          );
+          const base = "flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left";
+          return (
+            <li key={item.id}>
+              {action ? (
+                <Link
+                  to={action.to}
+                  className={cn(base, "transition-colors hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500")}
+                >
+                  {row}
+                </Link>
+              ) : (
+                <div className={cn(base, item.completed && "opacity-70")}>{row}</div>
+              )}
+            </li>
           );
         })}
-      </div>
+      </ul>
 
-      {/* All done message */}
-      {allDone && (
-        <div className="mt-4 pt-3 border-t border-border text-center">
-          <p className="text-sm text-semantic-success font-medium">
-            Parabéns! Todos os passos concluídos
-          </p>
+      {hasWizardWork(items) && (
+        <div className="mt-3 border-t border-border pt-3">
+          <Link
+            to={ONBOARDING_ROUTE}
+            className="inline-flex min-h-11 items-center gap-1 text-sm font-medium text-brand-500 hover:text-brand-400"
+          >
+            Continuar configuração
+            <ArrowRight size={14} aria-hidden="true" />
+          </Link>
         </div>
       )}
     </Card>

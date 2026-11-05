@@ -124,6 +124,9 @@ describe("shellPageTitle", () => {
   it("Configurações define o próprio título", () => {
     expect(shellPageTitle("/app/configuracoes")).toBeNull();
   });
+  it("a configuração inicial define o próprio título", () => {
+    expect(shellPageTitle("/app/configuracao-inicial")).toBeNull();
+  });
   it("rota com item usa o título do item", () => {
     expect(shellPageTitle("/app/entrada")).toBe(VOCAB.conversations.title);
   });

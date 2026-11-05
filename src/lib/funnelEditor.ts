@@ -1,7 +1,18 @@
-import { STAGE_COLORS } from "@/lib/onboardingTemplates";
 import type { FunctionArgs } from "convex/server";
 import type { api } from "../../convex/_generated/api";
 import type { FieldSeed, SegmentTemplate } from "../../convex/lib/onboardingTemplates";
+
+/** Paleta de cores das etapas (dado persistido, não tokens de tema). */
+export const STAGE_COLORS = [
+  "#EF4444",
+  "#F59E0B",
+  "#10B981",
+  "#3B82F6",
+  "#8B5CF6",
+  "#06B6D4",
+  "#EC4899",
+  "#6B7280",
+];
 
 // Regras puras do editor de funil (passo "Seu funil" da configuração inicial e
 // painel de Configurações). Mesmas regras de `applyFunnelTemplate`: primeira

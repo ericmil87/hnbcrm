@@ -21,6 +21,11 @@ export type OnboardingStepStatus = "done" | "skipped" | "pending";
 export type SavedStepStatus = "done" | "skipped";
 
 export interface OnboardingSnapshot {
+  /**
+   * O servidor tem rota de LLM (`capabilities.llm`). `false` torna o passo
+   * `test` impossível; ausente conta como disponível.
+   */
+  llmAvailable?: boolean;
   /** `onboardingMeta.business.offer` preenchido. */
   hasBusinessOffer: boolean;
   /** `onboardingMeta.wizardCompletedAt` (org legada que já concluiu o wizard v1). */
@@ -85,7 +90,11 @@ export function deriveOnboardingStatus(s: OnboardingSnapshot): OnboardingStatusR
         : saved(s, "attendant") === "skipped"
           ? "skipped"
           : "pending",
-    test: s.legacyOrg ? "done" : (saved(s, "test") ?? "pending"),
+    // Sem LLM no servidor o teste nunca roda: "skipped" para não travar
+    // `nextStep`/conclusão (um "done" salvo continua valendo).
+    test: s.legacyOrg
+      ? "done"
+      : (saved(s, "test") ?? (s.llmAvailable === false ? "skipped" : "pending")),
     extras: s.extrasEnabled ? "done" : saved(s, "extras") === "skipped" ? "skipped" : "pending",
     team: s.humanMemberCount > 1 ? "done" : saved(s, "team") === "skipped" ? "skipped" : "pending",
   };
