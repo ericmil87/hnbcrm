@@ -6,6 +6,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import {
   THEME_OWNER_KEY,
   THEME_STORAGE_KEY,
+  failureAction,
   isAppPath,
   isForeignLocalTheme,
   isUiTheme,
@@ -50,6 +51,7 @@ export function useUiTheme(
   const busyRef = useRef(false); // our own change is scheduled or being saved
   const inFlightRef = useRef(0);
   const lastChoiceRef = useRef<UiTheme | null>(null);
+  const mountedRef = useRef(true);
   const server = currentMember?.uiTheme;
   const userId = typeof currentMember?.userId === "string" ? currentMember.userId : undefined;
   const hasMember = !!currentMember;
@@ -90,26 +92,44 @@ export function useUiTheme(
       inFlightRef.current += 1;
       setMyUiThemeRef.current(arg)
         .catch(() => {
+          const action = failureAction({
+            mounted: mountedRef.current,
+            lastChoice: lastChoiceRef.current,
+            failed: arg.theme,
+            pendingSave: saveRef.current.pending(),
+          });
+          // Unmounted (sign-out / expired session): no toast, no data-theme on a public page, no storage write.
+          if (action === "ignore") return;
           toast.error(SAVE_ERROR);
-          // Only revert when no newer choice is waiting: otherwise that one decides.
-          if (lastChoiceRef.current !== arg.theme) return;
+          if (action !== "toast-and-revert") return;
           const saved = serverRef.current;
-          const back = resolveTheme({ server: saved, local: saved });
-          applyTheme(back);
+          applyTheme(resolveTheme({ server: saved, local: saved }));
           if (isUiTheme(saved)) writeLocal(saved, userIdRef.current);
           else clearStoredTheme();
         })
         .finally(() => {
           inFlightRef.current -= 1;
-          if (lastChoiceRef.current === arg.theme && inFlightRef.current === 0) busyRef.current = false;
+          if (!mountedRef.current) return;
+          if (lastChoiceRef.current === arg.theme && inFlightRef.current === 0 && !saveRef.current.pending()) {
+            busyRef.current = false;
+            // The echo may have been ignored while busy: reapply what the account says.
+            const saved = serverRef.current;
+            if (isUiTheme(saved) && getAppliedTheme() !== saved) {
+              applyTheme(saved);
+              writeLocal(saved, userIdRef.current);
+            }
+          }
         });
     }, SAVE_DEBOUNCE_MS),
   );
 
-  // Leaving /app (unmount) returns to the dark default; a pending save is sent, not lost.
+  // Leaving /app (unmount) returns to the dark default. Mark unmounted BEFORE the flush so a failing
+  // save (no session) cannot touch the DOM, storage or toasts.
   useEffect(() => {
+    mountedRef.current = true;
     const save = saveRef.current;
     return () => {
+      mountedRef.current = false;
       save.flush();
       clearTheme();
     };

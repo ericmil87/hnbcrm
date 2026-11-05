@@ -95,3 +95,24 @@ export const THEME_OPTIONS: ReadonlyArray<ThemeOption> = [
 export function themeLabel(theme: UiTheme): string {
   return THEME_OPTIONS.find((o) => o.id === theme)?.label ?? THEME_OPTIONS[0].label;
 }
+
+/**
+ * What the save-failure handler may do. Unmounted (sign-out / expired session): nothing, since the
+ * page is public or belongs to the next account. A newer choice (current value differs, or one is
+ * still scheduled/in flight) decides the outcome, so no revert either.
+ */
+export function failureAction({
+  mounted,
+  lastChoice,
+  failed,
+  pendingSave,
+}: {
+  mounted: boolean;
+  lastChoice: UiTheme | null;
+  failed: UiTheme;
+  pendingSave: boolean;
+}): "ignore" | "toast" | "toast-and-revert" {
+  if (!mounted) return "ignore";
+  if (lastChoice !== failed || pendingSave) return "toast";
+  return "toast-and-revert";
+}

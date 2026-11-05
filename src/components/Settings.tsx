@@ -25,7 +25,7 @@ function PanelError() {
       icon={AlertTriangle}
       size="sm"
       title="Não foi possível abrir esta seção."
-      description="Verifique sua conexão e tente de novo."
+      description="Recarregue a página para tentar de novo."
       // Recarrega a página: um pedaço lazy que falhou fica em cache como erro e só um reload o busca de novo.
       action={{ label: "Tentar de novo", onClick: () => window.location.reload() }}
     />

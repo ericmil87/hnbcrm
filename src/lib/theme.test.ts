@@ -7,6 +7,7 @@ import {
   THEME_OWNER_KEY,
   THEME_STORAGE_KEY,
   isAppPath,
+  failureAction,
   isForeignLocalTheme,
   resolveTheme,
   shouldPushLocalToServer,
@@ -71,6 +72,20 @@ describe("theme owner", () => {
     expect(isForeignLocalTheme({ owner: "a", userId: "a" })).toBe(false);
     expect(isForeignLocalTheme({ owner: null, userId: "a" })).toBe(false);
     expect(isForeignLocalTheme({ owner: "a" })).toBe(true);
+  });
+});
+
+describe("failureAction", () => {
+  const base = { mounted: true, lastChoice: "light", failed: "light", pendingSave: false } as const;
+  it("reverts when it is still the latest choice", () => {
+    expect(failureAction(base)).toBe("toast-and-revert");
+  });
+  it("does nothing after unmount (sign-out)", () => {
+    expect(failureAction({ ...base, mounted: false })).toBe("ignore");
+  });
+  it("does not revert when a newer choice exists or is scheduled", () => {
+    expect(failureAction({ ...base, lastChoice: "dark" })).toBe("toast");
+    expect(failureAction({ ...base, pendingSave: true })).toBe("toast");
   });
 });
 

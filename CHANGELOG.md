@@ -25,7 +25,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
 - No Atendente IA, as listas de seleção (jeito de atender, funil, etapas, canal do simulador) ficaram mais fáceis de usar no celular.
 - Se uma seção de Configurações falhar ao abrir, só ela mostra "Não foi possível abrir esta seção." com "Tentar de novo"; o resto da tela continua funcionando.
-- No celular, a barra "Salvar alterações" do Atendente IA não fica mais escondida atrás do menu inferior. Os campos ficam bloqueados enquanto salva, e o que você digitar durante o salvamento não se perde.
+- No celular, a barra "Salvar alterações" do Atendente IA não fica mais escondida atrás do menu inferior. Os campos ficam bloqueados enquanto salva.
 - Com mais de um atendente ativo, os painéis editam o primeiro ativo e avisam qual é.
 - Abrir uma seção sem permissão agora mostra um aviso dizendo qual seção foi pedida e qual está sendo mostrada.
 - Em Atendente IA › Visão geral há o atalho "Uso e limites de gasto", e a descrição de Modelo de IA e privacidade ficou em linguagem simples.
