@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { formatDayMonth, formatFullDate } from "./centralFormat";
 
 /**
- * Gráficos leves do Relatórios — SVG/HTML próprio, sem dependência.
+ * Gráficos leves de Relatórios — SVG/HTML próprio, sem dependência.
  * Regras: eixo de quantidade sempre a partir de zero, poucas cores (a série
  * que importa em laranja, a de contexto em cinza), rótulo direto no fim da
  * linha em vez de legenda solta, e tooltip no hover/toque.

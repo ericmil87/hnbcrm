@@ -57,7 +57,7 @@ export function DashboardOverview() {
   // seriam convites a telas que ele não pode usar.
   const { can } = usePermissions(organizationId);
   const canConfigure = can("settings", "manage");
-  // Atalho do Relatórios — só com o módulo opcional ligado.
+  // Atalho de Relatórios — só com o módulo opcional ligado.
   const { modules } = useOrgModules(organizationId);
   const showCentral = modules.central && can("reports", "view");
 
@@ -215,7 +215,7 @@ export function DashboardOverview() {
 }
 
 // ============================================================================
-// Atalho do Relatórios (módulo opcional)
+// Atalho de Relatórios (módulo opcional)
 // ============================================================================
 
 function CentralShortcutCard({ onClick }: { onClick: () => void }) {

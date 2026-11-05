@@ -240,7 +240,7 @@ function UnitsCard({ organizationId, canManage }: { organizationId: Id<"organiza
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Unidades</h3>
-          <p className="mt-1 text-sm text-text-secondary">Hotéis e pousadas atendidos pelo seu WhatsApp.</p>
+          <p className="mt-1 text-sm text-text-secondary">Hotéis e pousadas que você atende.</p>
         </div>
         {canManage && (
           <Button size="sm" onClick={() => setEditing("new")}>

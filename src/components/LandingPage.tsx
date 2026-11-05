@@ -226,7 +226,7 @@ function FeaturesSection() {
     },
     {
       icon: MessageSquare,
-      title: "Conversas unificadas",
+      title: "Caixa de Entrada Unificada",
       description: "Todas as conversas em um só lugar, em tempo real.",
     },
     {

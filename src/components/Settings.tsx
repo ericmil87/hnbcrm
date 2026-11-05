@@ -268,7 +268,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
       setExpiresAt("");
       setShowCreateApiKey(false);
     } catch (error) {
-      toast.error("Não foi possível criar chave API.");
+      toast.error("Não foi possível criar a chave de integração.");
     }
   };
 
@@ -288,7 +288,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
   return (
     <Card>
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Chaves API</h3>
+        <h3 className="text-lg font-semibold text-text-primary">Chaves de integração</h3>
         <Button onClick={() => setShowCreateApiKey(true)}>
           Criar chave
         </Button>
@@ -330,7 +330,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           ))}
         </div>
       ) : apiKeys ? (
-        <p className="text-text-secondary">Nenhuma chave API criada.</p>
+        <p className="text-text-secondary">Nenhuma chave de integração criada.</p>
       ) : null}
 
       <ConfirmDialog
@@ -339,7 +339,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
         onConfirm={() => {
           if (confirmRevokeId) handleRevoke(confirmRevokeId);
         }}
-        title="Revogar chave API"
+        title="Revogar chave de integração"
         description="Tem certeza que deseja revogar esta chave? Todas as integrações que a utilizam pararão de funcionar imediatamente."
         confirmLabel="Revogar"
         variant="danger"
@@ -348,7 +348,7 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
       <Modal
         open={showCreateApiKey}
         onClose={() => setShowCreateApiKey(false)}
-        title="Criar chave API"
+        title="Criar chave de integração"
       >
         <form onSubmit={handleCreateApiKey} className="space-y-4">
           <Input
@@ -553,7 +553,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
       <Modal
         open={showForm}
         onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar Campo Personalizado" : "Adicionar campo Personalizado"}
+        title={editingId ? "Editar campo personalizado" : "Adicionar campo personalizado"}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input

@@ -2729,7 +2729,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
       setCapDraft(null);
       toast.success("Teto de gastos atualizado");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar. o teto");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar o teto.");
     } finally {
       setSavingCap(false);
     }
@@ -3032,7 +3032,7 @@ function PrivacyCard({
       setByoForm({ provider: "openrouter", baseUrl: "", apiKey: "" });
       setTestResults(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível salvar. provider");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar o provedor.");
     } finally {
       setByoSaving(false);
     }

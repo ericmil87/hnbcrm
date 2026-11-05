@@ -24,7 +24,7 @@ export function ApiKeyRevealModal({ open, onClose, apiKey }: ApiKeyRevealModalPr
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Chave API Criada">
+    <Modal open={open} onClose={onClose} title="Chave de integração criada">
       <div className="space-y-5">
         {/* Key display */}
         <div className="relative">

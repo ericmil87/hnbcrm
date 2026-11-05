@@ -93,7 +93,7 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
     <SlideOver
       open={open}
       onClose={onClose}
-      title="Copiloto IA"
+      title="Copiloto"
       titleIcon={<Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />}
       headerActions={
         <button

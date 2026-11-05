@@ -5,6 +5,9 @@
  * Considera: texto JSX entre `>` e `<` (sem `{`), literais em atributos/propriedades
  * `title|label|placeholder|aria-label|description` e argumentos de `toast.*(`.
  * Ignora: comentários, `className`, partes dinâmicas de template, identificadores.
+ *
+ * Limitação: strings fora desses padrões (objetos com outras chaves, argumentos de função,
+ * ternários com uma palavra só) não são vistas; revise-as à mão ao migrar uma tela.
  */
 
 export interface UiString {
@@ -18,7 +21,7 @@ export const PROPER_NOUNS: ReadonlySet<string> = new Set([
   "Google", "CSV", "UTM", "API", "HNBCRM", "Facebook", "Copiloto", "Excel", "PDF",
   "Gmail", "Outlook", "Calendar", "Resend", "OAuth", "Webhooks", "Webhook", "URL", "ID",
   "CPF", "CNPJ", "SMS", "Brasil", "Convex", "OK", "GIF", "SLA", "WebP", "JPEG", "PNG",
-  "Ads", "OpenRouter", "OpenCode", "OpenAI", "Go", "DeepSeek", "LinkedIn", "Kanban",
+  "Web", "Ads", "OpenRouter", "OpenCode", "OpenAI", "Go", "DeepSeek", "LinkedIn", "Kanban",
 ]);
 
 /** Nomes de recurso do produto (VOCAB) que mantêm maiúscula no meio de uma frase. */
@@ -26,7 +29,8 @@ export const PROPER_PHRASES: readonly string[] = [
   "Atendente IA", "Agente de IA", "Sugerir respostas", "Responder sozinha", "Requer atenção",
   "Histórico de alterações", "Jeito de atender", "Chaves de integração", "Ramo de atividade",
   "Modo quadro", "Modo lista", "Filtros salvos", "Unidades e departamentos", "Modelo de IA",
-  "Resposta sugerida", "Conectar número",
+  "Resposta sugerida", "Conectar número", "WhatsApp Web", "Google Agenda", "São Paulo",
+  "Mercado Pago", "Instagram Direct", "Telegram Bot",
 ];
 
 const ENTITIES: Record<string, string> = {
@@ -149,7 +153,7 @@ export function extractUiStrings(source: string): UiString[] {
 
   // 2) atributos e propriedades de rótulo
   const attr =
-    /(?:\b(?:title|label|placeholder|description)|aria-label)\s*(?:=\s*\{?\s*|:\s*)(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`)/g;
+    /(?:\b(?:title|label|placeholder|description|name|desc|hint|subtitle|header)|aria-label)\s*(?:=\s*\{?\s*|:\s*)(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`)/g;
   while ((m = attr.exec(src))) {
     if (m[3] !== undefined) push(templateStatic(m[3]) ?? "", m.index);
     else push(unescapeJs(m[1] ?? m[2] ?? ""), m.index);
@@ -161,6 +165,10 @@ export function extractUiStrings(source: string): UiString[] {
     if (m[3] !== undefined) push(templateStatic(m[3]) ?? "", m.index);
     else push(unescapeJs(m[1] ?? m[2] ?? ""), m.index);
   }
+  // ramos de ternário com frase (`? "a b" : "c d"`); palavras soltas são valores de código
+  const tern = /[?:]\s*"((?:[^"\\\n]|\\.)*\s(?:[^"\\\n]|\\.)*)"/g;
+  while ((m = tern.exec(src))) push(unescapeJs(m[1]), m.index);
+
   // toast.promise(p, { loading: "...", success: "...", error: "..." })
   const promiseKeys = /\b(?:loading|success|error)\s*:\s*(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)')/g;
   if (/\btoast\.promise\(/.test(src)) {

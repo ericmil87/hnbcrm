@@ -568,7 +568,7 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
         <Database size={14} className="mt-0.5 shrink-0" />
         <p>
           Arquivos CSV saem com BOM (abrem direto no Excel e no LibreOffice) e datas em formato ISO.
-          Toda exportação e importação fica registrada na Auditoria.
+          Toda exportação e importação fica registrada no histórico de alterações.
         </p>
       </div>
 

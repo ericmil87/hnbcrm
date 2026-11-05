@@ -242,7 +242,7 @@ export function InviteMemberModal({
           <div className="text-center">
             <p className="text-sm font-semibold text-text-primary">Agente de IA</p>
             <p className="text-xs text-text-muted mt-1">
-              Crie um agente com chave API para automações
+              Crie um agente com chave de integração para automações
             </p>
           </div>
         </button>
@@ -352,7 +352,7 @@ export function InviteMemberModal({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Key size={16} className="text-brand-500" />
-            <span className="text-sm font-medium text-text-primary">Gerar chave API</span>
+            <span className="text-sm font-medium text-text-primary">Gerar chave de integração</span>
           </div>
           <button
             type="button"
@@ -379,7 +379,7 @@ export function InviteMemberModal({
         )}
         {!generateApiKey && (
           <p className="text-xs text-text-muted">
-            Você pode gerar chaves depois em Configurações &gt; Chaves API.
+            Você pode gerar chaves depois em Configurações &gt; Chaves de integração.
           </p>
         )}
       </div>
@@ -562,7 +562,7 @@ export function InviteMemberModal({
         <>
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Chave API
+              Chave de integração
             </label>
             <div className="flex items-center gap-2 bg-surface-sunken border border-border rounded-lg p-3">
               <code className="flex-1 text-sm font-mono text-text-primary break-all select-all">
@@ -585,7 +585,7 @@ export function InviteMemberModal({
             className="w-full"
           >
             {copied ? <Check size={18} /> : <Copy size={18} />}
-            {copied ? "Copiada" : "Copiar chave API"}
+            {copied ? "Copiada" : "Copiar chave de integração"}
           </Button>
 
           <div className="flex gap-3 bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-3">

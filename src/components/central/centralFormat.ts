@@ -1,5 +1,5 @@
 /**
- * Formatação e rótulos do Relatórios (pt-BR). Puro — testado em
+ * Formatação e rótulos de Relatórios (pt-BR). Puro — testado em
  * `centralFormat.test.ts`.
  */
 

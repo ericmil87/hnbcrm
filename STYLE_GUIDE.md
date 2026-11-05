@@ -851,6 +851,7 @@ Os ids (chaves) e as rotas não mudam; só o rótulo. A fonte é `src/lib/vocab.
 ### Capitalização e pontuação
 - **Sentence case** em tudo (menu, títulos, abas, botões, cabeçalhos de card, opções de select): "Adicionar nota", "Novo funil", "Campos personalizados". Só nomes próprios e siglas ficam em maiúscula: WhatsApp, Instagram, Messenger, Telegram, Meta, Google, LGPD, Pix, QR code, CSV, UTM, IA.
 - "E-mail" com hífen. Reticências com um caractere ("Salvando…"). A IA é feminina ("a IA", "ela responde"); texto na segunda pessoa ("você", "sua equipe").
+- Critério de emoji: `grep -rn "📎" src --exclude=EmojiPickerButton.tsx` deve ficar vazio (o seletor de emoji da conversa oferece 📎 como conteúdo, não como ícone da interface).
 - `vocabGuard.test.ts` confere os botões e os rótulos de navegação do escopo (`SENTENCE_CASE_SCOPE`).
 
 ### Toasts

@@ -288,7 +288,7 @@ export function WizardStep1Welcome({
           ))}
         </select>
         <p className="text-xs text-text-muted">
-          Usado quando um telefone é digitado ou importado sem o código do país (código do país). Números com + sempre valem como digitados.
+          Usado quando um telefone é digitado ou importado sem o código do país (+55, por exemplo). Números com + sempre valem como digitados.
         </p>
       </div>
     </div>

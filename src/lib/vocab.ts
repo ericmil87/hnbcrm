@@ -35,7 +35,7 @@ export const VOCAB = {
   connectionCode: "código de conexão",
   channel: { one: "canal", many: "canais" },
   origin: { one: "origem", many: "origens", title: "Origem", leadSources: "Origens dos leads" },
-  label: { one: "Etiqueta", many: "Etiquetas" },
+  label: { one: "etiqueta", many: "Etiquetas" },
   followUp: { name: "Follow-up", many: "Follow-ups" },
   draft: { name: "Rascunho" },
   persona: "Jeito de atender",

@@ -196,7 +196,7 @@ export function TaskDetailSlideOver({
   const leadOptions = useQuery(api.leads.getLeads, { organizationId, limit: 200 }) as
     | { _id: Id<"leads">; title: string }[]
     | undefined;
-  // Conversa do lead: alimenta o atalho "Conversa" (abre a Conversas
+  // Conversa do lead: alimenta o atalho "Conversa" (abre Conversas
   // já na conversa certa). Só a mais recente interessa.
   const leadConversations = useQuery(
     api.conversations.getConversations,

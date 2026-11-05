@@ -376,7 +376,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Ações</option>
+              <option value="all">Todas as ações</option>
               {filters?.actions.map((a) => (
                 <option key={a.value} value={a.value}>
                   {a.label}
@@ -412,7 +412,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Severidades</option>
+              <option value="all">Todas as severidades</option>
               <option value="low">Baixa</option>
               <option value="medium">Média</option>
               <option value="high">Alta</option>

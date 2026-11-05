@@ -116,7 +116,7 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
       {
         value: "auto" as const,
         label: "Automático",
-        desc: `Eu decido e executo nas conversas que você colocou em foco (ao tocar num cartão ou com /foco); o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para cancelar. Repasses e follow-ups travados sempre chegam para você decidir, com uma sugestão pronta. Tudo tem Desfazer.`,
+        desc: `Eu decido e executo nas conversas que você colocou em foco (ao tocar num cartão ou com /foco); o que for para o cliente fica ${a.autoSendDelaySeconds} s na sua tela para cancelar. Pedidos de ajuda e follow-ups travados sempre chegam para você decidir, com uma sugestão pronta. Tudo tem Desfazer.`,
       },
     ];
     const actions = [

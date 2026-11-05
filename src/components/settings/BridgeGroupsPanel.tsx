@@ -357,7 +357,7 @@ export function BridgeGroupsPanel({
 
               {/* Falta um passo: a lista já chegou, mas ninguém escolheu
                   acompanhar nada — sem isto o admin liga o número, vê os
-                  grupos aqui e não entende por que a Conversas
+                  grupos aqui e não entende por que Conversas
                   continua vazia. */}
               {groups !== undefined && visible.length > 0 && monitoredCount === 0 && (
                 <div className="flex gap-2.5 rounded-lg border border-brand-500/40 bg-brand-500/5 p-3">

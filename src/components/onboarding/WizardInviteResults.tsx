@@ -161,7 +161,7 @@ function describe(o: InviteOutcome) {
       return {
         icon: Bot,
         tone: { bg: "bg-semantic-warning/10", fg: "text-semantic-warning" },
-        text: "Agente de IA criado. Gere a chave API em Configurações quando for usar.",
+        text: "Agente de IA criado. Gere a chave de integração em Configurações quando for usar.",
       };
     case "failed":
       return {
