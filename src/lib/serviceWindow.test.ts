@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deviceViaLabel, getServiceWindowInfo, isComposerBlockedByWindow } from "./serviceWindow";
+import { conversationWindowKind, deviceViaLabel, getServiceWindowInfo, isComposerBlockedByWindow } from "./serviceWindow";
 
 const NOW = 1_000_000_000_000;
 const H = 3_600_000;
@@ -50,5 +50,19 @@ describe("deviceViaLabel", () => {
     expect(deviceViaLabel("unknown", "instagram")).toBe("fora do CRM");
     expect(deviceViaLabel("page_inbox", "whatsapp")).toBe("pelo aparelho");
     expect(deviceViaLabel(undefined, "whatsapp")).toBe("pelo aparelho");
+  });
+});
+
+describe("conversationWindowKind", () => {
+  it("bridge (serviceWindowApplies false) e conversa ausente não têm janela", () => {
+    expect(conversationWindowKind(null)).toBeNull();
+    expect(conversationWindowKind({ channel: "whatsapp", serviceWindowApplies: false })).toBeNull();
+  });
+  it("sem o campo novo, WhatsApp cai em template e os demais em nenhuma", () => {
+    expect(conversationWindowKind({ channel: "whatsapp" })).toBe("template");
+    expect(conversationWindowKind({ channel: "email" })).toBeNull();
+  });
+  it("o tipo do servidor vence", () => {
+    expect(conversationWindowKind({ channel: "instagram", serviceWindowKind: "wait" })).toBe("wait");
   });
 });
