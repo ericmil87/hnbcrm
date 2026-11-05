@@ -451,3 +451,17 @@ test("applyFunnelTemplate exige primeira etapa aberta", async () => {
     }),
   ).rejects.toThrow(/primeira etapa/);
 });
+
+test("initOnboardingProgress: org antiga com dados nasce concluída; org vazia segue mostrando", async () => {
+  const t = convexTest(schema, modules);
+  const old = await seed(t);
+  await addLead(t, old);
+  await as(t, old.adminUserId).mutation(api.onboarding.initOnboardingProgress, { organizationId: old.organizationId });
+  const p1 = await as(t, old.adminUserId).query(api.onboarding.getOnboardingProgress, { organizationId: old.organizationId });
+  expect(p1.shouldShowWizard).toBe(false);
+
+  const fresh = await seed(t);
+  await as(t, fresh.adminUserId).mutation(api.onboarding.initOnboardingProgress, { organizationId: fresh.organizationId });
+  const p2 = await as(t, fresh.adminUserId).query(api.onboarding.getOnboardingProgress, { organizationId: fresh.organizationId });
+  expect(p2.shouldShowWizard).toBe(true);
+});

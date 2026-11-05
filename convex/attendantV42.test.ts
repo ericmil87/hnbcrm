@@ -363,6 +363,23 @@ describe("activateOneFlow (wizard)", () => {
   });
 });
 
+describe("activateOneFlow reativação", () => {
+  test("atendente removido em autopilot volta em suggest", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { aiConfig: false });
+    const asAdmin = t.withIdentity({ subject: `${seed.userId}|s1` });
+    await t.run(async (ctx) => {
+      const a = (await ctx.db.get(seed.agentId))!;
+      await ctx.db.patch(seed.agentId, { agentProfile: { ...a.agentProfile!, mode: "autopilot" } });
+    });
+    await asAdmin.mutation(api.teamMembers.removeTeamMember, { teamMemberId: seed.agentId });
+    await asAdmin.mutation(api.aiSettings.activateOneFlow, { organizationId: seed.organizationId, lgpdAck: true });
+    const agent = await t.run(async (ctx) => ctx.db.get(seed.agentId));
+    expect(agent!.agentProfile!.mode).toBe("suggest");
+    expect(agent!.status).toBe("active");
+  });
+});
+
 describe("getConversationAiState", () => {
   test("expõe a razão do último skip da conversa", async () => {
     const t = setup();

@@ -675,6 +675,17 @@ export const activateOneFlow = mutation({
           updatedAt: now,
         });
       }
+      // O wizard promete "nunca autopilot": um atendente removido que estava em
+      // autopilot não pode voltar respondendo sozinho. A regra do wizard depende
+      // deste reset. Passa pelo port de perfil (auditoria + webhook).
+      if (existing.agentProfile?.mode !== "suggest") {
+        await updateAgentProfileCore(ctx, {
+          agent: (await ctx.db.get(existing._id))!,
+          member,
+          via: "wizard",
+          patch: { mode: "suggest" },
+        });
+      }
     } else {
       const orgFresh = (await ctx.db.get(args.organizationId))!;
       attendantId = await seedAttendant(ctx, orgFresh, member, {
