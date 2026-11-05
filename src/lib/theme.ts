@@ -33,3 +33,44 @@ export function shouldPushLocalToServer({ server, local }: { server?: unknown; l
 export function toasterTheme(theme: UiTheme): "dark" | "light" {
   return theme === "dark" ? "dark" : "light";
 }
+
+export interface ThemePreview {
+  /** Fixed hex values (data): the thumbnail must not depend on the active theme. */
+  sidebar: string;
+  background: string;
+  row: string;
+  bubbleIn: string;
+  bubbleOut: string;
+}
+
+export interface ThemeOption {
+  id: UiTheme;
+  label: string;
+  description: string;
+  preview: ThemePreview;
+}
+
+export const THEME_OPTIONS: ReadonlyArray<ThemeOption> = [
+  {
+    id: "dark",
+    label: "Escuro",
+    description: "Padrão do HNBCRM. Confortável para longas jornadas.",
+    preview: { sidebar: "#18181B", background: "#0F0F11", row: "#27272A", bubbleIn: "#27272A", bubbleOut: "#EA580C" },
+  },
+  {
+    id: "light",
+    label: "Claro",
+    description: "Fundo branco, ideal para ambientes iluminados.",
+    preview: { sidebar: "#F4F4F5", background: "#FFFFFF", row: "#E4E4E7", bubbleIn: "#F4F4F5", bubbleOut: "#9A3412" },
+  },
+  {
+    id: "whatsapp",
+    label: "Estilo WhatsApp",
+    description: "Cores e conversas com a cara do WhatsApp.",
+    preview: { sidebar: "#F0F2F5", background: "#EFEAE2", row: "#FFFFFF", bubbleIn: "#FFFFFF", bubbleOut: "#D9FDD3" },
+  },
+];
+
+export function themeLabel(theme: UiTheme): string {
+  return THEME_OPTIONS.find((o) => o.id === theme)?.label ?? THEME_OPTIONS[0].label;
+}

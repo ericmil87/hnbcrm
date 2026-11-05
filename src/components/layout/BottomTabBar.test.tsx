@@ -10,6 +10,7 @@ const zero = { inboxUnread: 0, pendingAttention: 0, pausedCampaigns: 0 };
 function setup(over: Partial<React.ComponentProps<typeof BottomTabBarView>> = {}) {
   const onNavigate = vi.fn();
   const onToggleMore = vi.fn();
+  const onOpenAppearance = vi.fn();
   render(
     <BottomTabBarView
       items={items}
@@ -21,13 +22,29 @@ function setup(over: Partial<React.ComponentProps<typeof BottomTabBarView>> = {}
       onToggleMore={onToggleMore}
       onOpenOrgSwitcher={vi.fn()}
       onSignOut={vi.fn()}
+      theme="whatsapp"
+      onOpenAppearance={onOpenAppearance}
       {...over}
     />
   );
-  return { onNavigate, onToggleMore };
+  return { onNavigate, onToggleMore, onOpenAppearance };
 }
 
 describe("BottomTabBarView", () => {
+  it("folha aberta: linha Aparência com o tema, entre Organização e Sair", async () => {
+    const { onToggleMore, onOpenAppearance } = setup({ showMore: true });
+    const dialog = screen.getByRole("dialog", { name: "Mais opções" });
+    const btns = within(dialog).getAllByRole("button");
+    const org = btns.findIndex((b) => /Organização atual/.test(b.getAttribute("aria-label") ?? ""));
+    const row = btns.findIndex((b) => b.textContent === "Aparência · Estilo WhatsApp");
+    const out = btns.findIndex((b) => b.textContent === "Sair");
+    expect(org).toBeLessThan(row);
+    expect(row).toBeLessThan(out);
+    await userEvent.click(btns[row]);
+    expect(onToggleMore).toHaveBeenCalled();
+    expect(onOpenAppearance).toHaveBeenCalled();
+  });
+
   it("mostra 4 primários e Mais", () => {
     setup();
     const nav = screen.getByRole("navigation");

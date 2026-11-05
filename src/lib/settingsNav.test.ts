@@ -41,14 +41,15 @@ describe("resolveSettingsPanel", () => {
     expect(visibleSettingsPanels(ctx([["settings", "view"]], { metaMessaging: true })).some((p) => p.id === "central")).toBe(false);
   });
 
-  it("appearance está reservado e nunca aparece", () => {
-    expect(visibleSettingsPanels(ADMIN).some((p) => p.id === "appearance")).toBe(false);
-    expect(resolveSettingsPanel("appearance", visibleSettingsPanels(ADMIN))?.id).toBe("general");
+  it("appearance é pessoal: aparece para todos, até sem permissões", () => {
+    expect(visibleSettingsPanels(ADMIN).some((p) => p.id === "appearance")).toBe(true);
+    expect(resolveSettingsPanel("appearance", visibleSettingsPanels(ADMIN))?.id).toBe("appearance");
+    expect(visibleSettingsPanels(ctx([])).some((p) => p.id === "appearance")).toBe(true);
   });
 
-  it("sem permissão nenhuma não há painel visível", () => {
+  it("sem permissão nenhuma só resta Aparência", () => {
     const none = ctx([]);
-    expect(visibleSettingsPanels(none)).toEqual([]);
+    expect(visibleSettingsPanels(none).map((p) => p.id)).toEqual(["appearance"]);
     expect(resolveSettingsPanel("general", [])).toBeNull();
   });
 
@@ -82,7 +83,7 @@ describe("groupOf / groupSettingsPanels", () => {
   it("agrupa na ordem dos grupos e omite grupos vazios", () => {
     const groups = groupSettingsPanels(visibleSettingsPanels(MEMBER));
     expect(groups.map((g) => g.id)).toEqual(["conta", "whatsapp", "atendente", "equipe", "dados", "avancado"]);
-    expect(groups[0].panels.map((p) => p.id)).toEqual(["general", "notifications"]);
+    expect(groups[0].panels.map((p) => p.id)).toEqual(["general", "appearance", "notifications"]);
     const only = groupSettingsPanels(visibleSettingsPanels(ctx([["settings", "view"]])));
     expect(only.some((g) => g.id === "equipe")).toBe(false);
   });

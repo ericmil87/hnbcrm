@@ -8,26 +8,30 @@ import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { CopilotPanel } from "@/components/copilot/CopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { activeTabForPath } from "@/lib/routes";
-import { navItemFor } from "@/lib/nav";
-import { APP_NAME, usePageTitle } from "@/hooks/usePageTitle";
+import { navItemFor, shellPageTitle } from "@/lib/nav";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
+import type { UiTheme } from "@/lib/theme";
 
 interface AppShellProps {
   onSignOut: () => void;
   organizationId: Id<"organizations">;
   orgName: string;
   onOpenOrgSwitcher: () => void;
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
   children: React.ReactNode;
 }
 
-export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, children }: AppShellProps) {
+export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme, children }: AppShellProps) {
   const [showMore, setShowMore] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const location = useLocation();
   const pageTitle = navItemFor(activeTabForPath(location.pathname))?.title;
-  // Título padrão da aba do navegador; as páginas sobrescrevem quando precisam.
-  usePageTitle(pageTitle ?? APP_NAME);
+  // Título padrão da aba do navegador. Configurações define o seu ("Configurações · painel"):
+  // o efeito deste componente roda depois do da página e o sobrescreveria, então fica de fora.
+  usePageTitle(shellPageTitle(location.pathname));
 
   // Voltar do navegador (ou qualquer troca de rota) fecha a folha "Mais".
   useEffect(() => {
@@ -48,6 +52,8 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         organizationId={organizationId}
         orgName={orgName}
         onOpenOrgSwitcher={onOpenOrgSwitcher}
+        theme={theme}
+        setTheme={setTheme}
       />
 
       {/* Main content area */}
@@ -87,6 +93,8 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         orgName={orgName}
         onOpenOrgSwitcher={onOpenOrgSwitcher}
         onSignOut={onSignOut}
+        theme={theme}
+        setTheme={setTheme}
       />
 
       {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}

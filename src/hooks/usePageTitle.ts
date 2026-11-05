@@ -9,9 +9,13 @@ export function pageDocumentTitle(title: string): string {
   return `${title} · ${APP_NAME}`;
 }
 
-/** Define `document.title = "{título} · HNBCRM"` e restaura o anterior ao desmontar. */
-export function usePageTitle(title: string): void {
+/**
+ * Define `document.title = "{título} · HNBCRM"` e restaura o anterior ao desmontar.
+ * `null` não mexe no título (a página filha define o seu).
+ */
+export function usePageTitle(title: string | null): void {
   useEffect(() => {
+    if (title === null) return;
     const previous = document.title;
     document.title = pageDocumentTitle(title);
     return () => {

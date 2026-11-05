@@ -9,6 +9,7 @@ const zero = { inboxUnread: 0, pendingAttention: 0, pausedCampaigns: 0 };
 
 function setup(over: Partial<React.ComponentProps<typeof SidebarView>> = {}) {
   const onNavigate = vi.fn();
+  const onOpenAppearance = vi.fn();
   render(
     <SidebarView
       items={items}
@@ -20,10 +21,11 @@ function setup(over: Partial<React.ComponentProps<typeof SidebarView>> = {}) {
       onNavigate={onNavigate}
       onSignOut={vi.fn()}
       onOpenOrgSwitcher={vi.fn()}
+      onOpenAppearance={onOpenAppearance}
       {...over}
     />
   );
-  return { onNavigate };
+  return { onNavigate, onOpenAppearance };
 }
 
 describe("SidebarView", () => {
@@ -48,6 +50,16 @@ describe("SidebarView", () => {
     const names = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"));
     expect(names.indexOf("Painel")).toBeLessThan(names.indexOf("Conversas"));
     expect(names.indexOf("Conversas")).toBeLessThan(names.indexOf("Requer atenção"));
+  });
+
+  it("botão Aparência fica acima de Sair, com 44 px, e abre o seletor", async () => {
+    const { onOpenAppearance } = setup();
+    const btn = screen.getByRole("button", { name: "Aparência" });
+    expect(btn.className).toContain("min-h-[44px]");
+    const all = screen.getAllByRole("button");
+    expect(all.indexOf(btn)).toBe(all.indexOf(screen.getByRole("button", { name: "Sair" })) - 1);
+    await userEvent.click(btn);
+    expect(onOpenAppearance).toHaveBeenCalled();
   });
 
   it("navega ao clicar", async () => {

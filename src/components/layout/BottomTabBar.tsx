@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Building2, LogOut, MoreHorizontal } from "lucide-react";
+import { Building2, LogOut, MoreHorizontal, Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNavBadges } from "@/hooks/useNavBadges";
@@ -17,6 +17,8 @@ import {
   type NavItemDef,
 } from "@/lib/nav";
 import { Modal } from "@/components/ui/Modal";
+import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
+import { themeLabel, type UiTheme } from "@/lib/theme";
 
 interface BottomTabBarViewProps {
   items: ReadonlyArray<NavItemDef>;
@@ -28,6 +30,8 @@ interface BottomTabBarViewProps {
   onToggleMore: () => void;
   onOpenOrgSwitcher: () => void;
   onSignOut: () => void;
+  theme: UiTheme;
+  onOpenAppearance: () => void;
 }
 
 const BADGE_PILL =
@@ -44,6 +48,8 @@ export function BottomTabBarView({
   onToggleMore,
   onOpenOrgSwitcher,
   onSignOut,
+  theme,
+  onOpenAppearance,
 }: BottomTabBarViewProps) {
   const { primary, more } = useMemo(() => splitMobile(items), [items]);
   const sections = useMemo(() => moreSheetSections(more), [more]);
@@ -120,6 +126,17 @@ export function BottomTabBarView({
                 <span className="block text-[11px] text-text-muted">Organização</span>
                 <span className="block truncate text-text-primary">{orgName}</span>
               </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onToggleMore();
+                onOpenAppearance();
+              }}
+              className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              <Palette size={18} className="shrink-0 text-brand-500" aria-hidden="true" />
+              <span className="flex-1 text-left">{`Aparência · ${themeLabel(theme)}`}</span>
             </button>
             <button
               type="button"
@@ -203,6 +220,8 @@ interface BottomTabBarProps {
   orgName: string;
   onOpenOrgSwitcher: () => void;
   onSignOut: () => void;
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
 }
 
 export function BottomTabBar({
@@ -212,7 +231,10 @@ export function BottomTabBar({
   orgName,
   onOpenOrgSwitcher,
   onSignOut,
+  theme,
+  setTheme,
 }: BottomTabBarProps) {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = activeTabForPath(location.pathname);
@@ -222,6 +244,7 @@ export function BottomTabBar({
   const badges = useNavBadges(organizationId, items);
 
   return (
+    <>
     <BottomTabBarView
       items={items}
       activeTab={activeTab}
@@ -232,6 +255,10 @@ export function BottomTabBar({
       onToggleMore={onToggleMore}
       onOpenOrgSwitcher={onOpenOrgSwitcher}
       onSignOut={onSignOut}
+      theme={theme}
+      onOpenAppearance={() => setAppearanceOpen(true)}
     />
+    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    </>
   );
 }
