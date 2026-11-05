@@ -90,7 +90,7 @@ async function seed(t: TestConvex<typeof schema>) {
       name: string,
       role: "admin" | "manager" | "agent"
     ) => {
-      const userId = await ctx.db.insert("users", {});
+      const userId = await ctx.db.insert("users", { email: `${name.toLowerCase().replace(/\W+/g, "")}@teste.com` });
       const memberId = await ctx.db.insert("teamMembers", {
         organizationId: orgId,
         userId,
