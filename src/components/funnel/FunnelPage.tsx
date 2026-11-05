@@ -1,33 +1,6 @@
-import { usePageTitle } from "@/hooks/usePageTitle";
-import { VOCAB } from "@/lib/vocab";
-import React, { useState, useMemo, useRef, useCallback, useEffect } from "react";
-import { useOutletContext, useSearchParams } from "react-router";
+import React, { useState, useMemo, useRef, useCallback } from "react";
+import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
-import { Id } from "../../../convex/_generated/dataModel";
-import type { AppOutletContext } from "@/components/layout/AuthLayout";
-import { usePermissions } from "@/hooks/usePermissions";
-import { useOrgModules } from "@/hooks/useOrgModules";
-import { ErrorBoundary } from "../ErrorBoundary";
-import { LeadDetailPanel } from "../LeadDetailPanel";
-import { CreateLeadModal } from "../CreateLeadModal";
-import { ManageStagesModal } from "../ManageStagesModal";
-import { EditBoardModal } from "../EditBoardModal";
-import { CloseReasonModal } from "../CloseReasonModal";
-import { DeleteBoardModal } from "../DeleteBoardModal";
-import { Button } from "@/components/ui/Button";
-import { Checkbox } from "@/components/ui/Checkbox";
-import { Badge } from "@/components/ui/Badge";
-import { Avatar } from "@/components/ui/Avatar";
-import { Spinner } from "@/components/ui/Spinner";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Modal } from "@/components/ui/Modal";
-import { LeadsListView, type LeadSortKey } from "../leads/LeadsListView";
-import { LeadsBulkActionBar } from "../leads/LeadsBulkActionBar";
-import { cn } from "@/lib/utils";
-import { assignableMembers, memberLabel } from "@/lib/teamMembers";
-import { Plus, Settings2, X, ChevronDown, Clock, MoreHorizontal, Palette, Edit2, Trash2, LayoutGrid, List, Archive, ArchiveRestore } from "lucide-react";
-import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import {
   DndContext,
   DragOverlay,
@@ -40,18 +13,37 @@ import {
   rectIntersection,
   DragEndEvent,
   DragStartEvent,
-  useDraggable,
-  useDroppable,
   type CollisionDetection,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
+import { Plus } from "lucide-react";
+import { api } from "../../../convex/_generated/api";
+import { Id } from "../../../convex/_generated/dataModel";
+import type { AppOutletContext } from "@/components/layout/AuthLayout";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useOrgModules } from "@/hooks/useOrgModules";
+import { useFunnelUrlState } from "@/hooks/useFunnelUrlState";
+import { VOCAB } from "@/lib/vocab";
+import { assignableMembers } from "@/lib/teamMembers";
+import { defaultSortOrder, filterLeads, sortLeads, type SortOrder } from "@/lib/funnelFilters";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
+import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
+import { ErrorBoundary } from "../ErrorBoundary";
+import { LeadDetailPanel } from "../LeadDetailPanel";
+import { LeadsListView, type LeadSortKey } from "../leads/LeadsListView";
+import { LeadsBulkActionBar } from "../leads/LeadsBulkActionBar";
 import { LeadCardView } from "./LeadCard";
 import { StageColumn } from "./StageColumn";
 import { QuickAddLead } from "./QuickAddLead";
 import { StageEditPopover } from "./StageEditPopover";
 import { AddStageColumn } from "./AddStageColumn";
 import { LeadDeepLinkResolver } from "./LeadDeepLinkResolver";
-import type { Lead, Stage } from "./types";
+import { FunnelToolbar } from "./FunnelToolbar";
+import { FunnelDialogs, type FunnelDialog, type PendingClose } from "./FunnelDialogs";
+import { useFunnelBulkActions } from "./useFunnelBulkActions";
 
 // Custom collision detection: prefer the column under the pointer, then any
 // column the dragged card overlaps, falling back to closest corners. This makes
@@ -71,59 +63,42 @@ export function FunnelPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
   const canDeleteLeads = can("leads", "full");
-  const [searchParams, setSearchParams] = useSearchParams();
-  const boardParam = searchParams.get("board");
-  const leadParam = searchParams.get("lead");
-  const [selectedBoardId, setSelectedBoardId] = useState<Id<"boards"> | null>(null);
-  const [selectedLeadId, setSelectedLeadId] = useState<Id<"leads"> | null>(null);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showManageStages, setShowManageStages] = useState(false);
-  const [showEditBoard, setShowEditBoard] = useState(false);
-  const [showCreateBoard, setShowCreateBoard] = useState(false);
-  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+
+  const boards = useQuery(api.boards.getBoards, { organizationId });
+  const {
+    filters,
+    setFilters,
+    clearFilters,
+    leadParam,
+    selectedBoardId,
+    setSelectedBoardId,
+    selectedLeadId,
+    openLeadPanel,
+    closeLeadPanel,
+    handleDeepLinkLead,
+  } = useFunnelUrlState(organizationId, boards);
+  const viewMode = filters.view;
+
+  const [dialog, setDialog] = useState<FunnelDialog | null>(null);
   const [quickAddStageId, setQuickAddStageId] = useState<Id<"stages"> | null>(null);
   const [draggedLeadId, setDraggedLeadId] = useState<Id<"leads"> | null>(null);
   const [stageMenuId, setStageMenuId] = useState<Id<"stages"> | null>(null);
-  const [stageMenuAnchor, setStageMenuAnchor] = useState<{ top: number; left: number } | null>(null);
-  const [showCloseReasonModal, setShowCloseReasonModal] = useState(false);
-  const [showArchiveBoardConfirm, setShowArchiveBoardConfirm] = useState(false);
-  const [deleteBoardTarget, setDeleteBoardTarget] = useState<{ _id: Id<"boards">; name: string } | null>(null);
-  const [showArchivedBoardsMenu, setShowArchivedBoardsMenu] = useState(false);
-  const [pendingClose, setPendingClose] = useState<{
-    leadId: Id<"leads">;
-    stageId: Id<"stages">;
-    isWon: boolean;
-    currentValue: number;
-  } | null>(null);
+  // Botão "Menu da etapa" que abriu o popover (âncora do `Popover`).
+  const stageMenuAnchorRef = useRef<HTMLElement | null>(null);
+  const [pendingClose, setPendingClose] = useState<PendingClose | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [sortKey, setSortKey] = useState<LeadSortKey>("updatedAt");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
 
-  // Search & Filters
-  const [searchQuery, setSearchQuery] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState<string>("all");
-  const [temperatureFilter, setTemperatureFilter] = useState<string>("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
   // Unidade (MVP Central — só com o módulo `units` ligado na org).
   const { modules: orgModules } = useOrgModules(organizationId);
-  const [unitFilter, setUnitFilter] = useState<string>("all");
   const units = useQuery(api.units.listUnits, orgModules.units ? { organizationId } : "skip");
-  const effectiveUnitFilter = orgModules.units ? unitFilter : "all";
 
-  // View mode (Kanban/List) + list-view selection + archiving
-  const [viewMode, setViewMode] = useState<"kanban" | "list">("kanban");
-  const [showArchived, setShowArchived] = useState(false);
-  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(() => new Set());
-  const [sortKey, setSortKey] = useState<LeadSortKey>("updatedAt");
-  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
-  const [pendingBulk, setPendingBulk] = useState<
-    { run: () => Promise<void>; title: string; description: string } | null
-  >(null);
-  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
-  const [bulkDeleteContacts, setBulkDeleteContacts] = useState(false);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const bulk = useFunnelBulkActions(organizationId, showArchived);
 
-  const boards = useQuery(api.boards.getBoards, { organizationId });
   const allBoards = useQuery(api.boards.getBoards, { organizationId, includeArchived: true });
   const archivedBoards = useMemo(
-    () => (allBoards ?? []).filter((b: any) => !!b.archivedAt),
+    () => (allBoards ?? []).filter((b) => !!b.archivedAt),
     [allBoards]
   );
   // Contador leve por board (só leads ativos, teto de 500) para o seletor.
@@ -162,18 +137,9 @@ export function FunnelPage() {
       );
     }
   );
-  const createBoard = useMutation(api.boards.createBoard);
-  const createBoardWithStages = useMutation(api.boards.createBoardWithStages);
-  const archiveBoard = useMutation(api.boards.archiveBoard);
-  const unarchiveBoard = useMutation(api.boards.unarchiveBoard);
   const updateStage = useMutation(api.boards.updateStage);
   const deleteStage = useMutation(api.boards.deleteStage);
   const createStage = useMutation(api.boards.createStage);
-  const bulkMoveLeads = useMutation(api.leads.bulkMoveLeads);
-  const bulkAssignLeads = useMutation(api.leads.bulkAssignLeads);
-  const bulkAddTags = useMutation(api.leads.bulkAddTags);
-  const bulkArchiveLeads = useMutation(api.leads.bulkArchiveLeads);
-  const bulkDeleteLeads = useMutation(api.leads.bulkDeleteLeads);
 
   // Suppress the click that fires immediately after a drag ends.
   const justDraggedRef = useRef(false);
@@ -188,214 +154,26 @@ export function FunnelPage() {
     })
   );
 
-  // Board inicial: query param (?board=) > último visto (localStorage por org) > primeiro board.
-  React.useEffect(() => {
-    if (!boards || boards.length === 0 || selectedBoardId) return;
-    const fromParam = boardParam && boards.some((b) => b._id === boardParam) ? boardParam : null;
-    const storageKey = `hnbcrm.lastBoard.${organizationId}`;
-    const stored = fromParam ? null : window.localStorage.getItem(storageKey);
-    const fromStorage = stored && boards.some((b) => b._id === stored) ? stored : null;
-    setSelectedBoardId((fromParam ?? fromStorage ?? boards[0]._id) as Id<"boards">);
-  }, [boards, selectedBoardId, boardParam, organizationId]);
-
-  // Lembra o último board visto por org, para a próxima visita sem query param.
-  React.useEffect(() => {
-    if (!selectedBoardId) return;
-    window.localStorage.setItem(`hnbcrm.lastBoard.${organizationId}`, selectedBoardId);
-  }, [selectedBoardId, organizationId]);
-
-  // O painel do lead vive na URL (`?lead=`): quem chega de Tarefas/Caixa de
-  // Entrada abre direto no lead certo, e voltar no browser reabre o painel.
-  const openLeadPanel = useCallback(
-    (leadId: Id<"leads">) => {
-      setSelectedLeadId(leadId);
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("lead", leadId);
-          return next;
-        },
-        { replace: true }
-      );
-    },
-    [setSearchParams]
+  const filteredLeads = useMemo(
+    () => filterLeads(leads, filters, orgModules.units),
+    [leads, filters, orgModules.units]
   );
-
-  const closeLeadPanel = useCallback(() => {
-    setSelectedLeadId(null);
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("lead");
-        return next;
-      },
-      { replace: true }
-    );
-  }, [setSearchParams]);
-
-  // Deep-link: troca para o board do lead (se preciso) e abre o painel.
-  const handleDeepLinkLead = useCallback(
-    (lead: { _id: Id<"leads">; boardId: Id<"boards"> }) => {
-      if (lead.boardId) setSelectedBoardId((cur) => (cur === lead.boardId ? cur : lead.boardId));
-      setSelectedLeadId((cur) => (cur === lead._id ? cur : lead._id));
-    },
-    []
-  );
-
-  // Filter leads client-side
-  const filteredLeads = useMemo(() => {
-    if (!leads) return [];
-
-    return leads.filter((lead) => {
-      // Search filter
-      if (searchQuery && !lead.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-        return false;
-      }
-
-      // Priority filter
-      if (priorityFilter !== "all" && lead.priority !== priorityFilter) {
-        return false;
-      }
-
-      // Temperature filter
-      if (temperatureFilter !== "all" && lead.temperature !== temperatureFilter) {
-        return false;
-      }
-
-      // Assignee filter
-      if (assigneeFilter !== "all") {
-        if (assigneeFilter === "unassigned" && lead.assignee) {
-          return false;
-        }
-        if (assigneeFilter !== "unassigned" && lead.assignee?._id !== assigneeFilter) {
-          return false;
-        }
-      }
-
-      if (effectiveUnitFilter !== "all") {
-        const leadUnitId = (lead as { unitId?: string }).unitId;
-        if (effectiveUnitFilter === "none" ? !!leadUnitId : leadUnitId !== effectiveUnitFilter) {
-          return false;
-        }
-      }
-
-      return true;
-    });
-  }, [leads, searchQuery, priorityFilter, temperatureFilter, assigneeFilter, effectiveUnitFilter]);
-
   // Sort for the list view (Kanban keeps stage-grouped order)
-  const sortedLeads = useMemo(() => {
-    const sortValue = (lead: any): string | number => {
-      switch (sortKey) {
-        case "title": return (lead.title ?? "").toLowerCase();
-        case "value": return lead.value ?? 0;
-        case "stage": return (lead.stage?.name ?? "").toLowerCase();
-        case "priority": return ({ urgent: 4, high: 3, medium: 2, low: 1 } as Record<string, number>)[lead.priority] ?? 0;
-        case "temperature": return ({ hot: 3, warm: 2, cold: 1 } as Record<string, number>)[lead.temperature] ?? 0;
-        case "assignee": return (lead.assignee?.name ?? "").toLowerCase();
-        case "updatedAt":
-        default: return lead.updatedAt ?? lead.lastActivityAt ?? 0;
-      }
-    };
-    const dir = sortOrder === "asc" ? 1 : -1;
-    return [...filteredLeads].sort((a, b) => {
-      const av = sortValue(a);
-      const bv = sortValue(b);
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv), "pt-BR") * dir;
-    });
-  }, [filteredLeads, sortKey, sortOrder]);
+  const sortedLeads = useMemo(
+    () => sortLeads(filteredLeads, sortKey, sortOrder),
+    [filteredLeads, sortKey, sortOrder]
+  );
 
-  // ── List-view selection ──
-  const toggleSelectLead = (id: string) => {
-    setSelectedLeadIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-  const clearSelection = () => setSelectedLeadIds(new Set());
-  const allSelected = sortedLeads.length > 0 && selectedLeadIds.size === sortedLeads.length;
-  const toggleSelectAll = () => {
-    setSelectedLeadIds(allSelected ? new Set() : new Set(sortedLeads.map((l: any) => l._id as string)));
-  };
+  const allSelected = sortedLeads.length > 0 && bulk.selectedLeadIds.size === sortedLeads.length;
 
   const handleSort = (key: LeadSortKey) => {
     if (key === sortKey) {
       setSortOrder((o) => (o === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
-      // Text columns default asc; numeric/recency columns default desc
-      setSortOrder(key === "title" || key === "stage" || key === "assignee" ? "asc" : "desc");
+      setSortOrder(defaultSortOrder(key));
     }
   };
-
-  // ── Bulk actions (confirm above 5, mirroring the Inbox pattern) ──
-  const runBulk = async (
-    fn: (ids: Id<"leads">[]) => Promise<unknown>,
-    successMsg: (n: number) => string
-  ) => {
-    const ids = Array.from(selectedLeadIds) as Id<"leads">[];
-    if (ids.length === 0) return;
-    try {
-      await fn(ids);
-      toast.success(successMsg(ids.length));
-      clearSelection();
-    } catch {
-      toast.error("Não foi possível concluir a ação em lote.");
-    }
-  };
-  const guardBulk = (run: () => Promise<void>, title: string, description: string) => {
-    if (selectedLeadIds.size > 5) setPendingBulk({ run, title, description });
-    else void run();
-  };
-  const handleBulkMove = (stageId: string) =>
-    guardBulk(
-      () =>
-        runBulk(
-          (ids) => bulkMoveLeads({ organizationId, leadIds: ids, stageId: stageId as Id<"stages"> }),
-          (n) => `${n} lead${n === 1 ? "" : "s"} movido${n === 1 ? "" : "s"}`
-        ),
-      "Mover leads",
-      `Mover ${selectedLeadIds.size} leads para outra etapa?`
-    );
-  const handleBulkAssign = (memberId: string | null) =>
-    guardBulk(
-      () =>
-        runBulk(
-          (ids) =>
-            bulkAssignLeads({
-              organizationId,
-              leadIds: ids,
-              assignedTo: memberId ? (memberId as Id<"teamMembers">) : undefined,
-            }),
-          (n) => `${n} lead${n === 1 ? "" : "s"} atualizado${n === 1 ? "" : "s"}`
-        ),
-      "Atribuir leads",
-      `Alterar o responsável de ${selectedLeadIds.size} leads?`
-    );
-  const handleBulkAddTag = (tag: string) =>
-    guardBulk(
-      () =>
-        runBulk(
-          (ids) => bulkAddTags({ organizationId, leadIds: ids, tags: [tag] }),
-          (n) => `Etiqueta aplicada a ${n} lead${n === 1 ? "" : "s"}`
-        ),
-      "Etiquetar leads",
-      `Aplicar a etiqueta "${tag}" a ${selectedLeadIds.size} leads?`
-    );
-  const handleBulkArchive = () =>
-    guardBulk(
-      () =>
-        runBulk(
-          (ids) => bulkArchiveLeads({ organizationId, leadIds: ids, archived: !showArchived }),
-          (n) =>
-            `${n} lead${n === 1 ? "" : "s"} ${showArchived ? "restaurado" : "arquivado"}${n === 1 ? "" : "s"}`
-        ),
-      showArchived ? "Restaurar leads" : "Arquivar leads",
-      `${showArchived ? "Restaurar" : "Arquivar"} ${selectedLeadIds.size} leads?`
-    );
 
   const handleDragStart = (event: DragStartEvent) => {
     setDraggedLeadId(event.active.id as Id<"leads">);
@@ -428,7 +206,6 @@ export function FunnelPage() {
         isWon: !!targetStage.isClosedWon,
         currentValue: lead.value,
       });
-      setShowCloseReasonModal(true);
       return;
     }
 
@@ -439,92 +216,12 @@ export function FunnelPage() {
       .catch(() => toast.error("Não foi possível mover o lead."));
   };
 
-  const handleArchiveBoard = async () => {
-    if (!selectedBoardId) return;
-
-    try {
-      await archiveBoard({ boardId: selectedBoardId });
-      toast.success("Funil arquivado");
-      setSelectedBoardId(null);
-      setShowSettingsMenu(false);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível arquivar o funil.");
-    }
-  };
-
-  const handleUnarchiveBoard = async (boardId: Id<"boards">) => {
-    try {
-      await unarchiveBoard({ boardId });
-      toast.success("Funil restaurado");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível restaurar o funil.");
-    }
-  };
-
-  const handleBoardDeleted = () => {
-    setDeleteBoardTarget(null);
-    setShowSettingsMenu(false);
-    setSelectedBoardId((cur) => (cur === deleteBoardTarget?._id ? null : cur));
-  };
-
-  const handleBulkDeleteLeads = async () => {
-    if (selectedLeadIds.size === 0 || bulkDeleting) return;
-    setBulkDeleting(true);
-    try {
-      await bulkDeleteLeads({
-        organizationId,
-        leadIds: Array.from(selectedLeadIds) as Id<"leads">[],
-        deleteContacts: bulkDeleteContacts,
-      });
-      toast.success(
-        `${selectedLeadIds.size} lead${selectedLeadIds.size === 1 ? "" : "s"} excluído${selectedLeadIds.size === 1 ? "" : "s"} permanentemente`
-      );
-      clearSelection();
-      setShowBulkDeleteConfirm(false);
-      setBulkDeleteContacts(false);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível excluir leads.");
-    } finally {
-      setBulkDeleting(false);
-    }
-  };
-
-  const handleCreateBoard = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const name = formData.get("name") as string;
-    const color = formData.get("color") as string;
-
-    if (!name.trim()) return;
-
-    // Default stages
-    const defaultStages = [
-      { name: "Novo Lead", color: "#71717A" },
-      { name: "Qualificado", color: "#3B82F6" },
-      { name: "Proposta", color: "#EAB308" },
-      { name: "Negociação", color: "#FB923C" },
-      { name: "Fechado", color: "#22C55E", isClosedWon: true },
-    ];
-
-    try {
-      await toast.promise(
-        createBoardWithStages({
-          organizationId,
-          name: name.trim(),
-          color: color || "#FF6B00",
-          stages: defaultStages,
-        }),
-        {
-          loading: "Criando funil…",
-          success: "Funil criado",
-          error: "Não foi possível criar o funil.",
-        }
-      );
-      setShowCreateBoard(false);
-    } catch (error) {
-      console.error("Failed to create board:", error);
-    }
-  };
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const openDialog = useCallback((next: FunnelDialog) => setDialog(next), []);
+  const selectBoard = useCallback(
+    (boardId: Id<"boards">) => setSelectedBoardId(boardId),
+    [setSelectedBoardId]
+  );
 
   const selectedBoard = boards?.find((b) => b._id === selectedBoardId);
   const draggedLead = leads?.find((l) => l._id === draggedLeadId);
@@ -539,14 +236,31 @@ export function FunnelPage() {
 
   if (boards.length === 0) {
     return (
-      <div className="text-center py-12">
-        <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum funil ainda</h3>
-        <p className="text-text-secondary mb-4">Crie seu primeiro funil de vendas para começar a acompanhar seus leads.</p>
-        <Button onClick={() => setShowCreateBoard(true)} variant="primary" size="md">
-          <Plus size={20} />
-          Criar funil
-        </Button>
-      </div>
+      <>
+        <div className="text-center py-12">
+          <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum funil ainda</h3>
+          <p className="text-text-secondary mb-4">Crie seu primeiro funil de vendas para começar a acompanhar seus leads.</p>
+          <Button onClick={() => openDialog({ kind: "createBoard" })} variant="primary" size="md">
+            <Plus size={20} />
+            Criar funil
+          </Button>
+        </div>
+        <FunnelDialogs
+          organizationId={organizationId}
+          selectedBoardId={selectedBoardId}
+          selectedBoard={selectedBoard}
+          dialog={dialog}
+          onCloseDialog={closeDialog}
+          onBoardArchived={() => {}}
+          onBoardDeleted={() => {}}
+          selectedLeadIds={bulk.selectedLeadIds}
+          onBulkDeleted={() => {}}
+          pendingBulk={null}
+          onClearPendingBulk={() => {}}
+          pendingClose={null}
+          onClearPendingClose={() => {}}
+        />
+      </>
     );
   }
 
@@ -560,316 +274,30 @@ export function FunnelPage() {
       <div className="h-full flex flex-col">
         <SpotlightTooltip spotlightId="board" organizationId={organizationId} />
 
-        {/* Board Selector + Settings + Create Lead */}
-        <div className="mb-4">
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex gap-2 overflow-x-auto flex-1 min-w-0">
-              {boards.map((board) => (
-                <button
-                  key={board._id}
-                  onClick={() => setSelectedBoardId(board._id)}
-                  className={cn(
-                    "px-4 py-2 rounded-full font-semibold whitespace-nowrap transition-all duration-150 flex items-center gap-2",
-                    selectedBoardId === board._id
-                      ? "bg-brand-600 text-white border-b-2 border-brand-400"
-                      : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
-                  )}
-                >
-                  <div
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: board.color }}
-                  />
-                  {board.name}
-                  {leadCountByBoard.has(board._id) && (
-                    <span className="text-xs font-normal tabular-nums opacity-75">
-                      ({leadCountByBoard.get(board._id)})
-                    </span>
-                  )}
-                </button>
-              ))}
-              <button
-                onClick={() => setShowCreateBoard(true)}
-                className="px-4 py-2 rounded-full font-semibold whitespace-nowrap bg-surface-overlay text-brand-400 hover:bg-surface-raised transition-all duration-150 flex items-center gap-1"
-                aria-label="Criar funil"
-              >
-                <Plus size={16} />
-                Novo
-              </button>
-            </div>
-
-            {/* Funis arquivados */}
-            {archivedBoards.length > 0 && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowArchivedBoardsMenu((v) => !v)}
-                  className={cn(
-                    "px-3 py-2 rounded-full text-sm border flex items-center gap-1.5 whitespace-nowrap transition-colors",
-                    showArchivedBoardsMenu
-                      ? "bg-brand-600/15 border-brand-500 text-brand-300"
-                      : "bg-surface-overlay border-border-strong text-text-secondary hover:text-text-primary"
-                  )}
-                  aria-label="Funis arquivados"
-                  aria-expanded={showArchivedBoardsMenu}
-                >
-                  <Archive size={15} />
-                  Arquivados
-                  <span className="text-xs font-normal tabular-nums opacity-75">({archivedBoards.length})</span>
-                </button>
-
-                {showArchivedBoardsMenu && (
-                  <>
-                    <div className="fixed inset-0 z-10" onClick={() => setShowArchivedBoardsMenu(false)} />
-                    <div className="absolute left-0 top-full mt-2 w-72 bg-surface-overlay border border-border rounded-card shadow-elevated z-20 py-1 max-h-80 overflow-y-auto">
-                      {archivedBoards.map((board: any) => (
-                        <div
-                          key={board._id}
-                          className="flex items-center gap-2 px-3 py-2 hover:bg-surface-raised transition-colors"
-                        >
-                          <div
-                            className="w-2 h-2 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: board.color }}
-                          />
-                          <span className="flex-1 min-w-0 truncate text-sm text-text-primary">{board.name}</span>
-                          {board.deletionStartedAt ? (
-                            <span className="text-xs text-semantic-error whitespace-nowrap">Excluindo…</span>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => handleUnarchiveBoard(board._id)}
-                                className="p-1.5 rounded-full text-text-muted hover:text-brand-500 hover:bg-surface-overlay transition-colors"
-                                aria-label={`Restaurar funil ${board.name}`}
-                                title="Restaurar"
-                              >
-                                <ArchiveRestore size={14} />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setDeleteBoardTarget({ _id: board._id, name: board.name });
-                                  setShowArchivedBoardsMenu(false);
-                                }}
-                                className="p-1.5 rounded-full text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
-                                aria-label={`Excluir funil ${board.name}`}
-                                title="Excluir"
-                              >
-                                <Trash2 size={14} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Settings Dropdown (only for active funil) */}
-            {selectedBoardId && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-                  className="p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors"
-                  aria-label="Configurações do funil"
-                >
-                  <Settings2 size={20} />
-                </button>
-
-                {showSettingsMenu && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-10"
-                      onClick={() => setShowSettingsMenu(false)}
-                    />
-                    <div className="absolute right-0 top-full mt-2 w-56 bg-surface-overlay border border-border rounded-card shadow-elevated z-20 py-1">
-                      <button
-                        onClick={() => {
-                          setShowEditBoard(true);
-                          setShowSettingsMenu(false);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-                      >
-                        Editar funil
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowManageStages(true);
-                          setShowSettingsMenu(false);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-                      >
-                        Gerenciar etapas
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowArchiveBoardConfirm(true);
-                          setShowSettingsMenu(false);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors flex items-center gap-2"
-                      >
-                        <Archive size={14} />
-                        Arquivar funil
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (selectedBoard) setDeleteBoardTarget({ _id: selectedBoard._id, name: selectedBoard.name });
-                          setShowSettingsMenu(false);
-                        }}
-                        className="w-full px-4 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
-                      >
-                        Excluir funil
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {can("leads", "edit_own") && (
-              <Button
-                onClick={() => setShowCreateModal(true)}
-                variant="primary"
-                size="md"
-                className="whitespace-nowrap"
-              >
-                <Plus size={20} />
-                Criar lead
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* Search & Filters */}
-        <div className="mb-4 flex items-center gap-2 flex-wrap">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar leads…"
-            className="flex-1 min-w-[200px] px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted text-sm"
-            style={{ fontSize: "16px" }}
-          />
-
-          <div className="relative">
-            <select
-              value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="all">Todas prioridades</option>
-              <option value="urgent">Urgente</option>
-              <option value="high">Alta</option>
-              <option value="medium">Média</option>
-              <option value="low">Baixa</option>
-            </select>
-            <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-          </div>
-
-          <div className="relative">
-            <select
-              value={temperatureFilter}
-              onChange={(e) => setTemperatureFilter(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="all">Todas temperaturas</option>
-              <option value="hot">Quente</option>
-              <option value="warm">Morno</option>
-              <option value="cold">Frio</option>
-            </select>
-            <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-          </div>
-
-          <div className="relative">
-            <select
-              value={assigneeFilter}
-              onChange={(e) => setAssigneeFilter(e.target.value)}
-              className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
-              style={{ fontSize: "16px" }}
-            >
-              <option value="all">Todos responsáveis</option>
-              <option value="unassigned">Não atribuído</option>
-              {teamMembers?.map((member) => (
-                <option key={member._id} value={member._id}>
-                  {memberLabel(member)}
-                </option>
-              ))}
-            </select>
-            <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-          </div>
-
-          {orgModules.units && (units ?? []).length > 0 && (
-            <div className="relative">
-              <select
-                value={unitFilter}
-                onChange={(e) => setUnitFilter(e.target.value)}
-                aria-label="Filtrar por unidade"
-                className="appearance-none pl-3 pr-8 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm cursor-pointer"
-                style={{ fontSize: "16px" }}
-              >
-                <option value="all">Todas unidades</option>
-                <option value="none">Sem unidade</option>
-                {(units ?? []).map((unit) => (
-                  <option key={unit._id} value={unit._id}>
-                    {unit.name}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={16} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
-            </div>
-          )}
-
-          {/* View toggle (Kanban / Lista) + Arquivados */}
-          <div className="flex items-center gap-2 ml-auto">
-            <div className="flex items-center gap-0.5 bg-surface-raised border border-border-strong rounded-field p-0.5">
-              <button
-                onClick={() => setViewMode("kanban")}
-                className={cn(
-                  "p-1.5 rounded-[0.4rem] transition-colors",
-                  viewMode === "kanban"
-                    ? "bg-brand-600 text-white"
-                    : "text-text-secondary hover:text-text-primary"
-                )}
-                aria-label="Modo quadro"
-                title="Modo quadro"
-              >
-                <LayoutGrid size={16} />
-              </button>
-              <button
-                onClick={() => setViewMode("list")}
-                className={cn(
-                  "p-1.5 rounded-[0.4rem] transition-colors",
-                  viewMode === "list"
-                    ? "bg-brand-600 text-white"
-                    : "text-text-secondary hover:text-text-primary"
-                )}
-                aria-label="Modo lista"
-                title="Modo lista"
-              >
-                <List size={16} />
-              </button>
-            </div>
-            <button
-              onClick={() => {
-                setShowArchived((v) => !v);
-                clearSelection();
-              }}
-              className={cn(
-                "px-3 py-2 rounded-field border text-sm flex items-center gap-1.5 transition-colors whitespace-nowrap",
-                showArchived
-                  ? "bg-brand-600/15 border-brand-500 text-brand-300"
-                  : "bg-surface-raised border-border-strong text-text-secondary hover:text-text-primary"
-              )}
-              title="Mostrar leads arquivados"
-            >
-              <Archive size={15} />
-              Arquivados
-            </button>
-          </div>
-        </div>
+        <FunnelToolbar
+          selector={{
+            boards,
+            archivedBoards,
+            leadCountByBoard,
+            selectedBoardId,
+            onSelectBoard: selectBoard,
+            onOpenDialog: openDialog,
+            canCreateLead: can("leads", "edit_own"),
+          }}
+          filters={filters}
+          onFiltersChange={setFilters}
+          onClearFilters={clearFilters}
+          teamMembers={teamMembers}
+          units={orgModules.units ? (units ?? null) : null}
+          showArchived={showArchived}
+          onToggleArchived={() => {
+            setShowArchived((v) => !v);
+            bulk.clearSelection();
+          }}
+        />
 
         {/* Kanban Board */}
-        {stages && viewMode === "kanban" && (
+        {stages && viewMode === "board" && (
           <div className="flex-1 overflow-x-auto">
             <div
               className={cn(
@@ -902,18 +330,17 @@ export function FunnelPage() {
                       onLeadClick={(leadId) => openLeadPanel(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}
                       onStageMenu={(e: React.MouseEvent) => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setStageMenuAnchor({ top: rect.bottom + 4, left: rect.left - 240 });
-                        setStageMenuId(stage._id);
+                        stageMenuAnchorRef.current = e.currentTarget as HTMLElement;
+                        setStageMenuId((cur) => (cur === stage._id ? null : stage._id));
                       }}
                     />
 
                     {/* Stage Menu */}
-                    {stageMenuId === stage._id && stageMenuAnchor && (
+                    {stageMenuId === stage._id && (
                       <StageEditPopover
                         stage={stage}
-                        anchor={stageMenuAnchor}
-                        onClose={() => { setStageMenuId(null); setStageMenuAnchor(null); }}
+                        anchor={stageMenuAnchorRef}
+                        onClose={() => setStageMenuId(null)}
                         onUpdate={(stageId, updates) => {
                           toast.promise(
                             updateStage({ stageId, ...updates }),
@@ -962,9 +389,9 @@ export function FunnelPage() {
           <div className="flex-1 overflow-y-auto pb-24">
             <LeadsListView
               leads={sortedLeads}
-              selectedIds={selectedLeadIds}
-              onToggleSelect={toggleSelectLead}
-              onToggleSelectAll={toggleSelectAll}
+              selectedIds={bulk.selectedLeadIds}
+              onToggleSelect={bulk.toggleSelectLead}
+              onToggleSelectAll={() => bulk.toggleSelectAll(sortedLeads.map((l) => l._id as string))}
               allSelected={allSelected}
               sortKey={sortKey}
               sortOrder={sortOrder}
@@ -981,19 +408,19 @@ export function FunnelPage() {
       </div>
 
       {/* Bulk action bar (list view) */}
-      {viewMode === "list" && selectedLeadIds.size > 0 && (
+      {viewMode === "list" && bulk.selectedLeadIds.size > 0 && (
         <LeadsBulkActionBar
-          count={selectedLeadIds.size}
+          count={bulk.selectedLeadIds.size}
           stages={(stages ?? []).map((s) => ({ _id: s._id, name: s.name, color: s.color }))}
           teamMembers={assignableMembers(teamMembers).map((m) => ({ _id: m._id, name: m.name, type: m.type }))}
-          onMove={handleBulkMove}
-          onAssign={handleBulkAssign}
-          onAddTag={handleBulkAddTag}
-          onArchive={handleBulkArchive}
+          onMove={bulk.handleBulkMove}
+          onAssign={bulk.handleBulkAssign}
+          onAddTag={bulk.handleBulkAddTag}
+          onArchive={bulk.handleBulkArchive}
           archiveLabel={showArchived ? "Desarquivar" : "Arquivar"}
-          onDelete={() => setShowBulkDeleteConfirm(true)}
+          onDelete={() => openDialog({ kind: "bulkDelete" })}
           canDelete={canDeleteLeads}
-          onClear={clearSelection}
+          onClear={bulk.clearSelection}
         />
       )}
 
@@ -1016,172 +443,30 @@ export function FunnelPage() {
         />
       )}
 
-      {/* Create Lead Modal */}
-      {showCreateModal && selectedBoardId && (
-        <CreateLeadModal
-          organizationId={organizationId}
-          boardId={selectedBoardId}
-          onClose={() => setShowCreateModal(false)}
-        />
-      )}
-
-      {/* Manage Stages Modal */}
-      {showManageStages && selectedBoardId && (
-        <ManageStagesModal
-          boardId={selectedBoardId}
-          organizationId={organizationId}
-          onClose={() => setShowManageStages(false)}
-        />
-      )}
-
-      {/* Edit Board Modal */}
-      {showEditBoard && selectedBoard && (
-        <EditBoardModal
-          board={selectedBoard}
-          onClose={() => setShowEditBoard(false)}
-        />
-      )}
-
-      {/* Create Board Modal */}
-      {showCreateBoard && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setShowCreateBoard(false)}
-          />
-          <div className="relative z-10 w-full bg-surface-overlay border border-border rounded-t-xl sm:rounded-xl sm:max-w-md sm:mx-4 p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Novo funil</h2>
-            <form onSubmit={handleCreateBoard} className="space-y-4">
-              <div>
-                <label className="block text-[13px] font-medium text-text-secondary mb-1">
-                  Nome <span className="text-semantic-error">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  placeholder="ex: Vendas B2B"
-                  className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
-                  style={{ fontSize: "16px" }}
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-[13px] font-medium text-text-secondary mb-1">Cor</label>
-                <input
-                  type="color"
-                  name="color"
-                  defaultValue="#FF6B00"
-                  className="w-full h-10 bg-surface-raised border border-border-strong rounded-field cursor-pointer"
-                />
-              </div>
-              <div className="text-xs text-text-muted bg-surface-sunken p-3 rounded-field">
-                Etapas padrão: Novo Lead, Qualificado, Proposta, Negociação, Fechado
-              </div>
-              <div className="flex gap-2 pt-2">
-                <Button
-                  type="button"
-                  onClick={() => setShowCreateBoard(false)}
-                  variant="secondary"
-                  size="md"
-                  className="flex-1"
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit" variant="primary" size="md" className="flex-1">
-                  Criar
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Archive Board Confirm */}
-      <ConfirmDialog
-        open={showArchiveBoardConfirm}
-        onClose={() => setShowArchiveBoardConfirm(false)}
-        onConfirm={handleArchiveBoard}
-        title="Arquivar funil"
-        description={`O funil "${selectedBoard?.name ?? ""}" e seus leads somem das listas ativas, mas continuam salvos e podem ser restaurados a qualquer momento.`}
-        confirmLabel="Arquivar"
-      />
-
-      {/* Delete Board Modal (funil ativo ou arquivado) */}
-      {deleteBoardTarget && (
-        <DeleteBoardModal
-          boardId={deleteBoardTarget._id}
-          boardName={deleteBoardTarget.name}
-          onClose={() => setDeleteBoardTarget(null)}
-          onDeleted={handleBoardDeleted}
-        />
-      )}
-
-      {/* Bulk delete leads confirm */}
-      <Modal
-        open={showBulkDeleteConfirm}
-        onClose={() => { if (!bulkDeleting) { setShowBulkDeleteConfirm(false); setBulkDeleteContacts(false); } }}
-        title="Excluir leads"
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-text-secondary leading-relaxed">
-            Excluir permanentemente {selectedLeadIds.size} lead{selectedLeadIds.size === 1 ? "" : "s"}? Conversas,
-            mensagens e documentos desses leads também serão excluídos. Os dados permanecem no log de auditoria.
-          </p>
-          <Checkbox
-            checked={bulkDeleteContacts}
-            onChange={(e) => setBulkDeleteContacts(e.target.checked)}
-            label="Excluir contatos vinculados sem outros leads"
-          />
-          <div className="flex gap-2 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => { setShowBulkDeleteConfirm(false); setBulkDeleteContacts(false); }}
-              className="flex-1"
-              disabled={bulkDeleting}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              variant="danger"
-              onClick={handleBulkDeleteLeads}
-              className="flex-1"
-              disabled={bulkDeleting}
-            >
-              {bulkDeleting ? "Excluindo…" : "Excluir permanentemente"}
-            </Button>
-          </div>
-        </div>
-      </Modal>
-
-      {/* Bulk action confirm (above 5 leads) */}
-      <ConfirmDialog
-        open={pendingBulk !== null}
-        onClose={() => setPendingBulk(null)}
-        onConfirm={() => {
-          const p = pendingBulk;
-          if (p) void p.run();
+      <FunnelDialogs
+        organizationId={organizationId}
+        selectedBoardId={selectedBoardId}
+        selectedBoard={selectedBoard}
+        dialog={dialog}
+        onCloseDialog={closeDialog}
+        onBoardArchived={() => {
+          setSelectedBoardId(null);
+          closeDialog();
         }}
-        title={pendingBulk?.title ?? ""}
-        description={pendingBulk?.description}
-        confirmLabel="Confirmar"
+        onBoardDeleted={(boardId) => {
+          closeDialog();
+          setSelectedBoardId((cur) => (cur === boardId ? null : cur));
+        }}
+        selectedLeadIds={bulk.selectedLeadIds}
+        onBulkDeleted={() => {
+          bulk.clearSelection();
+          closeDialog();
+        }}
+        pendingBulk={bulk.pendingBulk}
+        onClearPendingBulk={() => bulk.setPendingBulk(null)}
+        pendingClose={pendingClose}
+        onClearPendingClose={() => setPendingClose(null)}
       />
-
-      {/* Close Reason Modal */}
-      {showCloseReasonModal && pendingClose && (
-        <CloseReasonModal
-          open={showCloseReasonModal}
-          onClose={() => {
-            setShowCloseReasonModal(false);
-            setPendingClose(null);
-          }}
-          leadId={pendingClose.leadId}
-          stageId={pendingClose.stageId}
-          isWon={pendingClose.isWon}
-          currentValue={pendingClose.currentValue}
-        />
-      )}
     </DndContext>
   );
 }
