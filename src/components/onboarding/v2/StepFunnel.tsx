@@ -74,6 +74,8 @@ function FunnelForm({
   const [saving, setSaving] = useState(false);
   const [created, setCreated] = useState<Id<"boards"> | null>(null);
   const funnelOk = validateFunnel(value).ok;
+  // Funil já aplicado, sem mudança e sem campos novos: "Continuar" só avança (mesmo que o funil antigo não passe na validação).
+  const unchanged = !!existing && fieldKeys.length === 0 && sameFunnel(value, existing.value);
 
   const toggleField = (key: string, on: boolean) =>
     setFieldKeys((keys) => (on ? [...keys, key] : keys.filter((k) => k !== key)));
@@ -82,7 +84,7 @@ function FunnelForm({
     // Funil novo criado ao lado: o aviso foi lido, só segue.
     if (created) return onApplied(created);
     // Funil já aplicado e sem mudança: só segue (não reaplica o modelo por cima).
-    if (existing && sameFunnel(value, existing.value)) return onApplied(existing.boardId);
+    if (existing && unchanged) return onApplied(existing.boardId);
     if (!canAdvance("funnel", { funnelOk })) return;
     setSaving(true);
     try {
@@ -145,7 +147,7 @@ function FunnelForm({
         onSkip={onSkip}
         skipLoading={skipLoading}
         onContinue={() => void handleContinue()}
-        continueDisabled={!funnelOk}
+        continueDisabled={!funnelOk && !unchanged}
         continueLoading={saving}
       />
     </div>
