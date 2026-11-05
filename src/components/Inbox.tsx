@@ -78,6 +78,8 @@ import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
 import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
+import { useGroupMode } from "@/components/inbox/useGroupMode";
+import { ScheduledPendingRow } from "@/components/inbox/ScheduledPendingRow";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
 import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { ContactDetailPanel } from "@/components/ContactDetailPanel";
@@ -623,23 +625,15 @@ export function Inbox() {
   const contactName =
     `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
 
-  // ── Conversa de GRUPO (v0.57) ──
-  // Uma conversa de grupo NÃO tem lead nem contato: tudo que depende deles
-  // (funil, "Ver lead", repasse, rascunho de IA) sai da tela, e o que a
-  // substitui é a sala — assunto, membros e a política do grupo.
-  const isGroupConversation = currentConversation?.kind === "group";
-  const groupChatId = currentConversation?.groupChatId as Id<"groupChats"> | undefined;
-  const groupChat = useQuery(
-    api.groupChats.getGroup,
-    isGroupConversation && groupChatId ? { groupChatId } : "skip"
-  ) as (GroupChatDoc & { selfKey?: string | null }) | null | undefined;
-  const groupSummary = currentConversation?.groupChat as
-    | { subject: string; jid: string; participantsCount: number }
-    | null
-    | undefined;
-  const groupSubject = groupChat?.subject ?? groupSummary?.subject ?? "Grupo";
-  const groupParticipantsCount =
-    groupChat?.participantsCount ?? groupSummary?.participantsCount ?? 0;
+  // ── Conversa de GRUPO (v0.57): sala, assunto, membros e nomes por JID ──
+  const {
+    isGroupConversation,
+    groupChatId,
+    groupChat,
+    groupSubject,
+    groupParticipantsCount,
+    groupNameByKey,
+  } = useGroupMode(currentConversation, messages);
 
   const setGroupMonitored = useMutation(api.groupChats.setMonitored);
   const leaveGroup = useAction(api.groupChats.leaveGroup);
@@ -657,42 +651,6 @@ export function Inbox() {
         : `source=group_members&groupChatId=${groupChatId}`;
     navigate(`${TAB_ROUTES.campaigns}?novo=1&${params}`);
   };
-
-  // Nome por JID mencionado — alimenta o negrito das menções recebidas (o
-  // corpo traz "@558…" ou "@Fulano", e os dois precisam casar). Perf (onda 2):
-  // resolve só os JIDs que aparecem nas mensagens carregadas, em vez de baixar
-  // a sala inteira (até 1.024 membros) pelo `getGroup`.
-  const mentionedJids = React.useMemo(() => {
-    if (!isGroupConversation || !messages) return [];
-    const set = new Set<string>();
-    for (const m of messages as { mentions?: string[] }[]) {
-      for (const jid of m.mentions ?? []) if (typeof jid === "string" && jid) set.add(jid);
-    }
-    return Array.from(set).sort().slice(0, 100);
-  }, [isGroupConversation, messages]);
-  const mentionNames = useQuery(
-    api.groupChats.resolveGroupMemberNames,
-    isGroupConversation && groupChatId && mentionedJids.length > 0
-      ? { groupChatId, jids: mentionedJids }
-      : "skip"
-  );
-  // Último mapa carregado, para não piscar enquanto a próxima consulta volta —
-  // zerado ao trocar de sala (senão os nomes de uma sala vazariam na outra).
-  const lastMentionNames = useRef<{ jid: string; name: string }[]>([]);
-  const lastMentionNamesGroup = useRef<string | undefined>(groupChatId);
-  if (lastMentionNamesGroup.current !== groupChatId) {
-    lastMentionNamesGroup.current = groupChatId;
-    lastMentionNames.current = [];
-  }
-  if (mentionNames !== undefined) lastMentionNames.current = mentionNames;
-  const groupNameByKey = React.useMemo(() => {
-    const map = new Map<string, string>();
-    for (const { jid, name } of mentionNames ?? lastMentionNames.current) {
-      map.set(jid, name);
-      map.set(jid.split("@")[0], name);
-    }
-    return map;
-  }, [mentionNames, groupChatId]);
 
   // Menção a membro no grupo: o "@" busca os membros no servidor, o texto
   // recebe "@<nome>" e os JIDs escolhidos viajam em `mentions[]` no envio.
@@ -2983,71 +2941,6 @@ export function Inbox() {
         confirmLabel="Sair do grupo"
         variant="danger"
       />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Mensagem agendada pendente — linha com contagem regressiva         */
-/* ------------------------------------------------------------------ */
-
-function ScheduledPendingRow({
-  item,
-  onCancel,
-}: {
-  item: { _id: string; content: string; scheduledAt: number; createdAt: number };
-  onCancel: () => void;
-}) {
-  const [tick, setTick] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const total = Math.max(1, item.scheduledAt - item.createdAt);
-  const elapsed = Math.min(total, Math.max(0, tick - item.createdAt));
-  const progress = (elapsed / total) * 100;
-  const remainingMs = Math.max(0, item.scheduledAt - tick);
-
-  const remainingLabel = (() => {
-    const s = Math.ceil(remainingMs / 1000);
-    if (s <= 0) return "enviando…";
-    if (s < 60) return `em ${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `em ${m}min ${String(s % 60).padStart(2, "0")}s`;
-    const h = Math.floor(m / 60);
-    return `em ${h}h${String(m % 60).padStart(2, "0")}`;
-  })();
-
-  return (
-    <div className="rounded-lg bg-surface-sunken border border-border overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
-        <Clock size={12} className="shrink-0 text-brand-500" />
-        <span className="shrink-0 text-text-secondary tabular-nums">
-          {new Date(item.scheduledAt).toLocaleString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
-        <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
-        <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="shrink-0 p-1 rounded-full text-text-muted hover:text-semantic-error hover:bg-surface-raised transition-colors"
-          aria-label="Cancelar agendamento"
-        >
-          <X size={12} />
-        </button>
-      </div>
-      <div className="h-0.5 bg-surface-raised">
-        <div
-          className="h-full bg-brand-500 transition-[width] duration-1000 ease-linear"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
     </div>
   );
 }
