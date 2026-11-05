@@ -34,8 +34,10 @@
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
-| 12 | `feat/fv2-12-conversa-tema` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-12`) | revisão |
-| 13 | `feat/fv2-13-configuracoes-dois-niveis` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-13`) | revisão |
+| 12 | `feat/fv2-12-conversa-tema` | frontend-specialist | implementado (c4a7b8b), em revisão | integrar |
+| 14 | `feat/fv2-14-aplicacao-tema` | convex-backend → frontend-specialist | backend em implementação (worktree `/home/user/wt/fv2-14`) | frontend, revisão |
+| 17 | `feat/fv2-17-atendente-divisao` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-17`) | revisão |
+| 13 | `feat/fv2-13-configuracoes-dois-niveis` | frontend-specialist | implementado (0932e4c, f5a75fd), em revisão | integrar (merge com fv2-10/12 antes) |
 
 ## Parados (não integrar sem decisão do dono)
 
@@ -50,6 +52,7 @@
 
 ## Para retomar
 
-- Próximos: **fv2-12** e **fv2-13** (em implementação, em paralelo: arquivos disjuntos); depois 14, 15, 17, 19, 21, 22
+- Paralelismo ampliado a pedido do dono (05/11/2026, mensagem na sessão: "pode colocar mais agentes em paralelo"): PRs com arquivos disjuntos correm juntos; cada ramo faz merge de `frontend-v2` antes dos gates finais quando a base avançou.
+- Em curso: fv2-12 e fv2-13 (revisão), fv2-14 (backend) e fv2-17 (implementação). Depois: 15 (após 12/13/14), 19 (após 17), 21 (após 19), 22 (após 19/21)
 - PR em rascunho para acompanhamento: https://github.com/ericmil87/hnbcrm/pull/40
 - Ramo em andamento: nenhum
