@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -22,6 +23,7 @@ import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/Ha
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
 
 export function HandoffQueue() {
+  usePageTitle(VOCAB.attention.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);

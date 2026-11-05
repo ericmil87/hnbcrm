@@ -62,6 +62,12 @@ export const VOCAB = {
   webhooks: { name: "Webhooks", hint: "avisos automáticos para outros sistemas" },
   agenda: { nav: "Agenda", title: "Agenda" },
   dashboard: { nav: "Painel", title: "Painel" },
+  tasks: { nav: "Tarefas", title: "Tarefas" },
+  groups: { nav: "Grupos", title: "Grupos" },
+  forms: { nav: "Formulários", title: "Formulários" },
+  campaigns: { nav: "Campanhas", title: "Campanhas" },
+  team: { nav: "Equipe", title: "Equipe" },
+  settings: { nav: "Configurações", title: "Configurações" },
 } as const;
 
 /** Termos que não podem aparecer em texto visível fora da allowlist. */

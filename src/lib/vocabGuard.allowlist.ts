@@ -43,6 +43,7 @@ export const PENDING_SCOPE: readonly string[] = [
 export const SENTENCE_CASE_SCOPE: readonly string[] = [
   "src/components/ui/",
   "src/components/layout/",
+  "src/lib/nav.ts",
   "src/components/settings/",
   "src/components/Inbox.tsx",
   "src/components/inbox/",

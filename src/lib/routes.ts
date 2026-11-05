@@ -1,4 +1,20 @@
-import type { Tab } from "@/components/layout/BottomTabBar";
+import { NAV_ITEMS } from "./nav";
+
+export type Tab =
+  | "dashboard"
+  | "board"
+  | "contacts"
+  | "inbox"
+  | "tasks"
+  | "calendar"
+  | "handoffs"
+  | "team"
+  | "audit"
+  | "settings"
+  | "forms"
+  | "campaigns"
+  | "groups"
+  | "central";
 
 export const TAB_ROUTES: Record<Tab, string> = {
   dashboard: "/app/painel",
@@ -20,16 +36,19 @@ export const TAB_ROUTES: Record<Tab, string> = {
 /**
  * Aba ativa de um caminho, pelo prefixo mais longo: sub-rotas como
  * `/app/formularios/:formId/submissoes` ativam a aba da raiz (`forms`).
- * Caminho fora das abas devolve `undefined`.
+ * Lê `matchPrefixes` extras de `NAV_ITEMS`. Caminho fora das abas devolve `undefined`.
  */
 export function activeTabForPath(pathname: string): Tab | undefined {
   let best: Tab | undefined;
   let bestLength = -1;
   for (const [tab, root] of Object.entries(TAB_ROUTES) as [Tab, string][]) {
-    const matches = pathname === root || pathname.startsWith(root + "/");
-    if (matches && root.length > bestLength) {
-      best = tab;
-      bestLength = root.length;
+    const extra = NAV_ITEMS.find((i) => i.id === tab)?.matchPrefixes ?? [];
+    for (const prefix of [root, ...extra]) {
+      const matches = pathname === prefix || pathname.startsWith(prefix + "/");
+      if (matches && prefix.length > bestLength) {
+        best = tab;
+        bestLength = prefix.length;
+      }
     }
   }
   return best;

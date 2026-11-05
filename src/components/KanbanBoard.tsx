@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import React, { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -668,6 +670,7 @@ function LeadDeepLinkResolver({
 }
 
 export function KanbanBoard() {
+  usePageTitle(VOCAB.funnel.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
   const canDeleteLeads = can("leads", "full");

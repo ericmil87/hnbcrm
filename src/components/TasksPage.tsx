@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -86,6 +88,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 // ============================================================================
 
 export function TasksPage() {
+  usePageTitle(VOCAB.tasks.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can, role } = usePermissions(organizationId);
   const canEdit = can("tasks", "edit_own");

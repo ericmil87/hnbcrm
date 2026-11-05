@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Navegação e Configurações
 
+- O menu agora tem quatro grupos (Atendimento, Organização, Divulgação e Gestão), com o Painel no topo. No celular, a barra inferior mostra Painel, Conversas, Requer atenção, Funil e **Mais**; Agenda, Tarefas e Contatos ficam em **Mais**, junto com a troca de organização e o "Sair". O título da página aparece no topo do celular e na aba do navegador.
 - Endereço que não existe agora mostra a página "Página não encontrada", com atalhos para o app e para a página inicial; dentro do app, um endereço desconhecido leva de volta ao Painel.
 - Se uma tela falhar ao carregar (por exemplo, logo depois de uma atualização do sistema), aparece "Algo deu errado." com o botão "Recarregar", em vez de uma tela em branco.
 - Na Agenda, o link de um evento (como o de "Próximos eventos" no Painel) abre direto o dia e o detalhe do evento; visão, data e evento ficam no endereço e podem ser compartilhados.

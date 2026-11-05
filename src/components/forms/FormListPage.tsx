@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useRef, useEffect } from "react";
 import { useOutletContext, useNavigate } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -151,6 +153,7 @@ function MenuItem({
 }
 
 export function FormListPage() {
+  usePageTitle(VOCAB.forms.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
 

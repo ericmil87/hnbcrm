@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useState } from "react";
 import { useOutletContext, useNavigate } from "react-router";
 import { useQuery, useMutation } from "convex/react";
@@ -8,7 +9,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Skeleton } from "@/components/ui/Skeleton";
-import type { Tab } from "@/components/layout/BottomTabBar";
+import type { Tab } from "@/lib/routes";
 import { TAB_ROUTES } from "@/lib/routes";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { OnboardingChecklist } from "@/components/onboarding/OnboardingChecklist";
@@ -45,6 +46,7 @@ import {
 import { formatDueRelative, formatMoney } from "@/lib/format";
 
 export function DashboardOverview() {
+  usePageTitle(VOCAB.dashboard.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const onTabChange = (tab: Tab) => navigate(TAB_ROUTES[tab]);

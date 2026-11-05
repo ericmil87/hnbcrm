@@ -6,7 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
-import type { Tab } from "@/components/layout/BottomTabBar";
+import type { Tab } from "@/lib/routes";
 import { TAB_ROUTES } from "@/lib/routes";
 
 interface OnboardingChecklistProps {

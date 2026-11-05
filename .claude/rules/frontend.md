@@ -59,6 +59,8 @@ paths:
 - Mutations: `useMutation` plus `sonner` toasts (`toast.promise`). Convex user errors are `ConvexError` with PT-BR text; show it.
 
 ## Routing and deep links
+
+- Navigation menu: `src/lib/nav.ts` (`NAV_ITEMS`) is the only list. A new menu item = one line in `NAV_ITEMS` (label from `VOCAB`, icon, group, permission, module, badge, `mobile: "primary" | "more"`) plus its `TAB_ROUTES` entry; never add a second list in `Sidebar`/`BottomTabBar`. The bar holds at most 4 primary items. Menu pages call `usePageTitle(...)`.
 - Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `activeTabForPath`); navigate with `useNavigate`, derive active state from `useLocation`.
 - Authenticated routes are lazy (`React.lazy`) under `AuthLayout`. Public pages call `<SEO />` (`src/components/SEO.tsx`).
 - The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`, and the Agenda's `?view=`, `?date=`, `?event=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).

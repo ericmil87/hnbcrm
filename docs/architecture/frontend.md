@@ -32,3 +32,6 @@ Os tokens de cor viram canais RGB (`--rgb-surface-base: 15 15 17`) em `src/index
 
 **SEO:** react-helmet-async for dynamic meta tags, Open Graph + Twitter Cards, JSON-LD structured data, sitemap.xml, robots.txt. Reusable `<SEO />` component in `src/components/SEO.tsx`.
 
+### Modelo de navegação (Frontend v2, fv2-09)
+
+`src/lib/nav.ts` é a única lista de itens do menu (`NAV_ITEMS`, 14 itens em 4 grupos: Atendimento, Organização, Divulgação, Gestão; o Painel fica solto no topo). Cada item declara rótulo (de `VOCAB`), ícone, grupo, permissão, módulo, fonte do badge e `mobile: "primary" | "more"`. `visibleNavItems(can, modules)` e `splitMobile(items)` (até 4 na barra inferior) são puras e testadas; o tipo `Tab` e `TAB_ROUTES`/`activeTabForPath` ficam em `src/lib/routes.ts` (prefixo mais longo, mais `matchPrefixes` do item). `Sidebar` e `BottomTabBar` são só renderizadores (`SidebarView`/`BottomTabBarView` puros, mais um wrapper com hooks). As contagens vêm de `useNavBadges`, que pula a query de um item oculto (`badgeQueriesFor`). No celular o cabeçalho do `AppShell` mostra o título da página, e `usePageTitle` define `document.title` como "{título} · HNBCRM". Adicionar um item é uma linha em `NAV_ITEMS` mais a rota em `TAB_ROUTES`.

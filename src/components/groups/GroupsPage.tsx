@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -55,6 +57,7 @@ const TABS: { id: GroupsTab; label: string }[] = [
  * acompanhado, para quem esqueceu o passo lá.
  */
 export function GroupsPage() {
+  usePageTitle(VOCAB.groups.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can, isLoading } = usePermissions(organizationId);

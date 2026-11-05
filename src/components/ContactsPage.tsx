@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useEffect, useRef } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -44,6 +46,7 @@ const AVAILABLE_COLUMNS: ColumnDefinition[] = [
 const DEFAULT_COLUMNS: ColumnKey[] = ["contact", "company", "email", "tags"];
 
 export function ContactsPage() {
+  usePageTitle(VOCAB.contact.nav);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
   const [searchText, setSearchText] = useState("");

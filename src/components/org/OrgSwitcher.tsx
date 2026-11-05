@@ -272,7 +272,6 @@ export function OrgSwitcherTrigger({ orgName, onClick, className }: OrgSwitcherT
     <button
       type="button"
       onClick={onClick}
-      title={`Organização: ${orgName}`}
       aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]",
