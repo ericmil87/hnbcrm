@@ -434,6 +434,12 @@ export const internalGetSetupContext = internalQuery({
     v.object({
       organizationName: v.string(),
       timezone: v.string(),
+      // Estado mascarado (fv2-20): só booleano/nome/modo; nunca telefone nem id.
+      whatsappConnected: v.boolean(),
+      attendant: v.union(
+        v.null(),
+        v.object({ name: v.string(), mode: v.union(v.literal("suggest"), v.literal("autopilot")) }),
+      ),
       ...statusDetailValidator.fields,
     }),
   ),
@@ -441,9 +447,23 @@ export const internalGetSetupContext = internalQuery({
     const org = await ctx.db.get(args.organizationId);
     if (!org) return null;
     const detail = await buildStatusDetail(ctx, org, false, true);
+    const snapshot = await loadOnboardingSnapshot(ctx, org);
+    const aiMembers = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) =>
+        q.eq("organizationId", args.organizationId).eq("type", "ai"),
+      )
+      .take(50);
+    const attendantMember = aiMembers.find(
+      (m) => m.status === "active" && m.agentProfile?.kind === "attendant",
+    );
     return {
       organizationName: org.name,
       timezone: org.settings.timezone,
+      whatsappConnected: snapshot.whatsappConnected,
+      attendant: attendantMember?.agentProfile
+        ? { name: attendantMember.name, mode: attendantMember.agentProfile.mode }
+        : null,
       ...detail,
     };
   },

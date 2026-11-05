@@ -176,6 +176,7 @@ import type * as lib_metaOAuth from "../lib/metaOAuth.js";
 import type * as lib_metaSend from "../lib/metaSend.js";
 import type * as lib_metaSignedRequest from "../lib/metaSignedRequest.js";
 import type * as lib_notify from "../lib/notify.js";
+import type * as lib_onboardingSetupContext from "../lib/onboardingSetupContext.js";
 import type * as lib_onboardingStatus from "../lib/onboardingStatus.js";
 import type * as lib_onboardingTemplates from "../lib/onboardingTemplates.js";
 import type * as lib_orgModules from "../lib/orgModules.js";
@@ -439,6 +440,7 @@ declare const fullApi: ApiFromModules<{
   "lib/metaSend": typeof lib_metaSend;
   "lib/metaSignedRequest": typeof lib_metaSignedRequest;
   "lib/notify": typeof lib_notify;
+  "lib/onboardingSetupContext": typeof lib_onboardingSetupContext;
   "lib/onboardingStatus": typeof lib_onboardingStatus;
   "lib/onboardingTemplates": typeof lib_onboardingTemplates;
   "lib/orgModules": typeof lib_orgModules;
