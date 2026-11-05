@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   beginWrite,
   booleanParam,
+  type InFlightWrite,
   enumParam,
   listParam,
   numberParam,
@@ -98,7 +99,7 @@ describe("escrita em voo", () => {
 
   it("corrida: escrita pedida, URL ainda antiga, o efeito não reverte", () => {
     // URL em ?conversation=a; clique em b: estado vira b e a escrita é pedida.
-    let inFlight = beginWrite("a", "b");
+    let inFlight: InFlightWrite | null = beginWrite("a", "b");
     // Render intermediário: a URL ainda mostra "a" (valor antigo).
     let step = settleWrite(inFlight, "a");
     expect(step.hold).toBe(true);
