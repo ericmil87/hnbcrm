@@ -501,7 +501,7 @@ async function prepareSession(
     month: monthKeyUtc(Date.now()),
   });
   if (gate.blocked) {
-    await say({ chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai") });
+    await say({ chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return null;
   }
   try {
@@ -757,7 +757,7 @@ async function promptVoiceGate(ctx: ActionCtx, target: RunTarget): Promise<boole
     month: monthKeyUtc(Date.now()),
   });
   if (gate.blocked) {
-    await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai") });
+    await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return false;
   }
   return true;

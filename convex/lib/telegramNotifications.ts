@@ -383,9 +383,11 @@ function crmUrlFor(ctx: CardContext, n?: NotificationInput): string {
   if (n?.taskId) return crmLink(ctx, `/app/tarefas?task=${n.taskId}`);
   if (n?.conversationId) return crmLink(ctx, `/app/entrada?conversation=${n.conversationId}`);
   if (n?.campaignId) return crmLink(ctx, `/app/campanhas?campanha=${n.campaignId}`);
-  if (n?.type === "channel_session_lost") return crmLink(ctx, "/app/configuracoes?secao=channels");
+  if (n?.type === "channel_session_lost") {
+    return crmLink(ctx, `/app/configuracoes?secao=${ctx.channelSession?.kind === "meta" ? "instagram" : "channels"}`);
+  }
   if (n?.type === "ai_spend_warning" || n?.type === "ai_spend_reached") {
-    return crmLink(ctx, "/app/configuracoes?secao=ai");
+    return crmLink(ctx, "/app/configuracoes?secao=ai-usage");
   }
   if (ctx.conversation) return crmLink(ctx, `/app/entrada?conversation=${ctx.conversation.id}`);
   if (ctx.lead) return crmLink(ctx, `/app/pipeline?lead=${ctx.lead.id}`);
@@ -646,9 +648,13 @@ function transferredCard(n: NotificationInput, ctx: CardContext): CardOutput {
 // Channel session lost (v0.78) and the reconnection screens
 // ---------------------------------------------------------------------------
 
-const channelsLink = (ctx: Pick<CardContext, "appBaseUrl">, text = "🔗 Abrir canais"): CardButton => ({
+const channelsLink = (
+  ctx: Pick<CardContext, "appBaseUrl">,
+  text = "🔗 Abrir canais",
+  secao: "channels" | "instagram" = "channels",
+): CardButton => ({
   text,
-  url: crmLink(ctx, "/app/configuracoes?secao=channels"),
+  url: crmLink(ctx, `/app/configuracoes?secao=${secao}`),
 });
 
 const whatsappLabel = (last4: string | undefined) => (last4 ? `WhatsApp (…${escapeHtml(last4)})` : "WhatsApp");
@@ -671,7 +677,7 @@ function channelSessionCard(n: NotificationInput, ctx: CardContext): CardOutput 
         ? "Reconecte a conta para manter o acesso às mensagens."
         : "O acesso da Página venceu ou foi removido no Facebook.\nO login é feito no navegador.",
     ]);
-    return { text, keyboard: [[channelsLink(ctx, "🔗 Refazer login")]] };
+    return { text, keyboard: [[channelsLink(ctx, "🔗 Refazer login", "instagram")]] };
   }
   const name = whatsappLabel(last4);
   if (cs.state === "temporarily_banned") {

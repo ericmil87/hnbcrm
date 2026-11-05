@@ -588,6 +588,26 @@ describe("métricas de aceitação (gate do autopilot)", () => {
   });
 });
 
+describe("updateAgentProfile: rename", () => {
+  test("renomeia pela mutation pública e audita; nome inválido é recusado", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const run = (rename: string) =>
+      asUser(t, seed.adminUserId).mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: {},
+        rename,
+      });
+    await run("  Clara  ");
+    expect((await t.run((ctx) => ctx.db.get(seed.agentId)))?.name).toBe("Clara");
+
+    await expect(run("Linha 1\nLinha 2")).rejects.toThrow(/60 caracteres e uma só linha/);
+    await expect(run("a".repeat(61))).rejects.toThrow(/60 caracteres/);
+    await expect(run("   ")).rejects.toThrow(/vazio/);
+    expect((await t.run((ctx) => ctx.db.get(seed.agentId)))?.name).toBe("Clara");
+  });
+});
+
 describe("autopilot antecipado (pular o gate com aceite de risco)", () => {
   test("sem métricas e sem aceite: recusa com a mensagem do gate", async () => {
     const t = setup();
