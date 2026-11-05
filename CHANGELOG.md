@@ -22,6 +22,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Textos padronizados: só a primeira palavra em maiúscula ("Novo funil", "Adicionar nota"), "e-mail" com hífen, "Etiquetas" no lugar de "Tags", "Etapa" no lugar de "Estágio", "Descadastrados" no lugar de "Opt-out", papéis **Atendente**, **Gerente** e **Administrador**. Mensagens de sucesso ficaram curtas ("Lead criado") e as de erro dizem "Não foi possível salvar".
 - Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
 - O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
+- No Atendente IA, as listas de seleção (jeito de atender, funil, etapas, canal do simulador) ficaram mais fáceis de usar no celular.
 
 ### Aparência
 
