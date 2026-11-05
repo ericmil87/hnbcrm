@@ -481,9 +481,12 @@ export function AiInstructionPopover({
 export function ReturnToAiButton({
   conversationId,
   variant = "link",
+  buttonVariant = "ghost",
 }: {
   conversationId: Id<"conversations">;
   variant?: "link" | "button";
+  /** Estilo do botão quando `variant="button"` (secundário no banner de pedido de ajuda). */
+  buttonVariant?: "ghost" | "secondary";
 }) {
   const returnToAi = useMutation(api.attendant.returnToAi);
   const [open, setOpen] = useState(false);
@@ -500,7 +503,7 @@ export function ReturnToAiButton({
   return (
     <div className="relative">
       {variant === "button" ? (
-        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen((v) => !v)}>
+        <Button type="button" variant={buttonVariant} size="sm" onClick={() => setOpen((v) => !v)}>
           <Sparkles size={14} className="mr-1.5" />
           Devolver à IA
         </Button>
