@@ -2,7 +2,7 @@ import { usePageTitle } from "@/hooks/usePageTitle";
 import React, { useCallback, useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
-import { CheckCircle2, Eye, Users } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
@@ -10,18 +10,23 @@ import { TAB_ROUTES } from "@/lib/routes";
 import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage as errorMessage } from "@/lib/errors";
 import { toast } from "sonner";
-import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
-import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { VOCAB } from "@/lib/vocab";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import { stringParam } from "@/lib/searchParamState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
+import { AttentionRow, type AttentionItem } from "@/components/handoffs/AttentionRow";
+import {
+  parseAttentionDensity,
+  readAttentionDensity,
+  writeAttentionDensity,
+  type AttentionDensity,
+} from "@/lib/attentionPrefs";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
 
 export function HandoffQueue() {
@@ -56,6 +61,26 @@ export function HandoffQueue() {
   const [returnPopoverFor, setReturnPopoverFor] = useState<string | null>(null);
 
   const syncHandoffParam = setHandoffParam;
+
+  // Preferência pessoal de densidade (localStorage) e detalhes abertos (locais).
+  const [density, setDensity] = useState<AttentionDensity>(readAttentionDensity);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const changeDensity = (v: string) => {
+    const next = parseAttentionDensity(v);
+    setDensity(next);
+    writeAttentionDensity(next);
+  };
+  const toggleExpanded = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   // URL → estado. Um id que não está na fila (repasse já resolvido, inválido ou
   // de outra org) sai da URL em silêncio.
@@ -177,16 +202,29 @@ export function HandoffQueue() {
     : undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
 
       <PageHeader
         title={VOCAB.attention.title}
         subtitle={VOCAB.attention.subtitle}
         badge={
-          <Badge variant="warning">
-            <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
+          // Um único texto: o Badge é inline-flex e engolia o espaço entre os nós.
+          <Badge variant="warning" className="tabular-nums">
+            {`${handoffs.length} ${handoffs.length === 1 ? "pendente" : "pendentes"}`}
           </Badge>
+        }
+        actions={
+          <SegmentedControl
+            ariaLabel="Densidade da lista"
+            size="sm"
+            value={density}
+            onValueChange={changeDensity}
+            options={[
+              { value: "compact", label: "Compacto" },
+              { value: "comfortable", label: "Completo" },
+            ]}
+          />
         }
       />
 
@@ -197,169 +235,44 @@ export function HandoffQueue() {
           description={VOCAB.attention.emptyHint}
         />
       ) : (
-        <div className="grid gap-6">
+        <div className={density === "compact" ? "grid gap-2" : "grid gap-6"}>
           {handoffs.map((handoff) => (
-            <Card key={handoff._id}>
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
-                <div className="flex-1 min-w-0">
-                  {/* `title` vem pronto do servidor: o lead quando existe, o
-                      nome da SALA quando o repasse é de grupo. Antes o card de
-                      grupo saía com `<h3>` e subtítulo vazios, e o operador não
-                      sabia de onde veio o pedido (review de correção nº 13). */}
-                  <h3 className="text-base md:text-lg font-semibold text-text-primary mb-1 truncate">
-                    {handoff.isGroup && (
-                      <Users size={16} className="inline-block mr-1.5 -mt-0.5 text-brand-500" />
-                    )}
-                    {handoff.title ?? handoff.lead?.title ?? "Conversa"}
-                  </h3>
-                  <p className="text-sm text-text-secondary truncate">
-                    {handoff.isGroup ? (
-                      "Grupo de WhatsApp"
-                    ) : (
-                      <>
-                        {handoff.contact?.firstName} {handoff.contact?.lastName}
-                        {handoff.contact?.company && ` • ${handoff.contact?.company}`}
-                      </>
-                    )}
-                  </p>
-                </div>
-                <Badge variant="warning" className="shrink-0 self-start sm:self-auto">
-                  Pendente
-                </Badge>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-4 mb-4">
-                <div>
-                  <h4 className="text-sm font-medium text-text-primary mb-2">De</h4>
-                  <div className="flex items-center gap-2">
-                    <Avatar
-                      name={handoff.fromMember?.name || "?"}
-                      type={handoff.fromMember?.type === "ai" ? "ai" : "human"}
-                      size="md"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-text-primary truncate">
-                        {handoff.fromMember?.name}
-                      </p>
-                      <p className="text-xs text-text-secondary truncate">
-                        {handoff.fromMember?.role}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {handoff.toMember && (
-                  <div>
-                    <h4 className="text-sm font-medium text-text-primary mb-2">Para</h4>
-                    <div className="flex items-center gap-2">
-                      <Avatar
-                        name={handoff.toMember.name || "?"}
-                        type={handoff.toMember.type === "ai" ? "ai" : "human"}
-                        size="md"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-text-primary truncate">
-                          {handoff.toMember.name}
-                        </p>
-                        <p className="text-xs text-text-secondary truncate">
-                          {handoff.toMember.role}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-4">
-                <h4 className="text-sm font-medium text-text-primary mb-2">
-                  {handoff.fromMember?.type === "ai" ? "A IA pediu ajuda" : "Pedido de ajuda"} · {handoff.reason}
-                </h4>
-              </div>
-
-              {handoff.summary && (
-                <div className="mb-4">
-                  <h4 className="text-sm font-medium text-text-primary mb-2">Resumo</h4>
-                  <p className="text-sm text-text-secondary">{handoff.summary}</p>
-                </div>
-              )}
-
-              {handoff.suggestedActions.length > 0 && (
-                <div className="mb-6">
-                  <h4 className="text-sm font-medium text-text-primary mb-2">Ações sugeridas</h4>
-                  <ul className="space-y-1">
-                    {handoff.suggestedActions.map((action, index) => (
-                      <li key={index} className="text-sm text-text-secondary flex items-start gap-2">
-                        <span className="text-text-muted mt-0.5">•</span>
-                        <span className="flex-1">{action}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-border">
-                <span className="text-xs text-text-muted tabular-nums">
-                  Solicitado em {new Date(handoff.createdAt).toLocaleDateString("pt-BR", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}
-                </span>
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <Button
-                    onClick={() => openPeek(handoff._id)}
-                    variant="ghost"
-                    size="md"
-                    className="w-full sm:w-auto whitespace-nowrap"
-                  >
-                    <Eye size={16} />
-                    {VOCAB.attention.view}
-                  </Button>
-                  <div className="relative w-full sm:w-auto">
-                    <Button
-                      onClick={() =>
-                        setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
-                      }
-                      variant="secondary"
-                      size="md"
-                      className="w-full sm:w-auto whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
-                    >
-                      {VOCAB.attention.giveBack}
-                    </Button>
-                    {returnPopoverFor === handoff._id && (
-                      <AiInstructionPopover
-                        title={
-                          handoff.isGroup
-                            ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
-                            : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
-                        }
-                        placeholder={
-                          handoff.isGroup
-                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
-                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
-                        }
-                        submitLabel="Devolver"
-                        direction="up"
-                        onSubmit={(instruction) => {
-                          setReturnPopoverFor(null);
-                          void handleReject(handoff._id, instruction, handoff.isGroup);
-                        }}
-                        onClose={() => setReturnPopoverFor(null)}
-                      />
-                    )}
-                  </div>
-                  <Button
-                    onClick={() => handleAccept(handoff._id)}
-                    variant="primary"
-                    size="md"
-                    className="w-full sm:w-auto"
-                  >
-                    {VOCAB.attention.accept}
-                  </Button>
-                </div>
-              </div>
-            </Card>
+            <AttentionRow
+              key={handoff._id}
+              handoff={handoff as AttentionItem}
+              density={density}
+              now={now}
+              expanded={expandedIds.has(handoff._id)}
+              onToggleExpanded={() => toggleExpanded(handoff._id)}
+              onView={() => openPeek(handoff._id)}
+              onAccept={() => handleAccept(handoff._id)}
+              onToggleGiveBack={() =>
+                setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
+              }
+              giveBackPopover={
+                returnPopoverFor === handoff._id ? (
+                  <AiInstructionPopover
+                    title={
+                      handoff.isGroup
+                        ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                        : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
+                    }
+                    placeholder={
+                      handoff.isGroup
+                        ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                        : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
+                    }
+                    submitLabel="Devolver"
+                    direction="up"
+                    onSubmit={(instruction) => {
+                      setReturnPopoverFor(null);
+                      void handleReject(handoff._id, instruction, handoff.isGroup);
+                    }}
+                    onClose={() => setReturnPopoverFor(null)}
+                  />
+                ) : undefined
+              }
+            />
           ))}
         </div>
       )}
