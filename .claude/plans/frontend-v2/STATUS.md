@@ -10,6 +10,12 @@
 | 04 | Portas `updateAgentProfileCore`/`setFeatureTogglesCore`/`patchChannelTranscriptionCore` (`convex/lib/attendantConfigOps.ts`), `requireAccountWithEmail` em `updateAgentProfile`, `setFeatureToggles`, `createAttendantOneClick`, `createChannelConfig`; `getPlatformCapabilities` | `feat/fv2-04-portas-config` | `3f25ef6` (05/11/2026) | 3378 | 1 bloqueio corrigido: `setFeatureTogglesCore` sem checagem de tenant. Melhorias aplicadas: core de transcrição só aceita `whatsapp`; `rename` ≤ 60 chars sem quebra de linha; `metaMessaging` exige `META_MESSAGING_WEBHOOK_VERIFY_TOKEN`; `via` no audit também no caminho genérico; `ConfigVia` inclui `telegram`; 11 testes. | Delegação de `autoTranscribeAudio` ficou em `internalPatchConfig` (não em `updateChannelConfig`), só quando o patch é exclusivamente esse campo. Nenhuma dessas mutations agenda webhook (como antes). 15 fixtures de teste ganharam `email` (1 linha cada). Sem guarda de porta única (muitos escritores legítimos `internal*`); regra em `.claude/rules/ai-pipeline.md` lista as exceções. |
 | 02 | Templates por segmento (`convex/lib/onboardingTemplates.ts`) | `feat/fv2-02-templates-segmento` | `3086e07` (05/11/2026) | 3367 | Sem bloqueio. Melhorias aplicadas: `renderPersonaSeed` remove frase com placeholder vazio; palavras de repasse por intenção ("agendar visita", "fazer matrícula"); "falar com atendente" em todo segmento; JSDoc: consumidor une a `DEFAULT_HANDOFF_KEYWORDS`. | `INDUSTRY_TEMPLATES` do wizard v1 mantido literal (não derivado) para preservar comportamento; `FieldSeed = {key,label,type:"text"|"select",options?}`; `personaForIndustry("financeiro")` segue `geral`. `vite build`/`tsc node` não re-rodados após o commit de ajustes (só texto/dados). |
 
+## Passadas de integração (reviewer, a cada 3 PRs)
+
+| Após | Resultado | Atenção registrada |
+|---|---|---|
+| fv2-01/02/04 (`b54124e`) | bloqueia: nenhum. tsc convex/app ok; suíte 3417 testes (main: 3359). | `via` fixo `"settings"` no caminho genérico de `internalPatchConfig` (virar parâmetro se Copiloto/Telegram usarem); `getPlatformCapabilities` legível por qualquer membro (subir permissão se surgir capacidade sensível); typo "mova para o etapa" em `convex/lib/agentPersonas.ts` (corrigir no fv2-11); CI depende de `npm ci` (ok, é o que o workflow roda). |
+
 ## Em andamento
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
