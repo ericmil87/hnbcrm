@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { PairingPanel } from "./PairingPanel";
+import type { PairingResult } from "./types";
 
 const CONFIG = "cfg1" as Id<"channelConfigs">;
 
-function setup(defaultMode: "code" | "qr", startImpl?: () => Promise<unknown>) {
+function setup(defaultMode: "code" | "qr", startImpl?: () => Promise<PairingResult>) {
   const startPairing = vi.fn(startImpl);
   const pollPairing = vi.fn().mockResolvedValue({ state: "code" });
   const onConnected = vi.fn();
