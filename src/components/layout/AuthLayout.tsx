@@ -18,6 +18,8 @@ import { Card } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Building2, LogOut, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useUiTheme } from "@/hooks/useUiTheme";
+import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
@@ -37,6 +39,9 @@ import {
 
 export type AppOutletContext = {
   organizationId: Id<"organizations">;
+  /** Active UI theme and its setter (consumed by the appearance picker, fv2-15). */
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
 };
 
 const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
@@ -212,6 +217,7 @@ export function AuthLayout() {
     api.teamMembers.getCurrentTeamMember,
     activeOrgId ? { organizationId: activeOrgId } : "skip"
   );
+  const { theme, setTheme } = useUiTheme(currentMember, activeOrgId);
   const mustChangePassword = useQuery(
     api.teamMembers.getMustChangePassword,
     isAuthenticated ? {} : "skip"
@@ -419,7 +425,7 @@ export function AuthLayout() {
               <Spinner size="lg" />
             </div>
           ) : (
-            <Outlet context={{ organizationId: activeOrgId } satisfies AppOutletContext} />
+            <Outlet context={{ organizationId: activeOrgId, theme, setTheme } satisfies AppOutletContext} />
           )}
         </ErrorBoundary>
       </AppShell>
