@@ -2726,7 +2726,9 @@ const applicationTables = {
       // F4 — classificação barata de oportunidade num lote de mensagens.
       v.literal("group_radar"),
       // F4 — resumo/digest de um grupo (sob demanda ou diário).
-      v.literal("group_summary")
+      v.literal("group_summary"),
+      // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
+      v.literal("attendant_draft")
     ),
     status: v.union(
       v.literal("running"),

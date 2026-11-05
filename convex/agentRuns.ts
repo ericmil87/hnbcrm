@@ -23,7 +23,9 @@ export const internalStartRun = internalMutation({
       // IA em grupos (F4): turno no grupo, radar de oportunidade e resumo.
       v.literal("group_reply"),
       v.literal("group_radar"),
-      v.literal("group_summary")
+      v.literal("group_summary"),
+      // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
+      v.literal("attendant_draft")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),
