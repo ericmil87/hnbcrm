@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -106,14 +107,18 @@ describe("AttentionRow", () => {
     expect(screen.getByRole("button", { name: "Assumir conversa" }).parentElement).toHaveClass("flex-wrap");
   });
 
-  it("entrega o botão Devolver à IA como âncora do popover", () => {
-    const seen: Array<HTMLElement | null> = [];
-    setup({
-      renderGiveBackPopover: (anchor) => {
-        seen.push(anchor.current);
-        return null;
-      },
-    });
-    expect(screen.getByRole("button", { name: "Devolver à IA" })).toBeInTheDocument();
+  it("entrega o botão Devolver à IA como âncora e reflete aria-expanded", () => {
+    let anchorEl: HTMLElement | null = null;
+    function Probe({ anchor }: { anchor: React.RefObject<HTMLElement | null> }) {
+      useEffect(() => {
+        anchorEl = anchor.current;
+      }, [anchor]);
+      return <div role="dialog" aria-label="Devolver">conteúdo</div>;
+    }
+    setup({ giveBackOpen: true, renderGiveBackPopover: (anchor) => <Probe anchor={anchor} /> });
+    const btn = screen.getByRole("button", { name: "Devolver à IA" });
+    expect(anchorEl).toBe(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("dialog", { name: "Devolver" })).toBeInTheDocument();
   });
 });

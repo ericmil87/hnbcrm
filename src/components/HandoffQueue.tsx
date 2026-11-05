@@ -249,6 +249,7 @@ export function HandoffQueue() {
               onToggleGiveBack={() =>
                 setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
               }
+              giveBackOpen={returnPopoverFor === handoff._id}
               renderGiveBackPopover={(anchor) => (
                 <AiInstructionPopover
                   open={returnPopoverFor === handoff._id}

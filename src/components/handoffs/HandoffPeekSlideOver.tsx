@@ -438,6 +438,7 @@ export function HandoffPeekSlideOver({
               variant="secondary"
               disabled={busy}
               aria-haspopup="dialog"
+              aria-expanded={returnOpen}
               onClick={() => setReturnOpen((v) => !v)}
               className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
             >

@@ -37,6 +37,8 @@ interface AttentionRowProps {
    * Popover "Devolver à IA" montado pelo container. Recebe o botão como âncora;
    * o popover vai para um portal no body, então nenhum pai com overflow o corta.
    */
+  /** Popover aberto: reflete em `aria-expanded` do botão. */
+  giveBackOpen?: boolean;
   renderGiveBackPopover?: (anchor: RefObject<HTMLElement | null>) => ReactNode;
 }
 
@@ -71,6 +73,7 @@ export function AttentionRow({
   onView,
   onAccept,
   onToggleGiveBack,
+  giveBackOpen = false,
   renderGiveBackPopover,
 }: AttentionRowProps) {
   const giveBackRef = useRef<HTMLButtonElement>(null);
@@ -108,6 +111,7 @@ export function AttentionRow({
         variant="secondary"
         size={btnSize}
         aria-haspopup="dialog"
+        aria-expanded={giveBackOpen}
         className={cn(
           "whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
           stackBtn

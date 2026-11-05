@@ -444,11 +444,16 @@ export function AiInstructionPopover({
   onClose: () => void;
 }) {
   const sheet = useMediaQuery("(max-width: 767px)");
+  // Fechar pelo teclado, Cancelar ou o fundo devolve o foco ao gatilho (o portal desmonta).
+  const closeAndRefocus = () => {
+    anchor.current?.focus();
+    onClose();
+  };
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
-        if (!next) onClose();
+        if (!next) closeAndRefocus();
       }}
       anchor={anchor}
       side="bottom"
@@ -462,8 +467,11 @@ export function AiInstructionPopover({
         title={title}
         placeholder={placeholder}
         submitLabel={submitLabel}
-        onSubmit={onSubmit}
-        onClose={onClose}
+        onSubmit={(instruction) => {
+          anchor.current?.focus();
+          onSubmit(instruction);
+        }}
+        onClose={closeAndRefocus}
       />
     </Popover>
   );

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { ReactNode, RefObject } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+import { lockBodyScroll } from "@/lib/scrollLock";
 import {
   computePopoverPosition,
   type PopoverAlign,
@@ -72,11 +73,7 @@ export function Popover({
 
   useEffect(() => {
     if (!open || !sheet) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previous;
-    };
+    return lockBodyScroll();
   }, [open, sheet]);
 
   useEffect(() => {
