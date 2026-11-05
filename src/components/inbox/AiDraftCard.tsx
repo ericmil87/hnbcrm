@@ -224,21 +224,21 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
 
   return (
     <div className="flex justify-end">
-      <div className="w-full max-w-md rounded-xl border border-purple-500/40 bg-purple-500/5 overflow-hidden">
+      <div className="w-full max-w-md rounded-xl border border-ai-500/40 bg-ai-500/5 overflow-hidden">
         {draft.followUpId && (
-          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-medium text-purple-300/80">
+          <div className="flex items-center gap-1.5 px-4 pt-3 text-[11px] font-medium text-ai-300/80">
             <Bot size={11} className="shrink-0" />
             Follow-up agendado: resposta sugerida
           </div>
         )}
         <div className="flex flex-wrap items-center gap-2 px-4 pt-3">
-          <Sparkles size={14} className="text-purple-400 shrink-0" />
-          <span className="flex-1 min-w-0 text-xs font-medium text-purple-300">
+          <Sparkles size={14} className="text-ai-400 shrink-0" />
+          <span className="flex-1 min-w-0 text-xs font-medium text-ai-300">
             {VOCAB.attendant.draft} · aguardando sua revisão
           </span>
           {typeof draft.confidence === "number" && (
             <span
-              className="ml-auto shrink-0 rounded-full bg-purple-500/15 px-2 py-0.5 text-[11px] font-medium text-purple-300 tabular-nums"
+              className="ml-auto shrink-0 rounded-full bg-ai-500/15 px-2 py-0.5 text-[11px] font-medium text-ai-300 tabular-nums"
               title="Confiança que a IA declarou nesta resposta"
             >
               confiança {Math.round(draft.confidence * 100)}%
@@ -288,7 +288,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
                     </li>
                   ) : (
                     <li key={i} className="text-xs text-text-secondary flex items-center gap-1.5">
-                      <span className="h-1 w-1 rounded-full bg-purple-400 shrink-0" />
+                      <span className="h-1 w-1 rounded-full bg-ai-400 shrink-0" />
                       {actionLabel(action)}
                     </li>
                   )
@@ -300,7 +300,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
 
         {/* Coaching: instruir a IA e receber outra versão deste rascunho */}
         {!isGroupDraft && (
-        <div className="border-t border-purple-500/20 px-4 py-3">
+        <div className="border-t border-ai-500/20 px-4 py-3">
           {regenerating ? (
             <p className="flex items-center gap-2 text-xs text-text-secondary">
               <Spinner size="sm" />
@@ -315,7 +315,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
                     key={chip.label}
                     type="button"
                     onClick={() => setInstruction(chip.instruction)}
-                    className="rounded-full border border-border-strong px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-purple-500/60 hover:text-purple-300 transition-colors"
+                    className="rounded-full border border-border-strong px-2.5 py-1 text-[11px] font-medium text-text-secondary hover:border-ai-500/60 hover:text-ai-300 transition-colors"
                   >
                     {chip.label}
                   </button>
@@ -562,7 +562,7 @@ export function AiConversationControls({
           "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
           paused
             ? "bg-surface-overlay text-text-muted"
-            : "bg-purple-500/10 text-purple-400"
+            : "bg-ai-500/10 text-ai-400"
         )}
       >
         <Sparkles size={12} />

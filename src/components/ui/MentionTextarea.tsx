@@ -191,7 +191,7 @@ export function MentionTextarea({
                   className={cn(
                     "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold",
                     member.type === "ai"
-                      ? "bg-purple-600 text-white"
+                      ? "bg-ai-600 text-white"
                       : "bg-brand-600 text-white",
                   )}
                 >

@@ -1,3 +1,5 @@
+import plugin from "tailwindcss/plugin";
+
 // Color tokens are RGB channels defined in src/index.css; <alpha-value> enables `/NN`.
 const c = (name) => `rgb(var(--rgb-${name}) / <alpha-value>)`;
 const scale = (name, steps) => Object.fromEntries(steps.map((s) => [s, c(`${name}-${s}`)]));
@@ -8,7 +10,6 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
@@ -150,5 +151,10 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Pairs that must differ between dark and the light themes (light + whatsapp).
+    plugin(({ addVariant }) =>
+      addVariant("light-theme", ':is([data-theme="light"],[data-theme="whatsapp"]) &'),
+    ),
+  ],
 }

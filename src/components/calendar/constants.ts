@@ -12,7 +12,7 @@ export type CalendarEventType =
 
 export const EVENT_TYPE_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   call: { bg: "bg-blue-500/20", border: "border-blue-500", text: "text-blue-400" },
-  meeting: { bg: "bg-purple-500/20", border: "border-purple-500", text: "text-purple-400" },
+  meeting: { bg: "bg-ai-500/20", border: "border-ai-500", text: "text-ai-400" },
   follow_up: { bg: "bg-amber-500/20", border: "border-amber-500", text: "text-amber-400" },
   demo: { bg: "bg-emerald-500/20", border: "border-emerald-500", text: "text-emerald-400" },
   task: { bg: "bg-brand-500/20", border: "border-brand-500", text: "text-brand-400" },

@@ -134,10 +134,10 @@ function getBubbleStyle(message: InboxMessage): BubbleStyle {
     return {
       align: "justify-end",
       side: "end",
-      bg: "bg-purple-600/80 text-white",
+      bg: "bg-ai-600/80 text-white",
       rounded: "rounded-lg rounded-br-none",
       label: "Agente de IA",
-      labelColor: "text-purple-300",
+      labelColor: "text-ai-300",
       variant: "outbound",
       footerText: "text-white/75",
     };
