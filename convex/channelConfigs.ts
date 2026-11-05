@@ -1013,7 +1013,7 @@ const pairingResultValidator = v.object({
 
 function assertBridgeWhatsapp(config: Doc<"channelConfigs">) {
   if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
-    throw new Error("O pareamento só se aplica a canais WhatsApp do provider bridge");
+    throw new Error("QR só se aplica a canais do provider bridge");
   }
 }
 
@@ -1026,11 +1026,11 @@ function pairingResultFromStep(step: ReconnectStep, mode: PairingMode, attemptsL
   if (step.state === "connected") return { state: "connected", ...base };
   if (step.state === "error") return { state: "error", error: step.error ?? "Falha ao falar com o gateway", ...base };
   return {
-    // "waiting" (nenhum QR/código ainda): segue no modo pedido, a UI continua o poll.
+    // "waiting" (nenhum QR/código ainda) é espera, não erro: segue no modo pedido, sem `error`.
+    // A UI mantém o último `linkingCode`/`qrCode` entre polls (o poll de código nunca o reenvia).
     state: mode,
     ...(step.qrCode ? { qrCode: step.qrCode } : {}),
     ...(step.linkingCode ? { linkingCode: step.linkingCode } : {}),
-    ...(step.state === "waiting" && step.error ? { error: step.error } : {}),
     ...base,
   };
 }
@@ -1052,11 +1052,25 @@ async function startPairing(
   if (!norm.ok || norm.phone.length < 10) {
     return { state: "error", error: "Número inválido. Informe o número do WhatsApp com DDD (ex.: 11 98765-4321)." };
   }
+  // Estados que parear de novo não resolve (mesma regra do Telegram: `canStartReconnect` não os aceita).
+  const st = config.bridgeSessionState;
+  if (st === "banned" || st === "temporarily_banned" || st === "outdated") {
+    return {
+      state: "error",
+      error:
+        st === "outdated"
+          ? "Este número precisa de uma atualização do gateway antes de reconectar. Fale com o suporte."
+          : "O WhatsApp restringiu este número. Parear de novo não resolve; aguarde a liberação ou fale com o suporte.",
+    };
+  }
   const quota = await ctx.runMutation(internal.channelConfigs.internalConsumePairingAttempt, {
     configId: config._id,
     organizationId: config.organizationId,
     ...(args.memberId ? { actorId: args.memberId } : {}),
   });
+  if (quota.busy) {
+    return { state: "error", error: "Já existe um pedido de reconexão em andamento pelo Telegram. Conclua ou cancele por lá e tente de novo." };
+  }
   if (!quota.allowed) {
     return {
       state: "error",
@@ -1064,7 +1078,17 @@ async function startPairing(
       error: `Limite de 3 códigos por hora. Tente de novo às ${formatTime(quota.resetsAt, args.timezone)}.`,
     };
   }
+  const refs = { configId: config._id, organizationId: config.organizationId };
   const step = await runBridgeReconnectStep(ctx, { config, mode: "code", phase: "start", phoneDigits: norm.phone });
+  if (step.state === "error" || step.state === "connected" || !step.linkingCode) {
+    // Nenhum código saiu (falha do gateway ou canal já conectado): a tentativa volta.
+    await ctx.runMutation(internal.channelConfigs.internalRefundPairingAttempt, refs);
+    return pairingResultFromStep(step, "code", quota.attemptsLeft + 1);
+  }
+  await ctx.runMutation(internal.channelConfigs.internalAuditPairingRequested, {
+    ...refs,
+    ...(args.memberId ? { actorId: args.memberId } : {}),
+  });
   return pairingResultFromStep(step, "code", quota.attemptsLeft);
 }
 
@@ -1300,7 +1324,12 @@ export const internalGetConfigForMember = internalQuery({
 // plus the org timezone / default dial code and the acting member (audit).
 export const internalGetPairingContext = internalQuery({
   args: { configId: v.id("channelConfigs") },
-  returns: v.any(),
+  returns: v.object({
+    config: v.any(),
+    memberId: v.id("teamMembers"),
+    timezone: v.string(),
+    defaultCountry: v.string(),
+  }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config) throw new Error("Channel config not found");
@@ -1324,7 +1353,7 @@ export const internalConsumePairingAttempt = internalMutation({
     organizationId: v.id("organizations"),
     actorId: v.optional(v.id("teamMembers")),
   },
-  returns: v.object({ allowed: v.boolean(), attemptsLeft: v.number(), resetsAt: v.number() }),
+  returns: v.object({ allowed: v.boolean(), attemptsLeft: v.number(), resetsAt: v.number(), busy: v.optional(v.boolean()) }),
   handler: async (ctx, args) => {
     const config = await ctx.db.get(args.configId);
     if (!config || config.organizationId !== args.organizationId) throw new Error("Channel config not found");
@@ -1333,6 +1362,11 @@ export const internalConsumePairingAttempt = internalMutation({
       .query("telegramReconnects")
       .withIndex("by_channel_config", (q) => q.eq("channelConfigId", args.configId))
       .first();
+    // Tentativa do Telegram em curso: não dispara um segundo pairphone.
+    if (row?.token && row.until && row.until > now) {
+      const w = consumePairingAttempt(row, now);
+      return { allowed: false, busy: true, attemptsLeft: Math.max(0, w.attemptsLeft), resetsAt: w.resetsAt };
+    }
     const res = consumePairingAttempt(row, now);
     if (!res.allowed) return { allowed: false, attemptsLeft: 0, resetsAt: res.resetsAt };
     if (row) await ctx.db.patch(row._id, { ...res.next, updatedAt: now });
@@ -1344,6 +1378,35 @@ export const internalConsumePairingAttempt = internalMutation({
         updatedAt: now,
       });
     }
+    return { allowed: true, attemptsLeft: res.attemptsLeft, resetsAt: res.resetsAt };
+  },
+});
+
+// Internal: gives one attempt back (gateway failure / no code issued), like the Telegram `refund`.
+export const internalRefundPairingAttempt = internalMutation({
+  args: { configId: v.id("channelConfigs"), organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("telegramReconnects")
+      .withIndex("by_channel_config", (q) => q.eq("channelConfigId", args.configId))
+      .first();
+    if (!row || row.organizationId !== args.organizationId) return null;
+    await ctx.db.patch(row._id, { attempts: Math.max(0, row.attempts - 1), updatedAt: Date.now() });
+    return null;
+  },
+});
+
+// Internal: audit of an issued code (only when a code actually left the gateway).
+export const internalAuditPairingRequested = internalMutation({
+  args: {
+    configId: v.id("channelConfigs"),
+    organizationId: v.id("organizations"),
+    actorId: v.optional(v.id("teamMembers")),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
     // Never the code, the QR, the phone or the token: only who, which channel and how.
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
@@ -1356,7 +1419,7 @@ export const internalConsumePairingAttempt = internalMutation({
       severity: "high",
       createdAt: now,
     });
-    return { allowed: true, attemptsLeft: res.attemptsLeft, resetsAt: res.resetsAt };
+    return null;
   },
 });
 

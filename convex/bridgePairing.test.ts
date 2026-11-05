@@ -149,6 +149,43 @@ describe("startBridgePairing / pollBridgePairing", () => {
     expect(row!.chatId).toBe(77);
   });
 
+  test("falha do gateway devolve a tentativa", async () => {
+    const t = convexTest(schema, modules);
+    const { adminUserId, configId } = await seed(t);
+    const a = as(t, adminUserId);
+    gw.pairOk = false;
+    const bad = await a.action(api.channelConfigs.startBridgePairing, { configId, mode: "code", phone: "11987654321" });
+    expect(bad.state).toBe("error");
+    expect(bad.attemptsLeft).toBe(3);
+    gw.pairOk = true;
+    const ok = await a.action(api.channelConfigs.startBridgePairing, { configId, mode: "code", phone: "11987654321" });
+    expect(ok.attemptsLeft).toBe(2);
+    const audits = await t.run((ctx) => ctx.db.query("auditLogs").collect());
+    expect(audits.filter((x) => (x.metadata as any)?.event === "channel.pairing_requested")).toHaveLength(1);
+  });
+
+  test("canal já conectado não gasta cota; banido e Telegram em curso são recusados", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, adminUserId, configId } = await seed(t);
+    const a = as(t, adminUserId);
+    gw.loggedIn = true;
+    const c = await a.action(api.channelConfigs.startBridgePairing, { configId, mode: "code", phone: "11987654321" });
+    expect(c.state).toBe("connected");
+    const row = await t.run((ctx) => ctx.db.query("telegramReconnects").first());
+    expect(row!.attempts).toBe(0);
+    expect(pairCalls()).toHaveLength(0);
+    gw.loggedIn = false;
+    await t.run((ctx) => ctx.db.patch(configId, { bridgeSessionState: "banned" } as never));
+    const banned = await a.action(api.channelConfigs.startBridgePairing, { configId, mode: "code", phone: "11987654321" });
+    expect(banned.state).toBe("error");
+    await t.run((ctx) => ctx.db.patch(configId, { bridgeSessionState: "logged_out" } as never));
+    await t.run((ctx) => ctx.db.patch(row!._id, { token: "tg", until: Date.now() + 60_000 }));
+    const busy = await a.action(api.channelConfigs.startBridgePairing, { configId, mode: "code", phone: "11987654321" });
+    expect(busy.error).toContain("Telegram");
+    expect(pairCalls()).toHaveLength(0);
+    void organizationId;
+  });
+
   test("poll nunca pede código novo", async () => {
     const t = convexTest(schema, modules);
     const { adminUserId, configId } = await seed(t);
