@@ -1,8 +1,11 @@
 import { useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { History } from "lucide-react";
 import { Spinner } from "@/components/ui/Spinner";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils";
+import { formatDateTime } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
 /*  Activity Tab                                                       */
@@ -11,17 +14,17 @@ import { cn } from "@/lib/utils";
 const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   created: { color: "bg-semantic-success", letter: "C" },
   stage_change: { color: "bg-ai-500", letter: "S" },
-  assignment: { color: "bg-indigo-500", letter: "A" },
+  assignment: { color: "bg-ai-700", letter: "A" },
   message_sent: { color: "bg-brand-500", letter: "M" },
-  message_received: { color: "bg-cyan-500", letter: "R" },
+  message_received: { color: "bg-brand-800", letter: "R" },
   handoff: { color: "bg-brand-600", letter: "H" },
   qualification_update: { color: "bg-semantic-warning", letter: "Q" },
   note: { color: "bg-surface-overlay", letter: "N" },
-  call: { color: "bg-teal-500", letter: "P" },
+  call: { color: "bg-semantic-info/80", letter: "P" },
   email_sent: { color: "bg-semantic-info", letter: "E" },
 };
 
-export function ActivityTab({ leadId }: { leadId: Id<"leads"> }) {
+export function LeadActivityTab({ leadId }: { leadId: Id<"leads"> }) {
   const activities = useQuery(api.activities.getActivities, {
     leadId,
   });
@@ -36,9 +39,7 @@ export function ActivityTab({ leadId }: { leadId: Id<"leads"> }) {
 
   if (activities.length === 0) {
     return (
-      <div className="text-center py-12 text-text-muted text-sm">
-        Nenhuma atividade registrada ainda.
-      </div>
+      <EmptyState icon={History} size="sm" title="Nenhuma atividade registrada ainda" />
     );
   }
 
@@ -73,13 +74,8 @@ export function ActivityTab({ leadId }: { leadId: Id<"leads"> }) {
                     <span className="text-sm font-medium text-text-primary">
                       {activity.actorName}
                     </span>
-                    <span className="text-xs text-text-muted whitespace-nowrap">
-                      {new Date(activity.createdAt).toLocaleString("pt-BR", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <span className="text-xs text-text-muted whitespace-nowrap tabular-nums">
+                      {formatDateTime(activity.createdAt)}
                     </span>
                   </div>
                   <p className="text-sm text-text-secondary mt-0.5">

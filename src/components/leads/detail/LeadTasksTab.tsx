@@ -10,8 +10,10 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { cn } from "@/lib/utils";
 import { memberLabel } from "@/lib/teamMembers";
+import { formatDate } from "@/lib/format";
 import { CreateTaskModal } from "@/components/CreateTaskModal";
 
 /* ------------------------------------------------------------------ */
@@ -34,7 +36,7 @@ const LEAD_TASK_PRIORITY_BADGE: Record<string, { variant: "default" | "info" | "
   urgent: { variant: "error", label: "Urgente" },
 };
 
-export function TasksTab({
+export function LeadTasksTab({
   leadId,
   organizationId,
 }: {
@@ -81,16 +83,13 @@ export function TasksTab({
           size="sm"
           onClick={() => setShowCreateModal(true)}
         >
-          <Plus size={14} />
+          <Plus size={14} aria-hidden="true" />
           Nova tarefa
         </Button>
       </div>
 
       {leadTasks.length === 0 ? (
-        <div className="text-center py-8">
-          <CheckSquare size={32} className="mx-auto text-text-muted mb-2" />
-          <p className="text-sm text-text-muted">Nenhuma tarefa para este lead</p>
-        </div>
+        <EmptyState icon={CheckSquare} size="sm" title="Nenhuma tarefa para este lead" />
       ) : (
         <div className="space-y-1">
           {leadTasks.map((task) => {
@@ -120,7 +119,7 @@ export function TasksTab({
                   aria-label={isCompleted ? "Concluída" : "Concluir"}
                 >
                   {isCompleted && (
-                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-white">
+                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-white" aria-hidden="true">
                       <path d="M1 4L3.5 6.5L9 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   )}
@@ -145,7 +144,7 @@ export function TasksTab({
                     {task.title}
                   </span>
 
-                  <Badge variant={pb.variant} className="text-[10px] shrink-0">{pb.label}</Badge>
+                  <Badge variant={pb.variant} className="shrink-0">{pb.label}</Badge>
 
                   {assignee && (
                     <Avatar name={assignee.name} type={assignee.type} size="sm" className="shrink-0" />
@@ -158,7 +157,7 @@ export function TasksTab({
                         !isCompleted && task.dueDate < now ? "text-semantic-error" : "text-text-muted"
                       )}
                     >
-                      {new Date(task.dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                      {formatDate(task.dueDate)}
                     </span>
                   )}
                 </button>

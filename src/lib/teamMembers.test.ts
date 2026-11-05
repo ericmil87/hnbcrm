@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignableMembers, isPendingMember, memberLabel } from "./teamMembers";
+import { assignableMembers, isPendingMember, memberLabel, memberRoleLabel } from "./teamMembers";
 
 const members = [
   { _id: "a", name: "Ana" },
@@ -38,5 +38,15 @@ describe("isPendingMember", () => {
 
   it("respeita o campo do servidor quando existe", () => {
     expect(isPendingMember({ type: "human", userId: "u1", pending: true })).toBe(true);
+  });
+});
+
+describe("memberRoleLabel", () => {
+  it("IA vence o papel; os demais usam o vocabulário", () => {
+    expect(memberRoleLabel({ type: "ai", role: "agent" })).toBe("IA");
+    expect(memberRoleLabel({ type: "human", role: "admin" })).toBe("Administrador");
+    expect(memberRoleLabel({ type: "human", role: "manager" })).toBe("Gerente");
+    expect(memberRoleLabel({ type: "human", role: "agent" })).toBe("Atendente");
+    expect(memberRoleLabel({})).toBe("Atendente");
   });
 });

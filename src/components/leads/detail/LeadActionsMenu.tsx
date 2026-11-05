@@ -65,7 +65,7 @@ export function LeadActionsMenu({
             )}
             aria-label="Ações do lead"
           >
-            <MoreVertical size={18} />
+            <MoreVertical size={18} aria-hidden="true" />
           </button>
         )}
         items={[
@@ -73,7 +73,7 @@ export function LeadActionsMenu({
             ? [
                 {
                   label: archived ? "Restaurar lead" : "Arquivar lead",
-                  icon: archived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
+                  icon: archived ? <ArchiveRestore size={15} aria-hidden="true" /> : <Archive size={15} aria-hidden="true" />,
                   onSelect: handleArchive,
                   disabled: !lead || archiving,
                 },
@@ -83,7 +83,7 @@ export function LeadActionsMenu({
             ? [
                 {
                   label: "Excluir permanentemente",
-                  icon: <Trash2 size={15} />,
+                  icon: <Trash2 size={15} aria-hidden="true" />,
                   onSelect: () => setConfirmDelete(true),
                   danger: true,
                   separatorBefore: canArchive,

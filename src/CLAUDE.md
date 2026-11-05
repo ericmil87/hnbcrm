@@ -65,7 +65,9 @@ src/
     ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista) + FunnelSelector (funnel/archived/settings Menus),
     │                           #   StageColumn (useDroppable id=stageId), LeadCard (LeadCardView + DraggableCard useDraggable id=leadId, optional `lastMessage`), QuickAddLead,
     │                           #   StageEditPopover (on Popover), AddStageColumn, FunnelDialogs (modals), useFunnelBulkActions, LeadDeepLinkResolver
-    ├── LeadDetailPanel.tsx, CreateLeadModal.tsx  # Lead SlideOver / creation modal
+    ├── CreateLeadModal.tsx     # Lead creation modal
+    ├── LeadDetailPanel.tsx     # re-export of leads/detail/LeadDetailPanel (opened by funnel/FunnelPage, inbox/InboxOverlays, contacts/detail/ContactDetailPanel)
+    ├── leads/detail/           # LeadDetailPanel (shell: Tabs; `?leadTab=` only when opened by `?lead=` of the same lead, otherwise local state), LeadActionsMenu (Menu), LeadConversationTab, LeadDetailsTab (composes LeadContactBlock, LeadOwnerStageBlock, LeadBasicsBlock, LeadCustomFieldsBlock, LeadQualificationBlock, LeadDocumentsBlock), LeadTasksTab, LeadActivityTab; pure rules in lib/leadFields.ts and lib/leadTab.ts
     ├── leads/                  # LeadsListView (sortable table, row selection), LeadsBulkActionBar (move/assign/archive)
     │   └── detail/LeadConversationTab.tsx  # lead panel "Conversa" tab: ConversationThread variant="embedded" + Composer (no voice/schedule), Select when the lead has >1 conversation
     ├── Inbox.tsx               # Inbox orchestrator (/app/entrada, < 400 lines): wires the hooks above to InboxListColumn/ConversationHeader + ConversationThread + Composer; ?conversation=<id> (getConversationById fallback)
