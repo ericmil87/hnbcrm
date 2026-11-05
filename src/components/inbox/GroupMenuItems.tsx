@@ -71,29 +71,35 @@ export function GroupMenuItems({
         mas desabilitado com o motivo — esconder o item faria a pessoa procurar
         um recurso que existe e ela não sabe como ligar.
       */}
-      <Tooltip
-        content={groupAiEnabled ? null : "Ative a IA em grupos em Configurações → IA para usar o resumo"}
-        wrapperClassName="flex w-full"
-        asInfo
-      >
+      {groupAiEnabled ? (
         <button
           type="button"
-          disabled={!groupAiEnabled}
           onClick={() => {
             close();
             actions.onOpenSummary();
           }}
-          className={
-            groupAiEnabled
-              ? itemClass
-              : "w-full flex items-center gap-2.5 px-3 py-2 coarse:min-h-11 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
-          }
+          className={itemClass}
         >
           <Sparkles size={15} />
           Resumo por IA
-          {!groupAiEnabled && <span className="ml-auto text-micro uppercase tracking-wide">IA desligada</span>}
         </button>
-      </Tooltip>
+      ) : (
+        <Tooltip
+          content="Ative a IA em grupos em Configurações → IA para usar o resumo"
+          wrapperClassName="flex w-full"
+          asInfo
+        >
+          <button
+            type="button"
+            disabled
+            className="w-full flex items-center gap-2.5 px-3 py-2 coarse:min-h-11 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
+          >
+            <Sparkles size={15} />
+            Resumo por IA
+            <span className="ml-auto text-micro uppercase tracking-wide">IA desligada</span>
+          </button>
+        </Tooltip>
+      )}
       {canManageCampaigns && (
         <button
           type="button"

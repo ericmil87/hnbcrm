@@ -221,12 +221,13 @@ describe("useConversationSelection", () => {
     expect(router.state.location.search).toBe("");
   });
 
-  it("abrir a partir do modal Nova conversa substitui a entrada ?nova=: voltar não reabre o modal", async () => {
+  it("modal Nova conversa aberto pelo app: iniciar e voltar caem na lista, sem sair da tela", async () => {
     const { router } = renderWithRouter(<Harness />, { route: "/" });
     await act(async () => {
-      await router.navigate("/?nova=1");
+      screen.getByText("nova").click();
     });
-    expect(screen.getByTestId("nova")).toHaveTextContent("true:-");
+    expect(router.state.location.search).toBe("?nova=1");
+    expect(router.state.historyAction).toBe("PUSH");
     await act(async () => {
       screen.getByText("abrir c1 e limpar").click();
     });
@@ -238,6 +239,58 @@ describe("useConversationSelection", () => {
     expect(router.state.location.search).toBe("");
     expect(screen.getByTestId("nova")).toHaveTextContent("false:-");
     expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+  });
+
+  it("fechar o modal aberto pelo app volta no histórico", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      screen.getByText("nova").click();
+    });
+    await act(async () => {
+      screen.getByText("fechar nova").click();
+    });
+    expect(router.state.location.search).toBe("");
+    expect(router.state.historyAction).toBe("POP");
+    expect(screen.getByTestId("nova")).toHaveTextContent("false:-");
+  });
+
+  it("close guardado de um render velho, chamado depois de voltar pelo navegador, não sai da tela", async () => {
+    let api!: ReturnType<typeof useConversationSelection>;
+    const { router } = renderWithRouter(<Harness expose={(a) => (api = a)} />, { route: "/" });
+    await act(async () => {
+      screen.getByText("abrir c2").click();
+    });
+    const staleClose = api.close;
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(router.state.location.search).toBe("");
+    const before = router.state.location.key;
+    await act(async () => {
+      staleClose();
+    });
+    expect(router.state.location.search).toBe("");
+    expect(router.state.location.key).toBe(before);
+    expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+  });
+
+  it("dois fechar seguidos voltam uma entrada só", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      await router.navigate("/outra");
+    });
+    await act(async () => {
+      await router.navigate("/?x=1");
+    });
+    await act(async () => {
+      screen.getByText("abrir c2").click();
+    });
+    await act(async () => {
+      screen.getByText("fechar").click();
+      screen.getByText("fechar").click();
+    });
+    expect(router.state.location.pathname).toBe("/");
+    expect(router.state.location.search).toBe("?x=1");
   });
 
   it("reabrir a conversa já aberta não cria entrada", async () => {

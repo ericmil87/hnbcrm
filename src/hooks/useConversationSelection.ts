@@ -86,17 +86,35 @@ export function useConversationSelection({
   }, []);
 
   // A entrada de histórico criada por um push NOSSO leva este marcador no
-  // `location.state`: fechar a conversa então volta (`navigate(-1)`) em vez de
-  // deixar uma entrada morta por abertura.
+  // `location.state`: fechar a conversa (ou o modal) então volta
+  // (`navigate(-1)`) em vez de deixar uma entrada morta por abertura.
   const ownsEntry = (location.state as { inboxPushed?: boolean } | null)?.inboxPushed === true;
   const OWN_ENTRY = { inboxPushed: true };
+
+  // Estado VIVO da URL, lido na hora da chamada: `close` costuma rodar depois
+  // de um `await` (arquivar, sair do grupo, excluir lead), com a closure de um
+  // render velho; se a pessoa já voltou pelo navegador, um `navigate(-1)` com
+  // dados velhos sairia da tela.
+  const liveRef = useRef({ ownsEntry, conversation: conversationParam.raw, nova: novaParam.raw, key: location.key });
+  liveRef.current = { ownsEntry, conversation: conversationParam.raw, nova: novaParam.raw, key: location.key };
+  // `navigate(-1)` já pedido a partir desta entrada: um segundo fechar não pode voltar 2.
+  const backPendingKey = useRef<string | null>(null);
+
+  /** Volta uma entrada, uma única vez por entrada de origem. */
+  const goBackOnce = (param: { expectWrite: (target: string | null) => void }) => {
+    const live = liveRef.current;
+    if (backPendingKey.current === live.key) return;
+    backPendingKey.current = live.key;
+    param.expectWrite(null);
+    navigate(-1);
+  };
 
   /**
    * Clique do usuário: abre e escreve `?conversation=`, limpando `?nova=` na
    * mesma escrita. Push só quando a tela estava sem conversa e sem modal
-   * "Nova conversa"; trocar de conversa (ou abrir a partir do modal) substitui a
-   * entrada, para o "voltar" fechar a conversa em vez de reabrir o modal ou a
-   * anterior. Reabrir a que já está aberta não cria entrada.
+   * "Nova conversa"; trocar de conversa (ou abrir a partir do modal, que já é
+   * uma entrada nossa) substitui a entrada preservando a marca, para o
+   * "voltar" cair na lista. Reabrir a que já está aberta não cria entrada.
    */
   const select = useCallback(
     (conversationId: string, extra?: Readonly<Record<string, string | null>>) => {
@@ -121,13 +139,14 @@ export function useConversationSelection({
     latest.current.onSelectionChange();
     setShowMessages(false);
     setSelectedConversation(null);
-    if (ownsEntry && conversationParam.raw !== null) {
-      conversationParam.expectWrite(null);
-      navigate(-1);
-    } else {
+    const live = liveRef.current;
+    if (live.ownsEntry && live.conversation !== null) {
+      goBackOnce(conversationParam);
+    } else if (live.conversation !== null) {
       conversationParam.set(null, { history: "replace" });
     }
-  }, [conversationParam, navigate, ownsEntry]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationParam, navigate]);
 
   // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
   // (arquivada ou além do lote carregado), o resolver busca o documento avulso:
@@ -201,8 +220,18 @@ export function useConversationSelection({
   const novaRaw = novaParam.raw;
   const novaContactId =
     novaRaw && novaRaw !== "1" && CONTACT_ID_PATTERN.test(novaRaw) ? (novaRaw as Id<"contacts">) : null;
-  const openNewConversation = () => novaParam.set("1");
-  const closeNewConversation = () => novaParam.set(null);
+  // Abrir o modal a partir da lista é um push marcado (voltar/fechar caem na
+  // lista); com conversa aberta ou modal já aberto, só substitui. `?nova=` vindo
+  // de outra tela não é nosso: fechar substitui.
+  const openNewConversation = () => {
+    const push = conversationParam.raw === null && novaParam.raw === null;
+    novaParam.set("1", push ? { history: "push", state: OWN_ENTRY } : ownsEntry ? { state: OWN_ENTRY } : {});
+  };
+  const closeNewConversation = () => {
+    const live = liveRef.current;
+    if (live.ownsEntry && live.nova !== null && live.conversation === null) goBackOnce(novaParam);
+    else if (live.nova !== null) novaParam.set(null);
+  };
 
   return {
     selectedConversation,
