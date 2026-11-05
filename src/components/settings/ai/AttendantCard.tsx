@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Bot } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -57,28 +58,25 @@ export function AttendantCard({ organizationId }: { organizationId: Id<"organiza
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-semibold text-text-primary">{VOCAB.attendant.name}</h3>
             <p className="text-sm text-text-secondary mt-1 mb-4">
-              Nasce pronto: jeito de atender pelo seu ramo, o que a IA sabe do seu negócio a partir das suas respostas rápidas,
-              horário comercial. Começa em <strong>Sugerir respostas</strong>: cada resposta vira uma
-              resposta sugerida que sua equipe aprova antes de enviar. Funciona em canais WhatsApp
-              oficiais (Meta).
+              Nasce pronto: jeito de atender pelo seu ramo, o que a IA sabe do seu negócio a partir
+              das suas respostas rápidas, horário comercial. Começa em{" "}
+              <strong>Sugerir respostas</strong>: cada resposta vira uma resposta sugerida que sua
+              equipe aprova antes de enviar. Funciona em canais WhatsApp oficiais (Meta).
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                   Jeito de atender
                 </label>
-                <select
+                <Select
+                  className="w-auto"
                   value={personaId}
-                  onChange={(e) => setPersonaId(e.target.value)}
-                  className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
-                >
-                  <option value="">Automática (pelo meu ramo)</option>
-                  {PERSONAS.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
+                  onValueChange={setPersonaId}
+                  options={[
+                    { value: "", label: "Automática (pelo meu ramo)" },
+                    ...PERSONAS.map((p) => ({ value: p.id, label: p.label })),
+                  ]}
+                />
               </div>
               <Button onClick={() => void handleCreate()} disabled={busy}>
                 <Bot size={16} className="mr-1.5" />

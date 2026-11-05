@@ -2,12 +2,23 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { SlidersHorizontal, AlertTriangle } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
-import { AiStatus, SELECT_CLS } from "./aiTypes";
-import { ModelOption, PROVIDER_LABEL, ProductKey, ProductRow, RouteNote, RoutingSelect, RoutingSelectLabeled, VisionModelOption, secondsLabel } from "../advanced/AiModelsPanel";
+import { AiStatus } from "./aiTypes";
+import {
+  ModelOption,
+  PROVIDER_LABEL,
+  ProductKey,
+  ProductRow,
+  RouteNote,
+  RoutingSelect,
+  RoutingSelectLabeled,
+  VisionModelOption,
+  secondsLabel,
+} from "../advanced/AiModelsPanel";
 
 // ── Toggles por produto (Copiloto × Atendente) — sob o mestre ──
 
@@ -39,7 +50,7 @@ export function FeatureTogglesCard({
       visionEnabled?: boolean;
       groupAgentEnabled?: boolean;
     },
-    okMessage: string
+    okMessage: string,
   ) => {
     setBusy(true);
     try {
@@ -60,7 +71,7 @@ export function FeatureTogglesCard({
     if (
       nonZdr &&
       !window.confirm(
-        `Atenção: a rota "${model}" retém dados (${route!.retention}, residência ${route!.dataResidency}) e sai do padrão zero-retention. Confirmar mesmo assim?`
+        `Atenção: a rota "${model}" retém dados (${route!.retention}, residência ${route!.dataResidency}) e sai do padrão zero-retention. Confirmar mesmo assim?`,
       )
     ) {
       return;
@@ -90,29 +101,17 @@ export function FeatureTogglesCard({
         ...(patch.order !== undefined ? { order: patch.order as never } : {}),
         ...(patch.model !== undefined ? { model: patch.model } : {}),
       }),
-      { loading: "Salvando…", success: "Configuração salva", error: "Não foi possível salvar." }
+      { loading: "Salvando…", success: "Configuração salva", error: "Não foi possível salvar." },
     );
 
-  const ModelField = ({
-    which,
-    value,
-  }: {
-    which: "copilot" | "attendant";
-    value: string;
-  }) => (
+  const ModelField = ({ which, value }: { which: "copilot" | "attendant"; value: string }) => (
     <div>
       <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Modelo</label>
-      <select
+      <Select
         value={value}
-        onChange={(e) => void saveModel(which, e.target.value)}
-        className={SELECT_CLS}
-      >
-        {(modelOptions ?? []).map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.id}
-          </option>
-        ))}
-      </select>
+        onValueChange={(v) => void saveModel(which, v)}
+        options={[...(modelOptions ?? []).map((m) => ({ value: m.id, label: m.id }))]}
+      />
       <RouteNote route={routeFor(value)} />
     </div>
   );
@@ -140,7 +139,7 @@ export function FeatureTogglesCard({
           onToggle={() =>
             void toggle(
               { copilotEnabled: !status.copilotEnabled },
-              status.copilotEnabled ? "Copiloto desativado" : "Copiloto ativado"
+              status.copilotEnabled ? "Copiloto desativado" : "Copiloto ativado",
             )
           }
         >
@@ -161,7 +160,7 @@ export function FeatureTogglesCard({
           onToggle={() =>
             void toggle(
               { attendantEnabled: !status.attendantEnabled },
-              status.attendantEnabled ? "Atendente IA desativado" : "Atendente IA ativado"
+              status.attendantEnabled ? "Atendente IA desativado" : "Atendente IA ativado",
             )
           }
         >
@@ -182,7 +181,7 @@ export function FeatureTogglesCard({
           onToggle={() =>
             void toggle(
               { visionEnabled: !status.visionEnabled },
-              status.visionEnabled ? "Leitura de imagens desativada" : "Leitura de imagens ativada"
+              status.visionEnabled ? "Leitura de imagens desativada" : "Leitura de imagens ativada",
             )
           }
         >
@@ -190,18 +189,14 @@ export function FeatureTogglesCard({
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
               Modelo de visão
             </label>
-            <select
+            <Select
               value={status.products.vision.model}
-              onChange={(e) => saveRouting("vision", { model: e.target.value })}
-              className={SELECT_CLS}
-            >
-              <option value="">Automático (recomendado)</option>
-              {(visionOptions ?? []).map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.id}
-                </option>
-              ))}
-            </select>
+              onValueChange={(v) => saveRouting("vision", { model: v })}
+              options={[
+                { value: "", label: "Automático (recomendado)" },
+                ...(visionOptions ?? []).map((o) => ({ value: o.id, label: o.id })),
+              ]}
+            />
             {status.products.vision.model === "" ? (
               <p className="text-xs text-text-muted mt-1.5">
                 Tenta os modelos validados em ordem e passa para o próximo se algum falhar.
@@ -214,8 +209,7 @@ export function FeatureTogglesCard({
                   <div className="mt-1.5 space-y-0.5">
                     <p className="text-xs text-text-muted">
                       {secondsLabel(o.latencyMs)} · {o.inputTokens} tokens de imagem · acurácia{" "}
-                      {o.accuracy} ·{" "}
-                      {o.providers.map((p) => PROVIDER_LABEL[p] ?? p).join(" e ")}
+                      {o.accuracy} · {o.providers.map((p) => PROVIDER_LABEL[p] ?? p).join(" e ")}
                     </p>
                     {o.note && <p className="text-xs text-text-muted">{o.note}</p>}
                     <p className="flex items-start gap-1.5 text-xs text-semantic-warning">
@@ -250,14 +244,14 @@ export function FeatureTogglesCard({
           onToggle={() =>
             void toggle(
               { groupAgentEnabled: !status.groupAgentEnabled },
-              status.groupAgentEnabled ? "IA em grupos desativada" : "IA em grupos ativada"
+              status.groupAgentEnabled ? "IA em grupos desativada" : "IA em grupos ativada",
             )
           }
         >
           <div className="sm:col-span-2">
             <p className="text-xs text-text-muted">
-              O modelo é o mesmo do Atendente IA (o jeito de atender e o que ele sabe do negócio também).
-              Só o roteamento pode ser diferente.
+              O modelo é o mesmo do Atendente IA (o jeito de atender e o que ele sabe do negócio
+              também). Só o roteamento pode ser diferente.
             </p>
           </div>
           <RoutingSelect
@@ -282,19 +276,17 @@ export function FeatureTogglesCard({
           busy={busy}
         >
           <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Modelo</label>
-            <select
+            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
+              Modelo
+            </label>
+            <Select
               value={status.products.telegramCopilot?.model ?? ""}
-              onChange={(e) => saveRouting("telegramCopilot", { model: e.target.value })}
-              className={SELECT_CLS}
-            >
-              <option value="">Padrão (DeepSeek Flash via OpenRouter)</option>
-              {(modelOptions ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}
-                </option>
-              ))}
-            </select>
+              onValueChange={(v) => saveRouting("telegramCopilot", { model: v })}
+              options={[
+                { value: "", label: "Padrão (DeepSeek Flash via OpenRouter)" },
+                ...(modelOptions ?? []).map((m) => ({ value: m.id, label: m.id })),
+              ]}
+            />
           </div>
           <RoutingSelect
             value={status.products.telegramCopilot?.order ?? "inherit"}

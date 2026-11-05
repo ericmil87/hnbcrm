@@ -1,3 +1,4 @@
+import { Fragment, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -8,6 +9,7 @@ import { FeatureTogglesCard } from "./ai/FeatureTogglesCard";
 import { BridgeAiCard } from "./ai/BridgeAiCard";
 import { AttendantCard } from "./ai/AttendantCard";
 import { UsageCard } from "./ai/UsagePanel";
+import { aiSectionOrder, type AiCard } from "@/lib/attendantConfig";
 import { PrivacyCard } from "./advanced/AiModelsPanel";
 
 export function AiSection({ organizationId }: { organizationId: Id<"organizations"> }) {
@@ -23,22 +25,22 @@ export function AiSection({ organizationId }: { organizationId: Id<"organization
 
   // v4.2: enquanto a IA não está totalmente pronta (ativa + com atendente), a
   // seção mostra só o wizard de ativação em 1 fluxo — nada de cards soltos.
-  const needsActivation = !status.active || !status.hasAttendant;
+  // A ordem dos cartões vem de `aiSectionOrder` (testada em lib/attendantConfig).
+  const cards: Record<AiCard, ReactNode> = {
+    wizard: <ActivationWizardCard organizationId={organizationId} status={status} />,
+    activation: <ActivationCard organizationId={organizationId} status={status} />,
+    featureToggles: <FeatureTogglesCard organizationId={organizationId} status={status} />,
+    bridgeAi: <BridgeAiCard organizationId={organizationId} status={status} />,
+    attendant: <AttendantCard organizationId={organizationId} />,
+    usage: <UsageCard organizationId={organizationId} />,
+    privacy: <PrivacyCard organizationId={organizationId} status={status} />,
+  };
 
   return (
     <div className="space-y-6">
-      {needsActivation ? (
-        <ActivationWizardCard organizationId={organizationId} status={status} />
-      ) : (
-        <>
-          <ActivationCard organizationId={organizationId} status={status} />
-          <FeatureTogglesCard organizationId={organizationId} status={status} />
-          <BridgeAiCard organizationId={organizationId} status={status} />
-          <AttendantCard organizationId={organizationId} />
-          <UsageCard organizationId={organizationId} />
-          <PrivacyCard organizationId={organizationId} status={status} />
-        </>
-      )}
+      {aiSectionOrder(status).map((card) => (
+        <Fragment key={card}>{cards[card]}</Fragment>
+      ))}
     </div>
   );
 }

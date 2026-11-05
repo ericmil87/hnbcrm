@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useAction } from "convex/react";
 import { toast } from "sonner";
 import { ShieldCheck, ChevronDown, AlertTriangle, Check } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -11,7 +12,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { cn } from "@/lib/utils";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
-import { AiStatus, SELECT_CLS } from "../ai/aiTypes";
+import { AiStatus } from "../ai/aiTypes";
 
 // ── Produtos de IA ──────────────────────────────────────────────────────────
 //
@@ -22,7 +23,13 @@ import { AiStatus, SELECT_CLS } from "../ai/aiTypes";
 // guarda só o que é mesmo da organização inteira: rota padrão, chave própria e
 // privacidade.
 
-export type ProductKey = "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent" | "telegramCopilot";
+export type ProductKey =
+  | "copilot"
+  | "attendant"
+  | "vision"
+  | "groupPosts"
+  | "groupAgent"
+  | "telegramCopilot";
 
 export type ModelOption = {
   id: string;
@@ -98,14 +105,14 @@ export function RoutingSelect({
   return (
     <div>
       <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Roteamento</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLS}>
-        <option value="inherit">Herdar da organização — {orgLabel}</option>
-        {PLATFORM_ORDER_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={value}
+        onValueChange={onChange}
+        options={[
+          { value: "inherit", label: `Herdar da organização — ${orgLabel}` },
+          ...PLATFORM_ORDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+        ]}
+      />
     </div>
   );
 }
@@ -130,14 +137,14 @@ export function RoutingSelectLabeled({
   return (
     <div>
       <label className="block text-[13px] font-medium text-text-secondary mb-1.5">{label}</label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={SELECT_CLS}>
-        <option value="inherit">Herdar da organização — {orgLabel}</option>
-        {PLATFORM_ORDER_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      <Select
+        value={value}
+        onValueChange={onChange}
+        options={[
+          { value: "inherit", label: `Herdar da organização — ${orgLabel}` },
+          ...PLATFORM_ORDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+        ]}
+      />
     </div>
   );
 }
@@ -169,7 +176,15 @@ export function ProductRow({
           <p className="text-sm font-medium text-text-primary">{title}</p>
           <p className="text-xs text-text-muted mt-0.5">{description}</p>
         </div>
-        {onToggle && <Switch checked={enabled} onCheckedChange={() => onToggle()} label={title} hideLabel disabled={busy} />}
+        {onToggle && (
+          <Switch
+            checked={enabled}
+            onCheckedChange={() => onToggle()}
+            label={title}
+            hideLabel
+            disabled={busy}
+          />
+        )}
       </div>
       {enabled && (
         <>
@@ -178,10 +193,7 @@ export function ProductRow({
             onClick={() => setOpen((v) => !v)}
             className="mt-2 flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-400"
           >
-            <ChevronDown
-              size={13}
-              className={cn("transition-transform", open && "rotate-180")}
-            />
+            <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
             {open ? "Ocultar modelo e roteamento" : "Modelo e roteamento"}
           </button>
           {open && (
@@ -236,7 +248,7 @@ export function PrivacyCard({
   const [byoSaving, setByoSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResults, setTestResults] = useState<{ role: string; hops: ConnectionHop[] }[] | null>(
-    null
+    null,
   );
 
   const handleSaveByo = async () => {
@@ -325,33 +337,33 @@ export function PrivacyCard({
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                 Roteamento padrão (keys da plataforma)
               </label>
-              <select
+              <Select
                 value={status.platformOrder}
-                onChange={(e) =>
+                onValueChange={(v) =>
                   toast.promise(
                     setPlatformOrder({
                       organizationId,
-                      platformOrder: e.target.value as
+                      platformOrder: v as
                         | "auto"
                         | "openrouter-first"
                         | "opencode-only"
                         | "openrouter-only",
                     }),
-                    { loading: "Salvando…", success: "Roteamento atualizado", error: "Não foi possível salvar." }
+                    {
+                      loading: "Salvando…",
+                      success: "Roteamento atualizado",
+                      error: "Não foi possível salvar.",
+                    },
                   )
                 }
-                className={SELECT_CLS}
-              >
-                {PLATFORM_ORDER_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  ...PLATFORM_ORDER_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
+                ]}
+              />
               <p className="text-xs text-text-muted mt-1.5">
                 Vale para todos os produtos de IA; cada um pode sobrescrever em "Produtos de IA",
-                acima. O fallback assume automaticamente em caso de quota esgotada ou
-                instabilidade do provider primário.
+                acima. O fallback assume automaticamente em caso de quota esgotada ou instabilidade
+                do provider primário.
               </p>
             </div>
             {!byoOpen && (
@@ -404,17 +416,11 @@ export function PrivacyCard({
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                 Provider
               </label>
-              <select
+              <Select
                 value={byoForm.provider}
-                onChange={(e) => setByoForm({ ...byoForm, provider: e.target.value })}
-                className={SELECT_CLS}
-              >
-                {BYO_PROVIDERS.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(v) => setByoForm({ ...byoForm, provider: v })}
+                options={[...BYO_PROVIDERS.map((p) => ({ value: p.value, label: p.label }))]}
+              />
             </div>
             {byoForm.provider === "custom" && (
               <Input
@@ -433,8 +439,8 @@ export function PrivacyCard({
               placeholder="Cole a chave do provider"
             />
             <p className="text-xs text-text-muted">
-              A chave é cifrada e nunca sai do servidor. No modo BYO não há fallback para as keys
-              da plataforma — a org paga a própria conta.
+              A chave é cifrada e nunca sai do servidor. No modo BYO não há fallback para as keys da
+              plataforma — a org paga a própria conta.
             </p>
             <div className="flex gap-2">
               <Button
@@ -456,7 +462,12 @@ export function PrivacyCard({
 
         {/* Teste de conexão: pinga cada rota efetiva (sem fallback) e mostra o erro real */}
         <div className="space-y-2">
-          <Button variant="secondary" size="sm" onClick={() => void handleTest()} disabled={testing}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleTest()}
+            disabled={testing}
+          >
             {testing ? "Testando conexão..." : "Testar conexão"}
           </Button>
           {testResults && (

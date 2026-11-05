@@ -1,3 +1,4 @@
+import { Select } from "@/components/ui/Select";
 import { useState } from "react";
 import { useAction } from "convex/react";
 import { toast } from "sonner";
@@ -149,9 +150,9 @@ export function SimulatorModal({
       <div className="space-y-3">
         <p className="text-xs text-text-muted">
           Sandbox: nada aqui toca o WhatsApp nem altera dados do CRM. Escreva como se fosse o
-          cliente. Os três botões ao lado do campo trocam o tipo de mensagem: nota de voz (o
-          texto vira a transcrição), imagem (o texto vira a descrição que a leitura de imagens
-          produziria) e arquivo (só o nome chega à IA, como acontece com um PDF de verdade).
+          cliente. Os três botões ao lado do campo trocam o tipo de mensagem: nota de voz (o texto
+          vira a transcrição), imagem (o texto vira a descrição que a leitura de imagens produziria)
+          e arquivo (só o nome chega à IA, como acontece com um PDF de verdade).
         </p>
         <div className="flex flex-wrap items-center gap-2 rounded-lg bg-surface-sunken p-2.5">
           <label className="flex cursor-pointer items-center gap-2 text-xs text-text-primary">
@@ -176,8 +177,8 @@ export function SimulatorModal({
                 className="w-40 px-2.5 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-xs focus:outline-none focus:border-brand-500"
               />
               <span className="text-[11px] text-text-muted">
-                Usa as regras da sala: sem dado de outro cliente, sem confirmar pagamento,
-                assunto individual vai para o privado.
+                Usa as regras da sala: sem dado de outro cliente, sem confirmar pagamento, assunto
+                individual vai para o privado.
               </span>
             </>
           )}
@@ -187,21 +188,16 @@ export function SimulatorModal({
             <label htmlFor="sim-transport" className="text-xs text-text-muted">
               Canal simulado
             </label>
-            <select
+            <Select
+              className="w-auto"
               id="sim-transport"
               value={transport}
-              onChange={(e) => {
-                setTransport(e.target.value as SimTransport);
+              onValueChange={(v) => {
+                setTransport(v as SimTransport);
                 setTranscript([]);
               }}
-              className="min-h-[44px] px-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-xs focus:outline-none focus:border-brand-500"
-            >
-              {SIM_TRANSPORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+              options={[...SIM_TRANSPORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))]}
+            />
             {plainTextChannel && (
               <span className="text-[11px] text-text-muted">
                 Neste canal a resposta sai em texto puro, sem a formatação do WhatsApp (negrito,
@@ -217,13 +213,16 @@ export function SimulatorModal({
             </p>
           )}
           {transcript.map((m, i) => (
-            <div key={i} className={cn("flex", m.role === "customer" ? "justify-end" : "justify-start")}>
+            <div
+              key={i}
+              className={cn("flex", m.role === "customer" ? "justify-end" : "justify-start")}
+            >
               <div
                 className={cn(
                   "max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
                   m.role === "customer"
                     ? "bg-brand-600 text-white"
-                    : "bg-ai-600/20 text-text-primary border border-ai-500/30"
+                    : "bg-ai-600/20 text-text-primary border border-ai-500/30",
                 )}
               >
                 {(() => {
@@ -273,7 +272,7 @@ export function SimulatorModal({
                 "px-3 rounded-field border transition-colors",
                 kind === k
                   ? "bg-brand-600 border-brand-600 text-white"
-                  : "bg-surface-raised border-border-strong text-text-muted hover:text-text-primary"
+                  : "bg-surface-raised border-border-strong text-text-muted hover:text-text-primary",
               )}
             >
               <Icon size={15} />

@@ -2,9 +2,20 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Bot, FlaskConical, Lock, Send, ChevronDown, AlertTriangle, Clock, PowerOff, FileEdit } from "lucide-react";
+import {
+  Bot,
+  FlaskConical,
+  Lock,
+  Send,
+  ChevronDown,
+  AlertTriangle,
+  Clock,
+  PowerOff,
+  FileEdit,
+} from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -18,124 +29,27 @@ import { TAB_ROUTES } from "@/lib/routes";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 import { ExternalAgendaSection } from "../ExternalAgendaSection";
-import { BOT_TAG_MAX_CHARS, DEFAULT_BOT_TAG, validateBotGuardTag } from "../../../../convex/lib/botGuard";
+import { BOT_TAG_MAX_CHARS, DEFAULT_BOT_TAG } from "../../../../convex/lib/botGuard";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { Attendant } from "./types";
 import { FieldGroup, FollowUpModeCard, WarningNote } from "./fields";
 import { SimulatorModal } from "../ai/SimulatorModal";
-
-// Tetos de resposta do atendente — espelham a condição 9 de evaluateEligibility
-// (convex/attendant.ts): vazio = default do servidor, 0 = sem limite.
-export const DEFAULT_REPLIES_PER_CONVERSATION = 20;
-export const DEFAULT_REPLIES_PER_HOUR = 10;
-// Agrupamento de mensagens (agentProfile.messageDebounceSeconds): vazio =
-// default do servidor; a mutation aceita de 1 a 120 segundos.
-export const DEFAULT_DEBOUNCE_SECONDS = 5;
-export const MAX_DEBOUNCE_SECONDS = 120;
-export const SLOW_DEBOUNCE_SECONDS = 30;
-
-export function readDebounceSeconds(
-  raw: string
-): { ok: true; value: number | undefined } | { ok: false; message: string } {
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_DEBOUNCE_SECONDS) {
-    return {
-      ok: false,
-      message: `Agrupar mensagens por: use um número inteiro de segundos entre 1 e ${MAX_DEBOUNCE_SECONDS}.`,
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function debounceWarning(raw: string): string | null {
-  const parsed = Number(raw.trim());
-  if (raw.trim() === "" || !Number.isInteger(parsed)) return null;
-  return parsed > SLOW_DEBOUNCE_SECONDS
-    ? `Agrupar por ${parsed}s: as respostas vão demorar mais para sair.`
-    : null;
-}
-
-export function readReplyLimit(
-  raw: string,
-  label: string
-): { ok: true; value: number | undefined } | { ok: false; message: string } {
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    return {
-      ok: false,
-      message: `${label}: use um número inteiro maior ou igual a zero (0 = sem limite).`,
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function replyLimitWarning(raw: string, label: string): string | null {
-  const trimmed = raw.trim();
-  if (trimmed === "") return null;
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0) return null; // erro tratado no salvar
-  if (parsed === 0) return `${label}: sem limite — a IA responde indefinidamente. Só para testes.`;
-  if (parsed > 100) return `${label}: ${parsed} é alto demais para servir de limite.`;
-  return null;
-}
-
-// Follow-ups agendados pela IA (v0.60) — espelham os defaults e as faixas de
-// `convex/lib/followUpSettings.ts` (fonte ÚNICA server-side). A validação
-// aqui só evita uma volta ao servidor por erro óbvio; quem decide de verdade
-// é `aiSettings.updateAgentProfile`.
-export const FOLLOW_UP_DEFAULT_MAX_CHAIN = 2;
-export const FOLLOW_UP_MAX_CHAIN_LIMIT = 5;
-export const FOLLOW_UP_DEFAULT_QUIET_START_HOUR = 8;
-export const FOLLOW_UP_DEFAULT_QUIET_END_HOUR = 20;
-export const FOLLOW_UP_MAX_DAILY_CAP = 500;
-
-export function readFollowUpMaxChain(
-  raw: string
-): { ok: true; value: number | undefined } | { ok: false; message: string } {
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > FOLLOW_UP_MAX_CHAIN_LIMIT) {
-    return {
-      ok: false,
-      message: `Máximo de follow-ups seguidos: use um número inteiro entre 1 e ${FOLLOW_UP_MAX_CHAIN_LIMIT}.`,
-    };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function readFollowUpHour(
-  raw: string,
-  label: string
-): { ok: true; value: number | undefined } | { ok: false; message: string } {
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 24) {
-    return { ok: false, message: `${label}: use uma hora inteira entre 0 e 24.` };
-  }
-  return { ok: true, value: parsed };
-}
-
-export function readFollowUpDailyCap(
-  raw: string
-): { ok: true; value: number | undefined } | { ok: false; message: string } {
-  const trimmed = raw.trim();
-  if (trimmed === "") return { ok: true, value: undefined }; // mantém o default (automático)
-  const parsed = Number(trimmed);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > FOLLOW_UP_MAX_DAILY_CAP) {
-    return {
-      ok: false,
-      message: `Teto diário de follow-ups: use um número inteiro entre 0 e ${FOLLOW_UP_MAX_DAILY_CAP} (0 = sem teto).`,
-    };
-  }
-  return { ok: true, value: parsed };
-}
+import {
+  DEFAULT_DEBOUNCE_SECONDS,
+  DEFAULT_REPLIES_PER_CONVERSATION,
+  DEFAULT_REPLIES_PER_HOUR,
+  FOLLOW_UP_DEFAULT_MAX_CHAIN,
+  FOLLOW_UP_DEFAULT_QUIET_END_HOUR,
+  FOLLOW_UP_DEFAULT_QUIET_START_HOUR,
+  FOLLOW_UP_MAX_CHAIN_LIMIT,
+  FOLLOW_UP_MAX_DAILY_CAP,
+  MAX_DEBOUNCE_SECONDS,
+  conversationWarnings,
+  customizationToPatch,
+  validateCustomization,
+  type CustomizationForms,
+} from "@/lib/attendantConfig";
 
 export function AttendantConfig({
   organizationId,
@@ -166,7 +80,7 @@ export function AttendantConfig({
   const canManageTexts = can("settings", "manage");
   const attendantTexts = useQuery(
     api.aiSettings.getAttendantTexts,
-    showCustomize && canManageTexts ? { agentMemberId: attendant._id } : "skip"
+    showCustomize && canManageTexts ? { agentMemberId: attendant._id } : "skip",
   );
   // Sem `settings:manage` a query é pulada de propósito: os campos ficam
   // travados com um aviso, nunca em "Carregando…" para sempre.
@@ -191,25 +105,23 @@ export function AttendantConfig({
   const [maxPerConversation, setMaxPerConversation] = useState(
     profile.maxRepliesPerConversation !== undefined
       ? String(profile.maxRepliesPerConversation)
-      : ""
+      : "",
   );
   const [maxPerHour, setMaxPerHour] = useState(
-    profile.maxRepliesPerHour !== undefined ? String(profile.maxRepliesPerHour) : ""
+    profile.maxRepliesPerHour !== undefined ? String(profile.maxRepliesPerHour) : "",
   );
   const [debounceSeconds, setDebounceSeconds] = useState(
-    profile.messageDebounceSeconds !== undefined ? String(profile.messageDebounceSeconds) : ""
+    profile.messageDebounceSeconds !== undefined ? String(profile.messageDebounceSeconds) : "",
   );
   // Ausente/undefined = LIGADO; só `false` explícito desliga.
   const [includeCurrentDateTime, setIncludeCurrentDateTime] = useState<boolean>(
-    profile.includeCurrentDateTime !== false
+    profile.includeCurrentDateTime !== false,
   );
   // Guardrail anti-bot (v0.65): mesma semântica — só `enabled:false` desliga.
   const [botGuardEnabled, setBotGuardEnabled] = useState<boolean>(
-    profile.botGuard?.enabled !== false
+    profile.botGuard?.enabled !== false,
   );
-  const [botGuardTag, setBotGuardTag] = useState<string>(
-    profile.botGuard?.tag ?? DEFAULT_BOT_TAG
-  );
+  const [botGuardTag, setBotGuardTag] = useState<string>(profile.botGuard?.tag ?? DEFAULT_BOT_TAG);
   const [botGuardTagError, setBotGuardTagError] = useState<string | null>(null);
 
   // Follow-ups agendados pela IA (v0.60). Ausente = "draft" (D1). Os campos
@@ -218,16 +130,16 @@ export function AttendantConfig({
   const followUpsCfg = profile.followUps;
   const [fuMode, setFuMode] = useState<"off" | "draft" | "send">(followUpsCfg?.mode ?? "draft");
   const [fuMaxChain, setFuMaxChain] = useState(
-    followUpsCfg?.maxChain !== undefined ? String(followUpsCfg.maxChain) : ""
+    followUpsCfg?.maxChain !== undefined ? String(followUpsCfg.maxChain) : "",
   );
   const [fuQuietStart, setFuQuietStart] = useState(
-    followUpsCfg?.quietStartHour !== undefined ? String(followUpsCfg.quietStartHour) : ""
+    followUpsCfg?.quietStartHour !== undefined ? String(followUpsCfg.quietStartHour) : "",
   );
   const [fuQuietEnd, setFuQuietEnd] = useState(
-    followUpsCfg?.quietEndHour !== undefined ? String(followUpsCfg.quietEndHour) : ""
+    followUpsCfg?.quietEndHour !== undefined ? String(followUpsCfg.quietEndHour) : "",
   );
   const [fuDailyCap, setFuDailyCap] = useState(
-    followUpsCfg?.dailyCap !== undefined ? String(followUpsCfg.dailyCap) : ""
+    followUpsCfg?.dailyCap !== undefined ? String(followUpsCfg.dailyCap) : "",
   );
   const [fuEventDateField, setFuEventDateField] = useState(followUpsCfg?.eventDateField ?? "");
   const handleResetFollowUpDefaults = () => {
@@ -242,20 +154,20 @@ export function AttendantConfig({
   const pipelineConfig = profile.pipelineConfig;
   const [pcBoardId, setPcBoardId] = useState<string>(pipelineConfig?.boardId ?? "");
   const [pcInitialStageId, setPcInitialStageId] = useState<string>(
-    pipelineConfig?.initialStageId ?? ""
+    pipelineConfig?.initialStageId ?? "",
   );
   const [pcQualifiedStageId, setPcQualifiedStageId] = useState<string>(
-    pipelineConfig?.qualifiedStageId ?? ""
+    pipelineConfig?.qualifiedStageId ?? "",
   );
   const [pcQualifyThreshold, setPcQualifyThreshold] = useState<number>(
-    pipelineConfig?.qualifyThreshold ?? 3
+    pipelineConfig?.qualifyThreshold ?? 3,
   );
   const [pcAdvanceRules, setPcAdvanceRules] = useState(pipelineConfig?.advanceRules ?? "");
   const [pcAllowMoveStages, setPcAllowMoveStages] = useState<boolean>(
-    pipelineConfig?.allowMoveStages ?? true
+    pipelineConfig?.allowMoveStages ?? true,
   );
   const [pcCaptureFields, setPcCaptureFields] = useState<string[]>(
-    pipelineConfig?.captureFields ?? []
+    pipelineConfig?.captureFields ?? [],
   );
 
   const pcBoards = useQuery(api.boards.getBoards, { organizationId }) as
@@ -263,13 +175,13 @@ export function AttendantConfig({
     | undefined;
   const pcStages = useQuery(
     api.boards.getStages,
-    pcBoardId ? { boardId: pcBoardId as Id<"boards"> } : "skip"
+    pcBoardId ? { boardId: pcBoardId as Id<"boards"> } : "skip",
   ) as { _id: Id<"stages">; name: string }[] | undefined;
   // Resolução independente do formulário de personalização — reflete sempre o
   // pipelineConfig SALVO (não o rascunho em edição) na linha informativa.
   const infoStages = useQuery(
     api.boards.getStages,
-    pipelineConfig?.boardId ? { boardId: pipelineConfig.boardId } : "skip"
+    pipelineConfig?.boardId ? { boardId: pipelineConfig.boardId } : "skip",
   ) as { _id: Id<"stages">; name: string }[] | undefined;
   const infoBoardName = pcBoards?.find((b) => b._id === pipelineConfig?.boardId)?.name;
   const infoStageName = infoStages?.find((s) => s._id === pipelineConfig?.initialStageId)?.name;
@@ -281,18 +193,17 @@ export function AttendantConfig({
   }) as { _id: string; name: string; key: string }[] | undefined;
   const toggleCaptureField = (key: string) => {
     setPcCaptureFields((prev) =>
-      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
     );
   };
 
   const isAutopilot = profile.mode === "autopilot";
-  const limitWarnings = [
-    replyLimitWarning(maxPerConversation, "Por conversa"),
-    replyLimitWarning(maxPerHour, "Por hora"),
-  ].filter((w): w is string => w !== null);
-  const debounceWarnings = [debounceWarning(debounceSeconds)].filter(
-    (w): w is string => w !== null
-  );
+  const { limits: limitWarnings, debounce: debounceWarnings } = conversationWarnings({
+    maxPerConversation,
+    maxPerHour,
+    debounceSeconds,
+    includeCurrentDateTime,
+  });
 
   const handleModeToggle = async () => {
     try {
@@ -301,7 +212,9 @@ export function AttendantConfig({
         patch: { mode: isAutopilot ? "suggest" : "autopilot" },
       });
       toast.success(
-        isAutopilot ? "Voltou para Sugerir respostas" : "Responder sozinha ativado. As respostas saem sem revisão"
+        isAutopilot
+          ? "Voltou para Sugerir respostas"
+          : "Responder sozinha ativado. As respostas saem sem revisão",
       );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível alterar o modo.");
@@ -326,106 +239,45 @@ export function AttendantConfig({
   };
 
   const handleSaveCustomization = async () => {
-    const limitePorConversa = readReplyLimit(maxPerConversation, "Máx. respostas por conversa");
-    const limitePorHora = readReplyLimit(maxPerHour, "Máx. respostas por hora");
-    if (!limitePorConversa.ok) {
-      toast.error(limitePorConversa.message);
+    const forms: CustomizationForms = {
+      persona: { systemPrompt, knowledge, loaded: textsLoaded },
+      schedule: { startHour, endHour },
+      handoff: { keywords },
+      conversation: {
+        maxPerConversation,
+        maxPerHour,
+        debounceSeconds,
+        includeCurrentDateTime,
+      },
+      botGuard: { enabled: botGuardEnabled, tag: botGuardTag },
+      followUp: {
+        mode: fuMode,
+        maxChain: fuMaxChain,
+        quietStart: fuQuietStart,
+        quietEnd: fuQuietEnd,
+        dailyCap: fuDailyCap,
+        eventDateField: fuEventDateField,
+      },
+      pipeline: {
+        boardId: pcBoardId,
+        initialStageId: pcInitialStageId,
+        qualifiedStageId: pcQualifiedStageId,
+        qualifyThreshold: pcQualifyThreshold,
+        advanceRules: pcAdvanceRules,
+        allowMoveStages: pcAllowMoveStages,
+        captureFields: pcCaptureFields,
+      },
+    };
+    const check = validateCustomization(forms);
+    if (!check.ok) {
+      if (check.field === "botGuardTag") setBotGuardTagError(check.fieldError ?? null);
+      toast.error(check.message);
       return;
     }
-    if (!limitePorHora.ok) {
-      toast.error(limitePorHora.message);
-      return;
-    }
-    const agrupamento = readDebounceSeconds(debounceSeconds);
-    if (!agrupamento.ok) {
-      toast.error(agrupamento.message);
-      return;
-    }
-
-    const followUpMaxChain = readFollowUpMaxChain(fuMaxChain);
-    if (!followUpMaxChain.ok) {
-      toast.error(followUpMaxChain.message);
-      return;
-    }
-    const followUpQuietStart = readFollowUpHour(fuQuietStart, "Início da janela de envio");
-    if (!followUpQuietStart.ok) {
-      toast.error(followUpQuietStart.message);
-      return;
-    }
-    const followUpQuietEnd = readFollowUpHour(fuQuietEnd, "Fim da janela de envio");
-    if (!followUpQuietEnd.ok) {
-      toast.error(followUpQuietEnd.message);
-      return;
-    }
-    const followUpDailyCap = readFollowUpDailyCap(fuDailyCap);
-    if (!followUpDailyCap.ok) {
-      toast.error(followUpDailyCap.message);
-      return;
-    }
-    const effectiveQuietStart = followUpQuietStart.value ?? FOLLOW_UP_DEFAULT_QUIET_START_HOUR;
-    const effectiveQuietEnd = followUpQuietEnd.value ?? FOLLOW_UP_DEFAULT_QUIET_END_HOUR;
-    if (effectiveQuietStart >= effectiveQuietEnd) {
-      toast.error("Follow-ups: a janela de envio precisa começar antes de terminar.");
-      return;
-    }
-
-    // Etiqueta do guardrail anti-bot: mesma regra do servidor. Com a proteção
-    // desligada o campo some, então etiqueta inválida volta ao default.
-    const botTagCheck = validateBotGuardTag(botGuardTag);
-    if (!botTagCheck.ok && botGuardEnabled) {
-      setBotGuardTagError(botTagCheck.error);
-      toast.error(`Proteção contra robôs: ${botTagCheck.error}`);
-      return;
-    }
-    const botGuardTagValue = botTagCheck.ok ? botTagCheck.tag : DEFAULT_BOT_TAG;
-
-    const trimmedAdvanceRules = pcAdvanceRules.trim();
-    // "Vazio" só se allowMoveStages também está no default (true) — desligar o
-    // switch com o resto vazio é uma restrição REAL e não pode virar null.
-    const pipelineIsEmpty =
-      !pcBoardId &&
-      !pcInitialStageId &&
-      !pcQualifiedStageId &&
-      !trimmedAdvanceRules &&
-      pcAllowMoveStages &&
-      pcCaptureFields.length === 0;
     try {
       await updateProfile({
         agentMemberId: attendant._id,
-        patch: {
-          ...(textsLoaded ? { knowledge, systemPrompt } : {}),
-          schedule: { timezone: "America/Sao_Paulo", startHour, endHour },
-          handoffKeywords: keywords
-            .split(",")
-            .map((k) => k.trim())
-            .filter(Boolean),
-          maxRepliesPerConversation: limitePorConversa.value,
-          maxRepliesPerHour: limitePorHora.value,
-          messageDebounceSeconds: agrupamento.value,
-          includeCurrentDateTime,
-          botGuard: { enabled: botGuardEnabled, tag: botGuardTagValue },
-          followUps: {
-            mode: fuMode,
-            maxChain: followUpMaxChain.value,
-            quietStartHour: followUpQuietStart.value,
-            quietEndHour: followUpQuietEnd.value,
-            dailyCap: followUpDailyCap.value,
-            eventDateField: fuEventDateField.trim() || undefined,
-          },
-          pipelineConfig: pipelineIsEmpty
-            ? null
-            : {
-                boardId: pcBoardId ? (pcBoardId as Id<"boards">) : undefined,
-                initialStageId: pcInitialStageId ? (pcInitialStageId as Id<"stages">) : undefined,
-                qualifiedStageId: pcQualifiedStageId
-                  ? (pcQualifiedStageId as Id<"stages">)
-                  : undefined,
-                advanceRules: trimmedAdvanceRules || undefined,
-                qualifyThreshold: pcQualifyThreshold,
-                allowMoveStages: pcAllowMoveStages,
-                captureFields: pcCaptureFields.length > 0 ? pcCaptureFields : undefined,
-              },
-        },
+        patch: customizationToPatch(forms),
       });
       toast.success("Perfil do atendente atualizado");
       setShowCustomize(false);
@@ -506,7 +358,10 @@ export function AttendantConfig({
             </span>
           </div>
           {metrics.proactive > 0 && (
-            <div className="text-sm" title="Turnos que a própria IA disparou num follow-up que ela agendou">
+            <div
+              className="text-sm"
+              title="Turnos que a própria IA disparou num follow-up que ela agendou"
+            >
               <span className="text-text-muted">Follow-ups executados: </span>
               <span className="font-medium text-text-primary">{metrics.proactive}</span>
             </div>
@@ -567,24 +422,25 @@ export function AttendantConfig({
       >
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            As métricas existem para você ver a IA sugerir respostas antes de
-            deixá-la falar sozinha com seus clientes. Se você já conhece o atendente e sabe o que
-            esperar, pode pular essa etapa.
+            As métricas existem para você ver a IA sugerir respostas antes de deixá-la falar sozinha
+            com seus clientes. Se você já conhece o atendente e sabe o que esperar, pode pular essa
+            etapa.
           </p>
           <div className="flex items-start gap-2.5 p-3.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
             <AlertTriangle size={18} className="shrink-0 text-semantic-warning mt-0.5" />
             <ul className="text-sm text-text-primary space-y-1.5 list-disc pl-4">
               <li>
-                Cada resposta da IA vai <strong>direto para o cliente</strong>, sem revisão
-                humana, a partir de agora.
+                Cada resposta da IA vai <strong>direto para o cliente</strong>, sem revisão humana,
+                a partir de agora.
               </li>
               <li>
-                O jeito de atender, o que a IA sabe do seu negócio e as regras do funil ainda não foram validados com conversas
-                reais desta conta — erros de tom ou de informação chegam ao cliente.
+                O jeito de atender, o que a IA sabe do seu negócio e as regras do funil ainda não
+                foram validados com conversas reais desta conta — erros de tom ou de informação
+                chegam ao cliente.
               </li>
               <li>
-                Os tetos de resposta, o horário de atendimento e as palavras que chamam a equipe continuam
-                valendo. Você pode voltar para Sugerir respostas a qualquer momento.
+                Os tetos de resposta, o horário de atendimento e as palavras que chamam a equipe
+                continuam valendo. Você pode voltar para Sugerir respostas a qualquer momento.
               </li>
               <li>
                 Esta ativação fica registrada no histórico de alterações com seu nome e a data.
@@ -632,7 +488,9 @@ export function AttendantConfig({
                 rows={5}
                 disabled={!textsLoaded}
                 placeholder={
-                  textsLoaded ? "Preços, serviços, horários, políticas, diferenciais..." : textsPlaceholder
+                  textsLoaded
+                    ? "Preços, serviços, horários, políticas, diferenciais..."
+                    : textsPlaceholder
                 }
                 className="w-full resize-y px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
               />
@@ -721,9 +579,9 @@ export function AttendantConfig({
             <div className="pt-1">
               <p className="text-[13px] font-medium text-text-secondary">Limites de resposta</p>
               <p className="text-xs text-text-muted mt-0.5">
-                Limite de respostas seguidas (para quando o outro lado também é uma automação), contados por
-                conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por conversa,{" "}
-                {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
+                Limite de respostas seguidas (para quando o outro lado também é uma automação),
+                contados por conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por
+                conversa, {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
               </p>
               <div className="flex flex-wrap gap-4 mt-2">
                 <div className="w-40">
@@ -788,8 +646,9 @@ export function AttendantConfig({
                     Proteção contra robôs e mensagens automáticas
                   </p>
                   <p className="text-xs text-text-muted mt-0.5">
-                    Quando o outro lado parece um robô (auto-resposta, boletim, outra IA), a IA para de responder, abre um pedido de ajuda para verificação e etiqueta o
-                    lead. Evita loops entre dois robôs. Ligado por padrão.
+                    Quando o outro lado parece um robô (auto-resposta, boletim, outra IA), a IA para
+                    de responder, abre um pedido de ajuda para verificação e etiqueta o lead. Evita
+                    loops entre dois robôs. Ligado por padrão.
                   </p>
                 </div>
                 <Switch
@@ -823,7 +682,10 @@ export function AttendantConfig({
                   />
                   <p
                     id={`bot-guard-tag-help-${attendant._id}`}
-                    className={cn("text-xs mt-1", botGuardTagError ? "text-semantic-error" : "text-text-muted")}
+                    className={cn(
+                      "text-xs mt-1",
+                      botGuardTagError ? "text-semantic-error" : "text-text-muted",
+                    )}
                   >
                     {botGuardTagError ??
                       "Aplicada ao lead quando a suspeita é registrada — útil para filtrar no funil."}
@@ -839,7 +701,11 @@ export function AttendantConfig({
               'O que a IA faz quando chega a hora de um follow-up que ela mesma marcou (ex.: "te chamo amanhã de manhã"). No dia, ela relê a conversa — se o assunto já foi resolvido, não manda nada.'
             }
           >
-            <div role="radiogroup" aria-label="Follow-ups agendados pela IA" className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div
+              role="radiogroup"
+              aria-label="Follow-ups agendados pela IA"
+              className="grid grid-cols-1 sm:grid-cols-3 gap-2"
+            >
               <FollowUpModeCard
                 active={fuMode === "off"}
                 icon={PowerOff}
@@ -868,9 +734,9 @@ export function AttendantConfig({
               <div className="flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
                 <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
                 <p className="text-xs text-text-secondary">
-                  A IA manda a mensagem sem o cliente ter escrito nada antes. No WhatsApp por
-                  QR code isso conta como envio frio; no oficial (Meta), fora da janela de
-                  24h o texto vira resposta sugerida automaticamente.
+                  A IA manda a mensagem sem o cliente ter escrito nada antes. No WhatsApp por QR
+                  code isso conta como envio frio; no oficial (Meta), fora da janela de 24h o texto
+                  vira resposta sugerida automaticamente.
                   {!isAutopilot && (
                     <>
                       {" "}
@@ -987,8 +853,8 @@ export function AttendantConfig({
                     className="w-64 px-3.5 py-2.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:border-brand-500"
                   />
                   <p className="text-xs text-text-muted mt-1.5">
-                    Opcional. Com o campo preenchido no lead, a IA não cobra evento que já
-                    aconteceu nem agenda follow-up para depois dele. Em branco = sem essa trava.
+                    Opcional. Com o campo preenchido no lead, a IA não cobra evento que já aconteceu
+                    nem agenda follow-up para depois dele. Em branco = sem essa trava.
                   </p>
                 </div>
               </div>
@@ -1020,40 +886,32 @@ export function AttendantConfig({
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                       Funil para novos leads
                     </label>
-                    <select
+                    <Select
                       value={pcBoardId}
-                      onChange={(e) => {
-                        setPcBoardId(e.target.value);
+                      onValueChange={(v) => {
+                        setPcBoardId(v);
                         setPcInitialStageId("");
                         setPcQualifiedStageId("");
                       }}
-                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
-                    >
-                      <option value="">Sem funil dedicado (comportamento atual)</option>
-                      {(pcBoards ?? []).map((b) => (
-                        <option key={b._id} value={b._id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "Sem funil dedicado (comportamento atual)" },
+                        ...(pcBoards ?? []).map((b) => ({ value: b._id, label: b.name })),
+                      ]}
+                    />
                   </div>
                   <div className="flex-1 min-w-[220px]">
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                       Etapa inicial
                     </label>
-                    <select
+                    <Select
                       value={pcInitialStageId}
-                      onChange={(e) => setPcInitialStageId(e.target.value)}
+                      onValueChange={setPcInitialStageId}
                       disabled={!pcBoardId}
-                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
-                    >
-                      <option value="">Primeira etapa do funil</option>
-                      {(pcStages ?? []).map((s) => (
-                        <option key={s._id} value={s._id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "Primeira etapa do funil" },
+                        ...(pcStages ?? []).map((s) => ({ value: s._id, label: s.name })),
+                      ]}
+                    />
                   </div>
                 </div>
 
@@ -1062,19 +920,15 @@ export function AttendantConfig({
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
                       Mover para esta etapa ao qualificar
                     </label>
-                    <select
+                    <Select
                       value={pcQualifiedStageId}
-                      onChange={(e) => setPcQualifiedStageId(e.target.value)}
+                      onValueChange={setPcQualifiedStageId}
                       disabled={!pcBoardId}
-                      className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
-                    >
-                      <option value="">Não mover automaticamente</option>
-                      {(pcStages ?? []).map((s) => (
-                        <option key={s._id} value={s._id}>
-                          {s.name}
-                        </option>
-                      ))}
-                    </select>
+                      options={[
+                        { value: "", label: "Não mover automaticamente" },
+                        ...(pcStages ?? []).map((s) => ({ value: s._id, label: s.name })),
+                      ]}
+                    />
                   </div>
                   <div className="w-28">
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
@@ -1091,7 +945,8 @@ export function AttendantConfig({
                   </div>
                 </div>
                 <p className="text-xs text-text-muted -mt-2">
-                  Ao atingir o limiar, o lead é movido automaticamente (apenas em Responder sozinha).
+                  Ao atingir o limiar, o lead é movido automaticamente (apenas em Responder
+                  sozinha).
                 </p>
 
                 <div>
@@ -1147,8 +1002,7 @@ export function AttendantConfig({
                           onChange={() => toggleCaptureField(f.key)}
                           label={
                             <span className="text-xs text-text-secondary">
-                              {f.name}{" "}
-                              <span className="text-text-muted">({f.key})</span>
+                              {f.name} <span className="text-text-muted">({f.key})</span>
                             </span>
                           }
                         />

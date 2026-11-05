@@ -48,6 +48,9 @@ src/
     ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
     ├── Settings.tsx            # /app/configuracoes, deep-link ?secao=<id>
     ├── settings/               # AiSection, ChannelsSection (Meta + bridge, QR), ChannelHealthPanel (7-day stats), DataSection (export/import), ImportWizard (5 steps)
+    │   ├── settings/ai/        # AI section cards: ActivationWizardCard, ActivationCard, FeatureTogglesCard, BridgeAiCard, AttendantCard, SimulatorModal, UsagePanel (AiSection.tsx only orchestrates, order from `aiSectionOrder`)
+    │   ├── settings/attendant/ # AttendantConfig (editor, still monolithic until fv2-19), fields (FieldGroup, WarningNote, FollowUpModeCard), types
+    │   └── settings/advanced/AiModelsPanel.tsx  # model routing selects, ProductRow, PrivacyCard (technical terms allowed here)
     ├── TasksPage.tsx           # /app/tarefas, list/kanban per project, ?task=<id>
     ├── CreateTaskModal.tsx, TaskDetailSlideOver.tsx  # Task creation / detail (subtasks, dependencies, mentions, Lead section)
     ├── tasks/                  # ProjectSwitcher, ProjectFormModal, ColumnsEditorModal, TaskKanbanBoard, TaskFiltersBar, SavedFiltersMenu, LabelPicker,

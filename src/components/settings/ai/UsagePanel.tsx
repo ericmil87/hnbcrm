@@ -2,14 +2,14 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Gauge, AlertTriangle } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/utils";
-import { formatMoney, parseDecimal } from "@/lib/format";
+import { formatMoney, formatUsd, parseDecimal } from "@/lib/format";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
-import { SELECT_CLS } from "./aiTypes";
 
 // ── Uso e custo (medidor amigável) + teto de gastos em R$ (v0.69) ──
 
@@ -26,16 +26,14 @@ export const USAGE_KIND_LABELS: Record<string, string> = {
 
 export const SPEND_MODE_OPTIONS = [
   { value: "warn", label: "Avisar (a IA continua funcionando)" },
-  { value: "block", label: "Bloquear (atendente só sugere respostas e chama a equipe; demais recursos suspensos)" },
+  {
+    value: "block",
+    label: "Bloquear (atendente só sugere respostas e chama a equipe; demais recursos suspensos)",
+  },
   { value: "off", label: "Desligado (sem avisos)" },
 ] as const;
 
 export type SpendMode = (typeof SPEND_MODE_OPTIONS)[number]["value"];
-
-export function formatUsd(value: number): string {
-  if (value > 0 && value < 0.01) return "menos de US$ 0,01";
-  return formatMoney(value, "USD");
-}
 
 export function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) {
   // Mês corrente (UTC, mesma régua do backend) calculado UMA vez — nunca
@@ -111,10 +109,9 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
           <div className="flex gap-2 rounded-card border border-semantic-error/40 bg-semantic-error/10 p-3 text-sm text-text-primary">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-semantic-error" />
             <span>
-              Teto de gastos do mês atingido. O atendente está deixando as respostas como resposta sugerida
-              (chamando a equipe) e copiloto, leitura de imagens, IA em grupos,
-              publicações e resumos estão suspensos até o próximo mês — ou até você aumentar o
-              teto.
+              Teto de gastos do mês atingido. O atendente está deixando as respostas como resposta
+              sugerida (chamando a equipe) e copiloto, leitura de imagens, IA em grupos, publicações
+              e resumos estão suspensos até o próximo mês — ou até você aumentar o teto.
             </span>
           </div>
         )}
@@ -130,7 +127,9 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
             <span className="text-sm text-text-secondary">
               Gasto aproximado:{" "}
               <strong className="text-text-primary">{formatMoney(usage.costBrl)}</strong>
-              {cap.active && cap.monthlyBrl !== null ? ` de ${formatMoney(cap.monthlyBrl)}` : ""}{" "}
+              {cap.active && cap.monthlyBrl !== null
+                ? ` de ${formatMoney(cap.monthlyBrl)}`
+                : ""}{" "}
               <span className="text-text-muted">({formatUsd(usage.costUsdEstimate)})</span>
             </span>
             {spendPct !== null && <span className="text-xs text-text-muted">{spendPct}%</span>}
@@ -144,7 +143,7 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
                     ? "bg-semantic-error"
                     : spendPct >= cap.warnPct
                       ? "bg-semantic-warning"
-                      : "bg-brand-500"
+                      : "bg-brand-500",
                 )}
                 style={{ width: `${Math.min(100, spendPct)}%` }}
               />
@@ -189,17 +188,16 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
               <span className="block text-sm font-medium text-text-secondary mb-1.5">
                 Ao atingir o teto
               </span>
-              <select
+              <Select
                 value={draft.mode}
-                onChange={(e) => setCapDraft({ ...draft, mode: e.target.value as SpendMode })}
-                className={SELECT_CLS}
-              >
-                {SPEND_MODE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(v) => setCapDraft({ ...draft, mode: v as SpendMode })}
+                options={[
+                  ...SPEND_MODE_OPTIONS.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  })),
+                ]}
+              />
             </label>
             <Input
               label="Cotação do dólar (R$)"
@@ -236,8 +234,8 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
           <p className="text-xs text-text-muted">
             Os administradores recebem um aviso (sino e e-mail) ao chegar no percentual escolhido e
             outro ao atingir o teto — uma vez por mês cada. Em "Bloquear", ao atingir o teto o
-            atendente passa a deixar respostas sugeridas para a equipe (abrindo um pedido de ajuda) e os demais
-            recursos de IA ficam suspensos até virar o mês.
+            atendente passa a deixar respostas sugeridas para a equipe (abrindo um pedido de ajuda)
+            e os demais recursos de IA ficam suspensos até virar o mês.
           </p>
         </div>
 
@@ -260,7 +258,7 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
                     ? "bg-semantic-error"
                     : conversationPct >= 70
                       ? "bg-semantic-warning"
-                      : "bg-brand-500"
+                      : "bg-brand-500",
                 )}
                 style={{ width: `${conversationPct}%` }}
               />
@@ -284,7 +282,11 @@ export function UsageCard({ organizationId }: { organizationId: Id<"organization
                     organizationId,
                     budget: budgetInput ? Number(budgetInput) : null,
                   }),
-                  { loading: "Salvando…", success: "Limite atualizado", error: "Não foi possível salvar." }
+                  {
+                    loading: "Salvando…",
+                    success: "Limite atualizado",
+                    error: "Não foi possível salvar.",
+                  },
                 )
               }
             >

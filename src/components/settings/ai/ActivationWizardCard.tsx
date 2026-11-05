@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Sparkles, ShieldCheck, Bot, AlertTriangle, Check } from "lucide-react";
+import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -33,8 +34,8 @@ export function ActivationWizardCard({
           <div className="min-w-0">
             <h3 className="text-lg font-semibold text-text-primary">Ativar atendente IA</h3>
             <p className="text-sm text-text-secondary mt-1">
-              Um Atendente IA responde clientes no WhatsApp em modo Sugerir respostas — cada resposta
-              é revisada por você antes de sair. Leva menos de um minuto para configurar.
+              Um Atendente IA responde clientes no WhatsApp em modo Sugerir respostas — cada
+              resposta é revisada por você antes de sair. Leva menos de um minuto para configurar.
             </p>
           </div>
         </div>
@@ -86,7 +87,7 @@ export function ActivationWizardModal({
       toast.success(
         result.bridgeEnabled
           ? "Atendente IA ativado — inclusive no WhatsApp por QR code"
-          : "Atendente IA ativado em modo Sugerir respostas"
+          : "Atendente IA ativado em modo Sugerir respostas",
       );
       onClose();
     } catch (e) {
@@ -116,18 +117,14 @@ export function ActivationWizardModal({
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
             Jeito de atender
           </label>
-          <select
+          <Select
             value={personaId}
-            onChange={(e) => setPersonaId(e.target.value)}
-            className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500"
-          >
-            <option value="">Automática (pelo meu ramo)</option>
-            {PERSONAS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </select>
+            onValueChange={setPersonaId}
+            options={[
+              { value: "", label: "Automática (pelo meu ramo)" },
+              ...PERSONAS.map((p) => ({ value: p.id, label: p.label })),
+            ]}
+          />
         </div>
 
         {status.hasBridgeChannel && (
@@ -155,9 +152,9 @@ export function ActivationWizardModal({
             <p className="text-sm text-text-secondary">
               Ao ativar, dados de clientes (mensagens, nomes, contexto do CRM) são processados por
               provedores de IA nos EUA em modo <strong>zero-retention</strong> (não são retidos nem
-              usados para treino no caminho padrão da plataforma). Sua organização é a
-              controladora dos dados; confirme que sua política de privacidade divulga o uso de IA
-              e a transferência internacional de dados (LGPD, art. 33).
+              usados para treino no caminho padrão da plataforma). Sua organização é a controladora
+              dos dados; confirme que sua política de privacidade divulga o uso de IA e a
+              transferência internacional de dados (LGPD, art. 33).
             </p>
             <Checkbox
               checked={lgpdChecked}

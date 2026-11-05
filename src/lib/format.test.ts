@@ -5,6 +5,7 @@ import {
   formatDateTime,
   formatDueRelative,
   formatMoney,
+  formatUsd,
   formatRelative,
   formatTime,
   parseDecimal,
@@ -143,5 +144,14 @@ describe("parseDecimal", () => {
     expect(parseDecimal("")).toBeNull();
     expect(parseDecimal("   ")).toBeNull();
     expect(parseDecimal("abc")).toBeNull();
+  });
+});
+
+describe("formatUsd", () => {
+  const norm = (s: string) => s.replace(/\u00a0/g, " ");
+  it("formata dólar e abrevia valores abaixo de 1 centavo", () => {
+    expect(formatUsd(0.004)).toBe("menos de US$ 0,01");
+    expect(formatUsd(0)).not.toBe("menos de US$ 0,01");
+    expect(norm(formatUsd(12.5))).toBe("US$ 12,50");
   });
 });

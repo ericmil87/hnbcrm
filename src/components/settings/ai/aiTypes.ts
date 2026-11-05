@@ -36,7 +36,3 @@ export type AiStatus = {
 // ── Wizard de ativação em 1 fluxo (v4.2): liga IA + LGPD + atendente + bridge
 // numa única mutation (activateOneFlow). Some assim que a IA fica ativa E com
 // atendente — a partir daí a seção volta aos cards individuais de sempre. ──
-
-// Temporário (fv2-17, commit 1): some no commit seguinte, com o primitivo Select.
-export const SELECT_CLS =
-  "w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500";
