@@ -39,7 +39,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
         <AttendantPersonaForm
           value={persona.value}
           onChange={persona.setValue}
-          disabled={locked}
+          disabled={locked || saving}
           lockedPlaceholder={lockedPlaceholder}
         />
       </SectionCard>
@@ -47,12 +47,12 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
         <AttendantKnowledgeForm
           value={knowledge.value}
           onChange={knowledge.setValue}
-          disabled={locked}
+          disabled={locked || saving}
           lockedPlaceholder={lockedPlaceholder}
         />
       </SectionCard>
       <SectionCard title="Horário de atendimento">
-        <AttendantHoursForm value={hours.value} onChange={hours.setValue} disabled={locked} errors={hoursErrors} />
+        <AttendantHoursForm value={hours.value} onChange={hours.setValue} disabled={locked || saving} errors={hoursErrors} />
       </SectionCard>
       {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />

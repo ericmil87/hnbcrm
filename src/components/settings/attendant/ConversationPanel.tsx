@@ -47,7 +47,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
         <ConversationBehaviorForm
           value={behavior.value}
           onChange={behavior.setValue}
-          disabled={!ctx.canManage}
+          disabled={!ctx.canManage || saving}
           errors={behaviorErr}
         />
       </SectionCard>
@@ -55,7 +55,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
         <FunnelRulesForm
           value={funnel.value}
           onChange={funnel.setValue}
-          disabled={!ctx.canManage}
+          disabled={!ctx.canManage || saving}
           errors={funnelErr}
           options={{ boards: boards ?? [], stages: stages ?? [], leadFields }}
         />

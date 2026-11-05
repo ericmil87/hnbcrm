@@ -1,6 +1,10 @@
 import { Fragment, type ReactNode } from "react";
+import { Link } from "react-router";
 import { useQuery } from "convex/react";
+import { Gauge } from "lucide-react";
+import { buttonClassName } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
+import { TAB_ROUTES } from "@/lib/routes";
 import { aiSectionOrder, type AiCard } from "@/lib/attendantConfig";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -33,6 +37,10 @@ export function AiOverviewPanel({ organizationId }: { organizationId: Id<"organi
       {aiSectionOrder(status).map((card) => (
         <Fragment key={card}>{cards[card]}</Fragment>
       ))}
+      <Link to={`${TAB_ROUTES.settings}?secao=ai-usage`} className={buttonClassName("secondary", "md")}>
+        <Gauge size={16} aria-hidden="true" />
+        Uso e limites de gasto
+      </Link>
     </div>
   );
 }

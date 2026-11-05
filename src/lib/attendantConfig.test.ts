@@ -10,6 +10,10 @@ import {
   conversationWarnings,
   behaviorErrors,
   buildPanelPatch,
+  countActiveAttendants,
+  partsToResetAfterSave,
+  pickEditableAttendant,
+  snapshotDirtyParts,
   behaviorFromProfile,
   behaviorToPatch,
   followUpErrors,
@@ -401,5 +405,36 @@ describe("buildPanelPatch", () => {
     const bad = { ...behaviorFromProfile({}), botGuardTag: "" };
     expect(behaviorErrors(bad).botGuardTag).toMatch(/^Proteção contra robôs: /);
     expect(followUpErrors({ ...followUpFromProfile({}), quietStart: "20", quietEnd: "8" }).quietEnd).toMatch(/^Follow-ups: /);
+  });
+});
+
+describe("pickEditableAttendant", () => {
+  const a = (name: string, status = "active", removedAt?: number) => ({ name, status, removedAt });
+  it("lista vazia ou ausente -> undefined", () => {
+    expect(pickEditableAttendant([])).toBeUndefined();
+    expect(pickEditableAttendant(undefined)).toBeUndefined();
+  });
+  it("prefere o primeiro ativo e não removido", () => {
+    expect(pickEditableAttendant([a("Velho", "inactive"), a("Removido", "active", 1), a("Novo"), a("Outro")])?.name).toBe("Novo");
+  });
+  it("sem nenhum ativo, cai no primeiro", () => {
+    expect(pickEditableAttendant([a("A", "inactive"), a("B", "active", 5)])?.name).toBe("A");
+  });
+  it("conta só ativos não removidos", () => {
+    expect(countActiveAttendants([a("A"), a("B"), a("C", "active", 1), a("D", "inactive")])).toBe(2);
+    expect(countActiveAttendants(undefined)).toBe(0);
+  });
+});
+
+describe("partsToResetAfterSave", () => {
+  const part = (dirty: boolean, v: unknown) => ({ dirty, errors: {}, patch: () => ({ v }) });
+  it("zera o enviado que não mudou e preserva o editado durante o salvar", () => {
+    const submitted = snapshotDirtyParts([part(true, "a"), part(true, "b"), part(false, "c")]);
+    expect(submitted).toEqual(['{"v":"a"}', '{"v":"b"}', null]);
+    const now = [part(true, "a"), part(true, "b editado"), part(false, "c")];
+    expect(partsToResetAfterSave(submitted, now)).toEqual([0]);
+  });
+  it("nada enviado -> nada a zerar", () => {
+    expect(partsToResetAfterSave([null], [part(false, 1)])).toEqual([]);
   });
 });

@@ -4,6 +4,8 @@ export { UI_THEMES, isUiTheme };
 export type { UiTheme };
 
 export const THEME_STORAGE_KEY = "hnbcrm:theme";
+/** Who the device theme belongs to (user id). Absent = legacy value without owner. */
+export const THEME_OWNER_KEY = "hnbcrm:theme-user";
 export const DEFAULT_THEME: UiTheme = "dark";
 
 /** Value of `<meta name="theme-color">` per theme (data, not styling). */
@@ -25,8 +27,27 @@ export function resolveTheme({ server, local }: { server?: unknown; local?: unkn
   return DEFAULT_THEME;
 }
 
-/** Migrate the device choice to the account once: server empty and local non-default. */
-export function shouldPushLocalToServer({ server, local }: { server?: unknown; local?: unknown }): boolean {
+/** The stored device theme belongs to somebody else (owner recorded and different from the current user). */
+export function isForeignLocalTheme({ owner, userId }: { owner?: unknown; userId?: unknown }): boolean {
+  return typeof owner === "string" && owner !== "" && owner !== userId;
+}
+
+/**
+ * Migrate the device choice to the account once: server empty and local non-default,
+ * and the local value is not another user's (owner absent or equal to the current user).
+ */
+export function shouldPushLocalToServer({
+  server,
+  local,
+  owner,
+  userId,
+}: {
+  server?: unknown;
+  local?: unknown;
+  owner?: unknown;
+  userId?: unknown;
+}): boolean {
+  if (isForeignLocalTheme({ owner, userId })) return false;
   return !isUiTheme(server) && (local === "light" || local === "whatsapp");
 }
 
@@ -73,4 +94,25 @@ export const THEME_OPTIONS: ReadonlyArray<ThemeOption> = [
 
 export function themeLabel(theme: UiTheme): string {
   return THEME_OPTIONS.find((o) => o.id === theme)?.label ?? THEME_OPTIONS[0].label;
+}
+
+/**
+ * What the save-failure handler may do. Unmounted (sign-out / expired session): nothing, since the
+ * page is public or belongs to the next account. A newer choice (current value differs, or one is
+ * still scheduled/in flight) decides the outcome, so no revert either.
+ */
+export function failureAction({
+  mounted,
+  lastChoice,
+  failed,
+  pendingSave,
+}: {
+  mounted: boolean;
+  lastChoice: UiTheme | null;
+  failed: UiTheme;
+  pendingSave: boolean;
+}): "ignore" | "toast" | "toast-and-revert" {
+  if (!mounted) return "ignore";
+  if (lastChoice !== failed || pendingSave) return "toast";
+  return "toast-and-revert";
 }

@@ -24,22 +24,40 @@ export function visibleSettingsPanels<P extends SettingsPanelMeta = SettingsPane
   return panels.filter((p) => isSettingsPanelVisible(p, ctx));
 }
 
+export interface ResolvedSettingsPanel<P> {
+  /** Painel a abrir (o pedido ou o substituto do mesmo grupo), ou `null`. */
+  panel: P | null;
+  /** O painel pedido existe mas este usuário/org não o vê: `panel` é só o substituto. */
+  denied: boolean;
+  /** Painel pedido e conhecido (para citar o nome no aviso). */
+  requested: P | null;
+}
+
 /**
  * Valor de `?secao=` -> painel a abrir, ou `null` (ausente/desconhecido).
- * Painel conhecido mas invisível cai no primeiro visível do mesmo grupo.
+ * Painel conhecido mas invisível cai no primeiro visível do mesmo grupo e vem com `denied: true`.
  * `all` é o catálogo completo (para saber o grupo de um painel oculto).
  */
+export function resolveSettingsPanelState<P extends SettingsPanelMeta = SettingsPanelDef>(
+  param: string | null,
+  visible: ReadonlyArray<P>,
+  all: ReadonlyArray<P> = SETTINGS_PANELS as unknown as ReadonlyArray<P>
+): ResolvedSettingsPanel<P> {
+  if (!param) return { panel: null, denied: false, requested: null };
+  const known = all.find((p) => p.id === param);
+  if (!known) return { panel: null, denied: false, requested: null };
+  const direct = visible.find((p) => p.id === param);
+  if (direct) return { panel: direct, denied: false, requested: known };
+  return { panel: visible.find((p) => p.group === known.group) ?? null, denied: true, requested: known };
+}
+
+/** Só o painel de `resolveSettingsPanelState`. */
 export function resolveSettingsPanel<P extends SettingsPanelMeta = SettingsPanelDef>(
   param: string | null,
   visible: ReadonlyArray<P>,
   all: ReadonlyArray<P> = SETTINGS_PANELS as unknown as ReadonlyArray<P>
 ): P | null {
-  if (!param) return null;
-  const known = all.find((p) => p.id === param);
-  if (!known) return null;
-  const direct = visible.find((p) => p.id === param);
-  if (direct) return direct;
-  return visible.find((p) => p.group === known.group) ?? null;
+  return resolveSettingsPanelState(param, visible, all).panel;
 }
 
 export function groupOf(panel: Pick<SettingsPanelDef, "group">): { id: SettingsGroupId; label: string } {

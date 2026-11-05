@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SETTINGS_GROUPS, SETTINGS_PANELS, PLANNED_PANEL_IDS } from "@/components/settings/registry";
 import type { OrgModules } from "@/hooks/useOrgModules";
-import { groupOf, groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels, type SettingsCtx } from "./settingsNav";
+import { groupOf, groupSettingsPanels, resolveSettingsPanel, resolveSettingsPanelState, visibleSettingsPanels, type SettingsCtx } from "./settingsNav";
 
 const NO_MODULES: OrgModules = {
   units: false, departments: false, attribution: false, central: false, demoMode: false, metaMessaging: false,
@@ -86,5 +86,33 @@ describe("groupOf / groupSettingsPanels", () => {
     expect(groups[0].panels.map((p) => p.id)).toEqual(["general", "appearance", "notifications"]);
     const only = groupSettingsPanels(visibleSettingsPanels(ctx([["settings", "view"]])));
     expect(only.some((g) => g.id === "equipe")).toBe(false);
+  });
+});
+
+describe("resolveSettingsPanelState", () => {
+  it("painel visível não é negado", () => {
+    const r = resolveSettingsPanelState("channels", visibleSettingsPanels(ADMIN));
+    expect(r).toMatchObject({ denied: false });
+    expect(r.panel?.id).toBe("channels");
+  });
+
+  it("painel conhecido sem permissão: denied, com substituto do grupo e o pedido", () => {
+    const visible = visibleSettingsPanels(MEMBER);
+    expect(visible.some((p) => p.id === "ai-models")).toBe(false);
+    const r = resolveSettingsPanelState("ai-models", visible);
+    expect(r.denied).toBe(true);
+    expect(r.requested?.id).toBe("ai-models");
+    expect(r.panel?.group).toBe("avancado");
+  });
+
+  it("desconhecido ou ausente não é negado", () => {
+    const visible = visibleSettingsPanels(MEMBER);
+    expect(resolveSettingsPanelState("nao-existe", visible)).toEqual({ panel: null, denied: false, requested: null });
+    expect(resolveSettingsPanelState(null, visible).denied).toBe(false);
+  });
+
+  it("negado sem nenhum substituto no grupo: panel null", () => {
+    const r = resolveSettingsPanelState("ai-models", []);
+    expect(r).toMatchObject({ panel: null, denied: true });
   });
 });

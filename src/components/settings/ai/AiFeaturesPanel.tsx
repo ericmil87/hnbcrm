@@ -7,11 +7,13 @@ import { buttonClassName } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
+import { countActiveAttendants, pickEditableAttendant } from "@/lib/attendantConfig";
 import { TAB_ROUTES } from "@/lib/routes";
 import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { ExternalAgendaSection } from "../ExternalAgendaSection";
+import { MultiAttendantNotice } from "../attendant/MultiAttendantNotice";
 import { ChannelTranscriptionToggle } from "../channels/ChannelTranscriptionToggle";
 import type { Attendant } from "../attendant/types";
 import { BridgeAiCard } from "./BridgeAiCard";
@@ -51,7 +53,7 @@ export function AiFeaturesPanel({ organizationId }: { organizationId: Id<"organi
 
   const canManage = can("settings", "manage");
   const whatsapp = (channels ?? []).filter((c) => c.channel === "whatsapp");
-  const attendant = attendants?.[0];
+  const attendant = pickEditableAttendant(attendants);
 
   const toggle = async (args: Toggles, okMessage: string) => {
     setBusy(true);
@@ -67,6 +69,7 @@ export function AiFeaturesPanel({ organizationId }: { organizationId: Id<"organi
 
   return (
     <div className="space-y-4">
+      {attendant && <MultiAttendantNotice count={countActiveAttendants(attendants)} name={attendant.name} />}
       <FeatureToggleCard
         icon={Mic}
         title="Ouvir áudios (transcrição)"

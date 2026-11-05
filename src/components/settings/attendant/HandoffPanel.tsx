@@ -14,7 +14,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
   return (
     <>
       <SectionCard title="Quando chamar a equipe" description="Palavras que fazem a IA parar na hora e chamar alguém do time.">
-        <HandoffRulesForm value={handoff.value} onChange={handoff.setValue} disabled={!ctx.canManage} />
+        <HandoffRulesForm value={handoff.value} onChange={handoff.setValue} disabled={!ctx.canManage || saving} />
       </SectionCard>
       {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />

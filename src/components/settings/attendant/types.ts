@@ -4,6 +4,7 @@ export type Attendant = {
   _id: Id<"teamMembers">;
   name: string;
   status: string;
+  removedAt?: number;
   agentProfile: {
     kind: string;
     mode: "suggest" | "autopilot";
