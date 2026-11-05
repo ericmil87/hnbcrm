@@ -32,6 +32,10 @@ Os tokens de cor viram canais RGB (`--rgb-surface-base: 15 15 17`) em `src/index
 
 `src/index.css` ganha `[data-theme="light"]` (Claro) e `[data-theme="whatsapp"]` (Estilo WhatsApp), cada um com todas as chaves `--rgb-*` do `:root`, `--chat-wallpaper` (pontos no WhatsApp), sombras e brilho do skeleton; o bloco `.light` foi removido. Aliases ficam só em `:root`. O `tailwind.config.js` perde `darkMode` e ganha a variante `light-theme:` (vale para Claro e WhatsApp). `purple-*` virou `ai-*` (mesma cor no Escuro). `themeTokens.test.ts` passa a checar cobertura completa de chaves, contraste AA por tema e `bubble-out-fg` sobre as duas bolhas; `themeLegacy.test.ts` impede a volta do legado. Ainda não há seletor nem aplicação do atributo.
 
+### Sistema de temas (fase 3) (Frontend v2, fv2-12)
+
+A conversa passa a usar os tokens de chat (bolhas, papel de parede, cabeçalho, composer, recibos, badge de não lidas) e as cores cruas restantes respeitam o tema: calendário com `light-theme:text-X-700`, sparkline de Formulários com `rgb(var(--rgb-brand-600))`, hover âmbar do Inbox e do lead com `semantic-warning/90`. `src/lib/rawColorsGuard.test.ts` é a catraca por arquivo contra classes de paleta crua e `[#hex]` (arquivo novo nasce com zero; tetos só descem; `purple-` só em `JsonHighlighter.tsx`). Os `bg-white/N` sobre fundo escuro fixo (lightbox) ou cores canônicas do WhatsApp (`WhatsAppPreview`) ficam. O título da aba vem de `NavItemDef.title` (`VOCAB.x.title`), e `pageDocumentTitle` mostra só "HNBCRM" quando não há título de página.
+
 ### SEO
 
 **SEO:** react-helmet-async for dynamic meta tags, Open Graph + Twitter Cards, JSON-LD structured data, sitemap.xml, robots.txt. Reusable `<SEO />` component in `src/components/SEO.tsx`.

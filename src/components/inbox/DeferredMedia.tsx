@@ -45,7 +45,7 @@ export function DeferredMedia({
       <div
         className={cn(
           "flex items-center gap-2 text-xs italic",
-          outbound ? "text-white/80" : "text-text-muted"
+          outbound ? "text-bubble-out-fg/80" : "text-text-muted"
         )}
         title={media.reason === "rejected" ? media.detail : undefined}
       >
@@ -64,7 +64,7 @@ export function DeferredMedia({
       <div
         className={cn(
           "flex items-center gap-2 text-xs italic",
-          outbound ? "text-white/80" : "text-text-muted"
+          outbound ? "text-bubble-out-fg/80" : "text-text-muted"
         )}
       >
         <StateIcon size={14} className="shrink-0" aria-hidden />
@@ -87,27 +87,27 @@ export function DeferredMedia({
     <div
       className={cn(
         "flex items-center gap-2.5 rounded-lg border p-2",
-        outbound ? "border-white/20 bg-black/10" : "border-border bg-surface-sunken"
+        outbound ? "border-bubble-out-fg/20 bg-black/10" : "border-border bg-surface-sunken"
       )}
     >
       <span
         className={cn(
           "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-          outbound ? "bg-white/15 text-white" : "bg-surface-overlay text-text-secondary"
+          outbound ? "bg-bubble-out-fg/15 text-bubble-out-fg" : "bg-surface-overlay text-text-secondary"
         )}
         aria-hidden
       >
         <Icon size={18} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className={cn("text-xs font-medium", outbound ? "text-white" : "text-text-primary")}>
+        <p className={cn("text-xs font-medium", outbound ? "text-bubble-out-fg" : "text-text-primary")}>
           {label} não baixado{media.kind === "image" || media.kind === "sticker" ? "a" : ""}
         </p>
         {details && (
           <p
             className={cn(
               "truncate text-[11px] tabular-nums",
-              outbound ? "text-white/75" : "text-text-muted"
+              outbound ? "text-bubble-out-fg/75" : "text-text-muted"
             )}
             title={details}
           >
@@ -125,7 +125,7 @@ export function DeferredMedia({
             "inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-medium transition-colors md:min-h-8",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-wait disabled:opacity-60",
             outbound
-              ? "bg-white/20 text-white hover:bg-white/30"
+              ? "bg-bubble-out-fg/20 text-bubble-out-fg hover:bg-bubble-out-fg/30"
               : "bg-brand-600 text-white hover:bg-brand-700"
           )}
         >

@@ -37,13 +37,13 @@ export function AudioPlayer({
   // Color tokens per bubble background.
   const tone = outbound
     ? {
-        button: "bg-white/20 text-white hover:bg-white/30",
-        icon: "text-white/90",
-        track: "bg-white/25",
-        fill: "bg-white",
-        knob: "bg-white",
-        text: "text-white/80",
-        speed: "text-white/90 bg-white/15 hover:bg-white/25",
+        button: "bg-bubble-out-fg/20 text-bubble-out-fg hover:bg-bubble-out-fg/30",
+        icon: "text-bubble-out-fg/90",
+        track: "bg-bubble-out-fg/25",
+        fill: "bg-bubble-out-fg",
+        knob: "bg-bubble-out-fg",
+        text: "text-bubble-out-fg/80",
+        speed: "text-bubble-out-fg/90 bg-bubble-out-fg/15 hover:bg-bubble-out-fg/25",
       }
     : {
         button: "bg-brand-600 text-white hover:bg-brand-700",

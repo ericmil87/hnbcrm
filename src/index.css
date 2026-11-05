@@ -90,6 +90,7 @@
   --color-semantic-warning: rgb(var(--rgb-semantic-warning));
   --color-semantic-info:    rgb(var(--rgb-semantic-info));
   --color-brand-500:        rgb(var(--rgb-brand-500));
+  --color-brand-600:        rgb(var(--rgb-brand-600));
 
   --chat-wallpaper: none;
 
@@ -97,7 +98,7 @@
   --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
   --shadow-elevated:   0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-glow:       0 0 20px rgba(255, 107, 0, 0.15);
-  --shadow-bubble:     none;
+  --shadow-bubble:     0 0 #0000;
 
   --shimmer-highlight: rgba(255, 255, 255, 0.04);
 }

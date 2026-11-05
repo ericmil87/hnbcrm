@@ -120,8 +120,8 @@ function Sparkline({ data }: SparklineProps) {
       >
         <defs>
           <linearGradient id="sparkline-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#EA580C" stopOpacity="0.25" />
-            <stop offset="100%" stopColor="#EA580C" stopOpacity="0.02" />
+            <stop offset="0%" stopColor="var(--color-brand-600)" stopOpacity="0.25" />
+            <stop offset="100%" stopColor="var(--color-brand-600)" stopOpacity="0.02" />
           </linearGradient>
         </defs>
 
@@ -135,7 +135,7 @@ function Sparkline({ data }: SparklineProps) {
         <polyline
           points={points}
           fill="none"
-          stroke="#EA580C"
+          stroke="var(--color-brand-600)"
           strokeWidth="2"
           strokeLinejoin="round"
           strokeLinecap="round"
@@ -148,8 +148,8 @@ function Sparkline({ data }: SparklineProps) {
             cx={xAt(i)}
             cy={yAt(d.count)}
             r={data.length > 15 ? 2 : 3}
-            fill="#EA580C"
-            stroke="#18181B"
+            fill="var(--color-brand-600)"
+            stroke="var(--surface-raised)"
             strokeWidth="1.5"
           />
         ))}
