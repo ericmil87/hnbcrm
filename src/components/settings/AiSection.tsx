@@ -1080,8 +1080,8 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
     return (
       <Card>
         <div className="flex items-start gap-3">
-          <div className="h-10 w-10 shrink-0 rounded-full bg-purple-500/10 flex items-center justify-center">
-            <Bot size={20} className="text-purple-400" />
+          <div className="h-10 w-10 shrink-0 rounded-full bg-ai-500/10 flex items-center justify-center">
+            <Bot size={20} className="text-ai-400" />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="text-lg font-semibold text-text-primary">{VOCAB.attendant.name}</h3>
@@ -1629,8 +1629,8 @@ function AttendantConfig({
     <Card>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-start gap-3 min-w-0">
-          <div className="h-10 w-10 shrink-0 rounded-full bg-purple-500/10 flex items-center justify-center">
-            <Bot size={20} className="text-purple-400" />
+          <div className="h-10 w-10 shrink-0 rounded-full bg-ai-500/10 flex items-center justify-center">
+            <Bot size={20} className="text-ai-400" />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
@@ -2581,7 +2581,7 @@ function SimulatorModal({
                   "max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap",
                   m.role === "customer"
                     ? "bg-brand-600 text-white"
-                    : "bg-purple-600/20 text-text-primary border border-purple-500/30"
+                    : "bg-ai-600/20 text-text-primary border border-ai-500/30"
                 )}
               >
                 {(() => {
@@ -2595,9 +2595,9 @@ function SimulatorModal({
                 })()}
                 {m.content}
                 {m.actions && m.actions.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-purple-500/30">
+                  <div className="mt-2 pt-2 border-t border-ai-500/30">
                     {m.actions.map((a, j) => (
-                      <p key={j} className="text-xs text-purple-300">
+                      <p key={j} className="text-xs text-ai-300">
                         {/* v4.2: o backend manda rótulo humano com os VALORES
                             (ex.: 'Atualizar lead: cerimonia = X') — mostre inteiro;
                             formato legado name(args) cai no nome limpo. */}
@@ -2611,7 +2611,7 @@ function SimulatorModal({
           ))}
           {busy && (
             <div className="flex justify-start">
-              <div className="rounded-xl px-3 py-2 bg-purple-600/10">
+              <div className="rounded-xl px-3 py-2 bg-ai-600/10">
                 <Spinner size="sm" />
               </div>
             </div>

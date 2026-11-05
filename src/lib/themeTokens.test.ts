@@ -138,6 +138,8 @@ interface Pair {
   bg: string;
   min: number;
   alpha?: number;
+  /** Checked only in the Claro and Estilo WhatsApp themes. */
+  lightOnly?: boolean;
 }
 
 const surfaces = ["surface-base", "surface-raised", "surface-overlay", "surface-sunken"];
@@ -159,18 +161,29 @@ const PAIRS: Pair[] = [
   { fg: "bubble-system-fg", bg: "bubble-system", min: 4.5 },
   { fg: "white", bg: "chat-send", min: 3 },
   { fg: "brand-500", bg: "surface-base", min: 3 },
+  // Light and WhatsApp only (the dark brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
+  ...["brand-300", "brand-400", "brand-500"].flatMap((fg) =>
+    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, lightOnly: true })),
+  ),
+  ...["semantic-success", "semantic-error", "semantic-warning", "semantic-info"].flatMap((fg) =>
+    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, lightOnly: true })),
+  ),
 ];
 
 const pairKey = (p: Pair) => `${p.fg}/${p.bg}${p.alpha ? `@${p.alpha}` : ""}`;
 
-function channels(token: string): Rgb {
+const THEMES = ["dark", "light", "whatsapp"] as const;
+const themeVars = (theme: (typeof THEMES)[number]): Block => (theme === "dark" ? root : blocks[`[data-theme="${theme}"]`] ?? {});
+
+function channelsIn(theme: (typeof THEMES)[number], token: string): Rgb {
   if (token === "white") return [255, 255, 255];
-  const rgb = parseChannels(root[`--rgb-${token}`] ?? "");
-  if (!rgb) throw new Error(`Missing token --rgb-${token}`);
+  const rgb = parseChannels(themeVars(theme)[`--rgb-${token}`] ?? "");
+  if (!rgb) throw new Error(`Missing token --rgb-${token} in ${theme}`);
   return rgb;
 }
 
-const measure = (p: Pair) => contrastWithAlpha(channels(p.fg), channels(p.bg), p.alpha);
+const measureIn = (theme: (typeof THEMES)[number], p: Pair) =>
+  contrastWithAlpha(channelsIn(theme, p.fg), channelsIn(theme, p.bg), p.alpha);
 
 /**
  * Pairs the dark theme (kept identical on purpose) already fails today, with the measured ratio.
@@ -196,22 +209,68 @@ const DARK_KNOWN_FAILURES: Record<string, number> = {
   "bubble-system-fg/bubble-system": 3.4,
 };
 
+describe("themeTokens: cobertura completa", () => {
+  const rootKeys = Object.keys(root).filter((k) => k.startsWith("--rgb-")).sort();
+  it.each(["light", "whatsapp"] as const)("[data-theme=%s] defines exactly the --rgb-* keys of :root", (theme) => {
+    const keys = Object.keys(themeVars(theme)).filter((k) => k.startsWith("--rgb-")).sort();
+    expect(keys).toEqual(rootKeys);
+  });
+  it.each(["light", "whatsapp"] as const)("[data-theme=%s] defines wallpaper, shadows and shimmer", (theme) => {
+    const v = themeVars(theme);
+    for (const k of ["--chat-wallpaper", "--shadow-card", "--shadow-card-hover", "--shadow-elevated", "--shadow-glow", "--shadow-bubble", "--shimmer-highlight"]) {
+      expect(v[k], k).toBeTruthy();
+    }
+    expect(v["--shadow-glow"]).toContain("var(--rgb-brand-500)");
+    expect(v["--shimmer-highlight"]).toBe("rgba(0, 0, 0, 0.04)");
+  });
+  it("whatsapp has the dotted wallpaper, light has none", () => {
+    expect(themeVars("whatsapp")["--chat-wallpaper"]).toContain("radial-gradient");
+    expect(themeVars("light")["--chat-wallpaper"]).toBe("none");
+  });
+  it("aliases live only in :root", () => {
+    for (const t of ["light", "whatsapp"] as const) {
+      expect(Object.keys(themeVars(t)).filter((k) => !k.startsWith("--rgb-") && !k.startsWith("--shadow-") && k !== "--chat-wallpaper" && k !== "--shimmer-highlight")).toEqual([]);
+    }
+  });
+});
+
+describe("themeTokens: contraste AA dos temas claros", () => {
+  for (const theme of ["light", "whatsapp"] as const) {
+    describe(theme, () => {
+      it.each(PAIRS.map((p) => [pairKey(p), p] as const))("%s passes its minimum", (_k, p) => {
+        expect(measureIn(theme, p)).toBeGreaterThanOrEqual(p.min);
+      });
+    });
+  }
+});
+
+describe("themeTokens: bolhas compartilham fg", () => {
+  it.each(THEMES)("%s: bubble-out-fg reads on bubble-out and bubble-ai", (theme) => {
+    const fg = channelsIn(theme, "bubble-out-fg");
+    for (const bg of ["bubble-out", "bubble-ai"]) {
+      const ratio = contrastWithAlpha(fg, channelsIn(theme, bg));
+      if (theme === "dark" && `bubble-out-fg/${bg}` in DARK_KNOWN_FAILURES) continue;
+      expect(ratio, bg).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
 describe("themeTokens: contraste do Escuro", () => {
-  const failing = PAIRS.filter((p) => measure(p) < p.min).map(pairKey);
+  const failing = PAIRS.filter((p) => !p.lightOnly)
+    .filter((p) => measureIn("dark", p) < p.min)
+    .map(pairKey);
 
   it("has no new failing pair outside DARK_KNOWN_FAILURES", () => {
-    const unexpected = failing.filter((k) => !(k in DARK_KNOWN_FAILURES));
-    expect(unexpected).toEqual([]);
+    expect(failing.filter((k) => !(k in DARK_KNOWN_FAILURES))).toEqual([]);
   });
 
   it("DARK_KNOWN_FAILURES only lists pairs that still fail (remove the ones that now pass)", () => {
-    const stale = Object.keys(DARK_KNOWN_FAILURES).filter((k) => !failing.includes(k));
-    expect(stale).toEqual([]);
+    expect(Object.keys(DARK_KNOWN_FAILURES).filter((k) => !failing.includes(k))).toEqual([]);
   });
 
   it.each(Object.entries(DARK_KNOWN_FAILURES))("%s keeps its measured ratio %s", (key, ratio) => {
     const pair = PAIRS.find((p) => pairKey(p) === key);
     expect(pair).toBeDefined();
-    expect(measure(pair!)).toBeCloseTo(ratio, 1);
+    expect(measureIn("dark", pair!)).toBeCloseTo(ratio, 1);
   });
 });
