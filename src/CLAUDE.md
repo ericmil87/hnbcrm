@@ -46,6 +46,8 @@ src/
 ├── hooks/useConversationList.ts # list batches 50→500, keep-previous, infinite sentinel
 ├── hooks/useConversationSelection.ts # `?conversation=` (push) ↔ open conversation, deep-link resolver state, `?nova=`, `location.state` draft; test next to it
 ├── hooks/useBulkConversationSelection.ts # multi-select in the list: archive/unarchive/label in bulk
+├── lib/threadPaging.ts         # pure thread rules: scroll anchor on prepend, auto-scroll, jump to message, read signature, typing TTL (limits stay in lib/inboxPaging.ts); test next to it
+├── lib/composerRules.ts        # pure composer rules: deriveContentType, Enter/Shift+Enter, reply preview, schedule default, placeholder; test next to it
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
@@ -65,13 +67,16 @@ src/
     │                           #   StageEditPopover (on Popover), AddStageColumn, FunnelDialogs (modals), useFunnelBulkActions, LeadDeepLinkResolver
     ├── LeadDetailPanel.tsx, CreateLeadModal.tsx  # Lead SlideOver / creation modal
     ├── leads/                  # LeadsListView (sortable table, row selection), LeadsBulkActionBar (move/assign/archive)
-    ├── Inbox.tsx               # Inbox orchestrator (/app/entrada): wires the hooks above to ConversationList/ConversationHeader + the thread and composer (extracted in fv2-26); ?conversation=<id> (getConversationById fallback)
+    │   └── detail/LeadConversationTab.tsx  # lead panel "Conversa" tab: ConversationThread variant="embedded" + Composer (no voice/schedule), Select when the lead has >1 conversation
+    ├── Inbox.tsx               # Inbox orchestrator (/app/entrada, < 400 lines): wires the hooks above to InboxListColumn/ConversationHeader + ConversationThread + Composer; ?conversation=<id> (getConversationById fallback)
     ├── inbox/                  # MessageBubble, VoiceRecorder, VoiceTranscription, EmojiPickerButton, QuickReplies ("/"), ConversationActionsMenu,
     │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), ReactionPicker, ForwardModal, AudioPlayer…
     │                           #   fv2-25: ConversationList (presentational column: header, SegmentedControl/Select filters, search, items, empty state, "Carregar mais", bulk bar) + ConversationListItem,
     │                           #   ConversationHeader (contact/group, origin, funnel stage, AiStatusChip, "Assumir conversa"/"Devolver à IA" always visible on a pending handoff, bot suspicion, actions menu),
     │                           #   AiStatusChip, AttentionBanner ("N conversas precisam de você · Ver" → /app/repasses; `usePendingAttentionCount`), GroupMenuItems, GroupConversationPanels (+ `useGroupPanels`),
-    │                           #   useGroupMode (group doc + mention names by JID), ScheduledPendingRow; thread/composer stay in Inbox.tsx until fv2-26
+    │                           #   useGroupMode (group doc + mention names by JID), ScheduledPendingRow, InboxListColumn (list wiring), InboxOverlays (+ `useInboxOverlays`: lead/contact/group panels), ConversationDeepLinkResolver, useConversationHeaderState (typing/window/draft/standby for the header),
+    │                           #   fv2-26 (shared with the lead panel): ConversationThread (messages, upward paging, scroll anchor, mark read; `variant="page"|"embedded"`) + useThreadPaging (pure part in lib/threadPaging.ts) + useMarkReadAndPresence (`useContactTyping`, `useMarkRead`, `useTypingBroadcast`),
+    │                           #   Composer (container) + ComposerView (presentational, tested; pure rules in lib/composerRules.ts; `features={{voice,schedule,internalNote,quickReplies}}`), conversationInteraction (context: reply target, location.state draft, pending jump), useConversationDoc
     │                           #   (bubbleStyle.test.ts: getBubbleStyle only uses chat/bubble tokens)
     ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useSearchParamState; accepting navigates to /app/entrada?conversation=<id>
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)

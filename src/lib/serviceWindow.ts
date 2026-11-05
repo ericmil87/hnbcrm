@@ -72,3 +72,21 @@ export function deviceViaLabel(viaApp: unknown, channel?: string | null): string
 
 export const STANDBY_BANNER_TEXT =
   "Outro app (ex.: Caixa de entrada do Meta Business Suite) controla esta conversa; o HNBCRM só recebe. Defina o HNBCRM como app padrão em Configurações da Página > Mensagens avançadas.";
+
+/**
+ * Tipo de janela de uma conversa. `serviceWindowApplies === false` (bridge, não
+ * oficial) = sem janela; sem o campo novo do backend, WhatsApp cai em `template`.
+ */
+export function conversationWindowKind(
+  conversation:
+    | {
+        channel?: string;
+        serviceWindowApplies?: boolean;
+        serviceWindowKind?: ServiceWindowKind;
+      }
+    | null
+    | undefined
+): ServiceWindowKind {
+  if (!conversation || conversation.serviceWindowApplies === false) return null;
+  return conversation.serviceWindowKind ?? (conversation.channel === "whatsapp" ? "template" : null);
+}
