@@ -9,13 +9,16 @@ src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
 ├── SignInForm.tsx              # Password sign-in; links to components/auth/ForgotPasswordForm.tsx (password reset)
 ├── SignOutButton.tsx           # Sign-out button
-├── index.css                   # --rgb-* color channels + full-color aliases (dark/light), shadows, auth classes, shimmer, .chat-wallpaper
+├── index.css                   # --rgb-* color channels + full-color aliases (dark/light/whatsapp), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
 ├── lib/nav.ts                  # NAV_ITEMS/NAV_GROUPS (single nav model), visibleNavItems(), splitMobile(), badge helpers; test next to it
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/settingsNav.ts          # Settings: resolveSettingsPanel(), visibleSettingsPanels(), groupOf(), groupSettingsPanels(); test next to it
 ├── lib/settingsSearch.ts       # searchSettingsPanels(): label + keywords + description, accent/case-insensitive; test next to it
+├── lib/funnelEditor.ts         # pure funnel-editor rules (rename/move/add/remove stage, fromTemplate, validateFunnel, toApplyFunnelTemplateArgs); test next to it
+├── lib/attendantHoursPresets.ts # "Sempre"/"Comercial" hour presets + matching (wizard AttendantHoursForm); test next to it
+├── lib/pairingUi.ts            # wizard entry point for the pairing-code logic (re-exports lib/channelConnect.ts); test next to it
 ├── lib/inlineCrud.ts           # pure reducer for list + modal form + delete confirm (useInlineCrud); test next to it
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
@@ -27,9 +30,8 @@ src/
 ├── lib/rawColorsGuard.test.ts  # ratchet: raw Tailwind palette classes / [#hex] per file (ALLOWLIST ceilings only go down); purple- only in JsonHighlighter
 ├── lib/timezones.ts            # time zones with PT-BR names (value = IANA id, unchanged)
 ├── test/                       # setup.ts (jest-dom, matchMedia/ResizeObserver stubs), render.tsx (renderWithRouter) for *.test.tsx
-├── pages/                      # Public/route pages (Developers, Playground, Terms, Privacy, PublicForm, NotFoundPage, RouteErrorPage)
 ├── hooks/useNavBadges.ts       # sidebar/tab bar counts (inboxUnread, pendingAttention, pausedCampaigns); "skip" for hidden items (badgeQueriesFor)
-├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount
+├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount; `usePageTitle(null)` leaves the title as is
 ├── hooks/useInlineCrud.ts      # useReducer over lib/inlineCrud (showForm/editingId/form/confirmDeleteId + actions)
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
@@ -56,6 +58,8 @@ src/
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
     ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
     ├── Settings.tsx            # /app/configuracoes shell (two levels: 6 groups > panels). Panel = ?secao=<id> (push on click); group is derived. Mobile: ajustes-style list + search; desktop: sidebar + panel
+    ├── pipeline/FunnelEditor.tsx  # controlled funnel editor (name + stages, "Restaurar sugestão"), no Convex; shared by the v2 setup wizard and Settings
+    ├── ai/AttendantSimulator.tsx  # simulateAttendant chat, variant inline|modal (+ AttendantSimulatorView, presentational)
     ├── settings/               # registry.ts (SETTINGS_GROUPS/SETTINGS_PANELS: one entry per panel, lazy Component or href; PLANNED_PANEL_IDS), SettingsNavView (presentational), OrgProfilePanel, AppearancePanel + AppearancePicker + ThemePickerModal (theme choice; sidebar/"Mais" open the modal), CustomFieldsPanel, LeadSourcesPanel, advanced/ (ApiKeysPanel, WebhooksPanel: technical terms allowed here), channels/ (ex-`src/components/settings/ChannelsSection.tsx`, dividido no fv2-21; ChannelsPanel = "Números conectados"; ChannelCard, ChannelConnectCard = único fluxo de conectar número (WhatsApp oficial (Meta) × por QR code, aviso de risco, PairingPanel com "Conectar com código" + QR; View apresentacional + container), BridgeQrModal ("Mostrar QR code"), BridgeHistoryPanel, MetaForm, QrCodeConnectForm (bloco "Configuração manual (avançado)"), InstagramPanel = "Instagram e Messenger", useConnectActions.ts concentra as actions de conexão (BridgeQrModal ainda usa useAction direto)), ChannelHealthPanel (7-day stats), DataSection (export/import), ImportWizard (5 steps)
     │   ├── settings/ai/        # AiOverviewPanel (`ai`), AiFeaturesPanel (`ai-features`), UsagePanel (`ai-usage`), FeatureToggleCard (icon, title, switch, detail slot), ActivationWizardCard, ActivationCard, BridgeAiCard, AttendantCard (status + AttendantModeSwitch + SimulatorModal), aiTypes
     │   ├── settings/attendant/ # Controlled forms (ConfigFormProps<T>: value/onChange/disabled/errors/variant "panel"|"wizard"; no Convex): AttendantPersonaForm, AttendantKnowledgeForm, AttendantHoursForm, ConversationBehaviorForm, FunnelRulesForm, HandoffRulesForm, FollowUpForm, AttendantModeSwitch. Panels (load + partial save): AttendantProfilePanel (`ai-attendant`), ConversationPanel (`ai-conversation`), HandoffPanel (`ai-handoff`), FollowUpPanel (`ai-followup`); useAttendantProfile (+ useFormDraft), AttendantPanelFrame (SaveBar, useUnsavedGuard/useBlocker, usePanelSave), fields, types
@@ -91,6 +95,6 @@ src/
 
 ## Styling and language
 
-Dark default (`:root` dark, `.light` override in `index.css`), mobile-first (`md:`/`lg:`), tokens `bg-surface-base|raised`, `text-text-primary|secondary`, `border-border`, `bg-brand-600`;
+Dark default (`:root` dark, `[data-theme="light"|"whatsapp"]` on `<html>` in `index.css`), mobile-first (`md:`/`lg:`), tokens `bg-surface-base|raised`, `text-text-primary|secondary`, `border-border`, `bg-brand-600`;
 `cn()` from `@/lib/utils`; `lucide-react` icons (no emoji); pills `rounded-full`, cards `rounded-card border border-border bg-surface-raised`.
 All user-facing text is Portuguese (BR); nav: Painel, Pipeline, Caixa de Entrada, Repasses, Equipe, Auditoria, Configurações.

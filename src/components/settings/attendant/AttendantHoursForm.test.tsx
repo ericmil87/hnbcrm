@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { AttendantHoursForm } from "./AttendantHoursForm";
+import { HOURS_PRESETS } from "@/lib/attendantHoursPresets";
 
 const value = { startHour: 9, endHour: 18 };
 
@@ -47,5 +48,44 @@ describe("AttendantHoursForm", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Manhã" }));
     expect(onChange).toHaveBeenCalledWith({ startHour: 6, endHour: 12 });
+  });
+
+  describe('variant="wizard" com presets', () => {
+    const wizard = (v: Parameters<typeof AttendantHoursForm>[0]["value"], onChange = vi.fn()) => {
+      render(<AttendantHoursForm value={v} onChange={onChange} variant="wizard" presets={HOURS_PRESETS} />);
+      return onChange;
+    };
+
+    it("Comercial chama onChange com seg–sex, 8 às 18 e mantém o fuso", () => {
+      const onChange = wizard({ allDay: true, startHour: 9, endHour: 20, timezone: "America/Manaus" });
+      fireEvent.click(screen.getByRole("radio", { name: /Comercial/ }));
+      expect(onChange).toHaveBeenLastCalledWith({
+        allDay: false,
+        startHour: 8,
+        endHour: 18,
+        days: [1, 2, 3, 4, 5],
+        timezone: "America/Manaus",
+      });
+    });
+
+    it("Sempre chama onChange com allDay", () => {
+      const onChange = wizard({ startHour: 9, endHour: 18 });
+      fireEvent.click(screen.getByRole("radio", { name: "Sempre" }));
+      expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ allDay: true }));
+    });
+
+    it("Personalizado mostra os campos; os outros presets não", () => {
+      wizard({ allDay: false, startHour: 8, endHour: 18, days: [1, 2, 3, 4, 5] });
+      expect(screen.queryByLabelText("Início (h)")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByRole("radio", { name: "Personalizado" }));
+      expect(screen.getByRole("radio", { name: "Personalizado" })).toBeChecked();
+      expect(screen.getByLabelText("Início (h)")).toBeInTheDocument();
+    });
+
+    it("horário que não bate com nenhum preset já abre Personalizado", () => {
+      wizard({ allDay: false, startHour: 9, endHour: 17 });
+      expect(screen.getByLabelText("Início (h)")).toBeInTheDocument();
+      expect(screen.queryByText("Atender 24 horas")).not.toBeInTheDocument();
+    });
   });
 });
