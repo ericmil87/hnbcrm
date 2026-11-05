@@ -43,6 +43,7 @@
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
 | 19 | `feat/fv2-19-atendente-formularios` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-19`, ramo criado a partir do fv2-17; faz merge de frontend-v2 antes dos gates) | revisão |
+| 22 | `feat/fv2-22-componentes-wizard` | frontend-specialist | partes 1–2 (`FunnelEditor`, `AttendantSimulator`) em implementação (worktree `/home/user/wt/fv2-22`); partes 3–4 (presets em `AttendantHoursForm`, `pairingUi.ts`) após 19/21 | revisão |
 | 21 | `feat/fv2-21-canais` | frontend-specialist | implementação (worktree `/home/user/wt/fv2-21`; não cria `ChannelTranscriptionToggle`, que é do fv2-19; merge de frontend-v2 antes dos gates) | revisão |
 
 ## Parados (não integrar sem decisão do dono)
@@ -59,6 +60,6 @@
 ## Para retomar
 
 - Paralelismo ampliado a pedido do dono (05/11/2026, mensagem na sessão: "pode colocar mais agentes em paralelo"): PRs com arquivos disjuntos correm juntos; cada ramo faz merge de `frontend-v2` antes dos gates finais quando a base avançou.
-- Em curso: fv2-19 e fv2-21 (implementação). Trilho de temas (08, 10, 12, 14, 15) concluído. fv2-22 entra após 19 e 21 (reaproveita `src/lib/channelConnect.ts` do fv2-21 no lugar de `pairingUi.ts`). Depois: 15 (após 12/13/14), 19 (após 17), 21 (após 19), 22 (após 19/21)
+- Em curso: fv2-19, fv2-21 e fv2-22 (partes 1–2) em implementação. Trilho de temas (08, 10, 12, 14, 15) concluído. fv2-22 entra após 19 e 21 (reaproveita `src/lib/channelConnect.ts` do fv2-21 no lugar de `pairingUi.ts`). Depois: 15 (após 12/13/14), 19 (após 17), 21 (após 19), 22 (após 19/21)
 - PR em rascunho para acompanhamento: https://github.com/ericmil87/hnbcrm/pull/40
 - Ramo em andamento: nenhum
