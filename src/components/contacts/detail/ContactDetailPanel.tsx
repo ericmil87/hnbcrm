@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Trash2, MessageSquarePlus, UserX } from "lucide-react";
@@ -16,29 +16,36 @@ import { LeadDetailPanel } from "@/components/LeadDetailPanel";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
-import { enumParam } from "@/lib/searchParamState";
+import { CONTACT_TAB_PARAM, isContactTabInUrl, type ContactTab } from "@/lib/contactTab";
 import { contactFormToUpdate, contactToForm, type ContactForm } from "@/lib/contactForm";
 import { ContactInfoTab } from "./ContactInfoTab";
 import { ContactLeadsTab } from "./ContactLeadsTab";
 import { ContactGroupsTab } from "./ContactGroupsTab";
 import { ContactOptOutControl } from "./ContactOptOutControl";
 
-export const CONTACT_TABS = ["info", "leads", "groups"] as const;
-export type ContactTab = (typeof CONTACT_TABS)[number];
-/** Codec constante: `?contactTab=` (replace; `info` é o padrão e sai da URL). */
-const CONTACT_TAB_PARAM = enumParam<ContactTab>(CONTACT_TABS, "info");
-
 const TABS_ID_PREFIX = "contact-detail";
 
 interface ContactDetailPanelProps {
   contactId: Id<"contacts">;
   onClose: () => void;
+  /**
+   * Chamado no lugar de `onClose` quando o painel sai para outra tela
+   * ("Conversar no WhatsApp"). Quem fecha pelo histórico (`navigate(-1)`) passa
+   * um no-op: a travessia assíncrona descartaria o `navigate` seguinte.
+   */
+  onNavigateAway?: () => void;
 }
 
-export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelProps) {
+export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: ContactDetailPanelProps) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const tabParam = useSearchParamState("contactTab", CONTACT_TAB_PARAM);
-  const activeTab = tabParam.value;
+  // A aba só vai para a URL quando o painel é o de `?contact=` (página Contatos);
+  // como overlay (Conversas, Grupos, lead) fica local, sem sujar a URL nem a marca de histórico.
+  const tabInUrl = isContactTabInUrl(searchParams.get("contact"), contactId);
+  const [localTab, setLocalTab] = useState<ContactTab>("info");
+  const activeTab = tabInUrl ? tabParam.value : localTab;
+  const selectTab = (tab: ContactTab) => (tabInUrl ? tabParam.set(tab) : setLocalTab(tab));
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<ContactForm | null>(null);
   const [initialized, setInitialized] = useState(false);
@@ -156,7 +163,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
           <div className="border-b border-border px-4 md:px-6 shrink-0">
             <Tabs
               value={activeTab}
-              onValueChange={(id) => tabParam.set(id as ContactTab)}
+              onValueChange={(id) => selectTab(id as ContactTab)}
               ariaLabel="Seções do contato"
               idPrefix={TABS_ID_PREFIX}
               className="border-b-0"
@@ -263,7 +270,7 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
           initialContactId={contactId}
           onStarted={(conversationId) => {
             setShowNewConversation(false);
-            onClose();
+            (onNavigateAway ?? onClose)();
             navigate(`${TAB_ROUTES.inbox}?conversation=${conversationId}`);
           }}
         />

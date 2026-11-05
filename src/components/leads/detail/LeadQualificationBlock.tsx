@@ -21,11 +21,12 @@ import {
 } from "@/lib/leadFields";
 import { LeadBlockHeading, type LeadDoc } from "./LeadBlockHeading";
 
+// As letras são as do método (Budget, Authority, Need, Timeline); os rótulos ficam em português.
 const BANT_ITEMS = [
-  { letter: "B", label: "Budget", desc: "O prospect tem verba para comprar?" },
-  { letter: "A", label: "Authority", desc: "Está falando com quem decide?" },
-  { letter: "N", label: "Need", desc: "Existe uma dor real que seu produto resolve?" },
-  { letter: "T", label: "Timeline", desc: "Há urgência ou prazo definido?" },
+  { letter: "B", label: "Orçamento", desc: "O prospect tem verba para comprar?" },
+  { letter: "A", label: "Decisor", desc: "Está falando com quem decide?" },
+  { letter: "N", label: "Necessidade", desc: "Existe uma dor real que seu produto resolve?" },
+  { letter: "T", label: "Prazo", desc: "Há urgência ou prazo definido?" },
 ];
 
 function BantInfoContent() {

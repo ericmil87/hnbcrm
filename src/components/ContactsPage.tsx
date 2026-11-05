@@ -1,7 +1,7 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
 import { useState, useEffect, useRef } from "react";
-import { useLocation, useNavigate, useOutletContext } from "react-router";
+import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -18,6 +18,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { useContactSelection } from "@/hooks/useContactSelection";
 import { numberParam, stringParam } from "@/lib/searchParamState";
 import { ContactDetailPanel } from "./contacts/detail/ContactDetailPanel";
 import { CreateContactModal } from "./CreateContactModal";
@@ -53,23 +54,26 @@ const DEFAULT_COLUMNS: ColumnKey[] = ["contact", "company", "email", "tags"];
 const CONTACTS_PAGE_SIZE = 50;
 /** `?page=` é 1-based na URL (a primeira página sai da URL). Codec constante do módulo. */
 const PAGE_PARAM = numberParam({ min: 1 });
-/** Marca a entrada de histórico criada por um push nosso ao abrir um contato. */
-const OWN_ENTRY = { contactPushed: true };
+
+/** Fallback do boundary: o `?contact=` aponta para algo que não carrega; tira o param da URL. */
+function ClearInvalidContact({ onClear }: { onClear: () => void }) {
+  useEffect(() => {
+    onClear();
+  }, [onClear]);
+  return null;
+}
 
 export function ContactsPage() {
   usePageTitle(VOCAB.contact.nav);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const navigate = useNavigate();
-  const location = useLocation();
   // A URL é a fonte da verdade: contato aberto (push), busca e página (replace).
-  const contactParam = useSearchParamState("contact", stringParam, { history: "push" });
+  const contactSelection = useContactSelection();
   const searchParam = useSearchParamState("q", stringParam);
   const pageParam = useSearchParamState("page", PAGE_PARAM);
-  const selectedContactId = contactParam.value as Id<"contacts"> | null;
+  const selectedContactId = contactSelection.contactId as Id<"contacts"> | null;
   const debouncedSearch = searchParam.value ?? "";
   const requestedPage = (pageParam.value ?? 1) - 1;
-  const ownsEntry = (location.state as { contactPushed?: boolean } | null)?.contactPushed === true;
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const columnSelectorRef = useRef<HTMLDivElement>(null);
@@ -167,30 +171,8 @@ export function ContactsPage() {
     pageParam.set(page === 0 ? null : page + 1);
   };
 
-  // Abrir um contato empilha uma entrada (o "voltar" fecha); trocar de contato
-  // com o painel aberto só substitui. Abrir outro contato limpa a aba antiga.
-  const handleRowClick = (contactId: Id<"contacts">) => {
-    const push = contactParam.raw === null;
-    contactParam.set(contactId, {
-      also: { contactTab: null },
-      history: push ? "push" : "replace",
-      ...(push || ownsEntry ? { state: OWN_ENTRY } : {}),
-    });
-  };
-
-  // Entrada criada por nós: volta uma entrada; deep link ou recarga: substitui.
-  const closeRequested = useRef<string | null>(null);
-  const handleClosePanel = () => {
-    if (contactParam.raw === null) return;
-    if (ownsEntry) {
-      if (closeRequested.current === location.key) return;
-      closeRequested.current = location.key;
-      contactParam.expectWrite(null);
-      navigate(-1);
-    } else {
-      contactParam.set(null, { history: "replace", also: { contactTab: null } });
-    }
-  };
+  const handleRowClick = (contactId: Id<"contacts">) => contactSelection.open(contactId);
+  const handleClosePanel = contactSelection.close;
 
   const handleCloseCreateModal = () => {
     setShowCreateModal(false);
@@ -532,9 +514,14 @@ export function ContactsPage() {
 
       {/* Contact Detail Panel */}
       {selectedContactId && (
-        // Um id inválido na URL faz a query lançar: o boundary some com o painel.
-        <ErrorBoundary key={selectedContactId} fallback={<></>}>
-          <ContactDetailPanel contactId={selectedContactId} onClose={handleClosePanel} />
+        // Um id inválido na URL faz a query lançar: o boundary some com o painel e limpa o param.
+        <ErrorBoundary key={selectedContactId} fallback={<ClearInvalidContact onClear={contactSelection.clearInvalid} />}>
+          <ContactDetailPanel
+            contactId={selectedContactId}
+            onClose={handleClosePanel}
+            // "Conversar no WhatsApp" navega para outra tela: não fecha pelo histórico antes.
+            onNavigateAway={() => {}}
+          />
         </ErrorBoundary>
       )}
 

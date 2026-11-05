@@ -27,7 +27,7 @@ export function ContactOptOutControl({
   if (optOut) {
     return (
       <div className="flex items-center gap-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-sm text-text-primary">
-        <BellOff size={16} className="text-semantic-warning shrink-0" />
+        <BellOff size={16} className="text-semantic-warning shrink-0" aria-hidden="true" />
         <span className="flex-1">
           Em supressão: não recebe campanhas
           <span className="text-text-muted"> (desde {formatDate(optOut.createdAt)})</span>
@@ -54,7 +54,7 @@ export function ContactOptOutControl({
         }
       }}
     >
-      <BellOff size={16} className="mr-2" />
+      <BellOff size={16} aria-hidden="true" />
       Não contatar em campanhas
     </Button>
   );

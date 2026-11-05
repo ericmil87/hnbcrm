@@ -54,8 +54,8 @@ export function useFunnelUrlState(
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set("lead", leadId);
-          // Outro lead abre na aba inicial: a aba do anterior não vaza.
-          next.delete("leadTab");
+          // Outro lead abre na aba inicial (a aba do anterior não vaza); reabrir o mesmo mantém a aba.
+          if (prev.get("lead") !== leadId) next.delete("leadTab");
           return next;
         },
         { replace: true }
