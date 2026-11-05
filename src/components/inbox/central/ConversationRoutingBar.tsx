@@ -183,7 +183,7 @@ export function ConversationRoutingBar({
 
   return (
     <>
-      <div className="shrink-0 border-b border-border bg-surface-raised/60 px-4 py-2">
+      <div className="shrink-0 border-b border-border px-4 py-2">
         <div
           role="toolbar"
           aria-label="Roteamento e desfecho da conversa"

@@ -110,6 +110,8 @@ Todos os pares de texto/fundo atendem WCAG AA:
 - `#FAFAFA` sobre `#0F0F11` → 18.1:1 (AAA)
 - `#A1A1AA` sobre `#0F0F11` → 7.2:1 (AAA)
 - `#71717A` sobre `#0F0F11` → 4.6:1 (AA)
+> Nota: os contrastes do Escuro medidos são 3,96:1 (`text-muted`/base) e 3,56:1 (branco/`brand-600`), listados em `DARK_KNOWN_FAILURES` de `src/lib/themeTokens.test.ts`; a tabela dos 3 temas chega no fv2-10.
+
 - Botões primários usam `brand-600` (`#EA580C`, 4.6:1 com branco) em vez de `brand-500` para conformidade AA em texto de corpo
 
 ### 1.3 Configuração TailwindCSS
@@ -709,6 +711,8 @@ export function Card({
 ```
 
 ### 8.3 Tema
+
+Os tokens de cor são canais RGB (`--rgb-*`) com alfa funcionando (`bg-surface-base/50`); CSS cru e `style={{}}` usam os aliases `var(--surface-*)`, `var(--text-*)`, `var(--border-*)` e `var(--color-semantic-*)`. Há tokens de chat (`chat-*`, `composer*`, `bubble-*`, `tick-read`, `badge-unread*`) e a escala `ai-300..700`. Os valores do Escuro estão congelados em `src/lib/themeTokens.test.ts`.
 
 O app usa **dark mode como padrão**. Light mode é suportado via classe `.light` no `<html>`:
 

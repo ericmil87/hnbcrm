@@ -259,7 +259,7 @@ export function CampaignsPage() {
                   const s = c.stats;
                   const isRunning = c.status === "running" || c.status === "scheduled";
                   return (
-                    <tr key={c._id} className="hover:bg-surface-overlay/60 cursor-pointer" onClick={() => openDetail(c._id)}>
+                    <tr key={c._id} className="cursor-pointer" onClick={() => openDetail(c._id)}>
                       <td className="px-4 py-2.5">
                         <p className="font-medium text-text-primary truncate max-w-[220px]">{c.name}</p>
                         <p className="text-xs text-text-muted truncate max-w-[220px]">{c.creatorName ?? ""}{c.pausedReason ? ` · ${c.pausedReason}` : ""}</p>

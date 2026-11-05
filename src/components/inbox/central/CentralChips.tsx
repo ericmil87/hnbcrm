@@ -73,7 +73,7 @@ export function AttributionStrip({ attribution }: { attribution: LeadAttribution
       ? `gclid ${shortId(attribution.gclid)}`
       : null;
   return (
-    <div className="shrink-0 border-b border-border-subtle bg-surface-sunken/60 px-4 py-1.5">
+    <div className="shrink-0 border-b border-border-subtle px-4 py-1.5">
       <p className="flex w-full min-w-0 items-center gap-1.5 text-xs text-text-muted">
         <Icon size={13} className={cn("shrink-0", meta.tone)} aria-hidden />
         <span className="shrink-0 font-medium text-text-secondary">{meta.phrase}</span>
@@ -119,7 +119,7 @@ export function TransferEvent({ actorName, transfer, createdAt }: TransferEventP
   const from = transfer.fromDept?.name;
   return (
     <div className="flex justify-center px-2" role="note">
-      <div className="max-w-md rounded-2xl border border-border bg-surface-raised/70 px-3.5 py-2 text-center">
+      <div className="max-w-md rounded-2xl border border-border px-3.5 py-2 text-center">
         <p className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5 text-xs text-text-secondary">
           <ArrowRightLeft size={13} className="shrink-0 text-brand-500" aria-hidden />
           <span className="font-medium text-text-primary">{actorName ?? "Alguém"}</span>

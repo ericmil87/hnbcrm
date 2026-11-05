@@ -9,11 +9,13 @@ src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
 ├── SignInForm.tsx              # Password sign-in; links to components/auth/ForgotPasswordForm.tsx (password reset)
 ├── SignOutButton.tsx           # Sign-out button
-├── index.css                   # CSS custom properties (dark/light), auth classes, shimmer
+├── index.css                   # --rgb-* color channels + full-color aliases (dark/light), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
+├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
+├── lib/themeTokens.test.ts     # reads index.css: dark palette frozen (--rgb-* channels), aliases, AA pairs + DARK_KNOWN_FAILURES
 ├── lib/timezones.ts            # time zones with PT-BR names (value = IANA id, unchanged)
 ├── test/                       # setup.ts (jest-dom, matchMedia/ResizeObserver stubs), render.tsx (renderWithRouter) for *.test.tsx
 ├── pages/                      # Public/route pages (Developers, Playground, Terms, Privacy, PublicForm, NotFoundPage, RouteErrorPage)

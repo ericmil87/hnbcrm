@@ -80,7 +80,7 @@ export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
     <div
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-lg p-2.5",
-        outbound ? "bg-white/10" : "bg-surface-sunken/60"
+        outbound ? "bg-white/10" : ""
       )}
     >
       <div className="flex min-w-0 items-start gap-2">

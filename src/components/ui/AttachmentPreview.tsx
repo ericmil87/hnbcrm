@@ -58,7 +58,7 @@ export function AttachmentPreview({
                 <img
                   src={file.url}
                   alt={file.name}
-                  className="max-w-[240px] max-h-[180px] rounded-md object-cover border border-border/50"
+                  className="max-w-[240px] max-h-[180px] rounded-md object-cover border"
                   loading="lazy"
                 />
               </a>
@@ -84,7 +84,7 @@ export function AttachmentPreview({
                 <button
                   type="button"
                   onClick={() => onRemove(file._id)}
-                  className="absolute top-1 right-1 p-0.5 rounded-full bg-surface-base/80 text-text-muted hover:text-semantic-error transition-colors opacity-0 group-hover:opacity-100"
+                  className="absolute top-1 right-1 p-0.5 rounded-full text-text-muted hover:text-semantic-error transition-colors opacity-0 group-hover:opacity-100"
                   aria-label={`Remover ${file.name}`}
                 >
                   <X size={12} />
@@ -97,7 +97,7 @@ export function AttachmentPreview({
         return (
           <div
             key={file._id}
-            className="flex items-center gap-2 px-2 py-1.5 bg-surface-sunken/50 rounded-md max-w-[280px] group"
+            className="flex items-center gap-2 px-2 py-1.5 rounded-md max-w-[280px] group"
           >
             <Icon size={14} className="shrink-0 text-text-muted" />
             <div className="flex-1 min-w-0">

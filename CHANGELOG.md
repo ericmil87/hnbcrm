@@ -21,6 +21,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
 - O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
 
+### Aparência
+
+- Base técnica dos temas de cor: as cores do app passaram a aceitar transparência em todo o sistema, sem nenhuma mudança visível no tema escuro. Também foram corrigidas as cores das métricas em Formulários, que não apareciam.
+
 ### Configuração inicial e Copiloto
 
 - Organizações de startup/SaaS e de cursos passam a ter, na ativação em 1 toque, uma Atendente IA com jeito de atender próprio (antes usavam o modelo geral). Também chegam modelos prontos de funil, campos e perguntas frequentes por segmento, com os casos em que a Atendente IA passa a conversa para falar com a equipe.

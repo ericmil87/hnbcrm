@@ -102,7 +102,7 @@ export function DevelopersPage() {
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
-      <header className="sticky top-0 z-30 bg-surface-base/80 backdrop-blur-md border-b border-border">
+      <header className="sticky top-0 z-30 backdrop-blur-md border-b border-border">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
             <Link to="/" className="flex items-center gap-2">
@@ -151,7 +151,7 @@ export function DevelopersPage() {
       </header>
 
       {/* Mobile ToC */}
-      <nav className="md:hidden sticky top-[57px] z-20 bg-surface-base/80 backdrop-blur-md border-b border-border overflow-x-auto">
+      <nav className="md:hidden sticky top-[57px] z-20 backdrop-blur-md border-b border-border overflow-x-auto">
         <div className="flex gap-1 px-4 py-2">
           {sections.map((s) =>
             s.id === "playground" ? (
@@ -525,7 +525,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -555,7 +555,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -585,7 +585,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -657,7 +657,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -684,7 +684,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -719,7 +719,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -750,7 +750,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -776,7 +776,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -801,7 +801,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -836,7 +836,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -865,7 +865,7 @@ npm run dev`}</CodeBlock>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="border-b border-border bg-surface-sunken/50">
+                    <tr className="border-b border-border">
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-40">Tool</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
                       <th className="py-2 px-3 text-xs font-semibold text-text-muted w-48">Parâmetros chave</th>
@@ -1165,7 +1165,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   <div className="overflow-x-auto">
                     <table className="w-full text-left">
                       <thead>
-                        <tr className="border-b border-border bg-surface-sunken/50">
+                        <tr className="border-b border-border">
                           <th className="py-2 px-3 text-xs font-semibold text-text-muted w-16">Metodo</th>
                           <th className="py-2 px-3 text-xs font-semibold text-text-muted w-56">Path</th>
                           <th className="py-2 px-3 text-xs font-semibold text-text-muted">Descrição</th>
@@ -1175,7 +1175,7 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                         {filtered.map((ep) => (
                           <tr
                             key={ep.id}
-                            className="border-b border-border last:border-b-0 hover:bg-surface-overlay/50 cursor-pointer transition-colors"
+                            className="border-b border-border last:border-b-0 cursor-pointer transition-colors"
                             onClick={() => navigate(`/developers/playground?endpoint=${ep.id}`)}
                           >
                             <td className="py-2.5 px-3">

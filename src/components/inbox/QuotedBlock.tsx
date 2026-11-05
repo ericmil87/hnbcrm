@@ -21,7 +21,7 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
     <div
       className={cn(
         "flex flex-col gap-0.5 border-l-2 pl-2 py-1 rounded-r text-left",
-        outbound ? "border-white/70 bg-white/10" : "border-brand-500 bg-surface-sunken/60",
+        outbound ? "border-white/70 bg-white/10" : "border-brand-500",
         onJump && "cursor-pointer transition-colors",
         onJump && (outbound ? "hover:bg-white/20" : "hover:bg-surface-sunken")
       )}
