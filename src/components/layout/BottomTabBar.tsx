@@ -53,8 +53,8 @@ export function BottomTabBarView({
   return (
     <>
       {/* Folha "Mais" */}
-      <Modal open={showMore} onClose={onToggleMore} title="Mais opções" className="max-h-[85dvh]">
-        <div className="p-4 space-y-4">
+      <Modal open={showMore} onClose={onToggleMore} title="Mais opções" className="supports-[height:100dvh]:max-h-[85dvh]">
+        <div className="space-y-4">
           {sections.map((section) => (
             <section key={section.id} aria-label={section.label ?? undefined}>
               {section.label && (

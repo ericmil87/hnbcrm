@@ -48,6 +48,7 @@ paths:
 ## Mobile-first
 - Write base styles for mobile, then `md:`/`lg:`. Breakpoints: xs 375, sm 640, md 768, lg 1024, xl 1280. Verify at 375, 768, 1024.
 - Touch targets at least 44x44px. Bottom-anchored UI (sheets, FABs, composers) uses `pb-safe` or `env(safe-area-inset-*)`.
+- Viewport height: `dvh` always via `supports-[height:100dvh]:` after the `vh` class (e.g. `min-h-screen supports-[height:100dvh]:min-h-[100dvh]`); two plain utilities in a row make `vh` win.
 - Window scrolls naturally; do not add nested scroll containers for page content. Kanban on mobile scrolls horizontally with snap.
 - Respect `prefers-reduced-motion`. Focus ring (keyboard only): `focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base`; animate with `motion-safe:`.
 
