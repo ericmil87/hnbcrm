@@ -35,6 +35,13 @@ src/
 ├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount; `usePageTitle(null)` leaves the title as is
 ├── hooks/useInlineCrud.ts      # useReducer over lib/inlineCrud (showForm/editingId/form/confirmDeleteId + actions)
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
+├── lib/searchParamState.ts     # pure URL-state codecs (stringParam, enumParam, booleanParam `1`, numberParam, listParam), writeParams (several params in one write) and the in-flight write (beginWrite/settleWrite); test next to it
+├── hooks/useSearchParamState.ts # typed search-param state: replace for filters, push for entities; `isInFlight()` guards URL → state effects (single copy of the `{target, stale}` mechanism)
+├── lib/inboxState.ts           # pure Conversas logic: activeBotSuspicion, isHandoffPending, aiStateChipInfo, readKindFilter, filterConversations, listFilterKey, linkedMatchesView, decideConversationParamAction (param → selection state machine), emptyListMessage; test next to it
+├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1` and `?label=<id>` (URL, replace); direct/group and channel/account (localStorage); Central queue
+├── hooks/useConversationList.ts # list batches 50→500, keep-previous, infinite sentinel
+├── hooks/useConversationSelection.ts # `?conversation=` (push) ↔ open conversation, deep-link resolver state, `?nova=`, `location.state` draft; test next to it
+├── hooks/useBulkConversationSelection.ts # multi-select in the list: archive/unarchive/label in bulk
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
@@ -51,11 +58,15 @@ src/
     ├── KanbanBoard.tsx         # Pipeline drag-and-drop (/app/pipeline); deep-links ?board=<id>, ?lead=<id> (opens LeadDetailPanel, param synced for browser back)
     ├── LeadDetailPanel.tsx, CreateLeadModal.tsx  # Lead SlideOver / creation modal
     ├── leads/                  # LeadsListView (sortable table, row selection), LeadsBulkActionBar (move/assign/archive)
-    ├── Inbox.tsx               # Inbox (/app/entrada): search, labels, scheduling, bulk select, pending-handoff banner, ?conversation=<id> (getConversationById fallback)
+    ├── Inbox.tsx               # Inbox orchestrator (/app/entrada): wires the hooks above to ConversationList/ConversationHeader + the thread and composer (extracted in fv2-26); ?conversation=<id> (getConversationById fallback)
     ├── inbox/                  # MessageBubble, VoiceRecorder, VoiceTranscription, EmojiPickerButton, QuickReplies ("/"), ConversationActionsMenu,
     │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), ReactionPicker, ForwardModal, AudioPlayer…
+    │                           #   fv2-25: ConversationList (presentational column: header, SegmentedControl/Select filters, search, items, empty state, "Carregar mais", bulk bar) + ConversationListItem,
+    │                           #   ConversationHeader (contact/group, origin, funnel stage, AiStatusChip, "Assumir conversa"/"Devolver à IA" always visible on a pending handoff, bot suspicion, actions menu),
+    │                           #   AiStatusChip, AttentionBanner ("N conversas precisam de você · Ver" → /app/repasses; `usePendingAttentionCount`), GroupMenuItems, GroupConversationPanels (+ `useGroupPanels`),
+    │                           #   useGroupMode (group doc + mention names by JID), ScheduledPendingRow; thread/composer stay in Inbox.tsx until fv2-26
     │                           #   (bubbleStyle.test.ts: getBubbleStyle only uses chat/bubble tokens)
-    ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id>; accepting navigates to /app/entrada?conversation=<id>
+    ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useSearchParamState; accepting navigates to /app/entrada?conversation=<id>
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
     ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
     ├── Settings.tsx            # /app/configuracoes shell (two levels: 6 groups > panels). Panel = ?secao=<id> (push on click); group is derived. Mobile: ajustes-style list + search; desktop: sidebar + panel
