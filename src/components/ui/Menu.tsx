@@ -10,6 +10,10 @@ export interface MenuItem {
   onSelect: () => void;
   danger?: boolean;
   disabled?: boolean;
+  /** Linha separadora antes do item. */
+  separatorBefore?: boolean;
+  /** Chave estável (padrão: rótulo + posição). */
+  id?: string;
 }
 
 export interface MenuTriggerProps {
@@ -54,6 +58,7 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = list.length - 1;
     else if (e.key === "Tab") {
+      anchorRef.current?.focus();
       setOpen(false);
       return;
     }
@@ -89,9 +94,9 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
         className={cn(!isMobile && "min-w-56 max-w-xs", className)}
       >
         <div ref={listRef} id={menuId} role="menu" aria-label={ariaLabel} onKeyDown={onKeyDown} className="py-1">
-          {items.map((item) => (
+          {items.map((item, index) => (
             <button
-              key={item.label}
+              key={item.id ?? `${item.label}-${index}`}
               type="button"
               role="menuitem"
               tabIndex={-1}
@@ -101,6 +106,7 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
                 "flex w-full min-h-11 items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors",
                 "hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
                 "disabled:cursor-not-allowed disabled:opacity-50",
+                item.separatorBefore && index > 0 && "border-t border-border mt-1",
                 item.danger ? "text-semantic-error" : "text-text-primary"
               )}
             >

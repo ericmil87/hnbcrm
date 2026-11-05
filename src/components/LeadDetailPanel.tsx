@@ -247,6 +247,7 @@ function LeadActionsMenu({
                   icon: <Trash2 size={15} />,
                   onSelect: () => setConfirmDelete(true),
                   danger: true,
+                  separatorBefore: canArchive,
                 },
               ]
             : []),

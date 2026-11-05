@@ -15,10 +15,12 @@ export interface TooltipProps {
   /** Dica informativa: no toque abre com um toque simples (em vez de pressão longa). */
   asInfo?: boolean;
   className?: string;
+  /** Classes do `<span>` que envolve o filho (padrão `inline-flex`). */
+  wrapperClassName?: string;
 }
 
 /** Dica contextual: abre em hover e foco; no toque, em pressão longa (ou toque simples com `asInfo`). */
-export function Tooltip({ content, children, side = "top", asInfo = false, className }: TooltipProps) {
+export function Tooltip({ content, children, side = "top", asInfo = false, className, wrapperClassName }: TooltipProps) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLSpanElement>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -57,11 +59,21 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
     <>
       <span
         ref={anchorRef}
-        className="inline-flex"
+        className={cn("inline-flex", wrapperClassName)}
         tabIndex={disabled ? 0 : undefined}
+        role={disabled ? "button" : undefined}
+        aria-disabled={disabled || undefined}
+        aria-describedby={disabled && open ? id : undefined}
+        onClickCapture={(e) => {
+          if (longPressed.current) {
+            longPressed.current = false;
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         onMouseEnter={() => !ghostMouse() && setOpen(true)}
         onMouseLeave={() => !ghostMouse() && setOpen(false)}
-        onFocus={() => setOpen(true)}
+        onFocus={() => !ghostMouse() && setOpen(true)}
         onBlur={() => setOpen(false)}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
@@ -70,7 +82,13 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
           if (longPressed.current) e.preventDefault();
         }}
       >
-        {cloneElement(children, { "aria-describedby": open ? id : children.props["aria-describedby"] })}
+        {disabled
+          ? children
+          : cloneElement(children, {
+              "aria-describedby": open
+                ? [children.props["aria-describedby"], id].filter(Boolean).join(" ")
+                : children.props["aria-describedby"],
+            })}
       </span>
       <Popover
         open={open}
@@ -78,6 +96,7 @@ export function Tooltip({ content, children, side = "top", asInfo = false, class
         anchor={anchorRef}
         side={side}
         align="center"
+        trapEscape={false}
         role="tooltip"
         id={id}
         className={cn(

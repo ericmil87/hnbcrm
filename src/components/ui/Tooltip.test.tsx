@@ -95,4 +95,71 @@ describe("Tooltip", () => {
     fireEvent.touchStart(screen.getByText("fora"));
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
+
+  it("foco sintético depois de um toque simples não abre a dica", () => {
+    render(
+      <Tooltip content="Ajuda">
+        <button>alvo</button>
+      </Tooltip>
+    );
+    const el = screen.getByText("alvo");
+    fireEvent.touchStart(el);
+    fireEvent.touchEnd(el);
+    fireEvent.focus(el);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("Esc fecha a dica sem impedir outros listeners", async () => {
+    const seen = vi.fn();
+    document.addEventListener("keydown", seen);
+    render(
+      <Tooltip content="Ajuda">
+        <button>alvo</button>
+      </Tooltip>
+    );
+    await userEvent.tab();
+    await userEvent.keyboard("{Escape}");
+    document.removeEventListener("keydown", seen);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(seen).toHaveBeenCalled();
+  });
+
+  it("concatena o aria-describedby existente do filho", async () => {
+    render(
+      <Tooltip content="Ajuda">
+        <button aria-describedby="outro">alvo</button>
+      </Tooltip>
+    );
+    await userEvent.hover(screen.getByText("alvo"));
+    const tip = screen.getByRole("tooltip");
+    expect(screen.getByText("alvo")).toHaveAttribute("aria-describedby", `outro ${tip.id}`);
+  });
+
+  it("filho desabilitado: describedby no span focável", async () => {
+    render(
+      <Tooltip content="Sem permissão">
+        <button disabled>alvo</button>
+      </Tooltip>
+    );
+    const wrapper = screen.getByText("alvo").parentElement!;
+    await userEvent.tab();
+    const tip = screen.getByRole("tooltip");
+    expect(wrapper).toHaveAttribute("aria-describedby", tip.id);
+    expect(screen.getByText("alvo")).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("pressão longa não deixa o clique sintético passar", () => {
+    vi.useFakeTimers();
+    const onClick = vi.fn();
+    render(
+      <Tooltip content="Ajuda">
+        <button onClick={onClick}>alvo</button>
+      </Tooltip>
+    );
+    const el = screen.getByText("alvo");
+    fireEvent.touchStart(el);
+    act(() => void vi.advanceTimersByTime(500));
+    fireEvent.click(el);
+    expect(onClick).not.toHaveBeenCalled();
+  });
 });

@@ -27,6 +27,7 @@ export function SearchInput({
 }: SearchInputProps) {
   const [text, setText] = useState(value);
   const debounced = useDebouncedValue(text, debounceMs);
+  const inputRef = useRef<HTMLInputElement>(null);
   const lastEmitted = useRef(value);
   const onChange = useRef(onValueChange);
   onChange.current = onValueChange;
@@ -51,6 +52,7 @@ export function SearchInput({
     lastEmitted.current = "";
     onValueChange("");
     onClear?.();
+    inputRef.current?.focus();
   };
 
   return (
@@ -61,6 +63,7 @@ export function SearchInput({
         className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
       />
       <input
+        ref={inputRef}
         type="search"
         value={text}
         onChange={(e) => setText(e.target.value)}

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Menu } from "./Menu";
+import { Menu, type MenuItem } from "./Menu";
 
-function setup(items = [
+function setup(items: MenuItem[] = [
   { label: "Arquivar", onSelect: vi.fn() },
   { label: "Bloqueado", onSelect: vi.fn(), disabled: true },
   { label: "Excluir", onSelect: vi.fn(), danger: true },
@@ -84,5 +84,23 @@ describe("Menu", () => {
     const menu = screen.getByRole("menu");
     expect(menu.parentElement).toHaveClass("max-h-[80dvh]");
     expect(screen.getByRole("menuitem", { name: "Arquivar" })).toHaveClass("min-h-11");
+  });
+
+  it("Tab devolve o foco ao gatilho e fecha", async () => {
+    setup();
+    await userEvent.click(screen.getByText("abrir"));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Arquivar" }), { key: "Tab" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText("abrir")).toHaveFocus();
+  });
+
+  it("separatorBefore desenha a linha antes do item", async () => {
+    setup([
+      { label: "A", onSelect: vi.fn() },
+      { label: "B", onSelect: vi.fn(), separatorBefore: true },
+    ]);
+    await userEvent.click(screen.getByText("abrir"));
+    expect(screen.getByRole("menuitem", { name: "B" })).toHaveClass("border-t");
+    expect(screen.getByRole("menuitem", { name: "A" })).not.toHaveClass("border-t");
   });
 });

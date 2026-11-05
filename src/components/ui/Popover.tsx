@@ -18,6 +18,8 @@ export interface PopoverProps {
   align?: PopoverAlign;
   /** Renderiza como folha inferior (mobile) em vez de ancorado. */
   sheet?: boolean;
+  /** Captura o Esc (não propaga) — para camadas interativas. Dicas passam `false`. */
+  trapEscape?: boolean;
   role?: string;
   "aria-label"?: string;
   id?: string;
@@ -33,6 +35,7 @@ export function Popover({
   side = "bottom",
   align = "start",
   sheet = false,
+  trapEscape = true,
   role,
   "aria-label": ariaLabel,
   id,
@@ -47,6 +50,10 @@ export function Popover({
     const p = popRef.current;
     if (!a || !p) return;
     const r = a.getBoundingClientRect();
+    if (r.bottom < 0 || r.top > window.innerHeight || r.right < 0 || r.left > window.innerWidth) {
+      onOpenChange(false);
+      return;
+    }
     setPos(
       computePopoverPosition(
         { top: r.top, left: r.left, width: r.width, height: r.height },
@@ -56,7 +63,7 @@ export function Popover({
         align
       )
     );
-  }, [anchor, side, align]);
+  }, [anchor, side, align, onOpenChange]);
 
   useLayoutEffect(() => {
     if (!open || sheet) return;
@@ -64,10 +71,19 @@ export function Popover({
   }, [open, sheet, reposition]);
 
   useEffect(() => {
+    if (!open || !sheet) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [open, sheet]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      e.stopPropagation();
+      if (trapEscape) e.stopPropagation();
       onOpenChange(false);
       anchor.current?.focus();
     };
@@ -77,9 +93,9 @@ export function Popover({
       onOpenChange(false);
     };
     document.addEventListener("keydown", onKey, true);
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("touchstart", onPointer);
     if (!sheet) {
+      document.addEventListener("mousedown", onPointer);
+      document.addEventListener("touchstart", onPointer);
       window.addEventListener("resize", reposition);
       window.addEventListener("scroll", reposition, true);
     }
@@ -90,14 +106,18 @@ export function Popover({
       window.removeEventListener("resize", reposition);
       window.removeEventListener("scroll", reposition, true);
     };
-  }, [open, sheet, onOpenChange, anchor, reposition]);
+  }, [open, sheet, trapEscape, onOpenChange, anchor, reposition]);
 
   if (!open || typeof document === "undefined") return null;
 
   if (sheet) {
     return createPortal(
       <div className="fixed inset-0 z-50 flex items-end">
-        <div className="absolute inset-0 bg-black/50 motion-safe:animate-fade-in" aria-hidden="true" />
+        <div
+          className="absolute inset-0 bg-black/50 motion-safe:animate-fade-in"
+          aria-hidden="true"
+          onClick={() => onOpenChange(false)}
+        />
         <div
           ref={popRef}
           id={id}

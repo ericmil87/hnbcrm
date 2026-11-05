@@ -45,4 +45,11 @@ describe("SearchInput", () => {
     fireEvent.click(screen.getByText("externo"));
     expect(screen.getByRole("searchbox")).toHaveValue("zzz");
   });
+
+  it("limpar devolve o foco ao campo", () => {
+    render(<SearchInput value="" onValueChange={() => {}} />);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "x" } });
+    fireEvent.click(screen.getByLabelText("Limpar busca"));
+    expect(screen.getByRole("searchbox")).toHaveFocus();
+  });
 });

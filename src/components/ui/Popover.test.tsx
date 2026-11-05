@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Popover } from "./Popover";
 
@@ -54,5 +54,27 @@ describe("Popover", () => {
     expect(screen.getByRole("dialog")).toHaveClass("pb-safe");
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("folha: fecha pelo clique no fundo, não pelo touchstart, e restaura a rolagem do body", async () => {
+    document.body.style.overflow = "scroll";
+    render(<Harness sheet />);
+    await userEvent.click(screen.getByText("gatilho"));
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.touchStart(screen.getByText("fora"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("dialog").previousElementSibling!);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.body.style.overflow).toBe("scroll");
+    document.body.style.overflow = "";
+  });
+
+  it("fechado, o Esc chega a listeners do document", async () => {
+    const seen = vi.fn();
+    document.addEventListener("keydown", seen);
+    render(<Harness />);
+    await userEvent.keyboard("{Escape}");
+    document.removeEventListener("keydown", seen);
+    expect(seen).toHaveBeenCalled();
   });
 });
