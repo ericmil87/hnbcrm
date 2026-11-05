@@ -3,13 +3,13 @@ import { lazy, Suspense } from "react";
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
-import { Toaster } from "sonner";
 import { HelmetProvider } from 'react-helmet-async';
 import "./index.css";
 import { AuthLayout } from "./components/layout/AuthLayout";
 import { TAB_ROUTES } from "./lib/routes";
 import { RouteErrorPage } from "./pages/RouteErrorPage";
 import { Spinner } from "./components/ui/Spinner";
+import { ThemedToaster } from "./components/ui/ThemedToaster";
 
 // Páginas públicas pesadas (ex.: DevelopersPage puxa o apiRegistry) ficam fora do bundle inicial.
 const LandingPage = lazy(() => import("./components/LandingPage").then(m => ({ default: m.LandingPage })));
@@ -95,7 +95,7 @@ createRoot(document.getElementById("root")!).render(
   <HelmetProvider>
     <ConvexAuthProvider client={convex}>
       <RouterProvider router={router} />
-      <Toaster theme="dark" />
+      <ThemedToaster />
     </ConvexAuthProvider>
   </HelmetProvider>,
 );
