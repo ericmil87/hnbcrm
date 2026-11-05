@@ -11,6 +11,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Na Agenda, o link de um evento (como o de "Próximos eventos" no Painel) abre direto o dia e o detalhe do evento; visão, data e evento ficam no endereço e podem ser compartilhados.
 - Formatos que mudam na tela: o tempo relativo em Formulários passa a aparecer como "há 3 dias" e o valor do pipeline no Painel como "R$ 1,5 mi".
 - Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
+- Os controles de ligar e desligar, as abas e as listas de seleção (em Configurações e nos ajustes de formulários) ficaram mais fáceis de tocar no celular e podem ser usados pelo teclado.
 
 ### Configuração inicial e Copiloto
 

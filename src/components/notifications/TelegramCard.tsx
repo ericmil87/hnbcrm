@@ -8,7 +8,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
-import { Switch } from "@/components/settings/CentralSection";
+import { Switch } from "@/components/ui/Switch";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -165,11 +165,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
           <span className="text-sm text-text-primary">
             Sugerir ação nos repasses (uma chamada de IA por repasse)
           </span>
-          <Switch
+          <Switch hideLabel
             checked={a.suggestOnEvents}
             label="Sugerir ação nos repasses"
             disabled={busy}
-            onChange={() => void save({ suggestOnEvents: !a.suggestOnEvents })}
+            onCheckedChange={() => void save({ suggestOnEvents: !a.suggestOnEvents })}
           />
         </div>
         <div className={cn(!isAuto && "opacity-50")}>
@@ -294,9 +294,9 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
         {isAdmin ? (
           <div className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-border px-3.5">
             <span className="text-sm font-medium text-text-primary">Ligar Telegram para a equipe</span>
-            <Switch
+            <Switch hideLabel
               checked={false}
-              onChange={() =>
+              onCheckedChange={() =>
                 void run(
                   () => setOrgModules({ organizationId, modules: { telegram: true } }),
                   "Não foi possível ligar o módulo do Telegram",
@@ -354,11 +354,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
           ).map(({ key, label }) => (
             <div key={key} className="flex min-h-[44px] items-center justify-between gap-3 py-3">
               <span className="text-sm text-text-primary">{label}</span>
-              <Switch
+              <Switch hideLabel
                 checked={link.prefs[key]}
                 label={label}
                 disabled={busy}
-                onChange={() =>
+                onCheckedChange={() =>
                   void run(
                     () => updatePrefs({ organizationId, prefs: { [key]: !link.prefs[key] } }),
                     "Não foi possível salvar a preferência"
@@ -374,11 +374,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
             </div>
             <div className="flex min-h-[44px] items-center justify-between gap-3">
               <span className="text-sm text-text-primary">Receber relatórios no Telegram</span>
-              <Switch
+              <Switch hideLabel
                 checked={link.reports.enabled}
                 label="Receber relatórios no Telegram"
                 disabled={busy}
-                onChange={() =>
+                onCheckedChange={() =>
                   void run(
                     () => updatePrefs({ organizationId, reports: { enabled: !link.reports.enabled } }),
                     "Não foi possível salvar a preferência"
@@ -421,11 +421,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
             <p className="text-xs text-text-muted">Hora local da organização.</p>
             <div className={cn("flex min-h-[44px] items-center justify-between gap-3", !link.reports.enabled && "opacity-50")}>
               <span className="text-sm text-text-primary">Também aos fins de semana</span>
-              <Switch
+              <Switch hideLabel
                 checked={link.reports.weekends ?? false}
                 label="Também aos fins de semana"
                 disabled={busy || !link.reports.enabled}
-                onChange={() =>
+                onCheckedChange={() =>
                   void run(
                     () => updatePrefs({ organizationId, reports: { weekends: !(link.reports.weekends ?? false) } }),
                     "Não foi possível salvar a preferência"
@@ -497,9 +497,9 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
           <div className="mt-4 space-y-1">
             <div className="flex min-h-[44px] items-center justify-between gap-3 rounded-lg border border-border px-3.5">
               <span className="text-sm font-medium text-text-primary">Telegram para a equipe</span>
-              <Switch
+              <Switch hideLabel
                 checked
-                onChange={() =>
+                onCheckedChange={() =>
                   void run(
                     () => setOrgModules({ organizationId, modules: { telegram: false } }),
                     "Não foi possível desligar o módulo do Telegram",
@@ -544,11 +544,11 @@ export function TelegramCard({ organizationId }: TelegramCardProps) {
                     <span className="text-sm font-medium text-text-primary">{label}</span>
                     <p className="text-xs text-text-secondary">{desc}</p>
                   </div>
-                  <Switch
+                  <Switch hideLabel
                     checked={data.org[key]}
                     label={label}
                     disabled={busy}
-                    onChange={() =>
+                    onCheckedChange={() =>
                       void run(
                         () => updateOrgSettings({ organizationId, [key]: !data.org[key] }),
                         "Não foi possível salvar a configuração"

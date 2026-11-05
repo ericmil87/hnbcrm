@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Avatar } from "@/components/ui/Avatar";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { Switch } from "@/components/ui/Switch";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { assignableMembers } from "@/lib/teamMembers";
@@ -113,42 +114,6 @@ export function CentralSection({ organizationId }: { organizationId: Id<"organiz
 
 // --- Módulos ---------------------------------------------------------------
 
-export function Switch({
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onChange}
-      className={cn(
-        "relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
-        "before:absolute before:-inset-2.5 before:content-['']",
-        checked ? "bg-brand-500" : "bg-surface-overlay border border-border-strong",
-        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-      )}
-    >
-      <span
-        className={cn(
-          "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-          checked ? "translate-x-5" : "translate-x-1"
-        )}
-      />
-    </button>
-  );
-}
-
 function ModulesCard({
   organizationId,
   modules,
@@ -193,9 +158,9 @@ function ModulesCard({
                 <p className="mt-0.5 text-xs text-text-muted">{m.description}</p>
               </div>
               <div className="pt-1.5">
-                <Switch
+                <Switch hideLabel
                   checked={modules[m.key]}
-                  onChange={() => toggle(m.key)}
+                  onCheckedChange={() => toggle(m.key)}
                   label={m.label}
                   disabled={!canManage || busy !== null}
                 />

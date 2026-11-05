@@ -6,7 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Switch } from "@/components/settings/CentralSection";
+import { Switch } from "@/components/ui/Switch";
 import { mutationErrorMessage } from "@/lib/errors";
 import { MODULE_OFF_CONFIRMATION, STANDARD_ACCESS_NOTICE } from "@/lib/metaConnect";
 
@@ -54,9 +54,9 @@ export function MetaMessagingCard({ organizationId, enabled, hasActiveMetaChanne
           </p>
         </div>
         <div className="pt-1.5">
-          <Switch
+          <Switch hideLabel
             checked={enabled}
-            onChange={onToggle}
+            onCheckedChange={onToggle}
             label="Instagram e Facebook Messenger"
             disabled={busy}
           />

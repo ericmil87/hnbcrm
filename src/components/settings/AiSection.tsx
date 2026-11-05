@@ -28,6 +28,7 @@ import { useOrgModules } from "@/hooks/useOrgModules";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Checkbox } from "@/components/ui/Checkbox";
@@ -43,47 +44,6 @@ import {
   validateBotGuardTag,
 } from "../../../convex/lib/botGuard";
 import { formatMoney, parseDecimal } from "@/lib/format";
-
-// Switch grande do design system (role="switch") — a área clicável é maior que
-// o pill visual (touch target >= 44x44 via padding + margem negativa).
-function Switch({
-  checked,
-  onChange,
-  label,
-  disabled,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  label: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onChange}
-      disabled={disabled}
-      className="shrink-0 flex items-center justify-center p-2 -m-2 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50 disabled:cursor-not-allowed"
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "pointer-events-none relative inline-flex h-7 w-12 items-center rounded-full transition-colors",
-          checked ? "bg-brand-600" : "bg-surface-overlay border border-border-strong"
-        )}
-      >
-        <span
-          className={cn(
-            "inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform",
-            checked ? "translate-x-6" : "translate-x-1"
-          )}
-        />
-      </span>
-    </button>
-  );
-}
 
 const PERSONAS = [
   { id: "geral", label: "Atendimento geral" },
@@ -488,7 +448,7 @@ function ProductRow({
           <p className="text-sm font-medium text-text-primary">{title}</p>
           <p className="text-xs text-text-muted mt-0.5">{description}</p>
         </div>
-        {onToggle && <Switch checked={enabled} onChange={onToggle} label={title} disabled={busy} />}
+        {onToggle && <Switch checked={enabled} onCheckedChange={() => onToggle()} label={title} hideLabel disabled={busy} />}
       </div>
       {enabled && (
         <>
@@ -877,7 +837,8 @@ function BridgeAiCard({
         </div>
         <Switch
           checked={status.bridgeAiAckDone}
-          onChange={handleToggle}
+          onCheckedChange={() => handleToggle()}
+          hideLabel
           label="Canais não oficiais (bridge)"
           disabled={busy}
         />
@@ -2004,7 +1965,8 @@ function AttendantConfig({
               </div>
               <Switch
                 checked={includeCurrentDateTime}
-                onChange={() => setIncludeCurrentDateTime((v) => !v)}
+                hideLabel
+                onCheckedChange={() => setIncludeCurrentDateTime((v) => !v)}
                 label="Informar data e hora atuais à IA"
               />
             </div>
@@ -2023,7 +1985,8 @@ function AttendantConfig({
                 </div>
                 <Switch
                   checked={botGuardEnabled}
-                  onChange={() => setBotGuardEnabled((v) => !v)}
+                  hideLabel
+                  onCheckedChange={() => setBotGuardEnabled((v) => !v)}
                   label="Proteção contra robôs e mensagens automáticas"
                 />
               </div>
@@ -2347,7 +2310,8 @@ function AttendantConfig({
                   </div>
                   <Switch
                     checked={pcAllowMoveStages}
-                    onChange={() => setPcAllowMoveStages((v) => !v)}
+                    hideLabel
+                    onCheckedChange={() => setPcAllowMoveStages((v) => !v)}
                     label="Atendente pode mover leads no funil"
                   />
                 </div>

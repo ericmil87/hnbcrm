@@ -17,6 +17,8 @@ import { Modal } from "@/components/ui/Modal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { ApiKeyRevealModal } from "@/components/ui/ApiKeyRevealModal";
 import { Spinner } from "@/components/ui/Spinner";
+import { Select } from "@/components/ui/Select";
+import { Tabs, TabPanel } from "@/components/ui/Tabs";
 import { cn } from "@/lib/utils";
 import { ShieldAlert } from "lucide-react";
 import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
@@ -171,63 +173,52 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
         />
 
         <div>
-          <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Fuso Horário
-          </label>
-          <select
+          <Select
+            label="Fuso Horário"
             value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-            className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-          >
-            <option value="UTC">UTC</option>
-            <option value="America/New_York">Eastern Time</option>
-            <option value="America/Chicago">Central Time</option>
-            <option value="America/Denver">Mountain Time</option>
-            <option value="America/Los_Angeles">Pacific Time</option>
-            <option value="America/Sao_Paulo">São Paulo</option>
-            <option value="Europe/London">London</option>
-            <option value="Europe/Berlin">Berlin</option>
-            <option value="Asia/Tokyo">Tokyo</option>
-          </select>
+            onValueChange={setTimezone}
+            options={[
+              { value: "UTC", label: "UTC" },
+              { value: "America/New_York", label: "Eastern Time" },
+              { value: "America/Chicago", label: "Central Time" },
+              { value: "America/Denver", label: "Mountain Time" },
+              { value: "America/Los_Angeles", label: "Pacific Time" },
+              { value: "America/Sao_Paulo", label: "São Paulo" },
+              { value: "Europe/London", label: "London" },
+              { value: "Europe/Berlin", label: "Berlin" },
+              { value: "Asia/Tokyo", label: "Tokyo" },
+            ]}
+          />
         </div>
 
         <div>
-          <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Moeda
-          </label>
-          <select
+          <Select
+            label="Moeda"
             value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-          >
-            <option value="USD">USD ($)</option>
-            <option value="BRL">BRL (R$)</option>
-            <option value="EUR">EUR (€)</option>
-            <option value="GBP">GBP (£)</option>
-            <option value="CAD">CAD</option>
-            <option value="AUD">AUD</option>
-          </select>
+            onValueChange={setCurrency}
+            options={[
+              { value: "USD", label: "USD ($)" },
+              { value: "BRL", label: "BRL (R$)" },
+              { value: "EUR", label: "EUR (€)" },
+              { value: "GBP", label: "GBP (£)" },
+              { value: "CAD", label: "CAD" },
+              { value: "AUD", label: "AUD" },
+            ]}
+          />
         </div>
 
         <div>
-          <label htmlFor="org-default-country" className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            País padrão dos telefones
-          </label>
-          <select
+          <Select
             id="org-default-country"
+            label="País padrão dos telefones"
+            hint="Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados."
             value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value)}
-            className="w-full min-h-[44px] bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-          >
-            {SUPPORTED_DEFAULT_COUNTRIES.map((c) => (
-              <option key={c.dialCode + c.iso2} value={c.dialCode}>
-                {countryLabel(c)}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1.5 text-xs text-text-muted">
-            Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados.
-          </p>
+            onValueChange={setCountryCode}
+            options={SUPPORTED_DEFAULT_COUNTRIES.map((c) => ({
+              value: c.dialCode,
+              label: countryLabel(c),
+            }))}
+          />
         </div>
 
         <Button onClick={handleSave} disabled={saving}>
@@ -378,20 +369,12 @@ function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"
           />
           {aiAgents.length > 1 && (
             <div>
-              <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Agente IA
-              </label>
-              <select
+              <Select
+                label="Agente IA"
                 value={selectedAgentId}
-                onChange={(e) => setSelectedAgentId(e.target.value)}
-                className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-              >
-                {aiAgents.map((agent) => (
-                  <option key={agent._id} value={agent._id}>
-                    {agent.name}
-                  </option>
-                ))}
-              </select>
+                onValueChange={setSelectedAgentId}
+                options={aiAgents.map((agent) => ({ value: agent._id, label: agent.name }))}
+              />
             </div>
           )}
           <div>
@@ -518,32 +501,20 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
         </Button>
       </div>
 
-      {/* Entity type toggle */}
-      <div className="flex gap-2 mb-4">
-        <button
-          onClick={() => setEntityTab("lead")}
-          className={cn(
-            "px-4 py-2 rounded-full text-sm font-medium transition-colors",
-            entityTab === "lead"
-              ? "bg-brand-600 text-white"
-              : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
-          )}
-        >
-          Leads
-        </button>
-        <button
-          onClick={() => setEntityTab("contact")}
-          className={cn(
-            "px-4 py-2 rounded-full text-sm font-medium transition-colors",
-            entityTab === "contact"
-              ? "bg-brand-600 text-white"
-              : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
-          )}
-        >
-          Contatos
-        </button>
-      </div>
+      <Tabs
+        value={entityTab}
+        onValueChange={(v) => setEntityTab(v as "lead" | "contact")}
+        items={[
+          { id: "lead", label: "Leads" },
+          { id: "contact", label: "Contatos" },
+        ]}
+        ariaLabel="Tipo de entidade dos campos"
+        variant="pills"
+        idPrefix="custom-fields"
+        className="mb-4"
+      />
 
+      <TabPanel id={entityTab} idPrefix="custom-fields">
       {!fieldDefs && (
         <div className="flex justify-center py-8">
           <Spinner />
@@ -573,6 +544,7 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
       ) : fieldDefs ? (
         <p className="text-text-secondary">Nenhum campo personalizado definido.</p>
       ) : null}
+      </TabPanel>
 
       <ConfirmDialog
         open={!!confirmDeleteId}
@@ -610,15 +582,19 @@ function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizat
             />
           )}
           <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Tipo</label>
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-              <option value="text">Text</option>
-              <option value="number">Number</option>
-              <option value="boolean">Boolean</option>
-              <option value="date">Date</option>
-              <option value="select">Select</option>
-              <option value="multiselect">Multi-select</option>
-            </select>
+            <Select
+            label="Tipo"
+            value={form.type}
+            onValueChange={(type) => setForm({ ...form, type })}
+            options={[
+              { value: "text", label: "Text" },
+              { value: "number", label: "Number" },
+              { value: "boolean", label: "Boolean" },
+              { value: "date", label: "Date" },
+              { value: "select", label: "Select" },
+              { value: "multiselect", label: "Multi-select" },
+            ]}
+          />
           </div>
           {(form.type === "select" || form.type === "multiselect") && (
             <Input
@@ -761,16 +737,20 @@ function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizati
             required
           />
           <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">Tipo</label>
-            <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20">
-              <option value="website">Website</option>
-              <option value="social">Social</option>
-              <option value="email">Email</option>
-              <option value="phone">Phone</option>
-              <option value="referral">Referral</option>
-              <option value="api">API</option>
-              <option value="other">Other</option>
-            </select>
+            <Select
+            label="Tipo"
+            value={form.type}
+            onValueChange={(type) => setForm({ ...form, type })}
+            options={[
+              { value: "website", label: "Website" },
+              { value: "social", label: "Social" },
+              { value: "email", label: "Email" },
+              { value: "phone", label: "Phone" },
+              { value: "referral", label: "Referral" },
+              { value: "api", label: "API" },
+              { value: "other", label: "Other" },
+            ]}
+          />
           </div>
           <div className="flex gap-2 pt-4">
             <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
