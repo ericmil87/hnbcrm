@@ -8,17 +8,20 @@ import { Avatar } from "../ui/Avatar";
 import { Spinner } from "../ui/Spinner";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { useState } from "react";
+import { useNavigate } from "react-router";
 import {
   Calendar,
   CheckCircle2,
   XCircle,
   Trash2,
   User,
-  AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
+import { TAB_ROUTES } from "@/lib/routes";
+import { formatDate, formatTime } from "@/lib/format";
 
-interface TaskDetailSlideOverProps {
+interface TaskQuickViewProps {
   open: boolean;
   onClose: () => void;
   taskId: string | null;
@@ -40,7 +43,7 @@ const PRIORITY_VARIANTS: Record<string, "default" | "warning" | "error"> = {
 
 const STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
-  in_progress: "Em Andamento",
+  in_progress: "Em andamento",
   completed: "Concluída",
   cancelled: "Cancelada",
 };
@@ -63,7 +66,8 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   other: "Outro",
 };
 
-export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOverProps) {
+export function TaskQuickView({ open, onClose, taskId }: TaskQuickViewProps) {
+  const navigate = useNavigate();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const task = useQuery(
@@ -81,10 +85,10 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
         taskId: taskId as Id<"tasks">,
         status: "completed",
       });
-      toast.success("Tarefa concluída!");
+      toast.success("Tarefa concluída");
       onClose();
     } catch (error) {
-      toast.error("Erro ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
       console.error(error);
     }
   };
@@ -96,10 +100,10 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
         taskId: taskId as Id<"tasks">,
         status: "cancelled",
       });
-      toast.success("Tarefa cancelada!");
+      toast.success("Tarefa cancelada");
       onClose();
     } catch (error) {
-      toast.error("Erro ao cancelar tarefa");
+      toast.error("Não foi possível cancelar a tarefa.");
       console.error(error);
     }
   };
@@ -108,11 +112,11 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
     if (!taskId) return;
     try {
       await deleteTask({ taskId: taskId as Id<"tasks"> });
-      toast.success("Tarefa excluída!");
+      toast.success("Tarefa excluída");
       setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
-      toast.error("Erro ao excluir tarefa");
+      toast.error("Não foi possível excluir a tarefa.");
       console.error(error);
     }
   };
@@ -129,21 +133,11 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
 
   const dueDate = task.dueDate ? new Date(task.dueDate) : null;
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString("pt-BR", {
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    });
-  };
-
-  const formatTime = (date: Date) => {
-    return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
-  };
+  const openFullTask = () => navigate(`${TAB_ROUTES.tasks}?task=${task._id}`);
 
   return (
     <>
-      <SlideOver open={open} onClose={onClose} title="Detalhes da Tarefa">
+      <SlideOver open={open} onClose={onClose} title="Resumo da tarefa">
         <div className="p-4 md:p-6 space-y-6">
           {/* Header */}
           <div>
@@ -226,15 +220,11 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
             </div>
           )}
 
-          {/* Info: Tasks are edited on Tasks page */}
-          <div className="p-3 bg-brand-500/10 border border-brand-500/20 rounded-lg">
-            <div className="flex items-start gap-2">
-              <AlertCircle size={16} className="text-brand-500 shrink-0 mt-0.5" />
-              <p className="text-xs text-text-secondary">
-                Para editar esta tarefa, acesse a página de Tarefas
-              </p>
-            </div>
-          </div>
+          {/* A edição completa fica na página de Tarefas. */}
+          <Button variant="secondary" className="w-full" onClick={openFullTask}>
+            <ExternalLink size={16} aria-hidden="true" />
+            Abrir tarefa
+          </Button>
 
           {/* Actions */}
           <div className="space-y-2 pt-4 border-t border-border">
@@ -263,7 +253,7 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
               className="w-full justify-start text-semantic-error hover:text-semantic-error hover:bg-semantic-error/10"
               onClick={() => setShowDeleteConfirm(true)}
             >
-              <Trash2 size={16} />
+              <Trash2 size={16} aria-hidden="true" />
               Excluir
             </Button>
           </div>
@@ -274,7 +264,7 @@ export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOv
         open={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={handleDelete}
-        title="Excluir Tarefa"
+        title="Excluir tarefa"
         description="Tem certeza que deseja excluir esta tarefa? Esta ação não pode ser desfeita."
         confirmLabel="Excluir"
         variant="danger"

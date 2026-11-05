@@ -91,4 +91,43 @@ describe("useSearchParamState", () => {
     expect(screen.getByTestId("selected")).toHaveTextContent("nada");
     expect(router.state.location.search).toBe("");
   });
+
+  it("replace preserva o location.state da entrada; push sem state começa limpo", async () => {
+    function Writer() {
+      const tab = useSearchParamState("tab", stringParam);
+      const entity = useSearchParamState("item", stringParam, { history: "push" });
+      return (
+        <div>
+          <button onClick={() => tab.set("x")}>aba</button>
+          <button onClick={() => entity.set("i2")}>push</button>
+          <button onClick={() => entity.set("i3", { state: { mark: 2 } })}>push marcado</button>
+          <button onClick={() => tab.set("y", { state: { other: true } })}>aba com state</button>
+        </div>
+      );
+    }
+    const { router } = renderWithRouter(<Writer />, { route: "/" });
+    await act(async () => {
+      await router.navigate("/?item=i1", { state: { mark: 1 } });
+    });
+    await act(async () => {
+      screen.getByText("aba").click();
+    });
+    expect(router.state.location.state).toEqual({ mark: 1 });
+    expect(new URLSearchParams(router.state.location.search).get("tab")).toBe("x");
+
+    await act(async () => {
+      screen.getByText("push").click();
+    });
+    expect(router.state.location.state).toBeNull();
+
+    await act(async () => {
+      screen.getByText("push marcado").click();
+    });
+    expect(router.state.location.state).toEqual({ mark: 2 });
+
+    await act(async () => {
+      screen.getByText("aba com state").click();
+    });
+    expect(router.state.location.state).toEqual({ other: true });
+  });
 });

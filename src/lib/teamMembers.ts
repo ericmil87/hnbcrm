@@ -1,3 +1,5 @@
+import { VOCAB } from "./vocab";
+
 /**
  * Membro removido da org continua existindo para o HISTÓRICO (responsável de
  * um lead antigo, autor de comentário), mas não é opção de atribuição nova — o
@@ -40,4 +42,12 @@ export function isPendingMember(member: {
 }): boolean {
   if (typeof member.pending === "boolean") return member.pending;
   return member.type === "human" && !member.userId && !member.removed;
+}
+
+/** Papel para selo: "IA" para atendente de IA; senão Administrador, Gerente ou Atendente. */
+export function memberRoleLabel(member: { type?: string; role?: string }): string {
+  if (member.type === "ai") return "IA";
+  if (member.role === "admin") return VOCAB.roles.admin;
+  if (member.role === "manager") return VOCAB.roles.manager;
+  return VOCAB.roles.agent;
 }
