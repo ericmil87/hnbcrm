@@ -138,9 +138,22 @@ function longTextBlock(label: string | null, before: unknown, after: unknown): s
   if (label) out.push(label);
   out.push(`Antes: ${textStats(b)}`, `Depois: ${textStats(a)}`);
   const diff = diffLines(b, a);
-  for (const d of diff.slice(0, PREVIEW_MAX_DIFF_LINES)) out.push(`${d.type} ${cutLine(d.line)}`);
-  if (diff.length > PREVIEW_MAX_DIFF_LINES) {
-    out.push(`(+${diff.length - PREVIEW_MAX_DIFF_LINES} linhas)`);
+  const removed = diff.filter((d) => d.type === "-");
+  const added = diff.filter((d) => d.type === "+");
+  // Metade das linhas é reservada aos "+": o "Depois" nunca some, mesmo quando
+  // o texto antigo foi todo removido. Com mais de 6 novas, mostra as 5 primeiras
+  // e a ÚLTIMA (o fim do texto novo também é lido por quem confirma).
+  const addBudget = Math.min(added.length, PREVIEW_MAX_DIFF_LINES / 2);
+  const remShown = Math.min(removed.length, PREVIEW_MAX_DIFF_LINES - addBudget);
+  const addCap = Math.min(added.length, PREVIEW_MAX_DIFF_LINES - remShown);
+  for (const d of removed.slice(0, remShown)) out.push(`- ${cutLine(d.line)}`);
+  if (removed.length > remShown) out.push(`(+${removed.length - remShown} linhas removidas)`);
+  if (added.length <= addCap) {
+    for (const d of added) out.push(`+ ${cutLine(d.line)}`);
+  } else {
+    for (const d of added.slice(0, addCap - 1)) out.push(`+ ${cutLine(d.line)}`);
+    out.push(`(+${added.length - addCap} linhas adicionadas)`);
+    out.push(`+ ${cutLine(added[added.length - 1]!.line)}`);
   }
   return out;
 }
@@ -204,9 +217,6 @@ export function buildConfigPreview(tool: string, before: ConfigSnapshot, after: 
       lines.push(head("jeito de atender (persona)"));
       if ("name" in after) lines.push(...scalarBlock("Nome", String(before.name ?? ""), String(after.name ?? "")));
       if ("systemPrompt" in after) lines.push(...longTextBlock("Persona", before.systemPrompt, after.systemPrompt));
-      if ("disclosure" in after) {
-        lines.push(...scalarBlock("Apresentação na 1ª resposta", String(before.disclosure ?? "padrão"), String(after.disclosure ?? "padrão")));
-      }
       if ("language" in after) {
         lines.push(...scalarBlock("Idioma", String(before.language ?? "pt-BR"), String(after.language ?? "pt-BR")));
       }
@@ -232,13 +242,18 @@ export function buildConfigPreview(tool: string, before: ConfigSnapshot, after: 
       lines.push(`Antes: ${b.length} palavra${b.length === 1 ? "" : "s"}/frase${b.length === 1 ? "" : "s"}`);
       lines.push(`Depois: ${a.length} palavra${a.length === 1 ? "" : "s"}/frase${a.length === 1 ? "" : "s"}`);
       lines.push(...listDiff(b, a));
+      lines.push('Obs.: com lista configurada, "atendente" ou "humano" soltos em mensagem curta deixam de chamar a equipe; só as frases valem.');
       break;
     }
     case "setFollowUpSettings":
       lines.push(head("follow-up automático"));
       lines.push(...scalarBlock(null, followUpsText(before.followUps), followUpsText(after.followUps)));
       if ((after.followUps as { mode?: string } | null | undefined)?.mode === "send") {
-        lines.push("Atenção: a IA vai enviar os follow-ups sozinha, sem aprovação.");
+        lines.push(
+          before.attendantMode === "autopilot"
+            ? "Atenção: a IA vai enviar os follow-ups sozinha, sem aprovação."
+            : "Atenção: os follow-ups serão enviados sozinhos quando o Atendente IA estiver em Responder sozinha."
+        );
       }
       break;
     case "setAiFeatures": {

@@ -222,7 +222,6 @@ export async function runConfigCopilotReadTool(
     language: profile.language ?? "pt-BR",
     persona: persona.text,
     knowledge: knowledge.text,
-    greeting: profile.disclosure ?? null,
     handoffKeywords: effectiveKeywords(profile.handoffKeywords),
     schedule: profile.schedule
       ? { ...profile.schedule, label: formatSchedule(profile.schedule) }
@@ -284,7 +283,6 @@ type Plan = {
 const PATCH_KEYS = [
   "systemPrompt",
   "knowledge",
-  "disclosure",
   "language",
   "mode",
   "schedule",
@@ -309,12 +307,14 @@ async function currentSnapshot(
     if (plan.rename !== undefined) out.name = agent.name;
     if ("systemPrompt" in patch) out.systemPrompt = texts?.systemPrompt ?? "";
     if ("knowledge" in patch) out.knowledge = texts?.knowledge ?? "";
-    if ("disclosure" in patch) out.disclosure = profile.disclosure ?? null;
     if ("language" in patch) out.language = profile.language ?? null;
     if ("mode" in patch) out.mode = profile.mode;
     if ("schedule" in patch) out.schedule = profile.schedule ?? null;
     if ("handoffKeywords" in patch) out.handoffKeywords = effectiveKeywords(profile.handoffKeywords);
-    if ("followUps" in patch) out.followUps = profile.followUps ?? null;
+    if ("followUps" in patch) {
+      out.followUps = profile.followUps ?? null;
+      out.attendantMode = profile.mode; // a prévia avisa diferente conforme o modo
+    }
   }
   if (plan.visionEnabled !== undefined) out.visionEnabled = org.settings.aiConfig?.visionEnabled === true;
   if (plan.channelConfigIds) {
@@ -435,18 +435,13 @@ export async function runConfigCopilotWriteTool(
         if (!args.persona.trim() || args.persona.length > TEXT_LIMIT) return { error: `A persona deve ter de 1 a ${TEXT_LIMIT} caracteres` };
         patch.systemPrompt = args.persona;
       }
-      if (typeof args.greeting === "string") {
-        const g = args.greeting.trim();
-        if (!g || g.length > 500) return { error: "A apresentação deve ter de 1 a 500 caracteres" };
-        patch.disclosure = g;
-      }
       if (typeof args.language === "string") {
         const l = args.language.trim();
         if (!l || l.length > 20) return { error: "Idioma inválido (exemplo: pt-BR)" };
         patch.language = l;
       }
       if (plan.rename === undefined && Object.keys(patch).length === 0) {
-        return { error: "Informe ao menos um ajuste: newName, persona, greeting ou language" };
+        return { error: "Informe ao menos um ajuste: newName, persona ou language" };
       }
       break;
     }
@@ -458,6 +453,9 @@ export async function runConfigCopilotWriteTool(
       if (args.mode === "append") {
         const current = (await readAgentTexts(ctx, agent!)).knowledge ?? "";
         finalText = current.trim() ? `${current}\n\n${text}` : text;
+        if (finalText.length > TEXT_LIMIT) {
+          return { error: `Com o acréscimo o conhecimento passaria de ${TEXT_LIMIT} caracteres (hoje: ${current.length}). Resuma e use mode "replace".` };
+        }
       }
       patch.knowledge = finalText;
       break;
@@ -581,6 +579,9 @@ export async function runConfigCopilotWriteTool(
             return { error: "Há mais de um canal de WhatsApp. Diga o apelido do canal ou all=true.", channels: wa.map((c) => c.displayName) };
           }
         }
+        if (new Set(chosen.map((c) => norm(c.displayName))).size !== chosen.length) {
+          return { error: "Há canais de WhatsApp com o mesmo apelido; renomeie um deles antes.", channels: wa.map((c) => c.displayName) };
+        }
         plan.channelConfigIds = chosen.map((c) => c._id);
         plan.transcriptionEnabled = t.enabled;
         channelLabels = chosen.map((c) => c.displayName);
@@ -666,7 +667,14 @@ export async function executeConfigPendingAction(
   let agent: Doc<"teamMembers"> | null = null;
   if (plan.agentMemberId) {
     agent = await ctx.db.get(plan.agentMemberId);
-    if (!agent || agent.organizationId !== pending.organizationId || agent.type !== "ai" || !agent.agentProfile) {
+    if (
+      !agent ||
+      agent.organizationId !== pending.organizationId ||
+      agent.type !== "ai" ||
+      agent.agentProfile?.kind !== "attendant" ||
+      agent.removedAt !== undefined ||
+      agent.status === "inactive"
+    ) {
       return fail("O atendente não existe mais");
     }
   }

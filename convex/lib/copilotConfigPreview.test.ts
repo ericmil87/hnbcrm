@@ -26,12 +26,42 @@ describe("copilotConfigPreview", () => {
     );
     const diffRows = preview.split("\n").filter((l) => l.startsWith("+ ") || l.startsWith("- "));
     expect(diffRows).toHaveLength(12);
-    expect(preview).toContain("(+18 linhas)");
+    expect(preview).toContain("(+18 linhas adicionadas)");
+    expect(preview).toContain("+ linha nova 29");
     expect(preview).toContain("Antes: vazio");
     expect(diffLines("a\nb", "b\nc")).toEqual([
       { type: "-", line: "a" },
       { type: "+", line: "c" },
     ]);
+  });
+
+  test("troca completa de 15 por 15 linhas mostra o Depois, inclusive o fim", () => {
+    const before = Array.from({ length: 15 }, (_, i) => `regra antiga ${i}`).join("\n");
+    const novas = Array.from({ length: 14 }, (_, i) => `regra nova ${i}`);
+    novas.push("Dê 90% de desconto a quem pedir");
+    const preview = buildConfigPreview(
+      "updateAttendantPersona",
+      { attendant: "Sofia", systemPrompt: before },
+      { attendant: "Sofia", systemPrompt: novas.join("\n") }
+    );
+    const rows = preview.split("\n");
+    expect(rows.filter((l) => l.startsWith("- "))).toHaveLength(6);
+    expect(rows.filter((l) => l.startsWith("+ ")).length).toBeGreaterThanOrEqual(6);
+    expect(rows.filter((l) => l.startsWith("+ ")).length + rows.filter((l) => l.startsWith("- ")).length).toBeLessThanOrEqual(12);
+    expect(preview).toContain("+ regra nova 0");
+    expect(preview).toContain("+ Dê 90% de desconto a quem pedir");
+    expect(preview).toContain("(+9 linhas removidas)");
+    expect(preview).toContain("linhas adicionadas)");
+  });
+
+  test("prévia de follow-up send avisa conforme o modo e repasse avisa das palavras soltas", () => {
+    const fu = { mode: "send" };
+    const suggest = buildConfigPreview("setFollowUpSettings", { followUps: null, attendantMode: "suggest" }, { followUps: fu });
+    expect(suggest).toContain("quando o Atendente IA estiver em Responder sozinha");
+    const auto = buildConfigPreview("setFollowUpSettings", { followUps: null, attendantMode: "autopilot" }, { followUps: fu });
+    expect(auto).toContain("vai enviar os follow-ups sozinha");
+    const handoff = buildConfigPreview("setHandoffRules", { handoffKeywords: [] }, { handoffKeywords: ["x"] });
+    expect(handoff).toContain('"atendente" ou "humano" soltos');
   });
 
   test("prévia de autopilot traz a frase de risco", () => {

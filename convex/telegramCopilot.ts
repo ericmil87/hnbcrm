@@ -50,6 +50,7 @@ import {
   SUGGEST_SYSTEM_TEXT,
   UNDO_WINDOW_MS,
   autoActionsLeft,
+  autoTurnAllowsTool,
   autoModeSystemText,
   autoWriteTools,
   effectiveAssistantMode,
@@ -1057,7 +1058,7 @@ async function assistantAutoTurnLocked(ctx: ActionCtx, args: AssistantTurnArgs):
   const allowed = new Set(event.allowedWriteTools);
   const outcome = await runTelegramTurn(ctx, target, event.text, {
     extraSystem: autoModeSystemText(event.allowedWriteTools),
-    toolFilter: (spec) => spec.effect === "read" || (spec.effect === "write" && allowed.has(spec.name)),
+    toolFilter: (spec) => autoTurnAllowsTool(spec, allowed),
     interactive: false,
     quiet: true,
     toolVia: "telegram_auto",

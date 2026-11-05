@@ -15,7 +15,7 @@ import { createNotification } from "./lib/notify";
 import { maybeScheduleAiReplyRelay } from "./lib/telegramRelay";
 import { runAttendantCopilotWriteTool } from "./lib/copilotAttendantTools";
 import { buildConversationContextBlock, loadFocusContextInput } from "./lib/telegramContext";
-import { autoModeDescription, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
+import { autoModeDescription, autoTurnAllowsTool, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
 import { handleModeCommand } from "./lib/telegramActions";
 import { buildTourCard } from "./lib/telegramOnboarding";
 import { COPILOT_COPY } from "./telegramCopilot";
@@ -549,6 +549,15 @@ describe("modos (D22)", () => {
     const tools = autoWriteTools({ assistant: { autoAllowed: { instructAi: true, createTask: true, moveStage: false, acceptHandoff: true, replyCustomer: false } } } as any);
     expect(tools).not.toContain("sendCustomerReply");
     expect(tools).not.toContain("deleteLead");
+  });
+
+  test("turno automático não recebe as leituras de configuração do atendente", () => {
+    const allowed = new Set(["createTask"]);
+    expect(autoTurnAllowsTool({ name: "getAttendantConfig", effect: "read" }, allowed)).toBe(false);
+    expect(autoTurnAllowsTool({ name: "getAttendantSetupGuide", effect: "read" }, allowed)).toBe(false);
+    expect(autoTurnAllowsTool({ name: "listLeads", effect: "read" }, allowed)).toBe(true);
+    expect(autoTurnAllowsTool({ name: "createTask", effect: "write" }, allowed)).toBe(true);
+    expect(autoTurnAllowsTool({ name: "setAttendantMode", effect: "write" }, allowed)).toBe(false);
   });
 
   test("autoWriteTools nunca inclui tools de config", () => {

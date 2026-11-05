@@ -65,6 +65,15 @@ export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): s
   ];
 }
 
+/** Read tools the automatic turn must NOT get (customer-triggered turn: no persona/knowledge leaks). */
+export const AUTO_BLOCKED_READ_TOOLS: ReadonlySet<string> = new Set(["getAttendantConfig", "getAttendantSetupGuide"]);
+
+/** Tool filter of the automatic turn: reads (minus the blocked ones) plus the allowed writes. */
+export function autoTurnAllowsTool(spec: { name: string; effect: string }, allowedWrites: ReadonlySet<string>): boolean {
+  if (spec.effect === "read") return !AUTO_BLOCKED_READ_TOOLS.has(spec.name);
+  return spec.effect === "write" && allowedWrites.has(spec.name);
+}
+
 const AUTO_LABELS: Record<string, string> = {
   instructAttendant: "instruir a IA",
   createTask: "criar tarefa",

@@ -686,7 +686,7 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     resultFields: [
       "name", "mode", "language", "persona", "knowledge", "handoffKeywords", "schedule", "followUps",
       "channels", "visionEnabled", "transcription", "bridgeAiAckDone", "autopilotEligible", "attendants",
-      "aiActive", "warning", "greeting",
+      "aiActive", "warning", "status", "instruction", "url", "error",
     ],
   },
   {
@@ -700,7 +700,7 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "view" },
     audience: "copilot",
     effect: "read",
-    resultFields: ["segment", "businessSummary", "personaSeed", "faqSeed", "handoffSeed", "missingSteps"],
+    resultFields: ["segment", "businessSummary", "personaSeed", "faqSeed", "handoffSeed", "missingSteps", "status", "instruction", "url", "error"],
   },
 ];
 
@@ -1182,13 +1182,12 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
   {
     name: "updateAttendantPersona",
     description:
-      "PROPÕE mudar o jeito de atender do Atendente IA (nome, persona, apresentação na 1ª resposta, idioma). Não aplica agora: gera uma confirmação com Antes/Depois que o usuário precisa aprovar.",
+      "PROPÕE mudar o jeito de atender do Atendente IA (nome, persona, idioma; saudação e boas-vindas ficam dentro da persona). Não aplica agora: gera uma confirmação com Antes/Depois que o usuário precisa aprovar.",
     parameters: schema(
       {
         attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
         newName: { type: "string", maxLength: 60, description: "Novo nome do atendente" },
         persona: { type: "string", maxLength: 20000, description: "Texto completo da nova persona (substitui a atual)" },
-        greeting: { type: "string", maxLength: 500, description: "Frase de apresentação na 1ª resposta (diz que é uma IA)" },
         language: { type: "string", description: "Idioma, ex.: pt-BR" },
       },
       []
@@ -1196,7 +1195,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "manage" },
     audience: "copilot",
     effect: "write",
-    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
   },
   {
     name: "updateAttendantKnowledge",
@@ -1213,7 +1212,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "manage" },
     audience: "copilot",
     effect: "write",
-    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
   },
   {
     name: "setAttendantMode",
@@ -1248,7 +1247,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "manage" },
     audience: "copilot",
     effect: "write",
-    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
   },
   {
     name: "setHandoffRules",
@@ -1265,7 +1264,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "manage" },
     audience: "copilot",
     effect: "write",
-    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
   },
   {
     name: "setFollowUpSettings",
@@ -1285,7 +1284,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     permission: { category: "settings", level: "manage" },
     audience: "copilot",
     effect: "write",
-    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
   },
   {
     name: "setAiFeatures",

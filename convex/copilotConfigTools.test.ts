@@ -10,6 +10,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { readAgentTexts } from "./lib/agentProfileTexts";
+import { ALL_AGENT_TOOLS, projectToolResult, toolSpecByName } from "./lib/agentTools";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -407,5 +408,69 @@ describe("copilotConfigTools: Telegram automático", () => {
     const r = await propose(t, s, "updateAttendantPersona", { persona: "x" }, undefined, "telegram_auto");
     expect(r.error).toBe("Mudanças de configuração só com sua confirmação");
     expect(await pendings(t)).toHaveLength(0);
+  });
+});
+
+describe("copilotConfigTools: correções da revisão", () => {
+  test("resposta de requer_acao_humana chega ao modelo com instruction e url", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.attendantId, { type: "human" });
+    });
+    for (const [name, args] of [["getAttendantConfig", {}], ["setAttendantMode", { mode: "suggest" }]] as const) {
+      const r =
+        name === "getAttendantConfig" ? await read(t, s, name, args) : await propose(t, s, name, args);
+      expect(r.status).toBe("requer_acao_humana");
+      expect(r.instruction).toContain("Atendente IA");
+      expect(r.url).toContain("secao=ai");
+    }
+    const spec = toolSpecByName("setAttendantMode")!;
+    const projected = projectToolResult(spec, { status: "requer_acao_humana", instruction: "i", url: "u" });
+    expect(projected).toEqual({ status: "requer_acao_humana", instruction: "i", url: "u" });
+    for (const tool of ALL_AGENT_TOOLS.filter((x) => /Attendant(Config|SetupGuide|Persona|Knowledge|Mode|Hours)|setHandoffRules|setFollowUpSettings|setAiFeatures/.test(x.name))) {
+      for (const f of ["status", "instruction", "url"]) expect(tool.resultFields, tool.name).toContain(f);
+    }
+  });
+
+  test("updateAttendantPersona não tem o parâmetro greeting", () => {
+    const props = Object.keys((toolSpecByName("updateAttendantPersona")!.parameters as { properties: object }).properties);
+    expect(props).not.toContain("greeting");
+  });
+
+  test("append que passa de 20 000 caracteres é recusado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const big = "a".repeat(15_000);
+    const first = await propose(t, s, "updateAttendantKnowledge", { text: big, mode: "replace" });
+    await t.mutation(internal.copilot.internalConfirmPendingAction, { pendingActionId: first.pendingActionId, memberId: s.adminId });
+    const r = await propose(t, s, "updateAttendantKnowledge", { text: big, mode: "append" });
+    expect(r.error).toContain("replace");
+    expect(await pendings(t)).toHaveLength(1);
+  });
+
+  test("canais com apelido repetido recusam all", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("channelConfigs", {
+        organizationId: s.organizationId, channel: "whatsapp", provider: "meta", displayName: "Número principal",
+        phoneNumberId: "999", status: "active", createdAt: now, updatedAt: now,
+      });
+    });
+    const r = await propose(t, s, "setAiFeatures", { transcription: { all: true, enabled: true } });
+    expect(r.error).toContain("mesmo apelido");
+    expect(r.channels).toHaveLength(2);
+  });
+
+  test("confirmar recusa atendente removido depois da proposta", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const r = await propose(t, s, "setFollowUpSettings", { mode: "off" });
+    await t.run((ctx) => ctx.db.patch(s.attendantId, { removedAt: Date.now() }));
+    await expect(
+      t.mutation(internal.copilot.internalConfirmPendingAction, { pendingActionId: r.pendingActionId, memberId: s.adminId })
+    ).rejects.toThrow(/não existe mais/);
   });
 });
