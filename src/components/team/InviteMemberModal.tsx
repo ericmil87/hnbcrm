@@ -5,6 +5,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { PermissionsEditor } from "./PermissionsEditor";
@@ -296,25 +297,14 @@ export function InviteMemberModal({
       {/* Custom permissions toggle */}
       <div className="flex items-center justify-between">
         <span className="text-sm text-text-secondary">
-          Personalizar permissoes
+          Personalizar permissões
         </span>
-        <button
-          type="button"
-          onClick={() => setCustomPermissions(!customPermissions)}
-          className={cn(
-            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-            customPermissions ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-          )}
-          role="switch"
-          aria-checked={customPermissions}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-              customPermissions ? "translate-x-6" : "translate-x-1"
-            )}
-          />
-        </button>
+        <Switch
+          checked={customPermissions}
+          onCheckedChange={setCustomPermissions}
+          label="Personalizar permissões"
+          hideLabel
+        />
       </div>
 
       {customPermissions && (
@@ -354,23 +344,12 @@ export function InviteMemberModal({
             <Key size={16} className="text-brand-500" />
             <span className="text-sm font-medium text-text-primary">Gerar chave de integração</span>
           </div>
-          <button
-            type="button"
-            onClick={() => setGenerateApiKey(!generateApiKey)}
-            className={cn(
-              "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-              generateApiKey ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-            )}
-            role="switch"
-            aria-checked={generateApiKey}
-          >
-            <span
-              className={cn(
-                "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                generateApiKey ? "translate-x-6" : "translate-x-1"
-              )}
-            />
-          </button>
+          <Switch
+            checked={generateApiKey}
+            onCheckedChange={setGenerateApiKey}
+            label="Gerar chave de integração"
+            hideLabel
+          />
         </div>
         {generateApiKey && name.trim() && (
           <p className="text-xs text-text-muted">
@@ -387,25 +366,14 @@ export function InviteMemberModal({
       {/* Permissions */}
       <div className="flex items-center justify-between">
         <span className="text-sm text-text-secondary">
-          Personalizar permissoes
+          Personalizar permissões
         </span>
-        <button
-          type="button"
-          onClick={() => setCustomPermissions(!customPermissions)}
-          className={cn(
-            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-            customPermissions ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-          )}
-          role="switch"
-          aria-checked={customPermissions}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-              customPermissions ? "translate-x-6" : "translate-x-1"
-            )}
-          />
-        </button>
+        <Switch
+          checked={customPermissions}
+          onCheckedChange={setCustomPermissions}
+          label="Personalizar permissões"
+          hideLabel
+        />
       </div>
 
       {!customPermissions && (

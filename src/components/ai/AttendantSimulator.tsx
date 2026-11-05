@@ -213,8 +213,7 @@ export function AttendantSimulatorView({
             <button
               key={k}
               type="button"
-              role="switch"
-              aria-checked={kind === k}
+              aria-pressed={kind === k}
               aria-label={hint}
               onClick={() => onKindChange(kind === k ? "text" : k)}
               className={cn(

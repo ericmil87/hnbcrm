@@ -5,6 +5,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
@@ -142,25 +143,13 @@ export function BridgeHistoryPanel({
             </Badge>
           }
         >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            aria-label="Histórico do aparelho"
+          <Switch
+            checked={enabled}
+            onCheckedChange={(next) => void persist({ enabled: next })}
+            label="Histórico do aparelho"
+            hideLabel
             disabled={saving}
-            onClick={() => void persist({ enabled: !enabled })}
-            className={cn(
-              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50",
-              enabled ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-            )}
-          >
-            <span
-              className={cn(
-                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                enabled ? "translate-x-5" : "translate-x-1"
-              )}
-            />
-          </button>
+          />
         </PermissionGate>
       </div>
 

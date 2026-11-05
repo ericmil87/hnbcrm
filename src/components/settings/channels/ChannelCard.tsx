@@ -5,6 +5,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { Copy, Check, RefreshCw, Power, Trash2, QrCode, Cloud, Radio, LayoutTemplate, BellRing } from "lucide-react";
@@ -196,28 +197,12 @@ export function ChannelCard({
                 </Badge>
               }
             >
-              <button
-                type="button"
-                role="switch"
-                aria-checked={phoneNotificationsOn}
-                aria-label="Notificações no celular"
-                onClick={onTogglePhoneNotifications}
-                className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              >
-                <span
-                  className={cn(
-                    "relative inline-flex h-6 w-10 items-center rounded-full transition-colors",
-                    phoneNotificationsOn ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                      phoneNotificationsOn ? "translate-x-5" : "translate-x-1"
-                    )}
-                  />
-                </span>
-              </button>
+              <Switch
+                checked={phoneNotificationsOn}
+                onCheckedChange={onTogglePhoneNotifications}
+                label="Notificações no celular"
+                hideLabel
+              />
             </PermissionGate>
           </div>
           <p className="mt-1.5 text-xs text-text-muted">

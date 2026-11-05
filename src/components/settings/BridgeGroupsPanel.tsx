@@ -21,6 +21,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { PermissionGate } from "@/components/guards/PermissionGate";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -296,25 +297,13 @@ export function BridgeGroupsPanel({
             </Badge>
           }
         >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={enabled}
-            aria-label="Grupos neste número"
+          <Switch
+            checked={enabled}
+            onCheckedChange={() => void handleToggleEnabled()}
+            label="Grupos neste número"
+            hideLabel
             disabled={busy || settings === undefined}
-            onClick={() => void handleToggleEnabled()}
-            className={cn(
-              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50",
-              enabled ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-            )}
-          >
-            <span
-              className={cn(
-                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                enabled ? "translate-x-5" : "translate-x-1"
-              )}
-            />
-          </button>
+          />
         </PermissionGate>
       </div>
 
@@ -451,41 +440,18 @@ export function BridgeGroupsPanel({
                             </Badge>
                           }
                         >
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={group.monitored}
-                            aria-label={`Acompanhar ${group.subject}`}
-                            disabled={pendingId === group._id}
-                            onClick={() => void handleToggleMonitored(group)}
-                            className="flex shrink-0 cursor-pointer items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <span
-                              className={cn(
-                                "text-xs",
-                                group.monitored
-                                  ? "font-medium text-semantic-success"
-                                  : "text-text-muted"
-                              )}
-                            >
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className={cn("text-xs", group.monitored ? "font-medium text-semantic-success" : "text-text-muted")}>
                               {group.monitored ? "Acompanhando" : "Acompanhar"}
                             </span>
-                            <span
-                              className={cn(
-                                "relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors",
-                                group.monitored
-                                  ? "bg-brand-500"
-                                  : "bg-surface-overlay border border-border-strong"
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                                  group.monitored ? "translate-x-5" : "translate-x-1"
-                                )}
-                              />
-                            </span>
-                          </button>
+                            <Switch
+                              checked={group.monitored}
+                              onCheckedChange={() => void handleToggleMonitored(group)}
+                              label={`Acompanhar ${group.subject}`}
+                              hideLabel
+                              disabled={pendingId === group._id}
+                            />
+                          </div>
                         </PermissionGate>
                       </div>
 

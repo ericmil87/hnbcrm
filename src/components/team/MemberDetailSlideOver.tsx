@@ -5,6 +5,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -381,25 +382,14 @@ export function MemberDetailSlideOver({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-text-secondary">
-                  Personalizar permissoes
+                  Personalizar permissões
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setCustomPermissions(!customPermissions)}
-                  className={cn(
-                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                    customPermissions ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-                  )}
-                  role="switch"
-                  aria-checked={customPermissions}
-                >
-                  <span
-                    className={cn(
-                      "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                      customPermissions ? "translate-x-6" : "translate-x-1"
-                    )}
-                  />
-                </button>
+                <Switch
+                  checked={customPermissions}
+                  onCheckedChange={setCustomPermissions}
+                  label="Personalizar permissões"
+                  hideLabel
+                />
               </div>
 
               <PermissionsEditor
