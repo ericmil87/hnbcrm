@@ -65,6 +65,12 @@ import {
   runAttendantCopilotReadTool,
   runAttendantCopilotWriteTool,
 } from "./lib/copilotAttendantTools";
+import {
+  isConfigCopilotReadTool,
+  isConfigCopilotWriteTool,
+  runConfigCopilotReadTool,
+  runConfigCopilotWriteTool,
+} from "./lib/copilotConfigTools";
 
 const MAX_THREADS_PER_MEMBER = 50;
 const HISTORY_LIMIT = 200;
@@ -460,6 +466,8 @@ async function runReadTool(
           now: scope.now,
         });
       }
+      // Configuração do Atendente IA (fv2-16) — `lib/copilotConfigTools.ts`.
+      if (isConfigCopilotReadTool(name)) return await runConfigCopilotReadTool(ctx, name, toolArgs, { organizationId });
       return { error: `Tool não implementada: ${name}` };
   }
 }
@@ -1933,6 +1941,16 @@ async function runWriteTool(
           agentRunId: scope.agentRunId,
           turnStartedAt: scope.turnStartedAt,
           assistantMode: scope.assistantMode,
+        });
+      }
+      // Configuração do Atendente IA (fv2-16) — `lib/copilotConfigTools.ts`.
+      if (isConfigCopilotWriteTool(name)) {
+        return await runConfigCopilotWriteTool(ctx, name, toolArgs, {
+          organizationId,
+          member,
+          threadId: scope.threadId,
+          pendingActionTtlMs: PENDING_ACTION_TTL_MS,
+          via: scope.via,
         });
       }
       return { error: `Tool não implementada: ${name}` };

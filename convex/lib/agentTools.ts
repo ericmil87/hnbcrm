@@ -672,6 +672,36 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     effect: "read",
     resultFields: ["tasks"],
   },
+  // ── fv2-16: configuração do Atendente IA pelo Copiloto. Leitura: sem ids (o
+  // atendente é endereçado por NOME, canais por apelido). Executores em
+  // `lib/copilotConfigTools.ts`. ──
+  {
+    name: "getAttendantConfig",
+    description:
+      "Lê a configuração do Atendente IA: jeito de atender (persona), conhecimento, horário, palavras de repasse, follow-up, canais, leitura de imagens e transcrição de áudio. Aceites aparecem só como sim/não. Persona e conhecimento longos vêm cortados em 6 000 caracteres.",
+    parameters: schema({ attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" } }, []),
+    permission: { category: "settings", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: [
+      "name", "mode", "language", "persona", "knowledge", "handoffKeywords", "schedule", "followUps",
+      "channels", "visionEnabled", "transcription", "bridgeAiAckDone", "autopilotEligible", "attendants",
+      "aiActive", "warning", "greeting",
+    ],
+  },
+  {
+    name: "getAttendantSetupGuide",
+    description:
+      "Guia para montar o Atendente IA: modelo do segmento (persona, perguntas frequentes e palavras de repasse sugeridas), o perfil do negócio já informado e os passos que faltam. Use para redigir e depois proponha com updateAttendantPersona/updateAttendantKnowledge.",
+    parameters: schema(
+      { segment: { type: "string", description: "Segmento (imobiliaria, saas, servicos, saude, ecommerce, educacao, outro). Omita para usar o da organização." } },
+      []
+    ),
+    permission: { category: "settings", level: "view" },
+    audience: "copilot",
+    effect: "read",
+    resultFields: ["segment", "businessSummary", "personaSeed", "faqSeed", "handoffSeed", "missingSteps"],
+  },
 ];
 
 // ── Tools de ESCRITA do copiloto (F2): gated + confirmação por reversibilidade.
@@ -1145,6 +1175,142 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     audience: "copilot",
     effect: "write",
     resultFields: ["status", "message", "pendingActionId", "preview"],
+  },
+  // ── fv2-16: configuração do Atendente IA (two-phase). Nunca ligam a IA, nunca
+  // gravam aceites, nunca mexem em modelo/teto/canais: isso é `requer_acao_humana`.
+  // `effect:"write"` (não "destructive") de propósito; o executor não escreve na fase 1. ──
+  {
+    name: "updateAttendantPersona",
+    description:
+      "PROPÕE mudar o jeito de atender do Atendente IA (nome, persona, apresentação na 1ª resposta, idioma). Não aplica agora: gera uma confirmação com Antes/Depois que o usuário precisa aprovar.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        newName: { type: "string", maxLength: 60, description: "Novo nome do atendente" },
+        persona: { type: "string", maxLength: 20000, description: "Texto completo da nova persona (substitui a atual)" },
+        greeting: { type: "string", maxLength: 500, description: "Frase de apresentação na 1ª resposta (diz que é uma IA)" },
+        language: { type: "string", description: "Idioma, ex.: pt-BR" },
+      },
+      []
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+  },
+  {
+    name: "updateAttendantKnowledge",
+    description:
+      "PROPÕE mudar o que o Atendente IA sabe (conhecimento: preços, perguntas frequentes, políticas). 'append' acrescenta ao texto atual; 'replace' substitui tudo. Gera confirmação com Antes/Depois.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        text: { type: "string", maxLength: 20000 },
+        mode: { type: "string", enum: ["append", "replace"] },
+      },
+      ["text", "mode"]
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+  },
+  {
+    name: "setAttendantMode",
+    description:
+      "PROPÕE trocar o modo do Atendente IA: 'suggest' (prepara rascunhos, a equipe aprova) ou 'autopilot' (responde sozinho). Autopilot só é proposto se as métricas de aceitação permitem; antes disso o usuário precisa fazer na tela.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        mode: { type: "string", enum: ["suggest", "autopilot"] },
+      },
+      ["mode"]
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview", "instruction", "url"],
+  },
+  {
+    name: "setAttendantHours",
+    description:
+      "PROPÕE o horário de atendimento da IA (no fuso da organização). always=true deixa 24 h. days: seg, ter, qua, qui, sex, sab, dom.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        always: { type: "boolean" },
+        startHour: { type: "number", description: "Hora de início, 0 a 23" },
+        endHour: { type: "number", description: "Hora de fim, 1 a 24" },
+        days: { type: "array", items: { type: "string" }, description: "Dias: seg, ter, qua, qui, sex, sab, dom" },
+      },
+      []
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+  },
+  {
+    name: "setHandoffRules",
+    description:
+      "PROPÕE as palavras/frases com que o cliente chama a equipe (repasse para humano). As frases padrão continuam valendo; 'append' soma às atuais, 'replace' troca as suas.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        keywords: { type: "array", items: { type: "string", maxLength: 40 }, maxItems: 30 },
+        mode: { type: "string", enum: ["append", "replace"] },
+      },
+      ["mode"]
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+  },
+  {
+    name: "setFollowUpSettings",
+    description:
+      "PROPÕE os ajustes de follow-up automático da IA: modo (off, draft = prepara rascunho, send = envia sozinha), máximo de follow-ups seguidos sem resposta, janela de envio (horas) e teto diário. Só os campos informados mudam.",
+    parameters: schema(
+      {
+        attendantName: { type: "string", description: "Nome do Atendente IA (omita se a organização tem só um)" },
+        mode: { type: "string", enum: ["off", "draft", "send"] },
+        maxChain: { type: "number" },
+        quietStartHour: { type: "number" },
+        quietEndHour: { type: "number" },
+        dailyCap: { type: "number", description: "0 = sem teto" },
+      },
+      []
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "attendants", "pendingActionId", "preview"],
+  },
+  {
+    name: "setAiFeatures",
+    description:
+      "PROPÕE ligar/desligar a leitura de imagens (precisa da IA ativa) e/ou a transcrição automática de áudio de um canal de WhatsApp (por apelido) ou de todos.",
+    parameters: schema(
+      {
+        vision: { type: "boolean" },
+        transcription: {
+          type: "object",
+          properties: {
+            channelLabel: { type: "string", description: "Apelido do canal" },
+            all: { type: "boolean", description: "Todos os canais de WhatsApp" },
+            enabled: { type: "boolean" },
+          },
+          required: ["enabled"],
+          additionalProperties: false,
+        },
+      },
+      []
+    ),
+    permission: { category: "settings", level: "manage" },
+    audience: "copilot",
+    effect: "write",
+    resultFields: ["status", "message", "error", "channels", "pendingActionId", "preview", "warnings", "instruction", "url"],
   },
 ];
 

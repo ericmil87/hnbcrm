@@ -370,9 +370,9 @@ const statusDetailValidator = v.object({
   firstAiReplyDone: v.optional(v.boolean()),
 });
 
-type StatusDetail = Infer<typeof statusDetailValidator>;
+export type StatusDetail = Infer<typeof statusDetailValidator>;
 
-async function buildStatusDetail(
+export async function buildStatusDetail(
   ctx: QueryCtx,
   org: Doc<"organizations">,
   shouldShowWizard: boolean,

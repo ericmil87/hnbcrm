@@ -20,6 +20,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Salvar o Atendente IA, ligar os recursos da IA e criar ou provisionar um canal de WhatsApp agora exigem uma conta com e-mail (ler o QR em Configurações ainda não exige). Contas de acesso antigo, sem e-mail, veem um aviso pedindo para entrar com e-mail e senha.
 - Base para conectar o número do WhatsApp pelo celular, sem QR, com um código de conexão digitado no aparelho. O limite é de 3 códigos por hora por número, o mesmo do Telegram (a tela chega em um próximo passo). A URL de recebimento de mensagens passa a ser montada pelo servidor.
 - Base da nova configuração inicial: perfil do negócio, funil que pode ser refeito sem apagar contatos e andamento que lembra onde você parou. Os "Primeiros passos" no Painel passam a refletir o que já está feito de verdade (WhatsApp conectado, Atendente IA ligado, equipe convidada...), sem os itens técnicos de webhook/API e campos personalizados.
+- Peça ao Copiloto, no painel ou no Telegram, para ler e ajustar o Atendente IA: jeito de atender, o que a IA sabe, horário, quando chamar a equipe, follow-up, áudio e imagens. Toda mudança mostra "Antes → Depois" e só vale depois que você confirma; se a configuração mudar nesse meio-tempo, a confirmação é recusada. No modo automático do Telegram isso nunca acontece sozinho. Ligar a IA, aceitar termos e mexer em modelo, custo ou canais continua sendo feito por você nas Configurações.
 
 ## [0.78.1] - 2026-11-03
 

@@ -551,6 +551,17 @@ describe("modos (D22)", () => {
     expect(tools).not.toContain("deleteLead");
   });
 
+  test("autoWriteTools nunca inclui tools de config", () => {
+    const everything = { assistant: { autoAllowed: { instructAi: true, createTask: true, moveStage: true, acceptHandoff: true, replyCustomer: true } } } as any;
+    const tools = autoWriteTools(everything);
+    for (const name of [
+      "updateAttendantPersona", "updateAttendantKnowledge", "setAttendantMode", "setAttendantHours",
+      "setHandoffRules", "setFollowUpSettings", "setAiFeatures",
+    ]) {
+      expect(tools).not.toContain(name);
+    }
+  });
+
   test("decisão (D22 emendada): repasse nunca vira turno automático; mensagem em foco sim; teto 20/h → cartão", async () => {
     const s = await seed();
     const { notificationId } = await handoffEvent(s);

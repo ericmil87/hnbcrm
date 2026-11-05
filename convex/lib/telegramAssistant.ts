@@ -48,6 +48,11 @@ export function autoActionsLeft(link: Pick<Doc<"telegramLinks">, "assistant">, n
  * Write tools the automatic turn may call (D22, from `autoAllowed`). Read
  * tools are always allowed. Destructive tools never. `sendCustomerReply` only
  * when `replyCustomer` is allowed (and it is two-phase anyway).
+ *
+ * The Atendente IA config tools (`updateAttendantPersona`, `setAttendantMode`,
+ * `setAiFeatures`… — `lib/copilotConfigTools.ts`) are NEVER here: configuration
+ * changes only happen with the human's confirmation, and the executor also
+ * refuses `via:"telegram_auto"` (tested in telegramF3.test.ts).
  */
 export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): string[] {
   const a = link.assistant.autoAllowed;
