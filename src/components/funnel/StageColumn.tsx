@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { formatMoney } from "@/lib/format";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DraggableCard } from "./LeadCard";
+import type { FunnelCardPrefs } from "@/lib/funnelCardPrefs";
 import type { Lead, Stage } from "./types";
 
 // Droppable Column Component
@@ -18,6 +19,7 @@ export function StageColumn({
   onQuickAdd,
   onStageMenu,
   justDraggedRef,
+  cardPrefs,
 }: {
   stage: Stage;
   leads: Lead[];
@@ -27,6 +29,7 @@ export function StageColumn({
   onQuickAdd: () => void;
   onStageMenu: (e: React.MouseEvent) => void;
   justDraggedRef: React.MutableRefObject<boolean>;
+  cardPrefs?: FunnelCardPrefs;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage._id,
@@ -73,18 +76,19 @@ export function StageColumn({
             </button>
           </div>
         </div>
-        <div className="text-xs text-text-muted tabular-nums">
-          {leads.length} leads · {formatMoney(totalValue, "BRL", { fractionDigits: 0 })}
+        <div className="truncate text-xs text-text-muted tabular-nums">
+          {leads.length} {leads.length === 1 ? "lead" : "leads"} · {formatMoney(totalValue, "BRL", { fractionDigits: 0 })}
         </div>
       </div>
 
-      <div className="space-y-3 flex-1 overflow-y-auto">
+      <div className={cn("flex-1 overflow-y-auto", cardPrefs?.density === "comfortable" ? "space-y-3" : "space-y-2")}>
         {leads.map((lead) => (
           <DraggableCard
             key={lead._id}
             lead={lead}
             onClick={() => onLeadClick(lead._id)}
             justDraggedRef={justDraggedRef}
+            prefs={cardPrefs}
           />
         ))}
 

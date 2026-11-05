@@ -14,6 +14,8 @@ import {
 } from "@/lib/funnelFilters";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
+import { FunnelCardPicker } from "./FunnelCardPicker";
+import type { FunnelCardPrefs } from "@/lib/funnelCardPrefs";
 import { FunnelSelector, type FunnelSelectorProps } from "./FunnelSelector";
 
 interface FunnelToolbarProps {
@@ -26,6 +28,9 @@ interface FunnelToolbarProps {
   units: readonly { _id: string; name: string }[] | null;
   showArchived: boolean;
   onToggleArchived: () => void;
+  /** Preferência de exibição dos cards (só faz sentido no modo quadro). */
+  cardPrefs: FunnelCardPrefs;
+  onCardPrefsChange: (next: FunnelCardPrefs) => void;
 }
 
 const VIEW_OPTIONS = [
@@ -43,6 +48,8 @@ export function FunnelToolbar({
   units,
   showArchived,
   onToggleArchived,
+  cardPrefs,
+  onCardPrefsChange,
 }: FunnelToolbarProps) {
   const ownerOptions = useMemo<SelectOption[]>(
     () => [
@@ -122,6 +129,7 @@ export function FunnelToolbar({
             onValueChange={(view) => onFiltersChange({ view: view as FunnelView })}
             options={VIEW_OPTIONS}
           />
+          {filters.view === "board" && <FunnelCardPicker prefs={cardPrefs} onChange={onCardPrefsChange} />}
           <Button
             type="button"
             variant="secondary"

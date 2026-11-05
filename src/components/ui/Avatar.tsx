@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { Bot } from "lucide-react";
 
 const sizes = {
+  xs: "h-6 w-6 text-micro",
   sm: "h-8 w-8 text-xs",
   md: "h-10 w-10 text-sm",
   lg: "h-12 w-12 text-lg",
@@ -43,7 +44,7 @@ export function Avatar({ name, type = "human", size = "md", status, imageUrl, cl
       {/* AI badge */}
       {type === "ai" && (
         <div className="absolute -bottom-0.5 -right-0.5 bg-surface-overlay border border-border rounded-full p-0.5">
-          <Bot size={size === "sm" ? 10 : 12} className="text-brand-400" />
+          <Bot size={size === "xs" ? 8 : size === "sm" ? 10 : 12} className="text-brand-400" />
         </div>
       )}
 
@@ -52,7 +53,7 @@ export function Avatar({ name, type = "human", size = "md", status, imageUrl, cl
         <div
           className={cn(
             "absolute -top-0.5 -right-0.5 rounded-full border-2 border-surface-raised",
-            size === "sm" ? "h-2.5 w-2.5" : "h-3 w-3",
+            size === "xs" || size === "sm" ? "h-2.5 w-2.5" : "h-3 w-3",
             status === "active" && "bg-semantic-success",
             status === "busy" && "bg-semantic-warning",
             status === "inactive" && "bg-text-muted"
