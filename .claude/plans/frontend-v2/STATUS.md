@@ -20,6 +20,8 @@
 |---|---|---|
 | fv2-01/02/04 (`b54124e`) | bloqueia: nenhum. tsc convex/app ok; suíte 3417 testes (main: 3359). | `via` fixo `"settings"` no caminho genérico de `internalPatchConfig` (virar parâmetro se Copiloto/Telegram usarem); `getPlatformCapabilities` legível por qualquer membro (subir permissão se surgir capacidade sensível); typo "mova para o etapa" em `convex/lib/agentPersonas.ts` (corrigir no fv2-11); CI depende de `npm ci` (ok, é o que o workflow roda). |
 
+| fv2-03/05/06/11 (`b31be63`) | bloqueia: nenhum. 3× tsc ok; suíte 3532 testes. | `getBridgeQrCode` sem e-mail (fv2-21); `ChannelsSection` ainda manda `webhookUrl` (parar de enviar no fv2-21); `Button danger` usa `red-600/700` cru (pré-existente; migrar no fv2-12); `Select`/`Textarea` com `focus:` (nativo; aceitável); navegação por setas escrita 3× (extrair utilitário se surgir 4ª); comentário deslocado em `schema.ts:53`. |
+
 ## Em andamento
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
