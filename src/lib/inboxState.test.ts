@@ -4,6 +4,7 @@ import {
   activeBotSuspicion,
   aiStateChipInfo,
   decideConversationParamAction,
+  emptyListMessage,
   filterConversations,
   isHandoffPending,
   linkedMatchesView,
@@ -177,5 +178,29 @@ describe("decideConversationParamAction", () => {
         linked: { _id: "c1" },
       })
     ).toEqual({ type: "select", id: "c1", archivedTab: false });
+  });
+});
+
+describe("emptyListMessage", () => {
+  const base = { kind: "all" as const, showArchived: false, queueFilterActive: false, labelId: null };
+  it("Grupos vem antes de arquivadas e oferece escolher grupos", () => {
+    expect(emptyListMessage({ ...base, kind: "group" })).toEqual({
+      text: "Nenhum grupo acompanhado",
+      chooseGroups: true,
+    });
+    expect(emptyListMessage({ ...base, kind: "group", showArchived: true }).chooseGroups).toBe(false);
+  });
+  it("Diretas, fila, arquivadas, etiqueta e vazio geral", () => {
+    expect(emptyListMessage({ ...base, kind: "direct" }).text).toBe("Nenhuma conversa direta");
+    expect(emptyListMessage({ ...base, kind: "direct", showArchived: true }).text).toBe(
+      "Nenhuma conversa direta arquivada"
+    );
+    expect(emptyListMessage({ ...base, queueFilterActive: true }).text).toBe("Nenhuma conversa nesta fila");
+    expect(emptyListMessage({ ...base, queueFilterActive: true, showArchived: true }).text).toBe(
+      "Nenhuma conversa arquivada nesta fila"
+    );
+    expect(emptyListMessage({ ...base, showArchived: true, labelId: "l" }).text).toBe("Nenhuma conversa arquivada");
+    expect(emptyListMessage({ ...base, labelId: "l" }).text).toBe("Nenhuma conversa com essa etiqueta");
+    expect(emptyListMessage(base).text).toBe("Nenhuma conversa ainda");
   });
 });

@@ -159,3 +159,36 @@ export function decideConversationParamAction(input: {
     ? { type: "select", id: param, archivedTab: linkedArchived }
     : { type: "select", id: param };
 }
+
+/**
+ * Texto do estado vazio da lista. O filtro Diretas/Grupos vem ANTES de
+ * "arquivadas" na cadeia (review de correção nº 17): com o filtro em "Grupos" e
+ * nenhum grupo arquivado, a tela dizia "Nenhuma conversa arquivada" — mentindo,
+ * porque havia conversas diretas arquivadas escondidas pelo filtro.
+ * `chooseGroups` = mostrar o atalho "Escolher grupos".
+ */
+export function emptyListMessage(input: {
+  kind: ConversationKindFilter;
+  showArchived: boolean;
+  queueFilterActive: boolean;
+  labelId: string | null;
+}): { text: string; chooseGroups: boolean } {
+  const { kind, showArchived, queueFilterActive, labelId } = input;
+  if (kind === "group") {
+    return showArchived
+      ? { text: "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas", chooseGroups: false }
+      : { text: "Nenhum grupo acompanhado", chooseGroups: true };
+  }
+  if (kind === "direct") {
+    return { text: showArchived ? "Nenhuma conversa direta arquivada" : "Nenhuma conversa direta", chooseGroups: false };
+  }
+  if (queueFilterActive) {
+    return {
+      text: showArchived ? "Nenhuma conversa arquivada nesta fila" : "Nenhuma conversa nesta fila",
+      chooseGroups: false,
+    };
+  }
+  if (showArchived) return { text: "Nenhuma conversa arquivada", chooseGroups: false };
+  if (labelId) return { text: "Nenhuma conversa com essa etiqueta", chooseGroups: false };
+  return { text: "Nenhuma conversa ainda", chooseGroups: false };
+}
