@@ -11,6 +11,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 ### Requer atenção
 
 - A lista agora é compacta: cada pedido ocupa uma linha com o nome, o motivo, há quanto tempo foi pedido e o resumo em uma linha. **Assumir conversa**, **Devolver à IA** e **Ver conversa** ficam na própria linha, e a seta abre as ações sugeridas. Em **Completo**, no topo da página, o cartão volta a ser como antes; a escolha fica salva neste navegador. O contador agora aparece como "37 pendentes".
+- Corrigido: no celular, o cartão de cada pedido não estoura mais a largura da tela. Nome, motivo e resumo encurtam em vez de passar da borda, e os botões quebram de linha quando não cabem.
+- Corrigido: a caixa de **Devolver à IA** abria para fora da tela no computador e cortava o título e o campo. Agora ela abre junto ao botão, sempre inteira à vista, e no celular sobe como folha na parte de baixo. O mesmo vale para **Pedir resposta sugerida** e para o pedido de ajuda aberto na lateral.
+
+### Notificações
+
+- Corrigido: no celular, o painel de notificações mostrava só o título e a lista não aparecia. Agora ele abre como folha na parte de baixo, com a lista completa, e no computador continua junto ao sino.
 
 ## [Não lançado — Frontend v2]
 

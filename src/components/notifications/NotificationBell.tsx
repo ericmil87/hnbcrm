@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Bell } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
@@ -13,6 +13,7 @@ interface NotificationBellProps {
 // Sino de notificações do header — badge de não lidas + painel dropdown/overlay.
 export function NotificationBell({ organizationId }: NotificationBellProps) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const unreadCount = useQuery(api.notifications.unreadCount, { organizationId });
 
   const badgeLabel =
@@ -21,6 +22,7 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
   return (
     <div className="relative">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
@@ -44,7 +46,7 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
         )}
       </button>
 
-      <NotificationPanel organizationId={organizationId} open={open} onClose={() => setOpen(false)} />
+      <NotificationPanel organizationId={organizationId} open={open} onClose={() => setOpen(false)} anchor={buttonRef} />
     </div>
   );
 }

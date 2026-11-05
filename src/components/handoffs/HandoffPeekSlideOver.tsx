@@ -118,6 +118,7 @@ export function HandoffPeekSlideOver({
   const [instructing, setInstructing] = useState(false);
   // Popover do "Devolver à IA" (rejeitar respondendo o que a IA precisava).
   const [returnOpen, setReturnOpen] = useState(false);
+  const returnRef = useRef<HTMLButtonElement>(null);
 
   const handleInstruct = async () => {
     const text = instruction.trim();
@@ -431,36 +432,38 @@ export function HandoffPeekSlideOver({
         )}
 
         <div className="flex flex-col sm:flex-row gap-2">
-          <div className="relative">
+          <div>
             <Button
+              ref={returnRef}
               variant="secondary"
               disabled={busy}
+              aria-haspopup="dialog"
+              aria-expanded={returnOpen}
               onClick={() => setReturnOpen((v) => !v)}
               className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
             >
               {VOCAB.attention.giveBack}
             </Button>
-            {returnOpen && (
-              <AiInstructionPopover
-                title={
-                  handoff.isGroup
-                    ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
-                    : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
-                }
-                placeholder={
-                  handoff.isGroup
-                    ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
-                    : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
-                }
-                submitLabel="Devolver"
-                direction="up"
-                onSubmit={(instruction) => {
-                  setReturnOpen(false);
-                  void onReject(handoff._id, instruction);
-                }}
+            <AiInstructionPopover
+              open={returnOpen}
+              anchor={returnRef}
+              title={
+                handoff.isGroup
+                  ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                  : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
+              }
+              placeholder={
+                handoff.isGroup
+                  ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                  : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
+              }
+              submitLabel="Devolver"
+              onSubmit={(instruction) => {
+                setReturnOpen(false);
+                void onReject(handoff._id, instruction);
+              }}
                 onClose={() => setReturnOpen(false)}
               />
-            )}
           </div>
           <Button
             disabled={busy}

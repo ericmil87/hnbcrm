@@ -1,4 +1,5 @@
 import { useEffect, useCallback } from "react";
+import { lockBodyScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
 import { X, ArrowLeft } from "lucide-react";
 
@@ -38,13 +39,12 @@ export function SlideOver({
   );
 
   useEffect(() => {
-    if (open) {
-      document.addEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "hidden";
-    }
+    if (!open) return;
+    document.addEventListener("keydown", handleKeyDown);
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
+      unlock();
     };
   }, [open, handleKeyDown]);
 

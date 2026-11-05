@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useRef } from "react";
+import type { ReactNode, RefObject } from "react";
 import { ChevronDown, Eye, Users } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
@@ -32,8 +33,13 @@ interface AttentionRowProps {
   onView: () => void;
   onAccept: () => void;
   onToggleGiveBack: () => void;
-  /** Popover "Devolver à IA" já montado pelo container (só quando aberto). */
-  giveBackPopover?: ReactNode;
+  /**
+   * Popover "Devolver à IA" montado pelo container. Recebe o botão como âncora;
+   * o popover vai para um portal no body, então nenhum pai com overflow o corta.
+   */
+  /** Popover aberto: reflete em `aria-expanded` do botão. */
+  giveBackOpen?: boolean;
+  renderGiveBackPopover?: (anchor: RefObject<HTMLElement | null>) => ReactNode;
 }
 
 function subtitleOf(h: AttentionItem): string {
@@ -44,7 +50,7 @@ function subtitleOf(h: AttentionItem): string {
 
 function Member({ label, m }: { label: string; m: NonNullable<AttentionItem["fromMember"]> }) {
   return (
-    <div>
+    <div className="min-w-0">
       <h4 className="text-sm font-medium text-text-primary mb-2">{label}</h4>
       <div className="flex items-center gap-2">
         <Avatar name={m.name || "?"} type={m.type === "ai" ? "ai" : "human"} size="md" />
@@ -67,8 +73,10 @@ export function AttentionRow({
   onView,
   onAccept,
   onToggleGiveBack,
-  giveBackPopover,
+  giveBackOpen = false,
+  renderGiveBackPopover,
 }: AttentionRowProps) {
+  const giveBackRef = useRef<HTMLButtonElement>(null);
   const title = handoff.title ?? handoff.lead?.title ?? "Conversa";
   const subtitle = subtitleOf(handoff);
   const fromAi = handoff.fromMember?.type === "ai";
@@ -77,12 +85,12 @@ export function AttentionRow({
   const btnSize = comfortable ? "md" : "sm";
   const stackBtn = comfortable ? "w-full md:w-auto" : "";
 
-  // Abaixo de `md` a barra ocupa a largura toda e o popover ancora nela (não no
-  // botão), para a caixa de instrução não sair da tela no celular.
+  // Compacto: chevron, olho e botões ficam numa linha quando cabem e quebram
+  // quando não (sem rolagem horizontal). Completo empilha os botões no mobile.
   const renderActions = (leading?: ReactNode) => (
     <div
       className={cn(
-        "relative flex gap-2 w-full md:w-auto md:shrink-0",
+        "flex min-w-0 gap-2 w-full md:w-auto md:shrink-0",
         comfortable ? "flex-col md:flex-row md:items-center" : "flex-wrap items-center"
       )}
     >
@@ -97,20 +105,21 @@ export function AttentionRow({
           <Eye size={16} aria-hidden="true" />
         </Button>
       )}
-      <div className={cn("md:relative", stackBtn)}>
-        <Button
-          onClick={onToggleGiveBack}
-          variant="secondary"
-          size={btnSize}
-          className={cn(
-            "whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
-            stackBtn
-          )}
-        >
-          {VOCAB.attention.giveBack}
-        </Button>
-        {giveBackPopover}
-      </div>
+      <Button
+        ref={giveBackRef}
+        onClick={onToggleGiveBack}
+        variant="secondary"
+        size={btnSize}
+        aria-haspopup="dialog"
+        aria-expanded={giveBackOpen}
+        className={cn(
+          "whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
+          stackBtn
+        )}
+      >
+        {VOCAB.attention.giveBack}
+      </Button>
+      {renderGiveBackPopover?.(giveBackRef)}
       <Button onClick={onAccept} variant="primary" size={btnSize} className={cn("whitespace-nowrap", stackBtn)}>
         {VOCAB.attention.accept}
       </Button>
@@ -119,7 +128,7 @@ export function AttentionRow({
 
   if (density === "comfortable") {
     return (
-      <Card>
+      <Card className="w-full min-w-0 max-w-full overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
           <div className="flex-1 min-w-0">
             <h3 className="text-base md:text-lg font-semibold text-text-primary mb-1 truncate">
@@ -139,7 +148,7 @@ export function AttentionRow({
         </div>
 
         <div className="mb-4">
-          <h4 className="text-sm font-medium text-text-primary mb-2">
+          <h4 className="text-sm font-medium text-text-primary mb-2 break-words">
             {fromAi ? "A IA pediu ajuda" : "Pedido de ajuda"} · {handoff.reason}
           </h4>
         </div>
@@ -147,7 +156,7 @@ export function AttentionRow({
         {handoff.summary && (
           <div className="mb-4">
             <h4 className="text-sm font-medium text-text-primary mb-2">Resumo</h4>
-            <p className="text-sm text-text-secondary">{handoff.summary}</p>
+            <p className="text-sm text-text-secondary break-words">{handoff.summary}</p>
           </div>
         )}
 
@@ -158,7 +167,7 @@ export function AttentionRow({
               {handoff.suggestedActions.map((action, i) => (
                 <li key={i} className="text-sm text-text-secondary flex items-start gap-2">
                   <span className="text-text-muted mt-0.5" aria-hidden="true">•</span>
-                  <span className="flex-1">{action}</span>
+                  <span className="min-w-0 flex-1 break-words">{action}</span>
                 </li>
               ))}
             </ul>
@@ -177,32 +186,32 @@ export function AttentionRow({
   const detailsId = `attention-details-${handoff._id}`;
 
   return (
-    <Card className="p-3 md:p-3 md:px-4">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4">
+    <Card className="w-full min-w-0 max-w-full overflow-hidden p-3 md:p-3 md:px-4">
+      <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:gap-4">
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <h3 className="min-w-0 truncate text-sm md:text-base font-semibold text-text-primary">
+          <div className="flex min-w-0 items-center gap-2">
+            <h3 className="min-w-0 flex-1 truncate text-sm md:text-base font-semibold text-text-primary">
               {handoff.isGroup && <Users size={14} className="inline-block mr-1.5 -mt-0.5 text-brand-500" aria-hidden="true" />}
               {title}
             </h3>
-            <Badge variant="warning" className="inline-block shrink-0 max-w-[50%] truncate">
-              {handoff.reason}
-            </Badge>
-            <span className="ml-auto shrink-0 text-caption text-text-muted tabular-nums">
+            <span className="shrink-0 text-caption text-text-muted tabular-nums">
               {formatRelative(handoff.createdAt, now)}
             </span>
           </div>
-          <div className="flex items-center gap-2 min-w-0">
-            <p className={cn("min-w-0 flex-1 text-sm text-text-secondary", !expanded && "line-clamp-1")}>
-              {handoff.summary || subtitle || "Sem resumo"}
-            </p>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Badge variant="warning" className="inline-block min-w-0 max-w-full truncate">
+              {handoff.reason}
+            </Badge>
             {handoff.fromMember && (
-              <span className="hidden sm:inline-flex shrink-0 items-center gap-1.5 text-caption text-text-muted max-w-[40%]">
+              <span className="hidden md:inline-flex min-w-0 max-w-[60%] items-center gap-1.5 text-caption text-text-muted">
                 <Avatar name={handoff.fromMember.name || "?"} type={fromAi ? "ai" : "human"} size="sm" />
-                <span className="truncate">{handoff.fromMember.name}</span>
+                <span className="min-w-0 truncate">{handoff.fromMember.name}</span>
               </span>
             )}
           </div>
+          <p className={cn("min-w-0 break-words text-sm text-text-secondary", !expanded && "line-clamp-1")}>
+            {handoff.summary || subtitle || "Sem resumo"}
+          </p>
         </div>
         {renderActions(
           hasDetails ? (
@@ -223,11 +232,11 @@ export function AttentionRow({
 
       {expanded && (
         <div id={detailsId} className="mt-3 border-t border-border pt-3 space-y-3">
-          <p className="text-sm text-text-secondary">
+          <p className="text-sm text-text-secondary break-words">
             <span className="font-medium text-text-primary">{fromAi ? "A IA pediu ajuda" : "Pedido de ajuda"}</span>
             {" · "}
             {handoff.reason}
-            {handoff.fromMember?.name && <span className="sm:hidden text-text-muted"> · {handoff.fromMember.name}</span>}
+            {handoff.fromMember?.name && <span className="md:hidden text-text-muted"> · {handoff.fromMember.name}</span>}
           </p>
           {handoff.suggestedActions.length > 0 && (
             <div>

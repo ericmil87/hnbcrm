@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { lockBodyScroll } from "@/lib/scrollLock";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -20,13 +21,12 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   );
 
   useEffect(() => {
-    if (open) {
-      document.addEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "hidden";
-    }
+    if (!open) return;
+    document.addEventListener("keydown", handleKeyDown);
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
+      unlock();
     };
   }, [open, handleKeyDown]);
 

@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot, Paperclip } from "lucide-react";
@@ -8,6 +9,8 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
+import { Popover } from "@/components/ui/Popover";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { InboxMessage } from "./types";
@@ -417,42 +420,86 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
 }
 
 /**
- * Painel ancorado com uma instrução em texto livre para a IA. Usado por
- * "Devolver para IA", "Pedir sugestão à IA" e pelo devolver-com-instrução dos
- * repasses — no mobile abre alinhado à esquerda do gatilho para não sair da
- * tela; `direction="up"` para gatilhos colados no rodapé.
+ * Painel com uma instrução em texto livre para a IA. Usado por "Devolver à IA",
+ * "Pedir sugestão à IA" e pelo devolver-com-instrução dos repasses. Renderiza no
+ * `Popover` (portal no body, flip/clamp na viewport, Esc e clique fora fecham):
+ * ancorado no gatilho a partir de `md`, folha inferior abaixo disso para o
+ * campo ficar inteiro à vista com o teclado aberto.
  */
 export function AiInstructionPopover({
+  open,
+  anchor,
   title,
   placeholder,
   submitLabel,
   onSubmit,
   onClose,
-  direction = "down",
+}: {
+  open: boolean;
+  anchor: RefObject<HTMLElement | null>;
+  title: string;
+  placeholder: string;
+  submitLabel: string;
+  onSubmit: (instruction?: string) => void;
+  onClose: () => void;
+}) {
+  const sheet = useMediaQuery("(max-width: 767px)");
+  // Fechar pelo teclado, Cancelar ou o fundo devolve o foco ao gatilho (o portal desmonta).
+  const closeAndRefocus = () => {
+    anchor.current?.focus();
+    onClose();
+  };
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) closeAndRefocus();
+      }}
+      anchor={anchor}
+      side="bottom"
+      align="start"
+      sheet={sheet}
+      role="dialog"
+      aria-label={title}
+      className={sheet ? undefined : "w-80 max-w-[calc(100vw-1rem)]"}
+    >
+      <AiInstructionForm
+        title={title}
+        placeholder={placeholder}
+        submitLabel={submitLabel}
+        onSubmit={(instruction) => {
+          anchor.current?.focus();
+          onSubmit(instruction);
+        }}
+        onClose={closeAndRefocus}
+      />
+    </Popover>
+  );
+}
+
+/** Conteúdo do painel de instrução (montado só com o popover aberto, então o texto zera ao fechar). */
+function AiInstructionForm({
+  title,
+  placeholder,
+  submitLabel,
+  onSubmit,
+  onClose,
 }: {
   title: string;
   placeholder: string;
   submitLabel: string;
   onSubmit: (instruction?: string) => void;
   onClose: () => void;
-  direction?: "down" | "up";
 }) {
   const [text, setText] = useState("");
   const trimmed = text.trim();
 
   return (
-    <div
-      className={`absolute ${
-        direction === "up" ? "bottom-full mb-2" : "top-full mt-2"
-      } left-0 md:left-auto md:right-0 z-40 w-[calc(100vw-2rem)] max-w-xs p-3 bg-surface-overlay border border-border rounded-xl shadow-elevated space-y-2.5`}
-    >
-      <p className="text-xs font-medium text-text-primary">{title}</p>
+    <div className="min-w-0 space-y-2.5 p-3">
+      <p className="text-sm font-medium text-text-primary">{title}</p>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
-        }}
         rows={3}
         maxLength={MAX_INSTRUCTION_CHARS}
         autoFocus
@@ -490,6 +537,7 @@ export function ReturnToAiButton({
 }) {
   const returnToAi = useMutation(api.attendant.returnToAi);
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
 
   const submit = (instruction?: string) => {
     setOpen(false);
@@ -501,31 +549,42 @@ export function ReturnToAiButton({
   };
 
   return (
-    <div className="relative">
+    <>
       {variant === "button" ? (
-        <Button type="button" variant={buttonVariant} size="sm" onClick={() => setOpen((v) => !v)}>
+        <Button
+          ref={anchorRef}
+          type="button"
+          variant={buttonVariant}
+          size="sm"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          onClick={() => setOpen((v) => !v)}
+        >
           <Sparkles size={14} className="mr-1.5" />
           Devolver à IA
         </Button>
       ) : (
         <button
+          ref={anchorRef}
           type="button"
+          aria-expanded={open}
+          aria-haspopup="dialog"
           onClick={() => setOpen((v) => !v)}
           className="text-xs text-brand-500 hover:text-brand-400 font-medium"
         >
           Devolver à IA
         </button>
       )}
-      {open && (
-        <AiInstructionPopover
-          title="Devolver a conversa à IA"
-          placeholder='Instrução para a IA (opcional): responda o que ela precisa — ex. "o Pix é financeiro@empresa.com e o valor é R$ 150" — ou peça uma ação: "faça follow-up amanhã"'
-          submitLabel="Devolver"
-          onSubmit={submit}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </div>
+      <AiInstructionPopover
+        open={open}
+        anchor={anchorRef}
+        title="Devolver a conversa à IA"
+        placeholder='Instrução para a IA (opcional): responda o que ela precisa — ex. "o Pix é financeiro@empresa.com e o valor é R$ 150" — ou peça uma ação: "faça follow-up amanhã"'
+        submitLabel="Devolver"
+        onSubmit={submit}
+        onClose={() => setOpen(false)}
+      />
+    </>
   );
 }
 
@@ -548,6 +607,7 @@ export function AiConversationControls({
   const requestDraft = useMutation(api.attendant.requestAiDraft);
   const paused = aiPausedUntil !== undefined && aiPausedUntil > Date.now();
   const [askOpen, setAskOpen] = useState(false);
+  const askRef = useRef<HTMLButtonElement>(null);
 
   const requestSuggestion = (instruction?: string) => {
     setAskOpen(false);
@@ -589,25 +649,28 @@ export function AiConversationControls({
             Assumir conversa
           </button>
           {!hasPendingDraft && (
-            <div className="relative">
+            <>
               <button
+                ref={askRef}
                 type="button"
+                aria-expanded={askOpen}
+                aria-haspopup="dialog"
                 onClick={() => setAskOpen((v) => !v)}
                 className="inline-flex items-center gap-1 text-xs text-brand-500 hover:text-brand-400 font-medium"
               >
                 <Sparkles size={12} />
                 Pedir resposta sugerida
               </button>
-              {askOpen && (
-                <AiInstructionPopover
-                  title="Pedir uma sugestão de resposta"
-                  placeholder="Instrução para a IA (opcional): ex. responda a última dúvida e proponha uma call"
-                  submitLabel="Pedir"
-                  onSubmit={requestSuggestion}
-                  onClose={() => setAskOpen(false)}
-                />
-              )}
-            </div>
+              <AiInstructionPopover
+                open={askOpen}
+                anchor={askRef}
+                title="Pedir uma sugestão de resposta"
+                placeholder="Instrução para a IA (opcional): ex. responda a última dúvida e proponha uma call"
+                submitLabel="Pedir"
+                onSubmit={requestSuggestion}
+                onClose={() => setAskOpen(false)}
+              />
+            </>
           )}
         </>
       )}
