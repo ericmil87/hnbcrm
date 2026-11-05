@@ -191,15 +191,6 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
     });
   };
 
-  const handleToggleAutoTranscribe = (config: ChannelConfig) => {
-    const next = !config.autoTranscribeAudio;
-    toast.promise(updateChannelConfig({ configId: config._id, autoTranscribeAudio: next }), {
-      loading: "Atualizando…",
-      success: next ? "Transcrição automática ativada" : "Transcrição automática desativada",
-      error: "Não foi possível atualizar transcrição automática.",
-    });
-  };
-
   const handleTogglePhoneNotifications = (config: ChannelConfig) => {
     const next = !(config.bridgePhoneNotifications ?? true);
     toast.promise(updateChannelConfig({ configId: config._id, bridgePhoneNotifications: next }), {
@@ -339,7 +330,6 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
                 onTest={() => handleTestConnection(config)}
                 onEdit={() => openEditForm(config)}
                 onToggle={() => handleToggleStatus(config)}
-                onToggleAutoTranscribe={() => handleToggleAutoTranscribe(config)}
                 onTogglePhoneNotifications={() => handleTogglePhoneNotifications(config)}
                 onDelete={() => setConfirmDeleteId(config._id)}
                 onShowQr={() => setQrConfig(config)}

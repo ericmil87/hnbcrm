@@ -3,6 +3,13 @@ import {
   Bell,
   Bot,
   Instagram,
+  CalendarClock,
+  Gauge,
+  LifeBuoy,
+  MessageSquareText,
+  ShieldCheck,
+  UserRound,
+  Wand2,
   Building2,
   KeyRound,
   ListChecks,
@@ -61,21 +68,10 @@ export const SETTINGS_GROUPS: ReadonlyArray<{ id: SettingsGroupId; label: string
 export const DEFAULT_SETTINGS_PANEL_ID = "general";
 
 /**
- * Painéis previstos que ainda não existem (viram entradas nos PRs fv2-17/19/21).
+ * Painéis previstos que ainda não existem (viram entradas em PRs seguintes).
  * Reservados para a busca e para links futuros; não registrar sem componente.
- * - ai-attendant, ai-conversation, ai-handoff, ai-followup, ai-features
- *   (keywords: transcrição, áudio, imagem, visão, grupos, telegram), ai-usage (fv2-17/19).
- * - ai-models (privacidade e modelo; só settings:manage).
  */
-export const PLANNED_PANEL_IDS = [
-  "ai-attendant",
-  "ai-conversation",
-  "ai-handoff",
-  "ai-followup",
-  "ai-features",
-  "ai-usage",
-  "ai-models",
-] as const;
+export const PLANNED_PANEL_IDS: readonly string[] = [];
 
 const view = { category: "settings", level: "view" } as const;
 
@@ -140,9 +136,69 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     label: "Visão geral",
     description: "Ligar a IA, modo de atendimento e ajustes do atendente",
     icon: Bot,
-    keywords: ["ia", "atendente", "inteligência artificial", "modo", "persona", "horário", "follow-up", "uso", "custo"],
+    keywords: ["ia", "atendente", "inteligência artificial", "modo", "lgpd", "testar"],
     permission: view,
-    Component: lazy(() => import("./AiSection").then((m) => ({ default: m.AiSection }))),
+    Component: lazy(() => import("./ai/AiOverviewPanel").then((m) => ({ default: m.AiOverviewPanel }))),
+  },
+  {
+    id: "ai-attendant",
+    group: "atendente",
+    label: "Jeito de atender",
+    description: "Como a IA conversa, o que ela sabe do seu negócio e o horário de atendimento",
+    icon: UserRound,
+    keywords: ["persona", "tom", "conhecimento", "horário", "atendimento", "apresentação", "preços"],
+    permission: view,
+    Component: lazy(() => import("./attendant/AttendantProfilePanel").then((m) => ({ default: m.AttendantProfilePanel }))),
+  },
+  {
+    id: "ai-conversation",
+    group: "atendente",
+    label: "Comportamento na conversa",
+    description: "Agrupar mensagens, limite de respostas seguidas e funil dos leads",
+    icon: MessageSquareText,
+    keywords: ["agrupar", "limite", "robô", "funil", "etapa", "qualificar", "data e hora"],
+    permission: view,
+    Component: lazy(() => import("./attendant/ConversationPanel").then((m) => ({ default: m.ConversationPanel }))),
+  },
+  {
+    id: "ai-handoff",
+    group: "atendente",
+    label: "Quando chamar a equipe",
+    description: "Palavras que fazem a IA parar e chamar alguém do time",
+    icon: LifeBuoy,
+    keywords: ["palavras", "humano", "pedido de ajuda", "equipe"],
+    permission: view,
+    Component: lazy(() => import("./attendant/HandoffPanel").then((m) => ({ default: m.HandoffPanel }))),
+  },
+  {
+    id: "ai-followup",
+    group: "atendente",
+    label: VOCAB.followUp.many,
+    description: "O que a IA faz quando chega a hora de um follow-up que ela marcou",
+    icon: CalendarClock,
+    keywords: ["retorno", "lembrete", "janela de envio", "encadeamento"],
+    permission: view,
+    Component: lazy(() => import("./attendant/FollowUpPanel").then((m) => ({ default: m.FollowUpPanel }))),
+  },
+  {
+    id: "ai-features",
+    group: "atendente",
+    label: "Recursos da IA",
+    description: "Ouvir áudios, ler imagens, grupos, Copiloto e agenda externa",
+    icon: Wand2,
+    keywords: ["transcrição", "áudio", "imagem", "visão", "grupos", "telegram", "copiloto", "qr code", "agenda"],
+    permission: view,
+    Component: lazy(() => import("./ai/AiFeaturesPanel").then((m) => ({ default: m.AiFeaturesPanel }))),
+  },
+  {
+    id: "ai-usage",
+    group: "atendente",
+    label: "Uso e limites de gasto",
+    description: "Quanto a IA usou no mês e o teto de gastos",
+    icon: Gauge,
+    keywords: ["custo", "gasto", "teto", "orçamento", "consumo", "dólar", "reais"],
+    permission: view,
+    Component: lazy(() => import("./ai/UsagePanel").then((m) => ({ default: m.UsagePanel }))),
   },
   {
     id: "team",
@@ -195,6 +251,16 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     permission: view,
     visible: ({ can, modules }) => can("settings", "manage") || computeAnyEnabled(modules),
     Component: lazy(() => import("./CentralSection").then((m) => ({ default: m.CentralSection }))),
+  },
+  {
+    id: "ai-models",
+    group: "avancado",
+    label: "Modelo de IA e privacidade",
+    description: "Modelo e rota de cada produto, zero-retention e chave própria",
+    icon: ShieldCheck,
+    keywords: ["modelo", "privacidade", "zdr", "zero-retention", "byo", "openrouter", "rota", "provedor", "lgpd"],
+    permission: { category: "settings", level: "manage" },
+    Component: lazy(() => import("./advanced/AiModelsPanel").then((m) => ({ default: m.AiModelsPanel }))),
   },
   {
     id: "apikeys",

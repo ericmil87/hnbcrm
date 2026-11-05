@@ -169,9 +169,9 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       );
       return;
     }
-    // Gasto de IA do mês: o painel de uso e o teto ficam em Configurações → IA.
+    // Gasto de IA do mês: o painel de uso e o teto ficam em Configurações → Atendente IA → Uso e limites de gasto.
     if (n.type === "ai_spend_warning" || n.type === "ai_spend_reached") {
-      navigate(`${TAB_ROUTES.settings}?secao=ai`);
+      navigate(`${TAB_ROUTES.settings}?secao=ai-usage`);
       return;
     }
     if (n.type === "ai_followup_needs_human") {

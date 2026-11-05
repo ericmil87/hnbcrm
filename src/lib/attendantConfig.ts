@@ -15,6 +15,23 @@ export type ValidationResult =
   | { ok: true }
   | { ok: false; message: string; field?: string; fieldError?: string };
 
+// ── Contrato dos formulários controlados (compartilhado com o onboarding) ───
+
+export interface ConfigFormProps<T> {
+  value: T;
+  onChange: (next: T) => void;
+  disabled?: boolean;
+  /** Erros por campo, vindos das funções `*Errors`. */
+  errors?: Partial<Record<keyof T, string>>;
+  /** "panel" mostra descrições completas; "wizard" mostra a versão enxuta. */
+  variant?: "panel" | "wizard";
+}
+
+export type FieldErrors<T> = Partial<Record<keyof T, string>>;
+
+/** Compara dois valores de formulário (serializáveis) para saber se há alteração pendente. */
+export const isSameForm = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
 // ── Limites e padrões ───────────────────────────────────────────────────────
 
 // Tetos de resposta do atendente — espelham a condição 9 de evaluateEligibility
@@ -129,7 +146,7 @@ const valueOrUndefined = (r: ReadResult): number | undefined => (r.ok ? r.value 
 
 export type AttendantProfileInput = {
   mode?: "suggest" | "autopilot";
-  schedule?: { timezone: string; startHour: number; endHour: number };
+  schedule?: { timezone: string; startHour: number; endHour: number; days?: number[] };
   handoffKeywords?: string[];
   maxRepliesPerConversation?: number;
   maxRepliesPerHour?: number;
@@ -161,34 +178,82 @@ export type AttendantProfileInput = {
 // `settings:manage`. Até carregar, o salvar NÃO manda os textos — senão
 // gravaria vazio por cima do que já existe.
 
-export type PersonaForm = { systemPrompt: string; knowledge: string; loaded: boolean };
+export type PersonaTextForm = { systemPrompt: string; loaded: boolean };
+export type KnowledgeForm = { knowledge: string; loaded: boolean };
 
-export const personaFromTexts = (
-  texts: { systemPrompt?: string | null; knowledge?: string | null } | null | undefined,
-): PersonaForm =>
+type AttendantTexts = { systemPrompt?: string | null; knowledge?: string | null };
+
+export const personaFromTexts = (texts: AttendantTexts | null | undefined): PersonaTextForm =>
   texts
-    ? { systemPrompt: texts.systemPrompt ?? "", knowledge: texts.knowledge ?? "", loaded: true }
-    : { systemPrompt: "", knowledge: "", loaded: false };
+    ? { systemPrompt: texts.systemPrompt ?? "", loaded: true }
+    : { systemPrompt: "", loaded: false };
 
-export const validatePersona = (_form: PersonaForm): ValidationResult => ({ ok: true });
+export const knowledgeFromTexts = (texts: AttendantTexts | null | undefined): KnowledgeForm =>
+  texts
+    ? { knowledge: texts.knowledge ?? "", loaded: true }
+    : { knowledge: "", loaded: false };
 
-export const personaToPatch = (form: PersonaForm): { knowledge?: string; systemPrompt?: string } =>
-  form.loaded ? { knowledge: form.knowledge, systemPrompt: form.systemPrompt } : {};
+export const validatePersona = (_form: PersonaTextForm): ValidationResult => ({ ok: true });
+export const validateKnowledge = (_form: KnowledgeForm): ValidationResult => ({ ok: true });
+
+/** Safety net: sem os textos carregados o patch NÃO leva o texto (senão gravaria vazio). */
+export const personaToPatch = (form: PersonaTextForm): { systemPrompt?: string } =>
+  form.loaded ? { systemPrompt: form.systemPrompt } : {};
+
+export const knowledgeToPatch = (form: KnowledgeForm): { knowledge?: string } =>
+  form.loaded ? { knowledge: form.knowledge } : {};
 
 // ── Horário de atendimento ──────────────────────────────────────────────────
 
-export type ScheduleForm = { startHour: number; endHour: number };
+/**
+ * `allDay` = sem horário (a IA atende 24 horas; vira `schedule: null`).
+ * `timezone` e `days` vêm do perfil salvo e voltam intactos no patch (o Copiloto
+ * grava ambos; sem eles o painel apagaria os dias e forçaria o fuso de São Paulo).
+ */
+export type ScheduleForm = {
+  startHour: number;
+  endHour: number;
+  allDay?: boolean;
+  timezone?: string;
+  days?: number[];
+};
 
 export const scheduleFromProfile = (p: AttendantProfileInput): ScheduleForm => ({
+  allDay: !p.schedule,
   startHour: p.schedule?.startHour ?? DEFAULT_SCHEDULE_START_HOUR,
   endHour: p.schedule?.endHour ?? DEFAULT_SCHEDULE_END_HOUR,
+  timezone: p.schedule?.timezone ?? SCHEDULE_TIMEZONE,
+  ...(p.schedule?.days && p.schedule.days.length > 0 ? { days: p.schedule.days } : {}),
 });
 
 export const validateSchedule = (_form: ScheduleForm): ValidationResult => ({ ok: true });
 
-export const scheduleToPatch = (form: ScheduleForm) => ({
-  schedule: { timezone: SCHEDULE_TIMEZONE, startHour: form.startHour, endHour: form.endHour },
-});
+export function scheduleErrors(form: ScheduleForm): FieldErrors<ScheduleForm> {
+  const errors: FieldErrors<ScheduleForm> = {};
+  if (form.allDay) return errors;
+  if (!Number.isInteger(form.startHour) || form.startHour < 0 || form.startHour > 23) {
+    errors.startHour = "Horário: use uma hora de início inteira entre 0 e 23.";
+  }
+  if (!Number.isInteger(form.endHour) || form.endHour < 1 || form.endHour > 24) {
+    errors.endHour = "Horário: use uma hora de fim inteira entre 1 e 24.";
+  }
+  if (!errors.startHour && !errors.endHour && form.startHour >= form.endHour) {
+    errors.endHour = "Horário: o fim precisa ser depois do início.";
+  }
+  return errors;
+}
+
+export const scheduleToPatch = (form: ScheduleForm) =>
+  form.allDay
+    ? { schedule: null }
+    : {
+        schedule: {
+          timezone: form.timezone ?? SCHEDULE_TIMEZONE,
+          startHour: form.startHour,
+          endHour: form.endHour,
+          ...(form.days && form.days.length > 0 ? { days: form.days } : {}),
+        },
+      };
 
 // ── Repasse para a equipe (palavras-chave) ──────────────────────────────────
 
@@ -291,6 +356,48 @@ export function botGuardToPatch(form: BotGuardForm) {
   return { botGuard: { enabled: form.enabled, tag: check.ok ? check.tag : DEFAULT_BOT_TAG } };
 }
 
+// ── Comportamento na conversa = tetos/agrupamento/data + proteção contra robôs ──
+
+export type BehaviorForm = ConversationForm & { botGuardEnabled: boolean; botGuardTag: string };
+
+export const behaviorFromProfile = (p: AttendantProfileInput): BehaviorForm => {
+  const guard = botGuardFromProfile(p);
+  return {
+    ...conversationFromProfile(p),
+    botGuardEnabled: guard.enabled,
+    botGuardTag: guard.tag,
+  };
+};
+
+const guardOf = (f: BehaviorForm): BotGuardForm => ({ enabled: f.botGuardEnabled, tag: f.botGuardTag });
+const conversationOf = (f: BehaviorForm): ConversationForm => ({
+  maxPerConversation: f.maxPerConversation,
+  maxPerHour: f.maxPerHour,
+  debounceSeconds: f.debounceSeconds,
+  includeCurrentDateTime: f.includeCurrentDateTime,
+});
+
+export function behaviorErrors(form: BehaviorForm): FieldErrors<BehaviorForm> {
+  const errors: FieldErrors<BehaviorForm> = {};
+  const perConv = readReplyLimit(form.maxPerConversation, "Máx. respostas por conversa");
+  if (!perConv.ok) errors.maxPerConversation = perConv.message;
+  const perHour = readReplyLimit(form.maxPerHour, "Máx. respostas por hora");
+  if (!perHour.ok) errors.maxPerHour = perHour.message;
+  const debounce = readDebounceSeconds(form.debounceSeconds);
+  if (!debounce.ok) errors.debounceSeconds = debounce.message;
+  const guard = validateBotGuard(guardOf(form));
+  if (!guard.ok) errors.botGuardTag = guard.message;
+  return errors;
+}
+
+export const behaviorWarnings = (form: BehaviorForm) => conversationWarnings(conversationOf(form));
+
+/** Só as chaves deste formulário. */
+export const behaviorToPatch = (form: BehaviorForm) => ({
+  ...conversationToPatch(conversationOf(form)),
+  ...botGuardToPatch(guardOf(form)),
+});
+
 // ── Follow-ups agendados pela IA ────────────────────────────────────────────
 
 export type FollowUpForm = {
@@ -342,6 +449,24 @@ export function validateFollowUp(form: FollowUpForm): ValidationResult {
   return { ok: true };
 }
 
+export function followUpErrors(form: FollowUpForm): FieldErrors<FollowUpForm> {
+  const errors: FieldErrors<FollowUpForm> = {};
+  const maxChain = readFollowUpMaxChain(form.maxChain);
+  if (!maxChain.ok) errors.maxChain = maxChain.message;
+  const start = readFollowUpHour(form.quietStart, "Início da janela de envio");
+  if (!start.ok) errors.quietStart = start.message;
+  const end = readFollowUpHour(form.quietEnd, "Fim da janela de envio");
+  if (!end.ok) errors.quietEnd = end.message;
+  const cap = readFollowUpDailyCap(form.dailyCap);
+  if (!cap.ok) errors.dailyCap = cap.message;
+  if (start.ok && end.ok) {
+    const s = start.value ?? FOLLOW_UP_DEFAULT_QUIET_START_HOUR;
+    const e = end.value ?? FOLLOW_UP_DEFAULT_QUIET_END_HOUR;
+    if (s >= e) errors.quietEnd = "Follow-ups: a janela de envio precisa começar antes de terminar.";
+  }
+  return errors;
+}
+
 export const followUpToPatch = (form: FollowUpForm) => ({
   followUps: {
     mode: form.mode,
@@ -378,6 +503,13 @@ export const pipelineFromProfile = (p: AttendantProfileInput): PipelineForm => (
 });
 
 export const validatePipeline = (_form: PipelineForm): ValidationResult => ({ ok: true });
+
+export function pipelineErrors(form: PipelineForm): FieldErrors<PipelineForm> {
+  const t = form.qualifyThreshold;
+  return Number.isInteger(t) && t >= 1 && t <= 4
+    ? {}
+    : { qualifyThreshold: "Limiar BANT: use um número inteiro entre 1 e 4." };
+}
 
 /**
  * "Vazio" só se allowMoveStages também está no default (true) — desligar o
@@ -420,57 +552,37 @@ export const nextMode = (current: AttendantMode): AttendantMode =>
 
 export const modeToPatch = (mode: AttendantMode) => ({ mode });
 
-// ── Salvar "Personalizar": validação e patch compostos ──────────────────────
+// ── Ordem dos cartões da visão geral da IA ─────────────────────────────────
 
-export type CustomizationForms = {
-  persona: PersonaForm;
-  schedule: ScheduleForm;
-  handoff: HandoffForm;
-  conversation: ConversationForm;
-  botGuard: BotGuardForm;
-  followUp: FollowUpForm;
-  pipeline: PipelineForm;
-};
-
-/** Primeiro erro na MESMA ordem em que a tela sempre validou. */
-export function validateCustomization(forms: CustomizationForms): ValidationResult {
-  const checks = [
-    validateConversation(forms.conversation),
-    validateFollowUp(forms.followUp),
-    validateBotGuard(forms.botGuard),
-  ];
-  return checks.find((c) => !c.ok) ?? { ok: true };
-}
-
-/** Patch parcial do "Personalizar". Chame `validateCustomization` antes. */
-export function customizationToPatch(forms: CustomizationForms) {
-  return {
-    ...personaToPatch(forms.persona),
-    ...scheduleToPatch(forms.schedule),
-    ...handoffToPatch(forms.handoff),
-    ...conversationToPatch(forms.conversation),
-    ...botGuardToPatch(forms.botGuard),
-    ...followUpToPatch(forms.followUp),
-    ...pipelineToPatch(forms.pipeline),
-  };
-}
-
-// ── Ordem dos cartões da seção Inteligência artificial ──────────────────────
-
-export type AiCard =
-  | "wizard"
-  | "activation"
-  | "featureToggles"
-  | "bridgeAi"
-  | "attendant"
-  | "usage"
-  | "privacy";
+export type AiCard = "wizard" | "activation" | "attendant";
 
 /**
  * Enquanto a IA não está ativa E com atendente, só o wizard de ativação
- * aparece (inativa e "ativa sem atendente" caem no mesmo fluxo).
+ * aparece (inativa e "ativa sem atendente" caem no mesmo fluxo). Recursos, uso
+ * e privacidade moram nos painéis próprios (`ai-features`, `ai-usage`, `ai-models`).
  */
 export function aiSectionOrder(status: { active: boolean; hasAttendant: boolean }): AiCard[] {
   if (!status.active || !status.hasAttendant) return ["wizard"];
-  return ["activation", "featureToggles", "bridgeAi", "attendant", "usage", "privacy"];
+  return ["activation", "attendant"];
+}
+
+// ── Salvar um painel: união só dos formulários alterados ────────────────────
+
+export type PanelPart = {
+  dirty: boolean;
+  errors: Partial<Record<string, string | undefined>>;
+  /** Patch com SÓ as chaves deste formulário. */
+  patch: () => Record<string, unknown>;
+};
+
+export type PanelPatchResult =
+  | { ok: true; patch: Record<string, unknown> }
+  | { ok: false; message: string };
+
+/** Une os patches dos formulários alterados; o primeiro erro (dos alterados) corta o salvar. */
+export function buildPanelPatch(parts: ReadonlyArray<PanelPart>): PanelPatchResult {
+  const changed = parts.filter((p) => p.dirty);
+  const message = changed.flatMap((p) => Object.values(p.errors)).find(Boolean);
+  if (message) return { ok: false, message };
+  return { ok: true, patch: Object.assign({}, ...changed.map((p) => p.patch())) };
 }

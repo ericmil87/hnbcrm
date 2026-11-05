@@ -11,6 +11,7 @@ import { Copy, Check, RefreshCw, Power, Trash2, QrCode, Cloud, Radio, LayoutTemp
 import { cn } from "@/lib/utils";
 import { statusBadgeVariant, statusLabel, bridgeStateBadge } from "@/lib/channelBadges";
 import { BridgeGroupsPanel } from "@/components/settings/BridgeGroupsPanel";
+import { ChannelTranscriptionToggle } from "./ChannelTranscriptionToggle";
 import type { ChannelConfig } from "./types";
 import { BridgeHistoryPanel } from "./BridgeHistoryPanel";
 
@@ -23,7 +24,6 @@ export function ChannelCard({
   onTest,
   onEdit,
   onToggle,
-  onToggleAutoTranscribe,
   onTogglePhoneNotifications,
   onDelete,
   onShowQr,
@@ -36,7 +36,6 @@ export function ChannelCard({
   onTest: () => void;
   onEdit: () => void;
   onToggle: () => void;
-  onToggleAutoTranscribe: () => void;
   onTogglePhoneNotifications: () => void;
   onDelete: () => void;
   onShowQr: () => void;
@@ -164,42 +163,13 @@ export function ChannelCard({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between gap-3 rounded-lg bg-surface-base border border-border-subtle p-2.5">
-        <div className="min-w-0">
-          <span className="text-sm text-text-primary">Transcrever áudios automaticamente</span>
-          <p className="text-xs text-text-muted mt-0.5">
-            Transcreve automaticamente os áudios recebidos dos contatos e os enviados pela equipe (pelo HNBCRM ou pelo celular). A transcrição fica no histórico e o Atendente IA a lê.
-          </p>
-        </div>
-        <PermissionGate
+      <div className="mt-3">
+        <ChannelTranscriptionToggle
           organizationId={organizationId}
-          category="settings"
-          level="manage"
-          fallback={
-            <Badge variant={config.autoTranscribeAudio ? "success" : "default"}>
-              {config.autoTranscribeAudio ? "Ativado" : "Desativado"}
-            </Badge>
-          }
-        >
-          <button
-            type="button"
-            role="switch"
-            aria-checked={config.autoTranscribeAudio}
-            aria-label="Transcrever áudios automaticamente"
-            onClick={onToggleAutoTranscribe}
-            className={cn(
-              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-              config.autoTranscribeAudio ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-            )}
-          >
-            <span
-              className={cn(
-                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                config.autoTranscribeAudio ? "translate-x-5" : "translate-x-1"
-              )}
-            />
-          </button>
-        </PermissionGate>
+          configId={config._id}
+          checked={config.autoTranscribeAudio}
+          description="Transcreve automaticamente os áudios recebidos dos contatos e os enviados pela equipe (pelo HNBCRM ou pelo celular). A transcrição fica no histórico e o Atendente IA a lê."
+        />
       </div>
 
       {isBridge && (
