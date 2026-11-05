@@ -18,23 +18,30 @@ const SUGGESTIONS = [
   "Resuma as métricas do mês",
 ];
 
-interface CopilotPanelProps {
+interface CopilotPanelBaseProps {
   organizationId: Id<"organizations">;
-  open: boolean;
-  onClose: () => void;
-  /** "drawer" (padrão): gaveta lateral. "embedded": ocupa o contêiner pai, sem chrome de gaveta. */
-  variant?: "drawer" | "embedded";
   /** "setup": conversa de configuração inicial (thread próprio). */
   purpose?: "setup";
 }
 
-export function CopilotPanel({
-  organizationId,
-  open,
-  onClose,
-  variant = "drawer",
-  purpose,
-}: CopilotPanelProps) {
+type CopilotPanelProps =
+  | (CopilotPanelBaseProps & {
+      /** Gaveta lateral (padrão). */
+      variant?: "drawer";
+      open: boolean;
+      onClose: () => void;
+    })
+  | (CopilotPanelBaseProps & {
+      /** Ocupa o contêiner pai, sem chrome de gaveta; sempre ativo. */
+      variant: "embedded";
+      open?: boolean;
+      onClose?: () => void;
+    });
+
+export function CopilotPanel(props: CopilotPanelProps) {
+  const { organizationId, purpose } = props;
+  const variant = props.variant ?? "drawer";
+  const active = props.open === true || variant === "embedded";
   const {
     streamingText,
     activeTools,
@@ -54,7 +61,7 @@ export function CopilotPanel({
   // "flash" vazio).
   const liveMessages = useQuery(
     api.copilot.getThreadMessages,
-    threadId && open ? { threadId } : "skip"
+    threadId && active ? { threadId } : "skip"
   );
   const [cachedMessages, setCachedMessages] = useState<{
     threadId: string;
@@ -78,7 +85,7 @@ export function CopilotPanel({
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streamingText, activeTools, open]);
+  }, [messages, streamingText, activeTools, active]);
 
   // Textarea auto-expansível (até um teto, depois rola internamente).
   useEffect(() => {
@@ -183,7 +190,7 @@ export function CopilotPanel({
     </>
   );
 
-  if (variant === "embedded") {
+  if (props.variant === "embedded") {
     return (
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-4 md:px-6">
@@ -200,8 +207,8 @@ export function CopilotPanel({
 
   return (
     <SlideOver
-      open={open}
-      onClose={onClose}
+      open={props.open}
+      onClose={props.onClose}
       title="Copiloto"
       titleIcon={<Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />}
       headerActions={newThreadButton}
