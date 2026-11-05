@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-interface TaskDetailSlideOverProps {
+interface TaskQuickViewProps {
   open: boolean;
   onClose: () => void;
   taskId: string | null;
@@ -63,7 +63,7 @@ const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   other: "Outro",
 };
 
-export function TaskDetailSlideOver({ open, onClose, taskId }: TaskDetailSlideOverProps) {
+export function TaskQuickView({ open, onClose, taskId }: TaskQuickViewProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const task = useQuery(

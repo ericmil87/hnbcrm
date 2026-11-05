@@ -16,7 +16,7 @@ import { WeekView } from "./WeekView";
 import { DayView } from "./DayView";
 import { CalendarEventModal } from "./CalendarEventModal";
 import { EventDetailSlideOver } from "./EventDetailSlideOver";
-import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
+import { TaskQuickView } from "./TaskQuickView";
 import { EventBlock } from "./EventBlock";
 import type { CalendarEventType } from "./constants";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -299,7 +299,7 @@ export function CalendarPage() {
       )}
 
       {selectedTaskId && (
-        <TaskDetailSlideOver
+        <TaskQuickView
           open
           onClose={() => setSelectedTaskId(null)}
           taskId={selectedTaskId}
