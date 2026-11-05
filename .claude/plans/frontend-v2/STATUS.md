@@ -67,7 +67,7 @@
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
-| 29b | `feat/fv2-29b-a11y-mobile-vocabulario` | frontend-specialist | varredura final (PR 14 passos 2–6 + pendências acumuladas) | revisão → gates → merge → encerramento |
+| 29b | `feat/fv2-29b-a11y-mobile-vocabulario` | frontend-specialist | **IMPLEMENTADO e commitado (8 commits, 4601 testes, gates verdes), NÃO integrado**: revisão (`reviewer`) estava em curso quando a sessão atingiu o limite de uso. Worktree `.claude/worktrees/fv2-29b` (ramo não pushado). Smoke parcial no Chrome: Histórico (`?severity=` replace sem rolar; `?log=` push; voltar mantém o filtro) ok. | pushar o ramo, ler o veredito da revisão (ou refazê-la), corrigir, gates, PR → `frontend-v2`; notar que os pills de Tarefas ("Minha Semana", "Sem Responsável") ainda estão em title case |
 
 ## Parados (não integrar sem decisão do dono)
 
@@ -103,15 +103,11 @@
 
 ## Para retomar
 
-- **Último PR integrado:** fv2-22 (merge `9e0729a` em `frontend-v2`). Todos os 22 PRs do escopo da nuvem (fv2-01 a fv2-22) estão integrados; nenhum ficou parado.
-- **PR em andamento:** nenhum. Nenhum worktree/ramo com trabalho incompleto.
+- **Último PR integrado:** fv2-29a (`b56e6ae`, PR #51). Integrados nesta sessão local: fv2-22b/22c/22d/22e, 23, 24, 25, 26, 27, 28, 29a (PRs #41–#51). Suíte em `frontend-v2`: 4593 testes.
+- **PR em andamento:** fv2-29b, implementado em `.claude/worktrees/fv2-29b` (ramo local `feat/fv2-29b-a11y-mobile-vocabulario`, 8 commits, gates verdes, 4601 testes); falta: push do ramo, veredito da revisão, eventual rodada de correção, PR e merge em `frontend-v2`. O Vite auxiliar foi parado; o Vite do checkout principal (porta 5173) pode continuar rodando.
 - **PRs parados:** nenhum.
-- **Próximo PR da ordem (local, com o dono):** fv2-23 (wizard v2, passos 1–4), depois fv2-24. Antes de começar: `SimulatorModal` → `AttendantSimulator variant="modal"` (apagar `attendantSimulatorTypes.ts`); gravar `setupThreadId` em `onboardingProgress.wizardData` (é `v.any()`); usar `ChannelConnectCard variant="wizard"` + `PairingPanel`, `FunnelEditor`, `AttendantPersonaForm`/`AttendantHoursForm` (presets), `generateAttendantDraft`, `CopilotPanel variant="embedded" purpose="setup"`.
-- **Pendências para o dono** (detalhe na seção acima e no corpo de https://github.com/ericmil87/hnbcrm/pull/40):
-  - Envs/PROD: confirmar que `CONVEX_SITE_URL` resolve em PROD (o cliente não manda mais `webhookUrl`); backend precisa ir para PROD (`npm run deploy:prod`) ANTES do merge de `frontend-v2` em `main` (front novo chama `startBridgePairing`, `pollBridgePairing`, `setMyUiTheme`, `saveBusinessProfile`, `applyFunnelTemplate`, `getOnboardingStatus`, `generateAttendantDraft`, `purpose:"setup"`, tools do Copiloto).
-  - Validação viva: código de conexão num aparelho real (validade, segundo código invalida o primeiro?, rótulos do app WhatsApp); tema Estilo WhatsApp no celular; Configurações em dois níveis no celular; painéis do Atendente IA salvando patch parcial; pedir ao Copiloto "mude o horário para seg a sex 9–18" e confirmar.
-  - Textos: 7 templates de segmento (`convex/lib/onboardingTemplates.ts`); nomes de funil gravados ("Pipeline Imobiliário") em `src/lib/onboardingTemplates.ts` (`PENDING_SCOPE` do `vocabGuard`); decidir "Lead" × "Oportunidade" (`VOCAB.lead`).
-  - Backend (PR pequeno): links de e-mail/Telegram `?secao=ai` → `ai-usage` e `?secao=channels` (Meta) → `instagram` (`convex/emailTemplates.ts:661,715`, `convex/lib/telegramNotifications.ts:386,388,651`); traduzir erros técnicos em `pairingResultFromStep`; expor `rename` em `updateAgentProfile` pública (renomear atendente pelo formulário).
-  - Frontend (fv2-29): `Modal` sem gestão de foco; ~60 toasts "Falha ao…" em 28 arquivos fora do escopo do `vocabGuard`; textos em inglês pré-existentes; `BridgeQrModal` ainda usa `useAction` direto.
-  - Plano: tabela 3.5 de `01-temas.md` desatualizada (`bubble-out` Claro = `#9A3412`).
-- **Comando para continuar:** `git fetch && git checkout frontend-v2` (depois `npm ci`; colar `PROMPT-CLOUD.md` com a seção 1b ajustada para fv2-23…, ou continuar localmente).
+- **Opcionais fv2-30 a fv2-33:** não iniciados; decisão do Eric (pergunta feita na mensagem final).
+- **Encerramento pendente (seção 5 do PROMPT-LOCAL):** depois do fv2-29b → `reviewer` numa passada final `main...frontend-v2` (invariantes + deep links + guards); gates completos + `npx convex dev --once` + `npx convex codegen` sem diff no `frontend-v2` final; fechar a seção "Pronto para main" (hoje rascunho); PR #40 continua em rascunho.
+- **Pendências para o dono:** ver "Pronto para main" (envs em PROD, ordem deploy → merge, validações vivas que faltam, textos).
+- **Comando para continuar:** `git fetch && git checkout frontend-v2 && git pull` (worktree do 29b já existe: `git worktree list`); colar `PROMPT-LOCAL.md` apontando para "retomar no fv2-29b".
+
