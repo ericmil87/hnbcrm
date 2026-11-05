@@ -46,7 +46,7 @@ export const SENTENCE_CASE_SCOPE: readonly string[] = [
   "src/components/Inbox.tsx",
   "src/components/inbox/",
   "src/components/HandoffQueue.tsx",
-  "src/components/KanbanBoard.tsx",
+  "src/components/funnel/",
   "src/components/onboarding/",
 ];
 

@@ -1,6 +1,12 @@
 import { useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router";
-import { formatDateParam, parseCalendarParams, type CalendarView } from "@/lib/calendarParams";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import {
+  defaultCalendarView,
+  formatDateParam,
+  parseCalendarParams,
+  type CalendarView,
+} from "@/lib/calendarParams";
 
 /**
  * Estado da Agenda guardado na URL: `?view=day|week|month&date=YYYY-MM-DD&event=<id>`.
@@ -9,7 +15,8 @@ import { formatDateParam, parseCalendarParams, type CalendarView } from "@/lib/c
  */
 export function useCalendarState() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { view, date, event: eventParam } = parseCalendarParams(searchParams);
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const { view, date, event: eventParam } = parseCalendarParams(searchParams, defaultCalendarView(isMobile));
   // Sem `?date=`, a Agenda abre em "agora" (fixado na montagem).
   const [fallbackDate] = useState(() => new Date());
   const currentDate = useMemo(() => date ?? fallbackDate, [date, fallbackDate]);

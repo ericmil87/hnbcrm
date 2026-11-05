@@ -1,13 +1,14 @@
 import { activeTabForPath, TAB_ROUTES } from "./routes";
 
 /**
- * Parâmetros de busca que só controlam a UI (seção/aba, filtro de arquivadas)
- * e valem em qualquer org. Todo o resto (`?conversation=`, `?task=`, `?lead=`,
- * `?handoff=`, `?label=`, `?campanha=`, `?post=`…) aponta para uma entidade da
- * org ANTERIOR — as queries autorizam pela org da entidade, então a tela da org
- * nova mostraria o registro da antiga ao lado das listas dela.
+ * Parâmetros de busca que só controlam a UI (seção/aba, filtro de arquivadas,
+ * modo, busca e dia do Funil/Agenda) e valem em qualquer org. Todo o resto
+ * (`owner`, `unit`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`,
+ * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as queries
+ * autorizam pela org da entidade, então a tela da org nova mostraria o registro
+ * da antiga ao lado das listas dela.
  */
-const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba", "archived"]);
+const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba", "archived", "view", "q", "date"]);
 
 /**
  * Destino da navegação ao trocar de organização: mesma aba, sem deep-link de

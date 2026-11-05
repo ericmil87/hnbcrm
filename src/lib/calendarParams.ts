@@ -2,6 +2,11 @@ export type CalendarView = "day" | "week" | "month";
 
 export const DEFAULT_CALENDAR_VIEW: CalendarView = "day";
 
+/** Visão padrão quando `?view=` falta ou é inválida: dia no celular, semana no desktop. */
+export function defaultCalendarView(isMobile: boolean): CalendarView {
+  return isMobile ? "day" : "week";
+}
+
 const VIEWS: readonly CalendarView[] = ["day", "week", "month"];
 
 export interface CalendarParams {
@@ -34,10 +39,13 @@ export function formatDateParam(date: Date): string {
 }
 
 /** Lê `?view=&date=&event=` da Agenda; valores inválidos caem no padrão. */
-export function parseCalendarParams(search: string | URLSearchParams): CalendarParams {
+export function parseCalendarParams(
+  search: string | URLSearchParams,
+  fallbackView: CalendarView = DEFAULT_CALENDAR_VIEW
+): CalendarParams {
   const params = typeof search === "string" ? new URLSearchParams(search) : search;
   const rawView = params.get("view");
-  const view = VIEWS.find((v) => v === rawView) ?? DEFAULT_CALENDAR_VIEW;
+  const view = VIEWS.find((v) => v === rawView) ?? fallbackView;
   const event = params.get("event")?.trim() || null;
   return { view, date: parseDateParam(params.get("date")), event };
 }
