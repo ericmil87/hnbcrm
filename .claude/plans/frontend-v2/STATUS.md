@@ -41,6 +41,7 @@
 | A.6 Pendências da nuvem em PR pequeno | **fv2-22c** (acima). |
 | 22b | Validador de `getOnboardingStatus` (`steps`: `v.object`, não `v.record` de literais) + guarda `validatorRecordKeys.test.ts` + codegen regenerado (`lib/copilotDates`) | `feat/fv2-22b-validator-onboarding` | `bdf9221` (PR #41, 05/11/2026) | 4252 | Achado pelo push no DEV (A.3); sem revisão separada (1 linha + guarda). | Regra nova em `.claude/rules/convex-official.md`: chave de `v.record` só `v.string()`/`v.id()`. |
 | 22c | Links `?secao=ai-usage` (gasto de IA: e-mail, Telegram, Copiloto no Telegram) e `?secao=instagram` (Meta desconectada); `convex/lib/pairingErrors.ts` (erros do pareamento em PT-BR, cru só no log); `rename` em `updateAgentProfile` pública; tabela 3.5 de `01-temas.md` corrigida | `feat/fv2-22c-ajustes-backend` | `1c842bd` (PR #42, 05/11/2026) | 4264 | Fecha o único "bloqueia" da revisão de conjunto (links de gasto caíam em `ai`, que não mostra mais uso/teto). | Retorno OAuth da Meta e links de WhatsApp continuam `channels`; Telegram lê `step.error` direto (inalterado); mensagens de cota/ocupado já eram amigáveis. |
+| 22d | Correções da revisão de conjunto (backend): `applyFunnelTemplate` fail-closed (`canReplaceDefaultBoard`, `REFERENCE_SCAN_LIMIT`); checklist v2 em org legada marca `business`/`test` como feitos (`legacyOrg`); guarda `convex/lib/settingsPanelLinks.test.ts` (todo `secao=` do backend existe no registro); textos "Configurações › Atendente IA / WhatsApp e canais" no Copiloto | `feat/fv2-22d-correcoes-backend` | `7b26c1f` (PR #43, 05/11/2026) | 4270 | Origem: revisão (a) itens 5 e 6, revisão (b) item 6. | Outras mensagens do backend ainda dizem "Configurações → Canais/IA" (`whatsapp.ts`, `groupChats.ts`, `aiSpend.ts`, `bridge.ts`) → fv2-31. |
 
 ## Passadas de integração (reviewer, a cada 3 PRs)
 
@@ -58,6 +59,8 @@
 
 | fv2 | Ramo | Agente | Situação | Próximo passo |
 |---|---|---|---|---|
+| 22e | `feat/fv2-22e-correcoes-frontend` | frontend-specialist | implementando as melhorias das revisões (b) e (c) | revisão → gates → merge |
+| 23 | `feat/fv2-23-wizard-v2-passos-1-4` | frontend-specialist | implementando (worktree `.claude/worktrees/fv2-23`) | revisão → gates → merge; depois fv2-24 |
 
 ## Parados (não integrar sem decisão do dono)
 
