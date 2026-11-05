@@ -87,6 +87,7 @@ src/
     │                           #   Composer (container) + ComposerView (presentational, tested; pure rules in lib/composerRules.ts; `features={{voice,schedule,internalNote,quickReplies}}`), conversationInteraction (context: reply target, location.state draft, pending jump), useConversationDoc
     │                           #   (bubbleStyle.test.ts: getBubbleStyle only uses chat/bubble tokens)
     ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useSearchParamState; accepting navigates to /app/entrada?conversation=<id>
+    ├── handoffs/AttentionRow.tsx  # Presentational row of the Requer atenção list: compact (default) with expandable details, or comfortable card; density pref in lib/attentionPrefs.ts (localStorage hnbcrm.attentionDensity)
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
     ├── TeamPage.tsx, AuditLogs.tsx  # /app/equipe, /app/auditoria
     ├── ContactsPage.tsx        # /app/contatos: `?contact=<id>` (push; own entry marked in location.state, close = navigate(-1)), `?q=` and `?page=` (1-based, replace)
