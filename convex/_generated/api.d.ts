@@ -176,6 +176,7 @@ import type * as lib_orgModules from "../lib/orgModules.js";
 import type * as lib_orgPhone from "../lib/orgPhone.js";
 import type * as lib_outboundDispatch from "../lib/outboundDispatch.js";
 import type * as lib_outboundSideEffects from "../lib/outboundSideEffects.js";
+import type * as lib_pairingQuota from "../lib/pairingQuota.js";
 import type * as lib_passwordResetConfig from "../lib/passwordResetConfig.js";
 import type * as lib_permissions from "../lib/permissions.js";
 import type * as lib_phone from "../lib/phone.js";
@@ -432,6 +433,7 @@ declare const fullApi: ApiFromModules<{
   "lib/orgPhone": typeof lib_orgPhone;
   "lib/outboundDispatch": typeof lib_outboundDispatch;
   "lib/outboundSideEffects": typeof lib_outboundSideEffects;
+  "lib/pairingQuota": typeof lib_pairingQuota;
   "lib/passwordResetConfig": typeof lib_passwordResetConfig;
   "lib/permissions": typeof lib_permissions;
   "lib/phone": typeof lib_phone;

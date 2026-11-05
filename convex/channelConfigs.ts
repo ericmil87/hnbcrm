@@ -23,10 +23,15 @@ import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory
 import {
   BRIDGE_PRESENCE_AFTER_CONNECT_MS,
   bridgeFetchJson,
+  bridgeWebhookUrl,
   normalizeBridgeBaseUrl,
   resolveBridgePhone,
 } from "./lib/bridgeGateway";
-import { runBridgeReconnectStep } from "./lib/channelReconnectCore";
+import { runBridgeReconnectStep, type ReconnectStep } from "./lib/channelReconnectCore";
+import { consumePairingAttempt } from "./lib/pairingQuota";
+import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
+import { formatTime } from "./lib/telegramNotifications";
 // Old importers (`channelHealth.ts`) keep `import { bridgeFetchJson } from "./channelConfigs"`.
 export { bridgeFetchJson };
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
@@ -986,9 +991,118 @@ export const checkChannelHealth = action({
   },
 });
 
-// Bridge pairing: bring the session up (if needed) and fetch the QR to scan.
-// Returns the QR data-URI OR a state ("connected" needs no QR). NEVER returns the
-// instance token. Permission: settings/manage (via internalGetConfigForMember).
+type PairingMode = "qr" | "code";
+type PairingResult = {
+  state: "qr" | "code" | "connected" | "error";
+  qrCode?: string;
+  linkingCode?: string;
+  displayPhoneNumber?: string;
+  displacedFrom?: string[];
+  error?: string;
+  attemptsLeft?: number;
+};
+const pairingResultValidator = v.object({
+  state: v.union(v.literal("qr"), v.literal("code"), v.literal("connected"), v.literal("error")),
+  qrCode: v.optional(v.string()),
+  linkingCode: v.optional(v.string()),
+  displayPhoneNumber: v.optional(v.string()),
+  displacedFrom: v.optional(v.array(v.string())),
+  error: v.optional(v.string()),
+  attemptsLeft: v.optional(v.number()),
+});
+
+function assertBridgeWhatsapp(config: Doc<"channelConfigs">) {
+  if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
+    throw new Error("O pareamento só se aplica a canais WhatsApp do provider bridge");
+  }
+}
+
+function pairingResultFromStep(step: ReconnectStep, mode: PairingMode, attemptsLeft?: number): PairingResult {
+  const base = {
+    ...(step.displayPhoneNumber ? { displayPhoneNumber: step.displayPhoneNumber } : {}),
+    ...(step.displacedFrom ? { displacedFrom: step.displacedFrom } : {}),
+    ...(attemptsLeft !== undefined ? { attemptsLeft } : {}),
+  };
+  if (step.state === "connected") return { state: "connected", ...base };
+  if (step.state === "error") return { state: "error", error: step.error ?? "Falha ao falar com o gateway", ...base };
+  return {
+    // "waiting" (nenhum QR/código ainda): segue no modo pedido, a UI continua o poll.
+    state: mode,
+    ...(step.qrCode ? { qrCode: step.qrCode } : {}),
+    ...(step.linkingCode ? { linkingCode: step.linkingCode } : {}),
+    ...(step.state === "waiting" && step.error ? { error: step.error } : {}),
+    ...base,
+  };
+}
+
+// Porta única do pareamento web (QR ou código de conexão). Autorização do chamador:
+// `getBridgeQrCode` (settings:manage) ou `startBridgePairing` (settings:manage + conta com e-mail).
+// O QR e o código vão só na resposta: nunca persistidos nem logados.
+async function startPairing(
+  ctx: ActionCtx,
+  config: Doc<"channelConfigs">,
+  args: { mode: PairingMode; phone?: string; defaultCountry: string; timezone: string; memberId?: Id<"teamMembers"> },
+): Promise<PairingResult & { sessionState?: BridgeSessionState }> {
+  assertBridgeWhatsapp(config);
+  if (args.mode === "qr") {
+    const step = await runBridgeReconnectStep(ctx, { config, mode: "qr" });
+    return { ...pairingResultFromStep(step, "qr"), sessionState: step.sessionState };
+  }
+  const norm = normalizeCampaignPhone(args.phone ?? "", args.defaultCountry);
+  if (!norm.ok || norm.phone.length < 10) {
+    return { state: "error", error: "Número inválido. Informe o número do WhatsApp com DDD (ex.: 11 98765-4321)." };
+  }
+  const quota = await ctx.runMutation(internal.channelConfigs.internalConsumePairingAttempt, {
+    configId: config._id,
+    organizationId: config.organizationId,
+    ...(args.memberId ? { actorId: args.memberId } : {}),
+  });
+  if (!quota.allowed) {
+    return {
+      state: "error",
+      attemptsLeft: 0,
+      error: `Limite de 3 códigos por hora. Tente de novo às ${formatTime(quota.resetsAt, args.timezone)}.`,
+    };
+  }
+  const step = await runBridgeReconnectStep(ctx, { config, mode: "code", phase: "start", phoneDigits: norm.phone });
+  return pairingResultFromStep(step, "code", quota.attemptsLeft);
+}
+
+export const startBridgePairing = action({
+  args: {
+    configId: v.id("channelConfigs"),
+    mode: v.union(v.literal("qr"), v.literal("code")),
+    phone: v.optional(v.string()),
+  },
+  returns: pairingResultValidator,
+  handler: async (ctx, args): Promise<PairingResult> => {
+    const pairing = await ctx.runQuery(internal.channelConfigs.internalGetPairingContext, { configId: args.configId });
+    const res = await startPairing(ctx, pairing.config, {
+      mode: args.mode,
+      phone: args.phone,
+      defaultCountry: pairing.defaultCountry,
+      timezone: pairing.timezone,
+      memberId: pairing.memberId,
+    });
+    const { sessionState: _ignored, ...out } = res;
+    return out;
+  },
+});
+
+export const pollBridgePairing = action({
+  args: { configId: v.id("channelConfigs"), mode: v.union(v.literal("qr"), v.literal("code")) },
+  returns: pairingResultValidator,
+  handler: async (ctx, args): Promise<PairingResult> => {
+    const pairing = await ctx.runQuery(internal.channelConfigs.internalGetPairingContext, { configId: args.configId });
+    assertBridgeWhatsapp(pairing.config);
+    // Poll só lê o estado: nunca pede código novo nem consome cota.
+    const step = await runBridgeReconnectStep(ctx, { config: pairing.config, mode: args.mode, phase: "poll" });
+    return pairingResultFromStep(step, args.mode);
+  },
+});
+
+// Bridge pairing (QR) used by Settings. Same single port as `startBridgePairing({ mode: "qr" })`;
+// keeps its historic shape/permission (settings:manage). NEVER returns the instance token.
 export const getBridgeQrCode = action({
   args: { configId: v.id("channelConfigs") },
   returns: v.object({
@@ -1012,17 +1126,13 @@ export const getBridgeQrCode = action({
     const config = await ctx.runQuery(internal.channelConfigs.internalGetConfigForMember, {
       configId: args.configId,
     });
-    if (config.channel !== "whatsapp" || configProvider(config) !== "bridge") {
-      throw new Error("QR só se aplica a canais do provider bridge");
-    }
-    // v0.78: one path with the Telegram reconnect (`lib/channelReconnectCore.ts`); same behaviour.
-    const step = await runBridgeReconnectStep(ctx, { config, mode: "qr" });
+    const res = await startPairing(ctx, config, { mode: "qr", defaultCountry: "55", timezone: "America/Sao_Paulo" });
     return {
-      state: step.sessionState,
-      ...(step.qrCode ? { qrCode: step.qrCode } : {}),
-      ...(step.displayPhoneNumber ? { displayPhoneNumber: step.displayPhoneNumber } : {}),
-      ...(step.error ? { error: step.error } : {}),
-      ...(step.displacedFrom ? { displacedFrom: step.displacedFrom } : {}),
+      state: res.sessionState ?? "disconnected",
+      ...(res.qrCode ? { qrCode: res.qrCode } : {}),
+      ...(res.displayPhoneNumber ? { displayPhoneNumber: res.displayPhoneNumber } : {}),
+      ...(res.error ? { error: res.error } : {}),
+      ...(res.displacedFrom ? { displacedFrom: res.displacedFrom } : {}),
     };
   },
 });
@@ -1057,7 +1167,8 @@ export const provisionBridgeChannel = action({
     displayName: v.string(),
     bridgeBaseUrl: v.optional(v.string()),
     adminToken: v.optional(v.string()),
-    webhookUrl: v.string(),
+    // Opcional: sem ele o servidor monta `${CONVEX_SITE_URL}/webhooks/bridge`.
+    webhookUrl: v.optional(v.string()),
     useManagedGateway: v.optional(v.boolean()),
   },
   returns: v.id("channelConfigs"),
@@ -1086,8 +1197,16 @@ export const provisionBridgeChannel = action({
       adminToken = (args.adminToken ?? "").trim();
       if (!adminToken) throw new Error("Admin token é obrigatório para provisionar a instância");
     }
-    const webhook = args.webhookUrl.trim();
-    if (!webhook) throw new Error("URL de webhook é obrigatória para provisionar a instância");
+    let webhook = (args.webhookUrl ?? "").trim();
+    if (!webhook) {
+      const site = process.env.CONVEX_SITE_URL?.trim();
+      if (!site) {
+        throw new Error(
+          "CONVEX_SITE_URL não configurado no Convex e nenhuma URL de webhook foi informada — não dá para montar o webhook do bridge"
+        );
+      }
+      webhook = bridgeWebhookUrl(site);
+    }
 
     // The per-instance token (secret) and the instance name (= bridgeInstanceId,
     // the ingress routing key). The name must be what the gateway echoes in the
@@ -1174,6 +1293,70 @@ export const internalGetConfigForMember = internalQuery({
     if (!config) throw new Error("Channel config not found");
     await requirePermission(ctx, config.organizationId, "settings", "manage");
     return config;
+  },
+});
+
+// Internal: pairing context for the web actions — settings:manage + account with e-mail,
+// plus the org timezone / default dial code and the acting member (audit).
+export const internalGetPairingContext = internalQuery({
+  args: { configId: v.id("channelConfigs") },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config) throw new Error("Channel config not found");
+    const member = await requirePermission(ctx, config.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx);
+    const org = await ctx.db.get(config.organizationId);
+    return {
+      config,
+      memberId: member._id,
+      timezone: org?.settings?.timezone || "America/Sao_Paulo",
+      defaultCountry: resolveDefaultCountry(org?.settings),
+    };
+  },
+});
+
+// Internal: consumes one code attempt of the shared 3/h ceiling (same `telegramReconnects`
+// row as the Telegram reconnect; never touches `token` or the Telegram fields).
+export const internalConsumePairingAttempt = internalMutation({
+  args: {
+    configId: v.id("channelConfigs"),
+    organizationId: v.id("organizations"),
+    actorId: v.optional(v.id("teamMembers")),
+  },
+  returns: v.object({ allowed: v.boolean(), attemptsLeft: v.number(), resetsAt: v.number() }),
+  handler: async (ctx, args) => {
+    const config = await ctx.db.get(args.configId);
+    if (!config || config.organizationId !== args.organizationId) throw new Error("Channel config not found");
+    const now = Date.now();
+    const row = await ctx.db
+      .query("telegramReconnects")
+      .withIndex("by_channel_config", (q) => q.eq("channelConfigId", args.configId))
+      .first();
+    const res = consumePairingAttempt(row, now);
+    if (!res.allowed) return { allowed: false, attemptsLeft: 0, resetsAt: res.resetsAt };
+    if (row) await ctx.db.patch(row._id, { ...res.next, updatedAt: now });
+    else {
+      await ctx.db.insert("telegramReconnects", {
+        organizationId: args.organizationId,
+        channelConfigId: args.configId,
+        ...res.next,
+        updatedAt: now,
+      });
+    }
+    // Never the code, the QR, the phone or the token: only who, which channel and how.
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "channelConfig",
+      entityId: args.configId,
+      action: "update",
+      ...(args.actorId ? { actorId: args.actorId, actorType: "human" as const } : { actorType: "system" as const }),
+      metadata: { event: "channel.pairing_requested", via: "web", mode: "code" },
+      description: "Pediu o código de conexão do WhatsApp pela web",
+      severity: "high",
+      createdAt: now,
+    });
+    return { allowed: true, attemptsLeft: res.attemptsLeft, resetsAt: res.resetsAt };
   },
 });
 
