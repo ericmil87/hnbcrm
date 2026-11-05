@@ -168,7 +168,7 @@ function BulkDeleteLeadsModal({
       toast.success(`${count} lead${count === 1 ? "" : "s"} excluído${count === 1 ? "" : "s"} permanentemente`);
       onDeleted();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Não foi possível excluir leads.");
+      toast.error(error instanceof Error ? error.message : "Não foi possível excluir os leads.");
     } finally {
       setDeleting(false);
     }

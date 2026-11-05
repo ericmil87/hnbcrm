@@ -190,8 +190,8 @@ export function VoiceRecorder({
       await onRecorded({ fileId, name, mimeType, size: blob.size });
       resetToIdle();
     } catch (err) {
-      console.error("Não foi possível enviar nota de voz.", err);
-      toast.error("Não foi possível enviar nota de voz.");
+      console.error("Não foi possível enviar a nota de voz.", err);
+      toast.error("Não foi possível enviar a nota de voz.");
     } finally {
       setSending(false);
     }

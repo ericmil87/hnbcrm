@@ -442,7 +442,7 @@ export function TaskKanbanBoard({
         if (destColumn?.isDoneColumn) toast.success("Tarefa concluída!");
       }
     } catch {
-      toast.error("Não foi possível mover tarefa.");
+      toast.error("Não foi possível mover a tarefa.");
     }
   };
 

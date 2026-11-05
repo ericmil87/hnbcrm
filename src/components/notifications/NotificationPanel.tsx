@@ -193,7 +193,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     try {
       await markAllRead({ organizationId });
     } catch {
-      toast.error("Não foi possível marcar notificações como lidas.");
+      toast.error("Não foi possível marcar as notificações como lidas.");
     }
   };
 

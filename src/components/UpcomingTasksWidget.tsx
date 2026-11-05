@@ -239,7 +239,7 @@ export function UpcomingTasksWidget({
       await completeTask({ taskId });
       toast.success("Tarefa conclu\u00edda!");
     } catch {
-      toast.error("Não foi possível concluir tarefa.");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 

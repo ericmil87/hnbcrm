@@ -227,7 +227,7 @@ export function GroupsPage() {
       ) : monitored.length === 0 && unmonitored.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={anyChannelEnabled ? VOCAB.groups.empty.title : "Grupos desligados nos seus números"}
+          title={anyChannelEnabled ? "Nenhum grupo neste número" : "Grupos desligados nos seus números"}
           description={
             anyChannelEnabled
               ? "Sincronize a lista de salas no card do número em Configurações → Canais."

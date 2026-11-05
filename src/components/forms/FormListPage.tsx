@@ -185,7 +185,7 @@ export function FormListPage() {
       {
         loading: "Criando formulário...",
         success: "Formulário criado!",
-        error: "Não foi possível criar formulário.",
+        error: "Não foi possível criar o formulário.",
       }
     );
   }
@@ -199,7 +199,7 @@ export function FormListPage() {
       {
         loading: "Duplicando formulário...",
         success: "Formulário duplicado!",
-        error: "Não foi possível duplicar formulário.",
+        error: "Não foi possível duplicar o formulário.",
       }
     );
   }
@@ -212,7 +212,7 @@ export function FormListPage() {
         form.status === "archived"
           ? "Formulário desarquivado!"
           : "Formulário arquivado!",
-      error: "Não foi possível arquivar formulário.",
+      error: "Não foi possível arquivar o formulário.",
     });
   }
 
@@ -221,7 +221,7 @@ export function FormListPage() {
     toast.promise(deleteForm({ formId: deleteTarget._id }), {
       loading: "Excluindo formulário...",
       success: "Formulário excluído!",
-      error: "Não foi possível excluir formulário.",
+      error: "Não foi possível excluir o formulário.",
     });
     setDeleteTarget(null);
   }
@@ -247,9 +247,10 @@ export function FormListPage() {
             size="md"
             onClick={() => setShowCreateModal(true)}
             className="shrink-0"
+            aria-label="Novo formulário"
           >
             <Plus size={18} />
-            Novo formulário
+            <span className="hidden sm:inline">Novo formulário</span>
           </Button>
         </header>
 

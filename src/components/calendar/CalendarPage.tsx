@@ -127,7 +127,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar evento.");
+        toast.error("Não foi possível reagendar o evento.");
         console.error(error);
       }
       return;
@@ -153,7 +153,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar evento.");
+        toast.error("Não foi possível reagendar o evento.");
         console.error(error);
       }
     }

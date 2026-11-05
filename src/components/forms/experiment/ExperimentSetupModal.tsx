@@ -56,7 +56,7 @@ export function ExperimentSetupModal({
       loading: "Criando experimento...",
       success: "Experimento criado com sucesso!",
       error: (err: unknown) => {
-        const message = err instanceof Error ? err.message : "Não foi possível criar experimento.";
+        const message = err instanceof Error ? err.message : "Não foi possível criar o experimento.";
         return message;
       },
     });

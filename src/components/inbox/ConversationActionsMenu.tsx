@@ -93,7 +93,7 @@ export function ConversationActionsMenu({
       setOpen(false);
       onArchivedChange?.(!archived);
     } catch {
-      toast.error("Não foi possível arquivar conversa.");
+      toast.error("Não foi possível arquivar a conversa.");
     }
   };
 

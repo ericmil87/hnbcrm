@@ -56,7 +56,7 @@ export function ColumnsEditorModal({
       setNewName("");
       toast.success("Coluna criada");
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível criar coluna.");
+      toast.error(error?.message || "Não foi possível criar a coluna.");
     } finally {
       setCreating(false);
     }
@@ -71,7 +71,7 @@ export function ColumnsEditorModal({
       await reorderColumn({ columnId: current._id, order: neighbor.order });
       await reorderColumn({ columnId: neighbor._id, order: current.order });
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível reordenar colunas.");
+      toast.error(error?.message || "Não foi possível reordenar as colunas.");
     }
   };
 
@@ -194,7 +194,7 @@ function ColumnRow({
       await updateColumn({ columnId: column._id, name: trimmed });
     } catch (error: any) {
       setName(column.name);
-      toast.error(error?.message || "Não foi possível renomear coluna.");
+      toast.error(error?.message || "Não foi possível renomear a coluna.");
     }
   };
 
@@ -205,7 +205,7 @@ function ColumnRow({
     try {
       await updateColumn({ columnId: column._id, wipLimit: next });
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível salvar limite.");
+      toast.error(error?.message || "Não foi possível salvar o limite.");
     }
   };
 
@@ -216,7 +216,7 @@ function ColumnRow({
         isDoneColumn: !column.isDoneColumn,
       });
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível definir coluna de conclusão.");
+      toast.error(error?.message || "Não foi possível definir a coluna de conclusão.");
     }
   };
 
@@ -225,7 +225,7 @@ function ColumnRow({
       await deleteColumn({ columnId: column._id });
       toast.success("Coluna excluída");
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível excluir coluna.");
+      toast.error(error?.message || "Não foi possível excluir a coluna.");
     } finally {
       setConfirmingDelete(false);
     }

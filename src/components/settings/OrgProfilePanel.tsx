@@ -51,7 +51,7 @@ export function OrgProfilePanel({ organizationId }: { organizationId: Id<"organi
       });
       toast.success("Organização atualizada");
     } catch (error) {
-      toast.error("Não foi possível atualizar organização.");
+      toast.error("Não foi possível atualizar a organização.");
     }
     setSaving(false);
   };

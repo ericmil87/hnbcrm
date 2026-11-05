@@ -589,7 +589,7 @@ function TemplateEditor({
       const r = await sync({ channelConfigId });
       toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Não foi possível sincronizar templates."));
+      toast.error(mutationErrorMessage(e, "Não foi possível sincronizar os templates."));
     } finally {
       setSyncing(false);
     }

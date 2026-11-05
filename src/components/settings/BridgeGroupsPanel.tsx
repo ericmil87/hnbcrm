@@ -441,10 +441,17 @@ export function BridgeGroupsPanel({
                           }
                         >
                           <div className="flex shrink-0 items-center gap-2">
-                            <span className={cn("text-xs", group.monitored ? "font-medium text-semantic-success" : "text-text-muted")}>
+                            <label
+                              htmlFor={`monitor-${group._id}`}
+                              className={cn(
+                                "cursor-pointer text-xs",
+                                group.monitored ? "font-medium text-semantic-success" : "text-text-muted"
+                              )}
+                            >
                               {group.monitored ? "Acompanhando" : "Acompanhar"}
-                            </span>
+                            </label>
                             <Switch
+                              id={`monitor-${group._id}`}
                               checked={group.monitored}
                               onCheckedChange={() => void handleToggleMonitored(group)}
                               label={`Acompanhar ${group.subject}`}

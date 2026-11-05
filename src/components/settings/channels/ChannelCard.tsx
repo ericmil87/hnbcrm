@@ -62,7 +62,7 @@ export function ChannelCard({
       const r = await syncTemplates({ channelConfigId: config._id });
       toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível sincronizar templates.");
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível sincronizar os templates.");
     } finally {
       setSyncingTemplates(false);
     }

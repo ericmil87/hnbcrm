@@ -396,7 +396,7 @@ export function TasksPage() {
       await completeTask({ taskId });
       toast.success("Tarefa concluída!");
     } catch {
-      toast.error("Não foi possível concluir tarefa.");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -418,7 +418,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas concluídas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Não foi possível concluir tarefas.");
+      toast.error("Não foi possível concluir as tarefas.");
     }
   };
 
@@ -431,7 +431,7 @@ export function TasksPage() {
       toast.success(`${selectedTasks.size} tarefas canceladas!`);
       setSelectedTasks(new Set());
     } catch {
-      toast.error("Não foi possível cancelar tarefas.");
+      toast.error("Não foi possível cancelar as tarefas.");
     }
   };
 
@@ -456,7 +456,7 @@ export function TasksPage() {
       }
       if (selectedProjectId === project._id) updateUrl({ projectId: null });
     } catch (error: any) {
-      toast.error(error?.message || "Não foi possível atualizar projeto.");
+      toast.error(error?.message || "Não foi possível atualizar o projeto.");
     } finally {
       setPendingProjectAction(null);
     }
@@ -1127,7 +1127,7 @@ function StatusBoardView({
     try {
       await updateTask({ taskId, status: newStatus });
     } catch {
-      toast.error("Não foi possível mover tarefa.");
+      toast.error("Não foi possível mover a tarefa.");
     }
   };
 

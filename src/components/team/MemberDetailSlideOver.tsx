@@ -166,7 +166,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro atualizado!");
       setIsEditing(false);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível atualizar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível atualizar o membro."));
     } finally {
       setIsSaving(false);
     }
@@ -178,7 +178,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro removido.");
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível remover membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível remover o membro."));
     }
   };
 
@@ -206,7 +206,7 @@ export function MemberDetailSlideOver({
         kind === "new" ? "Convite reenviado." : `${member.name} já tinha conta e entrou na organização.`
       );
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível reenviar convite."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reenviar o convite."));
     } finally {
       setIsResending(false);
     }
@@ -217,7 +217,7 @@ export function MemberDetailSlideOver({
       await reactivateMember({ teamMemberId: member._id });
       toast.success("Membro reativado!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível reativar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reativar o membro."));
     }
   };
 
@@ -241,7 +241,7 @@ export function MemberDetailSlideOver({
       setNewKeyName("");
       toast.success("Chave API criada!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível criar chave API."));
+      toast.error(mutationErrorMessage(error, "Não foi possível criar a chave de integração."));
     } finally {
       setCreatingKey(false);
     }
@@ -254,7 +254,7 @@ export function MemberDetailSlideOver({
       toast.success("Chave API revogada!");
       setRevokeKeyId(null);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível revogar chave."));
+      toast.error(mutationErrorMessage(error, "Não foi possível revogar a chave."));
     }
   };
 

@@ -168,7 +168,7 @@ export function InviteMemberModal({
       }
     } catch (error) {
       // Recusas do servidor vêm como ConvexError (legíveis também em produção)
-      toast.error(mutationErrorMessage(error, "Não foi possível adicionar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível adicionar o membro."));
     } finally {
       setIsSubmitting(false);
     }
