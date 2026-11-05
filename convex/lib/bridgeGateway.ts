@@ -71,3 +71,8 @@ export async function resolveBridgePhone(params: {
     return undefined;
   }
 }
+
+/** URL do webhook do bridge (rota `/webhooks/bridge` em `router.ts`) a partir de `CONVEX_SITE_URL`. */
+export function bridgeWebhookUrl(siteUrl: string): string {
+  return `${siteUrl.trim().replace(/\/+$/, "")}/webhooks/bridge`;
+}
