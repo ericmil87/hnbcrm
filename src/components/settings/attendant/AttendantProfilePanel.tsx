@@ -24,7 +24,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
   const locked = !ctx.canManage;
   const lockedPlaceholder = ctx.canManage ? "Carregando…" : "Só quem gerencia as configurações vê e edita este texto";
 
-  const { dirty, saving, onSave, onDiscard } = usePanelSave(
+  const { dirty, saving, onSave, onDiscard, guardDialog } = usePanelSave(
     [
       { dirty: persona.dirty, errors: {}, patch: () => personaToPatch(persona.value), reset: persona.reset },
       { dirty: knowledge.dirty, errors: {}, patch: () => knowledgeToPatch(knowledge.value), reset: knowledge.reset },
@@ -54,6 +54,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
       <SectionCard title="Horário de atendimento">
         <AttendantHoursForm value={hours.value} onChange={hours.setValue} disabled={locked} errors={hoursErrors} />
       </SectionCard>
+      {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
   );

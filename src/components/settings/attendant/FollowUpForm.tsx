@@ -34,7 +34,8 @@ export function FollowUpForm({
           icon={PowerOff}
           title="Desligado"
           subtitle="A IA só cria a tarefa. No vencimento nada acontece sozinho: alguém do time precisa agir."
-          onClick={() => !disabled && set({ mode: "off" })}
+          disabled={disabled}
+          onClick={() => set({ mode: "off" })}
         />
         <FollowUpModeCard
           active={value.mode === "draft"}
@@ -42,14 +43,16 @@ export function FollowUpForm({
           title="Preparar resposta sugerida"
           subtitle="No vencimento, a IA deixa uma resposta sugerida em Conversas: você revisa e envia."
           badge="Recomendado"
-          onClick={() => !disabled && set({ mode: "draft" })}
+          disabled={disabled}
+          onClick={() => set({ mode: "draft" })}
         />
         <FollowUpModeCard
           active={value.mode === "send"}
           icon={Send}
           title="Enviar sozinho"
           subtitle="No vencimento, a IA manda a mensagem sozinha (em Responder sozinha)."
-          onClick={() => !disabled && set({ mode: "send" })}
+          disabled={disabled}
+          onClick={() => set({ mode: "send" })}
         />
       </div>
 

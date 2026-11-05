@@ -146,7 +146,7 @@ const valueOrUndefined = (r: ReadResult): number | undefined => (r.ok ? r.value 
 
 export type AttendantProfileInput = {
   mode?: "suggest" | "autopilot";
-  schedule?: { timezone: string; startHour: number; endHour: number };
+  schedule?: { timezone: string; startHour: number; endHour: number; days?: number[] };
   handoffKeywords?: string[];
   maxRepliesPerConversation?: number;
   maxRepliesPerHour?: number;
@@ -205,32 +205,55 @@ export const knowledgeToPatch = (form: KnowledgeForm): { knowledge?: string } =>
 
 // ── Horário de atendimento ──────────────────────────────────────────────────
 
-export type ScheduleForm = { startHour: number; endHour: number };
+/**
+ * `allDay` = sem horário (a IA atende 24 horas; vira `schedule: null`).
+ * `timezone` e `days` vêm do perfil salvo e voltam intactos no patch (o Copiloto
+ * grava ambos; sem eles o painel apagaria os dias e forçaria o fuso de São Paulo).
+ */
+export type ScheduleForm = {
+  startHour: number;
+  endHour: number;
+  allDay?: boolean;
+  timezone?: string;
+  days?: number[];
+};
 
 export const scheduleFromProfile = (p: AttendantProfileInput): ScheduleForm => ({
+  allDay: !p.schedule,
   startHour: p.schedule?.startHour ?? DEFAULT_SCHEDULE_START_HOUR,
   endHour: p.schedule?.endHour ?? DEFAULT_SCHEDULE_END_HOUR,
+  timezone: p.schedule?.timezone ?? SCHEDULE_TIMEZONE,
+  ...(p.schedule?.days && p.schedule.days.length > 0 ? { days: p.schedule.days } : {}),
 });
 
 export const validateSchedule = (_form: ScheduleForm): ValidationResult => ({ ok: true });
 
 export function scheduleErrors(form: ScheduleForm): FieldErrors<ScheduleForm> {
   const errors: FieldErrors<ScheduleForm> = {};
+  if (form.allDay) return errors;
   if (!Number.isInteger(form.startHour) || form.startHour < 0 || form.startHour > 23) {
-    errors.startHour = "Use uma hora inteira entre 0 e 23.";
+    errors.startHour = "Horário: use uma hora de início inteira entre 0 e 23.";
   }
   if (!Number.isInteger(form.endHour) || form.endHour < 1 || form.endHour > 24) {
-    errors.endHour = "Use uma hora inteira entre 1 e 24.";
+    errors.endHour = "Horário: use uma hora de fim inteira entre 1 e 24.";
   }
   if (!errors.startHour && !errors.endHour && form.startHour >= form.endHour) {
-    errors.endHour = "O fim precisa ser depois do início.";
+    errors.endHour = "Horário: o fim precisa ser depois do início.";
   }
   return errors;
 }
 
-export const scheduleToPatch = (form: ScheduleForm) => ({
-  schedule: { timezone: SCHEDULE_TIMEZONE, startHour: form.startHour, endHour: form.endHour },
-});
+export const scheduleToPatch = (form: ScheduleForm) =>
+  form.allDay
+    ? { schedule: null }
+    : {
+        schedule: {
+          timezone: form.timezone ?? SCHEDULE_TIMEZONE,
+          startHour: form.startHour,
+          endHour: form.endHour,
+          ...(form.days && form.days.length > 0 ? { days: form.days } : {}),
+        },
+      };
 
 // ── Repasse para a equipe (palavras-chave) ──────────────────────────────────
 
@@ -363,7 +386,7 @@ export function behaviorErrors(form: BehaviorForm): FieldErrors<BehaviorForm> {
   const debounce = readDebounceSeconds(form.debounceSeconds);
   if (!debounce.ok) errors.debounceSeconds = debounce.message;
   const guard = validateBotGuard(guardOf(form));
-  if (!guard.ok) errors.botGuardTag = guard.fieldError;
+  if (!guard.ok) errors.botGuardTag = guard.message;
   return errors;
 }
 
@@ -439,7 +462,7 @@ export function followUpErrors(form: FollowUpForm): FieldErrors<FollowUpForm> {
   if (start.ok && end.ok) {
     const s = start.value ?? FOLLOW_UP_DEFAULT_QUIET_START_HOUR;
     const e = end.value ?? FOLLOW_UP_DEFAULT_QUIET_END_HOUR;
-    if (s >= e) errors.quietEnd = "A janela de envio precisa começar antes de terminar.";
+    if (s >= e) errors.quietEnd = "Follow-ups: a janela de envio precisa começar antes de terminar.";
   }
   return errors;
 }
@@ -485,7 +508,7 @@ export function pipelineErrors(form: PipelineForm): FieldErrors<PipelineForm> {
   const t = form.qualifyThreshold;
   return Number.isInteger(t) && t >= 1 && t <= 4
     ? {}
-    : { qualifyThreshold: "Use um número inteiro entre 1 e 4." };
+    : { qualifyThreshold: "Limiar BANT: use um número inteiro entre 1 e 4." };
 }
 
 /**
@@ -541,4 +564,25 @@ export type AiCard = "wizard" | "activation" | "attendant";
 export function aiSectionOrder(status: { active: boolean; hasAttendant: boolean }): AiCard[] {
   if (!status.active || !status.hasAttendant) return ["wizard"];
   return ["activation", "attendant"];
+}
+
+// ── Salvar um painel: união só dos formulários alterados ────────────────────
+
+export type PanelPart = {
+  dirty: boolean;
+  errors: Partial<Record<string, string | undefined>>;
+  /** Patch com SÓ as chaves deste formulário. */
+  patch: () => Record<string, unknown>;
+};
+
+export type PanelPatchResult =
+  | { ok: true; patch: Record<string, unknown> }
+  | { ok: false; message: string };
+
+/** Une os patches dos formulários alterados; o primeiro erro (dos alterados) corta o salvar. */
+export function buildPanelPatch(parts: ReadonlyArray<PanelPart>): PanelPatchResult {
+  const changed = parts.filter((p) => p.dirty);
+  const message = changed.flatMap((p) => Object.values(p.errors)).find(Boolean);
+  if (message) return { ok: false, message };
+  return { ok: true, patch: Object.assign({}, ...changed.map((p) => p.patch())) };
 }

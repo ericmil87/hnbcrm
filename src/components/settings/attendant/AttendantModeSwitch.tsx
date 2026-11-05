@@ -3,6 +3,7 @@ import { AlertTriangle, Lock } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Modal } from "@/components/ui/Modal";
+import { formatDate } from "@/lib/format";
 import { VOCAB } from "@/lib/vocab";
 import { nextMode, type AttendantMode, type ConfigFormProps } from "@/lib/attendantConfig";
 
@@ -106,7 +107,7 @@ export function AttendantModeSwitch({
         <p className="w-full flex items-center gap-1.5 text-xs text-semantic-warning">
           <AlertTriangle size={12} className="shrink-0" aria-hidden="true" />
           Responder sozinha ativado antes da hora (sem atingir as métricas) em{" "}
-          {new Date(earlyAckAt).toLocaleDateString("pt-BR")}.
+          {formatDate(earlyAckAt)}.
         </p>
       )}
 

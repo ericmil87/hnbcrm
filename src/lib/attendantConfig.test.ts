@@ -9,6 +9,7 @@ import {
   conversationToPatch,
   conversationWarnings,
   behaviorErrors,
+  buildPanelPatch,
   behaviorFromProfile,
   behaviorToPatch,
   followUpErrors,
@@ -246,6 +247,8 @@ describe("erros por campo", () => {
     expect(scheduleErrors({ startHour: 18, endHour: 9 }).endHour).toBeTruthy();
     expect(scheduleErrors({ startHour: 24, endHour: 25 })).toHaveProperty("startHour");
     expect(scheduleErrors({ startHour: 9, endHour: 0 })).toHaveProperty("endHour");
+    expect(scheduleErrors({ startHour: 18, endHour: 9 }).endHour).toBe("Horário: o fim precisa ser depois do início.");
+    expect(scheduleErrors({ allDay: true, startHour: 18, endHour: 9 })).toEqual({});
   });
   it("comportamento: aponta o campo certo e a etiqueta só com a proteção ligada", () => {
     const base = behaviorFromProfile({});
@@ -275,9 +278,21 @@ describe("isSameForm", () => {
 });
 
 describe("horário, repasse e funil", () => {
-  it("horário padrão 9–18 em São Paulo", () => {
-    expect(scheduleToPatch(scheduleFromProfile({}))).toEqual({
+  it("sem horário salvo = 24 horas (schedule: null); desmarcar usa 9–18 em São Paulo", () => {
+    const form = scheduleFromProfile({});
+    expect(form.allDay).toBe(true);
+    expect(scheduleToPatch(form)).toEqual({ schedule: null });
+    expect(scheduleToPatch({ ...form, allDay: false })).toEqual({
       schedule: { timezone: "America/Sao_Paulo", startHour: 9, endHour: 18 },
+    });
+  });
+  it("horário salvo preserva fuso e dias no patch", () => {
+    const form = scheduleFromProfile({
+      schedule: { timezone: "America/Manaus", startHour: 8, endHour: 17, days: [1, 2, 3] },
+    });
+    expect(form.allDay).toBe(false);
+    expect(scheduleToPatch({ ...form, endHour: 19 })).toEqual({
+      schedule: { timezone: "America/Manaus", startHour: 8, endHour: 19, days: [1, 2, 3] },
     });
   });
   it("palavras-chave: separa por vírgula, apara e ignora vazias", () => {
@@ -359,5 +374,32 @@ describe("aiSectionOrder", () => {
   });
   it("ativa com atendente: ativação e atendente (o resto vive nos painéis próprios)", () => {
     expect(aiSectionOrder({ active: true, hasAttendant: true })).toEqual(FULL);
+  });
+});
+
+describe("buildPanelPatch", () => {
+  const part = (dirty: boolean, patch: Record<string, unknown>, errors: Record<string, string> = {}) => ({
+    dirty,
+    errors,
+    patch: () => patch,
+  });
+  it("une só as chaves dos formulários alterados", () => {
+    const r = buildPanelPatch([part(true, { a: 1 }), part(false, { b: 2 }), part(true, { c: 3 })]);
+    expect(r).toEqual({ ok: true, patch: { a: 1, c: 3 } });
+  });
+  it("nada alterado = patch vazio", () => {
+    expect(buildPanelPatch([part(false, { a: 1 })])).toEqual({ ok: true, patch: {} });
+  });
+  it("o primeiro erro corta o salvar; erro de formulário intocado é ignorado", () => {
+    expect(buildPanelPatch([part(true, { a: 1 }, { x: "Follow-ups: erro" }), part(true, { b: 2 })])).toEqual({
+      ok: false,
+      message: "Follow-ups: erro",
+    });
+    expect(buildPanelPatch([part(false, { a: 1 }, { x: "ignorado" }), part(true, { b: 2 })]).ok).toBe(true);
+  });
+  it("mensagens trazem o rótulo do campo", () => {
+    const bad = { ...behaviorFromProfile({}), botGuardTag: "" };
+    expect(behaviorErrors(bad).botGuardTag).toMatch(/^Proteção contra robôs: /);
+    expect(followUpErrors({ ...followUpFromProfile({}), quietStart: "20", quietEnd: "8" }).quietEnd).toMatch(/^Follow-ups: /);
   });
 });

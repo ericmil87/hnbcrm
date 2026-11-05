@@ -3,8 +3,10 @@ import { toast } from "sonner";
 import { useBlocker } from "react-router";
 import { Bot, Lock } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
+import { buildPanelPatch, type PanelPart as PanelPartData } from "@/lib/attendantConfig";
 import { TAB_ROUTES } from "@/lib/routes";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { useAttendantProfile, type AgentProfilePatch } from "./useAttendantProfile";
@@ -47,20 +49,27 @@ export function SaveBar({
   );
 }
 
-/** Avisa ao trocar de painel (ou fechar a aba) com alteração não salva. */
+/** Avisa ao trocar de painel (ou fechar a aba) com alteração não salva; devolve o diálogo a renderizar. */
 export function useUnsavedGuard(dirty: boolean) {
   const blocker = useBlocker(dirty);
-  useEffect(() => {
-    if (blocker.state !== "blocked") return;
-    if (window.confirm("Você tem alterações não salvas. Sair mesmo assim?")) blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
+  return (
+    <ConfirmDialog
+      open={blocker.state === "blocked"}
+      onClose={() => blocker.reset?.()}
+      onConfirm={() => blocker.proceed?.()}
+      title="Sair sem salvar?"
+      description="Você tem alterações não salvas neste painel. Se sair agora, elas serão perdidas."
+      confirmLabel="Sair sem salvar"
+      cancelLabel="Continuar editando"
+      variant="danger"
+    />
+  );
 }
 
 /**
@@ -107,31 +116,26 @@ export function AttendantPanelFrame({
   );
 }
 
-export interface PanelPart {
-  dirty: boolean;
-  errors: Record<string, string | undefined>;
-  /** Patch com SÓ as chaves deste formulário. */
-  patch: () => Record<string, unknown>;
+export interface PanelPart extends PanelPartData {
   reset: () => void;
 }
 
-/** Salva só os formulários alterados, com erro agregado em toast e o aviso de saída. */
+/** Salva só os formulários alterados, com o primeiro erro em toast e o aviso de saída. */
 export function usePanelSave(parts: PanelPart[], save: (patch: AgentProfilePatch) => Promise<void>) {
   const [saving, setSaving] = useState(false);
   const dirty = parts.some((p) => p.dirty);
-  useUnsavedGuard(dirty);
+  const guardDialog = useUnsavedGuard(dirty);
 
   const onSave = async () => {
-    const changed = parts.filter((p) => p.dirty);
-    const firstError = changed.flatMap((p) => Object.values(p.errors)).find(Boolean);
-    if (firstError) {
-      toast.error(firstError);
+    const built = buildPanelPatch(parts);
+    if (!built.ok) {
+      toast.error(built.message);
       return;
     }
     setSaving(true);
     try {
-      await save(Object.assign({}, ...changed.map((p) => p.patch())) as AgentProfilePatch);
-      changed.forEach((p) => p.reset());
+      await save(built.patch as AgentProfilePatch);
+      parts.filter((p) => p.dirty).forEach((p) => p.reset());
       toast.success("Alterações salvas");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
@@ -140,5 +144,5 @@ export function usePanelSave(parts: PanelPart[], save: (patch: AgentProfilePatch
     }
   };
 
-  return { dirty, saving, onSave, onDiscard: () => parts.forEach((p) => p.reset()) };
+  return { dirty, saving, onSave, onDiscard: () => parts.forEach((p) => p.reset()), guardDialog };
 }

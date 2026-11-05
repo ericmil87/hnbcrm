@@ -23,7 +23,7 @@ export const USAGE_KIND_LABELS: Record<string, string> = {
   group_summary: "Resumos de grupo",
   group_radar: "Radar de oportunidades",
   simulator: "Simulador",
-  attendant_draft: "Rascunho do atendente",
+  attendant_draft: "Escrever com IA (atendente)",
 };
 
 export const SPEND_MODE_OPTIONS = [

@@ -53,6 +53,7 @@ export function FollowUpModeCard({
   subtitle,
   badge,
   onClick,
+  disabled,
 }: {
   active: boolean;
   icon: React.ElementType;
@@ -60,15 +61,18 @@ export function FollowUpModeCard({
   subtitle: string;
   badge?: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       role="radio"
       aria-checked={active}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       onClick={onClick}
       className={cn(
-        "rounded-card border p-3 text-left transition-colors min-h-[44px]",
+        "rounded-card border p-3 text-left transition-colors min-h-[44px] disabled:cursor-not-allowed disabled:opacity-60",
         active
           ? "border-brand-500 bg-brand-500/10"
           : "border-border bg-surface-raised hover:border-border-strong"

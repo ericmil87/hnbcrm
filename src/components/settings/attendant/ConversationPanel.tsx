@@ -30,7 +30,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
     | { name: string; key: string }[]
     | undefined;
 
-  const { dirty, saving, onSave, onDiscard } = usePanelSave(
+  const { dirty, saving, onSave, onDiscard, guardDialog } = usePanelSave(
     [
       { dirty: behavior.dirty, errors: behaviorErr, patch: () => behaviorToPatch(behavior.value), reset: behavior.reset },
       { dirty: funnel.dirty, errors: funnelErr, patch: () => pipelineToPatch(funnel.value), reset: funnel.reset },
@@ -60,6 +60,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
           options={{ boards: boards ?? [], stages: stages ?? [], leadFields }}
         />
       </SectionCard>
+      {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
   );

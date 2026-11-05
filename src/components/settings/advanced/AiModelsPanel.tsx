@@ -164,8 +164,7 @@ export function PrivacyCard({
                 ]}
               />
               <p className="text-xs text-text-muted mt-1.5">
-                Vale para todos os produtos de IA; cada um pode sobrescrever em "Produtos de IA",
-                acima. O fallback assume automaticamente em caso de quota esgotada ou instabilidade
+                Vale para todos os produtos de IA; cada um pode sobrescrever em "Modelo e rota por produto". O fallback assume automaticamente em caso de quota esgotada ou instabilidade
                 do provider primário.
               </p>
             </div>

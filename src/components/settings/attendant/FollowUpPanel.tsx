@@ -9,7 +9,7 @@ import { useFormDraft } from "./useAttendantProfile";
 function Body({ ctx }: { ctx: ReadyProfileCtx }) {
   const followUp = useFormDraft(followUpFromProfile(ctx.profile));
   const errors = followUpErrors(followUp.value);
-  const { dirty, saving, onSave, onDiscard } = usePanelSave(
+  const { dirty, saving, onSave, onDiscard, guardDialog } = usePanelSave(
     [{ dirty: followUp.dirty, errors, patch: () => followUpToPatch(followUp.value), reset: followUp.reset }],
     ctx.save,
   );
@@ -27,6 +27,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
           isAutopilot={ctx.profile.mode === "autopilot"}
         />
       </SectionCard>
+      {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
   );

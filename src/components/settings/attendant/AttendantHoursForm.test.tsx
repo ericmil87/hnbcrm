@@ -27,6 +27,15 @@ describe("AttendantHoursForm", () => {
     expect(screen.queryByText(/Fora dessa janela/)).not.toBeInTheDocument();
   });
 
+  it("Atender 24 horas esconde as horas e chama onChange com allDay", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<AttendantHoursForm value={value} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("switch", { name: "Atender 24 horas" }));
+    expect(onChange).toHaveBeenCalledWith({ ...value, allDay: true });
+    rerender(<AttendantHoursForm value={{ ...value, allDay: true }} onChange={onChange} />);
+    expect(screen.queryByLabelText("Início (h)")).not.toBeInTheDocument();
+  });
+
   it("presets aplicam o horário inteiro", () => {
     const onChange = vi.fn();
     render(

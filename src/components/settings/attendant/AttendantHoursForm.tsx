@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/Button";
+import { NumberField, SwitchRow } from "./fields";
 import type { ConfigFormProps, ScheduleForm } from "@/lib/attendantConfig";
-import { NumberField } from "./fields";
 
 export interface HoursPreset {
   id: string;
@@ -36,6 +36,14 @@ export function AttendantHoursForm({
           ))}
         </div>
       )}
+      <SwitchRow
+        title="Atender 24 horas"
+        description={variant === "panel" ? "Sem horário: a IA responde a qualquer hora, inclusive de madrugada." : undefined}
+        checked={Boolean(value.allDay)}
+        disabled={disabled}
+        onChange={(allDay) => onChange({ ...value, allDay })}
+      />
+      {!value.allDay && (
       <div className="flex flex-wrap gap-4">
         <NumberField
           className="w-28"
@@ -58,7 +66,8 @@ export function AttendantHoursForm({
           onChange={(raw) => onChange({ ...value, endHour: toHour(raw) })}
         />
       </div>
-      {variant === "panel" && (
+      )}
+      {variant === "panel" && !value.allDay && (
         <p className="text-xs text-text-muted">
           Fora dessa janela a IA não responde: a conversa espera por alguém da equipe.
         </p>

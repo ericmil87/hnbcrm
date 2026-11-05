@@ -7,7 +7,7 @@ import { useFormDraft } from "./useAttendantProfile";
 
 function Body({ ctx }: { ctx: ReadyProfileCtx }) {
   const handoff = useFormDraft(handoffFromProfile(ctx.profile));
-  const { dirty, saving, onSave, onDiscard } = usePanelSave(
+  const { dirty, saving, onSave, onDiscard, guardDialog } = usePanelSave(
     [{ dirty: handoff.dirty, errors: {}, patch: () => handoffToPatch(handoff.value), reset: handoff.reset }],
     ctx.save,
   );
@@ -16,6 +16,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
       <SectionCard title="Quando chamar a equipe" description="Palavras que fazem a IA parar na hora e chamar alguém do time.">
         <HandoffRulesForm value={handoff.value} onChange={handoff.setValue} disabled={!ctx.canManage} />
       </SectionCard>
+      {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
   );

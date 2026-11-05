@@ -2,13 +2,14 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { Bot, FlaskConical } from "lucide-react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
 import { modeFromProfile, modeToPatch, type AttendantMode } from "@/lib/attendantConfig";
 import { VOCAB } from "@/lib/vocab";
@@ -114,6 +115,8 @@ function AttendantStatus({
 }) {
   const navigate = useNavigate();
   const { modules } = useOrgModules(organizationId);
+  const { can } = usePermissions(organizationId);
+  const canManage = can("settings", "manage");
   const metrics = useQuery(api.aiSettings.getAttendantMetrics, { organizationId, agentMemberId: attendant._id });
   const updateProfile = useMutation(api.aiSettings.updateAgentProfile);
   const [showSimulator, setShowSimulator] = useState(false);
@@ -211,8 +214,21 @@ function AttendantStatus({
           onChange={(next) => void changeMode(next)}
           metrics={metrics}
           earlyAckAt={profile.autopilotEarlyAck?.acceptedAt}
-          onEarlyAutopilot={earlyAutopilot}
+          disabled={!canManage}
+          onEarlyAutopilot={canManage ? earlyAutopilot : undefined}
         />
+        {!canManage && (
+          <p className="mt-2 text-xs text-text-muted">Só quem gerencia as configurações pode trocar o modo.</p>
+        )}
+        {(isAutopilot || metrics?.autopilotUnlocked) && (
+          <p className="mt-2 text-xs text-text-muted">
+            Em Responder sozinha, considere definir um horário de atendimento (
+            <Link to={`${TAB_ROUTES.settings}?secao=ai-attendant`} className="font-medium text-brand-500 hover:text-brand-400">
+              Jeito de atender
+            </Link>
+            ) se não quiser envios de madrugada.
+          </p>
+        )}
       </div>
 
       {showSimulator && (

@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Bot, Eye, Mic, Send, Sparkles, Users } from "lucide-react";
 import { buttonClassName } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
@@ -98,6 +99,16 @@ export function AiFeaturesPanel({ organizationId }: { organizationId: Id<"organi
         )}
       </FeatureToggleCard>
 
+      {!status.active ? (
+        <EmptyState
+          icon={Bot}
+          size="sm"
+          title="Ligue o Atendente IA primeiro"
+          description="Ler imagens, IA em grupos e Copiloto aparecem depois que a IA está ativa."
+          action={{ label: "Ir para a visão geral", href: `${TAB_ROUTES.settings}?secao=ai` }}
+        />
+      ) : (
+        <>
       <FeatureToggleCard
         icon={Eye}
         title="Ler imagens"
@@ -156,7 +167,10 @@ export function AiFeaturesPanel({ organizationId }: { organizationId: Id<"organi
         </Link>
       </FeatureToggleCard>
 
-      {attendant && <ExternalAgendaSection organizationId={organizationId} agentMemberId={attendant._id} />}
+        </>
+      )}
+
+      {status.active && attendant && <ExternalAgendaSection organizationId={organizationId} agentMemberId={attendant._id} />}
     </div>
   );
 }
