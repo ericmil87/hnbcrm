@@ -37,6 +37,28 @@ describe("pathAfterOrgSwitch", () => {
     expect(pathAfterOrgSwitch("/app/entrada", "?label=k17abc")).toBe("/app/entrada");
   });
 
+  it("Tarefas: mantém modo, filtro rápido e status; derruba responsável, etiqueta e projeto", () => {
+    expect(
+      pathAfterOrgSwitch("/app/tarefas", "?view=status&smart=today&status=pending&assignee=m1&label=l1,l2&project=p1&task=t1")
+    ).toBe("/app/tarefas?view=status&smart=today&status=pending");
+  });
+
+  it("Histórico: mantém filtros de enum e datas; derruba ator e item aberto", () => {
+    expect(
+      pathAfterOrgSwitch(
+        "/app/auditoria",
+        "?entity=lead&action=update&severity=high&from=2026-11-01&to=2026-11-04&actor=m1&log=a1"
+      )
+    ).toBe("/app/auditoria?entity=lead&action=update&severity=high&from=2026-11-01&to=2026-11-04");
+  });
+
+  it("Campanhas e Equipe: mantém status/canal/busca; derruba campanha e membro", () => {
+    expect(pathAfterOrgSwitch("/app/campanhas", "?status=active&provider=meta&campanha=c1")).toBe(
+      "/app/campanhas?status=active&provider=meta"
+    );
+    expect(pathAfterOrgSwitch("/app/equipe", "?q=ana&member=m1")).toBe("/app/equipe?q=ana");
+  });
+
   it("sobe para a raiz da aba quando o caminho carrega id", () => {
     expect(pathAfterOrgSwitch("/app/formularios/f1/submissoes", "?x=1")).toBe("/app/formularios");
   });

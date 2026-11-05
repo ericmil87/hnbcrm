@@ -9,6 +9,8 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { campaignProviderCodec, campaignStatusCodec, type CampaignStatusFilter } from "@/lib/campaignFilters";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -28,7 +30,7 @@ import {
   formatUsd,
 } from "@/components/campaigns/campaignUtils";
 
-const STATUS_FILTERS: { id: CampaignStatus | "all" | "active"; label: string }[] = [
+const STATUS_FILTERS: { id: CampaignStatusFilter; label: string }[] = [
   { id: "all", label: "Todas" },
   { id: "active", label: "Ativas" },
   { id: "draft", label: "Rascunhos" },
@@ -49,8 +51,9 @@ export function CampaignsPage() {
   const selectedId = (searchParams.get("campanha") as Id<"campaigns"> | null) ?? null;
   const [wizardId, setWizardId] = useState<Id<"campaigns"> | null | "new">(null);
   const [prefill, setPrefill] = useState<CampaignPrefill | null>(null);
-  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]["id"]>("all");
-  const [providerFilter, setProviderFilter] = useState<CampaignProvider | "all">("all");
+  // Filtros na URL (replace): sobrevivem ao recarregar e ao compartilhar o link.
+  const { value: statusFilter, set: setStatusFilter } = useSearchParamState("status", campaignStatusCodec);
+  const { value: providerFilter, set: setProviderFilter } = useSearchParamState("provider", campaignProviderCodec);
   const [confirmDelete, setConfirmDelete] = useState<Id<"campaigns"> | null>(null);
   const [optOutsOpen, setOptOutsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Id<"campaigns"> | null>(null);

@@ -16,6 +16,8 @@ import { PermissionGate } from "@/components/guards/PermissionGate";
 import { InviteMemberModal } from "@/components/team/InviteMemberModal";
 import { MemberDetailSlideOver } from "@/components/team/MemberDetailSlideOver";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { stringParam } from "@/lib/searchParamState";
 import { cn } from "@/lib/utils";
 import { isPendingMember } from "@/lib/teamMembers";
 import {
@@ -70,8 +72,14 @@ export function TeamPage() {
   const canManage = can("team", "manage");
 
   const [showInvite, setShowInvite] = useState(false);
-  const [selectedMemberId, setSelectedMemberId] = useState<Id<"teamMembers"> | null>(null);
-  const [search, setSearch] = useState("");
+  // Membro aberto (push: o "voltar" fecha) e busca (replace) moram na URL.
+  const memberParam = useSearchParamState("member", stringParam, { history: "push" });
+  const selectedMemberId = memberParam.value as Id<"teamMembers"> | null;
+  const setSelectedMemberId = (id: Id<"teamMembers"> | null) =>
+    memberParam.set(id, { history: id ? "push" : "replace" });
+  const { value: searchParam, set: setSearchParam } = useSearchParamState("q", stringParam);
+  const search = searchParam ?? "";
+  const setSearch = (value: string) => setSearchParam(value);
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -405,7 +413,7 @@ export function TeamPage() {
 
       {/* Member detail slide-over */}
       <MemberDetailSlideOver
-        open={!!selectedMemberId}
+        open={!!selectedMember}
         onClose={() => setSelectedMemberId(null)}
         member={selectedMember as any}
         organizationId={organizationId}

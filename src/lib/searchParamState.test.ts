@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { campaignProviderCodec, campaignStatusCodec } from "./campaignFilters";
+import { actionCodec, entityCodec, fromCodec, logCodec, severityCodec, toCodec } from "./auditFilters";
+import { labelCodec, smartCodec, statusCodec, viewCodec } from "./tasksFilters";
 import {
   beginWrite,
   booleanParam,
@@ -134,5 +137,42 @@ describe("escrita em voo", () => {
     const inFlight = beginWrite(null, "b");
     expect(settleWrite(inFlight, null).hold).toBe(true);
     expect(settleWrite(inFlight, "b").hold).toBe(false);
+  });
+});
+
+describe("params de filtro das telas (tipos e padrões)", () => {
+  it("Tarefas: view, smart e status são enums com padrão fora da URL", () => {
+    expect([viewCodec.parse(null), smartCodec.parse(null), statusCodec.parse(null)]).toEqual(["list", "all", ""]);
+    expect([viewCodec.serialize("list"), smartCodec.serialize("all"), statusCodec.serialize("")]).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(labelCodec.parse("a,b")).toEqual(["a", "b"]);
+  });
+
+  it("Histórico: enums, datas e item aberto", () => {
+    expect([severityCodec.parse(null), actionCodec.parse(null), entityCodec.parse(null)]).toEqual([
+      "all",
+      "all",
+      "all",
+    ]);
+    expect([fromCodec.parse("x"), toCodec.parse("2026-11-04")]).toEqual(["", "2026-11-04"]);
+    expect(logCodec.parse(null)).toBeNull();
+    expect(logCodec.parse("log1")).toBe("log1");
+  });
+
+  it("Campanhas: status e canal", () => {
+    expect(campaignStatusCodec.parse("active")).toBe("active");
+    expect(campaignStatusCodec.parse("scheduled")).toBe("all");
+    expect(campaignStatusCodec.serialize("all")).toBeNull();
+    expect(campaignProviderCodec.parse("bridge")).toBe("bridge");
+    expect(campaignProviderCodec.parse("sms")).toBe("all");
+    expect(campaignProviderCodec.serialize("all")).toBeNull();
+  });
+
+  it("Equipe: member e q usam stringParam (vazio = ausente)", () => {
+    expect(stringParam.parse("")).toBeNull();
+    expect(stringParam.serialize("ana")).toBe("ana");
   });
 });

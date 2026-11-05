@@ -6,6 +6,8 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuditUrlState } from "@/hooks/useAuditUrlState";
+import { resolveAuditActor, type AuditAction, type AuditSeverity } from "@/lib/auditFilters";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -40,16 +42,29 @@ export function AuditLogs() {
   const { can } = usePermissions(organizationId);
 
   // Filter state
-  const [selectedSeverity, setSelectedSeverity] = useState<string>("all");
-  const [selectedEntityType, setSelectedEntityType] = useState<string>("all");
-  const [selectedAction, setSelectedAction] = useState<string>("all");
-  const [selectedActorId, setSelectedActorId] = useState<string>("all");
-  const [datePreset, setDatePreset] = useState<string>("all");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
+  // Filtros e item aberto moram na URL; só o atalho de período relativo
+  // (24h/7d/30d) e o cursor de paginação ficam em estado da tela.
+  const urlState = useAuditUrlState();
+  const {
+    severity: selectedSeverity,
+    setSeverity: setSelectedSeverity,
+    entity: selectedEntityType,
+    setEntity: setSelectedEntityType,
+    action: selectedAction,
+    setAction: setSelectedAction,
+    from: startDate,
+    setFrom: setStartDate,
+    to: endDate,
+    setTo: setEndDate,
+    openLogId: expandedLogId,
+    setOpenLog: setExpandedLogId,
+  } = urlState;
+  const [localPreset, setLocalPreset] = useState<string>("all");
+  // Datas na URL implicam período personalizado.
+  const datePreset = startDate || endDate ? "custom" : localPreset;
+  const setDatePreset = setLocalPreset;
 
   // UI state
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
   const currentPage = cursorStack.length - 1;
 
@@ -79,7 +94,16 @@ export function AuditLogs() {
   }, [datePreset, startDate, endDate]);
 
   // Queries
-  const auditLogs = useQuery(api.auditLogs.getAuditLogs, {
+  const filters = useQuery(api.auditLogs.getAuditLogFilters, {
+    organizationId,
+  });
+  const resolvedActor = resolveAuditActor(
+    urlState.actor,
+    filters?.actors.map((a) => a.id)
+  );
+  const selectedActorId = resolvedActor.actor;
+  const setSelectedActorId = urlState.setActor;
+  const auditArgs = {
     organizationId,
     severity:
       selectedSeverity !== "all"
@@ -103,11 +127,12 @@ export function AuditLogs() {
     startDate: startTimestamp || undefined,
     endDate: endTimestamp || undefined,
     cursor: cursorStack[currentPage] ?? undefined,
-  });
+  };
+  const auditLogs = useQuery(
+    api.auditLogs.getAuditLogs,
+    resolvedActor.pending ? "skip" : auditArgs
+  );
 
-  const filters = useQuery(api.auditLogs.getAuditLogFilters, {
-    organizationId,
-  });
 
   // Active filters tracking
   const activeFilters = useMemo(() => {
@@ -171,10 +196,7 @@ export function AuditLogs() {
   // Handlers
   const handlePresetClick = (preset: string) => {
     setDatePreset(preset);
-    if (preset !== "custom") {
-      setStartDate("");
-      setEndDate("");
-    }
+    if (preset !== "custom") urlState.clearDates();
     resetPagination();
   };
 
@@ -204,21 +226,15 @@ export function AuditLogs() {
         break;
       case "date":
         setDatePreset("all");
-        setStartDate("");
-        setEndDate("");
+        urlState.clearDates();
         break;
     }
     resetPagination();
   };
 
   const clearAllFilters = () => {
-    setSelectedSeverity("all");
-    setSelectedEntityType("all");
-    setSelectedAction("all");
-    setSelectedActorId("all");
     setDatePreset("all");
-    setStartDate("");
-    setEndDate("");
+    urlState.clearAll();
     resetPagination();
   };
 
@@ -372,7 +388,7 @@ export function AuditLogs() {
             <select
               value={selectedAction}
               onChange={(e) => {
-                setSelectedAction(e.target.value);
+                setSelectedAction(e.target.value as AuditAction);
                 resetPagination();
               }}
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
@@ -408,7 +424,7 @@ export function AuditLogs() {
             <select
               value={selectedSeverity}
               onChange={(e) => {
-                setSelectedSeverity(e.target.value);
+                setSelectedSeverity(e.target.value as AuditSeverity);
                 resetPagination();
               }}
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
