@@ -26,6 +26,7 @@
 | fv2-01/02/04 (`b54124e`) | bloqueia: nenhum. tsc convex/app ok; suíte 3417 testes (main: 3359). | `via` fixo `"settings"` no caminho genérico de `internalPatchConfig` (virar parâmetro se Copiloto/Telegram usarem); `getPlatformCapabilities` legível por qualquer membro (subir permissão se surgir capacidade sensível); typo "mova para o etapa" em `convex/lib/agentPersonas.ts` (corrigir no fv2-11); CI depende de `npm ci` (ok, é o que o workflow roda). |
 
 | fv2-03/05/06/11 (`b31be63`) | bloqueia: nenhum. 3× tsc ok; suíte 3532 testes. | `getBridgeQrCode` sem e-mail (fv2-21); `ChannelsSection` ainda manda `webhookUrl` (parar de enviar no fv2-21); `Button danger` usa `red-600/700` cru (pré-existente; migrar no fv2-12); `Select`/`Textarea` com `focus:` (nativo; aceitável); navegação por setas escrita 3× (extrair utilitário se surgir 4ª); comentário deslocado em `schema.ts:53`. |
+| fv2-07/16/08/18/09 (`88d2d0b`) | bloqueia: nenhum. 3× tsc ok; suíte 3794 testes; build ok. | `internalGetDraftSetup` (`convex/attendantDraft.ts:69`) faz `ctx.runQuery` dentro de query (regra de `backend-invariants.md`): trocar por `spendStatusFor(ctx, org, month)` direto — **corrigir no fv2-14 (parte convex)**; título da aba definido em dois lugares (AppShell usa `label`, páginas usam `title`; Funil alterna "Funil"/"Funil de vendas"; fallback "HNBCRM · HNBCRM") — **corrigir no fv2-12**: `NavItemDef.title` e AppShell usa `title`, fallback só "HNBCRM"; `matchPrefixes` ainda sem uso (quem preencher adiciona teste em `routes.test.ts`). |
 
 ## Em andamento
 
