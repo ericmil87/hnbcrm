@@ -21,7 +21,7 @@ import { toast } from "sonner";
 import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
-import { OnboardingWizard } from "../onboarding/OnboardingWizard";
+import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
@@ -84,7 +84,7 @@ function writeKnownOrgIds(userId: string, ids: string[]) {
 }
 
 /**
- * O assistente é para o admin configurar uma org nova. O backend decide em
+ * O assistente (v2) é para o admin configurar uma org nova. O backend decide em
  * `shouldShowWizard`; o ramo legado (sem o campo) vale só para admin, porque
  * os passos chamam mutations admin-only e prenderiam um agente convidado.
  */
@@ -106,10 +106,6 @@ export function AuthLayout() {
   const location = useLocation();
   const [selectedOrgId, setSelectedOrgIdState] =
     useState<Id<"organizations"> | null>(readStoredOrgId);
-  // Por org: concluir/pular o assistente na A não pode pular o da B.
-  const [wizardClosedOrgs, setWizardClosedOrgs] = useState<ReadonlySet<string>>(
-    () => new Set()
-  );
   const [switcherMode, setSwitcherMode] = useState<"list" | "create" | null>(null);
   const { signOut } = useAuthActions();
 
@@ -390,21 +386,21 @@ export function AuthLayout() {
 
   if (
     onboardingProgress !== undefined &&
-    !wizardClosedOrgs.has(activeOrgId) &&
     shouldShowWizard(onboardingProgress, currentMember.role)
   ) {
-    const closeWizard = () =>
-      setWizardClosedOrgs((prev) => new Set(prev).add(activeOrgId));
+    // Tela cheia no lugar do AppShell. "Continuar depois" (`deferWizard`) e "Ir para o Painel"
+    // (`completeWizard`) gravam no servidor e `shouldShowWizard` passa a falso, então
+    // recarregar a página não reabre o assistente (`computeShouldShowWizard` respeita `wizardDeferredAt`).
     return (
       <>
-        <OnboardingWizard
+        <OnboardingWizardV2
           key={activeOrgId}
           organizationId={activeOrgId}
-          organizationName={activeOrg?.name ?? ""}
-          onComplete={closeWizard}
-          onSkip={closeWizard}
-          onOpenOrgSwitcher={() => setSwitcherMode("list")}
-          onSignOut={handleSignOut}
+          chrome={{
+            organizationName: activeOrg?.name ?? "",
+            onOpenOrgSwitcher: () => setSwitcherMode("list"),
+            onSignOut: handleSignOut,
+          }}
         />
         {switcher}
       </>
