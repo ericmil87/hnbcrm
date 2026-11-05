@@ -19,6 +19,7 @@ import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { Trash2, Bot, ExternalLink, Target, BellOff, Users, MessageSquare, ShieldCheck, MessageSquarePlus } from "lucide-react";
 import { usePermissions } from "@/hooks/usePermissions";
 import { cn } from "@/lib/utils";
+import { formatRelative } from "@/lib/format";
 
 interface ContactDetailPanelProps {
   contactId: Id<"contacts">;
@@ -700,21 +701,6 @@ export function ContactDetailPanel({ contactId, onClose }: ContactDetailPanelPro
 /*  Card de lead vinculado                                             */
 /* ------------------------------------------------------------------ */
 
-function formatRelativeDate(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "agora";
-  if (minutes < 60) return `há ${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `há ${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `há ${days} dia${days > 1 ? "s" : ""}`;
-  return new Date(timestamp).toLocaleDateString("pt-BR", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
 
 function LinkedLeadCard({
   lead,
@@ -766,7 +752,7 @@ function LinkedLeadCard({
           )}
           {lead.boardName && <span className="truncate">{lead.boardName}</span>}
           <span className="truncate">{lead.assigneeName || "Não atribuído"}</span>
-          {lead.updatedAt && <span>Atualizado {formatRelativeDate(lead.updatedAt)}</span>}
+          {lead.updatedAt && <span>Atualizado {formatRelative(lead.updatedAt, Date.now())}</span>}
         </div>
       </button>
 

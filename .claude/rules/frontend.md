@@ -45,9 +45,9 @@ paths:
 - Mutations: `useMutation` plus `sonner` toasts (`toast.promise`). Convex user errors are `ConvexError` with PT-BR text; show it.
 
 ## Routing and deep links
-- Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `PATH_TO_TAB`); navigate with `useNavigate`, derive active state from `useLocation`.
+- Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `activeTabForPath`); navigate with `useNavigate`, derive active state from `useLocation`.
 - Authenticated routes are lazy (`React.lazy`) under `AuthLayout`. Public pages call `<SEO />` (`src/components/SEO.tsx`).
-- The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).
+- The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`, and the Agenda's `?view=`, `?date=`, `?event=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).
 
 ## Anti-patterns (each causes real bugs)
 - No `Date.now()`, `new Set()`/`new Map()`/`[]`/`{}` in `useQuery` args or passed directly to `useState`; use `useState(() => ...)`.
@@ -56,6 +56,8 @@ paths:
 - No raw hex colors when a token exists; no emoji icons; no English UI strings.
 
 ## Where logic goes
+- Component tests (`*.test.tsx`) run in the `componentes` vitest project (jsdom + Testing Library, `src/test/`); only presentational components fed by props, never mock `useQuery`. A test that reads from disk needs `// @vitest-environment node` (and a `.test.ts` name so it runs in `backend-e-lib`).
+- Date/time/relative/money/count formatting always comes from `src/lib/format.ts`; never `toLocale*String` or a local `formatCurrency`/`timeAgo` in a component.
 - Non-trivial pure logic goes in `src/lib/*.ts` with a sibling `*.test.ts` (vitest includes `src/**/*.test.ts`); components stay thin. Examples: `src/lib/contactName.ts`, `src/lib/fabPosition.ts`.
 - Rules shared with the backend are imported from `convex/lib/*` (single source), never copied.
 - New components: named export, `PascalCase.tsx`, `interface XProps`, placed in the feature folder (`inbox/`, `tasks/`, `settings/`...) or `ui/` if generic.

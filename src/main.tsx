@@ -6,12 +6,17 @@ import { ConvexReactClient } from "convex/react";
 import { Toaster } from "sonner";
 import { HelmetProvider } from 'react-helmet-async';
 import "./index.css";
-import { LandingPage } from "./components/LandingPage";
-import { AuthPage } from "./components/AuthPage";
 import { AuthLayout } from "./components/layout/AuthLayout";
-import { DevelopersPage } from "./pages/DevelopersPage";
-import { PlaygroundPage } from "./pages/PlaygroundPage";
+import { TAB_ROUTES } from "./lib/routes";
+import { RouteErrorPage } from "./pages/RouteErrorPage";
 import { Spinner } from "./components/ui/Spinner";
+
+// Páginas públicas pesadas (ex.: DevelopersPage puxa o apiRegistry) ficam fora do bundle inicial.
+const LandingPage = lazy(() => import("./components/LandingPage").then(m => ({ default: m.LandingPage })));
+const AuthPage = lazy(() => import("./components/AuthPage").then(m => ({ default: m.AuthPage })));
+const DevelopersPage = lazy(() => import("./pages/DevelopersPage").then(m => ({ default: m.DevelopersPage })));
+const PlaygroundPage = lazy(() => import("./pages/PlaygroundPage").then(m => ({ default: m.PlaygroundPage })));
+const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then(m => ({ default: m.NotFoundPage })));
 
 const PublicFormPage = lazy(() => import("./pages/PublicFormPage").then(m => ({ default: m.PublicFormPage })));
 const TermsPage = lazy(() => import("./pages/TermsPage").then(m => ({ default: m.TermsPage })));
@@ -49,16 +54,17 @@ function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => R
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
 const router = createBrowserRouter([
-  { path: "/", element: <LandingPage /> },
-  { path: "/developers", element: <DevelopersPage /> },
-  { path: "/developers/playground", element: <PlaygroundPage /> },
-  { path: "/entrar", element: <AuthPage /> },
-  { path: "/termos", element: <LazyRoute Component={TermsPage} /> },
-  { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} /> },
-  { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} /> },
+  { path: "/", element: <LazyRoute Component={LandingPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/developers", element: <LazyRoute Component={DevelopersPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/developers/playground", element: <LazyRoute Component={PlaygroundPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/entrar", element: <LazyRoute Component={AuthPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/termos", element: <LazyRoute Component={TermsPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} />, errorElement: <RouteErrorPage /> },
   {
     path: "/app",
     element: <AuthLayout />,
+    errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <Navigate to="painel" replace /> },
       { path: "painel", element: <LazyRoute Component={DashboardOverview} /> },
@@ -79,8 +85,10 @@ const router = createBrowserRouter([
       { path: "grupos", element: <LazyRoute Component={GroupsPage} /> },
       { path: "central", element: <LazyRoute Component={CentralPage} /> },
       { path: "configuracoes", element: <LazyRoute Component={Settings} /> },
+      { path: "*", element: <Navigate to={TAB_ROUTES.dashboard} replace /> },
     ],
   },
+  { path: "*", element: <LazyRoute Component={NotFoundPage} />, errorElement: <RouteErrorPage /> },
 ]);
 
 createRoot(document.getElementById("root")!).render(

@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -17,9 +17,19 @@ import { EventDetailSlideOver } from "./EventDetailSlideOver";
 import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { EventBlock } from "./EventBlock";
 import type { CalendarEventType } from "./constants";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
 import { memberLabel } from "@/lib/teamMembers";
+
+/** Fallback vazio que limpa o `?event=` inválido ao montar. */
+function ClearEventParam({ onClear }: { onClear: () => void }) {
+  useEffect(() => {
+    onClear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <></>;
+}
 
 export function CalendarPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -32,12 +42,14 @@ export function CalendarPage() {
     navigateNext,
     goToToday,
     selectDay,
+    eventParam,
+    setSelectedEvent,
   } = useCalendarState();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [selectedEventSource, setSelectedEventSource] = useState<"event" | "task" | null>(null);
+  // Evento aberto pela URL (`?event=`); tarefas continuam em estado local.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [initialDate, setInitialDate] = useState<Date | undefined>();
   const [initialHour, setInitialHour] = useState<number | undefined>();
   const [initialMinute, setInitialMinute] = useState<number | undefined>();
@@ -145,8 +157,8 @@ export function CalendarPage() {
   };
 
   const handleEventClick = (eventId: string, source: "event" | "task") => {
-    setSelectedEventId(eventId);
-    setSelectedEventSource(source);
+    if (source === "event") setSelectedEvent(eventId);
+    else setSelectedTaskId(eventId);
   };
 
   const handleSlotClick = (date: Date, hour: number, minute: number) => {
@@ -271,26 +283,23 @@ export function CalendarPage() {
         initialMinute={initialMinute}
       />
 
-      {selectedEventSource === "event" && (
-        <EventDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          eventId={selectedEventId}
-          onEdit={handleEditEvent}
-        />
+      {eventParam && (
+        // Id inválido ou de outra org: a query falha dentro do filho e o deep-link é ignorado.
+        <ErrorBoundary key={eventParam} fallback={<ClearEventParam onClear={() => setSelectedEvent(null)} />}>
+          <EventDetailSlideOver
+            open
+            onClose={() => setSelectedEvent(null)}
+            eventId={eventParam}
+            onEdit={handleEditEvent}
+          />
+        </ErrorBoundary>
       )}
 
-      {selectedEventSource === "task" && (
+      {selectedTaskId && (
         <TaskDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          taskId={selectedEventId}
+          open
+          onClose={() => setSelectedTaskId(null)}
+          taskId={selectedTaskId}
         />
       )}
     </DndContext>

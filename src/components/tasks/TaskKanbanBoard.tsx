@@ -38,6 +38,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDueRelative } from "@/lib/format";
 
 // Kanban do projeto: uma coluna por `taskColumns`, ordem manual por `order`
 // fracionário. Este arquivo também hospeda as primitivas visuais do card
@@ -152,25 +153,6 @@ export const STATUS_LABELS: Record<string, string> = {
   completed: "Concluída",
   cancelled: "Cancelada",
 };
-
-export function formatRelativeDate(dueDate: number, now: number): string {
-  const due = new Date(dueDate);
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-
-  const diffDays = Math.round(
-    (dueDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atrás`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanhã";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return due.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
-}
 
 // ============================================================================
 // Primitivas de card (usadas no kanban e na lista)
@@ -743,7 +725,7 @@ export function TaskCard({
                   : "text-text-muted"
               )}
             >
-              {formatRelativeDate(task.dueDate, now)}
+              {formatDueRelative(task.dueDate, now)}
             </span>
           )}
           <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />

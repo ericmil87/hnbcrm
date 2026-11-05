@@ -42,6 +42,7 @@ import {
   DEFAULT_BOT_TAG,
   validateBotGuardTag,
 } from "../../../convex/lib/botGuard";
+import { formatMoney, parseDecimal } from "@/lib/format";
 
 // Switch grande do design system (role="switch") — a área clicável é maior que
 // o pill visual (touch target >= 44x44 via padding + margem negativa).
@@ -2713,18 +2714,9 @@ const SPEND_MODE_OPTIONS = [
 
 type SpendMode = (typeof SPEND_MODE_OPTIONS)[number]["value"];
 
-function formatBrlApprox(value: number): string {
-  return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
 function formatUsd(value: number): string {
   if (value > 0 && value < 0.01) return "menos de US$ 0,01";
-  return `US$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
-function parseDecimal(raw: string): number | null {
-  const value = Number(raw.replace(",", "."));
-  return raw.trim() === "" || !Number.isFinite(value) ? null : value;
+  return formatMoney(value, "USD");
 }
 
 function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) {
@@ -2819,8 +2811,8 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
           <div className="flex flex-wrap items-baseline justify-between gap-x-3 mb-1.5">
             <span className="text-sm text-text-secondary">
               Gasto aproximado:{" "}
-              <strong className="text-text-primary">{formatBrlApprox(usage.costBrl)}</strong>
-              {cap.active && cap.monthlyBrl !== null ? ` de ${formatBrlApprox(cap.monthlyBrl)}` : ""}{" "}
+              <strong className="text-text-primary">{formatMoney(usage.costBrl)}</strong>
+              {cap.active && cap.monthlyBrl !== null ? ` de ${formatMoney(cap.monthlyBrl)}` : ""}{" "}
               <span className="text-text-muted">({formatUsd(usage.costUsdEstimate)})</span>
             </span>
             {spendPct !== null && <span className="text-xs text-text-muted">{spendPct}%</span>}
@@ -2856,7 +2848,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
                 <li key={kind} className="flex justify-between gap-2">
                   <span>{USAGE_KIND_LABELS[kind] ?? kind}</span>
                   <span className="text-text-muted">
-                    {k.runs} · {formatBrlApprox((k.costUsdMicros / 1_000_000) * cap.usdBrlRate)}
+                    {k.runs} · {formatMoney((k.costUsdMicros / 1_000_000) * cap.usdBrlRate)}
                   </span>
                 </li>
               ))}

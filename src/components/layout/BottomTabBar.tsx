@@ -25,7 +25,7 @@ import {
   Users2,
   BarChart3,
 } from "lucide-react";
-import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
+import { TAB_ROUTES, activeTabForPath } from "@/lib/routes";
 import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 
 export type Tab = "dashboard" | "board" | "contacts" | "inbox" | "tasks" | "calendar" | "handoffs" | "team" | "audit" | "settings" | "forms" | "campaigns" | "groups" | "central";
@@ -80,7 +80,7 @@ export function BottomTabBar({
 }: BottomTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
-  const activeTab = PATH_TO_TAB[location.pathname];
+  const activeTab = activeTabForPath(location.pathname);
   const { can } = usePermissions(organizationId);
   const { modules } = useOrgModules(organizationId);
 

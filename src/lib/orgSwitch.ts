@@ -1,4 +1,4 @@
-import { PATH_TO_TAB, TAB_ROUTES } from "./routes";
+import { activeTabForPath, TAB_ROUTES } from "./routes";
 
 /**
  * Parâmetros de busca que só controlam a UI (seção/aba) e valem em qualquer
@@ -15,13 +15,8 @@ const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba"]);
  * para a raiz da aba; rota desconhecida cai no painel.
  */
 export function pathAfterOrgSwitch(pathname: string, search: string): string {
-  let basePath: string;
-  if (PATH_TO_TAB[pathname]) {
-    basePath = pathname;
-  } else {
-    const parent = Object.values(TAB_ROUTES).find((root) => pathname.startsWith(root + "/"));
-    basePath = parent ?? TAB_ROUTES.dashboard;
-  }
+  const tab = activeTabForPath(pathname);
+  const basePath = tab ? TAB_ROUTES[tab] : TAB_ROUTES.dashboard;
 
   const params = new URLSearchParams(search);
   const kept = new URLSearchParams();

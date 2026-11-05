@@ -34,10 +34,10 @@ import {
   ImportWizard,
   downloadFromUrl,
   downloadTextFile,
-  formatCount,
   importStatusMeta,
   type ImportJobDoc,
 } from "@/components/settings/ImportWizard";
+import { formatCount } from "@/lib/format";
 
 // ===== Tipos do lado de exportação =====
 

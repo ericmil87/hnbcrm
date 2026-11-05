@@ -15,7 +15,7 @@ import { BarList, CHART_COLORS, TimeSeriesChart } from "./charts";
 import {
   contactKindLabel,
   formatBRL,
-  formatBRLCompact,
+  formatCompactBRL,
   formatDuration,
   formatInt,
   formatPct,
@@ -70,7 +70,7 @@ export function OverviewTab({ data }: { data: CentralDashboard }) {
             kind="column"
             series={[{ key: "revenue", label: "Receita", color: CHART_COLORS.primary }]}
             formatValue={formatBRL}
-            formatAxis={formatBRLCompact}
+            formatAxis={formatCompactBRL}
             ariaLabel={`Receita por dia: total de ${formatBRL(t.revenue)} no período`}
           />
         </SectionCard>

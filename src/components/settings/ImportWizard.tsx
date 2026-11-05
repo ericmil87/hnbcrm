@@ -30,6 +30,7 @@ import {
   type ImportEntity,
   type ImportFieldDef,
 } from "../../../convex/lib/importMapping";
+import { formatCount } from "@/lib/format";
 
 // ===== Tipos e rótulos compartilhados com a aba "Dados" =====
 
@@ -167,9 +168,6 @@ export async function downloadFromUrl(url: string, fileName: string) {
   }
 }
 
-export function formatCount(value: number): string {
-  return value.toLocaleString("pt-BR");
-}
 
 // ===== Passos =====
 

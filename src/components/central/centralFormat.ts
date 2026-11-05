@@ -3,6 +3,8 @@
  * `centralFormat.test.ts`.
  */
 
+import { formatMoney } from "@/lib/format";
+
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const brlCompact = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -16,13 +18,10 @@ const decFmt = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 1, maximu
 
 export const EMPTY = "—";
 
-export function formatBRL(value: number | null | undefined): string {
-  if (value === null || value === undefined || !Number.isFinite(value)) return EMPTY;
-  return brl.format(value);
-}
+export const formatBRL = (value: number | null | undefined): string => formatMoney(value, "BRL");
 
 /** R$ 12,3 mil — para eixos e rótulos apertados. */
-export function formatBRLCompact(value: number): string {
+export function formatCompactBRL(value: number): string {
   if (Math.abs(value) < 1000) return brl.format(Math.round(value)).replace(/,00$/, "");
   return brlCompact.format(value);
 }

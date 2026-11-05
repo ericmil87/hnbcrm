@@ -7,11 +7,13 @@ Rules (tokens, primitives, mobile-first, anti-patterns): `.claude/rules/frontend
 ```
 src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
-├── App.tsx / Dashboard.tsx     # legacy, unused (superseded by router + AuthLayout)
 ├── SignInForm.tsx              # Password sign-in; links to components/auth/ForgotPasswordForm.tsx (password reset)
 ├── SignOutButton.tsx           # Sign-out button
 ├── index.css                   # CSS custom properties (dark/light), auth classes, shimmer
-├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES / PATH_TO_TAB route constants
+├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
+├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
+├── test/                       # setup.ts (jest-dom, matchMedia/ResizeObserver stubs), render.tsx (renderWithRouter) for *.test.tsx
+├── pages/                      # Public/route pages (Developers, Playground, Terms, Privacy, PublicForm, NotFoundPage, RouteErrorPage)
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
@@ -52,7 +54,7 @@ src/
 - **Data:** `useQuery(api.module.fn, ready ? { organizationId } : "skip")`; mutations via `useMutation` + `toast.promise` from `sonner`; loading = `<Spinner size="lg" />`.
 - **Auth/org:** `AuthLayout` (`useConvexAuth()`) redirects unauthenticated users to `/entrar`, gates org/onboarding, and passes `<Outlet context={{ organizationId }}>`;
   pages read it with `useOutletContext<AppOutletContext>()`.
-- **Navigation:** URL-based; `Sidebar`/`BottomTabBar` derive active state from `useLocation()` via `TAB_ROUTES`/`PATH_TO_TAB`; `Tab` type exported from `BottomTabBar.tsx`.
+- **Navigation:** URL-based; `Sidebar`/`BottomTabBar` derive active state from `useLocation()` via `TAB_ROUTES`/`activeTabForPath()`; `Tab` type exported from `BottomTabBar.tsx`.
 - **Public pages:** render `<SEO title description keywords ogImage />` from `@/components/SEO`.
 - **Lazy routes:** `lazy(() => import("./components/X").then(m => ({ default: m.X })))` wrapped in `LazyRoute` (Suspense + `<Spinner size="lg" />`); the Suspense fallback must be static.
 - **Scroll:** `<ScrollRestoration />` lives in `AuthLayout.tsx`; the window scrolls (no nested scroll containers).

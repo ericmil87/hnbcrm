@@ -21,6 +21,7 @@ import {
   Microscope,
   ListChecks,
 } from "lucide-react";
+import { formatDueRelative } from "@/lib/format";
 
 // ============================================================================
 // Types & Constants
@@ -516,7 +517,7 @@ function TaskRow({
                 : "text-text-secondary"
           )}
         >
-          {formatRelativeDate(task.dueDate, now)}
+          {formatDueRelative(task.dueDate, now)}
         </span>
       )}
     </div>
@@ -537,19 +538,3 @@ function isDueToday(dueDate: number, now: number): boolean {
   );
 }
 
-function formatRelativeDate(dueDate: number, now: number): string {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-
-  const diffMs = dueDay.getTime() - today.getTime();
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atr\u00e1s`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanh\u00e3";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return new Date(dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
-}
