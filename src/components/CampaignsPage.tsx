@@ -52,8 +52,8 @@ export function CampaignsPage() {
   const [wizardId, setWizardId] = useState<Id<"campaigns"> | null | "new">(null);
   const [prefill, setPrefill] = useState<CampaignPrefill | null>(null);
   // Filtros na URL (replace): sobrevivem ao recarregar e ao compartilhar o link.
-  const { value: statusFilter, set: setStatusFilter } = useSearchParamState("status", campaignStatusCodec);
-  const { value: providerFilter, set: setProviderFilter } = useSearchParamState("provider", campaignProviderCodec);
+  const { value: statusFilter, set: setStatusFilter } = useSearchParamState("status", campaignStatusCodec, { preventScrollReset: true });
+  const { value: providerFilter, set: setProviderFilter } = useSearchParamState("provider", campaignProviderCodec, { preventScrollReset: true });
   const [confirmDelete, setConfirmDelete] = useState<Id<"campaigns"> | null>(null);
   const [optOutsOpen, setOptOutsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Id<"campaigns"> | null>(null);

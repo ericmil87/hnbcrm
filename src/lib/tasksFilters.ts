@@ -39,6 +39,15 @@ export interface TasksUrlState {
   projectId: string | null;
 }
 
+export const DEFAULT_TASKS_URL_STATE: TasksUrlState = {
+  view: "list",
+  smart: "all",
+  status: "",
+  assigneeId: null,
+  labelIds: [],
+  projectId: null,
+};
+
 /** Estado → params serializados (`null` = fora da URL), prontos para `writeParams`. */
 export function tasksUrlWrites(state: TasksUrlState): Record<string, string | null> {
   return {
@@ -68,7 +77,9 @@ export interface ResolvedTaskIds {
 /**
  * Ids da URL só valem se existirem na org atual (link colado de outra org, item
  * apagado ou id malformado). Enquanto a lista carrega o id fica de fora e
- * `pending` avisa para não consultar com filtro incompleto.
+ * `pending` avisa para não consultar com filtro incompleto. A lista de projetos
+ * é a dos ATIVOS: `?project=` de um projeto arquivado também cai (a tela mostra
+ * todas as tarefas, sem aviso), inclusive vindo de um filtro salvo.
  */
 export function resolveTaskIds(
   state: Pick<TasksUrlState, "projectId" | "assigneeId" | "labelIds">,

@@ -1,15 +1,17 @@
 import { useCallback } from "react";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import {
   actionCodec,
   actorCodec,
   entityCodec,
   fromCodec,
-  logCodec,
   severityCodec,
   toCodec,
   ALL,
 } from "@/lib/auditFilters";
+
+const NOSCROLL = { preventScrollReset: true } as const;
 
 /**
  * Estado do Histórico de alterações que vive na URL: filtros
@@ -18,18 +20,17 @@ import {
  * fica em estado da tela.
  */
 export function useAuditUrlState() {
-  const severity = useSearchParamState("severity", severityCodec);
-  const entity = useSearchParamState("entity", entityCodec);
-  const action = useSearchParamState("action", actionCodec);
-  const actor = useSearchParamState("actor", actorCodec);
-  const from = useSearchParamState("from", fromCodec);
-  const to = useSearchParamState("to", toCodec);
-  const log = useSearchParamState("log", logCodec);
+  const severity = useSearchParamState("severity", severityCodec, NOSCROLL);
+  const entity = useSearchParamState("entity", entityCodec, NOSCROLL);
+  const action = useSearchParamState("action", actionCodec, NOSCROLL);
+  const actor = useSearchParamState("actor", actorCodec, NOSCROLL);
+  const from = useSearchParamState("from", fromCodec, NOSCROLL);
+  const to = useSearchParamState("to", toCodec, NOSCROLL);
+  const log = useOpenEntityParam("log");
 
   const { set: setSeverityParam } = severity;
   const { set: setFromParam } = from;
-  const { set: setLogParam } = log;
-
+  
   /** Limpa todos os filtros numa navegação só (dois `set` seguidos não se compõem). */
   const clearAll = useCallback(() => {
     setSeverityParam(ALL, {
@@ -42,10 +43,11 @@ export function useAuditUrlState() {
     setFromParam("", { also: { to: null } });
   }, [setFromParam]);
 
-  /** Abre com push (o "voltar" fecha); fechar substitui a entrada. */
+  /** Abre (push, o "voltar" fecha) ou fecha (volta a entrada que abrimos). */
+  const { open: openLog, close: closeLog } = log;
   const setOpenLog = useCallback(
-    (id: string | null) => setLogParam(id, { history: id ? "push" : "replace" }),
-    [setLogParam]
+    (id: string | null) => (id ? openLog(id) : closeLog()),
+    [openLog, closeLog]
   );
 
   return {
@@ -61,7 +63,7 @@ export function useAuditUrlState() {
     setFrom: from.set,
     to: to.value,
     setTo: to.set,
-    openLogId: log.value,
+    openLogId: log.id,
     setOpenLog,
     clearAll,
     clearDates,

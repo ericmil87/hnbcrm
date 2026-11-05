@@ -8,7 +8,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -16,12 +16,12 @@ import { PermissionGate } from "@/components/guards/PermissionGate";
 import { InviteMemberModal } from "@/components/team/InviteMemberModal";
 import { MemberDetailSlideOver } from "@/components/team/MemberDetailSlideOver";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import { stringParam } from "@/lib/searchParamState";
 import { cn } from "@/lib/utils";
 import { isPendingMember } from "@/lib/teamMembers";
 import {
-  Search,
   UserPlus,
   Users,
   Bot,
@@ -73,11 +73,13 @@ export function TeamPage() {
 
   const [showInvite, setShowInvite] = useState(false);
   // Membro aberto (push: o "voltar" fecha) e busca (replace) moram na URL.
-  const memberParam = useSearchParamState("member", stringParam, { history: "push" });
-  const selectedMemberId = memberParam.value as Id<"teamMembers"> | null;
+  const memberParam = useOpenEntityParam("member");
+  const selectedMemberId = memberParam.id as Id<"teamMembers"> | null;
   const setSelectedMemberId = (id: Id<"teamMembers"> | null) =>
-    memberParam.set(id, { history: id ? "push" : "replace" });
-  const { value: searchParam, set: setSearchParam } = useSearchParamState("q", stringParam);
+    id ? memberParam.open(id) : memberParam.close();
+  const { value: searchParam, set: setSearchParam } = useSearchParamState("q", stringParam, {
+    preventScrollReset: true,
+  });
   const search = searchParam ?? "";
   const setSearch = (value: string) => setSearchParam(value);
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
@@ -235,11 +237,11 @@ export function TeamPage() {
       <div className="space-y-3">
         <div className="flex gap-2">
           <div className="flex-1">
-            <Input
-              icon={<Search size={18} />}
-              placeholder="Buscar por nome ou email..."
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onValueChange={setSearch}
+              placeholder="Buscar por nome ou e-mail…"
+              ariaLabel="Buscar membros"
             />
           </div>
           <Button

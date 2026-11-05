@@ -13,6 +13,8 @@ export interface SetParamOptions {
   history?: "push" | "replace";
   /** Outros parâmetros escritos na MESMA navegação (`null` remove). */
   also?: Readonly<Record<string, string | null>>;
+  /** Não rola a janela para o topo nesta escrita (filtros e itens abertos no meio da lista). */
+  preventScrollReset?: boolean;
   /** `location.state` da entrada escrita (ex.: marcar a entrada criada por um push nosso). */
   state?: unknown;
 }
@@ -56,7 +58,10 @@ export interface SearchParamState<T> {
 export function useSearchParamState<T>(
   key: string,
   codec: ParamCodec<T>,
-  { history = "replace" }: { history?: "push" | "replace" } = {}
+  {
+    history = "replace",
+    preventScrollReset = false,
+  }: { history?: "push" | "replace"; preventScrollReset?: boolean } = {}
 ): SearchParamState<T> {
   const [searchParams, setSearchParams] = useSearchParams();
   const raw = searchParams.get(key);
@@ -71,11 +76,12 @@ export function useSearchParamState<T>(
         (prev) => writeParams(prev, { [key]: serialized, ...options.also }),
         {
           replace: (options.history ?? history) === "replace",
+          ...((options.preventScrollReset ?? preventScrollReset) ? { preventScrollReset: true } : {}),
           ...(options.state !== undefined ? { state: options.state } : {}),
         }
       );
     },
-    [codec, history, key, raw, setSearchParams]
+    [codec, history, key, preventScrollReset, raw, setSearchParams]
   );
 
   const isInFlight = useCallback(() => {

@@ -1,29 +1,35 @@
 import { useCallback, useMemo } from "react";
+import { useSearchParams } from "react-router";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { writeParams } from "@/lib/searchParamState";
 import {
   assigneeCodec,
   labelCodec,
   projectCodec,
   smartCodec,
   statusCodec,
+  DEFAULT_TASKS_URL_STATE,
   tasksUrlWrites,
   viewCodec,
   type TasksUrlState,
 } from "@/lib/tasksFilters";
+
+const NOSCROLL = { preventScrollReset: true } as const;
 
 /**
  * Estado de Tarefas que vive na URL (sempre `replace`; o padrão sai da URL):
  * `?view=&smart=&status=&assignee=&label=&project=`. `?task=` (detalhe, push)
  * continua na página. Escritas compostas (filtro salvo, trocar de projeto)
  * vão numa navegação só, porque dois `setSearchParams` seguidos não se compõem.
+ * `update` escreve apenas as chaves do `patch`, sobre a URL viva.
  */
 export function useTasksUrlState() {
-  const view = useSearchParamState("view", viewCodec);
-  const smart = useSearchParamState("smart", smartCodec);
-  const status = useSearchParamState("status", statusCodec);
-  const assignee = useSearchParamState("assignee", assigneeCodec);
-  const label = useSearchParamState("label", labelCodec);
-  const project = useSearchParamState("project", projectCodec);
+  const view = useSearchParamState("view", viewCodec, NOSCROLL);
+  const smart = useSearchParamState("smart", smartCodec, NOSCROLL);
+  const status = useSearchParamState("status", statusCodec, NOSCROLL);
+  const assignee = useSearchParamState("assignee", assigneeCodec, NOSCROLL);
+  const label = useSearchParamState("label", labelCodec, NOSCROLL);
+  const project = useSearchParamState("project", projectCodec, NOSCROLL);
 
   const state = useMemo<TasksUrlState>(
     () => ({
@@ -37,16 +43,27 @@ export function useTasksUrlState() {
     [view.value, smart.value, status.value, assignee.value, label.value, project.value]
   );
 
-  const { set: setSmart } = smart;
+  const [, setSearchParams] = useSearchParams();
   const update = useCallback(
     (patch: Partial<TasksUrlState>) => {
-      const next = { ...state, ...patch };
-      const { smart: smartWrite, ...others } = tasksUrlWrites(next);
-      // `smart` é só o portador da navegação; todos os params vão juntos.
-      void smartWrite;
-      setSmart(next.smart, { also: others });
+      // Só as chaves do `patch` entram na escrita, sobre a URL VIVA (`prev`):
+      // uma mudança de filtro feita durante um `await` não é desfeita.
+      const writes = tasksUrlWrites({ ...DEFAULT_TASKS_URL_STATE, ...patch });
+      const keys: Record<keyof TasksUrlState, string> = {
+        view: "view",
+        smart: "smart",
+        status: "status",
+        assigneeId: "assignee",
+        labelIds: "label",
+        projectId: "project",
+      };
+      const picked: Record<string, string | null> = {};
+      for (const field of Object.keys(patch) as (keyof TasksUrlState)[]) {
+        picked[keys[field]] = writes[keys[field]];
+      }
+      setSearchParams((prev) => writeParams(prev, picked), { replace: true, preventScrollReset: true });
     },
-    [state, setSmart]
+    [setSearchParams]
   );
 
   return { state, update };

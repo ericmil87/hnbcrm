@@ -89,6 +89,11 @@ describe("resolveTaskIds", () => {
     });
   });
 
+  it("projeto arquivado (fora da lista de ativos) também é descartado", () => {
+    const active = { projectIds: ["p-ativo"], memberIds: ["m1"], labelIds: [] };
+    expect(resolveTaskIds({ projectId: "p-arquivado", assigneeId: null, labelIds: [] }, active).projectId).toBeNull();
+  });
+
   it("segura a consulta enquanto a lista do id carrega", () => {
     const loading = { projectIds: undefined, memberIds: undefined, labelIds: undefined };
     expect(resolveTaskIds({ projectId: "p1", assigneeId: null, labelIds: [] }, loading).pending).toBe(true);
