@@ -631,3 +631,34 @@ export const requestSampleData = mutation({
     return null;
   },
 });
+
+// Capacidades da plataforma neste deployment (o assistente e o Copiloto decidem
+// o que oferecer). Só booleanos — NUNCA devolve valor de env nem segredo.
+export const getPlatformCapabilities = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.object({
+    managedBridge: v.boolean(),
+    transcription: v.boolean(),
+    llm: v.boolean(),
+    metaMessaging: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const org = await ctx.db.get(args.organizationId);
+    const pc = org?.settings.aiConfig?.providerConfig;
+    const byoConfigured = pc?.mode === "byo" && !!pc.byo;
+    const env = (name: string) => !!process.env[name]?.trim();
+    return {
+      managedBridge:
+        env("WA_BRIDGE_DEFAULT_URL") &&
+        env("WA_BRIDGE_ADMIN_TOKEN") &&
+        (process.env.WA_BRIDGE_HMAC_SECRET?.length ?? 0) >= 32,
+      transcription: env("WHISPER_SERVICE_URL"),
+      llm: env("OPENROUTER_API_KEY") || env("OPENCODE_GO_API") || byoConfigured,
+      metaMessaging:
+        env("META_MESSAGING_APP_ID") &&
+        env("META_MESSAGING_APP_SECRET") &&
+        env("META_MESSAGING_LOGIN_CONFIG_ID"),
+    };
+  },
+});

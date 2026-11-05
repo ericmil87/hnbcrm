@@ -54,7 +54,7 @@ function systemPromptOf(fetchMock: ReturnType<typeof vi.fn>, call = 0): string {
 async function seedOrg(t: TestConvex<typeof schema>) {
   return await t.run(async (ctx) => {
     const now = Date.now();
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const managerUserId = await ctx.db.insert("users", {});
     const organizationId = await ctx.db.insert("organizations", {
       name: "Org Textos",

@@ -44,7 +44,7 @@ async function seedCoachOrg(
 ) {
   return await t.run(async (ctx) => {
     const now = Date.now();
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const sellerUserId = await ctx.db.insert("users", {});
     const viewerUserId = await ctx.db.insert("users", {});
     const organizationId = await ctx.db.insert("organizations", {

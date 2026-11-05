@@ -53,7 +53,7 @@ async function seed(opts: { modules?: ModuleFlags; demoMode?: boolean; withWonLo
       updatedAt: now,
     });
     const mk = async (name: string, role: "admin" | "agent", type: "human" | "ai" = "human") => {
-      const userId = type === "human" ? await ctx.db.insert("users", {}) : undefined;
+      const userId = type === "human" ? await ctx.db.insert("users", { email: `${name.toLowerCase().replace(/\W+/g, "")}@teste.com` }) : undefined;
       const memberId = await ctx.db.insert("teamMembers", {
         organizationId,
         ...(userId ? { userId } : {}),

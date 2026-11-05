@@ -59,7 +59,7 @@ async function seed(t: TestConvex<typeof schema>) {
       createdAt: now,
       updatedAt: now,
     });
-    const userId = await ctx.db.insert("users", {});
+    const userId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId,
       userId,

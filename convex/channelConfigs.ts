@@ -16,6 +16,7 @@ import {
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
+import { patchChannelTranscriptionCore } from "./lib/attendantConfigOps";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
@@ -447,6 +448,10 @@ export const createChannelConfig = action({
   },
   returns: v.id("channelConfigs"),
   handler: async (ctx, args): Promise<Id<"channelConfigs">> => {
+    // settings:manage + conta com e-mail (sessão anônima legada não conecta número).
+    await ctx.runQuery(internal.channelConfigs.internalRequireSettingsManage, {
+      organizationId: args.organizationId,
+    });
     const provider = args.provider ?? "meta";
 
     if (provider === "meta") {
@@ -1424,6 +1429,17 @@ export const internalPatchConfig = internalMutation({
         .withIndex("by_bridge_instance", (q) => q.eq("bridgeInstanceId", patchBridgeInstanceId))
         .first();
       if (existing) throw new Error("Esta instância do bridge já está conectada");
+    }
+
+    // Patch só de transcrição: porta única (patch + audit) do core.
+    const patchKeys = Object.keys(args.patch);
+    if (patchKeys.length === 1 && typeof args.patch.autoTranscribeAudio === "boolean") {
+      return await patchChannelTranscriptionCore(ctx, {
+        config,
+        member: userMember,
+        enabled: args.patch.autoTranscribeAudio,
+        via: "settings",
+      });
     }
 
     const now = Date.now();

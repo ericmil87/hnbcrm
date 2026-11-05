@@ -75,6 +75,7 @@ import type * as lib_agentTools from "../lib/agentTools.js";
 import type * as lib_aiSpend from "../lib/aiSpend.js";
 import type * as lib_aiStateReasons from "../lib/aiStateReasons.js";
 import type * as lib_appUrl from "../lib/appUrl.js";
+import type * as lib_attendantConfigOps from "../lib/attendantConfigOps.js";
 import type * as lib_auditDescription from "../lib/auditDescription.js";
 import type * as lib_auditText from "../lib/auditText.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -330,6 +331,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiSpend": typeof lib_aiSpend;
   "lib/aiStateReasons": typeof lib_aiStateReasons;
   "lib/appUrl": typeof lib_appUrl;
+  "lib/attendantConfigOps": typeof lib_attendantConfigOps;
   "lib/auditDescription": typeof lib_auditDescription;
   "lib/auditText": typeof lib_auditText;
   "lib/auth": typeof lib_auth;
