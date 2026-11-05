@@ -2,6 +2,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 import {
   Bell,
   Bot,
+  Instagram,
   CalendarClock,
   Gauge,
   LifeBuoy,
@@ -69,9 +70,8 @@ export const DEFAULT_SETTINGS_PANEL_ID = "general";
 /**
  * Painéis previstos que ainda não existem (viram entradas em PRs seguintes).
  * Reservados para a busca e para links futuros; não registrar sem componente.
- * - instagram (fv2-21): hoje `MetaMessagingCard` mora dentro de `ChannelsSection`.
  */
-export const PLANNED_PANEL_IDS = ["instagram"] as const;
+export const PLANNED_PANEL_IDS: readonly string[] = [];
 
 const view = { category: "settings", level: "view" } as const;
 
@@ -113,11 +113,22 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     id: "channels",
     group: "whatsapp",
     label: "Números conectados",
-    description: "WhatsApp, Instagram e Messenger conectados",
+    description: "Números de WhatsApp: conectar, saúde e histórico",
     icon: Smartphone,
-    keywords: ["transcrição", "áudio", "QR code", "número", "whatsapp", "canal", "conectar", "instagram", "messenger", "meta"],
+    keywords: ["whatsapp", "número", "qr code", "código de conexão", "transcrição", "saúde", "histórico", "áudio", "conectar", "canal"],
     permission: view,
-    Component: lazy(() => import("./ChannelsSection").then((m) => ({ default: m.ChannelsSection }))),
+    Component: lazy(() => import("./channels/ChannelsPanel").then((m) => ({ default: m.ChannelsPanel }))),
+  },
+  {
+    id: "instagram",
+    group: "whatsapp",
+    label: "Instagram e Messenger",
+    description: "Receber e responder mensagens do Instagram e do Messenger",
+    icon: Instagram,
+    keywords: ["instagram", "messenger", "facebook", "meta", "direct", "página"],
+    permission: view,
+    visible: ({ can, modules }) => modules.metaMessaging || can("settings", "manage"),
+    Component: lazy(() => import("./channels/InstagramPanel").then((m) => ({ default: m.InstagramPanel }))),
   },
   {
     id: "ai",

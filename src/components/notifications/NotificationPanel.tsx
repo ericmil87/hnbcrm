@@ -142,7 +142,9 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     // Entramos num grupo novo: a decisão de acompanhar é humana e mora na
     // página de Grupos.
     if (n.type === "channel_session_lost") {
-      navigate(`${TAB_ROUTES.settings}?secao=channels`);
+      // Instagram/Messenger desconectado mora em "Instagram e Messenger", não em "Números conectados".
+      const isMeta = Boolean((n.data as { metaConnectionId?: unknown } | undefined)?.metaConnectionId);
+      navigate(`${TAB_ROUTES.settings}?secao=${isMeta ? "instagram" : "channels"}`);
       return;
     }
     if (n.type === "group_joined") {
