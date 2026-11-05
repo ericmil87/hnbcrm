@@ -70,11 +70,42 @@ export type UpdateChannelConfigFn = (args: {
   autoTranscribeAudio?: boolean;
 }) => Promise<null>;
 
-export type ProvisionBridgeFn = (args: {
+export type CreateManagedChannelFn = (args: {
   organizationId: Id<"organizations">;
   displayName: string;
   bridgeBaseUrl?: string;
   adminToken?: string;
-  webhookUrl: string;
   useManagedGateway?: boolean;
 }) => Promise<Id<"channelConfigs">>;
+
+/** Resultado de `startBridgePairing` / `pollBridgePairing`. O QR e o código nunca são guardados nem registrados. */
+export type PairingResult = {
+  state: "qr" | "code" | "connected" | "error";
+  qrCode?: string;
+  linkingCode?: string;
+  displayPhoneNumber?: string;
+  displacedFrom?: string[];
+  error?: string;
+  attemptsLeft?: number;
+};
+
+export type StartPairingFn = (args: {
+  configId: Id<"channelConfigs">;
+  mode: "qr" | "code";
+  phone?: string;
+}) => Promise<PairingResult>;
+
+export type PollPairingFn = (args: {
+  configId: Id<"channelConfigs">;
+  mode: "qr" | "code";
+}) => Promise<PairingResult>;
+
+export interface ChannelConnectActions {
+  createChannelConfig: CreateChannelConfigFn;
+  updateChannelConfig: UpdateChannelConfigFn;
+  createManagedChannel: CreateManagedChannelFn;
+  startPairing: StartPairingFn;
+  pollPairing: PollPairingFn;
+  /** Chamado uma vez quando o número conecta (grava o estado para o card atualizar). */
+  markConnected?: (configId: Id<"channelConfigs">) => void;
+}

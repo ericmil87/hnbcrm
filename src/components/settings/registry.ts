@@ -2,6 +2,7 @@ import { lazy, type ComponentType, type LazyExoticComponent } from "react";
 import {
   Bell,
   Bot,
+  Instagram,
   Building2,
   KeyRound,
   ListChecks,
@@ -62,13 +63,11 @@ export const DEFAULT_SETTINGS_PANEL_ID = "general";
 /**
  * Painéis previstos que ainda não existem (viram entradas nos PRs fv2-17/19/21).
  * Reservados para a busca e para links futuros; não registrar sem componente.
- * - instagram (fv2-21): hoje `MetaMessagingCard` mora dentro de `ChannelsSection`.
  * - ai-attendant, ai-conversation, ai-handoff, ai-followup, ai-features
  *   (keywords: transcrição, áudio, imagem, visão, grupos, telegram), ai-usage (fv2-17/19).
  * - ai-models (privacidade e modelo; só settings:manage).
  */
 export const PLANNED_PANEL_IDS = [
-  "instagram",
   "ai-attendant",
   "ai-conversation",
   "ai-handoff",
@@ -119,11 +118,22 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     id: "channels",
     group: "whatsapp",
     label: "Números conectados",
-    description: "WhatsApp, Instagram e Messenger conectados",
+    description: "Números de WhatsApp: conectar, saúde e histórico",
     icon: Smartphone,
-    keywords: ["transcrição", "áudio", "QR code", "número", "whatsapp", "canal", "conectar", "instagram", "messenger", "meta"],
+    keywords: ["whatsapp", "número", "qr code", "código de conexão", "transcrição", "saúde", "histórico", "áudio", "conectar", "canal"],
     permission: view,
-    Component: lazy(() => import("./ChannelsSection").then((m) => ({ default: m.ChannelsSection }))),
+    Component: lazy(() => import("./channels/ChannelsPanel").then((m) => ({ default: m.ChannelsPanel }))),
+  },
+  {
+    id: "instagram",
+    group: "whatsapp",
+    label: "Instagram e Messenger",
+    description: "Receber e responder mensagens do Instagram e do Messenger",
+    icon: Instagram,
+    keywords: ["instagram", "messenger", "facebook", "meta", "direct", "página"],
+    permission: view,
+    visible: ({ can, modules }) => modules.metaMessaging || can("settings", "manage"),
+    Component: lazy(() => import("./channels/InstagramPanel").then((m) => ({ default: m.InstagramPanel }))),
   },
   {
     id: "ai",

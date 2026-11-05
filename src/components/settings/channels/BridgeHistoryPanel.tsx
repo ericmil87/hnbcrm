@@ -15,12 +15,14 @@ import type { ChannelConfig } from "./types";
 // --- Histórico do aparelho (bridge, por número) ---
 //
 // Fica DENTRO do card do número, e não numa aba geral de configurações, porque
-// a config é por instância do gateway: cada número tem seu volume, seu risco e
+// a config é por conexão: cada número tem seu volume, seu risco e
 // seu estado de sessão. Ver o interruptor ao lado do status de pareamento é o
 // que deixa claro de qual número se está falando.
 //
 // Desligado por padrão: enquanto estiver assim o CRM não chama nenhum endpoint
-// de histórico do gateway.
+// de histórico do servidor de conexão.
+
+import { historyApplied } from "./historyApplied";
 
 const HISTORY_LIMIT_MIN = 10;
 const HISTORY_LIMIT_MAX = 500;
@@ -61,9 +63,9 @@ export function BridgeHistoryPanel({
     setSaving(true);
     try {
       const result = await setHistoryConfig({ configId: config._id, ...patch });
-      // `gatewayApplied: false` = preferência salva mas o gateway não confirmou.
+      // `applied: false` = preferência salva mas o servidor não confirmou.
       // É um aviso, não um erro: a próxima sincronização reenvia o teto.
-      if (result.gatewayApplied) toast.success(result.detail);
+      if (historyApplied(result)) toast.success(result.detail);
       else toast.warning(result.detail);
     } catch (e: any) {
       toast.error(e?.message ?? "Não foi possível salvar");

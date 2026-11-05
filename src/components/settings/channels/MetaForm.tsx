@@ -2,12 +2,16 @@ import { useState } from "react";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { Input } from "@/components/ui/Input";
-import { Copy, Check, Dices, Cloud } from "lucide-react";
+import { Copy, Check, Dices } from "lucide-react";
 import type { ChannelConfig, CreateChannelConfigFn, UpdateChannelConfigFn } from "./types";
 import { copyToClipboard } from "./copyToClipboard";
 
-// --- Meta (Cloud API) form — unchanged behavior from the original ---
+// URL pública do webhook da Meta: o deployment ".convex.cloud" do cliente mapeia para o host HTTP ".convex.site".
+const CONVEX_SITE = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(".convex.cloud", ".convex.site");
+const WEBHOOK_CALLBACK_URL = `${CONVEX_SITE}/webhooks/whatsapp`;
+
 export function MetaForm({
   organizationId,
   config,
@@ -15,6 +19,7 @@ export function MetaForm({
   createChannelConfig,
   updateChannelConfig,
   onBack,
+  onCreated,
 }: {
   organizationId: Id<"organizations">;
   config: ChannelConfig | null;
@@ -22,6 +27,8 @@ export function MetaForm({
   createChannelConfig: CreateChannelConfigFn;
   updateChannelConfig: UpdateChannelConfigFn;
   onBack?: () => void;
+  /** Número novo criado (segue o fluxo do chamador em vez de só fechar). */
+  onCreated?: (configId: Id<"channelConfigs">) => void;
 }) {
   const isEditing = !!config;
   const [form, setForm] = useState(() =>
@@ -52,6 +59,13 @@ export function MetaForm({
     setTimeout(() => setTokenCopied(false), 2000);
   };
 
+  const [webhookCopied, setWebhookCopied] = useState(false);
+  const handleCopyWebhook = async () => {
+    await copyToClipboard(WEBHOOK_CALLBACK_URL, "URL de callback copiada");
+    setWebhookCopied(true);
+    setTimeout(() => setWebhookCopied(false), 2000);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -72,9 +86,9 @@ export function MetaForm({
             success: "Número atualizado",
             error: (error) => (error instanceof Error ? error.message : "Não foi possível atualizar número."),
           }
-        );
+        ).unwrap();
       } else {
-        await toast.promise(
+        const id = await toast.promise(
           createChannelConfig({
             organizationId,
             channel: "whatsapp",
@@ -91,7 +105,11 @@ export function MetaForm({
             success: "Número conectado",
             error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar número."),
           }
-        );
+        ).unwrap();
+        if (onCreated) {
+          onCreated(id);
+          return;
+        }
       }
       onClose();
     } catch {
@@ -184,6 +202,51 @@ export function MetaForm({
           valores para substituí-los.
         </p>
       )}
+
+      <CollapsibleSection title="Detalhes técnicos">
+        <div className="space-y-3">
+          <p className="text-sm text-text-secondary">
+            No app da Meta (Meta for Developers), use esta URL de callback ao configurar o webhook do WhatsApp,
+            assinando o campo <span className="font-mono text-text-secondary">messages</span>.
+          </p>
+          <div className="flex flex-col gap-1.5 rounded-lg border border-border-subtle bg-surface-base p-3 sm:flex-row sm:items-center sm:justify-between">
+            <span className="break-all font-mono text-sm text-text-primary">{WEBHOOK_CALLBACK_URL}</span>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="shrink-0 self-start sm:self-auto"
+              onClick={() => void handleCopyWebhook()}
+            >
+              {webhookCopied ? <Check size={14} /> : <Copy size={14} />}
+              Copiar URL
+            </Button>
+          </div>
+          <ol className="list-inside list-decimal space-y-2 text-sm text-text-secondary">
+            <li>Crie um app na Meta for Developers do tipo Business.</li>
+            <li>Adicione o produto WhatsApp e anote o Phone Number ID e o WABA ID.</li>
+            <li>Crie um System User no Business Manager e gere um token de acesso permanente.</li>
+            <li>Copie o App Secret nas configurações do app.</li>
+            <li>
+              Configure o webhook com a URL de callback e o Verify Token acima, assinando o campo{" "}
+              <span className="font-mono">messages</span>.
+            </li>
+            <li>Teste a conexão pelo botão "Testar conexão" de cada número.</li>
+          </ol>
+          <p className="text-xs text-text-muted">
+            Guia completo na documentação oficial da Meta:{" "}
+            <a
+              href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline hover:text-text-primary"
+            >
+              Guia do WhatsApp oficial (Meta)
+            </a>
+            .
+          </p>
+        </div>
+      </CollapsibleSection>
 
       <div className="flex gap-2 pt-4">
         <Button

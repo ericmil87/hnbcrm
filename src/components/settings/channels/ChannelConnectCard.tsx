@@ -1,149 +1,179 @@
 import { useState } from "react";
-import { useAction } from "convex/react";
-import { api } from "../../../../convex/_generated/api";
-import type { Id } from "../../../../convex/_generated/dataModel";
+import { Cloud, Radio } from "lucide-react";
 import { toast } from "sonner";
-import { Modal } from "@/components/ui/Modal";
-import { Spinner } from "@/components/ui/Spinner";
-import { Cloud, Radio, Instagram, Facebook } from "lucide-react";
-import { mutationErrorMessage } from "@/lib/errors";
-import type { ChannelConfig, Provider, CreateChannelConfigFn, UpdateChannelConfigFn, ProvisionBridgeFn } from "./types";
+import type { Id } from "../../../../convex/_generated/dataModel";
+import { Card } from "@/components/ui/Card";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { CONNECT_NARROW_QUERY, defaultConnectMode, type ConnectMode } from "@/lib/channelConnect";
+import { VOCAB } from "@/lib/vocab";
 import { MetaForm } from "./MetaForm";
-import { QrCodeConnectForm } from "./QrCodeConnectForm";
+import { PairingPanel, type ConnectedInfo } from "./PairingPanel";
+import { QrCodeConnectForm, type QrConnectDefaults } from "./QrCodeConnectForm";
+import type { ChannelConnectActions } from "./types";
+import { useChannelConnectActions, useQrConnectDefaults } from "./useConnectActions";
+import { useOrgDefaultCountry } from "./useOrgDefaultCountry";
 
-// --- Create/edit form modal (provider-aware) ---
-export function ChannelFormModal({
-  organizationId,
-  metaEnabled,
-  config,
-  onClose,
-  createChannelConfig,
-  updateChannelConfig,
-  provisionBridgeChannel,
-}: {
+export interface ChannelConnectCardProps {
   organizationId: Id<"organizations">;
-  metaEnabled: boolean;
-  config: ChannelConfig | null;
-  onClose: () => void;
-  createChannelConfig: CreateChannelConfigFn;
-  updateChannelConfig: UpdateChannelConfigFn;
-  provisionBridgeChannel: ProvisionBridgeFn;
-}) {
-  const isEditing = !!config;
-  // On create, pick the provider first. On edit, the provider is locked.
-  const [provider, setProvider] = useState<Provider | null>(config ? config.provider : null);
-
-  const title = isEditing
-    ? "Editar número"
-    : provider === null
-      ? "Conectar número"
-      : provider === "meta"
-        ? "Conectar WhatsApp oficial (Meta)"
-        : "Conectar WhatsApp por QR code";
-
-  return (
-    <Modal open onClose={onClose} title={title}>
-      {provider === null ? (
-        <ProviderChooser
-          onPick={setProvider}
-          organizationId={organizationId}
-          metaEnabled={metaEnabled && !isEditing}
-        />
-      ) : provider === "meta" ? (
-        <MetaForm
-          organizationId={organizationId}
-          config={config}
-          onClose={onClose}
-          createChannelConfig={createChannelConfig}
-          updateChannelConfig={updateChannelConfig}
-          onBack={isEditing ? undefined : () => setProvider(null)}
-        />
-      ) : (
-        <QrCodeConnectForm
-          organizationId={organizationId}
-          config={config}
-          onClose={onClose}
-          createChannelConfig={createChannelConfig}
-          updateChannelConfig={updateChannelConfig}
-          provisionBridgeChannel={provisionBridgeChannel}
-          onBack={isEditing ? undefined : () => setProvider(null)}
-        />
-      )}
-    </Modal>
-  );
+  /** Número que já existe e só precisa ser conectado: vai direto ao passo de conexão. */
+  configId?: Id<"channelConfigs">;
+  /** Aba inicial da conexão. Sem isso: código no celular, QR code no computador. */
+  defaultMode?: ConnectMode;
+  variant?: "panel" | "wizard";
+  /** O número ficou pronto (WhatsApp oficial salvo ou número conectado). */
+  onConnected: (channelId: Id<"channelConfigs">) => void;
+  /** Cancelar na primeira tela. */
+  onClose?: () => void;
 }
 
-function ProviderChooser({
-  onPick,
+export interface ChannelConnectCardViewProps extends ChannelConnectCardProps {
+  /** Tela estreita ou de toque: o código de conexão vira o padrão. */
+  narrow: boolean;
+  defaults: QrConnectDefaults | undefined;
+  defaultCountryCode?: string;
+  actions: ChannelConnectActions;
+}
+
+type Step = "choose" | "meta" | "qr-setup" | "pair";
+
+/** Apresentacional: não usa Convex (as chamadas chegam por `actions`). */
+export function ChannelConnectCardView({
   organizationId,
-  metaEnabled,
-}: {
-  onPick: (p: Provider) => void;
-  organizationId: Id<"organizations">;
-  metaEnabled: boolean;
-}) {
-  const startMetaConnect = useAction(api.metaMessaging.startMetaConnect);
-  const [connecting, setConnecting] = useState(false);
+  configId,
+  defaultMode,
+  variant = "panel",
+  onConnected,
+  onClose,
+  narrow,
+  defaults,
+  defaultCountryCode,
+  actions,
+}: ChannelConnectCardViewProps) {
+  const [step, setStep] = useState<Step>(configId ? "pair" : "choose");
+  const [pairId, setPairId] = useState<Id<"channelConfigs"> | undefined>(configId);
+  const mode = defaultMode ?? defaultConnectMode(narrow);
 
-  // Não abre formulário: pede a URL do login da Meta e redireciona.
-  const handleConnectMeta = async () => {
-    setConnecting(true);
-    try {
-      const { url } = await startMetaConnect({ organizationId });
-      window.location.assign(url);
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível iniciar a conexão com a Meta"));
-      setConnecting(false);
+  const content = (() => {
+    if (step === "pair" && pairId) {
+      return (
+        <PairingPanel
+          configId={pairId}
+          defaultMode={mode}
+          defaultCountryCode={defaultCountryCode}
+          startPairing={actions.startPairing}
+          pollPairing={actions.pollPairing}
+          onConnected={(info: ConnectedInfo) => {
+            actions.markConnected?.(pairId);
+            const phone = info.displayPhoneNumber ? ` (${info.displayPhoneNumber})` : "";
+            toast.success(info.fresh ? `Número conectado${phone}` : `Número já conectado${phone}`);
+            if (info.displacedFrom.length > 0) {
+              toast.warning(`Este número foi desconectado de: ${info.displacedFrom.join(", ")}`, {
+                duration: 10000,
+              });
+            }
+          }}
+          onDone={() => onConnected(pairId)}
+        />
+      );
     }
-  };
+    if (step === "meta") {
+      return (
+        <MetaForm
+          organizationId={organizationId}
+          config={null}
+          onClose={() => onClose?.()}
+          createChannelConfig={actions.createChannelConfig}
+          updateChannelConfig={actions.updateChannelConfig}
+          onBack={() => setStep("choose")}
+          onCreated={(id) => onConnected(id)}
+        />
+      );
+    }
+    if (step === "qr-setup") {
+      return (
+        <QrCodeConnectForm
+          organizationId={organizationId}
+          config={null}
+          defaults={defaults}
+          onClose={() => onClose?.()}
+          createChannelConfig={actions.createChannelConfig}
+          updateChannelConfig={actions.updateChannelConfig}
+          createManagedChannel={actions.createManagedChannel}
+          onCreated={(id) => {
+            setPairId(id);
+            setStep("pair");
+          }}
+          onBack={() => setStep("choose")}
+        />
+      );
+    }
+    return <ProviderChooser onPickOfficial={() => setStep("meta")} onPickQr={() => setStep("qr-setup")} />;
+  })();
 
+  if (variant === "wizard") {
+    return (
+      <Card variant="sunken" className="space-y-4">
+        <h3 className="text-base font-semibold text-text-primary">{VOCAB.connectNumber}</h3>
+        {content}
+      </Card>
+    );
+  }
+  return <div className="space-y-4">{content}</div>;
+}
+
+function ProviderChooser({ onPickOfficial, onPickQr }: { onPickOfficial: () => void; onPickQr: () => void }) {
   return (
     <div className="space-y-3">
       <p className="text-sm text-text-secondary">Escolha como este número será conectado.</p>
       <button
-        onClick={() => onPick("meta")}
-        className="w-full text-left rounded-lg border border-border bg-surface-sunken p-4 hover:border-brand-500 transition-colors"
+        type="button"
+        onClick={onPickOfficial}
+        className="min-h-11 w-full rounded-lg border border-border bg-surface-sunken p-4 text-left transition-colors hover:border-brand-500"
       >
-        <div className="flex items-center gap-2 mb-1">
+        <div className="mb-1 flex items-center gap-2">
           <Cloud size={18} className="text-brand-500" />
-          <span className="font-medium text-text-primary">WhatsApp oficial (Meta)</span>
+          <span className="font-medium text-text-primary">{VOCAB.whatsappOfficial}</span>
         </div>
         <p className="text-sm text-text-secondary">
-          Recomendado. Aprovado pela Meta, com janela de 24h e templates. Requer app no Meta for
-          Developers.
+          Recomendado. Aprovado pela Meta, com janela de 24h e templates. Requer um app no Meta for Developers.
         </p>
       </button>
       <button
-        onClick={() => onPick("bridge")}
-        className="w-full text-left rounded-lg border border-border bg-surface-sunken p-4 hover:border-semantic-warning transition-colors"
+        type="button"
+        onClick={onPickQr}
+        className="min-h-11 w-full rounded-lg border border-border bg-surface-sunken p-4 text-left transition-colors hover:border-semantic-warning"
       >
-        <div className="flex items-center gap-2 mb-1">
+        <div className="mb-1 flex items-center gap-2">
           <Radio size={18} className="text-semantic-warning" />
-          <span className="font-medium text-text-primary">WhatsApp por QR code</span>
+          <span className="font-medium text-text-primary">{VOCAB.whatsappQr}</span>
         </div>
         <p className="text-sm text-text-secondary">
-          Ponte rápida via protocolo não sancionado pela Meta. Sem janela de 24h nem templates.{" "}
-          <span className="text-semantic-warning">Risco de banimento — use por sua conta e risco.</span>
+          Conexão rápida pelo celular, com código de conexão ou QR code. Sem janela de 24h nem templates.{" "}
+          <span className="text-semantic-warning">Risco de banimento: use por sua conta e risco.</span>
         </p>
       </button>
-      {metaEnabled && (
-        <button
-          onClick={() => void handleConnectMeta()}
-          disabled={connecting}
-          className="w-full text-left rounded-lg border border-border bg-surface-sunken p-4 hover:border-brand-500 transition-colors disabled:opacity-60 disabled:cursor-wait"
-        >
-          <div className="flex items-center gap-2 mb-1">
-            <Instagram size={18} className="text-brand-500" />
-            <Facebook size={18} className="text-brand-500" />
-            <span className="font-medium text-text-primary">Instagram / Facebook Messenger (oficial)</span>
-            {connecting && <Spinner size="sm" />}
-          </div>
-          <p className="text-sm text-text-secondary">
-            Conexão oficial pela Meta, sem senha. Você entra com o Facebook e escolhe a Página e a conta do
-            Instagram.
-          </p>
-        </button>
-      )}
     </div>
+  );
+}
+
+/**
+ * Conexão de número do WhatsApp: oficial (Meta) ou por QR code, com aviso de risco e aceite, e depois
+ * "Conectar com código" ou QR code. Reutilizável pelas Configurações e pela configuração inicial.
+ */
+export function ChannelConnectCard(props: ChannelConnectCardProps) {
+  const { organizationId, configId } = props;
+  const actions = useChannelConnectActions();
+  const narrow = useMediaQuery(CONNECT_NARROW_QUERY);
+  const defaultCountryCode = useOrgDefaultCountry(organizationId);
+  const defaults = useQrConnectDefaults(organizationId, !!configId);
+
+  return (
+    <ChannelConnectCardView
+      {...props}
+      narrow={narrow}
+      defaults={configId ? { managedAvailable: false } : defaults}
+      defaultCountryCode={defaultCountryCode}
+      actions={actions}
+    />
   );
 }

@@ -118,9 +118,13 @@ export function ChannelCard({
         <div className="flex items-center gap-1.5 flex-wrap">
           <PermissionGate organizationId={organizationId} category="settings" level="manage">
             {isBridge && (
-              <Button variant="secondary" size="sm" onClick={onShowQr}>
+              <Button
+                variant={config.bridgeSessionState === "connected" ? "secondary" : "primary"}
+                size="sm"
+                onClick={onShowQr}
+              >
                 <QrCode size={14} />
-                Mostrar QR
+                Mostrar QR code
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={onTest} disabled={testing}>
@@ -139,23 +143,20 @@ export function ChannelCard({
                 Templates{templates !== undefined ? ` (${approvedCount})` : ""}
               </Button>
             )}
-            <button
-              onClick={onEdit}
-              className="text-sm text-brand-500 hover:text-brand-400 px-2 py-1.5"
-            >
+            <Button variant="ghost" size="sm" onClick={onEdit}>
               Editar
-            </button>
+            </Button>
             <button
               onClick={onToggle}
               aria-label={config.status === "active" ? "Desativar número" : "Ativar número"}
-              className="flex items-center justify-center h-8 w-8 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+              className="flex items-center justify-center h-8 w-8 coarse:h-11 coarse:w-11 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
             >
               <Power size={16} />
             </button>
             <button
               onClick={onDelete}
               aria-label="Excluir número"
-              className="flex items-center justify-center h-8 w-8 rounded-full text-semantic-error hover:bg-semantic-error/10 transition-colors"
+              className="flex items-center justify-center h-8 w-8 coarse:h-11 coarse:w-11 rounded-full text-semantic-error hover:bg-semantic-error/10 transition-colors"
             >
               <Trash2 size={16} />
             </button>
@@ -259,7 +260,7 @@ export function ChannelCard({
 
       {isBridge && <BridgeGroupsPanel organizationId={organizationId} config={config} />}
 
-      {/* Meta: verify token footer. Bridge: gateway instance info (no secrets). */}
+      {/* Meta: verify token footer. QR code: dados da conexão (sem segredos). */}
       {!isBridge && config.verifyToken && (
         <div className="mt-3 flex flex-col gap-1.5 rounded-lg bg-surface-base border border-border-subtle p-2.5 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-xs text-text-muted">
@@ -275,7 +276,9 @@ export function ChannelCard({
         </div>
       )}
       {isBridge && (config.bridgeBaseUrl || config.bridgeInstanceId) && (
-        <div className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-2.5 text-xs text-text-muted space-y-0.5 break-all">
+        <details className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-2.5 text-xs text-text-muted">
+          <summary className="cursor-pointer select-none py-1 coarse:min-h-11 text-text-secondary">Detalhes técnicos</summary>
+          <div className="mt-1 space-y-0.5 break-all">
           {config.bridgeBaseUrl && (
             <div>
               Servidor de conexão: <span className="font-mono text-text-secondary">{config.bridgeBaseUrl}</span>
@@ -286,7 +289,8 @@ export function ChannelCard({
               ID da conexão: <span className="font-mono text-text-secondary">{config.bridgeInstanceId}</span>
             </div>
           )}
-        </div>
+          </div>
+        </details>
       )}
     </div>
   );

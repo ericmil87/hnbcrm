@@ -11,26 +11,20 @@ import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
-import { MessageCircle, Plus, Copy, Check, ChevronDown, ShieldAlert } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { MessageCircle, Plus, ShieldAlert } from "lucide-react";
 import { mutationErrorMessage } from "@/lib/errors";
 import { FINALIZE_FAILED_TEXT, FINALIZE_WRONG_ORG_HINT, RECONNECT_FLAG_KEY, finalizeMetaAction, metaReturnMessage, safeSession } from "@/lib/metaConnect";
-import { InstagramPanel } from "./InstagramPanel";
 import { MetaPageSelectionModal } from "@/components/settings/MetaPageSelectionModal";
 import { ChannelHealthPanel } from "@/components/settings/ChannelHealthPanel";
 import type { ChannelConfig } from "./types";
 import { copyToClipboard } from "./copyToClipboard";
-import { ChannelFormModal } from "./ChannelConnectCard";
+import { ChannelConnectCard } from "./ChannelConnectCard";
+import { useCreateManagedChannel } from "./useConnectActions";
+import { ChannelEditForm } from "./ChannelEditForm";
+import { Modal } from "@/components/ui/Modal";
+import { VOCAB } from "@/lib/vocab";
 import { ChannelCard } from "./ChannelCard";
 import { BridgeQrModal } from "./BridgeQrModal";
-
-// Derive the public webhook callback host from the Convex deployment URL
-// (client-facing ".convex.cloud" deployment maps to the HTTP action host ".convex.site")
-const CONVEX_SITE = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
-  ".convex.cloud",
-  ".convex.site"
-);
-const WEBHOOK_CALLBACK_URL = `${CONVEX_SITE}/webhooks/whatsapp`;
 
 export function ChannelsPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
   const { can } = usePermissions(organizationId);
@@ -41,7 +35,6 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
   const [confirmDeleteId, setConfirmDeleteId] = useState<Id<"channelConfigs"> | null>(null);
   const [testingId, setTestingId] = useState<Id<"channelConfigs"> | null>(null);
   const [qrConfig, setQrConfig] = useState<ChannelConfig | null>(null);
-  const [guideOpen, setGuideOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
   const { modules } = useOrgModules(organizationId);
@@ -50,7 +43,7 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
   const allConfigs = useQuery(api.channelConfigs.getChannelConfigs, { organizationId }) as
     | (ChannelConfig | { channel: "instagram" | "messenger" })[]
     | undefined;
-  // WhatsApp (Cloud API / gateway) segue no fluxo de sempre; Instagram/Messenger ficam em InstagramPanel.
+  // WhatsApp (oficial e por QR code) segue no fluxo de sempre; Instagram/Messenger ficam em InstagramPanel.
   const configs = allConfigs?.filter((c): c is ChannelConfig => c.channel === "whatsapp");
 
   // Volta do OAuth da Meta: /app/configuracoes?secao=channels&meta=<code>[&pendente=<id>].
@@ -154,7 +147,7 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
 
   const createChannelConfig = useAction(api.channelConfigs.createChannelConfig);
   const updateChannelConfig = useAction(api.channelConfigs.updateChannelConfig);
-  const provisionBridgeChannel = useAction(api.channelConfigs.provisionBridgeChannel);
+  const createManagedChannel = useCreateManagedChannel();
   const setChannelConfigStatus = useMutation(api.channelConfigs.setChannelConfigStatus);
   const deleteChannelConfig = useMutation(api.channelConfigs.deleteChannelConfig);
   const checkChannelHealth = useAction(api.channelConfigs.checkChannelHealth);
@@ -265,8 +258,6 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
           </Button>
         </div>
       )}
-      <InstagramPanel organizationId={organizationId} />
-
       <Card>
         <div className="flex items-start justify-between gap-3 mb-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -274,7 +265,7 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
               <MessageCircle size={20} className="text-brand-500" />
             </div>
             <div>
-              <h3 className="text-lg font-semibold text-text-primary">Canais</h3>
+              <h3 className="text-lg font-semibold text-text-primary">Números de WhatsApp</h3>
               <p className="text-sm text-text-secondary">
                 Conecte números de WhatsApp pelo WhatsApp oficial (Meta) ou por QR code.
               </p>
@@ -330,74 +321,6 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
         {configs && configs.length > 0 && <ChannelHealthPanel organizationId={organizationId} />}
       </Card>
 
-      {/* Meta webhook configuration block */}
-      <Card variant="sunken">
-        <h4 className="text-sm font-semibold text-text-primary mb-1">Configuração do webhook na Meta</h4>
-        <p className="text-sm text-text-secondary mb-3">
-          Para números via Cloud API (oficial), use esta URL de callback ao configurar o webhook do seu
-          app no Meta for Developers, assinando o campo{" "}
-          <span className="font-mono text-text-secondary">messages</span>.
-        </p>
-        <div className="flex flex-col gap-1.5 rounded-lg bg-surface-base border border-border-subtle p-3 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-sm font-mono text-text-primary break-all">{WEBHOOK_CALLBACK_URL}</span>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="self-start sm:self-auto shrink-0"
-            onClick={() => handleCopy("webhook-url", WEBHOOK_CALLBACK_URL, "URL de callback copiada")}
-          >
-            {copiedField === "webhook-url" ? <Check size={14} /> : <Copy size={14} />}
-            Copiar URL
-          </Button>
-        </div>
-        <p className="text-xs text-text-muted mt-2">
-          O verify token de cada número do WhatsApp oficial está listado no card correspondente acima.
-        </p>
-      </Card>
-
-      {/* Inline setup guide */}
-      <Card>
-        <button
-          onClick={() => setGuideOpen((v) => !v)}
-          className="flex w-full items-center justify-between gap-2 text-left"
-          aria-expanded={guideOpen}
-        >
-          <h4 className="text-sm font-semibold text-text-primary">Como conectar</h4>
-          <ChevronDown
-            size={18}
-            className={cn("text-text-muted transition-transform", guideOpen && "rotate-180")}
-          />
-        </button>
-
-        {guideOpen && (
-          <div className="mt-3 space-y-3">
-            <ol className="space-y-2 text-sm text-text-secondary list-decimal list-inside">
-              <li>Crie um app na Meta for Developers do tipo Business.</li>
-              <li>Adicione o produto WhatsApp e anote o Phone Number ID e o WABA ID.</li>
-              <li>Crie um System User no Business Manager e gere um token de acesso permanente.</li>
-              <li>Copie o App Secret nas configurações do app.</li>
-              <li>
-                Configure o webhook com a URL de callback e o verify token acima, assinando o campo{" "}
-                <span className="font-mono">messages</span>.
-              </li>
-              <li>Teste a conexão pelo botão "Testar conexão" de cada número.</li>
-            </ol>
-            <p className="text-xs text-text-muted">
-              Guia completo na documentação oficial da Meta:{" "}
-              <a
-                href="https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-text-primary"
-              >
-                Guia do WhatsApp oficial (Meta)
-              </a>
-              .
-            </p>
-          </div>
-        )}
-      </Card>
-
       <ConfirmDialog
         open={!!confirmDeleteId}
         onClose={() => setConfirmDeleteId(null)}
@@ -419,19 +342,32 @@ export function ChannelsPanel({ organizationId }: { organizationId: Id<"organiza
       )}
 
       {showForm && (
-        <ChannelFormModal
-          organizationId={organizationId}
-          metaEnabled={metaEnabled}
-          config={editingConfig}
+        <Modal
+          open
           onClose={closeForm}
-          createChannelConfig={createChannelConfig}
-          updateChannelConfig={updateChannelConfig}
-          provisionBridgeChannel={provisionBridgeChannel}
-        />
+          title={editingConfig ? "Editar número" : VOCAB.connectNumber}
+        >
+          {editingConfig ? (
+            <ChannelEditForm
+              organizationId={organizationId}
+              config={editingConfig}
+              onClose={closeForm}
+              createChannelConfig={createChannelConfig}
+              updateChannelConfig={updateChannelConfig}
+              createManagedChannel={createManagedChannel}
+            />
+          ) : (
+            <ChannelConnectCard
+              organizationId={organizationId}
+              onConnected={closeForm}
+              onClose={closeForm}
+            />
+          )}
+        </Modal>
       )}
 
       {qrConfig && (
-        <BridgeQrModal config={qrConfig} onClose={() => setQrConfig(null)} />
+        <BridgeQrModal organizationId={organizationId} config={qrConfig} onClose={() => setQrConfig(null)} />
       )}
     </div>
   );
