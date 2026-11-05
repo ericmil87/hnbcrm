@@ -7,7 +7,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 ### Configuração inicial e Copiloto
 
 - Organizações de startup/SaaS e de cursos passam a ter, na ativação em 1 toque, uma Atendente IA com jeito de atender próprio (antes usavam o modelo geral). Também chegam modelos prontos de funil, campos e perguntas frequentes por segmento, com os casos em que a Atendente IA passa a conversa para falar com a equipe.
-- Salvar o Atendente IA, ligar os recursos da IA e conectar um número de WhatsApp agora exigem uma conta com e-mail confirmado. Contas de acesso antigo, sem e-mail, veem um aviso pedindo para entrar com e-mail e senha.
+- Salvar o Atendente IA, ligar os recursos da IA e conectar um número de WhatsApp agora exigem uma conta com e-mail. Contas de acesso antigo, sem e-mail, veem um aviso pedindo para entrar com e-mail e senha.
 
 ## [0.78.1] - 2026-11-03
 

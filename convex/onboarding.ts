@@ -658,7 +658,8 @@ export const getPlatformCapabilities = query({
       metaMessaging:
         env("META_MESSAGING_APP_ID") &&
         env("META_MESSAGING_APP_SECRET") &&
-        env("META_MESSAGING_LOGIN_CONFIG_ID"),
+        env("META_MESSAGING_LOGIN_CONFIG_ID") &&
+        env("META_MESSAGING_WEBHOOK_VERIFY_TOKEN"),
     };
   },
 });

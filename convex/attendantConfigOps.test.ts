@@ -109,13 +109,80 @@ test("agente sem settings:manage é recusado", async () => {
   const agent = as(t, s.agentUserId);
   await expect(
     agent.mutation(api.aiSettings.updateAgentProfile, { agentMemberId: s.aiId, patch: {} })
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Permissão insuficiente/);
   await expect(
     agent.mutation(api.aiSettings.setFeatureToggles, { organizationId: s.organizationId })
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Permissão insuficiente/);
   await expect(
     agent.mutation(api.aiSettings.createAttendantOneClick, { organizationId: s.organizationId })
-  ).rejects.toThrow();
+  ).rejects.toThrow(/Permissão insuficiente/);
+});
+
+test("createAttendantOneClick recusa conta sem e-mail", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await expect(
+    as(t, s.anonUserId).mutation(api.aiSettings.createAttendantOneClick, {
+      organizationId: s.organizationId,
+    })
+  ).rejects.toThrow(/e-mail/);
+});
+
+test("createChannelConfig recusa conta sem e-mail", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await expect(
+    as(t, s.anonUserId).action(api.channelConfigs.createChannelConfig, {
+      organizationId: s.organizationId,
+      channel: "whatsapp",
+      displayName: "Novo",
+    })
+  ).rejects.toThrow(/e-mail/);
+});
+
+test("core recusa agente/config de outra org", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  const other = await t.run(async (ctx) => {
+    const now = Date.now();
+    const organizationId = await ctx.db.insert("organizations", {
+      name: "Outra", slug: "outra",
+      settings: { timezone: "America/Sao_Paulo", currency: "BRL", aiConfig: { enabled: true, autoAssign: false, handoffThreshold: 0.8 } },
+      createdAt: now, updatedAt: now,
+    });
+    const configId = await ctx.db.insert("channelConfigs", {
+      organizationId, channel: "instagram", provider: "meta", displayName: "IG",
+      status: "active", createdAt: now, updatedAt: now,
+    } as never);
+    return { organizationId, configId };
+  });
+  await t.run(async (ctx) => {
+    const agent = (await ctx.db.get(s.aiId))!;
+    const member = (await ctx.db.get(s.adminId))!;
+    const otherOrg = (await ctx.db.get(other.organizationId))!;
+    const otherConfig = (await ctx.db.get(other.configId))!;
+    const ownConfig = (await ctx.db.get(s.configId))!;
+    const ownOrg = (await ctx.db.get(s.organizationId))!;
+    await expect(setFeatureTogglesCore(ctx, { org: otherOrg, member, toggles: { visionEnabled: true } })).rejects.toThrow(/Organização não encontrada/);
+    await expect(patchChannelTranscriptionCore(ctx, { config: otherConfig, member, enabled: true })).rejects.toThrow();
+    const foreignMember = { ...member, organizationId: other.organizationId };
+    await expect(updateAgentProfileCore(ctx, { agent, member: foreignMember, patch: {} })).rejects.toThrow(/não encontrado/);
+    // canal que não é WhatsApp também é recusado (mesma org)
+    const igConfig = { ...ownConfig, channel: "instagram" as const };
+    await expect(patchChannelTranscriptionCore(ctx, { config: igConfig, member, enabled: true })).rejects.toThrow(/não é suportada/);
+    void ownOrg;
+  });
+});
+
+test("core rename recusa nome longo ou com quebra de linha", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await t.run(async (ctx) => {
+    const agent = (await ctx.db.get(s.aiId))!;
+    const member = (await ctx.db.get(s.adminId))!;
+    await expect(updateAgentProfileCore(ctx, { agent, member, patch: {}, rename: "a".repeat(61) })).rejects.toThrow(/60 caracteres/);
+    await expect(updateAgentProfileCore(ctx, { agent, member, patch: {}, rename: "Bia\nX" })).rejects.toThrow(/uma só linha/);
+  });
 });
 
 test("core grava via no audit", async () => {
@@ -180,7 +247,7 @@ test("getPlatformCapabilities reflete envs sem vazar valores", async () => {
   for (const k of [
     "WA_BRIDGE_DEFAULT_URL", "WA_BRIDGE_ADMIN_TOKEN", "WA_BRIDGE_HMAC_SECRET", "WHISPER_SERVICE_URL",
     "OPENROUTER_API_KEY", "OPENCODE_GO_API", "META_MESSAGING_APP_ID", "META_MESSAGING_APP_SECRET",
-    "META_MESSAGING_LOGIN_CONFIG_ID",
+    "META_MESSAGING_LOGIN_CONFIG_ID", "META_MESSAGING_WEBHOOK_VERIFY_TOKEN",
   ]) vi.stubEnv(k, "");
   const none = await admin.query(api.onboarding.getPlatformCapabilities, { organizationId: s.organizationId });
   expect(none).toEqual({ managedBridge: false, transcription: false, llm: false, metaMessaging: false });
@@ -197,6 +264,9 @@ test("getPlatformCapabilities reflete envs sem vazar valores", async () => {
   vi.stubEnv("META_MESSAGING_APP_ID", "123");
   vi.stubEnv("META_MESSAGING_APP_SECRET", "fake-meta-secret");
   vi.stubEnv("META_MESSAGING_LOGIN_CONFIG_ID", "456");
+  const noVerify = await admin.query(api.onboarding.getPlatformCapabilities, { organizationId: s.organizationId });
+  expect(noVerify.metaMessaging).toBe(false);
+  vi.stubEnv("META_MESSAGING_WEBHOOK_VERIFY_TOKEN", "fake-verify");
   const all = await admin.query(api.onboarding.getPlatformCapabilities, { organizationId: s.organizationId });
   expect(all).toEqual({ managedBridge: true, transcription: true, llm: true, metaMessaging: true });
   const serialized = JSON.stringify(all);

@@ -1467,7 +1467,12 @@ export const internalPatchConfig = internalMutation({
       actorId: userMember._id,
       actorType: userMember.type === "ai" ? "ai" : "human",
       ...(Object.keys(after).length > 0 ? { changes: { before, after } } : {}),
-      metadata: { name: config.displayName, channel: config.channel, changedFields },
+      metadata: {
+        name: config.displayName,
+        channel: config.channel,
+        changedFields,
+        ...(args.patch.autoTranscribeAudio !== undefined ? { via: "settings" } : {}),
+      },
       description: buildAuditDescription({ action: "update", entityType: "channelConfig", metadata: { name: config.displayName } }),
       severity: "high",
       createdAt: now,

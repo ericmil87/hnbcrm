@@ -1,8 +1,9 @@
 /**
  * Portas únicas de CONFIGURAÇÃO do atendente IA (perfil, toggles dos produtos de
  * IA, transcrição por canal). A UI de Configurações, o wizard e as tools do
- * Copiloto chamam estes cores; nenhum outro lugar grava `agentProfile` nem os
- * toggles de `aiConfig`. Quem chama faz auth/permissão e carrega os docs; o
+ * Copiloto chamam estes cores. Exceções conhecidas: ops `internal*`
+ * (`internalSetBotGuard`, `internalSetFollowUpMode`, agenda externa,
+ * `opsAgentProfile`), `activateOneFlow` e `demoSim`. Quem chama faz auth/permissão e carrega os docs; o
  * core valida, grava e audita. `via` vai para `auditLogs.metadata.via`.
  */
 import { v, Infer } from "convex/values";
@@ -24,7 +25,7 @@ import {
 } from "./followUpSettings";
 import { buildAuditDescription } from "./auditDescription";
 
-export type ConfigVia = "settings" | "copilot" | "wizard";
+export type ConfigVia = "settings" | "copilot" | "wizard" | "telegram";
 
 export const agentProfilePatchValidator = v.object({
   mode: v.optional(v.union(v.literal("suggest"), v.literal("autopilot"))),
@@ -213,6 +214,9 @@ export async function updateAgentProfileCore(
   const newName = params.rename?.trim();
   if (params.rename !== undefined && !newName) {
     throw new Error("O nome do atendente não pode ficar vazio");
+  }
+  if (newName !== undefined && (newName.length > 60 || /[\r\n]/.test(newName))) {
+    throw new Error("O nome do atendente deve ter até 60 caracteres e uma só linha");
   }
   const renamed = newName !== undefined && newName !== agent.name;
 
@@ -456,6 +460,7 @@ export async function setFeatureTogglesCore(
   params: { org: Doc<"organizations">; member: Doc<"teamMembers">; toggles: FeatureTogglesPatch; via?: ConfigVia }
 ): Promise<null> {
   const { org, member, toggles } = params;
+  if (member.organizationId !== org._id) throw new Error("Organização não encontrada");
   if (!org.settings.aiConfig) throw new Error("Ative a IA primeiro");
   const current = org.settings.aiConfig;
 
@@ -520,6 +525,9 @@ export async function patchChannelTranscriptionCore(
   const { config, member, enabled } = params;
   if (member.organizationId !== config.organizationId) {
     throw new Error("Channel config not found");
+  }
+  if (config.channel !== "whatsapp") {
+    throw new Error("Edição de credenciais não é suportada para este canal.");
   }
   const now = Date.now();
   await ctx.db.patch(config._id, { autoTranscribeAudio: enabled, updatedAt: now });
