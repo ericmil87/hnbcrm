@@ -9,7 +9,7 @@ export type Attendant = {
     mode: "suggest" | "autopilot";
     // Persona/conhecimento NÃO vêm em `listAttendants` (perf): o editor carrega
     // `getAttendantTexts` só quando abre.
-    schedule?: { timezone: string; startHour: number; endHour: number };
+    schedule?: { timezone: string; startHour: number; endHour: number; days?: number[] };
     handoffKeywords?: string[];
     disclosure?: string;
     disclosureMode?: "first_reply" | "on_demand";

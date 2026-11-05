@@ -330,7 +330,7 @@ export function GroupPostsTab({ organizationId }: { organizationId: Id<"organiza
             setWizard(null);
             goToGroupsTab();
           }}
-          onOpenAiSettings={() => navigate(`${TAB_ROUTES.settings}?secao=ai`)}
+          onOpenAiSettings={() => navigate(`${TAB_ROUTES.settings}?secao=ai-features`)}
         />
       )}
     </div>
