@@ -5,6 +5,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { ChannelConnectCard } from "@/components/settings/channels/ChannelConnectCard";
 import { Button } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
+import { TAB_ROUTES } from "@/lib/routes";
 import { stepAvailability, type OnboardingStatus } from "@/lib/onboardingWizard";
 import { WizardNav } from "./OnboardingWizardV2View";
 
@@ -79,7 +80,7 @@ export function StepWhatsapp({
           )}
 
           <Link
-            to="/app/configuracoes?secao=channels"
+            to={`${TAB_ROUTES.settings}?secao=channels`}
             className="inline-flex min-h-11 items-center text-sm text-brand-500 hover:text-brand-400"
           >
             Outras opções

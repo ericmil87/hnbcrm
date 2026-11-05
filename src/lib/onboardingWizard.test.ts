@@ -71,6 +71,8 @@ describe("passos", () => {
     expect(savedStepFromProgress({ wizardCurrentStep: 4 })).toBeNull();
     expect(savedStepFromProgress({ wizardCurrentStep: 2, wizardData: wizardDataPatch() })).toBe(2);
     expect(savedStepFromProgress({ wizardCurrentStep: 99, wizardData: wizardDataPatch() })).toBeNull();
+    // o v1 grava wizardVersion null por cima do 2 (merge raso do servidor)
+    expect(savedStepFromProgress({ wizardCurrentStep: 2, wizardData: { ...wizardDataPatch(), wizardVersion: null } })).toBeNull();
   });
 
   it("esconde o teste sem IA no servidor e pula o passo na navegação", () => {
@@ -85,7 +87,7 @@ describe("pular", () => {
   it("só grava o pulo onde o servidor aceita", () => {
     expect(skipIsPersisted("whatsapp")).toBe(true);
     expect(skipIsPersisted("attendant")).toBe(true);
-    expect(skipIsPersisted("funnel")).toBe(false);
+    expect(skipIsPersisted("funnel")).toBe(true);
     expect(skipIsPersisted("business")).toBe(false);
   });
 });
@@ -174,14 +176,20 @@ describe("passo 4", () => {
     schedule: { allDay: true, startHour: 8, endHour: 18 },
   };
 
-  it("preenche número e funil dos passos 3 e 2", () => {
+  it("preenche o funil do passo 2 e não restringe canais quando a lista está vazia", () => {
     const patch = attendantStepPatch({ ...forms, channelId: channel, boardId: board, initialStageId: stage });
-    expect(patch.channelConfigIds).toEqual([channel]);
+    expect("channelConfigIds" in patch).toBe(false);
     expect(patch.pipelineConfig).toEqual({ boardId: board, initialStageId: stage });
     expect(patch.systemPrompt).toBe("Você é a Ana");
     expect(patch.handoffKeywords).toEqual(["humano", "atendente"]);
     expect(patch.schedule).toBeNull();
     expect(patch.mode).toBeUndefined();
+  });
+
+  it("com lista de canais já restrita, acrescenta o número do passo 3", () => {
+    const other = "ch0" as Id<"channelConfigs">;
+    expect(attendantStepPatch({ ...forms, channelId: channel, current: { channelConfigIds: [other] } }).channelConfigIds).toEqual([other, channel]);
+    expect("channelConfigIds" in attendantStepPatch({ ...forms, channelId: channel, current: { channelConfigIds: [] } })).toBe(false);
   });
 
   it("sem passos 2 e 3 não mexe em canais nem funil", () => {

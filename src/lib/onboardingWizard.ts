@@ -103,13 +103,9 @@ export function firstPendingStep(status: StatusLike | undefined, savedStep?: num
   return savedStep > stepIndex(fromStatus) ? saved.id : fromStatus;
 }
 
-/**
- * `markWizardStep` só grava "pulou" nestes passos. "Seu funil" não grava (o servidor
- * só o marca como feito ao aplicar o funil): pular lá apenas avança, e a retomada
- * usa a posição salva do membro.
- */
+/** `markWizardStep` só grava "pulou" nestes passos (o "feito" do funil vem de `applyFunnelTemplate`). */
 export function skipIsPersisted(step: WizardStepId): boolean {
-  return step === "whatsapp" || step === "attendant" || step === "test" || step === "extras" || step === "team";
+  return step !== "business" && step !== "done";
 }
 
 export function nextStepId(current: WizardStepId, status?: StatusLike): WizardStepId | null {
@@ -337,9 +333,10 @@ export function attendantStepPatch(input: AttendantStepInput): AttendantPatch {
     ...scheduleToPatch(input.schedule),
   };
 
-  if (input.channelId) {
-    const existing = input.current?.channelConfigIds ?? [];
-    patch.channelConfigIds = existing.includes(input.channelId) ? [...existing] : [...existing, input.channelId];
+  // Lista vazia significa "todos os canais": só acrescenta o número do passo 3 a uma lista que já restringe.
+  const existing = input.current?.channelConfigIds ?? [];
+  if (input.channelId && existing.length > 0 && !existing.includes(input.channelId)) {
+    patch.channelConfigIds = [...existing, input.channelId];
   }
 
   if (input.boardId) {

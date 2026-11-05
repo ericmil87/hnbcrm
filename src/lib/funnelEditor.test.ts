@@ -4,7 +4,9 @@ import {
   addStage,
   canMoveStage,
   canRemoveStage,
+  fromBoard,
   fromTemplate,
+  sameFunnel,
   moveStage,
   removeStage,
   renameStage,
@@ -22,6 +24,24 @@ const base = (): FunnelValue => ({
     { key: "w", name: "Ganho", color: "#10B981", isClosedWon: true },
     { key: "l", name: "Perdido", color: "#6B7280", isClosedLost: true },
   ],
+});
+
+describe("fromBoard e sameFunnel", () => {
+  it("ordena as etapas por order e reconhece o mesmo funil sem olhar as chaves", () => {
+    const value = fromBoard(
+      { name: "Funil", color: "#3B82F6" },
+      [
+        { name: "B", color: "#111111", order: 1 },
+        { name: "A", color: "#222222", order: 0 },
+        { name: "G", color: "#333333", order: 2, isClosedWon: true },
+      ],
+    );
+    expect(value.stages.map((s) => s.name)).toEqual(["A", "B", "G"]);
+    expect(value.stages[2].isClosedWon).toBe(true);
+    const copy = { ...value, stages: value.stages.map((s) => ({ ...s, key: s.key + "x" })) };
+    expect(sameFunnel(value, copy)).toBe(true);
+    expect(sameFunnel(value, renameStage(value, value.stages[0].key, "Z"))).toBe(false);
+  });
 });
 
 describe("funnelEditor", () => {

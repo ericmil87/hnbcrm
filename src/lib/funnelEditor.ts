@@ -129,6 +129,37 @@ export function fromTemplate(template: SegmentTemplate): FunnelValue {
   };
 }
 
+/** Funil já salvo (quadro + etapas), com chaves novas; etapas na ordem de `order`. */
+export function fromBoard(
+  board: { name: string; color?: string },
+  stages: ReadonlyArray<{ name: string; color: string; order: number; isClosedWon?: boolean; isClosedLost?: boolean }>,
+): FunnelValue {
+  return {
+    boardName: board.name,
+    ...(board.color ? { boardColor: board.color } : {}),
+    stages: [...stages]
+      .sort((a, b) => a.order - b.order)
+      .map((s) => ({
+        key: newStageKey(),
+        name: s.name,
+        color: s.color,
+        ...(s.isClosedWon ? { isClosedWon: true } : {}),
+        ...(s.isClosedLost ? { isClosedLost: true } : {}),
+      })),
+  };
+}
+
+/** Mesmo funil (nome, cor e etapas), ignorando as chaves do cliente. */
+export function sameFunnel(a: FunnelValue, b: FunnelValue): boolean {
+  const norm = (v: FunnelValue) =>
+    JSON.stringify([
+      v.boardName.trim(),
+      v.boardColor ?? null,
+      v.stages.map((s) => [s.name.trim(), s.color, !!s.isClosedWon, !!s.isClosedLost]),
+    ]);
+  return norm(a) === norm(b);
+}
+
 export interface FunnelErrors {
   boardName?: string;
   /** Erros por chave de etapa. */

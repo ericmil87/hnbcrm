@@ -11,6 +11,7 @@ import { AttendantPersonaForm } from "@/components/settings/attendant/AttendantP
 import { HandoffRulesForm } from "@/components/settings/attendant/HandoffRulesForm";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Input";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { Spinner } from "@/components/ui/Spinner";
@@ -89,12 +90,15 @@ export function StepAttendant({
     | undefined;
 
   const activate = useMutation(api.aiSettings.activateOneFlow);
+  const setAiEnabled = useMutation(api.aiSettings.setAiEnabled);
+  const setBridgeAck = useMutation(api.aiSettings.setBridgeAiAck);
   const updateProfile = useMutation(api.aiSettings.updateAgentProfile);
   const generate = useAction(api.attendantDraft.generateAttendantDraft);
 
   const [lgpdChecked, setLgpdChecked] = useState(false);
   const [bridgeChecked, setBridgeChecked] = useState(false);
-  const [busy, setBusy] = useState<"create" | "ack" | "generate" | "save" | null>(null);
+  const [busy, setBusy] = useState<"create" | "ack" | "enable" | "generate" | "save" | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
   const [forms, setForms] = useState<Forms | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [touched, setTouched] = useState(false);
@@ -116,19 +120,45 @@ export function StepAttendant({
   const bridgeAckNeeded = aiStatus ? aiStatus.hasBridgeChannel && !aiStatus.bridgeAiAckDone : false;
   const gate = attendantGate({ status, aiActive, bridgeAckNeeded, hasAttendant, lgpdChecked });
 
-  const run = async (kind: "create" | "ack", extra: { bridge: boolean }) => {
-    setBusy(kind);
+  const createAttendant = async () => {
+    setBusy("create");
     try {
       await activate({
         organizationId,
         lgpdAck: gate.lgpdAck,
-        ...(extra.bridge ? { bridgeRiskAck: true } : {}),
+        ...(bridgeChecked ? { bridgeRiskAck: true } : {}),
         // Sempre nasce em "Sugerir respostas": a IA escreve e a equipe aprova.
         personaId: segmentTemplate(status.segment).personaId,
       });
-      if (kind === "create") toast.success("Atendente criado");
+      toast.success("Atendente criado");
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível criar o atendente."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Mesma porta de Configurações › Atendente IA: só registra o aceite, não mexe em liga/desliga.
+  const registerBridgeAck = async () => {
+    setBusy("ack");
+    try {
+      await setBridgeAck({ organizationId, accept: true, riskAck: true });
+      toast.success("Aceite registrado");
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, "Não foi possível registrar o aceite."));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // IA desligada com atendente já criado: religar é o clique do aceite LGPD.
+  const enableAi = async () => {
+    setBusy("enable");
+    try {
+      await setAiEnabled({ organizationId, enabled: true, lgpdAck: true });
+      toast.success("IA ligada");
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, "Não foi possível ligar a IA."));
     } finally {
       setBusy(null);
     }
@@ -149,6 +179,7 @@ export function StepAttendant({
     }
   };
 
+  const hasCurrentTexts = !!forms && (!!forms.persona.systemPrompt.trim() || !!forms.knowledge.knowledge.trim() || !!forms.handoff.keywords.trim());
   const errors = forms ? scheduleErrors(forms.schedule) : {};
   const handleSave = async () => {
     setTouched(true);
@@ -212,7 +243,7 @@ export function StepAttendant({
         {bridgeAckBox}
         <Button
           size="lg"
-          onClick={() => void run("create", { bridge: bridgeChecked })}
+          onClick={() => void createAttendant()}
           disabled={!gate.canCreate}
           loading={busy === "create"}
           className="w-full sm:w-auto"
@@ -231,14 +262,41 @@ export function StepAttendant({
     const set = (patch: Partial<Forms>) => setForms((f) => (f ? { ...f, ...patch } : f));
     body = (
       <div className="space-y-5">
-        <p className="text-sm text-text-secondary">
-          Em {VOCAB.attendant.modeSuggest}, a IA escreve e sua equipe aprova antes de enviar.
-        </p>
+        {attendant?.agentProfile.mode === "autopilot" ? (
+          <p className="text-sm text-text-secondary">
+            Seu atendente está em {VOCAB.attendant.modeAuto}. Para mudar o modo, use Configurações › {VOCAB.attendant.name}.
+          </p>
+        ) : (
+          <p className="text-sm text-text-secondary">
+            Em {VOCAB.attendant.modeSuggest}, a IA escreve e sua equipe aprova antes de enviar.
+          </p>
+        )}
+        {!aiActive && (
+          <div className="space-y-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/10 p-3">
+            <p className="text-sm text-text-primary">A IA está desligada, então seu atendente não responde por enquanto.</p>
+            {aiStatus && !aiStatus.lgpdAckDone && (
+              <Checkbox
+                containerClassName="min-h-11 items-center"
+                checked={lgpdChecked}
+                onChange={(e) => setLgpdChecked(e.target.checked)}
+                label="Confirmo o uso de IA com dados de clientes (o assistente processa dados de clientes com provedores de IA, conforme a LGPD)"
+              />
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => void enableAi()}
+              disabled={!aiStatus || (!aiStatus.lgpdAckDone && !lgpdChecked)}
+              loading={busy === "enable"}
+            >
+              Ligar a IA
+            </Button>
+          </div>
+        )}
         {availability.notice && <p className="text-sm text-text-muted">{availability.notice}</p>}
         {gate.showWriteWithAi && (
           <Button
             variant="secondary"
-            onClick={() => void handleGenerate()}
+            onClick={() => (hasCurrentTexts ? setConfirmReplace(true) : void handleGenerate())}
             disabled={!gate.canGenerate}
             loading={busy === "generate"}
           >
@@ -271,7 +329,7 @@ export function StepAttendant({
         {gate.showBridgeAck && (
           <Button
             variant="secondary"
-            onClick={() => void run("ack", { bridge: true })}
+            onClick={() => void registerBridgeAck()}
             disabled={!bridgeChecked}
             loading={busy === "ack"}
           >
@@ -287,6 +345,17 @@ export function StepAttendant({
       <SectionCard title={VOCAB.attendant.name} description="Quem atende seus clientes quando a equipe não está por perto.">
         {body}
       </SectionCard>
+      <ConfirmDialog
+        open={confirmReplace}
+        onClose={() => setConfirmReplace(false)}
+        onConfirm={() => {
+          setConfirmReplace(false);
+          void handleGenerate();
+        }}
+        title="Substituir o texto atual pelo rascunho da IA?"
+        description="O nome, o jeito de atender, o conhecimento e as palavras que chamam a equipe serão trocados. Você ainda pode editar antes de salvar."
+        confirmLabel="Substituir"
+      />
       <WizardNav
         onBack={onBack}
         onSkip={hasAttendant ? undefined : onSkip}

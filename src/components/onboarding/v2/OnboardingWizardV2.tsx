@@ -120,7 +120,7 @@ export function OnboardingWizardV2() {
   const aiActive = aiStatus?.active === true;
   const org = orgs?.find((o) => o?._id === organizationId);
 
-  const skip = async (step: Extract<WizardStepId, "whatsapp" | "attendant">) => {
+  const skip = async (step: Extract<WizardStepId, "funnel" | "whatsapp" | "attendant">) => {
     setSkipping(true);
     try {
       if (skipIsPersisted(step)) await markStep({ organizationId, step, status: "skipped" });
@@ -163,13 +163,15 @@ export function OnboardingWizardV2() {
       body = (
         <StepFunnel
           organizationId={organizationId}
-          segment={status.segment}
+          status={status}
+          funnelBoardId={data.funnelBoardId}
           onBack={back}
           onApplied={(boardId) => {
             setLocal((l) => ({ ...l, funnelBoardId: boardId }));
             goTo(next, { funnelBoardId: boardId });
           }}
-          onSkip={forward}
+          onSkip={() => void skip("funnel")}
+          skipLoading={skipping}
         />
       );
       break;

@@ -25,6 +25,7 @@ import {
   type BusinessTone,
   type OnboardingStatus,
 } from "@/lib/onboardingWizard";
+import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { WizardNav } from "./OnboardingWizardV2View";
 
@@ -81,13 +82,16 @@ export function StepBusiness({ organizationId, status, aiActive, orgDefaults, on
     if (!canAdvance("business", { business: draft })) return;
     const plan = businessSavePlan(draft, status, aiActive);
     setSaving(true);
+    let profileSaved = false;
     try {
       await saveProfile({ organizationId, ...plan.profile });
+      profileSaved = true;
       // O aceite é um clique humano: só liga a IA com o checkbox marcado.
       if (plan.enableAi) await setAiEnabled({ organizationId, enabled: true, lgpdAck: true });
       onSaved();
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Não foi possível salvar."));
+      const message = mutationErrorMessage(e, "Não foi possível salvar.");
+      toast.error(profileSaved ? `Seu negócio foi salvo, mas não foi possível ligar a IA. ${message}` : message);
     } finally {
       setSaving(false);
     }
@@ -190,7 +194,7 @@ export function StepBusiness({ organizationId, status, aiActive, orgDefaults, on
               <p>
                 Moeda: <span className="text-text-primary">{orgDefaults?.currency ?? "BRL"}</span>
               </p>
-              <Link to="/app/configuracoes?secao=general" className="inline-flex min-h-11 items-center text-brand-500 hover:text-brand-400">
+              <Link to={`${TAB_ROUTES.settings}?secao=general`} className="inline-flex min-h-11 items-center text-brand-500 hover:text-brand-400">
                 Alterar em Configurações
               </Link>
             </div>
