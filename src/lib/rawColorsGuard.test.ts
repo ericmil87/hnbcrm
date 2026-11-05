@@ -20,7 +20,7 @@ const ALLOWLIST: Record<string, number> = {
   // Cor de dado: tipo de evento do calendário (par `-400` + `light-theme:-700`).
   "components/calendar/constants.ts": 20,
   // Timeline do lead: um ponto sólido por tipo de atividade.
-  "components/LeadDetailPanel.tsx": 3,
+  "components/leads/detail/LeadActivityTab.tsx": 3,
   // Bloco de código sempre escuro (#0d1117), nos dois temas.
   "components/developers/JsonHighlighter.tsx": 7,
   "components/developers/CodeBlock.tsx": 2,
