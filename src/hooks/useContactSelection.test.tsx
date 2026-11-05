@@ -93,4 +93,19 @@ describe("useContactSelection", () => {
     expect(before).toBe("PUSH");
     expect(router.state.historyAction).toBe("REPLACE");
   });
+
+  it("fechar, avançar e fechar de novo ainda fecha", async () => {
+    const router = await setup();
+    await click("abrir c1");
+    await click("fechar");
+    await act(async () => {});
+    expect(url(router)).toBe("/app/contatos");
+    await act(async () => {
+      await router.navigate(1);
+    });
+    expect(url(router)).toBe("/app/contatos?contact=c1");
+    await click("fechar");
+    await act(async () => {});
+    expect(url(router)).toBe("/app/contatos");
+  });
 });

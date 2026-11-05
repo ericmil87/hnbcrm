@@ -20,7 +20,7 @@ const activityTypeConfig: Record<string, { color: string; letter: string }> = {
   handoff: { color: "bg-brand-600", letter: "H" },
   qualification_update: { color: "bg-semantic-warning", letter: "Q" },
   note: { color: "bg-surface-overlay", letter: "N" },
-  call: { color: "bg-ai-300", letter: "P" },
+  call: { color: "bg-ai-600", letter: "P" },
   email_sent: { color: "bg-semantic-info", letter: "E" },
 };
 

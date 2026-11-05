@@ -293,6 +293,26 @@ describe("useConversationSelection", () => {
     expect(router.state.location.search).toBe("?x=1");
   });
 
+  it("fechar, avançar e fechar de novo ainda fecha (a marca expira ao mudar de entrada)", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      screen.getByText("abrir c2").click();
+    });
+    await act(async () => {
+      screen.getByText("fechar").click();
+    });
+    expect(params(router).has("conversation")).toBe(false);
+    await act(async () => {
+      await router.navigate(1);
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("c2");
+    await act(async () => {
+      screen.getByText("fechar").click();
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+    expect(params(router).has("conversation")).toBe(false);
+  });
+
   it("reabrir a conversa já aberta não cria entrada", async () => {
     const { router } = renderWithRouter(<Harness />, { route: "/?conversation=c1" });
     await act(async () => {

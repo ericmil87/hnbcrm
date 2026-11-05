@@ -20,9 +20,11 @@ export function useContactSelection() {
 
   const ownsEntry = (location.state as { contactPushed?: boolean } | null)?.contactPushed === true;
   const live = useRef({ ownsEntry, raw: contactParam.raw, key: location.key });
-  live.current = { ownsEntry, raw: contactParam.raw, key: location.key };
   // `navigate(-1)` já pedido a partir desta entrada: um segundo fechar não pode voltar 2.
   const backPendingKey = useRef<string | null>(null);
+  // Voltar/avançar reaproveita a `key` da entrada: ao mudar de entrada a marca expira.
+  if (backPendingKey.current !== null && backPendingKey.current !== location.key) backPendingKey.current = null;
+  live.current = { ownsEntry, raw: contactParam.raw, key: location.key };
 
   /** Abre (ou troca) o contato; limpa a aba do anterior na mesma escrita. */
   const open = useCallback(
