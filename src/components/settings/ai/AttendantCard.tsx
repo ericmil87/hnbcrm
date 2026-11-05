@@ -18,7 +18,7 @@ import { Id } from "../../../../convex/_generated/dataModel";
 import { PERSONAS } from "./aiTypes";
 import { Attendant } from "../attendant/types";
 import { AttendantModeSwitch } from "../attendant/AttendantModeSwitch";
-import { SimulatorModal } from "./SimulatorModal";
+import { AttendantSimulator } from "@/components/ai/AttendantSimulator";
 
 // ── Atendente IA: criação em 1 toque, status, teste e modo ──
 
@@ -232,7 +232,8 @@ function AttendantStatus({
       </div>
 
       {showSimulator && (
-        <SimulatorModal
+        <AttendantSimulator
+          variant="modal"
           metaEnabled={modules.metaMessaging}
           organizationId={organizationId}
           agentMemberId={attendant._id}
