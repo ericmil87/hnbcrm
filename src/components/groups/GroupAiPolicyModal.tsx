@@ -25,8 +25,8 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 
 const REPLY_MODES: { id: ReplyMode; label: string; hint: string }[] = [
   { id: "inherit", label: "Herdar do atendente", hint: "Usa o modo configurado em Configurações → IA." },
-  { id: "suggest", label: "Sugestão", hint: "Escreve um rascunho para alguém revisar no inbox." },
-  { id: "autopilot", label: "Autopilot", hint: "Envia direto, sem revisão humana." },
+  { id: "suggest", label: "Sugerir respostas", hint: "Escreve uma resposta sugerida para alguém revisar em Conversas." },
+  { id: "autopilot", label: "Responder sozinha", hint: "Envia direto, sem revisão humana." },
 ];
 
 /**
@@ -114,7 +114,7 @@ export function GroupAiPolicyModal({
       toast.success("Política de IA salva");
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar a política"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar a política."));
     } finally {
       setSaving(false);
     }
@@ -199,13 +199,13 @@ export function GroupAiPolicyModal({
         {replyMode === "autopilot" && mode !== "off" && aiStatus?.groupAutopilotAckDone === false && (
           <div className="space-y-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-3">
             <p className="text-xs text-semantic-warning">
-              No autopilot a IA publica direto na sala, sem ninguém revisar — para todos os
+              Em Responder sozinha, a IA publica direto na sala, sem ninguém revisar — para todos os
               participantes, inclusive gente que nunca falou com a empresa. O aceite vale para a
-              organização inteira e fica registrado na auditoria.
+              organização inteira e fica registrado no histórico de alterações.
             </p>
-            <p className="text-[11px] text-text-muted">
-              Com o atendente 1 a 1 já em autopilot esta sala salva sem o aceite — ele existe para
-              quando o atendente está em sugestão e só a sala vai sozinha.
+            <p className="text-caption text-text-muted">
+              Com o Atendente IA 1 a 1 já em Responder sozinha, esta sala salva sem o aceite — ele existe para
+              quando o atendente está em Sugerir respostas e só a sala vai sozinha.
             </p>
             {can("settings", "manage") ? (
               <Button
@@ -222,7 +222,7 @@ export function GroupAiPolicyModal({
                     // deixar a sala em sugestão por esquecimento.
                     await handleSave();
                   } catch (error) {
-                    toast.error(mutationErrorMessage(error, "Falha ao registrar o aceite"));
+                    toast.error(mutationErrorMessage(error, "Não foi possível registrar o aceite."));
                   } finally {
                     setAckBusy(false);
                   }
@@ -268,12 +268,12 @@ export function GroupAiPolicyModal({
             atendente 1:1. Sem a legenda, quem quer calar a IA digita 0 nos dois
             campos e libera resposta ilimitada num grupo de terceiros.
           */}
-          <p className="text-[11px] text-text-muted">
+          <p className="text-caption text-text-muted">
             Vazio usa o padrão (10/hora e 30/dia). <strong>0 = sem limite</strong> — para calar a
             IA nesta sala, use o modo “Desligada” acima.
           </p>
           {(parseCap(maxPerHour) === 0 || parseCap(maxPerDay) === 0) && mode !== "off" && (
-            <p className="rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 px-2.5 py-1.5 text-[11px] text-semantic-warning">
+            <p className="rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 px-2.5 py-1.5 text-caption text-semantic-warning">
               Com 0 a IA responde sem teto nesta sala. Se a intenção é parar de responder, escolha
               “Desligada” no modo.
             </p>
@@ -305,7 +305,7 @@ export function GroupAiPolicyModal({
             disabled={mode === "off"}
             onChange={(e) => setKeywords(e.target.value)}
           />
-          <span className="mt-1 block text-[11px] text-text-muted">
+          <span className="mt-1 block text-caption text-text-muted">
             Sem isto a IA só responde quando alguém a menciona ou responde a uma
             mensagem nossa.
           </span>
@@ -323,7 +323,7 @@ export function GroupAiPolicyModal({
               value={alertKeywords}
               onChange={(e) => setAlertKeywords(e.target.value)}
             />
-            <span className="mt-1 block text-[11px] text-text-muted">
+            <span className="mt-1 block text-caption text-text-muted">
               Gera uma notificação no sino. Não usa IA e não faz a IA responder.
             </span>
           </label>

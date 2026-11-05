@@ -29,7 +29,7 @@ interface FieldTypeEntry {
 
 const INPUT_FIELD_TYPES: FieldTypeEntry[] = [
   { type: "text", label: "Texto", icon: Type },
-  { type: "email", label: "Email", icon: Mail },
+  { type: "email", label: "E-mail", icon: Mail },
   { type: "phone", label: "Telefone", icon: Phone },
   { type: "number", label: "Número", icon: Hash },
   { type: "select", label: "Seleção", icon: ChevronDown },
@@ -80,7 +80,7 @@ export function FieldPalette({ onAddField }: FieldPaletteProps) {
     <div className="space-y-4">
       {/* Campos de Entrada */}
       <div>
-        <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">
+        <p className="text-caption font-semibold text-text-muted uppercase tracking-wide mb-2">
           Campos de Entrada
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -92,7 +92,7 @@ export function FieldPalette({ onAddField }: FieldPaletteProps) {
 
       {/* Layout */}
       <div>
-        <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">
+        <p className="text-caption font-semibold text-text-muted uppercase tracking-wide mb-2">
           Layout
         </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

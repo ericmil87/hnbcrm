@@ -63,7 +63,7 @@ export function ChangePasswordScreen({
       toast.success("Senha alterada com sucesso!");
       onSuccess();
     } catch (error: any) {
-      toast.error(error.message || "Falha ao alterar senha.");
+      toast.error(error.message || "Não foi possível alterar a senha.");
     } finally {
       setIsSubmitting(false);
     }

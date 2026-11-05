@@ -73,7 +73,7 @@ export function LeadDocuments({ leadId, organizationId }: LeadDocumentsProps) {
       await removeDocument({ documentId });
       toast.success("Documento removido");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao remover documento");
+      toast.error(error.message || "Não foi possível remover o documento.");
     }
   };
 
@@ -241,7 +241,7 @@ function UploadDocumentModal({
         body: selectedFile,
       });
 
-      if (!response.ok) throw new Error("Falha no upload do arquivo");
+      if (!response.ok) throw new Error("Não foi possível enviar o arquivo.");
 
       const { storageId } = await response.json();
 
@@ -267,7 +267,7 @@ function UploadDocumentModal({
       toast.success("Documento adicionado com sucesso");
       handleClose();
     } catch (error: any) {
-      toast.error(error.message || "Falha ao enviar documento");
+      toast.error(error.message || "Não foi possível enviar o documento.");
       setUploading(false);
     }
   };

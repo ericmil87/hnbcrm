@@ -41,7 +41,7 @@ async function seed(t: TestConvex<typeof schema>, opts?: { autoTranscribeAudio?:
       createdAt: now,
       updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId,
       userId: adminUserId,

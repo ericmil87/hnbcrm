@@ -42,6 +42,7 @@ import {
   effectiveAssistantMode,
 } from "./telegramAssistant";
 import { escapeHtml } from "./telegramFormat";
+import { PAIRING_ATTEMPTS_PER_HOUR, consumePairingAttempt, pairingWindow } from "./pairingQuota";
 import {
   buildAiRelayCard,
   attachmentLine,
@@ -1501,8 +1502,7 @@ export async function executeAutoSend(
 // ---------------------------------------------------------------------------
 
 const SETTINGS_MANAGE: [PermissionCategory, string] = ["settings", "manage"];
-const HOUR_MS = 60 * 60 * 1000;
-export const RECONNECT_ATTEMPTS_PER_HOUR = 3;
+export const RECONNECT_ATTEMPTS_PER_HOUR = PAIRING_ATTEMPTS_PER_HOUR;
 /** Pairing code ≈ one login websocket (~160 s); the QR rotates for ~160–180 s. */
 export const RECONNECT_CODE_WINDOW_MS = 150_000;
 export const RECONNECT_QR_WINDOW_MS = 180_000;
@@ -1599,12 +1599,12 @@ async function onReconnect(ctx: MutationCtx, tap: Tap, mode: "code" | "qr"): Pro
     return say(tap.chatId, "📷 O QR já está logo abaixo. Leia com o celular do número; ele renova sozinho.");
   }
   const switchingToQr = mode === "qr" && sameChatActive;
-  const fresh = !row || tap.now - row.hourStart >= HOUR_MS;
-  const hourStart = fresh ? tap.now : row!.hourStart;
-  const attempts = fresh ? 0 : row!.attempts;
-  if (!switchingToQr && attempts >= RECONNECT_ATTEMPTS_PER_HOUR) {
+  // Mesmo teto da web (`lib/pairingQuota.ts`); trocar para QR não consome tentativa.
+  const quota = consumePairingAttempt(row, tap.now);
+  const { hourStart, attempts } = pairingWindow(row, tap.now);
+  if (!switchingToQr && !quota.allowed) {
     const tz = (await contextFor(ctx, actor, tap, {})).timezone;
-    const card = reconnectLimitCard({ nextAt: hourStart + HOUR_MS, tz });
+    const card = reconnectLimitCard({ nextAt: quota.resetsAt, tz });
     return { replies: [{ chatId: tap.chatId, text: card.text, keyboard: card.keyboard }], edits: [] };
   }
   const edits: EditOp[] = [];
@@ -1621,7 +1621,7 @@ async function onReconnect(ctx: MutationCtx, tap: Tap, mode: "code" | "qr"): Pro
   const startedAt = switchingToQr ? (row!.startedAt ?? tap.now) : tap.now;
   const fields = {
     hourStart,
-    attempts: switchingToQr ? attempts : attempts + 1,
+    attempts: switchingToQr ? attempts : quota.next.attempts,
     token,
     linkId: actor.link._id,
     chatId: tap.chatId,

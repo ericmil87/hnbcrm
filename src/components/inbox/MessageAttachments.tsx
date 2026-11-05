@@ -50,7 +50,7 @@ export function MessageAttachments({
               key={file._id}
               className={cn(
                 "text-xs italic",
-                outbound ? "text-white/70" : "text-text-muted"
+                outbound ? "text-bubble-out-fg/75" : "text-text-muted"
               )}
             >
               Anexo indisponível
@@ -125,14 +125,14 @@ export function MessageAttachments({
             className={cn(
               "flex items-center gap-2.5 px-3 py-2 rounded-lg max-w-[280px] transition-colors",
               outbound
-                ? "bg-white/15 text-white hover:bg-white/25"
-                : "bg-surface-sunken/70 text-text-secondary hover:bg-surface-sunken"
+                ? "bg-bubble-out-fg/15 text-bubble-out-fg hover:bg-bubble-out-fg/25"
+                : "text-text-secondary hover:bg-surface-sunken"
             )}
           >
             <DocumentIcon mimeType={file.mimeType} />
             <div className="flex-1 min-w-0">
               <span className="block text-xs font-medium truncate">{file.name}</span>
-              <span className={cn("text-[10px]", outbound ? "text-white/70" : "text-text-muted")}>
+              <span className={cn("text-caption", outbound ? "text-bubble-out-fg/75" : "text-text-muted")}>
                 {formatFileSize(file.size)}
               </span>
             </div>

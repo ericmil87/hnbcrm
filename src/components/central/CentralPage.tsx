@@ -1,3 +1,4 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useQuery } from "convex/react";
@@ -9,6 +10,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 import { TAB_ROUTES } from "@/lib/routes";
 import type { CentralDashboard } from "./CentralKpi";
@@ -32,6 +34,7 @@ const selectClass =
   "min-h-[44px] w-full sm:w-auto bg-surface-raised border border-border-strong text-text-primary rounded-field px-3 py-2 text-base md:text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20";
 
 export function CentralPage() {
+  usePageTitle(VOCAB.reports.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can, isLoading: permsLoading } = usePermissions(organizationId);
@@ -93,11 +96,11 @@ export function CentralPage() {
     return (
       <EmptyState
         icon={LayoutDashboard}
-        title="Painel da Central desligado"
-        description="O Painel da Central é um módulo opcional. Um administrador pode ligá-lo em Configurações → Central."
+        title="Relatórios desligados"
+        description="Os relatórios por unidade e departamento são um módulo opcional. Um administrador pode ligá-lo em Configurações → Unidades e departamentos."
         action={
           can("settings", "manage")
-            ? { label: "Abrir Configurações", onClick: () => navigate(`${TAB_ROUTES.settings}?secao=central`) }
+            ? { label: "Abrir configurações", onClick: () => navigate(`${TAB_ROUTES.settings}?secao=central`) }
             : undefined
         }
       />
@@ -120,7 +123,7 @@ export function CentralPage() {
       {/* Cabeçalho */}
       <header className="flex flex-col gap-1">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl md:text-3xl font-bold text-text-primary">Painel da Central</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-text-primary">{VOCAB.reports.title}</h1>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-semantic-success/10 px-2.5 py-0.5 text-xs font-medium text-semantic-success">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-semantic-success opacity-60 motion-reduce:hidden" />
@@ -247,8 +250,8 @@ export function CentralPage() {
       ) : !hasActivity ? (
         <EmptyState
           icon={BarChart3}
-          title="Sem movimento neste período"
-          description="Assim que chegarem conversas no WhatsApp, o painel se preenche sozinho. Tente um período maior ou outra unidade."
+          title={VOCAB.reports.empty.title}
+          description={`${VOCAB.reports.empty.hint} Tente um período maior ou outra unidade.`}
         />
       ) : (
         <div className={cn("w-full transition-opacity", refreshing && "opacity-60")} aria-busy={refreshing}>

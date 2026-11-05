@@ -9,6 +9,7 @@ import { Markdown, CopyButton } from "@/components/ui/Markdown";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfigPreview } from "./ConfigPreview";
 import { Sparkles, Plus, Send, AlertTriangle } from "lucide-react";
 
 const SUGGESTIONS = [
@@ -17,13 +18,34 @@ const SUGGESTIONS = [
   "Resuma as métricas do mês",
 ];
 
-interface CopilotPanelProps {
+interface CopilotPanelBaseProps {
   organizationId: Id<"organizations">;
-  open: boolean;
-  onClose: () => void;
+  /** "setup": conversa de configuração inicial (thread próprio). */
+  purpose?: "setup";
+  /** Thread guardada fora do navegador (o wizard grava em `wizardData`). */
+  initialThreadId?: string | null;
+  /** A thread mudou (criada ou descartada): quem usa o painel pode guardá-la. */
+  onThreadChange?: (threadId: string | null) => void;
 }
 
-export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProps) {
+type CopilotPanelProps =
+  | (CopilotPanelBaseProps & {
+      /** Gaveta lateral (padrão). */
+      variant?: "drawer";
+      open: boolean;
+      onClose: () => void;
+    })
+  | (CopilotPanelBaseProps & {
+      /** Ocupa o contêiner pai, sem chrome de gaveta; sempre ativo. */
+      variant: "embedded";
+      open?: boolean;
+      onClose?: () => void;
+    });
+
+export function CopilotPanel(props: CopilotPanelProps) {
+  const { organizationId, purpose } = props;
+  const variant = props.variant ?? "drawer";
+  const active = props.open === true || variant === "embedded";
   const {
     streamingText,
     activeTools,
@@ -32,7 +54,12 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
     threadId,
     sendMessage,
     startNewThread,
-  } = useCopilotStream(organizationId);
+  } = useCopilotStream(
+    organizationId,
+    purpose || props.initialThreadId || props.onThreadChange
+      ? { purpose, initialThreadId: props.initialThreadId, onThreadChange: props.onThreadChange }
+      : undefined
+  );
 
   // Painel FECHADO não assina o histórico: a query reativa seria reexecutada a
   // cada mensagem do thread mesmo sem ninguém olhando. Ao reabrir, o último
@@ -40,7 +67,7 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
   // "flash" vazio).
   const liveMessages = useQuery(
     api.copilot.getThreadMessages,
-    threadId && open ? { threadId } : "skip"
+    threadId && active ? { threadId } : "skip"
   );
   const [cachedMessages, setCachedMessages] = useState<{
     threadId: string;
@@ -64,7 +91,7 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streamingText, activeTools, open]);
+  }, [messages, streamingText, activeTools, active]);
 
   // Textarea auto-expansível (até um teto, depois rola internamente).
   useEffect(() => {
@@ -89,26 +116,20 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
   const hasConversation =
     threadId !== null || (messages?.length ?? 0) > 0 || streamingText.length > 0;
 
-  return (
-    <SlideOver
-      open={open}
-      onClose={onClose}
-      title="Copiloto IA"
-      titleIcon={<Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />}
-      headerActions={
-        <button
-          onClick={handleNewThread}
-          disabled={isStreaming}
-          className="h-11 w-11 shrink-0 flex items-center justify-center rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50 disabled:pointer-events-none"
-          aria-label="Nova conversa"
-          title="Nova conversa"
-        >
-          <Plus size={18} />
-        </button>
-      }
-      className="md:w-[520px] lg:w-[600px] xl:w-[680px]"
-      bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
+  const newThreadButton = (
+    <button
+      onClick={handleNewThread}
+      disabled={isStreaming}
+      className="h-11 w-11 shrink-0 flex items-center justify-center rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors disabled:opacity-50 disabled:pointer-events-none"
+      aria-label="Nova conversa"
+      title="Nova conversa"
     >
+      <Plus size={18} />
+    </button>
+  );
+
+  const content = (
+    <>
       {/* Mensagens */}
       <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-4 py-4 md:px-6 space-y-4">
         {!hasConversation ? (
@@ -172,6 +193,35 @@ export function CopilotPanel({ organizationId, open, onClose }: CopilotPanelProp
           </button>
         </div>
       </div>
+    </>
+  );
+
+  if (props.variant === "embedded") {
+    return (
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 md:px-6">
+          <div className="flex items-center gap-2 py-2">
+            <Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />
+            <h2 className="text-base font-semibold text-text-primary">Copiloto</h2>
+          </div>
+          {newThreadButton}
+        </div>
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <SlideOver
+      open={props.open}
+      onClose={props.onClose}
+      title="Copiloto"
+      titleIcon={<Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />}
+      headerActions={newThreadButton}
+      className="md:w-[520px] lg:w-[600px] xl:w-[680px]"
+      bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
+    >
+      {content}
     </SlideOver>
   );
 }
@@ -192,7 +242,7 @@ function PendingActionsCard({ organizationId }: { organizationId: Id<"organizati
         >
           <div className="flex items-start gap-2 mb-3">
             <AlertTriangle size={18} className="text-semantic-error shrink-0 mt-0.5" />
-            <p className="text-sm text-text-primary">{action.preview}</p>
+            <ConfigPreview preview={action.preview} className="min-w-0 flex-1" />
           </div>
           <div className="flex gap-2">
             <Button
@@ -202,7 +252,7 @@ function PendingActionsCard({ organizationId }: { organizationId: Id<"organizati
                   loading: "Executando...",
                   success: "Ação executada",
                   error: (e) =>
-                    e instanceof Error ? e.message : "Falha ao executar a ação",
+                    e instanceof Error ? e.message : "Não foi possível executar a ação.",
                 })
               }
               className="flex-1"

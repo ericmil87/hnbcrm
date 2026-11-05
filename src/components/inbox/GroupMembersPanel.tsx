@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
@@ -155,7 +156,7 @@ export function GroupMembersPanel({
       navigate(`${TAB_ROUTES.board}?lead=${result.leadId}`);
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao criar o lead"));
+      toast.error(mutationErrorMessage(error, "Não foi possível criar o lead."));
     } finally {
       setBusyKey(null);
     }
@@ -306,7 +307,7 @@ export function GroupMembersPanel({
                                 onOpenContact?.(participant.contactId as Id<"contacts">)
                               }
                               disabled={!onOpenContact}
-                              className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2 py-0.5 text-[11px] font-medium text-brand-400 transition-colors hover:bg-brand-500/25 disabled:opacity-60"
+                              className="inline-flex items-center gap-1 rounded-full bg-brand-500/15 px-2 py-0.5 text-caption font-medium text-brand-400 transition-colors hover:bg-brand-500/25 disabled:opacity-60"
                             >
                               <UserRound size={11} />
                               Abrir contato
@@ -316,7 +317,7 @@ export function GroupMembersPanel({
                               type="button"
                               onClick={() => void handleCreateLead(participant)}
                               disabled={busyKey === key || bulkProgress !== null}
-                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] font-medium text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption font-medium text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
                             >
                               {busyKey === key ? <Spinner size="sm" /> : <UserPlus size={11} />}
                               Criar lead deste membro
@@ -359,37 +360,35 @@ export function GroupMembersPanel({
                   Limpar
                 </Button>
                 {canCreateLead && (
+                  <Tooltip content={selectedWithoutLead.length === 0
+                        ? "Os selecionados já são contatos (ou não expõem telefone)"
+                        : undefined} asInfo>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={selectedWithoutLead.length === 0 || bulkProgress !== null}
+                      onClick={() => void handleBulkCreateLeads()}
+                    >
+                      {bulkProgress ? <Spinner size="sm" /> : <UserPlus size={14} />}
+                      Criar leads dos selecionados ({selectedWithoutLead.length})
+                    </Button>
+                  </Tooltip>
+                )}
+                <Tooltip content={onDispatchSelected
+                      ? "Abre uma campanha com os números selecionados"
+                      : "Precisa de permissão para gerenciar campanhas"} asInfo>
                   <Button
                     size="sm"
-                    variant="secondary"
-                    disabled={selectedWithoutLead.length === 0 || bulkProgress !== null}
-                    onClick={() => void handleBulkCreateLeads()}
-                    title={
-                      selectedWithoutLead.length === 0
-                        ? "Os selecionados já são contatos (ou não expõem telefone)"
-                        : undefined
-                    }
+                    disabled={!onDispatchSelected || selectedPhones.length === 0}
+                    onClick={() => onDispatchSelected?.(selectedPhones, groupChatId)}
                   >
-                    {bulkProgress ? <Spinner size="sm" /> : <UserPlus size={14} />}
-                    Criar leads dos selecionados ({selectedWithoutLead.length})
+                    <Send size={14} />
+                    Disparar para selecionados
                   </Button>
-                )}
-                <Button
-                  size="sm"
-                  disabled={!onDispatchSelected || selectedPhones.length === 0}
-                  onClick={() => onDispatchSelected?.(selectedPhones, groupChatId)}
-                  title={
-                    onDispatchSelected
-                      ? "Abre uma campanha com os números selecionados"
-                      : "Precisa de permissão para gerenciar campanhas"
-                  }
-                >
-                  <Send size={14} />
-                  Disparar para selecionados
-                </Button>
+                </Tooltip>
               </div>
               {!onDispatchSelected && (
-                <p className="mt-1.5 text-[11px] text-text-muted">
+                <p className="mt-1.5 text-caption text-text-muted">
                   Disparar para membros exige permissão de campanhas.
                 </p>
               )}

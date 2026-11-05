@@ -58,7 +58,7 @@ async function seedOrg(t: TestConvex<typeof schema>, slug: string) {
       createdAt: now,
       updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const adminId = await ctx.db.insert("teamMembers", {
       organizationId,
       userId: adminUserId,

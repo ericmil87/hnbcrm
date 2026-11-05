@@ -48,6 +48,11 @@ export function autoActionsLeft(link: Pick<Doc<"telegramLinks">, "assistant">, n
  * Write tools the automatic turn may call (D22, from `autoAllowed`). Read
  * tools are always allowed. Destructive tools never. `sendCustomerReply` only
  * when `replyCustomer` is allowed (and it is two-phase anyway).
+ *
+ * The Atendente IA config tools (`updateAttendantPersona`, `setAttendantMode`,
+ * `setAiFeatures`… — `lib/copilotConfigTools.ts`) are NEVER here: configuration
+ * changes only happen with the human's confirmation, and the executor also
+ * refuses `via:"telegram_auto"` (tested in telegramF3.test.ts).
  */
 export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): string[] {
   const a = link.assistant.autoAllowed;
@@ -58,6 +63,15 @@ export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): s
     // Never `acceptHandoff` (D22 amended 03/11): a handoff is always the human's call.
     ...(a.replyCustomer ? ["sendCustomerReply"] : []),
   ];
+}
+
+/** Read tools the automatic turn must NOT get (customer-triggered turn: no persona/knowledge leaks). */
+export const AUTO_BLOCKED_READ_TOOLS: ReadonlySet<string> = new Set(["getAttendantConfig", "getAttendantSetupGuide"]);
+
+/** Tool filter of the automatic turn: reads (minus the blocked ones) plus the allowed writes. */
+export function autoTurnAllowsTool(spec: { name: string; effect: string }, allowedWrites: ReadonlySet<string>): boolean {
+  if (spec.effect === "read") return !AUTO_BLOCKED_READ_TOOLS.has(spec.name);
+  return spec.effect === "write" && allowedWrites.has(spec.name);
 }
 
 const AUTO_LABELS: Record<string, string> = {

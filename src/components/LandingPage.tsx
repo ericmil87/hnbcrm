@@ -430,7 +430,7 @@ function DeveloperSection() {
     <section
       id="developers"
       ref={ref}
-      className="py-16 md:py-24 bg-surface-sunken/30"
+      className="py-16 md:py-24"
       aria-labelledby="developer-heading"
     >
       <div className="max-w-6xl mx-auto px-4">
@@ -536,7 +536,7 @@ function ComingSoonSection() {
     <section
       id="em-breve"
       ref={ref}
-      className="py-16 md:py-24 bg-surface-sunken/30"
+      className="py-16 md:py-24"
       aria-labelledby="coming-soon-heading"
     >
       <div className="max-w-6xl mx-auto px-4">

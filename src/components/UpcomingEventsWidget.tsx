@@ -367,11 +367,11 @@ export function UpcomingEventsWidget({
               <div key={group.key}>
                 {/* Day group header */}
                 <div className="flex items-center gap-3 py-2">
-                  <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                  <span className="text-caption font-semibold text-text-muted uppercase tracking-wider">
                     {group.label}
                   </span>
                   <div className="flex-1 h-px bg-border" />
-                  <span className="text-[10px] text-text-muted">
+                  <span className="text-caption text-text-muted">
                     {group.events.length} {group.events.length === 1 ? "evento" : "eventos"}
                   </span>
                 </div>
@@ -422,7 +422,7 @@ export function UpcomingEventsWidget({
                             </span>
                             <Badge
                               className={cn(
-                                "text-[10px]",
+                                "text-caption",
                                 typeColor.bg,
                                 typeColor.text
                               )}

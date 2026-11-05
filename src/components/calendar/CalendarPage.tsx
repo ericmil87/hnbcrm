@@ -1,4 +1,6 @@
-import { useState, useMemo } from "react";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
+import { useState, useMemo, useEffect } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -14,14 +16,25 @@ import { WeekView } from "./WeekView";
 import { DayView } from "./DayView";
 import { CalendarEventModal } from "./CalendarEventModal";
 import { EventDetailSlideOver } from "./EventDetailSlideOver";
-import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
+import { TaskQuickView } from "./TaskQuickView";
 import { EventBlock } from "./EventBlock";
 import type { CalendarEventType } from "./constants";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
 import { memberLabel } from "@/lib/teamMembers";
 
+/** Fallback vazio que limpa o `?event=` inválido ao montar. */
+function ClearEventParam({ onClear }: { onClear: () => void }) {
+  useEffect(() => {
+    onClear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <></>;
+}
+
 export function CalendarPage() {
+  usePageTitle(VOCAB.agenda.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const {
     view,
@@ -32,12 +45,14 @@ export function CalendarPage() {
     navigateNext,
     goToToday,
     selectDay,
+    eventParam,
+    setSelectedEvent,
   } = useCalendarState();
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  const [selectedEventSource, setSelectedEventSource] = useState<"event" | "task" | null>(null);
+  // Evento aberto pela URL (`?event=`); tarefas continuam em estado local.
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [initialDate, setInitialDate] = useState<Date | undefined>();
   const [initialHour, setInitialHour] = useState<number | undefined>();
   const [initialMinute, setInitialMinute] = useState<number | undefined>();
@@ -112,7 +127,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Erro ao reagendar evento");
+        toast.error("Não foi possível reagendar o evento.");
         console.error(error);
       }
       return;
@@ -138,15 +153,15 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Erro ao reagendar evento");
+        toast.error("Não foi possível reagendar o evento.");
         console.error(error);
       }
     }
   };
 
   const handleEventClick = (eventId: string, source: "event" | "task") => {
-    setSelectedEventId(eventId);
-    setSelectedEventSource(source);
+    if (source === "event") setSelectedEvent(eventId);
+    else setSelectedTaskId(eventId);
   };
 
   const handleSlotClick = (date: Date, hour: number, minute: number) => {
@@ -271,26 +286,23 @@ export function CalendarPage() {
         initialMinute={initialMinute}
       />
 
-      {selectedEventSource === "event" && (
-        <EventDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          eventId={selectedEventId}
-          onEdit={handleEditEvent}
-        />
+      {eventParam && (
+        // Id inválido ou de outra org: a query falha dentro do filho e o deep-link é ignorado.
+        <ErrorBoundary key={eventParam} fallback={<ClearEventParam onClear={() => setSelectedEvent(null)} />}>
+          <EventDetailSlideOver
+            open
+            onClose={() => setSelectedEvent(null)}
+            eventId={eventParam}
+            onEdit={handleEditEvent}
+          />
+        </ErrorBoundary>
       )}
 
-      {selectedEventSource === "task" && (
-        <TaskDetailSlideOver
-          open={!!selectedEventId}
-          onClose={() => {
-            setSelectedEventId(null);
-            setSelectedEventSource(null);
-          }}
-          taskId={selectedEventId}
+      {selectedTaskId && (
+        <TaskQuickView
+          open
+          onClose={() => setSelectedTaskId(null)}
+          taskId={selectedTaskId}
         />
       )}
     </DndContext>

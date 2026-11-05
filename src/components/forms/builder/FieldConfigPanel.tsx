@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import {
@@ -67,42 +68,9 @@ const FIELD_LABELS: Record<FormField["type"], string> = {
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-3 pb-2 border-b border-border-subtle">
+    <h3 className="text-caption font-semibold text-text-muted uppercase tracking-wide mb-3 pb-2 border-b border-border-subtle">
       {children}
     </h3>
-  );
-}
-
-function ToggleSwitch({
-  checked,
-  onToggle,
-  label,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onToggle}
-      className={cn(
-        "relative flex-shrink-0 w-10 h-6 rounded-full transition-colors duration-200",
-        "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-overlay",
-        checked ? "bg-brand-600" : "bg-surface-overlay border border-border-strong"
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm",
-          "transition-transform duration-200",
-          checked ? "translate-x-4" : "translate-x-0"
-        )}
-        aria-hidden="true"
-      />
-    </button>
   );
 }
 
@@ -125,7 +93,7 @@ function ToggleRow({
           <p className="text-[12px] text-text-muted mt-0.5">{description}</p>
         )}
       </div>
-      <ToggleSwitch checked={checked} onToggle={onToggle} label={label} />
+      <Switch hideLabel className="focus-visible:ring-offset-surface-overlay" checked={checked} onCheckedChange={() => onToggle()} label={label} />
     </div>
   );
 }

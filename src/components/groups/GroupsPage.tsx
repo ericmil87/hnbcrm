@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -55,6 +57,7 @@ const TABS: { id: GroupsTab; label: string }[] = [
  * acompanhado, para quem esqueceu o passo lá.
  */
 export function GroupsPage() {
+  usePageTitle(VOCAB.groups.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can, isLoading } = usePermissions(organizationId);
@@ -87,7 +90,7 @@ export function GroupsPage() {
   const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
   // Segue o mesmo padrão do painel de canais: um id em voo trava só a LINHA
   // dele, e o "parar de acompanhar" pede confirmação por ser mais destrutivo
-  // (some da Caixa de Entrada e apaga a lista de membros).
+  // (some de Conversas e apaga a lista de membros).
   const [followingId, setFollowingId] = useState<string | null>(null);
   const [unfollowTarget, setUnfollowTarget] = useState<GroupChatDoc | null>(null);
   const [mediaTarget, setMediaTarget] = useState<GroupChatDoc | null>(null);
@@ -131,7 +134,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: true });
       toast.success(`Acompanhando '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao acompanhar o grupo"));
+      toast.error(mutationErrorMessage(error, "Não foi possível acompanhar o grupo."));
     } finally {
       setFollowingId(null);
     }
@@ -142,7 +145,7 @@ export function GroupsPage() {
       await setMonitored({ groupChatId: group._id as Id<"groupChats">, monitored: false });
       toast.success(`Parou de acompanhar '${group.subject}'`);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
+      toast.error(mutationErrorMessage(error, "Não foi possível parar de acompanhar."));
     }
   };
 
@@ -228,9 +231,9 @@ export function GroupsPage() {
           description={
             anyChannelEnabled
               ? "Sincronize a lista de salas no card do número em Configurações → Canais."
-              : "Ligue os grupos num número bridge em Configurações → Canais para o CRM listar as salas."
+              : "Ligue os grupos num número por QR code em Configurações → Canais para o CRM listar as salas."
           }
-          action={{ label: "Abrir Canais", onClick: goToChannels }}
+          action={{ label: "Abrir canais", onClick: goToChannels }}
         />
       ) : monitored.length === 0 ? (
         // Já sabemos de sala — só falta escolher. Fica no lugar do estado
@@ -242,7 +245,7 @@ export function GroupsPage() {
               Escolha os grupos para acompanhar
             </h2>
             <p className="mt-1 max-w-xl text-sm text-text-secondary">
-              Só os grupos que você acompanha aparecem na Caixa de Entrada, podem
+              Só os grupos que você acompanha aparecem em Conversas, podem
               receber publicações programadas e ter a IA ligada. Os demais ficam só
               listados — nada é lido nem guardado.
             </p>
@@ -266,7 +269,7 @@ export function GroupsPage() {
               >
                 <GroupTitle group={group} />
                 <p className="text-xs text-text-muted tabular-nums">
-                  {channelName.get(group.channelConfigId) ?? "Número bridge"} ·{" "}
+                  {channelName.get(group.channelConfigId) ?? "Número por QR code"} ·{" "}
                   {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"} ·{" "}
                   {activityLabel(group.lastMessageAt)}
                 </p>
@@ -380,7 +383,7 @@ export function GroupsPage() {
           if (target) void handleUnfollow(target);
         }}
         title={unfollowTarget ? `Parar de acompanhar '${unfollowTarget.subject}'?` : "Parar de acompanhar?"}
-        description="A conversa do grupo sai da Caixa de Entrada e a lista de membros é apagada do CRM. As mensagens já recebidas continuam guardadas. Publicações programadas para este grupo param de funcionar."
+        description="A conversa do grupo sai de Conversas e a lista de membros é apagada do CRM. As mensagens já recebidas continuam guardadas. Publicações programadas para este grupo param de funcionar."
         confirmLabel="Parar de acompanhar"
         variant="danger"
       />
@@ -454,7 +457,7 @@ function GroupActions({
         type="button"
         onClick={onOpenInbox}
         disabled={!group.conversationId}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:opacity-50"
       >
         <MessageSquare size={11} />
         Abrir no inbox
@@ -462,7 +465,7 @@ function GroupActions({
       <button
         type="button"
         onClick={onMembers}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
       >
         <Users size={11} />
         Membros
@@ -470,7 +473,7 @@ function GroupActions({
       <button
         type="button"
         onClick={onMedia}
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
       >
         <HardDrive size={11} />
         Mídia
@@ -484,7 +487,7 @@ function GroupActions({
             ? "Cria uma campanha de mensagem privada para os membros deste grupo"
             : "Precisa de permissão para gerenciar campanhas"
         }
-        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <Send size={11} />
         Disparar 1 a 1 para os membros
@@ -493,7 +496,7 @@ function GroupActions({
         <button
           type="button"
           onClick={onUnfollow}
-          className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
+          className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error"
         >
           <EyeOff size={11} />
           Parar de acompanhar
@@ -532,7 +535,7 @@ function UnmonitoredGroupsSection({
             <div className="min-w-0">
               <GroupTitle group={group} />
               <p className="mt-0.5 text-xs text-text-muted tabular-nums">
-                {channelName.get(group.channelConfigId) ?? "Número bridge"} ·{" "}
+                {channelName.get(group.channelConfigId) ?? "Número por QR code"} ·{" "}
                 {group.participantsCount} membro{group.participantsCount === 1 ? "" : "s"}
               </p>
             </div>

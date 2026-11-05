@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -5,6 +6,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
@@ -59,9 +61,9 @@ interface MemberDetailSlideOverProps {
 }
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
   ai: "IA",
 };
 
@@ -164,7 +166,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro atualizado!");
       setIsEditing(false);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao atualizar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível atualizar o membro."));
     } finally {
       setIsSaving(false);
     }
@@ -176,7 +178,7 @@ export function MemberDetailSlideOver({
       toast.success("Membro removido.");
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao remover membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível remover o membro."));
     }
   };
 
@@ -204,7 +206,7 @@ export function MemberDetailSlideOver({
         kind === "new" ? "Convite reenviado." : `${member.name} já tinha conta e entrou na organização.`
       );
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao reenviar convite."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reenviar o convite."));
     } finally {
       setIsResending(false);
     }
@@ -215,7 +217,7 @@ export function MemberDetailSlideOver({
       await reactivateMember({ teamMemberId: member._id });
       toast.success("Membro reativado!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao reativar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível reativar o membro."));
     }
   };
 
@@ -239,7 +241,7 @@ export function MemberDetailSlideOver({
       setNewKeyName("");
       toast.success("Chave API criada!");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao criar chave API."));
+      toast.error(mutationErrorMessage(error, "Não foi possível criar a chave de integração."));
     } finally {
       setCreatingKey(false);
     }
@@ -252,7 +254,7 @@ export function MemberDetailSlideOver({
       toast.success("Chave API revogada!");
       setRevokeKeyId(null);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao revogar chave."));
+      toast.error(mutationErrorMessage(error, "Não foi possível revogar a chave."));
     }
   };
 
@@ -381,25 +383,14 @@ export function MemberDetailSlideOver({
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-text-secondary">
-                  Personalizar permissoes
+                  Personalizar permissões
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setCustomPermissions(!customPermissions)}
-                  className={cn(
-                    "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-                    customPermissions ? "bg-brand-500" : "bg-surface-overlay border border-border-strong"
-                  )}
-                  role="switch"
-                  aria-checked={customPermissions}
-                >
-                  <span
-                    className={cn(
-                      "inline-block h-4 w-4 rounded-full bg-white transition-transform",
-                      customPermissions ? "translate-x-6" : "translate-x-1"
-                    )}
-                  />
-                </button>
+                <Switch
+                  checked={customPermissions}
+                  onCheckedChange={setCustomPermissions}
+                  label="Personalizar permissões"
+                  hideLabel
+                />
               </div>
 
               <PermissionsEditor
@@ -484,12 +475,15 @@ export function MemberDetailSlideOver({
                     <code className="flex-1 text-xs font-mono text-text-primary break-all select-all">
                       {keyRevealed ? newKeyValue : newKeyValue.slice(0, 10) + "\u2022".repeat(20) + newKeyValue.slice(-4)}
                     </code>
-                    <button
-                      onClick={() => setKeyRevealed(!keyRevealed)}
-                      className="flex-shrink-0 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
-                    >
-                      {keyRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
-                    </button>
+                    <Tooltip content={keyRevealed ? "Ocultar chave" : "Mostrar chave"}>
+                      <button
+                        aria-label={keyRevealed ? "Ocultar chave" : "Mostrar chave"}
+                        onClick={() => setKeyRevealed(!keyRevealed)}
+                        className="flex-shrink-0 p-1 rounded text-text-muted hover:text-text-primary transition-colors"
+                      >
+                        {keyRevealed ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    </Tooltip>
                   </div>
                   <Button
                     size="sm"
@@ -524,7 +518,7 @@ export function MemberDetailSlideOver({
                         "flex items-center justify-between p-2.5 rounded-lg border",
                         key.isActive
                           ? "bg-surface-sunken border-border"
-                          : "bg-surface-sunken/50 border-border-subtle opacity-60"
+                          : "border-border-subtle opacity-60"
                       )}
                     >
                       <div className="min-w-0 flex-1">
@@ -547,13 +541,15 @@ export function MemberDetailSlideOver({
                         </p>
                       </div>
                       {canManage && key.isActive && (
-                        <button
-                          onClick={() => setRevokeKeyId(key._id)}
-                          className="flex-shrink-0 p-1.5 rounded-md text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
-                          title="Revogar chave"
-                        >
-                          <Ban size={14} />
-                        </button>
+                        <Tooltip content="Revogar chave">
+                          <button
+                            aria-label="Revogar chave"
+                            onClick={() => setRevokeKeyId(key._id)}
+                            className="flex-shrink-0 p-1.5 rounded-md text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors"
+                          >
+                            <Ban size={14} />
+                          </button>
+                        </Tooltip>
                       )}
                     </div>
                   ))}
@@ -634,7 +630,7 @@ export function MemberDetailSlideOver({
                     className="w-full"
                   >
                     <Pencil size={16} />
-                    Editar Membro
+                    Editar membro
                   </Button>
 
                   {isInactive ? (
@@ -644,7 +640,7 @@ export function MemberDetailSlideOver({
                       className="w-full"
                     >
                       <RotateCcw size={16} />
-                      Reativar Membro
+                      Reativar membro
                     </Button>
                   ) : (
                     !isSelf && (
@@ -654,7 +650,7 @@ export function MemberDetailSlideOver({
                         className="w-full"
                       >
                         <Trash2 size={16} />
-                        Remover Membro
+                        Remover membro
                       </Button>
                     )
                   )}
@@ -669,7 +665,7 @@ export function MemberDetailSlideOver({
         open={showRemoveConfirm}
         onClose={() => setShowRemoveConfirm(false)}
         onConfirm={handleRemove}
-        title="Remover Membro"
+        title="Remover membro"
         description={`Remover ${member.name} da equipe? O acesso a esta organização (e às chaves API do membro) é cortado na hora. O histórico fica, e dá para reativar depois.`}
         confirmLabel="Remover"
         variant="danger"

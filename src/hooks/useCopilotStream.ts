@@ -14,6 +14,15 @@ const TOOL_LABELS: Record<string, string> = {
   listBoardsAndStages: "consultando pipelines",
   listQuickReplies: "consultando respostas rápidas",
   listTasks: "listando tarefas",
+  getAttendantConfig: "lendo o atendente",
+  getAttendantSetupGuide: "consultando o guia do atendente",
+  updateAttendantPersona: "propondo ajuste no atendente",
+  updateAttendantKnowledge: "propondo ajuste no conhecimento do atendente",
+  setAttendantMode: "propondo o modo do atendente",
+  setAttendantHours: "propondo o horário do atendente",
+  setHandoffRules: "propondo regras de repasse",
+  setFollowUpSettings: "propondo ajuste de follow-up",
+  setAiFeatures: "propondo ajuste de áudio e imagens",
 };
 
 export function toolLabel(name: string): string {
@@ -25,8 +34,8 @@ const SITE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
   ".convex.site"
 );
 
-function threadStorageKey(organizationId: string): string {
-  return `hnbcrm_copilot_thread_${organizationId}`;
+function threadStorageKey(organizationId: string, purpose?: string): string {
+  return `hnbcrm_copilot_thread_${purpose ? `${purpose}_` : ""}${organizationId}`;
 }
 
 type CopilotSSEEvent =
@@ -49,15 +58,30 @@ interface UseCopilotStreamResult {
   startNewThread: () => void;
 }
 
+export interface UseCopilotStreamOptions {
+  purpose?: "setup";
+  /** Thread guardada no servidor (usada se o navegador não tiver uma). */
+  initialThreadId?: string | null;
+  /** A thread da conversa mudou (criada ou descartada). */
+  onThreadChange?: (threadId: string | null) => void;
+}
+
 export function useCopilotStream(
-  organizationId: Id<"organizations">
+  organizationId: Id<"organizations">,
+  options?: UseCopilotStreamOptions
 ): UseCopilotStreamResult {
+  const purpose = options?.purpose;
   const token = useAuthToken();
+  // Thread guardada fora do navegador (ex.: wizard de configuração): vale quando o
+  // localStorage não tem nenhuma.
+  const initialThreadRef = useRef(options?.initialThreadId ?? null);
+  const onThreadChangeRef = useRef(options?.onThreadChange);
+  onThreadChangeRef.current = options?.onThreadChange;
 
   const [threadId, setThreadId] = useState<Id<"copilotThreads"> | null>(() => {
     if (typeof window === "undefined") return null;
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId));
-    return (stored as Id<"copilotThreads"> | null) ?? null;
+    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
+    return (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null);
   });
   const [streamingText, setStreamingText] = useState("");
   const [activeTools, setActiveTools] = useState<string[]>([]);
@@ -69,17 +93,27 @@ export function useCopilotStream(
 
   // Cada organização tem sua própria thread persistida — recarrega ao trocar de org.
   useEffect(() => {
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId));
-    setThreadId((stored as Id<"copilotThreads"> | null) ?? null);
-  }, [organizationId]);
+    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
+    setThreadId(
+      (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null),
+    );
+  }, [organizationId, purpose]);
+
+  // Avisa quem guarda a thread fora do navegador, só quando ela muda de fato.
+  const reportedThreadRef = useRef<string | null>(initialThreadRef.current);
+  useEffect(() => {
+    if (reportedThreadRef.current === threadId) return;
+    reportedThreadRef.current = threadId;
+    onThreadChangeRef.current?.(threadId);
+  }, [threadId]);
 
   const startNewThread = useCallback(() => {
-    window.localStorage.removeItem(threadStorageKey(organizationId));
+    window.localStorage.removeItem(threadStorageKey(organizationId, purpose));
     setThreadId(null);
     setStreamingText("");
     setActiveTools([]);
     setError(null);
-  }, [organizationId]);
+  }, [organizationId, purpose]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -106,11 +140,12 @@ export function useCopilotStream(
             organizationId,
             threadId: threadIdRef.current ?? undefined,
             message: trimmed,
+            ...(purpose ? { purpose } : {}),
           }),
         });
 
         if (!res.ok || !res.body) {
-          let message = "Falha ao conectar com o copiloto";
+          let message = "Não foi possível conectar com o copiloto.";
           try {
             const data = await res.json();
             if (typeof data?.error === "string") message = data.error;
@@ -149,7 +184,7 @@ export function useCopilotStream(
               case "thread":
                 setThreadId(event.threadId as Id<"copilotThreads">);
                 window.localStorage.setItem(
-                  threadStorageKey(organizationId),
+                  threadStorageKey(organizationId, purpose),
                   event.threadId
                 );
                 break;
@@ -179,7 +214,7 @@ export function useCopilotStream(
         setIsStreaming(false);
       }
     },
-    [isStreaming, organizationId, token]
+    [isStreaming, organizationId, token, purpose]
   );
 
   return {

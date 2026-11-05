@@ -104,13 +104,34 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `warning` | `#EAB308` | Avisos (âmbar — distinto do laranja) |
 | `info` | `#3B82F6` | Informações |
 
+#### Três temas (`data-theme` no `<html>`)
+
+Fonte da verdade: `src/index.css` (canais `--rgb-*`) e `src/lib/themeTokens.test.ts`. Escuro é o `:root`; Claro e Estilo WhatsApp são `[data-theme="light"]` e `[data-theme="whatsapp"]`. O seletor de tema chega depois; hoje os dois blocos novos só valem se o atributo for setado no DevTools.
+
+| Grupo | Token | Escuro | Claro | Estilo WhatsApp |
+|---|---|---|---|---|
+| Base | `surface-base` / `raised` / `overlay` / `sunken` | `#0F0F11` / `#18181B` / `#1F1F23` / `#09090B` | `#FAFAFA` / `#FFFFFF` / `#FFFFFF` / `#F4F4F5` | `#F0F2F5` / `#FFFFFF` / `#FFFFFF` / `#E9EDEF` |
+| Base | `border-default` / `subtle` / `strong` | `#27272A` / `#1E1E22` / `#3F3F46` | `#E4E4E7` / `#EBEBED` / `#D4D4D8` | `#D1D7DB` / `#E9EDEF` / `#AEBAC1` |
+| Base | `text-primary` / `secondary` / `muted` | `#FAFAFA` / `#A1A1AA` / `#71717A` | `#18181B` / `#52525B` / `#6B6B74` | `#111B21` / `#3B4A54` / `#54656F` |
+| Marca | `brand-300` / `400` / `500` | `#FDBA74` / `#FB923C` / `#FF6B00` | `#9A3412` / `#C2410C` / `#C2410C` | `#015C4B` / `#017561` / `#017561` |
+| Marca | `brand-600` (botão) | `#EA580C` | `#AD3A0B` | `#008069` |
+| Semântica | `success` / `error` / `warning` / `info` | `#22C55E` / `#EF4444` / `#EAB308` / `#3B82F6` | `#15803D` / `#B91C1C` / `#8A5A00` / `#1D4ED8` | `#166534` / `#B91C1C` / `#8A5A00` / `#1D4ED8` |
+| IA | `ai-300` / `400` / `500` / `600` / `700` | `#D8B4FE` / `#C084FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#6B21A8` / `#7E22CE` / `#9333EA` / `#7E22CE` / `#6B21A8` | igual ao Claro |
+| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#9A3412` / `#7E22CE` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` |
+| Chat | `bubble-out-fg` | `#FFFFFF` | `#FFFFFF` | `#111B21` |
+
+`ai-*` substitui o `purple-*` do Tailwind (proibido em `src`, exceto `developers/JsonHighlighter.tsx`). A tabela completa de chat, bolhas e sombras está no plano `01-temas.md` §3.5-3.6. Divergência do plano: `bubble-out` do Claro é `#9A3412` (= `brand-700` do Claro), não `#C2410C`, porque o rodapé a 75% de branco só atinge 3,58:1 com `#C2410C`; com `#9A3412` chega a 4,80:1 (7,31 com branco pleno, 6,38 com o rótulo). A tabela 3.5 do plano continua com `#C2410C`, mas o valor ajustado vale e não deve ser revertido. Nessa bolha `bubble-out-fg/70` dá 4,20 e `/60` 3,49: use essas opacidades só em ícones, não em texto.
+
 #### Conformidade de Contraste
 
-Todos os pares de texto/fundo atendem WCAG AA:
-- `#FAFAFA` sobre `#0F0F11` → 18.1:1 (AAA)
-- `#A1A1AA` sobre `#0F0F11` → 7.2:1 (AAA)
-- `#71717A` sobre `#0F0F11` → 4.6:1 (AA)
-- Botões primários usam `brand-600` (`#EA580C`, 4.6:1 com branco) em vez de `brand-500` para conformidade AA em texto de corpo
+Claro e Estilo WhatsApp passam em todos os pares AA do teste (texto 4,5:1; ícones e tique 3:1). O Escuro é mantido idêntico ao app anterior e falha os pares abaixo (valores medidos; lista `DARK_KNOWN_FAILURES`):
+
+- `text-muted` sobre `surface-base` 3,96, `raised` 3,67, `overlay` 3,40, `sunken` 4,12
+- Branco sobre `brand-600` 3,56, `success` 2,28, `error` 3,76, `warning` 1,92, `info` 3,68
+- Bolha da equipe (`bubble-out`): `bubble-out-fg` 3,56 (a 75%: 2,60), `bubble-out-label` 2,63, `bubble-out-link` 3,56, `tick-read` 1,57
+- `bubble-ai-label` sobre `bubble-ai` 4,06; `badge-unread-fg` 3,56; `bubble-system-fg` 3,40
+
+Esses pares só podem sair da lista quando passarem; pares novos que falhem quebram o teste.
 
 ### 1.3 Configuração TailwindCSS
 
@@ -236,6 +257,8 @@ Small:    13px / 18px / Regular (400)                → Mantém
 Caption:  11px / 14px / Medium (500)                 → md: 12px / 16px
 ```
 
+Utilitários Tailwind: `text-caption` (12px / 16px, mínimo legível para texto de apoio) e `text-micro` (11px / 14px, só para selos e marcadores). Para alvos de toque use a variante `coarse:` (`(pointer: coarse)`), por exemplo `coarse:min-h-11` (44px).
+
 ### 2.2 Pesos Utilizados
 
 | Peso | Nome | Uso |
@@ -283,6 +306,10 @@ Todos os botões seguem o formato **pill** (bordas totalmente arredondadas).
 | `sm` | 32px | 12px | 13px | Ações inline, tabelas |
 | `md` | 40px | 16px | 14px | Padrão desktop |
 | `lg` | 48px | 24px | 16px | CTAs mobile (touch target) |
+
+`sm` e `md` ganham `coarse:min-h-11` (44px em telas de toque); `iconOnly` é um quadrado de 40px (`coarse:` 44px) e exige `aria-label`; `loading` mostra spinner, `aria-busy` e desabilita. O anel de foco usa `focus-visible:` (aparece só ao navegar por teclado).
+
+**Estrutura de página:** `PageHeader` (único `<h1>`, voltar com `aria-label="Voltar"`, selo e ações que quebram para baixo no mobile); `SectionCard` (`<section aria-labelledby>` com `<h2>`, descrição, ícone e ações); `EmptyState` (ícone, título `h2`/`h3`, descrição, ação principal e secundária, `size` `sm`/`md`).
 
 **Especificações:**
 - Border-radius: `rounded-full` (pill)
@@ -341,6 +368,16 @@ Todos os botões seguem o formato **pill** (bordas totalmente arredondadas).
 - **Com label:** Label acima, texto `text-secondary`, font `13px medium`
 - **Com erro:** Borda `semantic-error`, mensagem de erro abaixo em `text-semantic-error`
 - **Com ícone:** Ícone à esquerda com `padding-left: 40px`
+
+### 3.2.1 Controles de formulário
+
+Primitivos em `src/components/ui/`, todos com teste de teclado e `aria-*`:
+
+- `Switch`: `button role="switch"`, rótulo clicável (ou `hideLabel` quando o texto está fora), área de toque de 44 px também no `sm`.
+- `Select`: `<select>` nativo estilizado, `text-base md:text-sm`, opções planas (`options`) ou agrupadas (`groups`).
+- `SegmentedControl`: escolha única entre poucas opções (`radiogroup`, setas).
+- `Tabs` + `TabPanel`: `tablist`/`tab`/`tabpanel`, setas, Home/End; rolagem horizontal no celular. Variantes `underline` e `pills`.
+- `FormField` e `Textarea`: rótulo, dica e erro ligados por id; `(opcional)` com `showOptional`; contador com `maxLength`.
 
 ### 3.3 Cards
 
@@ -694,20 +731,21 @@ export function Card({
 
 ### 8.3 Tema
 
-O app usa **dark mode como padrão**. Light mode é suportado via classe `.light` no `<html>`:
+Os tokens de cor são canais RGB (`--rgb-*`) com alfa funcionando (`bg-surface-base/50`); CSS cru e `style={{}}` usam os aliases `var(--surface-*)`, `var(--text-*)`, `var(--border-*)` e `var(--color-semantic-*)`. Há tokens de chat (`chat-*`, `composer*`, `bubble-*`, `tick-read`, `badge-unread*`) e a escala `ai-300..700`. Os valores do Escuro estão congelados em `src/lib/themeTokens.test.ts`.
 
-```typescript
-// Dark mode (padrão):
-// Background: bg-surface-base (#0F0F11)
-// Cards: bg-surface-raised (#18181B)
-// Texto: text-text-primary (#FAFAFA)
+Bolhas por tema (`getBubbleStyle`, `src/components/inbox/MessageBubble.tsx`): nota interna `bg-bubble-note` com borda tracejada `border-bubble-note-border/30`; entrada `bg-bubble-in` (branca no Claro e no Estilo WhatsApp); equipe `bg-bubble-out` (laranja escuro no Claro, verde `#D9FDD3` no Estilo WhatsApp); IA `bg-bubble-ai` sólida. Dentro da bolha de saída use `bubble-out-fg[/N]` (texto e fundos translúcidos), `bubble-out-link` e `bubble-in-link` nos links; `/70` e `/60` de `bubble-out-fg` só em ícones. A área de mensagens usa `bg-chat-bg chat-wallpaper`, o cabeçalho `bg-chat-header`, o composer `bg-composer` e `bg-composer-field`. No Escuro a única diferença visível é a bolha da IA: `purple-600/80` virou o sólido `#792CBF`, até 1 nível por canal. O `src/lib/rawColorsGuard.test.ts` impede cor crua nova (catraca por arquivo).
 
-// Light mode (classe .light no <html>):
-// As CSS custom properties são sobrescritas automaticamente
-// Background: bg-surface-base (#FAFAFA)
-// Cards: bg-surface-raised (#FFFFFF)
-// Texto: cores escuras do Tailwind
+O app tem três temas: Escuro (padrão, `:root`), Claro e Estilo WhatsApp. O tema é o atributo `data-theme` no `<html>` (`light` ou `whatsapp`; sem atributo = Escuro). Tem de ser no `<html>`: os aliases (`--surface-*`, `--text-*`...) são resolvidos no elemento onde foram declarados, então um tema em wrapper deixaria os aliases na paleta do Escuro. Os aliases ficam só em `:root`.
+
+Use sempre tokens, que mudam sozinhos com o tema. Para o par inevitável claro/escuro (ex.: `WhatsAppPreview`, cores fixas do WhatsApp), use a variante `light-theme:`, que vale para Claro e Estilo WhatsApp:
+
+```tsx
+<div className="bg-[#005c4b] light-theme:bg-[#d9fdd3]" />
 ```
+
+Como escolher: (1) token semântico (`bg-surface-raised`, `text-text-secondary`, `bg-bubble-in`...), que muda sozinho; (2) escala com alfa (`bg-brand-500/10`); (3) `light-theme:` só quando a cor é um dado fixo que precisa de par claro/escuro; (4) nunca classe de paleta crua nem `[#hex]` em arquivo novo (`rawColorsGuard`). Tokens de chat: `bg-chat-bg|chat-header|chat-send`, `bg-composer`, `bg-composer-field`, `bg-bubble-in|out|ai|note|system`, `text-bubble-out-fg|out-label|ai-label|note-label|in-link|out-link|system-fg`, `border-bubble-note-border`, `text-tick-read`, `bg-badge-unread` + `text-badge-unread-fg`, `shadow-bubble` e `.chat-wallpaper`.
+
+Seletor: o `AppearancePicker` (`src/components/settings/`) aparece na sidebar e no "Mais" (via `ThemePickerModal`) e em Configurações › Conta › Aparência (`AppearancePanel`). As miniaturas são a exceção às cores cruas: o hex vem de `THEME_OPTIONS[].preview` (`src/lib/theme.ts`) e entra por `style={{ background }}`, como dado, para não depender do tema ativo.
 
 ---
 
@@ -771,19 +809,23 @@ Todo texto voltado ao usuário será em Português (BR):
 | Chave | Label |
 |---|---|
 | `dashboard` | Painel |
-| `board` | Pipeline |
-| `inbox` | Caixa de Entrada |
-| `handoffs` | Repasses |
+| `board` | Funil |
+| `inbox` | Conversas |
+| `handoffs` | Requer atenção |
+| `calendar` | Agenda |
+| `central` | Relatórios |
 | `team` | Equipe |
-| `audit` | Auditoria |
+| `audit` | Histórico de alterações |
 | `settings` | Configurações |
+
+Os ids (chaves) e as rotas não mudam; só o rótulo. A fonte é `src/lib/vocab.ts` (`VOCAB`).
 
 ### Autenticação
 | Chave | Texto |
 |---|---|
 | `signIn` | Entrar |
 | `signUp` | Cadastrar |
-| `email` | Email |
+| `email` | E-mail |
 | `password` | Senha |
 | `signInAnonymous` | Entrar anonimamente |
 | `or` | ou |
@@ -823,7 +865,20 @@ Todo texto voltado ao usuário será em Português (BR):
 | `search` | Buscar |
 | `filter` | Filtrar |
 | `export` | Exportar |
-| `loading` | Carregando... |
+| `loading` | Carregando… |
 | `noResults` | Nenhum resultado encontrado |
 | `confirm` | Confirmar |
 | `back` | Voltar |
+
+### Capitalização e pontuação
+- **Sentence case** em tudo (menu, títulos, abas, botões, cabeçalhos de card, opções de select): "Adicionar nota", "Novo funil", "Campos personalizados". Só nomes próprios e siglas ficam em maiúscula: WhatsApp, Instagram, Messenger, Telegram, Meta, Google, LGPD, Pix, QR code, CSV, UTM, IA.
+- "E-mail" com hífen. Reticências com um caractere ("Salvando…"). A IA é feminina ("a IA", "ela responde"); texto na segunda pessoa ("você", "sua equipe").
+- Critério de emoji: `grep -rn "📎" src --exclude=EmojiPickerButton.tsx` deve ficar vazio (o seletor de emoji da conversa oferece 📎 como conteúdo, não como ícone da interface).
+- `vocabGuard.test.ts` confere os botões e os rótulos de navegação do escopo (`SENTENCE_CASE_SCOPE`).
+
+### Toasts
+- **Sucesso:** particípio, sem "com sucesso" e sem exclamação: "Lead criado", "Etapa excluída".
+- **Erro:** "Não foi possível {verbo}." + o que fazer, quando houver: "Não foi possível salvar. Tente de novo." A mensagem de `ConvexError` do servidor tem prioridade e aparece como está (`mutationErrorMessage`).
+
+### Glossário resumido
+Um nome por conceito, definido em `src/lib/vocab.ts`: **Conversas** (era Caixa de Entrada), **Requer atenção** (Repasses; cada item é um "pedido de ajuda"; ações "Assumir conversa" e "Devolver à IA"), **Funil** e **Etapa** (Pipeline, Board, Estágio), **Atendente IA** (Atendente virtual), **Copiloto** (assistente da equipe), **Sugerir respostas** / **Responder sozinha** (Autopilot), **Resposta sugerida** (rascunho da IA), **WhatsApp oficial (Meta)** e **WhatsApp por QR code** (Cloud API, bridge), **Conectar número**, **Etiqueta** (Tag), **Origem**, **Histórico de alterações** (Auditoria), **Relatórios** (Central), **Agenda** (Calendário), **Descadastrados** (Opt-out), **Ramo de atividade** (Setor do negócio) e **Departamento**, **Atendente** / **Administrador** / **Gerente** (papéis), **Modo quadro** / **Modo lista** e **Filtros salvos** (Visão). Termos técnicos (Webhooks, Chaves de integração, Modelo de IA) só em Configurações › Avançado e em `/developers`. Tabela completa e justificativas: `.claude/plans/frontend-v2/03-reorganizacao-vocabulario.md` §1.2.

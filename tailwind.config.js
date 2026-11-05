@@ -1,47 +1,61 @@
+import plugin from "tailwindcss/plugin";
+
+// Color tokens are RGB channels defined in src/index.css; <alpha-value> enables `/NN`.
+const c = (name) => `rgb(var(--rgb-${name}) / <alpha-value>)`;
+const scale = (name, steps) => Object.fromEntries(steps.map((s) => [s, c(`${name}-${s}`)]));
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        brand: {
-          50:  '#FFF7ED',
-          100: '#FFEDD5',
-          200: '#FED7AA',
-          300: '#FDBA74',
-          400: '#FB923C',
-          500: '#FF6B00',
-          600: '#EA580C',
-          700: '#C2410C',
-          800: '#9A3412',
-          900: '#7C2D12',
-        },
+        brand: scale("brand", [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]),
+        ai: scale("ai", [300, 400, 500, 600, 700]),
         surface: {
-          base:    'var(--surface-base)',
-          raised:  'var(--surface-raised)',
-          overlay: 'var(--surface-overlay)',
-          sunken:  'var(--surface-sunken)',
+          base:    c("surface-base"),
+          raised:  c("surface-raised"),
+          overlay: c("surface-overlay"),
+          sunken:  c("surface-sunken"),
         },
         border: {
-          DEFAULT: 'var(--border-default)',
-          subtle:  'var(--border-subtle)',
-          strong:  'var(--border-strong)',
+          DEFAULT: c("border-default"),
+          subtle:  c("border-subtle"),
+          strong:  c("border-strong"),
         },
         text: {
-          primary:   'var(--text-primary)',
-          secondary: 'var(--text-secondary)',
-          muted:     'var(--text-muted)',
+          primary:   c("text-primary"),
+          secondary: c("text-secondary"),
+          muted:     c("text-muted"),
         },
         semantic: {
-          success: '#22C55E',
-          error:   '#EF4444',
-          warning: '#EAB308',
-          info:    '#3B82F6',
+          success: c("semantic-success"),
+          error:   c("semantic-error"),
+          warning: c("semantic-warning"),
+          info:    c("semantic-info"),
         },
+        chat: { bg: c("chat-bg"), header: c("chat-header"), send: c("chat-send") },
+        composer: { DEFAULT: c("composer"), field: c("composer-field") },
+        bubble: {
+          in:            c("bubble-in"),
+          "in-link":     c("bubble-in-link"),
+          out:           c("bubble-out"),
+          "out-fg":      c("bubble-out-fg"),
+          "out-label":   c("bubble-out-label"),
+          "out-link":    c("bubble-out-link"),
+          ai:            c("bubble-ai"),
+          "ai-label":    c("bubble-ai-label"),
+          note:          c("bubble-note"),
+          "note-label":  c("bubble-note-label"),
+          "note-border": c("bubble-note-border"),
+          system:        c("bubble-system"),
+          "system-fg":   c("bubble-system-fg"),
+        },
+        tick: { read: c("tick-read") },
+        badge: { unread: c("badge-unread"), "unread-fg": c("badge-unread-fg") },
       },
       fontFamily: {
         sans: ['"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
@@ -52,13 +66,19 @@ export default {
         field: '8px',
       },
       boxShadow: {
-        card:        '0 1px 3px rgba(0, 0, 0, 0.3)',
-        'card-hover': '0 4px 12px rgba(0, 0, 0, 0.4)',
-        elevated:    '0 8px 24px rgba(0, 0, 0, 0.5)',
-        glow:        '0 0 20px rgba(255, 107, 0, 0.15)',
+        card:         'var(--shadow-card)',
+        'card-hover': 'var(--shadow-card-hover)',
+        elevated:     'var(--shadow-elevated)',
+        glow:         'var(--shadow-glow)',
+        bubble:       'var(--shadow-bubble)',
       },
       screens: {
         xs: '375px',
+        coarse: { raw: '(pointer: coarse)' },
+      },
+      fontSize: {
+        caption: ['12px', { lineHeight: '16px' }],
+        micro: ['11px', { lineHeight: '14px' }],
       },
       animation: {
         'fade-in':       'fadeIn 200ms ease-out',
@@ -131,5 +151,10 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [
+    // Pairs that must differ between dark and the light themes (light + whatsapp).
+    plugin(({ addVariant }) =>
+      addVariant("light-theme", ':is([data-theme="light"],[data-theme="whatsapp"]) &'),
+    ),
+  ],
 }

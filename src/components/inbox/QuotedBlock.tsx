@@ -21,15 +21,15 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
     <div
       className={cn(
         "flex flex-col gap-0.5 border-l-2 pl-2 py-1 rounded-r text-left",
-        outbound ? "border-white/70 bg-white/10" : "border-brand-500 bg-surface-sunken/60",
+        outbound ? "border-bubble-out-fg/70 bg-bubble-out-fg/10" : "border-brand-500",
         onJump && "cursor-pointer transition-colors",
-        onJump && (outbound ? "hover:bg-white/20" : "hover:bg-surface-sunken")
+        onJump && (outbound ? "hover:bg-bubble-out-fg/20" : "hover:bg-surface-sunken")
       )}
     >
       <span
         className={cn(
-          "text-[11px] font-semibold",
-          outbound ? "text-white/90" : "text-brand-400"
+          "text-caption font-semibold",
+          outbound ? "text-bubble-out-fg/90" : "text-bubble-in-link"
         )}
       >
         {author}
@@ -37,7 +37,7 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
       <span
         className={cn(
           "text-xs truncate max-w-[240px]",
-          outbound ? "text-white/80" : "text-text-secondary"
+          outbound ? "text-bubble-out-fg/80" : "text-text-secondary"
         )}
       >
         {preview}

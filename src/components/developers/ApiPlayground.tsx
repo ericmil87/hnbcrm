@@ -357,7 +357,7 @@ export function ApiPlayground({ initialEndpointId, fullPage, onEndpointChange }:
                     {response && (
                       <Badge
                         variant={response.status >= 200 && response.status < 300 ? "success" : "error"}
-                        className="text-[10px] px-1.5 py-0"
+                        className="text-caption px-1.5 py-0"
                       >
                         {response.status}
                       </Badge>
@@ -462,7 +462,7 @@ function EmptyState() {
           return (
             <span
               key={cat}
-              className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-surface-overlay border border-border text-text-secondary"
+              className="px-2.5 py-1 rounded-full text-caption font-medium bg-surface-overlay border border-border text-text-secondary"
             >
               {cat} ({count})
             </span>

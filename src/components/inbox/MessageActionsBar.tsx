@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
 import { Reply, Smile, Forward, FileText, ScanText } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -85,27 +86,29 @@ export function MessageActionsBar({
         </>
       )}
       {onTranscribe && (
-        <button
-          type="button"
-          onClick={onTranscribe}
-          className={BTN}
-          aria-label="Transcrever áudio"
-          title="Transcrever"
-        >
-          <FileText size={16} />
-        </button>
+        <Tooltip content="Transcrever áudio">
+          <button
+            type="button"
+            onClick={onTranscribe}
+            className={BTN}
+            aria-label="Transcrever áudio"
+          >
+            <FileText size={16} />
+          </button>
+        </Tooltip>
       )}
 
       {onDescribeImage && (
-        <button
-          type="button"
-          onClick={onDescribeImage}
-          className={BTN}
-          aria-label="Ler imagem"
-          title="Ler imagem"
-        >
-          <ScanText size={16} />
-        </button>
+        <Tooltip content="Ler imagem">
+          <button
+            type="button"
+            onClick={onDescribeImage}
+            className={BTN}
+            aria-label="Ler imagem"
+          >
+            <ScanText size={16} />
+          </button>
+        </Tooltip>
       )}
 
       {pickerOpen && (

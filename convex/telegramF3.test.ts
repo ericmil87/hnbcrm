@@ -15,7 +15,7 @@ import { createNotification } from "./lib/notify";
 import { maybeScheduleAiReplyRelay } from "./lib/telegramRelay";
 import { runAttendantCopilotWriteTool } from "./lib/copilotAttendantTools";
 import { buildConversationContextBlock, loadFocusContextInput } from "./lib/telegramContext";
-import { autoModeDescription, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
+import { autoModeDescription, autoTurnAllowsTool, autoWriteTools, effectiveAssistantMode, parseSuggestion } from "./lib/telegramAssistant";
 import { handleModeCommand } from "./lib/telegramActions";
 import { buildTourCard } from "./lib/telegramOnboarding";
 import { COPILOT_COPY } from "./telegramCopilot";
@@ -315,7 +315,7 @@ describe("turno do Copiloto pelo Telegram (D9/D10)", () => {
   test("copilotEnabled:false e teto de gastos: cópias da §4.10, sem chamar o modelo", async () => {
     await seed({ copilotEnabled: false });
     await say("oi");
-    expect(sends()[0].body.text).toBe("🤖 O Copiloto está desligado na Acme Corp. Um admin liga em Configurações → IA.");
+    expect(sends()[0].body.text).toBe("🤖 O Copiloto está desligado na Acme Corp. Um admin liga em Configurações › Atendente IA.");
     expect(llmCalls).toHaveLength(0);
   });
 
@@ -549,6 +549,26 @@ describe("modos (D22)", () => {
     const tools = autoWriteTools({ assistant: { autoAllowed: { instructAi: true, createTask: true, moveStage: false, acceptHandoff: true, replyCustomer: false } } } as any);
     expect(tools).not.toContain("sendCustomerReply");
     expect(tools).not.toContain("deleteLead");
+  });
+
+  test("turno automático não recebe as leituras de configuração do atendente", () => {
+    const allowed = new Set(["createTask"]);
+    expect(autoTurnAllowsTool({ name: "getAttendantConfig", effect: "read" }, allowed)).toBe(false);
+    expect(autoTurnAllowsTool({ name: "getAttendantSetupGuide", effect: "read" }, allowed)).toBe(false);
+    expect(autoTurnAllowsTool({ name: "listLeads", effect: "read" }, allowed)).toBe(true);
+    expect(autoTurnAllowsTool({ name: "createTask", effect: "write" }, allowed)).toBe(true);
+    expect(autoTurnAllowsTool({ name: "setAttendantMode", effect: "write" }, allowed)).toBe(false);
+  });
+
+  test("autoWriteTools nunca inclui tools de config", () => {
+    const everything = { assistant: { autoAllowed: { instructAi: true, createTask: true, moveStage: true, acceptHandoff: true, replyCustomer: true } } } as any;
+    const tools = autoWriteTools(everything);
+    for (const name of [
+      "updateAttendantPersona", "updateAttendantKnowledge", "setAttendantMode", "setAttendantHours",
+      "setHandoffRules", "setFollowUpSettings", "setAiFeatures",
+    ]) {
+      expect(tools).not.toContain(name);
+    }
   });
 
   test("decisão (D22 emendada): repasse nunca vira turno automático; mensagem em foco sim; teto 20/h → cartão", async () => {

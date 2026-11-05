@@ -153,7 +153,7 @@ export function StepMessage({ organizationId, campaignId, draft, setDraft, edita
         )}
         {isMeta && kind === "text" && !canFreeText && (
           <Warn>
-            Na Cloud API só é possível enviar texto livre para quem escreveu nas últimas 24h. Para números novos, use um template ou
+            No WhatsApp oficial só é possível enviar texto livre para quem escreveu nas últimas 24h. Para números novos, use um template ou
             filtre o público por "janela aberta".
           </Warn>
         )}
@@ -279,7 +279,7 @@ export function StepMessage({ organizationId, campaignId, draft, setDraft, edita
 
             {needsVariants && !hasVariation && (
               <Warn>
-                No bridge, acima de {BRIDGE_MIN_VARIANTS_ABOVE} destinatários é obrigatório variar o texto: crie 2+ variantes ou use spintax{" "}
+                No WhatsApp por QR code, acima de {BRIDGE_MIN_VARIANTS_ABOVE} destinatários é obrigatório variar o texto: crie 2+ variantes ou use spintax{" "}
                 <code className="text-text-primary">{"{oi|olá|bom dia}"}</code>. Texto idêntico em massa é o sinal de spam mais fácil de detectar.
               </Warn>
             )}
@@ -481,7 +481,7 @@ function VariantEditor({
             onRecorded={(file) => onAttachments([file])}
           />
         )}
-        <span className="text-[11px] text-text-muted">
+        <span className="text-caption text-text-muted">
           Imagem, vídeo (mp4 ≤16 MB), áudio ou documento. Só o primeiro anexo vai na mensagem.
           {usedVars.length > 0 ? ` · variáveis: ${usedVars.join(", ")}` : ""}
         </span>
@@ -534,7 +534,7 @@ function VarMenu({ vars, onPick, disabled }: { vars: string[]; onPick: (k: strin
                 </button>
               );
             })}
-            <p className="px-3 py-1.5 text-[11px] text-text-muted">
+            <p className="px-3 py-1.5 text-caption text-text-muted">
               Fallback: <span className="font-mono">{"{{nome|cliente}}"}</span>
             </p>
           </div>
@@ -589,7 +589,7 @@ function TemplateEditor({
       const r = await sync({ channelConfigId });
       toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao sincronizar templates"));
+      toast.error(mutationErrorMessage(e, "Não foi possível sincronizar os templates."));
     } finally {
       setSyncing(false);
     }
@@ -709,7 +709,7 @@ function TemplateEditor({
               ))}
             </div>
           )}
-          <p className="text-[11px] text-text-muted">
+          <p className="text-caption text-text-muted">
             Template de marketing é cobrado por mensagem entregue; utility dentro da janela é grátis. A Meta pode segurar templates novos
             (pacing) e pausa os que caem para qualidade vermelha.
           </p>

@@ -100,3 +100,23 @@ export function filterMembers<
     return name.includes(normalizedQuery) || email.includes(normalizedQuery);
   });
 }
+
+/**
+ * Menção "@algo" em digitação nos comentários de tarefa (formato "@Nome ",
+ * sem token): precisa haver um "@" antes do caret, precedido por início de
+ * texto ou espaço, e sem espaço entre o "@" e o caret (senão a menção já foi
+ * "fechada"). Devolve onde o "@" está e o que foi digitado depois dele.
+ */
+export function detectMentionTrigger(
+  text: string,
+  caret: number
+): { start: number; query: string } | null {
+  const upToCaret = text.slice(0, caret);
+  const at = upToCaret.lastIndexOf("@");
+  if (at === -1) return null;
+  const prevChar = at > 0 ? upToCaret[at - 1] : " ";
+  if (!/\s/.test(prevChar)) return null;
+  const query = upToCaret.slice(at + 1);
+  if (/\s/.test(query)) return null;
+  return { start: at, query };
+}

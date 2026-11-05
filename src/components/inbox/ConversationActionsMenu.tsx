@@ -93,7 +93,7 @@ export function ConversationActionsMenu({
       setOpen(false);
       onArchivedChange?.(!archived);
     } catch {
-      toast.error("Falha ao arquivar conversa");
+      toast.error("Não foi possível arquivar a conversa.");
     }
   };
 
@@ -101,7 +101,7 @@ export function ConversationActionsMenu({
     try {
       await toggleLabel({ conversationId, labelId });
     } catch {
-      toast.error("Falha ao aplicar etiqueta");
+      toast.error("Não foi possível aplicar a etiqueta.");
     }
   };
 
@@ -114,7 +114,7 @@ export function ConversationActionsMenu({
       setNewName("");
       setCreating(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Falha ao criar etiqueta");
+      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Não foi possível criar a etiqueta.");
     }
   };
 
@@ -123,7 +123,7 @@ export function ConversationActionsMenu({
       await deleteLabel({ labelId });
       toast.success(`Etiqueta "${name}" excluída`);
     } catch {
-      toast.error("Falha ao excluir etiqueta");
+      toast.error("Não foi possível excluir a etiqueta.");
     }
   };
 
@@ -158,7 +158,7 @@ export function ConversationActionsMenu({
             {archived ? "Desarquivar conversa" : "Arquivar conversa"}
           </button>
 
-          <p className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted border-t border-border mt-1">
+          <p className="px-3 pt-2 pb-1 text-caption font-semibold uppercase tracking-wide text-text-muted border-t border-border mt-1">
             Etiquetas
           </p>
           {labels === undefined ? (

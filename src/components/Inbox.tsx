@@ -1,698 +1,129 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useOutletContext, useNavigate, useSearchParams, useLocation } from "react-router";
-import { useQuery, useMutation, useAction } from "convex/react";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { useState } from "react";
+import { useOutletContext, useNavigate } from "react-router";
+import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
 import { TAB_ROUTES } from "@/lib/routes";
-import { toast } from "sonner";
-import { Send, ArrowLeft, ArrowLeftRight, Clock, X, Reply, Mic, Image as ImageIcon, Video, FileText, Search, Check, CheckSquare, ExternalLink, Users, LogOut, EyeOff, Sparkles, Bot, MessageSquarePlus, BarChart3, MapPin, UserRound, Calendar, Link2, Phone, HelpCircle, Images, MousePointerClick } from "lucide-react";
+import { VOCAB } from "@/lib/vocab";
+import { ArrowLeft, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
-import { mutationErrorMessage } from "@/lib/errors";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { Badge } from "@/components/ui/Badge";
-import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
-import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
-import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
-import {
-  INBOX_FILTER_STORAGE_KEY,
-  accountFullLabel,
-  accountChipOptions,
-  type InboxFilterState,
-  channelIcon,
-  channelLabel,
-  parseStoredInboxFilter,
-  sanitizeInboxFilter,
-  shouldShowAccount,
-  showChannelChip,
-  viaLabel,
-} from "@/lib/channelAccounts";
-import {
-  channelSupports,
-  formatTextCounter,
-  measureText,
-  textLimitFor,
-  textNeedsSplit,
-  textPartsCount,
-  mediaSendBlocked,
-  MEDIA_BLOCKED_HINT,
-} from "@/lib/channelCapabilities";
-import {
-  STANDBY_BANNER_TEXT,
-  type ServiceWindowKind,
-  getServiceWindowInfo,
-  isComposerBlockedByWindow,
-} from "@/lib/serviceWindow";
-import { Avatar } from "@/components/ui/Avatar";
+import { channelSupports } from "@/lib/channelCapabilities";
+import { STANDBY_BANNER_TEXT } from "@/lib/serviceWindow";
 import { Spinner } from "@/components/ui/Spinner";
-import { Button } from "@/components/ui/Button";
-import { useKeepPrevious } from "@/hooks/useKeepPrevious";
-import { useInfiniteSentinel } from "@/hooks/useInfiniteSentinel";
-import {
-  CONVERSATIONS_DEFAULT_LIMIT,
-  CONVERSATIONS_MAX_LIMIT,
-  LOAD_MORE_STEP,
-  MESSAGES_DEFAULT_LIMIT,
-  MESSAGES_MAX_LIMIT,
-  SEARCH_JUMP_STEP,
-  canLoadMore,
-  limitForKey,
-  nextLimit,
-  scrollTopAfterPrepend,
-} from "@/lib/inboxPaging";
-import { MentionTextarea } from "@/components/ui/MentionTextarea";
-import { Checkbox } from "@/components/ui/Checkbox";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { extractMentionIds } from "@/lib/mentions";
+import { useInboxFilters } from "@/hooks/useInboxFilters";
+import { useConversationList } from "@/hooks/useConversationList";
+import { useConversationSelection } from "@/hooks/useConversationSelection";
+import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
+import { filterConversations } from "@/lib/inboxState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
-import { FileUploadButton, type UploadedFile } from "@/components/ui/FileUploadButton";
-import { MessageBubble } from "@/components/inbox/MessageBubble";
-import { ForwardModal } from "@/components/inbox/ForwardModal";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
-import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
-import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
-import { useQuickReplies, QuickReplyDropdown, QuickRepliesModal } from "@/components/inbox/QuickReplies";
-import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
-import { AiDraftCard, AiConversationControls, ReturnToAiButton, getAiDraft } from "@/components/inbox/AiDraftCard";
-import { FollowUpChip } from "@/components/inbox/FollowUpChip";
-import { LeadDetailPanel } from "@/components/LeadDetailPanel";
-import { ContactDetailPanel } from "@/components/ContactDetailPanel";
-import { GroupMembersPanel, GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
-import { GroupSummaryModal } from "@/components/inbox/GroupSummaryModal";
-import { mentionTokensFor } from "@/components/inbox/GroupMentionText";
-import {
-  useGroupMentions,
-  GroupMentionDropdown,
-} from "@/components/inbox/GroupMentionComposer";
-import { useOrgModules } from "@/hooks/useOrgModules";
-import {
-  InboxQueueBar,
-  EMPTY_QUEUE_FILTER,
-  queueFilterArgs,
-  type InboxQueueFilter,
-} from "@/components/inbox/central/InboxQueueBar";
-import { ColorChip, AttributionIcon, TransferEvent } from "@/components/inbox/central/CentralChips";
+import { usePendingAttentionCount } from "@/components/inbox/AttentionBanner";
+import { Composer } from "@/components/inbox/Composer";
+import { ConversationDeepLinkResolver } from "@/components/inbox/ConversationDeepLinkResolver";
+import { ConversationHeader } from "@/components/inbox/ConversationHeader";
+import { InboxListColumn } from "@/components/inbox/InboxListColumn";
+import type { ConversationListEntry } from "@/components/inbox/ConversationListItem";
+import { ConversationThread } from "@/components/inbox/ConversationThread";
+import { ConversationInteractionProvider, useInteractionState } from "@/components/inbox/conversationInteraction";
+import { InboxOverlays, useInboxOverlays } from "@/components/inbox/InboxOverlays";
+import { useConversationHeaderState } from "@/components/inbox/useConversationHeaderState";
+import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
-import { aiStateReasonLabel } from "@/lib/aiStateReasons";
-import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
-import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
-import { getReactions, isMediaPlaceholder, isVoiceNote, type GroupChatDoc, type InboxMessage } from "@/components/inbox/types";
-
-// Guardrail anti-bot (v0.65): `conversations.botSuspicion` sem `clearedAt` =
-// a IA parou de responder porque o outro lado parece um robô. "Devolver para
-// IA" (ou rejeitar o repasse) limpa no backend.
-type BotSuspicion = {
-  at: number;
-  source: "heuristic" | "model";
-  reason: string;
-  clearedAt?: number;
-};
-
-function activeBotSuspicion(conversation: { botSuspicion?: BotSuspicion } | null | undefined): BotSuspicion | null {
-  const s = conversation?.botSuspicion;
-  return s && s.clearedAt === undefined ? s : null;
-}
-
-// `lead.handoffState` some quando nunca houve repasse; "completed" é repasse
-// já resolvido. Qualquer outro estado = alguém precisa assumir a conversa.
-type LeadHandoffState = { status: string; reason?: string } | undefined | null;
-
-function isHandoffPending(state: LeadHandoffState): boolean {
-  return !!state && state.status !== "completed";
-}
-
-type AiConvState = {
-  status: string;
-  reason: string | null;
-  at: number;
-  afterLastInbound: boolean;
-} | null | undefined;
-
-// "done" ou item antigo (já superado por uma mensagem inbound mais nova) → sem chip.
-function aiStateChipInfo(state: AiConvState): { label: string; tone: "processing" | "waiting" } | null {
-  if (!state || state.status === "done") return null;
-  if (state.status === "pending" || state.status === "processing") {
-    return { label: "IA preparando resposta…", tone: "processing" };
-  }
-  if ((state.status === "skipped" || state.status === "failed") && state.afterLastInbound) {
-    const reasonLabel = state.reason ? aiStateReasonLabel(state.reason) : "motivo desconhecido";
-    return { label: `IA em espera: ${reasonLabel}`, tone: "waiting" };
-  }
-  return null;
-}
-
-// Filtro "Todas / Diretas / Grupos" da lista de conversas.
-type ConversationKindFilter = "all" | "direct" | "group";
-const KIND_FILTER_KEY = "hnbcrm.inbox.kindFilter";
-const KIND_FILTERS: { id: ConversationKindFilter; label: string }[] = [
-  { id: "all", label: "Todas" },
-  { id: "direct", label: "Diretas" },
-  { id: "group", label: "Grupos" },
-];
-
-function readKindFilter(): ConversationKindFilter {
-  try {
-    const stored = window.localStorage.getItem(KIND_FILTER_KEY);
-    if (stored === "direct" || stored === "group" || stored === "all") return stored;
-  } catch {
-    /* localStorage bloqueado (janela anônima, dados de site desligados) */
-  }
-  return "all";
-}
 
 /**
- * Resolve o `?conversation=` que não está na lista carregada (fora do lote carregado
- * ou arquivada). Fica isolado num filho sob ErrorBoundary porque a query
- * quebra para id malformado ou de outra org — nesse caso o deep-link é
- * simplesmente ignorado, sem derrubar a caixa de entrada.
+ * Orquestrador de Conversas (/app/entrada): liga os hooks de filtros, lista,
+ * seleção (URL) e lote à lista, ao cabeçalho, ao thread e ao composer
+ * compartilhados com o painel do lead (ConversationThread e Composer, em inbox/).
  */
-function ConversationDeepLinkResolver({
-  conversationId,
-  onResolve,
-}: {
-  conversationId: Id<"conversations">;
-  onResolve: (conversation: Record<string, any> | null) => void;
-}) {
-  const conversation = useQuery(api.conversations.getConversationById, { conversationId });
-  useEffect(() => {
-    if (conversation === undefined) return;
-    onResolve(conversation as Record<string, any> | null);
-  }, [conversation, onResolve]);
-  return null;
-}
-
 export function Inbox() {
+  usePageTitle(VOCAB.conversations.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
-  const conversationParam = searchParams.get("conversation");
-  const { can, member } = usePermissions(organizationId);
-  const currentMemberId = member?._id ?? null;
-  // "Nova conversa": `?nova=1` abre o modal vazio, `?nova=<contactId>` já com
-  // o contato. A URL é a fonte da verdade (fechar o modal limpa o param).
-  const novaParam = searchParams.get("nova");
-  const novaContactId =
-    novaParam && novaParam !== "1" && /^[a-z0-9]{25,40}$/.test(novaParam)
-      ? (novaParam as Id<"contacts">)
-      : null;
-  const canStartConversation = can("inbox", "reply");
+  const { can } = usePermissions(organizationId);
+  const canReply = can("inbox", "reply");
   const sendableChannels = useQuery(
     api.startConversation.listSendableWhatsappChannels,
-    canStartConversation ? { organizationId } : "skip"
+    canReply ? { organizationId } : "skip"
   );
-  const showNewConversation = canStartConversation && (sendableChannels?.length ?? 0) > 0;
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
-  const [newMessage, setNewMessage] = useState("");
-  const [isInternal, setIsInternal] = useState(false);
-  const [showMessages, setShowMessages] = useState(false);
-  const [stagedFiles, setStagedFiles] = useState<UploadedFile[]>([]);
-  const [now, setNow] = useState(() => Date.now());
+  const showNewConversation = canReply && (sendableChannels?.length ?? 0) > 0;
 
-  // Arquivadas + filtro por etiqueta na lista de conversas.
-  const [showArchived, setShowArchived] = useState(false);
-  const [filterLabelId, setFilterLabelId] = useState<string | null>(null);
-  // Diretas x grupos (v0.57). Persistido porque quem acompanha 30 grupos quase
-  // sempre quer a mesma aba de novo; leitura e escrita protegidas porque o
-  // localStorage lança em janela anônima e com dados de site bloqueados.
-  const [kindFilter, setKindFilter] = useState<ConversationKindFilter>(() => readKindFilter());
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(KIND_FILTER_KEY, kindFilter);
-    } catch {
-      /* sem persistência é só perder a preferência, não quebrar a tela */
-    }
-  }, [kindFilter]);
-
-  // Chips Canal e Conta (D11; valem para WhatsApp com 2+ números, sem módulo
-  // Meta). Persistidos com try/catch, como o filtro acima. O valor salvo é
-  // validado contra as contas atuais antes de virar arg da query.
-  const { accounts: channelAccounts, byId: accountById } = useInboxChannelAccounts(organizationId);
-  const [storedChannelFilter, setStoredChannelFilter] = useState<InboxFilterState>(() => {
-    try {
-      return parseStoredInboxFilter(window.localStorage.getItem(INBOX_FILTER_STORAGE_KEY));
-    } catch {
-      return { channel: null, configId: null };
-    }
-  });
-  const sanitizedFilter = sanitizeInboxFilter(channelAccounts, storedChannelFilter);
-  const channelChipVisible = showChannelChip(channelAccounts);
-  const accountChoices = accountChipOptions(channelAccounts, sanitizedFilter.channel);
-  // Filtro escondido (chip invisível) nunca fica ativo às cegas.
-  const channelFilter: InboxFilterState = {
-    channel: channelChipVisible ? sanitizedFilter.channel : null,
-    configId: accountChoices.length > 0 ? sanitizedFilter.configId : null,
-  };
-  const updateChannelFilter = (next: InboxFilterState) => {
-    setStoredChannelFilter(next);
-    try {
-      window.localStorage.setItem(INBOX_FILTER_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      /* sem persistência é só perder a preferência */
-    }
-  };
-  const channelOptions = Array.from(new Set(channelAccounts.map((a) => a.channel)));
-
-  // Conversa alcançada por deep-link que não está na lista carregada — o
-  // resolver abaixo mantém este estado em dia (o documento continua reativo).
-  const [linkedConversation, setLinkedConversation] = useState<Record<string, any> | null>(null);
-
-  // Seleção múltipla na lista (arquivar/etiquetar em lote).
-  const [selectionMode, setSelectionMode] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
-  const [bulkLabelOpen, setBulkLabelOpen] = useState(false);
-  const [confirmBulk, setConfirmBulk] = useState<
-    null | { action: "archive" | "label"; labelId?: string }
-  >(null);
-
-  // Busca em mensagens (lista de conversas vira lista de resultados).
+  // Busca em mensagens (a lista vira lista de resultados). O termo já chega
+  // com debounce do SearchInput.
   const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedTerm, setDebouncedTerm] = useState("");
   const [searchMonth, setSearchMonth] = useState(""); // "YYYY-MM" ou ""
+  const isSearching = searchTerm.trim().length >= 2;
 
-  // Onda 2 interaction state.
-  const [replyTo, setReplyTo] = useState<InboxMessage | null>(null);
-  const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
-  const [highlightId, setHighlightId] = useState<string | null>(null);
-  const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
-  const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
-  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
-  const [recorderActive, setRecorderActive] = useState(false);
+  // Citação, rascunho e salto pendente: compartilhados entre thread e composer.
+  const interaction = useInteractionState();
 
-  // Painéis sobrepostos à conversa (lead / contato) — trocar de conversa fecha.
-  const [showLeadPanel, setShowLeadPanel] = useState(false);
-  const [showContactPanel, setShowContactPanel] = useState(false);
-  // Grupo: painel de membros e o contato de um membro (D3 — pode não existir).
-  const [showMembersPanel, setShowMembersPanel] = useState(false);
-  const [showGroupSummary, setShowGroupSummary] = useState(false);
-  const [memberContactId, setMemberContactId] = useState<Id<"contacts"> | null>(null);
-  const [confirmGroupAction, setConfirmGroupAction] = useState<null | "unmonitor" | "leave">(null);
-  useEffect(() => {
-    setShowLeadPanel(false);
-    setShowContactPanel(false);
-    setShowMembersPanel(false);
-    // Faltava: o modal de resumo ficava aberto ao trocar de conversa, mostrando
-    // o resumo da sala ANTERIOR (achado menor do review de correção).
-    setShowGroupSummary(false);
-    setMemberContactId(null);
-    setConfirmGroupAction(null);
-  }, [selectedConversation]);
-
-  useEffect(() => {
-    const interval = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Debounce da busca para não disparar uma query por tecla.
-  useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedTerm(searchTerm), 300);
-    return () => window.clearTimeout(timer);
-  }, [searchTerm]);
+  // Filtros (URL: arquivadas e etiqueta; localStorage: tipo e canal; Central: fila),
+  // lista em lotes, conversa aberta (`?conversation=`, `?nova=`) e seleção em lote.
+  const filters = useInboxFilters(organizationId);
+  const { showArchived, kindFilter, filterLabelId, conversationLabels, centralModules, centralEnabled } = filters;
+  const list = useConversationList({
+    organizationId,
+    showArchived,
+    queueArgs: filters.queueArgs,
+    channelArgs: filters.channelArgs,
+    isSearching,
+  });
+  const { validConversations } = list;
+  const selection = useConversationSelection({
+    validConversations,
+    listLoaded: list.conversations !== undefined,
+    showArchived,
+    setShowArchived: filters.setShowArchived,
+    kindFilter,
+    onSelectionChange: interaction.reset,
+    onDraft: interaction.setDraft,
+  });
+  const { selectedConversation, showMessages, currentConversation } = selection;
+  const bulk = useBulkConversationSelection({ organizationId, showArchived });
+  const attentionCount = usePendingAttentionCount(organizationId, can("inbox", "view_own"));
+  const overlays = useInboxOverlays(selectedConversation);
+  const { groupPanels } = overlays;
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
-  // MVP "Central" (opcional por org): filas por setor/unidade, chips e o
-  // roteamento no header. Com os módulos desligados nada disto aparece e
-  // `getConversations` recebe exatamente os args de antes.
-  const { modules: centralModules, anyEnabled: centralEnabled } = useOrgModules(organizationId);
-  const queuesEnabled = centralModules.departments || centralModules.units;
-  const [queueFilter, setQueueFilter] = useState<InboxQueueFilter>(EMPTY_QUEUE_FILTER);
-  const inboxQueues = useQuery(
-    api.conversationRouting.getInboxQueues,
-    queuesEnabled ? { organizationId } : "skip"
-  );
-  const queueArgs = queueFilterArgs(queueFilter, centralModules);
-  const queueFilterActive = Object.keys(queueArgs).length > 0;
-  const unitById = new Map((inboxQueues?.units ?? []).map((u) => [u._id as string, u]));
-  const departmentById = new Map((inboxQueues?.departments ?? []).map((d) => [d._id as string, d]));
-  // IA da org (opt-in): controla os controles de IA no header + rascunhos.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
-  // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
-  const aiConvState = useQuery(
-    api.attendant.getConversationAiState,
-    selectedConversation && aiStatus?.active
-      ? { conversationId: selectedConversation as Id<"conversations"> }
-      : "skip"
-  );
-
-  // Lista em lotes de 50 ("Carregar mais conversas", até 500 — perf Convex
-  // I/O, fase 2). O limite vale para a combinação de filtros do SERVIDOR
-  // (arquivadas + fila); trocar o filtro volta a 50. Os filtros só de tela
-  // (Diretas/Grupos, etiqueta) não mudam a query e mantêm o limite.
-  const channelArgs = {
-    ...(channelFilter.channel
-      ? { channel: channelFilter.channel as "whatsapp" | "instagram" | "messenger" }
-      : {}),
-    ...(channelFilter.configId
-      ? { channelConfigId: channelFilter.configId as Id<"channelConfigs"> }
-      : {}),
-  };
-  const listFilterKey = `${showArchived ? "archived" : "active"}|${JSON.stringify(queueArgs)}|${JSON.stringify(channelArgs)}`;
-  const [listPage, setListPage] = useState<{ key: string | null; limit: number }>(() => ({
-    key: null,
-    limit: CONVERSATIONS_DEFAULT_LIMIT,
-  }));
-  const listLimit = limitForKey(listPage, listFilterKey, CONVERSATIONS_DEFAULT_LIMIT);
-  const conversationsRaw = useQuery(api.conversations.getConversations, {
-    organizationId,
-    ...(showArchived ? { archived: true } : {}),
-    ...queueArgs,
-    ...channelArgs,
-    limit: listLimit,
-  });
-  // Mantém a lista na tela enquanto o lote maior carrega.
-  const conversations = useKeepPrevious(conversationsRaw, listFilterKey);
-  const loadingMoreConversations = conversationsRaw === undefined && conversations !== undefined;
-  // Enquanto o lote maior carrega, o lote MANTIDO (menor que o limite novo)
-  // daria false — o botão sumiria em vez de mostrar "Carregando…".
-  const canLoadMoreConversations =
-    !!conversations &&
-    (loadingMoreConversations ||
-      canLoadMore(conversations.length, listLimit, CONVERSATIONS_MAX_LIMIT));
-  const handleLoadMoreConversations = () =>
-    setListPage({
-      key: listFilterKey,
-      limit: nextLimit(listLimit, LOAD_MORE_STEP, CONVERSATIONS_MAX_LIMIT),
-    });
-
-  const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
-
-  // Thread: as 50 mensagens mais RECENTES; "Carregar mensagens anteriores"
-  // sobe de 50 em 50 até 500. O limite é por conversa (trocar volta a 50).
-  const [messagePage, setMessagePage] = useState<{ key: string | null; limit: number }>(() => ({
-    key: null,
-    limit: MESSAGES_DEFAULT_LIMIT,
-  }));
-  const messageLimit = limitForKey(messagePage, selectedConversation, MESSAGES_DEFAULT_LIMIT);
-  const messagesRaw = useQuery(
-    api.conversations.getMessages,
-    selectedConversation
-      ? { conversationId: selectedConversation as Id<"conversations">, limit: messageLimit }
-      : "skip"
-  );
-  const messages = useKeepPrevious(messagesRaw, selectedConversation);
-  const loadingOlderMessages = messagesRaw === undefined && messages !== undefined;
+  // IA em grupos (F4): o mestre da org + o interruptor do produto. Os recursos
+  // POR GRUPO (responder, radar, digest) ficam na política de cada sala.
+  const groupAiEnabled = Boolean(aiStatus?.active && aiStatus?.groupAgentEnabled);
+  const headerState = useConversationHeaderState(selectedConversation, currentConversation);
 
   // Recorte do mês selecionado → range [início, fim] em ms.
   const monthRange = (() => {
     if (!/^\d{4}-\d{2}$/.test(searchMonth)) return null;
     const [y, m] = searchMonth.split("-").map(Number);
-    return {
-      dateFrom: new Date(y, m - 1, 1).getTime(),
-      dateTo: new Date(y, m, 1).getTime() - 1,
-    };
+    return { dateFrom: new Date(y, m - 1, 1).getTime(), dateTo: new Date(y, m, 1).getTime() - 1 };
   })();
-
-  const isSearching = debouncedTerm.trim().length >= 2;
-
-  // Scroll infinito: o sentinela no fim da lista chama o MESMO handler do
-  // botão quando o usuário rola até lá (o botão fica como fallback — lista
-  // menor que a tela não carrega sozinha, ver lib/infiniteScroll).
-  const conversationListScrollRef = useRef<HTMLDivElement>(null);
-  const conversationListSentinelRef = useInfiniteSentinel({
-    enabled: canLoadMoreConversations && !loadingMoreConversations && !isSearching,
-    loading: loadingMoreConversations,
-    onReach: handleLoadMoreConversations,
-    root: conversationListScrollRef,
-    resetKey: listFilterKey,
-  });
-
   const searchResults = useQuery(
     api.conversations.searchMessages,
-    isSearching
-      ? {
-          organizationId,
-          searchQuery: debouncedTerm,
-          ...(monthRange ?? {}),
-        }
-      : "skip"
+    isSearching ? { organizationId, searchQuery: searchTerm, ...(monthRange ?? {}) } : "skip"
   );
 
-  const scheduledPending = useQuery(
-    api.scheduledMessages.listPending,
-    selectedConversation ? { conversationId: selectedConversation as Id<"conversations"> } : "skip"
-  );
-  const scheduleMessage = useMutation(api.scheduledMessages.schedule);
-  const cancelScheduled = useMutation(api.scheduledMessages.cancel);
-
-  const bulkArchiveConversations = useMutation(api.conversations.bulkSetConversationsArchived);
-  const bulkLabelConversations = useMutation(api.conversations.bulkApplyConversationLabel);
-
-  const sendMessage = useMutation(api.conversations.sendMessage);
-  const reactToMessage = useMutation(api.conversations.reactToMessage);
-  const markConversationRead = useMutation(api.conversations.markConversationRead);
-  const sendTypingState = useMutation(api.conversations.sendTypingState);
-  const transcribe = useAction(api.transcription.transcribe);
-  const describeImage = useAction(api.vision.describeImage);
-  const downloadDeferredMedia = useAction(api.groupChats.downloadDeferredMedia);
-  // Visão é um AND (D10 do plano): IA ativa na org E leitura de imagens ligada.
-  const visionEnabled = Boolean(aiStatus?.active && aiStatus?.visionEnabled);
-  // IA em grupos (F4): o mestre da org + o interruptor do produto. Os recursos
-  // POR GRUPO (responder, radar, digest) ficam na política de cada sala.
-  const groupAiEnabled = Boolean(aiStatus?.active && aiStatus?.groupAgentEnabled);
-
-  // Typing indicator throttle bookkeeping.
-  const typingLastSentRef = useRef(0);
-  const typingPauseTimerRef = useRef<number | null>(null);
-  // markConversationRead de-dupe: last "conversationId:newestInboundId" acted on.
-  const lastReadSigRef = useRef<string | null>(null);
-
-  // Composer textarea — usado para inserir emoji na posição do cursor.
-  const composerInputRef = useRef<HTMLTextAreaElement | null>(null);
-
-  const insertEmoji = (emoji: string) => {
-    const el = composerInputRef.current;
-    if (!el) {
-      setNewMessage((v) => v + emoji);
-      return;
-    }
-    const start = el.selectionStart ?? newMessage.length;
-    const end = el.selectionEnd ?? start;
-    setNewMessage(newMessage.slice(0, start) + emoji + newMessage.slice(end));
-    requestAnimationFrame(() => {
-      el.focus();
-      const pos = start + emoji.length;
-      el.setSelectionRange(pos, pos);
-    });
-  };
-
-  // Agendamento de mensagem — popover com datetime no composer.
-  const [scheduleOpen, setScheduleOpen] = useState(false);
-  const [scheduleValue, setScheduleValue] = useState("");
-
-  const toLocalInputValue = (d: Date) => {
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
-  const openSchedule = () => {
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    d.setMinutes(0, 0, 0);
-    setScheduleValue(toLocalInputValue(d));
-    setScheduleOpen(true);
-  };
-
-  const handleSchedule = async () => {
-    if (!selectedConversation || !newMessage.trim() || !scheduleValue) return;
-    const scheduledAt = new Date(scheduleValue).getTime();
-    if (Number.isNaN(scheduledAt)) return;
-    try {
-      // Menção também no agendado: o "@fulano" sobrevivia como TEXTO mas não
-      // notificava ninguém na entrega (achado menor do review de correção).
-      const trimmed = newMessage.trim();
-      const memberMentions = isGroupConversation ? groupMentions.mentionsFor(trimmed) : [];
-      await scheduleMessage({
-        conversationId: selectedConversation as Id<"conversations">,
-        content: trimmed,
-        scheduledAt,
-        ...(memberMentions.length ? { mentions: memberMentions } : {}),
-      });
-      toast.success(
-        `Mensagem agendada para ${new Date(scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}`
-      );
-      setNewMessage("");
-      setScheduleOpen(false);
-      groupMentions.reset();
-      stopTyping();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Falha ao agendar");
-    }
-  };
-
-  const handleCancelScheduled = async (id: string) => {
-    try {
-      await cancelScheduled({ scheduledMessageId: id as Id<"scheduledMessages"> });
-      toast.success("Agendamento cancelado");
-    } catch {
-      toast.error("Falha ao cancelar agendamento");
-    }
-  };
-
-  // Respostas rápidas — "/" no composer (fora do modo nota interna).
-  const quickReplies = useQuickReplies({
-    organizationId,
-    value: newMessage,
-    enabled: !isInternal,
-    onApply: (content) => {
-      setNewMessage(content);
-      requestAnimationFrame(() => composerInputRef.current?.focus());
-    },
-  });
-
-  // Auto-scroll bookkeeping for the message thread (WhatsApp-style anchoring).
-  const messagesScrollRef = useRef<HTMLDivElement>(null);
-  const nearBottomRef = useRef(true);
-  const scrolledConvRef = useRef<string | null>(null);
-
-  const handleMessagesScroll = () => {
-    const el = messagesScrollRef.current;
-    if (!el) return;
-    // Considera "perto do fim" quando falta menos de 120px para o rodapé.
-    nearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-  };
-
-  // Rolagem guardada ao pedir o lote de mensagens anteriores: quando ele
-  // chega (conteúdo inserido ACIMA), a tela é compensada pela altura nova —
-  // sem isso ela pularia para o topo do histórico.
-  const prependAnchorRef = useRef<{
-    conversationId: string;
-    limit: number;
-    scrollTop: number;
-    scrollHeight: number;
-  } | null>(null);
-
-  const handleLoadOlderMessages = () => {
-    const el = messagesScrollRef.current;
-    if (!selectedConversation) return;
-    const limit = nextLimit(messageLimit, LOAD_MORE_STEP, MESSAGES_MAX_LIMIT);
-    if (el) {
-      prependAnchorRef.current = {
-        conversationId: selectedConversation,
-        limit,
-        scrollTop: el.scrollTop,
-        scrollHeight: el.scrollHeight,
-      };
-    }
-    setMessagePage({ key: selectedConversation, limit });
-  };
-
-  // Scroll infinito no TOPO da thread: rolar até lá chama o mesmo handler do
-  // botão (que tira o snapshot da rolagem ANTES de mudar o limite). A thread
-  // abre no fim, então o sentinela nasce fora de vista e não dispara no mount;
-  // depois do lote a rolagem é compensada e ele sai de vista de novo.
-  const canLoadOlderMessages =
-    !!messages && canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT);
-  const olderMessagesSentinelRef = useInfiniteSentinel({
-    enabled: canLoadOlderMessages && !loadingOlderMessages,
-    loading: loadingOlderMessages,
-    onReach: handleLoadOlderMessages,
-    root: messagesScrollRef,
-    resetKey: selectedConversation,
-  });
-
-  // On conversation switch: force-scroll to the newest message. On new messages:
-  // only stick to the bottom if the user was already near it (reading history stays put).
-  useLayoutEffect(() => {
-    const el = messagesScrollRef.current;
-    if (!el || !messages) return;
-    const anchor = prependAnchorRef.current;
-    if (anchor && anchor.conversationId !== selectedConversation) prependAnchorRef.current = null;
-    if (
-      anchor &&
-      anchor.conversationId === selectedConversation &&
-      anchor.limit === messageLimit &&
-      messagesRaw !== undefined
-    ) {
-      prependAnchorRef.current = null;
-      el.scrollTop = scrollTopAfterPrepend(anchor, el.scrollHeight);
-      return;
-    }
-    const switched = scrolledConvRef.current !== selectedConversation;
-    if (switched) {
-      scrolledConvRef.current = selectedConversation;
-      nearBottomRef.current = true;
-      el.scrollTop = el.scrollHeight;
-      return;
-    }
-    if (nearBottomRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages, messagesRaw, messageLimit, selectedConversation]);
-
-  const validConversations = (conversations ?? []).filter(
-    (c): c is NonNullable<typeof c> => c !== null
-  );
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
-  // Os chips aparecem quando há grupo na lista OU quando o filtro guardado não
-  // é "Todas" (review de correção nº 17). Sem a segunda condição, um filtro
-  // "Grupos" persistido numa sessão anterior escondia os próprios chips assim
-  // que a org parava de acompanhar as salas: a caixa ficava vazia para sempre,
-  // sem controle na tela para voltar.
+  // Os chips aparecem com grupo na lista OU filtro guardado diferente de "Todas":
+  // sem a 2ª condição, um filtro "Grupos" persistido escondia os próprios chips
+  // quando a org parava de acompanhar salas, e a caixa ficava vazia sem saída.
   const hasGroupConversations =
     validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
-  const filteredConversations = validConversations.filter((c) => {
-    if (filterLabelId && !((c.labelIds ?? []) as string[]).includes(filterLabelId)) return false;
-    if (kindFilter === "group") return c.kind === "group";
-    if (kindFilter === "direct") return c.kind !== "group";
-    return true;
+  const filteredConversations = filterConversations(validConversations, {
+    kind: kindFilter,
+    labelId: filterLabelId,
   });
-
-  // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
-  // fora da lista carregada (fora do lote carregado, ou arquivada ainda carregando).
-  const conversationInList =
-    conversationParam !== null && validConversations.some((c) => c._id === conversationParam);
-  // Só fixa se ela PERTENCE à aba/filtro em tela: uma conversa ativa aberta por
-  // link aparecia no topo de "Arquivadas" (e um 1:1 no topo de "Grupos") só por
-  // não estar na lista carregada — parecia arquivada sem estar.
-  const linkedMatchesView =
-    !!linkedConversation &&
-    Boolean(linkedConversation.archivedAt) === showArchived &&
-    (kindFilter === "all" ||
-      (kindFilter === "group" ? linkedConversation.kind === "group" : linkedConversation.kind !== "group"));
-  const pinnedConversation =
-    linkedConversation &&
-    linkedMatchesView &&
-    linkedConversation._id === selectedConversation &&
-    !validConversations.some((c) => c._id === linkedConversation._id)
-      ? linkedConversation
-      : null;
-  const listedConversations = pinnedConversation
-    ? [pinnedConversation, ...filteredConversations]
+  const listedConversations: ConversationListEntry[] = selection.pinnedConversation
+    ? [selection.pinnedConversation as ConversationListEntry, ...filteredConversations]
     : filteredConversations;
-  const currentConversation =
-    validConversations.find((c) => c._id === selectedConversation) ??
-    (linkedConversation?._id === selectedConversation ? linkedConversation : undefined);
-  // Capacidades do canal da conversa aberta (matriz em lib/channelCapabilities).
-  const convChannel: string | undefined = currentConversation?.channel;
-  const convTransport: string | undefined = currentConversation?.channelProvider;
-  const canSendTyping = channelSupports(convChannel, convTransport, "typingIndicator");
-  const canUseAiAttendant = channelSupports(convChannel, convTransport, "aiAttendant");
-  const canRecordVoice = channelSupports(convChannel, convTransport, "voiceRecorder");
-  const isWhatsappConversation = convChannel === "whatsapp";
-  const mediaBlocked = mediaSendBlocked(convChannel, convTransport) && !isInternal;
-  const textLimit = textLimitFor(convChannel, convTransport);
-  const contactName =
-    `${currentConversation?.contact?.firstName ?? ""} ${currentConversation?.contact?.lastName ?? ""}`.trim();
 
-  // ── Conversa de GRUPO (v0.57) ──
-  // Uma conversa de grupo NÃO tem lead nem contato: tudo que depende deles
-  // (funil, "Ver lead", repasse, rascunho de IA) sai da tela, e o que a
-  // substitui é a sala — assunto, membros e a política do grupo.
-  const isGroupConversation = currentConversation?.kind === "group";
-  const groupChatId = currentConversation?.groupChatId as Id<"groupChats"> | undefined;
-  const groupChat = useQuery(
-    api.groupChats.getGroup,
-    isGroupConversation && groupChatId ? { groupChatId } : "skip"
-  ) as (GroupChatDoc & { selfKey?: string | null }) | null | undefined;
-  const groupSummary = currentConversation?.groupChat as
-    | { subject: string; jid: string; participantsCount: number }
-    | null
-    | undefined;
-  const groupSubject = groupChat?.subject ?? groupSummary?.subject ?? "Grupo";
-  const groupParticipantsCount =
-    groupChat?.participantsCount ?? groupSummary?.participantsCount ?? 0;
-
-  const setGroupMonitored = useMutation(api.groupChats.setMonitored);
-  const leaveGroup = useAction(api.groupChats.leaveGroup);
+  // Conversa de GRUPO (v0.57): sala, assunto e membros (nomes por JID ficam no thread).
+  const { isGroupConversation, groupChatId, groupChat, groupSubject, groupParticipantsCount } =
+    useGroupMode(currentConversation, undefined);
   // Mexer na sala (acompanhar, entrar, sair) é `settings:manage` (D11).
   const canManageGroups = can("settings", "manage");
   // Disparar para os membros é campanha (F5), não configuração de canal.
@@ -708,880 +139,30 @@ export function Inbox() {
     navigate(`${TAB_ROUTES.campaigns}?novo=1&${params}`);
   };
 
-  // Nome por JID mencionado — alimenta o negrito das menções recebidas (o
-  // corpo traz "@558…" ou "@Fulano", e os dois precisam casar). Perf (onda 2):
-  // resolve só os JIDs que aparecem nas mensagens carregadas, em vez de baixar
-  // a sala inteira (até 1.024 membros) pelo `getGroup`.
-  const mentionedJids = React.useMemo(() => {
-    if (!isGroupConversation || !messages) return [];
-    const set = new Set<string>();
-    for (const m of messages as { mentions?: string[] }[]) {
-      for (const jid of m.mentions ?? []) if (typeof jid === "string" && jid) set.add(jid);
-    }
-    return Array.from(set).sort().slice(0, 100);
-  }, [isGroupConversation, messages]);
-  const mentionNames = useQuery(
-    api.groupChats.resolveGroupMemberNames,
-    isGroupConversation && groupChatId && mentionedJids.length > 0
-      ? { groupChatId, jids: mentionedJids }
-      : "skip"
-  );
-  // Último mapa carregado, para não piscar enquanto a próxima consulta volta —
-  // zerado ao trocar de sala (senão os nomes de uma sala vazariam na outra).
-  const lastMentionNames = useRef<{ jid: string; name: string }[]>([]);
-  const lastMentionNamesGroup = useRef<string | undefined>(groupChatId);
-  if (lastMentionNamesGroup.current !== groupChatId) {
-    lastMentionNamesGroup.current = groupChatId;
-    lastMentionNames.current = [];
-  }
-  if (mentionNames !== undefined) lastMentionNames.current = mentionNames;
-  const groupNameByKey = React.useMemo(() => {
-    const map = new Map<string, string>();
-    for (const { jid, name } of mentionNames ?? lastMentionNames.current) {
-      map.set(jid, name);
-      map.set(jid.split("@")[0], name);
-    }
-    return map;
-  }, [mentionNames, groupChatId]);
-
-  // Menção a membro no grupo: o "@" busca os membros no servidor, o texto
-  // recebe "@<nome>" e os JIDs escolhidos viajam em `mentions[]` no envio.
-  const groupMentions = useGroupMentions({
-    groupChatId: isGroupConversation ? groupChatId : undefined,
-    value: newMessage,
-    enabled: isGroupConversation && !isInternal,
-    onChange: (next, cursorPosition) => {
-      setNewMessage(next);
-      requestAnimationFrame(() => {
-        const el = composerInputRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(cursorPosition, cursorPosition);
-      });
-    },
-  });
-
   const openContactId = currentConversation?.contact?._id as Id<"contacts"> | undefined;
-  const contactHeadingText = currentConversation ? contactName || "Sem nome" : "";
-
-  const renderContactHeading = (className: string) =>
-    isGroupConversation ? (
-      <h2 className={className}>
-        <span className="flex items-center gap-2 min-w-0">
-          <Users size={16} className="shrink-0 text-text-muted" aria-hidden />
-          <span className="truncate">{groupSubject}</span>
-        </span>
-      </h2>
-    ) : openContactId && currentConversation?.contact ? (
-      <h2 className={className}>
-        {/* Nome editável ali mesmo: clicar no nome abre o contato; o lápis (ou
-            o próprio "Sem nome") renomeia sem passar pelo painel do lead. */}
-        <InlineNameEditor
-          contact={currentConversation.contact as InlineNameContact}
-          lead={currentConversation.lead as InlineNameLead}
-          onOpen={() => setShowContactPanel(true)}
-          openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
-        />
-      </h2>
-    ) : (
-      <h2 className={className}>{contactHeadingText}</h2>
-    );
-
-  // Funil do lead da conversa aberta (C2): "Funil: <board> → <estágio>" + lead.
   const openLeadId = currentConversation?.leadId as Id<"leads"> | undefined;
-  const leadBoardId = currentConversation?.lead?.boardId as Id<"boards"> | undefined;
-  const leadStageId = currentConversation?.lead?.stageId as Id<"stages"> | undefined;
-  const leadBoards = useQuery(
-    api.boards.getBoards,
-    leadBoardId ? { organizationId, includeArchived: true } : "skip"
-  ) as
-    | { _id: Id<"boards">; name: string }[]
-    | undefined;
-  const leadStages = useQuery(
-    api.boards.getStages,
-    leadBoardId ? { boardId: leadBoardId } : "skip"
-  ) as { _id: Id<"stages">; name: string }[] | undefined;
-  const leadBoardName = leadBoards?.find((b) => b._id === leadBoardId)?.name;
-  const leadStageName = leadStages?.find((s) => s._id === leadStageId)?.name;
-  const funnelText = (
-    <>
-      Funil: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
-      {" → "}
-      <span className="text-text-secondary font-medium">{leadStageName ?? "…"}</span>
-    </>
-  );
-  const funnelLine = leadBoardId ? (
-    <div className="flex items-center gap-1 min-w-0">
-      {openLeadId ? (
-        <button
-          type="button"
-          onClick={() => setShowLeadPanel(true)}
-          className="flex-1 min-w-0 truncate py-2 -my-2 text-left text-xs text-text-muted hover:text-brand-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
-          aria-label="Ver detalhes do lead"
-        >
-          {funnelText}
-          <span className="ml-1.5 text-brand-500">Ver lead</span>
-        </button>
-      ) : (
-        <span className="flex-1 min-w-0 truncate text-xs text-text-muted">{funnelText}</span>
-      )}
-      <button
-        type="button"
-        onClick={() =>
-          navigate(
-            `${TAB_ROUTES.board}?board=${leadBoardId}` +
-              (openLeadId ? `&lead=${openLeadId}` : "")
-          )
-        }
-        title="Abrir no funil"
-        aria-label="Abrir no funil"
-        className="shrink-0 flex items-center justify-center min-h-[44px] min-w-[44px] -my-3 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
-      >
-        <ExternalLink size={14} />
-      </button>
-    </div>
-  ) : null;
+  const handleBackToList = selection.close;
 
-  // Repasse pendente do lead da conversa aberta → banner com ação inline.
-  const openHandoffState = currentConversation?.lead?.handoffState as LeadHandoffState;
-  const leadHandoffPending = isHandoffPending(openHandoffState);
-  const pendingLeadHandoff = useQuery(
-    api.handoffs.getPendingHandoffForLead,
-    leadHandoffPending && openLeadId ? { leadId: openLeadId } : "skip"
-  ) as { _id: string } | null | undefined;
-
-  // SALA DE GRUPO não tem lead, e o banner âmbar saía de
-  // `conversation.lead.handoffState`: numa sala o operador não via nem que
-  // havia repasse aberto nem o botão de aceitar inline. A fonte aqui é a
-  // CONVERSA (índice `by_conversation_and_status`).
-  const pendingGroupHandoff = useQuery(
-    api.handoffs.getPendingHandoffForConversation,
-    isGroupConversation && currentConversation
-      ? { conversationId: currentConversation._id as Id<"conversations"> }
-      : "skip"
-  ) as { _id: string; reason?: string } | null | undefined;
-
-  const pendingHandoff = isGroupConversation ? pendingGroupHandoff : pendingLeadHandoff;
-  const handoffPending = isGroupConversation ? !!pendingGroupHandoff : leadHandoffPending;
-  const handoffReason = isGroupConversation
-    ? pendingGroupHandoff?.reason
-    : openHandoffState?.reason;
-
-  const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
-  const returnToAi = useMutation(api.attendant.returnToAi);
-
-  // A sala está com a IA em silêncio? (aceitar repasse pausa por 24 h)
-  const groupAiPaused =
-    isGroupConversation &&
-    typeof currentConversation?.aiPausedUntil === "number" &&
-    currentConversation.aiPausedUntil > Date.now();
-
-  const handleAcceptHandoff = () => {
-    if (!pendingHandoff) return;
-    toast.promise(acceptHandoff({ handoffId: pendingHandoff._id as Id<"handoffs"> }), {
-      loading: "Assumindo conversa…",
-      success: isGroupConversation
-        ? "Repasse assumido — a IA da sala fica em silêncio por 24 h"
-        : "Conversa assumida — IA pausada",
-      error: (e) => mutationErrorMessage(e, "Falha ao assumir o repasse"),
-    });
-  };
-
-  /**
-   * Itens de grupo no menu "⋮" da conversa. Parar de acompanhar e sair pedem
-   * confirmação (sair é irreversível pelo CRM — voltar exige convite novo) e
-   * exigem `settings:manage`, o mesmo gate do backend.
-   */
-  const renderGroupMenuItems = (close: () => void) => (
-    <>
-      <button
-        type="button"
-        onClick={() => {
-          close();
-          setShowMembersPanel(true);
-        }}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-      >
-        <Users size={15} />
-        Ver membros
-      </button>
-      {/*
-        Resumo por IA (F4). Fica visível mesmo com a IA de grupos desligada,
-        mas desabilitado com o motivo — esconder o item faria a pessoa procurar
-        um recurso que existe e ela não sabe como ligar.
-      */}
-      <button
-        type="button"
-        disabled={!groupAiEnabled}
-        title={
-          groupAiEnabled
-            ? undefined
-            : "Ative a IA em grupos em Configurações → IA para usar o resumo"
-        }
-        onClick={() => {
-          close();
-          setShowGroupSummary(true);
-        }}
-        className={
-          groupAiEnabled
-            ? "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-            : "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
-        }
-      >
-        <Sparkles size={15} />
-        Resumo por IA
-        {!groupAiEnabled && (
-          <span className="ml-auto text-[10px] uppercase tracking-wide">IA desligada</span>
-        )}
-      </button>
-      {canManageCampaigns && (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            dispatchToGroupMembers("group_members");
-          }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-        >
-          <Send size={15} />
-          Disparar 1 a 1 para os membros
-        </button>
-      )}
-      {/*
-        "Devolver à IA" numa sala (review de correção nº 6). Aceitar um repasse
-        de grupo silencia a IA por 24 h; sem este item, não havia como devolver
-        antes disso — o único caminho era esperar. Só aparece quando a sala está
-        de fato pausada.
-      */}
-      {can("inbox", "reply") && groupAiPaused && (
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            void handleReturnGroupToAi();
-          }}
-          className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-        >
-          <Sparkles size={15} />
-          Devolver à IA
-        </button>
-      )}
-      {canManageGroups && (
-        <>
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              setConfirmGroupAction("unmonitor");
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-          >
-            <EyeOff size={15} />
-            Parar de acompanhar
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              close();
-              setConfirmGroupAction("leave");
-            }}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
-          >
-            <LogOut size={15} />
-            Sair do grupo
-          </button>
-        </>
-      )}
-    </>
-  );
-
-  // Suspeita de robô na conversa aberta (só 1 a 1).
-  const botSuspicion = isGroupConversation ? null : activeBotSuspicion(currentConversation as any);
-  const [returningFromBot, setReturningFromBot] = useState(false);
-  const handleNotABot = async () => {
-    if (!currentConversation) return;
-    setReturningFromBot(true);
-    try {
-      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
-      toast.success("Conversa devolvida à IA");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao devolver para a IA"));
-    } finally {
-      setReturningFromBot(false);
-    }
-  };
-
-  const handleReturnGroupToAi = async () => {
-    if (!currentConversation) return;
-    try {
-      await returnToAi({ conversationId: currentConversation._id as Id<"conversations"> });
-      toast.success("A IA volta a responder quando for mencionada na sala");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao devolver à IA"));
-    }
-  };
-
-  // Sem `toast.promise` aqui: o formatador de sucesso dele roda durante a
-  // renderização do toast, e voltar para a lista é `setState` — o efeito
-  // colateral fica no `then`, não no render.
-  const handleStopMonitoring = async () => {
-    if (!groupChatId) return;
-    try {
-      await setGroupMonitored({ groupChatId, monitored: false });
-      handleBackToList();
-      toast.success("Parou de acompanhar o grupo — a conversa foi arquivada");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao parar de acompanhar"));
-    }
-  };
-
-  const handleLeaveGroup = async () => {
-    if (!groupChatId) return;
-    try {
-      const result = await leaveGroup({ groupChatId });
-      handleBackToList();
-      toast.success(result.detail);
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao sair do grupo"));
-    }
-  };
-
-  // Com um rascunho já aguardando revisão, pedir outra sugestão não faz
-  // sentido (o backend recusa um segundo turno enfileirado na mesma conversa).
-  const hasPendingDraft = ((messages ?? []) as InboxMessage[]).some(
-    (m) => getAiDraft(m)?.status === "pending"
-  );
-
-  const aiChip = aiStateChipInfo(aiConvState);
-
-  // "digitando..." do contato — TTL de 12s no cliente (o "paused" pode se perder).
-  // Fase 4b: a presença saiu do doc da conversa (cada "digitando" reexecutava a
-  // lista e o thread); só a conversa ABERTA assina a query leve de presença.
-  const contactPresence =
-    useQuery(
-      api.conversations.getConversationPresence,
-      currentConversation?._id
-        ? { conversationId: currentConversation._id as Id<"conversations"> }
-        : "skip"
-    ) ?? undefined;
-  const [presenceNow, setPresenceNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (contactPresence?.state !== "composing") return;
-    setPresenceNow(Date.now());
-    const interval = setInterval(() => setPresenceNow(Date.now()), 4000);
-    return () => clearInterval(interval);
-  }, [contactPresence?.state, contactPresence?.at]);
-  const contactTyping =
-    contactPresence?.state === "composing" && presenceNow - contactPresence.at < 12_000;
-
-  // Content type is derived from the first staged file; the bridge only sends
-  // one attachment per message, so the first drives how it's classified.
-  const deriveContentType = (
-    files: UploadedFile[]
-  ): "text" | "image" | "audio" | "file" => {
-    const first = files[0];
-    if (!first) return "text";
-    if (first.mimeType.startsWith("image/")) return "image";
-    if (first.mimeType.startsWith("audio/")) return "audio";
-    return "file";
-  };
-
-  const stopTyping = () => {
-    if (typingPauseTimerRef.current !== null) {
-      window.clearTimeout(typingPauseTimerRef.current);
-      typingPauseTimerRef.current = null;
-    }
-    if (typingLastSentRef.current !== 0 && selectedConversation && canSendTyping) {
-      typingLastSentRef.current = 0;
-      sendTypingState({
-        conversationId: selectedConversation as Id<"conversations">,
-        state: "paused",
-      }).catch(() => {});
-    }
-  };
-
-  // Throttled "composing" on keystroke; "paused" after 3s idle. WhatsApp only.
-  const handleComposerActivity = () => {
-    if (!selectedConversation || !canSendTyping || isInternal) return;
-    const ts = Date.now();
-    if (ts - typingLastSentRef.current > 4000) {
-      typingLastSentRef.current = ts;
-      sendTypingState({
-        conversationId: selectedConversation as Id<"conversations">,
-        state: "composing",
-      }).catch(() => {});
-    }
-    if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
-    typingPauseTimerRef.current = window.setTimeout(() => {
-      typingLastSentRef.current = 0;
-      typingPauseTimerRef.current = null;
-      if (selectedConversation) {
-        sendTypingState({
-          conversationId: selectedConversation as Id<"conversations">,
-          state: "paused",
-        }).catch(() => {});
-      }
-    }, 3000);
-  };
-
-  // Mark inbound messages read when a conversation is open and a new newest
-  // inbound arrives. The signature guard prevents re-firing on our own patch.
-  useEffect(() => {
-    if (!selectedConversation || !messages) return;
-    const msgs = messages as InboxMessage[];
-    let newestInbound: InboxMessage | undefined;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].direction === "inbound") {
-        newestInbound = msgs[i];
-        break;
-      }
-    }
-    if (!newestInbound) return;
-    const sig = `${selectedConversation}:${newestInbound._id}`;
-    if (lastReadSigRef.current === sig) return;
-    lastReadSigRef.current = sig;
-    const conversationId = selectedConversation as Id<"conversations">;
-    const timer = window.setTimeout(() => {
-      markConversationRead({ conversationId }).catch(() => {});
-    }, 400);
-    return () => window.clearTimeout(timer);
-  }, [selectedConversation, messages, markConversationRead]);
-
-  // Cancel any pending typing timer on unmount.
-  useEffect(() => {
-    return () => {
-      if (typingPauseTimerRef.current !== null) window.clearTimeout(typingPauseTimerRef.current);
-    };
-  }, []);
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = newMessage.trim();
-    if ((!trimmed && stagedFiles.length === 0) || !selectedConversation) return;
-    if (composerBlocked) return;
-
-    try {
-      const mentionedUserIds = isInternal ? extractMentionIds(trimmed) : undefined;
-      const attachments = stagedFiles.map((f) => f.fileId);
-      // Só os JIDs cujo "@<nome>" sobreviveu no texto — quem apagou a menção
-      // não quer mais notificar aquela pessoa.
-      const memberMentions =
-        isGroupConversation && !isInternal ? groupMentions.mentionsFor(trimmed) : [];
-
-      await sendMessage({
-        conversationId: selectedConversation as Id<"conversations">,
-        content: trimmed,
-        contentType: attachments.length ? deriveContentType(stagedFiles) : "text",
-        isInternal,
-        attachments: attachments.length ? attachments : undefined,
-        mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
-        replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
-        mentions: memberMentions.length ? memberMentions : undefined,
-      });
-      setNewMessage("");
-      setStagedFiles([]);
-      setReplyTo(null);
-      groupMentions.reset();
-      stopTyping();
-    } catch (error) {
-      toast.error("Falha ao enviar mensagem");
-    }
-  };
-
-  const handleSendVoice = async (file: UploadedFile) => {
-    if (!selectedConversation) throw new Error("no conversation");
-    await sendMessage({
-      conversationId: selectedConversation as Id<"conversations">,
-      content: "",
-      contentType: "audio",
-      attachments: [file.fileId],
-      replyToMessageId: replyTo ? (replyTo._id as Id<"messages">) : undefined,
-    });
-    setReplyTo(null);
-    stopTyping();
-  };
-
-  const handleReact = async (message: InboxMessage, emoji: string) => {
-    const mine = getReactions(message).find((r) => r.sender === currentMemberId)?.emoji ?? null;
-    const next = mine === emoji ? "" : emoji;
-    try {
-      await reactToMessage({ messageId: message._id as Id<"messages">, emoji: next });
-    } catch {
-      toast.error("Falha ao reagir à mensagem");
-    }
-  };
-
-  const handleTranscribe = async (message: InboxMessage) => {
-    setTranscribingIds((prev) => new Set(prev).add(message._id));
-    try {
-      const result = await transcribe({ organizationId, messageId: message._id as Id<"messages"> });
-      if (result.status === "failed") toast.error("Falha na transcrição");
-    } catch {
-      toast.error("Falha na transcrição");
-    } finally {
-      setTranscribingIds((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.delete(message._id);
-        return nextSet;
-      });
-    }
-  };
-
-  const handleDescribeImage = async (message: InboxMessage) => {
-    setDescribingIds((prev) => new Set(prev).add(message._id));
-    try {
-      const result = await describeImage({
-        organizationId,
-        messageId: message._id as Id<"messages">,
-      });
-      if (result.status === "failed") toast.error("Não foi possível ler a imagem");
-    } catch {
-      toast.error("Não foi possível ler a imagem");
-    } finally {
-      setDescribingIds((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.delete(message._id);
-        return nextSet;
-      });
-    }
-  };
-
-  // Mídia de grupo que a política não baixou (v0.62): o servidor devolve o
-  // motivo em PT-BR pronto (vencida, quota…); o sucesso aparece sozinho, pela
-  // query reativa trocando o placeholder pelo arquivo.
-  const handleDownloadMedia = async (message: InboxMessage) => {
-    setDownloadingIds((prev) => new Set(prev).add(message._id));
-    try {
-      const result = await downloadDeferredMedia({
-        organizationId,
-        messageId: message._id as Id<"messages">,
-      });
-      if (!result.ok) toast.error(result.reason);
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível baixar a mídia"));
-    } finally {
-      setDownloadingIds((prev) => {
-        const nextSet = new Set(prev);
-        nextSet.delete(message._id);
-        return nextSet;
-      });
-    }
-  };
-
-  // Salto pendente para um resultado da busca — efetivado quando o thread carrega.
-  const pendingJumpRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    const target = pendingJumpRef.current;
-    // Só decide com o lote do limite ATUAL na tela (não com o anterior que
-    // fica visível enquanto o maior carrega).
-    if (!target || !messagesRaw || !selectedConversation) return;
-    const el = document.getElementById(`msg-${target}`);
-    if (!el) {
-      // Fora do lote carregado: sobe o limite (de 100 em 100) e tenta de novo
-      // quando o lote chegar; lote incompleto ou teto = não há mais o que buscar.
-      if (canLoadMore(messagesRaw.length, messageLimit, MESSAGES_MAX_LIMIT)) {
-        setMessagePage({
-          key: selectedConversation,
-          limit: nextLimit(messageLimit, SEARCH_JUMP_STEP, MESSAGES_MAX_LIMIT),
-        });
-      } else {
-        pendingJumpRef.current = null;
-        toast(
-          messageLimit >= MESSAGES_MAX_LIMIT
-            ? "Mensagem antiga demais para exibir aqui"
-            : "A mensagem original não está carregada"
-        );
-      }
-      return;
-    }
-    pendingJumpRef.current = null;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightId(target);
-    window.setTimeout(() => {
-      setHighlightId((cur) => (cur === target ? null : cur));
-    }, 2000);
-  }, [messagesRaw, messageLimit, selectedConversation]);
-
-  const handleJumpToMessage = (messageId: string) => {
-    const el = document.getElementById(`msg-${messageId}`);
-    if (!el) {
-      // Fora do lote carregado: o efeito do salto pendente sobe o limite e
-      // tenta de novo quando o lote chegar.
-      if (
-        selectedConversation &&
-        messages &&
-        canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)
-      ) {
-        pendingJumpRef.current = messageId;
-        setMessagePage({
-          key: selectedConversation,
-          limit: nextLimit(messageLimit, SEARCH_JUMP_STEP, MESSAGES_MAX_LIMIT),
-        });
-      } else {
-        toast(
-          messageLimit >= MESSAGES_MAX_LIMIT
-            ? "Mensagem antiga demais para exibir aqui"
-            : "A mensagem original não está carregada"
-        );
-      }
-      return;
-    }
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
-    setHighlightId(messageId);
-    window.setTimeout(() => {
-      setHighlightId((cur) => (cur === messageId ? null : cur));
-    }, 2000);
-  };
-
-  const resetConversationState = () => {
-    setStagedFiles([]);
-    setReplyTo(null);
-    setNewMessage("");
-    setRecorderActive(false);
-    groupMentions.reset();
-    stopTyping();
-    lastReadSigRef.current = null;
-  };
-
-  // Escrita nossa no `?conversation=` ainda em voo: o router aplica o
-  // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
-  // que `selectedConversation` já é a conversa nova e o param ainda é a antiga.
-  // `target` é o valor que pedimos e `stale` o que estava na URL na hora —
-  // enquanto a URL mostrar `stale`, o efeito URL → estado tem de ficar quieto
-  // (reaplicar o valor antigo desfazia o clique e travava a caixa no link).
-  const conversationParamSyncRef = useRef<{ target: string | null; stale: string | null } | null>(
-    null
-  );
-
-  // A conversa aberta vive na URL (`?conversation=`), para dar/receber
-  // deep-link de outras telas (detalhe da tarefa, painel do lead).
-  const syncConversationParam = useCallback(
-    (conversationId: string | null) => {
-      conversationParamSyncRef.current = { target: conversationId, stale: conversationParam };
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (conversationId) next.set("conversation", conversationId);
-          else next.delete("conversation");
-          // Abrir uma conversa encerra o fluxo "Nova conversa" (`?nova=`):
-          // limpar aqui junta as duas escritas numa só (dois setSearchParams
-          // funcionais seguidos não se compõem — o segundo venceria).
-          if (conversationId) next.delete("nova");
-          return next;
-        },
-        { replace: true }
-      );
-    },
-    [conversationParam, setSearchParams]
-  );
-
-  const handleSelectConversation = (conversationId: string) => {
-    stopTyping();
-    setSelectedConversation(conversationId);
-    setShowMessages(true);
-    setStagedFiles([]);
-    setReplyTo(null);
-    setNewMessage("");
-    setRecorderActive(false);
-    groupMentions.reset();
-    lastReadSigRef.current = null;
-    syncConversationParam(conversationId);
-  };
-
-  // Rascunho vindo de outra tela (F4: "Criar lead + abrir no privado" do sino).
-  // Chega em `location.state` e NÃO é enviado por ninguém automaticamente — só
-  // preenche o compositor. Consumido uma vez: o state é limpo em seguida, para
-  // o rascunho não voltar sozinho a cada re-render ou ao usar o back.
-  const consumedDraftRef = useRef<string | null>(null);
-  useEffect(() => {
-    const draft = (location.state as { draftMessage?: string } | null)?.draftMessage;
-    if (!draft || consumedDraftRef.current === draft) return;
-    consumedDraftRef.current = draft;
-    setNewMessage(draft);
-    navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
-  }, [location.state, location.pathname, location.search, navigate]);
-
-  const openNewConversation = () => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("nova", "1");
-        return next;
-      },
-      { replace: true }
-    );
-  };
-  const closeNewConversation = () => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("nova");
-        return next;
-      },
-      { replace: true }
-    );
-  };
-  // Conversa iniciada/reaberta: abre no mesmo caminho do deep-link, inclusive
-  // no mobile (lista → mensagens). A aba volta para "ativas" e um filtro
-  // "Grupos" é desfeito — senão a conversa abriria sem aparecer na lista.
+  // Conversa iniciada/reaberta: abre como o deep-link (também no mobile), volta a
+  // aba para "ativas" na mesma escrita da URL e desfaz o filtro "Grupos".
   const handleNewConversationStarted = (conversationId: Id<"conversations">) => {
-    setShowArchived(false);
-    if (kindFilter === "group") setKindFilter("all");
-    handleSelectConversation(conversationId);
+    if (kindFilter === "group") filters.setKindFilter("all");
+    selection.select(conversationId, { archived: null });
   };
 
-  const handleBackToList = () => {
-    resetConversationState();
-    setShowMessages(false);
-    setSelectedConversation(null);
-    syncConversationParam(null);
-  };
-
-  // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
-  // (arquivada ou além do lote carregado), o resolver busca o documento avulso:
-  // arquivada troca a aba da lista, ativa entra fixada no topo e um id
-  // inexistente sai da URL em silêncio.
-  useEffect(() => {
-    // Antes de qualquer coisa: o param em mãos pode ser o eco velho de uma
-    // escrita nossa que o router ainda não aplicou (ver `conversationParamSyncRef`).
-    const pendingWrite = conversationParamSyncRef.current;
-    if (pendingWrite) {
-      if (conversationParam === pendingWrite.target) {
-        conversationParamSyncRef.current = null; // a URL alcançou o que pedimos
-      } else if (conversationParam === pendingWrite.stale) {
-        return; // ainda em voo — o param é o valor antigo, ignorar
-      } else {
-        conversationParamSyncRef.current = null; // mudou por fora no meio do caminho
-      }
-    }
-
-    if (!conversationParam || conversationParam === selectedConversation) return;
-    if (conversations === undefined) return;
-
-    if (conversationInList) {
-      handleSelectConversation(conversationParam);
-      return;
-    }
-    // aguarda o resolver responder sobre o id que está na URL
-    if (!linkedConversation || linkedConversation._id !== conversationParam) return;
-    // A aba da lista acompanha a conversa que chegou por link — só nesta
-    // abertura, para não arrastar o filtro do usuário depois.
-    const linkedArchived = Boolean(linkedConversation.archivedAt);
-    if (linkedArchived !== showArchived) setShowArchived(linkedArchived);
-    handleSelectConversation(conversationParam);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationParam, conversations, conversationInList, linkedConversation, selectedConversation, showArchived]);
-
-  // O resolver responde para o id que está na URL agora; um `null` significa
-  // conversa inexistente (ou apagada) — o param sai da URL.
-  const handleResolveLinkedConversation = useCallback(
-    (conversation: Record<string, any> | null) => {
-      if (!conversation) {
-        setLinkedConversation(null);
-        syncConversationParam(null);
-        return;
-      }
-      setLinkedConversation(conversation);
-    },
-    [syncConversationParam]
-  );
-
-  // ── Seleção múltipla: arquivar/etiquetar em lote ──
-
-  const exitSelection = () => {
-    setSelectionMode(false);
-    setSelectedIds(new Set());
-    setBulkLabelOpen(false);
-  };
-
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const runBulkArchive = async () => {
-    const ids = Array.from(selectedIds) as Id<"conversations">[];
-    try {
-      await bulkArchiveConversations({
-        organizationId,
-        conversationIds: ids,
-        archived: !showArchived,
-      });
-      toast.success(
-        `${ids.length} conversa${ids.length === 1 ? "" : "s"} ${showArchived ? "desarquivada" : "arquivada"}${ids.length === 1 ? "" : "s"}`
-      );
-      exitSelection();
-    } catch {
-      toast.error("Falha na ação em lote");
-    }
-  };
-
-  const runBulkLabel = async (labelId: string) => {
-    const ids = Array.from(selectedIds) as Id<"conversations">[];
-    try {
-      await bulkLabelConversations({
-        organizationId,
-        conversationIds: ids,
-        labelId: labelId as Id<"conversationLabels">,
-      });
-      toast.success(`Etiqueta aplicada a ${ids.length} conversa${ids.length === 1 ? "" : "s"}`);
-      exitSelection();
-    } catch {
-      toast.error("Falha ao aplicar etiqueta");
-    }
-  };
-
-  // Acima de 5 conversas, pede confirmação antes de executar.
-  const handleBulkArchiveClick = () => {
-    if (selectedIds.size > 5) setConfirmBulk({ action: "archive" });
-    else void runBulkArchive();
-  };
-
-  const handleBulkLabelClick = (labelId: string) => {
-    setBulkLabelOpen(false);
-    if (selectedIds.size > 5) setConfirmBulk({ action: "label", labelId });
-    else void runBulkLabel(labelId);
-  };
-
+  // Resultado da busca: na conversa aberta o thread rola até a mensagem; em
+  // outra, o salto fica pendente e o thread o efetiva quando o lote carregar.
   const handleOpenSearchResult = (result: { _id: string; conversationId: string }) => {
     if (result.conversationId === selectedConversation) {
-      setShowMessages(true);
-      handleJumpToMessage(result._id);
+      selection.setShowMessages(true);
+      interaction.requestJump(result._id);
       return;
     }
-    pendingJumpRef.current = result._id;
-    handleSelectConversation(result.conversationId);
+    interaction.pendingJumpRef.current = result._id;
+    selection.select(result.conversationId);
   };
 
-  const clearSearch = () => {
-    setSearchTerm("");
-    setDebouncedTerm("");
-    setSearchMonth("");
-  };
-
-  // Trecho do resultado com o termo destacado (janela em volta do 1º match).
-  const renderSnippet = (content: string, term: string) => {
-    const idx = content.toLowerCase().indexOf(term.toLowerCase());
-    if (idx === -1) return content.slice(0, 90);
-    const start = Math.max(0, idx - 24);
-    return (
-      <>
-        {start > 0 ? "…" : ""}
-        {content.slice(start, idx)}
-        <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">
-          {content.slice(idx, idx + term.length)}
-        </mark>
-        {content.slice(idx + term.length, idx + term.length + 60)}
-      </>
-    );
-  };
-
-  if (!conversations) {
+  if (!list.conversations) {
     return (
       <div className="flex justify-center items-center h-64">
         <Spinner size="lg" />
@@ -1589,126 +170,19 @@ export function Inbox() {
     );
   }
 
-  // Media icon for the last-message preview in the conversation list
-  const getPreviewIcon = (contentType: string | null, bridgeType: string | null) => {
-    if (contentType === "audio" || bridgeType === "audio") return Mic;
-    if (contentType === "image" || bridgeType === "sticker" || bridgeType === "image") return ImageIcon;
-    if (bridgeType === "video") return Video;
-    if (contentType === "file") return FileText;
-    switch (bridgeType) {
-      case "album": return Images;
-      case "poll": return BarChart3;
-      case "location":
-      case "live_location": return MapPin;
-      case "contact": return UserRound;
-      case "event": return Calendar;
-      case "group_invite": return Link2;
-      case "call_log": return Phone;
-      case "interactive_reply": return MousePointerClick;
-      case "unknown": return HelpCircle;
-    }
-    return null;
-  };
-
-  // Janela de serviço por canal. `template` = WhatsApp Cloud API (24h, requer
-  // template); `wait` = Instagram/Messenger (só o cliente reabre). Bridge
-  // (não oficial) reporta serviceWindowApplies === false — sem janela. Sem o
-  // campo novo do backend, WhatsApp com janela cai em `template` como antes.
-  const windowKind: ServiceWindowKind =
-    !currentConversation || currentConversation.serviceWindowApplies === false
-      ? null
-      : (currentConversation as { serviceWindowKind?: ServiceWindowKind }).serviceWindowKind ??
-        (convChannel === "whatsapp" ? "template" : null);
-  const windowExpiresAt: number | null = currentConversation?.serviceWindowExpiresAt ?? null;
-  const windowResult = getServiceWindowInfo(windowKind, windowExpiresAt, now);
-  const windowInfo = windowResult
-    ? {
-        text: windowResult.text,
-        tone: windowResult.closed ? ("text-semantic-warning" as const) : ("text-text-secondary" as const),
-      }
-    : null;
-  // Origem no cabeçalho: ícone + conta completa + "via <canal>".
-  const currentAccount = currentConversation?.channelConfigId
-    ? accountById.get(currentConversation.channelConfigId as string)
-    : undefined;
-  const originShown =
-    !!currentConversation &&
-    !!convChannel &&
-    (convChannel === "instagram" ||
-      convChannel === "messenger" ||
-      (!!currentAccount && shouldShowAccount(channelAccounts, convChannel)));
-  const originFullLabel = accountFullLabel(currentAccount);
-  const originText = originFullLabel
-    ? originFullLabel.toLowerCase().startsWith(channelLabel(convChannel ?? "").toLowerCase())
-      ? originFullLabel
-      : `${originFullLabel} · ${viaLabel(convChannel ?? "")}`
-    : viaLabel(convChannel ?? "");
-  const OriginIcon = channelIcon(convChannel ?? "", convTransport);
-  const originLine = originShown ? (
-    <span className="inline-flex items-center gap-1 min-w-0 text-xs text-text-muted">
-      {currentAccount?.avatarUrl ? (
-        <ChannelAvatar
-          channel={convChannel ?? ""}
-          transport={convTransport}
-          avatarUrl={currentAccount.avatarUrl}
-          size={28}
-        />
-      ) : (
-        <OriginIcon size={12} aria-hidden="true" className="shrink-0" />
-      )}
-      <span className="truncate">{originText}</span>
-    </span>
-  ) : null;
-
-  // Instagram/Messenger com janela fechada: o composer fica bloqueado (nota interna segue livre).
-  const composerBlocked = isComposerBlockedByWindow(windowKind, windowExpiresAt, now) && !isInternal;
-
-  // Outro app (ex.: Caixa de entrada do Business Suite) controla a conversa
-  // quando a última mensagem recebida veio em standby.
-  const lastInboundMessage = (messages ?? []).reduce<any>(
-    (acc, m: any) =>
-      m.direction === "inbound" && !m.isInternal && (!acc || m.createdAt >= acc.createdAt) ? m : acc,
-    null
-  );
-  const standbyActive = lastInboundMessage?.metadata?.standby === true;
-
-  // Contador de texto (Instagram: bytes; Messenger: caracteres). Não bloqueia.
-  const textCounter =
-    textLimit && !isInternal && newMessage.length > 0
-      ? {
-          label: formatTextCounter(measureText(newMessage, textLimit.unit), textLimit),
-          parts: textPartsCount(newMessage, textLimit),
-          over: textNeedsSplit(newMessage, textLimit),
-        }
-      : null;
-
   // Controles de IA (pausar/retomar) aparecem em canais oficiais sempre, e em
   // canais bridge (não-oficiais) só depois do aceite de risco específico do
-  // atendente — não mexe na janela de 24h/templates do composer acima.
+  // atendente — não mexe na janela de 24h/templates do composer.
   const aiControlsAllowed =
     currentConversation?.serviceWindowApplies !== false || aiStatus?.bridgeAiAckDone === true;
+  const showAiControls = Boolean(
+    aiStatus?.active &&
+      channelSupports(currentConversation?.channel, currentConversation?.channelProvider, "aiAttendant") &&
+      aiControlsAllowed &&
+      !isGroupConversation
+  );
 
-  const canReply = can("inbox", "reply");
-  // Voice recorder / mic replaces the send button when there's nothing typed.
-  const composerEmpty = newMessage.trim() === "" && stagedFiles.length === 0;
-  const showVoice =
-    canRecordVoice && !isInternal && canReply && (recorderActive || composerEmpty);
-
-  // Compact preview for the composer reply citation bar.
-  const replyPreview = replyTo
-    ? replyTo.content && !isMediaPlaceholder(replyTo.content)
-      ? replyTo.content
-      : isVoiceNote(replyTo)
-        ? "Mensagem de voz"
-        : "Mídia"
-    : "";
-  const replyAuthor =
-    replyTo && (replyTo.direction === "inbound" || replyTo.senderType === "contact")
-      ? contactName || "Contato"
-      : "Você";
-
-  // O container fixo começa ABAIXO do header sticky do AppShell (h-14/h-16) —
-  // top-0 deixava o topo da página (spotlight) atrás do sino de notificações.
+  // Começa ABAIXO do header sticky do AppShell (top-0 escondia o spotlight atrás do sino).
   return (
     <div className="fixed top-14 md:top-16 left-0 right-0 h-[calc(100dvh-3.5rem-64px-env(safe-area-inset-bottom,0px))] md:left-16 lg:left-56 md:h-[calc(100dvh-4rem)] flex flex-col bg-surface-base">
       {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
@@ -1717,602 +191,33 @@ export function Inbox() {
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col md:flex-row">
-      {/* Conversations List */}
-      <div
-        className={cn(
-          "w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0",
-          // Central ligada: a coluna não encolhe (a barra de filas e a de
-          // roteamento disputavam espaço e a lista caía para ~230 px).
-          centralEnabled && "md:shrink-0",
-          showMessages && "hidden md:flex"
-        )}
-      >
-        <div className="p-4 border-b border-border space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-lg font-semibold text-text-primary">Conversas</h2>
-            {showNewConversation && (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={openNewConversation}
-                className="h-11 w-11 p-0 md:h-8 md:w-auto md:px-3"
-                aria-label="Nova conversa"
-                title="Nova conversa"
-              >
-                <MessageSquarePlus size={16} />
-                <span className="hidden md:inline">Nova conversa</span>
-              </Button>
-            )}
-          </div>
-          <div className="relative">
-            <Search
-              size={15}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-            />
-            <input
-              type="search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar nas mensagens..."
-              className={cn(
-                "w-full h-9 pl-9 pr-8 rounded-full text-sm bg-surface-sunken border border-border-strong",
-                "text-text-primary placeholder:text-text-muted",
-                "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-                "[&::-webkit-search-cancel-button]:hidden"
-              )}
-              aria-label="Buscar nas mensagens"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={clearSearch}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
-                aria-label="Limpar busca"
-              >
-                <X size={14} />
-              </button>
-            )}
-          </div>
-          {!isSearching && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <button
-                type="button"
-                onClick={() => setShowArchived(false)}
-                className={cn(
-                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  !showArchived
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-              >
-                Ativas
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowArchived(true)}
-                className={cn(
-                  "shrink-0 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  showArchived
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-              >
-                Arquivadas
-              </button>
-              {/* Diretas x grupos — só aparece quando a org tem grupo algum. */}
-              {hasGroupConversations && (
-                <>
-                  <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-                  {KIND_FILTERS.map((f) => (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => setKindFilter(f.id)}
-                      className={cn(
-                        "shrink-0 flex items-center gap-1 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                        kindFilter === f.id
-                          ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                          : "border-border-strong text-text-muted hover:text-text-primary"
-                      )}
-                      aria-pressed={kindFilter === f.id}
-                    >
-                      {f.id === "group" && <Users size={11} />}
-                      {f.label}
-                    </button>
-                  ))}
-                </>
-              )}
-              {/* Canal e Conta (D11): valem também para WhatsApp com 2+ números. */}
-              {(channelChipVisible || accountChoices.length > 0) && (
-                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-              )}
-              {channelChipVisible && (
-                <select
-                  value={channelFilter.channel ?? ""}
-                  onChange={(e) =>
-                    updateChannelFilter({ channel: e.target.value || null, configId: null })
-                  }
-                  aria-label="Filtrar por canal"
-                  className={cn(
-                    "shrink-0 h-7 max-w-[10rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
-                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    channelFilter.channel
-                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <option value="">Canal</option>
-                  {channelOptions.map((ch) => (
-                    <option key={ch} value={ch}>
-                      {channelLabel(ch)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {accountChoices.length > 0 && (
-                <select
-                  value={channelFilter.configId ?? ""}
-                  onChange={(e) =>
-                    updateChannelFilter({
-                      channel: channelFilter.channel,
-                      configId: e.target.value || null,
-                    })
-                  }
-                  aria-label="Filtrar por conta"
-                  className={cn(
-                    "shrink-0 h-7 max-w-[11rem] pl-2.5 pr-6 rounded-full text-xs border bg-transparent transition-colors cursor-pointer",
-                    "focus:outline-none focus:ring-2 focus:ring-brand-500",
-                    channelFilter.configId
-                      ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <option value="">Conta</option>
-                  {accountChoices.map((a) => (
-                    <option key={a._id} value={a._id}>
-                      {accountFullLabel(a)}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {conversationLabels && conversationLabels.length > 0 && (
-                <span className="shrink-0 h-4 w-px bg-border-strong mx-0.5" />
-              )}
-              {(conversationLabels ?? []).map((label) => (
-                <button
-                  key={label._id}
-                  type="button"
-                  onClick={() =>
-                    setFilterLabelId((cur) => (cur === label._id ? null : label._id))
-                  }
-                  className={cn(
-                    "shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                    filterLabelId === label._id
-                      ? "bg-surface-overlay border-border-strong text-text-primary font-medium"
-                      : "border-border-strong text-text-muted hover:text-text-primary"
-                  )}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ backgroundColor: label.color }}
-                  />
-                  {label.name}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => (selectionMode ? exitSelection() : setSelectionMode(true))}
-                className={cn(
-                  "ml-auto shrink-0 flex items-center gap-1.5 h-7 px-2.5 rounded-full text-xs border transition-colors",
-                  selectionMode
-                    ? "bg-brand-500/15 border-brand-500 text-brand-500 font-medium"
-                    : "border-border-strong text-text-muted hover:text-text-primary"
-                )}
-                title="Selecionar várias conversas"
-              >
-                <CheckSquare size={12} />
-                {selectionMode ? "Cancelar" : "Selecionar"}
-              </button>
-            </div>
-          )}
-          {!isSearching && queuesEnabled && (
-            <InboxQueueBar
-              queues={inboxQueues}
-              showDepartments={centralModules.departments}
-              showUnits={centralModules.units}
-              value={queueFilter}
-              onChange={setQueueFilter}
-            />
-          )}
-          {isSearching && (
-            <div className="flex items-center gap-2">
-              <input
-                type="month"
-                value={searchMonth}
-                onChange={(e) => setSearchMonth(e.target.value)}
-                className={cn(
-                  "h-8 px-2.5 rounded-full text-xs bg-surface-sunken border border-border-strong text-text-secondary",
-                  "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-                  searchMonth && "border-brand-500 text-text-primary"
-                )}
-                aria-label="Filtrar por mês"
-              />
-              {searchMonth && (
-                <button
-                  type="button"
-                  onClick={() => setSearchMonth("")}
-                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
-                >
-                  Limpar mês
-                </button>
-              )}
-              <span className="ml-auto text-xs text-text-muted tabular-nums">
-                {searchResults === undefined ? "…" : `${searchResults.length} resultado${searchResults.length === 1 ? "" : "s"}`}
-              </span>
-            </div>
-          )}
-        </div>
+      <InboxListColumn
+        className={showMessages ? "hidden md:flex" : undefined}
+        conversations={listedConversations}
+        selectedId={selectedConversation}
+        labelById={labelById}
+        filters={filters}
+        list={list}
+        bulk={bulk}
+        attentionCount={attentionCount}
+        showKindFilter={hasGroupConversations}
+        search={{
+          term: searchTerm,
+          onTermChange: (term) => {
+            setSearchTerm(term);
+            if (!term) setSearchMonth("");
+          },
+          active: isSearching,
+          month: searchMonth,
+          onMonthChange: setSearchMonth,
+          results: searchResults,
+          onOpenResult: handleOpenSearchResult,
+        }}
+        onSelect={(id) => selection.select(id)}
+        onNewConversation={showNewConversation ? selection.openNewConversation : undefined}
+      />
 
-        <div ref={conversationListScrollRef} className="overflow-y-auto flex-1">
-          {isSearching ? (
-            searchResults === undefined ? (
-              <div className="p-6 flex justify-center">
-                <Spinner size="md" />
-              </div>
-            ) : searchResults.length === 0 ? (
-              <div className="p-4 text-center text-text-muted text-sm">
-                Nada encontrado{searchMonth ? " nesse mês" : ""} para "{debouncedTerm}"
-              </div>
-            ) : (
-              searchResults.map((result) => (
-                <button
-                  key={result._id}
-                  type="button"
-                  onClick={() => handleOpenSearchResult(result)}
-                  className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-sm font-medium text-text-primary truncate">
-                      {result.contactName}
-                      {result.direction !== "inbound" && (
-                        <span className="text-text-muted font-normal"> · você</span>
-                      )}
-                    </span>
-                    <span className="shrink-0 text-xs text-text-muted tabular-nums">
-                      {new Date(result.createdAt).toLocaleDateString("pt-BR", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-xs text-text-secondary truncate flex items-center gap-1">
-                    {result.matchedTranscript && (
-                      <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
-                    )}
-                    {result.matchedImage && (
-                      <ImageIcon
-                        size={11}
-                        className="shrink-0 text-text-muted"
-                        aria-label="Encontrado na leitura da imagem"
-                      />
-                    )}
-                    <span className="truncate">
-                      {renderSnippet(result.snippetText, debouncedTerm.trim())}
-                    </span>
-                  </p>
-                </button>
-              ))
-            )
-          ) : listedConversations.length === 0 ? (
-            <div className="p-4 text-center text-text-muted">
-              {/* O filtro Diretas/Grupos vem ANTES de "arquivadas" na cadeia
-                  (review de correção nº 17): com o filtro em "Grupos" e nenhum
-                  grupo arquivado, a tela dizia "Nenhuma conversa arquivada" —
-                  mentindo, porque havia conversas diretas arquivadas
-                  escondidas pelo filtro. */}
-              {kindFilter === "group" ? (
-                showArchived ? (
-                  "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas"
-                ) : (
-                  <div className="space-y-1.5">
-                    <p>Nenhum grupo acompanhado</p>
-                    <Button variant="ghost" size="sm" onClick={() => navigate(TAB_ROUTES.groups)}>
-                      Escolher grupos
-                    </Button>
-                  </div>
-                )
-              ) : kindFilter === "direct"
-                  ? showArchived
-                    ? "Nenhuma conversa direta arquivada"
-                    : "Nenhuma conversa direta"
-                  : queueFilterActive
-                    ? showArchived
-                      ? "Nenhuma conversa arquivada nesta fila"
-                      : "Nenhuma conversa nesta fila"
-                  : showArchived
-                    ? "Nenhuma conversa arquivada"
-                    : filterLabelId
-                      ? "Nenhuma conversa com essa etiqueta"
-                      : "Nenhuma conversa ainda"}
-            </div>
-          ) : (
-            listedConversations.map((conversation) => (
-              <div
-                key={conversation._id}
-                onClick={() =>
-                  selectionMode
-                    ? toggleSelected(conversation._id)
-                    : handleSelectConversation(conversation._id)
-                }
-                className={cn(
-                  "p-4 border-b border-border cursor-pointer transition-colors",
-                  "hover:bg-surface-overlay active:bg-surface-overlay",
-                  (conversation.unreadCount ?? 0) > 0 &&
-                    selectedConversation !== conversation._id &&
-                    "bg-brand-500/5",
-                  !selectionMode &&
-                    selectedConversation === conversation._id &&
-                    "bg-brand-500/10 border-l-2 border-l-brand-500",
-                  selectionMode && selectedIds.has(conversation._id) && "bg-brand-500/10"
-                )}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  {selectionMode && (
-                    <span
-                      className={cn(
-                        "mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                        selectedIds.has(conversation._id)
-                          ? "bg-brand-500 border-brand-500 text-white"
-                          : "border-border-strong"
-                      )}
-                      aria-hidden
-                    >
-                      {selectedIds.has(conversation._id) && <Check size={11} />}
-                    </span>
-                  )}
-                  <h3
-                    className={cn(
-                      "flex items-center gap-1.5 min-w-0 flex-1 text-text-primary truncate",
-                      (conversation.unreadCount ?? 0) > 0 ? "font-semibold" : "font-medium"
-                    )}
-                  >
-                    {conversation.kind === "group" && (
-                      <Users
-                        size={14}
-                        className="shrink-0 text-text-muted"
-                        aria-label="Conversa de grupo"
-                      />
-                    )}
-                    <span className="truncate">
-                      {conversation.kind === "group"
-                        ? conversation.groupChat?.subject ?? "Grupo"
-                        : `${conversation.contact?.firstName ?? ""} ${conversation.contact?.lastName ?? ""}`.trim() ||
-                          "Sem nome"}
-                    </span>
-                    {((conversation.labelIds ?? []) as string[]).map((labelId) => {
-                      const label = labelById.get(labelId);
-                      return label ? (
-                        <span
-                          key={labelId}
-                          className="h-2 w-2 rounded-full shrink-0"
-                          style={{ backgroundColor: label.color }}
-                          title={label.name}
-                        />
-                      ) : null;
-                    })}
-                  </h3>
-                  <ChannelOriginBadge
-                    channel={conversation.channel}
-                    transport={conversation.channelProvider}
-                    account={
-                      conversation.channelConfigId
-                        ? accountById.get(conversation.channelConfigId as string)
-                        : null
-                    }
-                    showAccount={shouldShowAccount(channelAccounts, conversation.channel)}
-                  />
-                </div>
-
-                {conversation.kind === "group" && (
-                  <p className="mb-1 text-sm text-text-secondary tabular-nums">
-                    {conversation.groupChat?.participantsCount ?? 0} membro
-                    {(conversation.groupChat?.participantsCount ?? 0) === 1 ? "" : "s"}
-                  </p>
-                )}
-
-                {conversation.lead && (
-                  <div className="flex items-center gap-1.5 mb-1 min-w-0">
-                    <p className="flex-1 min-w-0 text-sm text-text-secondary truncate">
-                      {conversation.lead.title}
-                    </p>
-                    {isHandoffPending(conversation.lead.handoffState) && (
-                      <span
-                        className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-[11px] font-medium text-semantic-warning"
-                        title="Repasse pendente — aguardando um humano assumir"
-                      >
-                        <ArrowLeftRight size={12} />
-                        Repasse
-                      </span>
-                    )}
-                    {activeBotSuspicion(conversation as any) && (
-                      <span
-                        className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
-                        title="Suspeita de robô"
-                        aria-label="Suspeita de robô"
-                        role="img"
-                      >
-                        <Bot size={12} aria-hidden />
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {centralEnabled && conversation.kind !== "group" && (() => {
-                  const unit = centralModules.units && conversation.unitId
-                    ? unitById.get(conversation.unitId as string)
-                    : undefined;
-                  const dept = centralModules.departments && conversation.departmentId
-                    ? departmentById.get(conversation.departmentId as string)
-                    : undefined;
-                  const attribution = centralModules.attribution ? conversation.lead?.attribution : undefined;
-                  if (!unit && !dept && !attribution) return null;
-                  return (
-                    <div className="mb-1.5 flex min-w-0 items-center gap-1">
-                      {attribution && <AttributionIcon attribution={attribution} />}
-                      {unit && <ColorChip name={unit.name} color={unit.color} title={`Unidade: ${unit.name}`} />}
-                      {dept && <ColorChip name={dept.name} color={dept.color} title={`Setor: ${dept.name}`} />}
-                    </div>
-                  );
-                })()}
-
-                <div className="flex items-center justify-between gap-2">
-                  {conversation.lastMessagePreview ? (
-                    <span
-                      className={cn(
-                        "flex items-center gap-1 min-w-0 text-xs",
-                        (conversation.unreadCount ?? 0) > 0
-                          ? "text-text-primary font-medium"
-                          : "text-text-muted"
-                      )}
-                    >
-                      {(() => {
-                        const PreviewIcon = getPreviewIcon(
-                          conversation.lastMessageContentType ?? null,
-                          conversation.lastMessageBridgeType ?? null
-                        );
-                        return PreviewIcon ? <PreviewIcon className="w-3.5 h-3.5 shrink-0" /> : null;
-                      })()}
-                      <span className="truncate">
-                        {conversation.lastMessageDirection === "outbound" ? "Você: " : ""}
-                        {conversationPreviewText(
-                          conversation.lastMessagePreview,
-                          conversation.lastMessageBridgeType ?? null,
-                          conversation.lastMessageRevoked === true
-                        )}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-xs text-text-muted tabular-nums">
-                      {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-2 shrink-0">
-                    {conversation.assignee && (
-                      <Avatar
-                        name={conversation.assignee.name || "?"}
-                        type={conversation.assignee.type === "ai" ? "ai" : "human"}
-                        size="sm"
-                      />
-                    )}
-                    {conversation.lastMessageAt && (
-                      <span
-                        className={cn(
-                          "text-xs tabular-nums",
-                          (conversation.unreadCount ?? 0) > 0
-                            ? "text-brand-500 font-medium"
-                            : "text-text-muted"
-                        )}
-                      >
-                        {new Date(conversation.lastMessageAt).toLocaleDateString("pt-BR")}
-                      </span>
-                    )}
-                    {(conversation.unreadCount ?? 0) > 0 && (
-                      <span
-                        className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
-                        aria-label={`${conversation.unreadCount} mensagens não lidas`}
-                      >
-                        {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-          {!isSearching && canLoadMoreConversations ? (
-            <div className="text-center py-3">
-              <div ref={conversationListSentinelRef} aria-hidden="true" className="h-px" />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleLoadMoreConversations}
-                disabled={loadingMoreConversations}
-                aria-busy={loadingMoreConversations}
-              >
-                {loadingMoreConversations ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Spinner size="sm" />
-                    Carregando mais conversas…
-                  </span>
-                ) : (
-                  "Carregar mais conversas"
-                )}
-              </Button>
-            </div>
-          ) : !isSearching && conversations && conversations.length >= CONVERSATIONS_MAX_LIMIT ? (
-            <div className="text-center py-2">
-              <span className="text-xs text-text-muted">
-                Mostrando as {CONVERSATIONS_MAX_LIMIT} conversas mais recentes
-              </span>
-            </div>
-          ) : null}
-        </div>
-
-        {selectionMode && (
-          <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex items-center gap-2">
-            <span className="flex-1 text-xs text-text-secondary tabular-nums">
-              {selectedIds.size} selecionada{selectedIds.size === 1 ? "" : "s"}
-            </span>
-            <div className="relative">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={selectedIds.size === 0}
-                onClick={() => setBulkLabelOpen((v) => !v)}
-              >
-                Etiquetar
-              </Button>
-              {bulkLabelOpen && (
-                <div className="absolute bottom-full right-0 mb-1 z-40 w-52 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
-                  {(conversationLabels ?? []).length === 0 ? (
-                    <p className="px-3 py-2 text-xs text-text-muted">
-                      Nenhuma etiqueta — crie uma no menu ⋯ de uma conversa
-                    </p>
-                  ) : (
-                    (conversationLabels ?? []).map((label) => (
-                      <button
-                        key={label._id}
-                        type="button"
-                        onClick={() => handleBulkLabelClick(label._id)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
-                      >
-                        <span
-                          className="h-2.5 w-2.5 rounded-full shrink-0"
-                          style={{ backgroundColor: label.color }}
-                        />
-                        {label.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              disabled={selectedIds.size === 0}
-              onClick={handleBulkArchiveClick}
-            >
-              {showArchived ? "Desarquivar" : "Arquivar"}
-            </Button>
-          </div>
-        )}
-      </div>
-
-      {/* Messages */}
+      {/* Conversa aberta: cabeçalho, thread e composer */}
       <div
         className={cn(
           "flex-1 flex flex-col bg-surface-base min-h-0",
@@ -2321,579 +226,107 @@ export function Inbox() {
         )}
       >
         {selectedConversation ? (
-          <>
-            {/* Mobile header with back button */}
-            <div className="md:hidden shrink-0 p-4 border-b border-border bg-surface-raised flex flex-col gap-1">
-              <div className="flex items-center gap-3">
+          <ConversationInteractionProvider value={interaction}>
+            {currentConversation ? (
+              <ConversationHeader
+                key={currentConversation._id}
+                organizationId={organizationId}
+                conversation={currentConversation}
+                canReply={canReply}
+                isGroup={isGroupConversation}
+                groupSubject={groupSubject}
+                groupParticipantsCount={groupParticipantsCount}
+                groupMenu={
+                  isGroupConversation
+                    ? {
+                        canManageGroups,
+                        canManageCampaigns,
+                        canReply,
+                        groupAiEnabled,
+                        onOpenMembers: () => groupPanels.setShowMembersPanel(true),
+                        onOpenSummary: () => groupPanels.setShowGroupSummary(true),
+                        onUnmonitor: () => groupPanels.setConfirmGroupAction("unmonitor"),
+                        onLeave: () => groupPanels.setConfirmGroupAction("leave"),
+                        onDispatch: () => dispatchToGroupMembers("group_members"),
+                      }
+                    : undefined
+                }
+                channelAccounts={filters.channelAccounts}
+                accountById={filters.accountById}
+                aiActive={Boolean(aiStatus?.active)}
+                showAiControls={showAiControls}
+                hasPendingDraft={headerState.hasPendingDraft}
+                contactTyping={headerState.contactTyping}
+                windowInfo={headerState.windowInfo}
+                onBack={handleBackToList}
+                onOpenContact={() => overlays.setShowContactPanel(true)}
+                onOpenLead={() => overlays.setShowLeadPanel(true)}
+                onOpenMembers={() => groupPanels.setShowMembersPanel(true)}
+                onArchivedChange={(archived) => {
+                  if (archived && !showArchived) handleBackToList();
+                }}
+                onLeadDeleted={handleBackToList}
+              >
+                {/* Central (opcional): unidade/setor/responsável/tipo/desfecho + origem */}
+                {centralEnabled && !isGroupConversation && (
+                  <ConversationRoutingBar
+                    key={currentConversation._id}
+                    organizationId={organizationId}
+                    conversationId={currentConversation._id as Id<"conversations">}
+                    modules={centralModules}
+                    lead={
+                      currentConversation.lead
+                        ? {
+                            _id: currentConversation.lead._id as Id<"leads">,
+                            boardId: currentConversation.lead.boardId as Id<"boards">,
+                            value: currentConversation.lead.value as number | undefined,
+                            customFields: currentConversation.lead.customFields as
+                              | Record<string, unknown>
+                              | undefined,
+                          }
+                        : null
+                    }
+                    canReply={canReply}
+                    canEditLead={can("leads", "edit_own")}
+                    teamMembers={assignableMembers(teamMembers ?? [])}
+                  />
+                )}
+
+                {/* Outro app controla a conversa (standby): só recebemos, composer livre */}
+                {headerState.standbyActive && !isGroupConversation && (
+                  <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
+                    <p className="max-w-4xl mx-auto w-full flex items-start gap-2 text-sm text-text-secondary">
+                      <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
+                      <span className="min-w-0">{STANDBY_BANNER_TEXT}</span>
+                    </p>
+                  </div>
+                )}
+              </ConversationHeader>
+            ) : (
+              <div className="md:hidden shrink-0 p-2 border-b border-border bg-chat-header">
                 <button
+                  type="button"
                   onClick={handleBackToList}
-                  className="p-2 -ml-2 text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
+                  className="flex h-11 w-11 items-center justify-center text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
                   aria-label="Voltar"
                 >
                   <ArrowLeft size={20} />
                 </button>
-                {renderContactHeading(
-                  "flex-1 min-w-0 truncate text-base font-semibold text-text-primary"
-                )}
-                {currentConversation && (
-                  <ConversationActionsMenu
-                    organizationId={organizationId}
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    archivedAt={currentConversation.archivedAt}
-                    labelIds={(currentConversation.labelIds ?? []) as string[]}
-                    onArchivedChange={(archived) => {
-                      if (archived && !showArchived) handleBackToList();
-                    }}
-                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
-                    leadId={
-                      !isGroupConversation && currentConversation.leadId
-                        ? (currentConversation.leadId as Id<"leads">)
-                        : undefined
-                    }
-                    onLeadDeleted={handleBackToList}
-                  />
-                )}
-              </div>
-              {funnelLine && <div className="pl-11">{funnelLine}</div>}
-              {isGroupConversation && (
-                <div className="pl-11">
-                  <GroupMembersButton
-                    participantsCount={groupParticipantsCount}
-                    onClick={() => setShowMembersPanel(true)}
-                  />
-                </div>
-              )}
-              {originLine && <div className="pl-11 flex">{originLine}</div>}
-              {contactTyping && (
-                <span className="pl-11 text-xs text-brand-500 animate-pulse">
-                  {isGroupConversation ? "alguém está digitando…" : "digitando…"}
-                </span>
-              )}
-              {aiStatus?.active && currentConversation && canUseAiAttendant &&
-                aiControlsAllowed && !isGroupConversation && (
-                <div className="pl-11 flex flex-wrap items-center gap-2">
-                  <AiConversationControls
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
-                    hasPendingDraft={hasPendingDraft}
-                  />
-                  {aiChip && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                        aiChip.tone === "processing"
-                          ? "bg-brand-500/10 text-brand-400"
-                          : "bg-surface-overlay text-text-muted"
-                      )}
-                    >
-                      {aiChip.label}
-                    </span>
-                  )}
-                  <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
-                </div>
-              )}
-              {windowInfo && (
-                <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
-                  <Clock className="h-3.5 w-3.5 shrink-0" />
-                  {windowInfo.text}
-                </div>
-              )}
-            </div>
-
-            {/* Desktop header */}
-            <div className="hidden md:flex shrink-0 p-4 border-b border-border bg-surface-raised items-center justify-between">
-              <div className="min-w-0">
-                {renderContactHeading("text-base font-semibold text-text-primary truncate")}
-                {funnelLine}
-                {isGroupConversation && (
-                  <GroupMembersButton
-                    participantsCount={groupParticipantsCount}
-                    onClick={() => setShowMembersPanel(true)}
-                  />
-                )}
-                {originLine && <div className="flex">{originLine}</div>}
-                {contactTyping && (
-                  <span className="text-xs text-brand-500 animate-pulse">
-                    {isGroupConversation ? "alguém está digitando…" : "digitando…"}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {aiStatus?.active && currentConversation && canUseAiAttendant &&
-                aiControlsAllowed && !isGroupConversation && (
-                  <>
-                    <AiConversationControls
-                      conversationId={currentConversation._id as Id<"conversations">}
-                      aiPausedUntil={currentConversation.aiPausedUntil as number | undefined}
-                      hasPendingDraft={hasPendingDraft}
-                    />
-                    {aiChip && (
-                      <span
-                        className={cn(
-                          "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
-                          aiChip.tone === "processing"
-                            ? "bg-brand-500/10 text-brand-400"
-                            : "bg-surface-overlay text-text-muted"
-                        )}
-                      >
-                        {aiChip.label}
-                      </span>
-                    )}
-                    <FollowUpChip conversationId={currentConversation._id as Id<"conversations">} />
-                  </>
-                )}
-                {windowInfo && (
-                  <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
-                    <Clock className="h-4 w-4 shrink-0" />
-                    {windowInfo.text}
-                  </div>
-                )}
-                {currentConversation && (
-                  <ConversationActionsMenu
-                    organizationId={organizationId}
-                    conversationId={currentConversation._id as Id<"conversations">}
-                    archivedAt={currentConversation.archivedAt}
-                    labelIds={(currentConversation.labelIds ?? []) as string[]}
-                    onArchivedChange={(archived) => {
-                      if (archived && !showArchived) handleBackToList();
-                    }}
-                    renderExtraItems={isGroupConversation ? renderGroupMenuItems : undefined}
-                    leadId={
-                      !isGroupConversation && currentConversation.leadId
-                        ? (currentConversation.leadId as Id<"leads">)
-                        : undefined
-                    }
-                    onLeadDeleted={handleBackToList}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Central (opcional): unidade/setor/responsável/tipo/desfecho + origem */}
-            {centralEnabled && currentConversation && !isGroupConversation && (
-              <ConversationRoutingBar
-                key={currentConversation._id}
-                organizationId={organizationId}
-                conversationId={currentConversation._id as Id<"conversations">}
-                modules={centralModules}
-                lead={
-                  currentConversation.lead
-                    ? {
-                        _id: currentConversation.lead._id as Id<"leads">,
-                        boardId: currentConversation.lead.boardId as Id<"boards">,
-                        value: currentConversation.lead.value as number | undefined,
-                        customFields: currentConversation.lead.customFields as
-                          | Record<string, unknown>
-                          | undefined,
-                      }
-                    : null
-                }
-                canReply={canReply}
-                canEditLead={can("leads", "edit_own")}
-                teamMembers={assignableMembers(teamMembers ?? [])}
-              />
-            )}
-
-            {/* Outro app controla a conversa (standby): só recebemos, composer livre */}
-            {standbyActive && !isGroupConversation && (
-              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                <p className="max-w-4xl mx-auto w-full flex items-start gap-2 text-sm text-text-secondary">
-                  <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
-                  <span className="min-w-0">{STANDBY_BANNER_TEXT}</span>
-                </p>
               </div>
             )}
 
-            {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
-            {handoffPending && (
-              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-                    <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
-                    <span className="min-w-0">
-                      <span className="font-medium text-semantic-warning">Repasse pendente</span>
-                      {handoffReason && (
-                        <span className="text-text-secondary"> — {handoffReason}</span>
-                      )}
-                    </span>
-                  </p>
-                  {canReply && (
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={!pendingHandoff}
-                        onClick={handleAcceptHandoff}
-                      >
-                        Aceitar e assumir
-                      </Button>
-                      {pendingHandoff && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() =>
-                            navigate(`${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`)
-                          }
-                        >
-                          Ver repasse
-                        </Button>
-                      )}
-                      {currentConversation && (
-                        <ReturnToAiButton
-                          conversationId={currentConversation._id as Id<"conversations">}
-                          variant="button"
-                        />
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Suspeita de robô (v0.65) — adicional ao banner de repasse */}
-            {botSuspicion && currentConversation && !isGroupConversation && (
-              <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-                  <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-                    <Bot size={16} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
-                    <span className="min-w-0">
-                      <span className="block font-medium text-semantic-warning">
-                        A IA parou de responder: o outro lado parece um robô ou mensagem automática
-                      </span>
-                      {botSuspicion.reason && (
-                        <span className="block text-xs text-text-secondary mt-0.5 break-words">
-                          {botSuspicion.reason}
-                        </span>
-                      )}
-                    </span>
-                  </p>
-                  {canReply && (
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={returningFromBot}
-                        onClick={() => void handleNotABot()}
-                      >
-                        É uma pessoa — devolver para a IA
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() =>
-                          navigate(
-                            pendingHandoff
-                              ? `${TAB_ROUTES.handoffs}?handoff=${pendingHandoff._id}`
-                              : TAB_ROUTES.handoffs
-                          )
-                        }
-                      >
-                        Ver repasse
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Messages List */}
-            <div
-              ref={messagesScrollRef}
-              onScroll={handleMessagesScroll}
-              className="flex-1 min-h-0 overflow-y-auto"
-            >
-              <div className="min-h-full flex flex-col justify-end max-w-4xl mx-auto w-full p-4 space-y-4">
-                {messages &&
-                (loadingOlderMessages ||
-                  canLoadMore(messages.length, messageLimit, MESSAGES_MAX_LIMIT)) ? (
-                  <div className="text-center py-2 mb-2">
-                    <div ref={olderMessagesSentinelRef} aria-hidden="true" className="h-px" />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={handleLoadOlderMessages}
-                      disabled={loadingOlderMessages}
-                      aria-busy={loadingOlderMessages}
-                    >
-                      {loadingOlderMessages ? (
-                        <span className="inline-flex items-center gap-2">
-                          <Spinner size="sm" />
-                          Carregando mensagens anteriores…
-                        </span>
-                      ) : (
-                        "Carregar mensagens anteriores"
-                      )}
-                    </Button>
-                  </div>
-                ) : messages && messages.length >= MESSAGES_MAX_LIMIT ? (
-                  <div className="text-center py-2 mb-2">
-                    <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
-                      Exibindo as últimas {MESSAGES_MAX_LIMIT} mensagens
-                    </span>
-                  </div>
-                ) : null}
-                {(messages as InboxMessage[] | undefined)?.map((message) =>
-                  message.metadata?.kind === "transfer" && message.metadata?.transfer ? (
-                    // Transferência de setor (Central): evento de sistema, não bolha
-                    <TransferEvent
-                      key={message._id}
-                      actorName={message.sender?.name ?? null}
-                      transfer={message.metadata.transfer}
-                      createdAt={message.createdAt}
-                    />
-                  ) : getAiDraft(message) ? (
-                    // Rascunho do atendente IA (modo sugestão): revisão humana
-                    <AiDraftCard key={message._id} message={message} />
-                  ) : (
-                    <MessageBubble
-                      key={message._id}
-                      message={message}
-                      channel={convChannel}
-                      transport={convTransport}
-                      canInteract={canReply}
-                      currentMemberId={currentMemberId}
-                      contactName={contactName}
-                      transcribing={transcribingIds.has(message._id)}
-                      describing={describingIds.has(message._id)}
-                      downloadingMedia={downloadingIds.has(message._id)}
-                      visionEnabled={visionEnabled}
-                      highlighted={highlightId === message._id}
-                      group={
-                        isGroupConversation
-                          ? {
-                              mentionTokens: mentionTokensFor(message.mentions, groupNameByKey),
-                              onOpenContact: (contactId) =>
-                                setMemberContactId(contactId as Id<"contacts">),
-                            }
-                          : undefined
-                      }
-                      onReply={setReplyTo}
-                      onReact={handleReact}
-                      onForward={setForwardTarget}
-                      onTranscribe={handleTranscribe}
-                      onDescribeImage={(m) => void handleDescribeImage(m)}
-                      {...(canReply
-                        ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
-                        : {})}
-                      onJumpToMessage={handleJumpToMessage}
-                    />
-                  )
-                )}
-              </div>
-            </div>
-
-            {/* Message Input */}
-            {canReply ? (
-              <form onSubmit={handleSendMessage} className="shrink-0 border-t border-border bg-surface-raised">
-                <div className="max-w-4xl mx-auto w-full p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Checkbox
-                    checked={isInternal}
-                    onChange={(e) => setIsInternal(e.target.checked)}
-                    label="Nota interna"
-                  />
-                  {isInternal && (
-                    <Badge variant="warning">Visível apenas para membros da equipe</Badge>
-                  )}
-                </div>
-
-                {/* Reply citation bar */}
-                {replyTo && !isInternal && (
-                  <div className="flex items-center gap-2 mb-2 pl-2 pr-1 py-1.5 border-l-2 border-brand-500 bg-surface-sunken rounded-r-lg">
-                    <Reply size={15} className="shrink-0 text-brand-400" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-brand-400">
-                        Respondendo {replyAuthor}
-                      </p>
-                      <p className="text-xs text-text-secondary truncate">{replyPreview}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setReplyTo(null)}
-                      className="shrink-0 p-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
-                      aria-label="Cancelar resposta"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                )}
-
-                {scheduledPending && scheduledPending.length > 0 && (
-                  <div className="mb-2 space-y-1">
-                    {scheduledPending.map((item) => (
-                      <ScheduledPendingRow
-                        key={item._id}
-                        item={item}
-                        onCancel={() => handleCancelScheduled(item._id)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {stagedFiles.length > 1 && isWhatsappConversation && (
-                  <p className="text-xs text-text-muted mb-2">
-                    WhatsApp: apenas o primeiro anexo será enviado
-                  </p>
-                )}
-                <div className="relative flex gap-2 items-end">
-                  <QuickReplyDropdown
-                    open={quickReplies.open}
-                    items={quickReplies.items}
-                    activeIndex={quickReplies.activeIndex}
-                    onPick={quickReplies.pick}
-                    onManage={() => quickReplies.setManageOpen(true)}
-                  />
-                  <GroupMentionDropdown
-                    open={groupMentions.open}
-                    items={groupMentions.items}
-                    activeIndex={groupMentions.activeIndex}
-                    onPick={groupMentions.pick}
-                    pending={groupMentions.pending}
-                  />
-                  {!recorderActive && (
-                    <>
-                      <FileUploadButton
-                        organizationId={organizationId}
-                        uploadedFiles={stagedFiles}
-                        onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
-                        onFilesRemoved={(fileId) =>
-                          setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))
-                        }
-                        className="shrink-0"
-                        disabled={composerBlocked || mediaBlocked}
-                        disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
-                        channel={convChannel}
-                        transport={convTransport}
-                      />
-                      <EmojiPickerButton onPick={insertEmoji} />
-                      <MentionTextarea
-                        inputRef={composerInputRef}
-                        value={newMessage}
-                        onChange={(value) => {
-                          setNewMessage(value);
-                          // O "@" do grupo depende da posição do cursor, que só
-                          // existe no DOM depois que o React aplica o valor.
-                          requestAnimationFrame(() =>
-                            groupMentions.setCursor(
-                              composerInputRef.current?.selectionStart ?? value.length
-                            )
-                          );
-                          handleComposerActivity();
-                        }}
-                        onKeyDown={(e) => {
-                          if (groupMentions.handleKeyDown(e)) return;
-                          if (quickReplies.handleKeyDown(e)) return;
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            if (newMessage.trim() || stagedFiles.length > 0) {
-                              handleSendMessage(e as unknown as React.FormEvent);
-                            }
-                          }
-                        }}
-                        teamMembers={assignableMembers(teamMembers)}
-                        mentionEnabled={isInternal}
-                        disabled={composerBlocked}
-                        placeholder={
-                          isInternal
-                            ? "Escreva uma nota interna... Use @ para mencionar"
-                            : composerBlocked
-                              ? "Janela fechada — aguarde o cliente escrever de novo"
-                              : isGroupConversation
-                              ? "Mensagem para o grupo... Use @ para mencionar um membro"
-                              : "Digite uma mensagem..."
-                        }
-                        rows={1}
-                        className={cn(
-                          "bg-surface-sunken",
-                          isInternal
-                            ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
-                            : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
-                        )}
-                      />
-                    </>
-                  )}
-
-                  {!showVoice && !isInternal && !composerBlocked && newMessage.trim() && (
-                    <div className="relative shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => (scheduleOpen ? setScheduleOpen(false) : openSchedule())}
-                        className={cn(
-                          "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
-                          scheduleOpen && "text-brand-500 bg-brand-500/10"
-                        )}
-                        aria-label="Agendar mensagem"
-                        title="Agendar mensagem"
-                      >
-                        <Clock size={18} />
-                      </button>
-                      {scheduleOpen && (
-                        <div className="absolute bottom-full right-0 mb-2 z-40 w-64 p-3 bg-surface-overlay border border-border rounded-xl shadow-elevated space-y-2.5">
-                          <p className="text-xs font-medium text-text-primary">Enviar em</p>
-                          <input
-                            type="datetime-local"
-                            value={scheduleValue}
-                            onChange={(e) => setScheduleValue(e.target.value)}
-                            className="w-full h-9 px-2.5 rounded-lg text-sm bg-surface-sunken border border-border-strong text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
-                          />
-                          <div className="flex justify-end gap-2">
-                            {/* type="button" obrigatório: dentro do form, o default
-                                "submit" dispararia o envio imediato junto do agendamento */}
-                            <Button type="button" variant="ghost" size="sm" onClick={() => setScheduleOpen(false)}>
-                              Cancelar
-                            </Button>
-                            <Button type="button" size="sm" onClick={handleSchedule}>
-                              Agendar
-                            </Button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {showVoice ? (
-                    <VoiceRecorder
-                      organizationId={organizationId}
-                      onActiveChange={setRecorderActive}
-                      onRecorded={handleSendVoice}
-                    />
-                  ) : (
-                    <Button
-                      type="submit"
-                      disabled={composerBlocked || (!newMessage.trim() && stagedFiles.length === 0)}
-                      variant={isInternal ? "secondary" : "primary"}
-                      size="md"
-                      className={cn(
-                        "shrink-0",
-                        isInternal && "bg-semantic-warning hover:bg-amber-600 text-white"
-                      )}
-                      aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
-                    >
-                      <Send size={16} />
-                      <span className="hidden sm:inline">{isInternal ? "Adicionar Nota" : "Enviar"}</span>
-                    </Button>
-                  )}
-                </div>
-                {textCounter && (
-                  <p
-                    className={cn(
-                      "mt-1 text-right text-xs tabular-nums",
-                      textCounter.over ? "text-semantic-warning" : "text-text-muted"
-                    )}
-                    aria-live="polite"
-                  >
-                    {textCounter.label}
-                    {textCounter.over && ` — a mensagem será enviada em cerca de ${textCounter.parts} partes`}
-                  </p>
-                )}
-                </div>
-              </form>
-            ) : (
-              <div className="shrink-0 p-4 border-t border-border bg-surface-raised text-center">
-                <p className="text-sm text-text-muted">Você não tem permissão para enviar mensagens.</p>
-              </div>
-            )}
-          </>
+            <ConversationThread
+              organizationId={organizationId}
+              conversationId={selectedConversation as Id<"conversations">}
+              onOpenGroupMemberContact={groupPanels.setMemberContactId}
+            />
+            <Composer
+              key={selectedConversation}
+              organizationId={organizationId}
+              conversationId={selectedConversation as Id<"conversations">}
+              canReply={canReply}
+            />
+          </ConversationInteractionProvider>
         ) : (
           <div className="flex-1 flex items-center justify-center text-text-muted">
             Selecione uma conversa para ver as mensagens
@@ -2903,44 +336,26 @@ export function Inbox() {
     </div>
 
       {/* Deep-link ?conversation= fora da lista carregada (arquivada ou antiga) */}
-      {conversationParam && !conversationInList && (
-        <ErrorBoundary key={conversationParam} fallback={<></>}>
+      {selection.deepLinkId && (
+        <ErrorBoundary key={selection.deepLinkId} fallback={<></>}>
           <ConversationDeepLinkResolver
-            conversationId={conversationParam as Id<"conversations">}
-            onResolve={handleResolveLinkedConversation}
+            conversationId={selection.deepLinkId as Id<"conversations">}
+            onResolve={selection.handleResolveLinkedConversation}
           />
         </ErrorBoundary>
       )}
 
-      <ForwardModal
-        open={!!forwardTarget}
-        organizationId={organizationId}
-        message={forwardTarget}
-        currentConversationId={selectedConversation}
-        onClose={() => setForwardTarget(null)}
-      />
-      <QuickRepliesModal
-        organizationId={organizationId}
-        open={quickReplies.manageOpen}
-        onClose={() => quickReplies.setManageOpen(false)}
-      />
       <ConfirmDialog
-        open={!!confirmBulk}
-        onClose={() => setConfirmBulk(null)}
-        onConfirm={() => {
-          const pending = confirmBulk;
-          setConfirmBulk(null);
-          if (!pending) return;
-          if (pending.action === "archive") void runBulkArchive();
-          else if (pending.labelId) void runBulkLabel(pending.labelId);
-        }}
+        open={!!bulk.confirmBulk}
+        onClose={() => bulk.setConfirmBulk(null)}
+        onConfirm={bulk.confirmPending}
         title={
-          confirmBulk?.action === "archive"
-            ? `${showArchived ? "Desarquivar" : "Arquivar"} ${selectedIds.size} conversas?`
-            : `Etiquetar ${selectedIds.size} conversas?`
+          bulk.confirmBulk?.action === "archive"
+            ? `${showArchived ? "Desarquivar" : "Arquivar"} ${bulk.selectedIds.size} conversas?`
+            : `Etiquetar ${bulk.selectedIds.size} conversas?`
         }
         description={
-          confirmBulk?.action === "archive"
+          bulk.confirmBulk?.action === "archive"
             ? showArchived
               ? "As conversas selecionadas voltam para a lista de ativas."
               : "As conversas selecionadas saem da lista de ativas. Dá para desarquivar depois."
@@ -2952,152 +367,32 @@ export function Inbox() {
       {showNewConversation && (
         <NewConversationModal
           organizationId={organizationId}
-          open={novaParam !== null}
-          onClose={closeNewConversation}
-          initialContactId={novaContactId}
+          open={selection.novaOpen}
+          onClose={selection.closeNewConversation}
+          initialContactId={selection.novaContactId}
           onStarted={handleNewConversationStarted}
         />
       )}
 
-      {/* Painéis sobrepostos à conversa */}
-      {showLeadPanel && openLeadId && (
-        <LeadDetailPanel
-          leadId={openLeadId}
-          organizationId={organizationId}
-          onClose={() => setShowLeadPanel(false)}
-          initialTab="details"
-        />
-      )}
-      {showContactPanel && openContactId && (
-        <ContactDetailPanel
-          contactId={openContactId}
-          onClose={() => setShowContactPanel(false)}
-        />
-      )}
-
-      {/* Grupo: resumo por IA (F4) */}
-      {isGroupConversation && groupChatId && showGroupSummary && (
-        <GroupSummaryModal
-          open
-          groupChatId={groupChatId}
-          groupSubject={groupSubject}
-          initial={groupChat?.summary ?? null}
-          onClose={() => setShowGroupSummary(false)}
-        />
-      )}
-
-      {/* Grupo: membros da sala + o contato de um membro, sobrepostos */}
-      {isGroupConversation && groupChatId && (
-        <GroupMembersPanel
-          // `key` por sala: sem ela a busca e a seleção vazavam de um grupo
-          // para outro ("3 selecionado(s)" sem nada marcado).
-          key={groupChatId}
-          open={showMembersPanel}
-          groupChatId={groupChatId}
-          organizationId={organizationId}
-          onClose={() => setShowMembersPanel(false)}
-          onOpenContact={(contactId) => setMemberContactId(contactId)}
-          {...(canManageCampaigns
-            ? { onDispatchSelected: (phones: string[]) => dispatchToGroupMembers("manual", phones) }
-            : {})}
-        />
-      )}
-      {/* Montado DEPOIS do painel de membros para ficar por cima (v0.48). */}
-      {memberContactId && (
-        <ContactDetailPanel
-          contactId={memberContactId}
-          onClose={() => setMemberContactId(null)}
-        />
-      )}
-
-      <ConfirmDialog
-        open={confirmGroupAction === "unmonitor"}
-        onClose={() => setConfirmGroupAction(null)}
-        onConfirm={() => {
-          setConfirmGroupAction(null);
-          void handleStopMonitoring();
-        }}
-        title={`Parar de acompanhar '${groupSubject}'?`}
-        description="O CRM deixa de receber as mensagens desta sala e a conversa é arquivada. O histórico já ingerido continua aqui, e dá para voltar a acompanhar depois."
-        confirmLabel="Parar de acompanhar"
+      <InboxOverlays
+        organizationId={organizationId}
+        overlays={overlays}
+        openLeadId={openLeadId}
+        openContactId={openContactId}
+        group={
+          isGroupConversation && groupChatId
+            ? {
+                groupChatId,
+                groupSubject,
+                groupChat,
+                onDispatchSelected: canManageCampaigns
+                  ? (phones) => dispatchToGroupMembers("manual", phones)
+                  : undefined,
+                onLeft: handleBackToList,
+              }
+            : undefined
+        }
       />
-      <ConfirmDialog
-        open={confirmGroupAction === "leave"}
-        onClose={() => setConfirmGroupAction(null)}
-        onConfirm={() => {
-          setConfirmGroupAction(null);
-          void handleLeaveGroup();
-        }}
-        title={`Sair de '${groupSubject}'?`}
-        description="O número sai do grupo de verdade, no WhatsApp — os membros veem a saída. Voltar exige um convite novo. Esta ação é registrada na auditoria."
-        confirmLabel="Sair do grupo"
-        variant="danger"
-      />
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Mensagem agendada pendente — linha com contagem regressiva         */
-/* ------------------------------------------------------------------ */
-
-function ScheduledPendingRow({
-  item,
-  onCancel,
-}: {
-  item: { _id: string; content: string; scheduledAt: number; createdAt: number };
-  onCancel: () => void;
-}) {
-  const [tick, setTick] = useState(() => Date.now());
-  useEffect(() => {
-    const interval = setInterval(() => setTick(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const total = Math.max(1, item.scheduledAt - item.createdAt);
-  const elapsed = Math.min(total, Math.max(0, tick - item.createdAt));
-  const progress = (elapsed / total) * 100;
-  const remainingMs = Math.max(0, item.scheduledAt - tick);
-
-  const remainingLabel = (() => {
-    const s = Math.ceil(remainingMs / 1000);
-    if (s <= 0) return "enviando…";
-    if (s < 60) return `em ${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `em ${m}min ${String(s % 60).padStart(2, "0")}s`;
-    const h = Math.floor(m / 60);
-    return `em ${h}h${String(m % 60).padStart(2, "0")}`;
-  })();
-
-  return (
-    <div className="rounded-lg bg-surface-sunken border border-border overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
-        <Clock size={12} className="shrink-0 text-brand-500" />
-        <span className="shrink-0 text-text-secondary tabular-nums">
-          {new Date(item.scheduledAt).toLocaleString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </span>
-        <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
-        <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="shrink-0 p-1 rounded-full text-text-muted hover:text-semantic-error hover:bg-surface-raised transition-colors"
-          aria-label="Cancelar agendamento"
-        >
-          <X size={12} />
-        </button>
-      </div>
-      <div className="h-0.5 bg-surface-raised">
-        <div
-          className="h-full bg-brand-500 transition-[width] duration-1000 ease-linear"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
     </div>
   );
 }

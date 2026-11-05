@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import React, { useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -115,7 +116,7 @@ export function FileUploadButton({
         });
 
         if (!response.ok) {
-          throw new Error(`Falha ao enviar ${file.name}`);
+          throw new Error(`Não foi possível enviar ${file.name}.`);
         }
 
         const { storageId } = await response.json();
@@ -143,7 +144,7 @@ export function FileUploadButton({
 
       onFilesUploaded(newFiles);
     } catch (error: any) {
-      toast.error(error.message || "Falha ao enviar arquivo");
+      toast.error(error.message || "Não foi possível enviar o arquivo.");
     } finally {
       setUploading(false);
       setProgress(0);
@@ -187,31 +188,30 @@ export function FileUploadButton({
       )}
 
       {/* Upload button */}
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={disabled || uploading || uploadedFiles.length >= MAX_FILES}
-        className={cn(
-          "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
-          "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
-        )}
-        title={
-          disabled && disabledHint
+      <Tooltip content={disabled && disabledHint
             ? disabledHint
             : uploading
             ? `Enviando... ${progress}%`
             : uploadedFiles.length >= MAX_FILES
             ? `Máximo de ${MAX_FILES} arquivos`
-            : (channel && UPLOAD_RULES_HINT[channel]) || "Anexar arquivo"
-        }
-        aria-label="Anexar arquivo"
-      >
-        {uploading ? (
-          <Loader2 size={18} className="animate-spin" />
-        ) : (
-          <Paperclip size={18} />
-        )}
-      </button>
+            : (channel && UPLOAD_RULES_HINT[channel]) || "Anexar arquivo"}>
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={disabled || uploading || uploadedFiles.length >= MAX_FILES}
+          className={cn(
+            "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
+          )}
+          aria-label="Anexar arquivo"
+        >
+          {uploading ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : (
+            <Paperclip size={18} />
+          )}
+        </button>
+      </Tooltip>
 
       <input
         ref={fileInputRef}

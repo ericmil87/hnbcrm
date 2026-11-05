@@ -15,7 +15,7 @@ import { BarList, CHART_COLORS, TimeSeriesChart } from "./charts";
 import {
   contactKindLabel,
   formatBRL,
-  formatBRLCompact,
+  formatCompactBRL,
   formatDuration,
   formatInt,
   formatPct,
@@ -45,9 +45,9 @@ export function OverviewTab({ data }: { data: CentralDashboard }) {
         <KpiCard icon={Bot} label="Resolvido pela IA" value={formatPct(t.aiResolvedRate)} hint="sem precisar de humano" />
         <KpiCard
           icon={ArrowRightLeft}
-          label="Repasses"
+          label="Pedidos de ajuda"
           value={formatInt(t.handoffs)}
-          hint={`${formatInt(t.transfers)} transferências de setor`}
+          hint={`${formatInt(t.transfers)} transferências de departamento`}
         />
         <KpiCard icon={Inbox} label="Abertas agora" value={formatInt(t.openNow)} hint="conversas em andamento" />
       </div>
@@ -70,14 +70,14 @@ export function OverviewTab({ data }: { data: CentralDashboard }) {
             kind="column"
             series={[{ key: "revenue", label: "Receita", color: CHART_COLORS.primary }]}
             formatValue={formatBRL}
-            formatAxis={formatBRLCompact}
+            formatAxis={formatCompactBRL}
             ariaLabel={`Receita por dia: total de ${formatBRL(t.revenue)} no período`}
           />
         </SectionCard>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:gap-6 lg:grid-cols-2">
-        <SectionCard title="Funil por estágio" subtitle="Leads do período, pelo estágio em que estão agora">
+        <SectionCard title="Funil por etapa" subtitle="Leads do período, pela etapa em que estão agora">
           <BarList
             items={data.funnel.map((s) => ({
               key: s.stageId,
@@ -86,7 +86,7 @@ export function OverviewTab({ data }: { data: CentralDashboard }) {
               dotColor: s.color,
             }))}
             formatValue={formatInt}
-            ariaLabel="Leads por estágio do funil"
+            ariaLabel="Leads por etapa do funil"
             emptyText="Nenhum lead novo no período."
           />
         </SectionCard>

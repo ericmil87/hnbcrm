@@ -27,7 +27,7 @@ interface OptOutRow {
 
 const SOURCE_LABEL: Record<OptOutRow["source"], { label: string; variant: "warning" | "error" | "default" | "info" }> = {
   keyword: { label: "Pediu para parar", variant: "warning" },
-  meta_131050: { label: "Opt-out na Meta", variant: "error" },
+  meta_131050: { label: "Descadastro pela Meta", variant: "error" },
   manual: { label: "Manual", variant: "default" },
   import: { label: "Importado", variant: "info" },
 };
@@ -79,11 +79,11 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
         phone: newPhone.trim(),
         ...(newReason.trim() ? { reason: newReason.trim() } : {}),
       });
-      toast.success(id ? "Número adicionado à lista de supressão" : "Este número já estava na lista");
+      toast.success(id ? "Número adicionado aos descadastrados" : "Este número já estava na lista");
       setNewPhone("");
       setNewReason("");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao adicionar"));
+      toast.error(mutationErrorMessage(e, "Não foi possível adicionar."));
     } finally {
       setAdding(false);
     }
@@ -93,9 +93,9 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
     if (!confirmRemove) return;
     try {
       await removeOptOut({ optOutId: confirmRemove._id });
-      toast.success("Número removido da supressão — voltará a receber campanhas");
+      toast.success("Número removido dos descadastrados. Ele voltará a receber campanhas");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao remover"));
+      toast.error(mutationErrorMessage(e, "Não foi possível remover."));
     } finally {
       setConfirmRemove(null);
     }
@@ -105,7 +105,7 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
     <SlideOver
       open={open}
       onClose={onClose}
-      title="Lista de supressão"
+      title="Descadastrados"
       titleIcon={<Ban size={18} className="text-semantic-warning" />}
       className="md:w-[560px]"
     >
@@ -113,7 +113,7 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
         <p className="text-sm text-text-secondary">
           Números que pediram para não receber mensagens. Nenhuma campanha envia para quem está
           aqui, mesmo que o número esteja no segmento ou no CSV. Entradas automáticas vêm das
-          palavras-chave (SAIR, PARAR, STOP, CANCELAR) e do opt-out registrado pela Meta.
+          palavras-chave (SAIR, PARAR, STOP, CANCELAR) e do descadastro registrado pela Meta.
         </p>
 
         {canManage && (
@@ -160,7 +160,7 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
             title={search ? "Nenhum número encontrado" : "Lista vazia"}
             description={
               search
-                ? "Nenhum número da supressão contém esses dígitos."
+                ? "Nenhum número descadastrado contém esses dígitos."
                 : "Ninguém pediu para sair ainda. Contatos que responderem SAIR entram aqui sozinhos."
             }
           />
@@ -176,15 +176,15 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
                       <Badge variant={meta.variant}>{meta.label}</Badge>
                     </div>
                     {row.reason && <p className="text-xs text-text-secondary mt-0.5 break-words">{row.reason}</p>}
-                    <p className="text-[11px] text-text-muted mt-0.5">{formatDateTime(row.createdAt)}</p>
+                    <p className="text-caption text-text-muted mt-0.5">{formatDateTime(row.createdAt)}</p>
                   </div>
                   {canFull && (
                     <button
                       type="button"
                       onClick={() => setConfirmRemove(row)}
                       className="h-11 w-11 shrink-0 inline-flex items-center justify-center rounded-full text-text-muted hover:text-semantic-error hover:bg-semantic-error/10"
-                      aria-label="Remover da supressão"
-                      title="Remover da supressão"
+                      aria-label="Remover dos descadastrados"
+                      title="Remover dos descadastrados"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -208,7 +208,7 @@ export function OptOutsPanel({ organizationId, open, onClose }: OptOutsPanelProp
         open={confirmRemove !== null}
         onClose={() => setConfirmRemove(null)}
         onConfirm={() => void handleRemove()}
-        title="Remover da lista de supressão?"
+        title="Remover dos descadastrados?"
         description={
           confirmRemove
             ? `${formatPhone(confirmRemove.phone)} voltará a receber campanhas. Faça isso apenas se a pessoa pediu para voltar a ser contatada — reenviar a quem pediu para parar é o caminho mais curto para denúncia e bloqueio.`

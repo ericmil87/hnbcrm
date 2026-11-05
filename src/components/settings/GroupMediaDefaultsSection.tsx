@@ -62,7 +62,7 @@ export function GroupMediaDefaultsSection({
     try {
       await setGroupMediaDefaults({ organizationId, channelConfigId, policy: next });
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao salvar a mídia dos grupos"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar a mídia dos grupos."));
     } finally {
       setDraft(null);
       setSaving(false);
@@ -136,7 +136,7 @@ export function GroupMediaDefaultsSection({
             ))}
           </div>
 
-          <ul className="list-disc space-y-1 pl-4 text-[11px] leading-relaxed text-text-muted">
+          <ul className="list-disc space-y-1 pl-4 text-caption leading-relaxed text-text-muted">
             <li>
               Mídia não baixada não ocupa espaço e pode ser baixada depois, na
               própria conversa, por até 14 dias.

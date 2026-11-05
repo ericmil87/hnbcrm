@@ -3,6 +3,7 @@
  * tipo de contato, desfecho e origem do anúncio). Puro — testado em
  * `centralMeta.test.ts`.
  */
+import { formatMoney } from "@/lib/format";
 import {
   BedDouble,
   Briefcase,
@@ -117,15 +118,7 @@ export function shortId(id: string | null | undefined, keep = 6): string | null 
   return `${s.slice(0, keep)}…${s.slice(-4)}`;
 }
 
-const BRL = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-  maximumFractionDigits: 0,
-});
-
-export function formatBRL(value: number): string {
-  return BRL.format(value);
-}
+export const formatBRL = (value: number): string => formatMoney(value, "BRL", { fractionDigits: 0 });
 
 /** "YYYY-MM-DD" → Date local (sem o deslocamento de fuso do `new Date(iso)`). */
 function parseDay(day: string): Date | null {

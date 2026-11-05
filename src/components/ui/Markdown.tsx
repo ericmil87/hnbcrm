@@ -1,3 +1,4 @@
+import { Tooltip } from "./Tooltip";
 import { memo, useMemo, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import {
@@ -117,7 +118,7 @@ const ALIGN_CLASS: Record<Exclude<TableAlign, null>, string> = {
 
 function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-border bg-surface-base/40">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-xs">
         <thead>
           <tr className="bg-surface-sunken">
@@ -136,7 +137,7 @@ function Table({ node }: { node: Extract<BlockNode, { type: "table" }> }) {
         </thead>
         <tbody>
           {node.rows.map((row, r) => (
-            <tr key={r} className="even:bg-surface-overlay/40">
+            <tr key={r}>
               {row.map((cell, c) => (
                 <td
                   key={c}
@@ -160,7 +161,7 @@ function CodeBlock({ lang, value }: { lang: string | null; value: string }) {
   return (
     <div className="group relative overflow-hidden rounded-lg border border-border bg-surface-sunken">
       {lang && (
-        <div className="border-b border-border px-3 py-1 font-mono text-[11px] text-text-muted">
+        <div className="border-b border-border px-3 py-1 font-mono text-caption text-text-muted">
           {lang}
         </div>
       )}
@@ -197,22 +198,23 @@ export function CopyButton({
   };
 
   return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      aria-label={label}
-      title={label}
-      className={cn(
-        "rounded-md border border-border bg-surface-raised p-1.5 text-text-muted transition-colors hover:text-text-primary",
-        className
-      )}
-    >
-      {copied ? (
-        <Check size={13} className="text-semantic-success" />
-      ) : (
-        <Copy size={13} />
-      )}
-    </button>
+    <Tooltip content={label}>
+      <button
+        type="button"
+        onClick={handleCopy}
+        aria-label={label}
+        className={cn(
+          "rounded-md border border-border bg-surface-raised p-1.5 text-text-muted transition-colors hover:text-text-primary",
+          className
+        )}
+      >
+        {copied ? (
+          <Check size={13} className="text-semantic-success" />
+        ) : (
+          <Copy size={13} />
+        )}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -257,7 +259,7 @@ function Inline({ node }: { node: InlineNode }) {
 
     case "codeSpan":
       return (
-        <code className="rounded border border-border/70 bg-surface-sunken px-1 py-0.5 font-mono text-[0.85em] text-text-primary">
+        <code className="rounded border border-border/50 bg-surface-sunken px-1 py-0.5 font-mono text-[0.85em] text-text-primary">
           {node.value}
         </code>
       );

@@ -296,4 +296,15 @@ describe("queda de canal", () => {
     expect(tpl.html).toContain("/app/configuracoes?secao=channels");
     expect(tpl.html).toContain("••••8753");
   });
+
+  test("links do e-mail: Meta abre Instagram; gasto de IA abre Uso da IA", () => {
+    const meta = buildTemplate("channelSessionLost", {
+      orgName: "Org", channelName: "Instagram Loja", state: "token_expired", provider: "meta_messaging",
+    });
+    expect(meta.html).toContain("/app/configuracoes?secao=instagram");
+    const spend = buildTemplate("aiSpendAlert", {
+      level: "warn", orgName: "Org", month: "2026-11", costBrl: "R$ 80,00", capBrl: "R$ 100,00", pct: 80, mode: "warn",
+    });
+    expect(spend.html).toContain("/app/configuracoes?secao=ai-usage");
+  });
 });

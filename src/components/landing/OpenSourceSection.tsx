@@ -18,7 +18,7 @@ export function OpenSourceSection() {
   return (
     <section
       ref={ref}
-      className="py-12 md:py-16 border-y border-border bg-surface-sunken/50"
+      className="py-12 md:py-16 border-y border-border"
     >
       <div className="max-w-6xl mx-auto px-4">
         <div className="text-center space-y-4 mb-10">

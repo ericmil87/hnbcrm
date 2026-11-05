@@ -71,7 +71,7 @@ export function StepReview({
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <SummaryTile icon={Radio} label="Canal" value={channelName} sub={isBridge ? "Bridge (API não oficial)" : "Cloud API (Meta)"} />
+          <SummaryTile icon={Radio} label="Canal" value={channelName} sub={isBridge ? "WhatsApp por QR code" : "WhatsApp oficial (Meta)"} />
           <SummaryTile
             icon={Users}
             label="Destinatários"
@@ -106,7 +106,7 @@ export function StepReview({
             icon={DollarSign}
             label="Custo estimado"
             value={isBridge ? "sem custo da Meta" : formatUsd(estimatedCostUsd)}
-            sub={isBridge ? "custo do seu gateway" : draft.content.template?.category ? `template ${draft.content.template.category.toLowerCase()}` : "texto livre na janela"}
+            sub={isBridge ? "custo da sua conexão" : draft.content.template?.category ? `template ${draft.content.template.category.toLowerCase()}` : "texto livre na janela"}
           />
         </div>
 
@@ -148,14 +148,14 @@ export function StepReview({
             checked={consentAck}
             onChange={(e) => onConsentAck(e.target.checked)}
             label="Declaro que a organização possui base legal (consentimento ou legítimo interesse documentado) para contatar esta lista"
-            description="Exigido pela LGPD e pelos Termos de Uso. Quem pedir para parar entra na lista de supressão e nunca mais recebe campanha."
+            description="Exigido pela LGPD e pelos Termos de Uso. Quem pedir para parar entra nos descadastrados e nunca mais recebe campanha."
           />
           {isBridge && (
             <Checkbox
               checked={bridgeRiskAck}
               onChange={(e) => onBridgeRiskAck(e.target.checked)}
-              label="Aceito e reconheço que a API não-oficial viola os Termos do WhatsApp e pode causar banimento permanente do número"
-              description="Disparo em massa é o uso de maior risco do bridge, mesmo dentro dos limites seguros."
+              label="Aceito e reconheço que conectar por QR code viola os Termos de uso do WhatsApp e pode causar banimento permanente do número"
+              description="Disparo em massa é o uso de maior risco do WhatsApp por QR code, mesmo dentro dos limites seguros."
             />
           )}
           {isBridge && newNumberRisk && (
@@ -195,11 +195,11 @@ export function StepReview({
 function SummaryTile({ icon: Icon, label, value, sub }: { icon: React.ElementType; label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-border bg-surface-sunken px-3 py-2.5">
-      <div className="flex items-center gap-1.5 text-[11px] text-text-muted">
+      <div className="flex items-center gap-1.5 text-caption text-text-muted">
         <Icon size={12} /> {label}
       </div>
       <p className="text-sm font-semibold text-text-primary mt-0.5 truncate">{value}</p>
-      {sub && <p className="text-[11px] text-text-muted truncate">{sub}</p>}
+      {sub && <p className="text-caption text-text-muted truncate">{sub}</p>}
     </div>
   );
 }

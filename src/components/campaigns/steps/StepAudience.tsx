@@ -53,7 +53,7 @@ const EXCLUSION_LABELS: Record<string, string> = {
   no_phone: "sem telefone",
   invalid_phone: "telefone inválido",
   duplicate_phone: "telefone repetido",
-  opted_out: "em supressão (opt-out)",
+  opted_out: "descadastrado",
   window_closed: "janela de 24h fechada",
   campaigned_recently: "receberam campanha há pouco",
   replied_before: "já responderam a campanha",
@@ -97,7 +97,7 @@ export function StepAudience({ organizationId, campaignId, draft, setDraft, isDr
                 <Icon size={15} />
                 {tab.label}
               </div>
-              <p className="text-[11px] text-text-muted mt-0.5 hidden sm:block">{tab.hint}</p>
+              <p className="text-caption text-text-muted mt-0.5 hidden sm:block">{tab.hint}</p>
             </button>
           );
         })}
@@ -224,7 +224,7 @@ function SegmentTab({
 
         {filters.boardId && stages && stages.length > 0 && (
           <div>
-            <span className="block text-[13px] font-medium text-text-secondary mb-1.5">Estágios</span>
+            <span className="block text-[13px] font-medium text-text-secondary mb-1.5">Etapas</span>
             <div className="flex flex-wrap gap-1.5">
               {stages.map((s) => {
                 const active = (filters.stageIds ?? []).includes(s._id);
@@ -277,7 +277,7 @@ function SegmentTab({
             </select>
           </label>
           <Input
-            label="Tags (separadas por vírgula)"
+            label="Etiquetas (separadas por vírgula)"
             value={tagsText}
             onChange={(e) => {
               setTagsText(e.target.value);
@@ -308,7 +308,7 @@ function SegmentTab({
               checked={filters.onlyOpenWindow ?? false}
               onChange={(e) => update({ onlyOpenWindow: e.target.checked || undefined })}
               label="Só quem tem a janela de 24h aberta"
-              description="Permite texto livre (sem template) na Cloud API. Quem escreveu para o número nas últimas 24h."
+              description="Permite texto livre (sem template) no WhatsApp oficial (Meta). Quem escreveu para o número nas últimas 24h."
             />
           )}
           <div className="flex items-center gap-3 flex-wrap">
@@ -381,7 +381,7 @@ function SegmentTab({
             )}
           </>
         )}
-        <p className="text-[11px] text-text-muted">
+        <p className="text-caption text-text-muted">
           O público é congelado no lançamento: mudar o filtro depois não altera uma campanha em andamento.
         </p>
       </aside>
@@ -445,7 +445,7 @@ function ImportTab({
       });
       setPhase("map");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao ler o CSV"));
+      toast.error(mutationErrorMessage(e, "Não foi possível ler o CSV."));
     } finally {
       setBusy(false);
     }
@@ -459,7 +459,7 @@ function ImportTab({
       setSummary(result);
       setPhase("check");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na validação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível validar a audiência."));
     } finally {
       setBusy(false);
     }
@@ -475,7 +475,7 @@ function ImportTab({
       toast.success(`${result.added ?? 0} destinatários adicionados`);
       onImported?.();
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao importar"));
+      toast.error(mutationErrorMessage(e, "Não foi possível importar."));
     } finally {
       setBusy(false);
     }
@@ -572,7 +572,7 @@ function ImportTab({
             <ImportStat label="Válidos" value={summary.valid} tone="success" />
             <ImportStat label="Inválidos" value={summary.invalidCount} tone={summary.invalidCount > 0 ? "error" : undefined} />
             <ImportStat label="Repetidos" value={summary.duplicates} />
-            <ImportStat label="Em supressão" value={summary.suppressed} tone={summary.suppressed > 0 ? "warning" : undefined} />
+            <ImportStat label="Descadastrados" value={summary.suppressed} tone={summary.suppressed > 0 ? "warning" : undefined} />
             <ImportStat label="Já são contatos" value={summary.existingContacts} />
           </div>
           {summary.invalid.length > 0 && (
@@ -653,7 +653,7 @@ function MappingSelect({
 function ImportStat({ label, value, tone }: { label: string; value: number; tone?: "success" | "error" | "warning" }) {
   return (
     <div className="rounded-lg bg-surface-raised border border-border px-3 py-2">
-      <p className="text-[11px] text-text-muted">{label}</p>
+      <p className="text-caption text-text-muted">{label}</p>
       <p
         className={cn(
           "text-lg font-semibold tabular-nums",
@@ -706,7 +706,7 @@ function ManualTab({ campaignId, isDraft, onAdded }: { campaignId: Id<"campaigns
       toast.success(`${totals.added} destinatários adicionados`);
       onAdded?.();
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao adicionar"));
+      toast.error(mutationErrorMessage(e, "Não foi possível adicionar."));
     } finally {
       setBusy(false);
     }
@@ -745,7 +745,7 @@ function ManualTab({ campaignId, isDraft, onAdded }: { campaignId: Id<"campaigns
         <div className="rounded-lg border border-border bg-surface-sunken p-3 text-sm space-y-1">
           <p className="text-text-primary">
             <span className="font-semibold text-semantic-success">{result.added}</span> adicionados · {result.duplicates} repetidos ·{" "}
-            {result.suppressed} em supressão · {result.invalid.length} inválidos
+            {result.suppressed} descadastrados · {result.invalid.length} inválidos
           </p>
           {result.invalid.length > 0 && (
             <ul className="text-xs text-text-muted space-y-0.5">
@@ -804,7 +804,7 @@ function RecipientsList({ campaignId, isDraft, onChanged }: { campaignId: Id<"ca
                   onClick={() =>
                     void removeRecipient({ recipientId: r._id })
                       .then(() => onChanged?.())
-                      .catch((e) => toast.error(mutationErrorMessage(e, "Falha ao remover")))
+                      .catch((e) => toast.error(mutationErrorMessage(e, "Não foi possível remover.")))
                   }
                   className="h-9 w-9 flex items-center justify-center rounded-full text-text-muted hover:text-semantic-error hover:bg-semantic-error/10"
                   aria-label="Remover destinatário"
@@ -830,7 +830,7 @@ function RecipientsList({ campaignId, isDraft, onChanged }: { campaignId: Id<"ca
           setConfirmClear(false);
           void clearRecipients({ campaignId })
             .then(() => onChanged?.())
-            .catch((e) => toast.error(mutationErrorMessage(e, "Falha ao limpar")));
+            .catch((e) => toast.error(mutationErrorMessage(e, "Não foi possível limpar.")));
         }}
         title="Limpar destinatários?"
         description="Todos os números adicionados a este rascunho serão removidos."
@@ -897,7 +897,7 @@ function TargetSection({
           </select>
         </label>
         <label className="block">
-          <span className="block text-[13px] font-medium text-text-secondary mb-1.5">Estágio</span>
+          <span className="block text-[13px] font-medium text-text-secondary mb-1.5">Etapa</span>
           <select
             className={selectClass}
             disabled={disabled || !draft.audience.targetBoardId}
@@ -909,7 +909,7 @@ function TargetSection({
               }))
             }
           >
-            <option value="">Primeiro estágio</option>
+            <option value="">Primeira etapa</option>
             {(stages ?? []).map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
@@ -918,7 +918,7 @@ function TargetSection({
           </select>
         </label>
         <Input
-          label="Tags para o lead"
+          label="Etiquetas para o lead"
           disabled={disabled}
           value={tagsText}
           onChange={(e) => {
@@ -930,7 +930,7 @@ function TargetSection({
         />
       </div>
       {draft.audience.source === "segment" && (
-        <p className="text-[11px] text-text-muted flex items-start gap-1.5">
+        <p className="text-caption text-text-muted flex items-start gap-1.5">
           <AlertTriangle size={12} className="shrink-0 mt-0.5" />
           Num segmento todos já são leads; o destino só vale para números novos de importação/manual.
         </p>

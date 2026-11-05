@@ -1,104 +1,62 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { useQuery } from "convex/react";
+import { LogOut, Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
-import { api } from "../../../convex/_generated/api";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useNavBadges } from "@/hooks/useNavBadges";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { Id } from "../../../convex/_generated/dataModel";
-import type { PermissionCategory } from "../../../convex/lib/permissions";
+import { TAB_ROUTES, activeTabForPath, type Tab } from "@/lib/routes";
 import {
-  LayoutDashboard,
-  Kanban,
-  Contact2,
-  MessageSquare,
-  CheckSquare,
-  CalendarDays,
-  ArrowRightLeft,
-  Users,
-  ScrollText,
-  FileText,
-  Settings,
-  LogOut,
-  Megaphone,
-  Users2,
-  BarChart3,
-} from "lucide-react";
-import type { Tab } from "./BottomTabBar";
-import { TAB_ROUTES, PATH_TO_TAB } from "@/lib/routes";
-import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
+  badgeA11yText,
+  formatBadgeCount,
+  groupNavItems,
+  visibleNavItems,
+  type NavBadgeSource,
+  type NavItemDef,
+} from "@/lib/nav";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
+import { Tooltip } from "@/components/ui/Tooltip";
+import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
+import type { UiTheme } from "@/lib/theme";
 
-interface NavItem {
-  id: Tab;
-  label: string;
-  icon: React.ElementType;
-  /** Permission category + minimum level required to see this nav item */
-  permission?: { category: PermissionCategory; level: string };
-  /** Módulo opcional da org que precisa estar ligado para o item aparecer */
-  module?: keyof Omit<OrgModules, "demoMode">;
-}
+type NavGroups = ReturnType<typeof groupNavItems>;
 
-const navItems: NavItem[] = [
-  { id: "dashboard", label: "Painel", icon: LayoutDashboard },
-  { id: "central", label: "Central", icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
-  { id: "board", label: "Pipeline", icon: Kanban, permission: { category: "leads", level: "view_own" } },
-  { id: "contacts", label: "Contatos", icon: Contact2, permission: { category: "contacts", level: "view" } },
-  { id: "inbox", label: "Caixa de Entrada", icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
-  { id: "handoffs", label: "Repasses", icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
-  { id: "tasks", label: "Tarefas", icon: CheckSquare, permission: { category: "tasks", level: "view_own" } },
-  { id: "calendar", label: "Calendário", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
-  { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
-  { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
-  { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
-  { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
-  { id: "groups", label: "Grupos", icon: Users2, permission: { category: "inbox", level: "view_own" } },
-  { id: "settings", label: "Configurações", icon: Settings, permission: { category: "settings", level: "view" } },
-];
-
-interface SidebarProps {
-  onSignOut: () => void;
-  organizationId: Id<"organizations">;
+interface SidebarViewProps {
+  items: ReadonlyArray<NavItemDef>;
+  groups: NavGroups;
+  activeTab: Tab | undefined;
+  badges: Record<NavBadgeSource, number>;
+  /** Barra estreita (só ícones): botões ganham `Tooltip`. */
+  collapsed: boolean;
   orgName: string;
+  onNavigate: (tab: Tab) => void;
+  onSignOut: () => void;
   onOpenOrgSwitcher: () => void;
+  onOpenAppearance: () => void;
 }
 
-export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher }: SidebarProps) {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const activeTab = PATH_TO_TAB[location.pathname];
-  const { can } = usePermissions(organizationId);
-  const { modules } = useOrgModules(organizationId);
-
-  const visibleItems = useMemo(() => {
-    return navItems.filter((item) => {
-      if (item.module && !modules[item.module]) return false;
-      if (!item.permission) return true;
-      return can(item.permission.category, item.permission.level);
-    });
-  }, [can, modules]);
-
-  // Badges reativos (estilo sino de notificações): mensagens não lidas na
-  // Caixa de Entrada + repasses pendentes. Skip sem permissão de inbox.
-  const canSeeInbox = can("inbox", "view_own");
-  const inboxUnread = useQuery(
-    api.conversations.getInboxUnreadCount,
-    canSeeInbox ? { organizationId } : "skip"
-  );
-  const pendingHandoffs = useQuery(
-    api.handoffs.getPendingHandoffCount,
-    canSeeInbox ? { organizationId } : "skip"
-  );
-
-  const pausedCampaigns = useQuery(
-    api.campaigns.getPausedCount,
-    can("campaigns", "view") ? { organizationId } : "skip"
-  );
-
-  const badgeCounts: Partial<Record<Tab, number | undefined>> = {
-    inbox: inboxUnread,
-    handoffs: pendingHandoffs,
-    campaigns: pausedCampaigns,
-  };
+/** Sidebar pura: recebe o modelo já filtrado e as contagens. */
+export function SidebarView({
+  groups,
+  activeTab,
+  badges,
+  collapsed,
+  orgName,
+  onNavigate,
+  onSignOut,
+  onOpenOrgSwitcher,
+  onOpenAppearance,
+}: SidebarViewProps) {
+  const withTip = (label: string, node: React.ReactElement<{ "aria-describedby"?: string }>) =>
+    collapsed ? (
+      <Tooltip content={label} wrapperClassName="flex w-full">
+        {node}
+      </Tooltip>
+    ) : (
+      node
+    );
 
   return (
     <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-20 flex-col bg-surface-raised border-r border-border w-16 lg:w-56 transition-all duration-200">
@@ -114,66 +72,145 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher 
         </span>
       </div>
 
-      {/* Nav items */}
-      <nav className="flex-1 py-3 px-2 space-y-1 overflow-y-auto">
-        {visibleItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = activeTab === item.id;
-          const count = badgeCounts[item.id] ?? 0;
-          const badgeLabel = count > 0 ? (count > 99 ? "99+" : String(count)) : null;
-          return (
-            <button
-              key={item.id}
-              onClick={() => navigate(TAB_ROUTES[item.id])}
-              className={cn(
-                "relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                "min-h-[44px]",
-                isActive
-                  ? "bg-brand-500/10 text-brand-500"
-                  : "text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
-              )}
-              aria-current={isActive ? "page" : undefined}
-              aria-label={badgeLabel ? `${item.label}, ${badgeLabel} não lidas` : undefined}
-              title={item.label}
-            >
-              <Icon size={20} className="shrink-0" />
-              <span className="hidden lg:block truncate">{item.label}</span>
-              {badgeLabel && (
-                <>
-                  {/* Sidebar expandida: pill no fim da linha */}
-                  <span
-                    className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
-                    aria-hidden="true"
-                  >
-                    {badgeLabel}
-                  </span>
-                  {/* Sidebar colapsada (só ícones): pill sobre o ícone */}
-                  <span
-                    className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
-                    aria-hidden="true"
-                  >
-                    {badgeLabel}
-                  </span>
-                </>
-              )}
-            </button>
-          );
-        })}
+      {/* Itens por grupo */}
+      <nav aria-label="Menu principal" className="flex-1 py-3 px-2 overflow-y-auto">
+        {groups.map((group, index) => (
+          <div
+            key={group.id}
+            role="group"
+            aria-label={group.label ?? undefined}
+            className={cn("space-y-1", index > 0 && "mt-3 pt-3 border-t border-border")}
+          >
+            {group.label && (
+              <p className="hidden lg:block px-3 pb-1 text-caption font-medium text-text-muted">
+                {group.label}
+              </p>
+            )}
+            {group.items.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+              const count = item.badge ? badges[item.badge] : 0;
+              const badgeLabel = formatBadgeCount(count);
+              const a11y = badgeA11yText(item.badge, count);
+              return (
+                <div key={item.id}>
+                  {withTip(
+                    item.label,
+                    <button
+                      type="button"
+                      onClick={() => onNavigate(item.id)}
+                      className={cn(
+                        "relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                        "min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+                        isActive
+                          ? "bg-brand-500/10 text-brand-500"
+                          : "text-text-secondary hover:text-text-primary hover:bg-surface-overlay"
+                      )}
+                      aria-current={isActive ? "page" : undefined}
+                      aria-label={a11y ? `${item.label}, ${a11y}` : item.label}
+                    >
+                      <Icon size={20} className="shrink-0" aria-hidden="true" />
+                      <span className="hidden lg:block truncate">{item.label}</span>
+                      {badgeLabel && (
+                        <>
+                          {/* Sidebar expandida: pill no fim da linha */}
+                          <span
+                            className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
+                            aria-hidden="true"
+                          >
+                            {badgeLabel}
+                          </span>
+                          {/* Sidebar colapsada (só ícones): pill sobre o ícone */}
+                          <span
+                            className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
+                            aria-hidden="true"
+                          >
+                            {badgeLabel}
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </nav>
 
       {/* Bottom section */}
       <div className="border-t border-border p-2 space-y-1 shrink-0">
-        <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
-        <button
-          onClick={onSignOut}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors min-h-[44px]"
-          title="Sair"
-          aria-label="Sair"
-        >
-          <LogOut size={20} className="shrink-0" />
-          <span className="hidden lg:block">Sair</span>
-        </button>
+        {withTip(
+          `Organização: ${orgName}`,
+          <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
+        )}
+        {withTip(
+          "Aparência",
+          <button
+            type="button"
+            onClick={onOpenAppearance}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            aria-label="Aparência"
+            aria-haspopup="dialog"
+          >
+            <Palette size={20} className="shrink-0" aria-hidden="true" />
+            <span className="hidden lg:block">Aparência</span>
+          </button>
+        )}
+        {withTip(
+          "Sair",
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-muted hover:text-semantic-error hover:bg-semantic-error/10 transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            aria-label="Sair"
+          >
+            <LogOut size={20} className="shrink-0" aria-hidden="true" />
+            <span className="hidden lg:block">Sair</span>
+          </button>
+        )}
       </div>
     </aside>
+  );
+}
+
+interface SidebarProps {
+  onSignOut: () => void;
+  organizationId: Id<"organizations">;
+  orgName: string;
+  onOpenOrgSwitcher: () => void;
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
+}
+
+export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme }: SidebarProps) {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeTab = activeTabForPath(location.pathname);
+  const { can } = usePermissions(organizationId);
+  const { modules } = useOrgModules(organizationId);
+  const expanded = useMediaQuery("(min-width: 1024px)");
+
+  const items = useMemo(() => visibleNavItems(can, modules), [can, modules]);
+  const groups = useMemo(() => groupNavItems(items), [items]);
+  const badges = useNavBadges(organizationId, items);
+
+  return (
+    <>
+    <SidebarView
+      items={items}
+      groups={groups}
+      activeTab={activeTab}
+      badges={badges}
+      collapsed={!expanded}
+      orgName={orgName}
+      onNavigate={(tab) => navigate(TAB_ROUTES[tab])}
+      onSignOut={onSignOut}
+      onOpenOrgSwitcher={onOpenOrgSwitcher}
+      onOpenAppearance={() => setAppearanceOpen(true)}
+    />
+    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    </>
   );
 }

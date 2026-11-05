@@ -19,12 +19,12 @@ export function ApiKeyRevealModal({ open, onClose, apiKey }: ApiKeyRevealModalPr
   const handleCopy = async () => {
     await navigator.clipboard.writeText(apiKey);
     setCopied(true);
-    toast.success("Chave copiada!");
+    toast.success("Chave copiada");
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Chave API Criada">
+    <Modal open={open} onClose={onClose} title="Chave de integração criada">
       <div className="space-y-5">
         {/* Key display */}
         <div className="relative">
@@ -50,7 +50,7 @@ export function ApiKeyRevealModal({ open, onClose, apiKey }: ApiKeyRevealModalPr
           className="w-full"
         >
           {copied ? <Check size={18} /> : <Copy size={18} />}
-          {copied ? "Copiada!" : "Copiar Chave"}
+          {copied ? "Copiada" : "Copiar chave"}
         </Button>
 
         {/* Security warning */}

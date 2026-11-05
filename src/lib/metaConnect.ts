@@ -296,5 +296,5 @@ export function hasConversationsCount(error: unknown): number | null {
 export function deleteWithHistoryText(conversations: number): string {
   const one = conversations === 1;
   const noun = one ? "1 conversa" : `${conversations} conversas`;
-  return `Este canal tem ${noun}. ${one ? "Ela continua visível" : "Elas continuam visíveis"} na Caixa de Entrada, mas não será possível responder por ${one ? "ela" : "elas"} até conectar esta conta de novo (a reconexão religa as conversas). Para só pausar, use Desconectar.`;
+  return `Este canal tem ${noun}. ${one ? "Ela continua visível" : "Elas continuam visíveis"} em Conversas, mas não será possível responder por ${one ? "ela" : "elas"} até conectar esta conta de novo (a reconexão religa as conversas). Para só pausar, use Desconectar.`;
 }

@@ -2,6 +2,94 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado — Frontend v2]
+
+### Navegação e Configurações
+
+- Configurações foram reorganizadas em 6 grupos (Conta, WhatsApp e canais, Atendente IA, Equipe, Dados e Avançado), com um campo "Buscar nas configurações" (por exemplo, "transcrição" leva a Números conectados). No celular, a tela abre como uma lista estilo ajustes e o botão de voltar leva de volta a ela. Os links antigos (para canais, IA, notificações e outros) continuam funcionando.
+- O Atendente IA foi dividido em painéis curtos em Configurações: Jeito de atender, Comportamento na conversa, Quando chamar a equipe, Follow-ups, Recursos da IA e Uso e limites de gasto; o modelo de IA e a privacidade ficam em Avançado. A transcrição de áudio (por número) e a leitura de imagens agora estão em Atendente IA › Recursos da IA. O botão "Salvar alterações" só aparece quando há mudança, e o sistema avisa se você tentar sair do painel sem salvar.
+- O menu agora tem quatro grupos (Atendimento, Organização, Divulgação e Gestão), com o Painel no topo. No celular, a barra inferior mostra Painel, Conversas, Requer atenção, Funil e **Mais**; Agenda, Tarefas e Contatos ficam em **Mais**, junto com a troca de organização e o "Sair". O título da página aparece no topo do celular e na aba do navegador.
+- Endereço que não existe agora mostra a página "Página não encontrada", com atalhos para o app e para a página inicial; dentro do app, um endereço desconhecido leva de volta ao Painel.
+- Os filtros de Tarefas (modo, filtro rápido, status, responsável, etiqueta e projeto), do Histórico de alterações (tipo, ação, ator, severidade e período), de Campanhas (status e canal) e a busca e o membro aberto em Equipe agora ficam no endereço da página: sobrevivem ao recarregar, podem ser compartilhados e, no Histórico e em Equipe, o botão de voltar do navegador fecha o item aberto.
+- Se uma tela falhar ao carregar (por exemplo, logo depois de uma atualização do sistema), aparece "Algo deu errado." com o botão "Recarregar", em vez de uma tela em branco.
+- Na Agenda, o link de um evento (como o de "Próximos eventos" no Painel) abre direto o dia e o detalhe do evento; visão, data e evento ficam no endereço e podem ser compartilhados.
+- No Funil, o **Modo quadro** ou **Modo lista**, a busca e os filtros (prioridade, temperatura, responsável e unidade) ficam no endereço da página: dá para recarregar, voltar ou compartilhar o link e ver a mesma tela, e **Limpar filtros** zera tudo. A escolha do funil, a configuração dele e os funis arquivados agora ficam em menus que abrem como folha no celular, e o menu da etapa não sai mais da tela.
+- Na Agenda, quando o endereço não diz a visão, o celular abre no dia e o computador na semana.
+- Em **Criar funil**, o botão da tela vazia agora abre o formulário.
+- No celular, os textos pequenos ficaram maiores (12 px no mínimo), a tela inteira acompanha a altura real do navegador e a data de uma mensagem agendada cabe em uma linha.
+- Botões só com ícone agora têm nome para leitores de tela, e as dicas dos botões aparecem ao passar o mouse, ao focar com o teclado e ao manter o dedo pressionado.
+- Interruptores de Equipe, Números conectados e Notificações passam a funcionar igual aos demais (teclado, foco e toque maiores).
+- As mensagens de erro seguem um padrão único ("Não foi possível salvar."), e as telas vazias de Conversas, Funil, Contatos, Tarefas, Campanhas, Grupos, Formulários, Equipe e Histórico explicam o que fazer a seguir.
+- O botão de voltar do navegador agora fecha a tarefa aberta em Tarefas, e as datas do filtro de período do Histórico não mudam mais de dia.
+- Ao conectar um número, a "Configuração manual (avançado)" fica fechada quando há o Servidor do HNBCRM, e o endereço do servidor não aparece mais.
+- Formatos que mudam na tela: o tempo relativo em Formulários passa a aparecer como "há 3 dias" e o valor do pipeline no Painel como "R$ 1,5 mi".
+- Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
+- No painel do lead, a aba Conversa agora é o mesmo chat de Conversas: mesmas bolhas, respostas rápidas, emoji, anexos, nota interna, citação e encaminhamento. Quando o lead tem conversas em mais de um canal, um seletor no topo troca entre elas. Gravar nota de voz e agendar mensagem continuam só em Conversas. Quem não tem permissão para responder vê o aviso de permissão no lugar do campo, também no painel do lead.
+- Os controles de ligar e desligar, as abas e as listas de seleção (em Configurações e nos ajustes de formulários) ficaram mais fáceis de tocar no celular e podem ser usados pelo teclado.
+- O anel laranja de foco só aparece quando você navega pelo teclado. No celular, os menus de ações abrem como folha na parte de baixo da tela e as dicas abrem com pressão longa (ou com um toque, quando são só informativas).
+- Novos nomes no menu: Caixa de Entrada agora é **Conversas**, Repasses agora é **Requer atenção**, Pipeline agora é **Funil**, Auditoria agora é **Histórico de alterações**, Central agora é **Relatórios** e Calendário agora é **Agenda**. As telas e os endereços continuam os mesmos; o que mudou foi o nome.
+- Em **Requer atenção**, cada cartão diz "A IA pediu ajuda" e traz o motivo; os botões são **Assumir conversa**, **Devolver à IA** e **Ver conversa**. Quando não há nada pendente aparece "Tudo em dia".
+- No Atendente IA, os modos agora se chamam **Sugerir respostas** (você revisa antes de enviar) e **Responder sozinha** (antes "Autopilot"). O texto pronto aguardando revisão é a **Resposta sugerida**, e o bloco de instruções é o **Jeito de atender**. O Copiloto é descrito como o assistente da sua equipe.
+- Os canais de WhatsApp aparecem como **WhatsApp oficial (Meta)** e **WhatsApp por QR code**, com **Conectar número**; sem termos como "gateway", "instância" ou "Cloud API" nas telas comuns.
+- Textos padronizados: só a primeira palavra em maiúscula ("Novo funil", "Adicionar nota"), "e-mail" com hífen, "Etiquetas" no lugar de "Tags", "Etapa" no lugar de "Estágio", "Descadastrados" no lugar de "Opt-out", papéis **Atendente**, **Gerente** e **Administrador**. Mensagens de sucesso ficaram curtas ("Lead criado") e as de erro dizem "Não foi possível salvar".
+- Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
+- O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
+- No Atendente IA, as listas de seleção (jeito de atender, funil, etapas, canal do simulador) ficaram mais fáceis de usar no celular.
+- Se uma seção de Configurações falhar ao abrir, só ela mostra "Não foi possível abrir esta seção." com "Tentar de novo"; o resto da tela continua funcionando.
+- No celular, a barra "Salvar alterações" do Atendente IA não fica mais escondida atrás do menu inferior. Os campos ficam bloqueados enquanto salva.
+- Com mais de um atendente ativo, os painéis editam o primeiro ativo e avisam qual é.
+- Abrir uma seção sem permissão agora mostra um aviso dizendo qual seção foi pedida e qual está sendo mostrada.
+- Em Atendente IA › Visão geral há o atalho "Uso e limites de gasto", e a descrição de Modelo de IA e privacidade ficou em linguagem simples.
+- Em **Conversas**, uma faixa no topo da lista avisa "3 conversas precisam de você · Ver" quando a IA pediu ajuda (leva a **Requer atenção**) e some quando não há nada pendente.
+- Na conversa com pedido de ajuda pendente, os botões **Assumir conversa** e **Devolver à IA** ficam sempre à vista no topo, tanto em conversa direta quanto em grupo.
+- Os filtros **Arquivadas** e **Etiqueta** da lista de Conversas ficam no endereço da página: dá para recarregar, compartilhar o link e voltar do navegador sem perder o filtro. Abrir uma conversa agora também entra no histórico (o "voltar" do navegador, inclusive no celular, fecha a conversa e volta à lista). Os filtros de canal, conta e Diretas/Grupos continuam guardados só neste aparelho.
+- Os filtros da lista de Conversas (Ativas/Arquivadas, Todas/Diretas/Grupos, canal, conta e etiqueta) usam os mesmos seletores do resto do app, com área de toque maior no celular.
+- Em **Contatos**, o contato aberto, a busca e a página ficam no endereço da tela: dá para recarregar, compartilhar o link e usar o botão de voltar do navegador para fechar o painel. As abas do contato (**Informações**, **Leads** e **Grupos**) também ficam no endereço. As informações do contato foram reunidas em quatro seções: Dados, Endereço e empresa, Origem, e Etiquetas e notas.
+- No **painel do lead**, a aba aberta (Conversa, Detalhes, Tarefas, Campanhas ou Atividade) fica no endereço quando o lead é aberto pelo **Funil**: dá para recarregar ou compartilhar o link na mesma aba. A aba Detalhes foi organizada em blocos (contato, responsável e etapa, detalhes, campos personalizados, qualificação e documentos) e o bloco BANT agora se chama **Qualificação**. Salvar os detalhes do lead sem título ou com valor negativo mostra um aviso em vez de gravar.
+- Na **Agenda**, o resumo de uma tarefa ganhou o botão **Abrir tarefa**, que leva direto para a tarefa em Tarefas.
+- Corrigido: abrir um contato que foi excluído, ou que é de outra organização, agora mostra "Contato não encontrado" em vez de uma tela de carregamento sem fim.
+
+### Aparência: escolha entre Escuro, Claro e Estilo WhatsApp
+
+- Cada pessoa da equipe escolhe as cores do painel em **Aparência** (menu lateral, **Mais** no celular ou Configurações › Conta › Aparência). A escolha acompanha a conta em qualquer aparelho.
+- **Estilo WhatsApp**: acento verde, conversas com fundo bege e bolhas verdes, como no aplicativo.
+- **Claro** revisado para leitura confortável (contraste AA em textos, links e avisos).
+- O **Escuro** continua o padrão e não mudou, exceto a bolha da Atendente IA, que fica num roxo sólido quase idêntico.
+- Corrigido: a borda de imagens anexadas, tabelas e trechos de código nas mensagens ficava num cinza fora do padrão; agora usa a cor de borda do tema. Os hovers do botão de nota interna e dos links nas mensagens recebidas também acompanham o tema.
+- Corrigido: as cores das métricas em Formulários não apareciam.
+- O título da aba do navegador deixou de repetir "HNBCRM · HNBCRM" e, em Configurações, mostra o painel aberto.
+- Corrigido: mensagem que falhou ou aviso de envio dentro das bolhas enviadas ficava ilegível no tema Claro; agora usa a cor do texto da bolha.
+- Corrigido: o tema salvo no aparelho não passa mais para a conta de outra pessoa quando a sessão expira, e ele é esquecido ao sair.
+- Corrigido: se salvar o tema falhar, a tela volta ao tema que estava salvo, em vez de ficar num tema que não foi gravado.
+- A cor da barra do navegador no celular já nasce no tema escolhido, sem piscar.
+- Trocar de tema pelas setas do teclado salva só a escolha final.
+
+### Configuração inicial e Copiloto
+
+- Organizações antigas, que já concluíram a configuração inicial, não ficam mais com "Conte sobre seu negócio" e "Teste seu atendente" pendentes para sempre na lista de primeiros passos.
+- Corrigido um erro interno que impedia publicar a consulta de progresso da Configuração inicial.
+- Organizações de startup/SaaS e de cursos passam a ter, na ativação em 1 toque, uma Atendente IA com jeito de atender próprio (antes usavam o modelo geral). Também chegam modelos prontos de funil, campos e perguntas frequentes por segmento, com os casos em que a Atendente IA passa a conversa para falar com a equipe.
+- Salvar o Atendente IA, ligar os recursos da IA e criar ou provisionar um canal de WhatsApp agora exigem uma conta com e-mail (ler o QR em Configurações também passa a exigir, pois a tela usa o mesmo caminho do código de conexão). Contas de acesso antigo, sem e-mail, veem um aviso pedindo para entrar com e-mail e senha.
+- Base do "Configurar conversando": o Copiloto passa a conhecer o seu negócio e o que ainda falta configurar, sem você precisar explicar tudo (a tela chega na configuração inicial nova).
+- Base para conectar o número do WhatsApp pelo celular, sem QR, com um código de conexão digitado no aparelho. O limite é de 3 códigos por hora por número, o mesmo do Telegram (a tela chega em um próximo passo). A URL de recebimento de mensagens passa a ser montada pelo servidor.
+- Os avisos de gasto da IA (e-mail e Telegram) agora abrem direto a tela de Uso da IA, e os de desconexão do Instagram/Messenger abrem a tela do Instagram.
+- Nova configuração inicial em passos, em /app/configuracao-inicial: Seu negócio, Seu funil, Conectar WhatsApp e Atendente IA. Você conta o que vende, ajusta o funil sugerido para o seu segmento, conecta o número e cria o Atendente IA em Sugerir respostas (a IA escreve e sua equipe aprova), com horário de atendimento. Teste, extras e equipe completam o fluxo em 8 passos (abaixo).
+- Na configuração inicial, "Escrever com IA" gera o nome, o jeito de atender e as palavras que chamam a equipe a partir do seu negócio, e "Configurar conversando" abre o Copiloto ao lado do passo (a conversa continua depois de recarregar a página).
+- Mensagens de erro ao gerar o código de conexão do WhatsApp agora vêm em português claro, sem texto técnico do serviço.
+- O nome do Atendente IA agora pode ser alterado ao salvar o Atendente (até 60 caracteres, em uma linha).
+- Configuração guiada nova: do zero ao WhatsApp com Atendente IA em 8 passos. Depois de criar o atendente você conversa com ele num teste seguro (nada chega a um cliente de verdade), liga "Ouvir áudios" e "Ler imagens" com custo explicado, convida a equipe e vê no fim o que ficou configurado e o que falta. Dá para pular passos, e "Continuar depois" não reabre a configuração ao recarregar a página.
+- O passo aberto da configuração inicial agora fica na URL (?passo=), então os links do Painel abrem direto no passo certo e o botão Voltar do navegador funciona entre os passos.
+- "Primeiros passos" no Painel mostra o que falta da configuração (negócio, funil, WhatsApp, Atendente IA, teste, extras, equipe e a primeira conversa respondida pela IA), com um botão para cada item e o link "Continuar configuração". Ao concluir tudo, comemora uma vez e some sozinho.
+- A configuração inicial antiga (com dados de exemplo) foi removida.
+- Base da nova configuração inicial: perfil do negócio, funil que pode ser refeito sem apagar contatos e andamento que lembra onde você parou. Os "Primeiros passos" no Painel passam a refletir o que já está feito de verdade (WhatsApp conectado, Atendente IA ligado, equipe convidada...), sem os itens técnicos de webhook/API e campos personalizados.
+- Peça ao Copiloto, no painel ou no Telegram, para ler e ajustar o Atendente IA: jeito de atender, o que a IA sabe, horário, quando chamar a equipe, follow-up, áudio e imagens. Toda mudança mostra "Antes → Depois" (com as linhas de antes e depois destacadas no cartão de confirmação) e só vale depois que você confirma; se a configuração mudar nesse meio-tempo, a confirmação é recusada. No modo automático do Telegram isso nunca acontece sozinho. Ligar a IA, aceitar termos e mexer em modelo, custo ou canais continua sendo feito por você nas Configurações.
+- Base do "Escrever com IA": a IA redige um rascunho do jeito de atender, do que ela sabe e de quando chamar a equipe, a partir da descrição do seu negócio. Nada é salvo até você confirmar; se a IA falhar, você recebe o modelo do seu segmento. A tela chega na configuração inicial nova.
+- Base dos passos "Seu funil" (editor de etapas com "Restaurar sugestão"), "Conectar WhatsApp", "Atendente IA" (horário com atalhos "Sempre" e "Comercial") e "Teste" (conversa de teste com o Atendente IA e perguntas prontas por segmento) da nova configuração inicial. Nada visível ainda.
+- Conecte o número do WhatsApp pelo celular com um código de conexão: você informa o número, digita o código no WhatsApp (Aparelhos conectados › Conectar um aparelho › Conectar com número de telefone) e não precisa de outro aparelho para ler o QR code. No computador, o QR code continua sendo o padrão e se renova sozinho. O código vale por cerca de 2 minutos e você pode gerar outro depois de 2 minutos e meio.
+- Número desconectado agora mostra "Mostrar QR code" em destaque no próprio cartão. "Conectar número" passa a ser um único fluxo (WhatsApp oficial (Meta) ou WhatsApp por QR code), com aviso de risco de banimento e aceite obrigatório; os campos de configuração manual ficam recolhidos em "Configuração manual (avançado)".
+- Instagram e Messenger ganham um painel próprio em Configurações, separado de "Números conectados".
+- Pendência de publicação: confirmar que `CONVEX_SITE_URL` resolve em PROD (variável de sistema do Convex) antes de publicar. A tela deixa de enviar o endereço de recebimento de mensagens (`webhookUrl`) e o servidor passa a montá-lo com `CONVEX_SITE_URL`.
+
 ## [0.78.1] - 2026-11-03
 
 ### Copiloto — datas e contexto nas leituras; áudio entende o vocabulário do CRM

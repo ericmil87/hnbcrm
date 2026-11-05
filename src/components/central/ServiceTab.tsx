@@ -15,7 +15,7 @@ export function ServiceTab({ data, showDepartments }: { data: CentralDashboard; 
   const deptColumns: Column<DeptRow>[] = [
     {
       key: "name",
-      header: "Setor",
+      header: "Departamento",
       sortValue: (r) => r.name,
       render: (r) => (
         <span className="flex items-center gap-2">
@@ -78,8 +78,8 @@ export function ServiceTab({ data, showDepartments }: { data: CentralDashboard; 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiCard icon={Timer} label="1ª resposta" value={formatDuration(t.avgFirstResponseSec)} hint="tempo médio" emphasis />
         <KpiCard icon={Bot} label="Resolvido pela IA" value={formatPct(t.aiResolvedRate)} hint="sem precisar de humano" emphasis />
-        <KpiCard icon={ArrowRightLeft} label="Repasses" value={formatInt(t.handoffs)} hint="IA pediu ajuda humana" />
-        <KpiCard icon={Shuffle} label="Transferências" value={formatInt(t.transfers)} hint="entre setores" />
+        <KpiCard icon={ArrowRightLeft} label="Pedidos de ajuda" value={formatInt(t.handoffs)} hint="IA pediu ajuda humana" />
+        <KpiCard icon={Shuffle} label="Transferências" value={formatInt(t.transfers)} hint="entre departamentos" />
         <KpiCard icon={Inbox} label="Abertas agora" value={formatInt(t.openNow)} hint="conversas em andamento" />
       </div>
 
@@ -122,12 +122,12 @@ export function ServiceTab({ data, showDepartments }: { data: CentralDashboard; 
       </SectionCard>
 
       {showDepartments && (
-        <SectionCard title="Por setor" subtitle="Volume, fila atual e velocidade de cada setor">
+        <SectionCard title="Por departamento" subtitle="Volume, fila atual e velocidade de cada departamento">
           {data.byDepartment.length === 0 ? (
-            <p className="py-4 text-sm text-text-muted">Nenhum setor cadastrado. Crie os setores em Configurações → Central.</p>
+            <p className="py-4 text-sm text-text-muted">Nenhum departamento cadastrado. Crie os departamentos em Configurações → Unidades e departamentos.</p>
           ) : (
             <SortableTable
-              caption="Atendimento por setor"
+              caption="Atendimento por departamento"
               rows={data.byDepartment}
               columns={deptColumns}
               rowKey={(r) => r.departmentId}

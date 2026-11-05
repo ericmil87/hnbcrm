@@ -1,3 +1,4 @@
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -189,8 +190,8 @@ export function VoiceRecorder({
       await onRecorded({ fileId, name, mimeType, size: blob.size });
       resetToIdle();
     } catch (err) {
-      console.error("Falha ao enviar nota de voz", err);
-      toast.error("Falha ao enviar nota de voz");
+      console.error("Não foi possível enviar a nota de voz.", err);
+      toast.error("Não foi possível enviar a nota de voz.");
     } finally {
       setSending(false);
     }
@@ -198,19 +199,20 @@ export function VoiceRecorder({
 
   if (mode === "idle") {
     return (
-      <button
-        type="button"
-        onClick={startRecording}
-        disabled={disabled}
-        className={cn(
-          "shrink-0 p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
-          "disabled:opacity-40 disabled:cursor-not-allowed"
-        )}
-        aria-label="Gravar nota de voz"
-        title="Gravar nota de voz"
-      >
-        <Mic size={18} />
-      </button>
+      <Tooltip content="Gravar nota de voz">
+        <button
+          type="button"
+          onClick={startRecording}
+          disabled={disabled}
+          className={cn(
+            "shrink-0 p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "disabled:opacity-40 disabled:cursor-not-allowed"
+          )}
+          aria-label="Gravar nota de voz"
+        >
+          <Mic size={18} />
+        </button>
+      </Tooltip>
     );
   }
 

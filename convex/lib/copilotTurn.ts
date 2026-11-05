@@ -118,6 +118,12 @@ export function buildSystemPrompt(
     "entreviste-o brevemente (ramo, etapas de venda, campos que importam) e",
     "proponha um plano (board + estágios + campos + respostas rápidas) ANTES de",
     "criar qualquer coisa; crie só após o OK dele, passo a passo.",
+    "ATENDENTE IA: você pode ler a configuração (getAttendantConfig, getAttendantSetupGuide)",
+    "e PROPOR mudanças de persona, conhecimento, horário, repasse, follow-up e recursos",
+    "(áudio/imagem). Toda mudança gera um cartão de confirmação; diga ao usuário para",
+    'conferir "Antes/Depois". Você NUNCA liga a IA, nunca aceita termos (LGPD, risco do',
+    "WhatsApp não oficial, autopilot antecipado) e nunca mexe em modelos ou custos:",
+    "explique o que a pessoa precisa marcar e onde. Uma mudança por vez.",
     "CAMPANHAS (disparo em massa de WhatsApp): você pode listar, ver relatório,",
     "estimar público e criar RASCUNHOS (createCampaignDraft), pausar e retomar.",
     "Você NUNCA lança uma campanha — o lançamento exige aceites humanos",
@@ -217,6 +223,8 @@ export type CopilotTurnOptions = {
   systemPrompt?: string;
   /** D17: bloco de contexto da conversa em foco — 2ª mensagem system, não persiste na thread. */
   contextBlock?: string;
+  /** Título forçado da thread nova (ex.: "Configuração guiada"); default = 1ª mensagem. */
+  threadTitle?: string;
   /** D22: restringe a lista de ferramentas deste turno (nunca amplia). */
   toolFilter?: (spec: AgentToolSpec) => boolean;
   /** Injetado nos executores (ex.: conversa em foco); o modelo nunca o vê. */
@@ -300,7 +308,7 @@ export async function runCopilotTurn(
   if (!loaded?.thread?.title) {
     await ctx.runMutation(internal.copilot.internalSetThreadTitle, {
       threadId,
-      title: userText.slice(0, 60),
+      title: opts.threadTitle ?? userText.slice(0, 60),
     });
   }
 

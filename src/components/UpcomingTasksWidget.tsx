@@ -21,6 +21,7 @@ import {
   Microscope,
   ListChecks,
 } from "lucide-react";
+import { formatDueRelative } from "@/lib/format";
 
 // ============================================================================
 // Types & Constants
@@ -238,7 +239,7 @@ export function UpcomingTasksWidget({
       await completeTask({ taskId });
       toast.success("Tarefa conclu\u00edda!");
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -302,7 +303,7 @@ export function UpcomingTasksWidget({
                 {count > 0 && (
                   <span
                     className={cn(
-                      "text-[10px] font-bold tabular-nums",
+                      "text-caption font-bold tabular-nums",
                       smartFilter === filter.value
                         ? "text-brand-400"
                         : filter.value === "overdue"
@@ -400,7 +401,7 @@ export function UpcomingTasksWidget({
                 {/* Group header */}
                 <button
                   onClick={() => toggleGroup(group.key)}
-                  className="w-full flex items-center gap-3 py-2 hover:bg-surface-overlay/50 transition-colors rounded-lg px-1"
+                  className="w-full flex items-center gap-3 py-2 transition-colors rounded-lg px-1"
                 >
                   <ChevronDown
                     size={14}
@@ -409,11 +410,11 @@ export function UpcomingTasksWidget({
                       isCollapsed && "-rotate-90"
                     )}
                   />
-                  <span className={cn("text-[11px] font-semibold uppercase tracking-wider", group.color)}>
+                  <span className={cn("text-caption font-semibold uppercase tracking-wider", group.color)}>
                     {group.label}
                   </span>
                   <div className="flex-1 h-px bg-border" />
-                  <span className="text-[10px] text-text-muted tabular-nums">
+                  <span className="text-caption text-text-muted tabular-nums">
                     {group.tasks.length}
                   </span>
                 </button>
@@ -475,7 +476,7 @@ function TaskRow({
   const priorityBadge = PRIORITY_BADGE[task.priority];
 
   return (
-    <div className="flex items-center gap-2 md:gap-3 py-2.5 px-1 hover:bg-surface-overlay/50 transition-colors rounded-lg">
+    <div className="flex items-center gap-2 md:gap-3 py-2.5 px-1 transition-colors rounded-lg">
       {/* Complete checkbox */}
       <button
         onClick={(e) => {
@@ -500,7 +501,7 @@ function TaskRow({
       </button>
 
       {/* Priority badge (desktop) */}
-      <Badge variant={priorityBadge.variant} className="hidden md:inline-flex shrink-0 text-[10px]">
+      <Badge variant={priorityBadge.variant} className="hidden md:inline-flex shrink-0 text-caption">
         {priorityBadge.label}
       </Badge>
 
@@ -516,7 +517,7 @@ function TaskRow({
                 : "text-text-secondary"
           )}
         >
-          {formatRelativeDate(task.dueDate, now)}
+          {formatDueRelative(task.dueDate, now)}
         </span>
       )}
     </div>
@@ -537,19 +538,3 @@ function isDueToday(dueDate: number, now: number): boolean {
   );
 }
 
-function formatRelativeDate(dueDate: number, now: number): string {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-
-  const diffMs = dueDay.getTime() - today.getTime();
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atr\u00e1s`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanh\u00e3";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return new Date(dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
-}

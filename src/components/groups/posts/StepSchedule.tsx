@@ -147,7 +147,7 @@ export function StepSchedule({ draft, setDraft, orgTimezone, now }: StepSchedule
               key={preset.label}
               type="button"
               onClick={() => setDraft((prev) => ({ ...prev, days: [...preset.days] }))}
-              className="rounded-full border border-border px-2.5 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+              className="rounded-full border border-border px-2.5 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
             >
               {preset.label}
             </button>
@@ -225,7 +225,7 @@ export function StepSchedule({ draft, setDraft, orgTimezone, now }: StepSchedule
               </p>
             )}
             {draft.jitterMinutes > 0 && (
-              <p className="text-[11px] text-text-muted">
+              <p className="text-caption text-text-muted">
                 Horários aproximados: a variação só é sorteada na hora, por publicação.
               </p>
             )}

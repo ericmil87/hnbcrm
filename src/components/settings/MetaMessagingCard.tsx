@@ -6,7 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { Switch } from "@/components/settings/CentralSection";
+import { Switch } from "@/components/ui/Switch";
 import { mutationErrorMessage } from "@/lib/errors";
 import { MODULE_OFF_CONFIRMATION, STANDARD_ACCESS_NOTICE } from "@/lib/metaConnect";
 
@@ -49,14 +49,14 @@ export function MetaMessagingCard({ organizationId, enabled, hasActiveMetaChanne
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-medium text-text-primary">Mais canais: Instagram e Facebook Messenger</h3>
           <p className="mt-0.5 text-xs text-text-muted">
-            Receba e responda mensagens do Instagram e do Messenger na Caixa de Entrada, pela conexão oficial da
+            Receba e responda mensagens do Instagram e do Messenger em Conversas, pela conexão oficial da
             Meta. Desligado, nada muda no seu CRM.
           </p>
         </div>
         <div className="pt-1.5">
-          <Switch
+          <Switch hideLabel
             checked={enabled}
-            onChange={onToggle}
+            onCheckedChange={onToggle}
             label="Instagram e Facebook Messenger"
             disabled={busy}
           />

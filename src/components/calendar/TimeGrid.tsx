@@ -97,7 +97,7 @@ export function TimeGrid({
           <div className="h-12" /> {/* Header spacer */}
           {TIME_SLOTS.map((hour) => (
             <div key={hour} className="h-[60px] relative">
-              <span className="absolute -top-2.5 right-1 md:right-2 text-[10px] md:text-xs text-text-muted tabular-nums">
+              <span className="absolute -top-2.5 right-1 md:right-2 text-caption md:text-xs text-text-muted tabular-nums">
                 {hour.toString().padStart(2, "0")}:00
               </span>
             </div>

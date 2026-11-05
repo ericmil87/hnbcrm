@@ -1,13 +1,34 @@
-import { PATH_TO_TAB, TAB_ROUTES } from "./routes";
+import { activeTabForPath, TAB_ROUTES } from "./routes";
 
 /**
- * Parâmetros de busca que só controlam a UI (seção/aba) e valem em qualquer
- * org. Todo o resto (`?conversation=`, `?task=`, `?lead=`, `?handoff=`,
- * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as
- * queries autorizam pela org da entidade, então a tela da org nova mostraria
- * o registro da antiga ao lado das listas dela.
+ * Parâmetros de busca que só controlam a UI (seção/aba, filtro de arquivadas,
+ * modo, busca, dia e página do Funil/Agenda/Contatos, aba dos painéis de lead e
+ * contato, filtros de enum e datas de Tarefas, Histórico e Campanhas) e valem em
+ * qualquer org. Todo o resto (`owner`, `assignee`, `actor`, `project`, `member`,
+ * `log`, `unit`, `?contact=`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`,
+ * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as queries
+ * autorizam pela org da entidade, então a tela da org nova mostraria o registro
+ * da antiga ao lado das listas dela.
  */
-const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba"]);
+const ORG_AGNOSTIC_PARAMS = new Set([
+  "secao",
+  "aba",
+  "archived",
+  "view",
+  "q",
+  "date",
+  "smart",
+  "status",
+  "severity",
+  "entity",
+  "action",
+  "from",
+  "to",
+  "provider",
+  "page",
+  "leadTab",
+  "contactTab",
+]);
 
 /**
  * Destino da navegação ao trocar de organização: mesma aba, sem deep-link de
@@ -15,13 +36,8 @@ const ORG_AGNOSTIC_PARAMS = new Set(["secao", "aba"]);
  * para a raiz da aba; rota desconhecida cai no painel.
  */
 export function pathAfterOrgSwitch(pathname: string, search: string): string {
-  let basePath: string;
-  if (PATH_TO_TAB[pathname]) {
-    basePath = pathname;
-  } else {
-    const parent = Object.values(TAB_ROUTES).find((root) => pathname.startsWith(root + "/"));
-    basePath = parent ?? TAB_ROUTES.dashboard;
-  }
+  const tab = activeTabForPath(pathname);
+  const basePath = tab ? TAB_ROUTES[tab] : TAB_ROUTES.dashboard;
 
   const params = new URLSearchParams(search);
   const kept = new URLSearchParams();

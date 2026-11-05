@@ -17,6 +17,7 @@ import {
   Inbox,
   Clock,
 } from "lucide-react";
+import { formatRelative } from "@/lib/format";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -150,17 +151,6 @@ function partialStatusConfig(status: PartialSubmission["status"]): {
     case "converted":
       return { label: "Convertido", variant: "success" };
   }
-}
-
-function timeAgo(timestamp: number): string {
-  const diff = Date.now() - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "agora";
-  if (minutes < 60) return `${minutes}min atrás`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h atrás`;
-  const days = Math.floor(hours / 24);
-  return `${days}d atrás`;
 }
 
 // ── Filter tabs ───────────────────────────────────────────────────────────────
@@ -786,7 +776,7 @@ export function FormSubmissionsPage() {
             Parciais
             {partialStats && partialStats.total > 0 && (
               <span className={cn(
-                "inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-bold",
+                "inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-caption font-bold",
                 mainTab === "partials"
                   ? "bg-brand-500/20 text-brand-400"
                   : "bg-surface-overlay text-text-muted"
@@ -877,7 +867,7 @@ export function FormSubmissionsPage() {
                       scope="col"
                       className="px-4 py-3 text-left text-xs font-semibold text-text-muted uppercase tracking-wide"
                     >
-                      Nome / Email
+                      Nome e e-mail
                     </th>
                     <th
                       scope="col"
@@ -1065,7 +1055,7 @@ export function FormSubmissionsPage() {
                             >
                               <td className="px-4 py-3 whitespace-nowrap">
                                 <span className="text-sm text-text-secondary tabular-nums">
-                                  {timeAgo(partial.lastActivityAt)}
+                                  {formatRelative(partial.lastActivityAt, Date.now())}
                                 </span>
                               </td>
                               <td className="px-4 py-3 whitespace-nowrap">
@@ -1178,7 +1168,7 @@ export function FormSubmissionsPage() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <Badge variant={variant}>{label}</Badge>
                               <span className="text-xs text-text-muted tabular-nums">
-                                {timeAgo(partial.lastActivityAt)}
+                                {formatRelative(partial.lastActivityAt, Date.now())}
                               </span>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1254,7 +1244,7 @@ export function FormSubmissionsPage() {
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-card border border-border bg-surface-raised p-3">
-      <p className="text-[11px] font-medium text-text-muted uppercase tracking-wide">{label}</p>
+      <p className="text-caption font-medium text-text-muted uppercase tracking-wide">{label}</p>
       <p className="text-lg font-bold text-text-primary mt-0.5 tabular-nums">{String(value)}</p>
     </div>
   );

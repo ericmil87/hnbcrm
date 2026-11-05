@@ -55,6 +55,7 @@ Measured gotchas of the gateways. Full history and reasoning: `docs/architecture
 - Two-level pacing cursor: per conversation (6.5 s) + per number (`channelPacing`; Meta 1–3 s, bridge 4–15 s with jitter); humanized typing on bridge for AI/scheduled sends. Retry backoff 4^X for Meta 131056/130429/80007; 131048 freezes the channel 30 min; 131026/131047/130403 → failed; 131050 → opt-out.
 - Voice notes are transcoded to ogg/opus via the Whisper service `/convert`. Quotes in groups need `Participant` = member JID; mentions in `MentionedJID` filtered against participants (`resolveGroupMentions`).
 - Campaign caps live in `convex/lib/campaignPacing.ts` (safe table by number age; hard cap bridge 200/day, 40/h, ≥ 15 s; Meta 80 % of tier); daily/hourly counters in `channelPacing.campaign*` with enforcement.
+- Web pairing has ONE port: `channelConfigs.startBridgePairing`/`pollBridgePairing` (code mode shares the 3/h ceiling with Telegram via `lib/pairingQuota.ts` + `telegramReconnects`); never call `pairphone` elsewhere. The bridge webhook URL is built server-side (`bridgeWebhookUrl(CONVEX_SITE_URL)`), never by the client.
 
 ## Fixtures
 - `convex/__fixtures__/bridgeGroupMessage.json`, `bridgeGroupList.json` are REAL captures; `bridgeGroupInfoEvent.json`, `bridgeJoinedGroup.json`, `bridgeSessionEvents.json`, `bridgeMessageTypes.json` are SYNTHETIC (built from whatsmeow structs) — re-validate against a live gateway before trusting field names.

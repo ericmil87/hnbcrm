@@ -141,7 +141,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
     }
     if (step === "audience") {
       if (draft.audience.source === "groups" || draft.audience.source === "group_members") {
-        if (draft.provider !== "bridge") return "Grupos só existem no canal bridge (API não-oficial)";
+        if (draft.provider !== "bridge") return "Grupos só existem no WhatsApp por QR code";
         if (draft.audience.groupChatIds.length === 0) return "Escolha pelo menos um grupo";
       }
     }
@@ -152,11 +152,11 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
         const filled = draft.content.variants.filter((vr) => vr.text.trim() || (vr.attachmentFileIds?.length ?? 0) > 0);
         if (filled.length === 0) return "Escreva a mensagem (ou anexe uma mídia)";
         if (draft.provider === "meta" && !(draft.audience.source === "segment" && draft.audience.filters.onlyOpenWindow)) {
-          return "Na Cloud API, números fora da janela de 24h exigem template";
+          return "No WhatsApp oficial, números fora da janela de 24h exigem template";
         }
         if (draft.provider === "bridge" && Math.max(recipientsTotal, groupTotal) > 30) {
           const variations = draft.content.variants.reduce((acc, vr) => acc + countSpintaxVariations(vr.text), 0);
-          if (draft.content.variants.length < 2 && variations < 2) return "Acima de 30 destinatários no bridge, use 2+ variantes ou spintax";
+          if (draft.content.variants.length < 2 && variations < 2) return "Acima de 30 destinatários no WhatsApp por QR code, use 2+ variantes ou spintax";
         }
         if (draft.provider === "bridge" && !draft.safety.allowLinks && draft.content.variants.some((vr) => containsLink(vr.text))) {
           return "A mensagem tem link — marque o aceite de risco de link ou remova";
@@ -251,7 +251,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
       return;
     }
     if (draft.provider === "bridge" && !bridgeRiskAck) {
-      toast.error("Confirme o aceite de risco do bridge");
+      toast.error("Confirme o aceite de risco do WhatsApp por QR code");
       return;
     }
     if (newNumberRisk && !newNumberRiskAck) {
@@ -342,7 +342,7 @@ export function CampaignWizard({ organizationId, campaignId: initialId, onClose,
                   )}
                   aria-current={active ? "step" : undefined}
                 >
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/20 text-[10px]">
+                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-black/20 text-micro">
                     {done ? <Check size={10} /> : i + 1}
                   </span>
                   {WIZARD_STEP_LABELS[s]}

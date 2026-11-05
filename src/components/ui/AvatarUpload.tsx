@@ -86,7 +86,7 @@ export function AvatarUpload({
       });
 
       if (!response.ok) {
-        throw new Error("Falha no upload");
+        throw new Error("Não foi possível enviar a imagem.");
       }
 
       const { storageId } = await response.json();
@@ -105,9 +105,9 @@ export function AvatarUpload({
 
       // 4. Notify parent
       onPhotoChange(fileId);
-      toast.success("Foto atualizada!");
+      toast.success("Foto atualizada");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao enviar foto.");
+      toast.error(error.message || "Não foi possível enviar a foto.");
     } finally {
       setUploading(false);
     }

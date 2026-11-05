@@ -658,7 +658,7 @@ export function buildAiSpendAlertTemplate(data: {
   appUrl?: string;
 }): TemplateResult {
   const appUrl = data.appUrl || resolveAppUrl();
-  const settingsUrl = `${appUrl}/app/configuracoes?secao=ai`;
+  const settingsUrl = `${appUrl}/app/configuracoes?secao=ai-usage`;
   const pct = Math.round(data.pct);
   const reached = data.level === "reached";
   const consequence = !reached
@@ -712,7 +712,7 @@ export function buildChannelSessionLostTemplate(data: {
   appUrl?: string;
 }): TemplateResult {
   const appUrl = data.appUrl || resolveAppUrl();
-  const url = `${appUrl}/app/configuracoes?secao=channels`;
+  const url = `${appUrl}/app/configuracoes?secao=${data.provider === "meta_messaging" ? "instagram" : "channels"}`;
   if (data.provider === "meta_messaging") {
     const expiring = data.state === "data_access_expiring";
     const name = maskDigitRuns(data.channelName);

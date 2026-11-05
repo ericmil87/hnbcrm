@@ -27,9 +27,9 @@ interface MentionTextareaProps {
 
 const ROLE_LABELS: Record<string, string> = {
   ai: "IA",
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
 };
 
 function getRoleLabel(member: TeamMember): string {
@@ -191,7 +191,7 @@ export function MentionTextarea({
                   className={cn(
                     "flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold",
                     member.type === "ai"
-                      ? "bg-purple-600 text-white"
+                      ? "bg-ai-600 text-white"
                       : "bg-brand-600 text-white",
                   )}
                 >
@@ -209,7 +209,7 @@ export function MentionTextarea({
                     <span className="text-sm font-medium text-text-primary truncate">
                       {member.name}
                     </span>
-                    <Badge variant={member.type === "ai" ? "info" : "default"} className="text-[10px] shrink-0">
+                    <Badge variant={member.type === "ai" ? "info" : "default"} className="text-caption shrink-0">
                       {getRoleLabel(member)}
                     </Badge>
                   </div>

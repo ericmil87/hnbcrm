@@ -7,7 +7,7 @@ import { Badge } from "../ui/Badge";
 import { Avatar } from "../ui/Avatar";
 import { Spinner } from "../ui/Spinner";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Calendar,
   Clock,
@@ -51,7 +51,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       toast.success("Evento concluído!");
       onClose();
     } catch (error) {
-      toast.error("Erro ao concluir evento");
+      toast.error("Não foi possível concluir o evento.");
       console.error(error);
     }
   };
@@ -63,7 +63,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       toast.success("Evento cancelado!");
       onClose();
     } catch (error) {
-      toast.error("Erro ao cancelar evento");
+      toast.error("Não foi possível cancelar o evento.");
       console.error(error);
     }
   };
@@ -76,10 +76,17 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
-      toast.error("Erro ao excluir evento");
+      toast.error("Não foi possível excluir o evento.");
       console.error(error);
     }
   };
+
+  // Evento apagado (ou link antigo): fecha o painel e limpa o `?event=`.
+  const notFound = event === null;
+  useEffect(() => {
+    if (notFound) onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notFound]);
 
   if (!event) {
     return (

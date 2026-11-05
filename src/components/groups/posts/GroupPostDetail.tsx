@@ -234,7 +234,7 @@ export function GroupPostDetail({ groupPostId, organizationId, onClose, onEdit }
                   <button
                     type="button"
                     onClick={() => navigate(`${TAB_ROUTES.inbox}?conversation=${target.conversationId}`)}
-                    className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-[11px] text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
+                    className="inline-flex items-center gap-1 rounded-full border border-border-strong px-2 py-0.5 text-caption text-text-secondary transition-colors hover:border-brand-500 hover:text-brand-400"
                   >
                     <MessageSquare size={11} />
                     Abrir conversa
@@ -395,7 +395,7 @@ export function GroupPostDetail({ groupPostId, organizationId, onClose, onEdit }
                           }
                           title={send.error ?? "Abrir no inbox"}
                           className={cn(
-                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors",
+                            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-caption transition-colors",
                             send.error
                               ? "border-semantic-error/50 text-semantic-error"
                               : "border-border-strong text-text-secondary hover:border-brand-500 hover:text-brand-400",
@@ -473,7 +473,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-card border border-border bg-surface-raised p-3 text-center">
       <p className="text-lg font-semibold tabular-nums text-text-primary">{value}</p>
-      <p className="text-[11px] text-text-muted">{label}</p>
+      <p className="text-caption text-text-muted">{label}</p>
     </div>
   );
 }

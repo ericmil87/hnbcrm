@@ -17,7 +17,7 @@ interface CrmMappingSelectProps {
 const CONTACT_FIELDS: { field: string; label: string }[] = [
   { field: "firstName", label: "Nome" },
   { field: "lastName", label: "Sobrenome" },
-  { field: "email", label: "Email" },
+  { field: "email", label: "E-mail" },
   { field: "phone", label: "Telefone" },
   { field: "company", label: "Empresa" },
   { field: "title", label: "Cargo" },

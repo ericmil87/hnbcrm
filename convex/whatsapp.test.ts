@@ -44,7 +44,7 @@ async function seedOrgWithConfig(
       createdAt: now,
       updatedAt: now,
     });
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     await ctx.db.insert("teamMembers", {
       organizationId,
       userId: adminUserId,

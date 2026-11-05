@@ -1,3 +1,5 @@
+import { EmptyState } from "@/components/ui/EmptyState";
+import { usePageTitle } from "@/hooks/usePageTitle";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -5,6 +7,8 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useAuditUrlState } from "@/hooks/useAuditUrlState";
+import { resolveAuditActor, type AuditAction, type AuditSeverity } from "@/lib/auditFilters";
 import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +16,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
+import { VOCAB } from "@/lib/vocab";
+import { formatDate, formatDateTime } from "@/lib/format";
 import {
   Shield,
   Download,
@@ -33,20 +39,34 @@ import {
 } from "@/lib/auditUtils";
 
 export function AuditLogs() {
+  usePageTitle(VOCAB.audit.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
 
   // Filter state
-  const [selectedSeverity, setSelectedSeverity] = useState<string>("all");
-  const [selectedEntityType, setSelectedEntityType] = useState<string>("all");
-  const [selectedAction, setSelectedAction] = useState<string>("all");
-  const [selectedActorId, setSelectedActorId] = useState<string>("all");
-  const [datePreset, setDatePreset] = useState<string>("all");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
+  // Filtros e item aberto moram na URL; só o atalho de período relativo
+  // (24h/7d/30d) e o cursor de paginação ficam em estado da tela.
+  const urlState = useAuditUrlState();
+  const {
+    severity: selectedSeverity,
+    setSeverity: setSelectedSeverity,
+    entity: selectedEntityType,
+    setEntity: setSelectedEntityType,
+    action: selectedAction,
+    setAction: setSelectedAction,
+    from: startDate,
+    setFrom: setStartDate,
+    to: endDate,
+    setTo: setEndDate,
+    openLogId: expandedLogId,
+    setOpenLog: setExpandedLogId,
+  } = urlState;
+  const [localPreset, setLocalPreset] = useState<string>("all");
+  // Datas na URL implicam período personalizado.
+  const datePreset = startDate || endDate ? "custom" : localPreset;
+  const setDatePreset = setLocalPreset;
 
   // UI state
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
   const currentPage = cursorStack.length - 1;
 
@@ -66,7 +86,7 @@ export function AuditLogs() {
       return { startTimestamp: now - 30 * 86400000, endTimestamp: now };
     if (datePreset === "custom") {
       return {
-        startTimestamp: startDate ? new Date(startDate).getTime() : 0,
+        startTimestamp: startDate ? new Date(startDate + "T00:00:00").getTime() : 0,
         endTimestamp: endDate
           ? new Date(endDate + "T23:59:59").getTime()
           : 0,
@@ -76,7 +96,16 @@ export function AuditLogs() {
   }, [datePreset, startDate, endDate]);
 
   // Queries
-  const auditLogs = useQuery(api.auditLogs.getAuditLogs, {
+  const filters = useQuery(api.auditLogs.getAuditLogFilters, {
+    organizationId,
+  });
+  const resolvedActor = resolveAuditActor(
+    urlState.actor,
+    filters?.actors.map((a) => a.id)
+  );
+  const selectedActorId = resolvedActor.actor;
+  const setSelectedActorId = urlState.setActor;
+  const auditArgs = {
     organizationId,
     severity:
       selectedSeverity !== "all"
@@ -100,11 +129,12 @@ export function AuditLogs() {
     startDate: startTimestamp || undefined,
     endDate: endTimestamp || undefined,
     cursor: cursorStack[currentPage] ?? undefined,
-  });
+  };
+  const auditLogs = useQuery(
+    api.auditLogs.getAuditLogs,
+    resolvedActor.pending ? "skip" : auditArgs
+  );
 
-  const filters = useQuery(api.auditLogs.getAuditLogFilters, {
-    organizationId,
-  });
 
   // Active filters tracking
   const activeFilters = useMemo(() => {
@@ -146,10 +176,10 @@ export function AuditLogs() {
 
     if (startDate || endDate) {
       const start = startDate
-        ? new Date(startDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(startDate + "T00:00:00").getTime())
         : "início";
       const end = endDate
-        ? new Date(endDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(endDate + "T00:00:00").getTime())
         : "agora";
       result.push({ key: "date", label: `Período: ${start} até ${end}` });
     }
@@ -168,10 +198,7 @@ export function AuditLogs() {
   // Handlers
   const handlePresetClick = (preset: string) => {
     setDatePreset(preset);
-    if (preset !== "custom") {
-      setStartDate("");
-      setEndDate("");
-    }
+    if (preset !== "custom") urlState.clearDates();
     resetPagination();
   };
 
@@ -201,21 +228,15 @@ export function AuditLogs() {
         break;
       case "date":
         setDatePreset("all");
-        setStartDate("");
-        setEndDate("");
+        urlState.clearDates();
         break;
     }
     resetPagination();
   };
 
   const clearAllFilters = () => {
-    setSelectedSeverity("all");
-    setSelectedEntityType("all");
-    setSelectedAction("all");
-    setSelectedActorId("all");
     setDatePreset("all");
-    setStartDate("");
-    setEndDate("");
+    urlState.clearAll();
     resetPagination();
   };
 
@@ -237,7 +258,7 @@ export function AuditLogs() {
     const rows = auditLogs.logs.map((log) => {
       const desc = log.description || buildClientDescription(log);
       return [
-        new Date(log.createdAt).toLocaleString("pt-BR"),
+        formatDateTime(log.createdAt),
         log.action,
         log.entityType,
         log.entityId,
@@ -261,7 +282,7 @@ export function AuditLogs() {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
         <Shield size={48} className="text-text-muted" />
-        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os logs de auditoria.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para ver o histórico de alterações.</p>
       </div>
     );
   }
@@ -276,10 +297,10 @@ export function AuditLogs() {
           </div>
           <div>
             <h2 className="text-2xl md:text-3xl font-bold text-text-primary">
-              Logs de Auditoria
+              {VOCAB.audit.title}
             </h2>
             <p className="text-sm text-text-secondary">
-              Monitore todas as atividades da sua organização
+              Veja quem fez o quê na sua organização
             </p>
           </div>
         </div>
@@ -357,7 +378,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todos os Atores</option>
+              <option value="all">Todos os atores</option>
               {filters?.actors.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.type === "ai" ? "IA" : "Humano"})
@@ -369,13 +390,13 @@ export function AuditLogs() {
             <select
               value={selectedAction}
               onChange={(e) => {
-                setSelectedAction(e.target.value);
+                setSelectedAction(e.target.value as AuditAction);
                 resetPagination();
               }}
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Ações</option>
+              <option value="all">Todas as ações</option>
               {filters?.actions.map((a) => (
                 <option key={a.value} value={a.value}>
                   {a.label}
@@ -393,7 +414,7 @@ export function AuditLogs() {
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todos os Tipos</option>
+              <option value="all">Todos os tipos</option>
               {filters?.entityTypes.map((t) => (
                 <option key={t.value} value={t.value}>
                   {t.label}
@@ -405,13 +426,13 @@ export function AuditLogs() {
             <select
               value={selectedSeverity}
               onChange={(e) => {
-                setSelectedSeverity(e.target.value);
+                setSelectedSeverity(e.target.value as AuditSeverity);
                 resetPagination();
               }}
               className="bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
               style={{ fontSize: "16px" }}
             >
-              <option value="all">Todas as Severidades</option>
+              <option value="all">Todas as severidades</option>
               <option value="low">Baixa</option>
               <option value="medium">Média</option>
               <option value="high">Alta</option>
@@ -471,35 +492,16 @@ export function AuditLogs() {
 
         {/* Empty state */}
         {auditLogs && auditLogs.logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="w-16 h-16 rounded-2xl bg-surface-overlay flex items-center justify-center mb-4">
-              {activeFilters.length > 0 ? (
-                <Search size={32} className="text-text-muted" />
-              ) : (
-                <Shield size={32} className="text-text-muted" />
-              )}
-            </div>
-            <h3 className="text-lg font-semibold text-text-primary mb-2">
-              {activeFilters.length > 0
-                ? "Nenhum log encontrado"
-                : "Nenhum log de auditoria"}
-            </h3>
-            <p className="text-sm text-text-secondary text-center max-w-md">
-              {activeFilters.length > 0
-                ? "Tente ajustar os filtros ou expandir o período de datas."
-                : "Os logs de auditoria aparecerão aqui automaticamente conforme as atividades da organização."}
-            </p>
-            {activeFilters.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-4"
-                onClick={clearAllFilters}
-              >
-                Limpar Filtros
-              </Button>
-            )}
-          </div>
+          <EmptyState
+            icon={activeFilters.length > 0 ? Search : Shield}
+            title={activeFilters.length > 0 ? "Nenhuma alteração encontrada" : VOCAB.audit.empty.title}
+            description={
+              activeFilters.length > 0
+                ? "Tente ajustar os filtros ou ampliar o período."
+                : VOCAB.audit.empty.hint
+            }
+            action={activeFilters.length > 0 ? { label: "Limpar filtros", onClick: clearAllFilters } : undefined}
+          />
         )}
 
         {/* Log entries with date grouping */}
@@ -611,9 +613,7 @@ export function AuditLogs() {
                             <div className="flex flex-col items-end gap-1 shrink-0">
                               <span
                                 className="text-xs text-text-muted"
-                                title={new Date(log.createdAt).toLocaleString(
-                                  "pt-BR"
-                                )}
+                                title={formatDateTime(log.createdAt)}
                               >
                                 {formatRelativeTime(log.createdAt)}
                               </span>
@@ -707,7 +707,7 @@ export function AuditLogs() {
 
                               {/* IP + User Agent (for HTTP API calls) */}
                               {(log.ipAddress || log.userAgent) && (
-                                <div className="flex items-center gap-3 mt-2 text-[10px] text-text-muted">
+                                <div className="flex items-center gap-3 mt-2 text-caption text-text-muted">
                                   {log.ipAddress && (
                                     <span className="flex items-center gap-1">
                                       <Monitor size={10} /> {log.ipAddress}

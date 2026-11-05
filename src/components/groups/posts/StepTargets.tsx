@@ -103,7 +103,7 @@ export function StepTargets({ draft, setDraft, groups, channels, onGoToGroups }:
                 <div key={channelId} className="rounded-card border border-border bg-surface-raised">
                   <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
                     <span className="text-sm font-medium text-text-primary">
-                      {info?.displayName ?? "Número bridge"}
+                      {info?.displayName ?? "Número por QR code"}
                     </span>
                     {connected ? (
                       <Badge variant="success">
@@ -120,7 +120,7 @@ export function StepTargets({ draft, setDraft, groups, channels, onGoToGroups }:
                     )}
                     {groupsOff && <Badge variant="error">grupos desligados</Badge>}
                     {channelLocked && (
-                      <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-text-muted">
+                      <span className="ml-auto inline-flex items-center gap-1 text-caption text-text-muted">
                         <Lock size={11} /> outro número já escolhido
                       </span>
                     )}

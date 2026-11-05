@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useOutletContext, useSearchParams } from "react-router";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate, useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
-import { Eye, Users } from "lucide-react";
+import { CheckCircle2, Eye, Users } from "lucide-react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
@@ -14,16 +15,25 @@ import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { VOCAB } from "@/lib/vocab";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { stringParam } from "@/lib/searchParamState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
 
 export function HandoffQueue() {
+  usePageTitle(VOCAB.attention.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const handoffParam = searchParams.get("handoff");
+  // O repasse aberto vive na URL (`?handoff=`, destino do sino de notificações).
+  const { value: handoffParam, set: setHandoffParam, isInFlight } = useSearchParamState(
+    "handoff",
+    stringParam
+  );
 
   // getHandoffs agora exige inbox:view_own no servidor — sem o skip, um membro
   // sem permissão que cole a URL derrubaria a página no ErrorBoundary genérico
@@ -45,42 +55,13 @@ export function HandoffQueue() {
   // Popover "Devolver à IA" aberto em qual card (um por vez).
   const [returnPopoverFor, setReturnPopoverFor] = useState<string | null>(null);
 
-  // Escrita nossa no `?handoff=` ainda em voo: o router aplica o
-  // `setSearchParams` de forma assíncrona, então existe pelo menos um render em
-  // que o peek já mudou e o param ainda é o valor antigo. `target` é o que
-  // pedimos e `stale` o que estava na URL na hora — enquanto a URL mostrar
-  // `stale`, o efeito URL → estado fica quieto (senão fechar o peek o reabria).
-  const handoffParamSyncRef = useRef<{ target: string | null; stale: string | null } | null>(null);
-
-  const syncHandoffParam = useCallback(
-    (handoffId: string | null) => {
-      handoffParamSyncRef.current = { target: handoffId, stale: handoffParam };
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          if (handoffId) next.set("handoff", handoffId);
-          else next.delete("handoff");
-          return next;
-        },
-        { replace: true }
-      );
-    },
-    [handoffParam, setSearchParams]
-  );
+  const syncHandoffParam = setHandoffParam;
 
   // URL → estado. Um id que não está na fila (repasse já resolvido, inválido ou
   // de outra org) sai da URL em silêncio.
   useEffect(() => {
-    const pendingWrite = handoffParamSyncRef.current;
-    if (pendingWrite) {
-      if (handoffParam === pendingWrite.target) {
-        handoffParamSyncRef.current = null; // a URL alcançou o que pedimos
-      } else if (handoffParam === pendingWrite.stale) {
-        return; // ainda em voo — o param é o valor antigo, ignorar
-      } else {
-        handoffParamSyncRef.current = null; // mudou por fora no meio do caminho
-      }
-    }
+    // Escrita nossa ainda em voo (o param é o valor antigo): o efeito fica quieto.
+    if (isInFlight()) return;
 
     if (!handoffParam || handoffParam === peekHandoffId) return;
     if (handoffs === undefined) return;
@@ -89,7 +70,7 @@ export function HandoffQueue() {
     } else {
       syncHandoffParam(null);
     }
-  }, [handoffParam, handoffs, peekHandoffId, syncHandoffParam]);
+  }, [handoffParam, handoffs, peekHandoffId, syncHandoffParam, isInFlight]);
 
   // O repasse aberto pode ser resolvido por outra pessoa enquanto está na tela.
   useEffect(() => {
@@ -113,7 +94,7 @@ export function HandoffQueue() {
   if (!can("inbox", "view_own")) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-20">
-        <p className="text-text-secondary text-sm">Você não tem permissão para acessar os repasses.</p>
+        <p className="text-text-secondary text-sm">Você não tem permissão para ver o que requer atenção.</p>
       </div>
     );
   }
@@ -126,13 +107,13 @@ export function HandoffQueue() {
       })) as { conversationId?: string | null } | null;
 
       if (result?.conversationId) {
-        toast.success("Repasse aceito — abrindo a conversa");
+        toast.success("Conversa assumida — abrindo");
         navigate(`${TAB_ROUTES.inbox}?conversation=${result.conversationId}`);
       } else {
-        toast.success("Repasse aceito com sucesso");
+        toast.success("Conversa assumida");
       }
     } catch (error) {
-      toast.error(errorMessage(error, "Falha ao aceitar repasse"));
+      toast.error(errorMessage(error, "Não foi possível assumir a conversa. Tente de novo."));
     }
   };
 
@@ -153,13 +134,13 @@ export function HandoffQueue() {
       toast.success(
         instruction
           ? isGroup
-            ? "Devolvido à IA — sua orientação vale a partir da próxima menção na sala"
-            : "Devolvido à IA — ela vai responder o cliente com a sua orientação"
-          : "Repasse rejeitado — a IA volta a atender"
+            ? "Devolvido à IA. Sua orientação vale a partir da próxima menção na sala"
+            : "Devolvido à IA. Ela vai responder o cliente com a sua orientação"
+          : "Devolvido à IA. Ela volta a atender"
       );
       return true;
     } catch (error) {
-      toast.error(errorMessage(error, "Falha ao rejeitar repasse"));
+      toast.error(errorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
       return false;
     }
   };
@@ -199,18 +180,22 @@ export function HandoffQueue() {
     <div className="space-y-6">
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl md:text-2xl font-bold text-text-primary">Fila de Repasses</h2>
-        <Badge variant="warning">
-          <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
-        </Badge>
-      </div>
+      <PageHeader
+        title={VOCAB.attention.title}
+        subtitle={VOCAB.attention.subtitle}
+        badge={
+          <Badge variant="warning">
+            <span className="tabular-nums">{handoffs.length}</span> {handoffs.length === 1 ? "pendente" : "pendentes"}
+          </Badge>
+        }
+      />
 
       {handoffs.length === 0 ? (
-        <div className="text-center py-12">
-          <h3 className="text-lg font-medium text-text-primary mb-2">Nenhum repasse pendente</h3>
-          <p className="text-text-secondary">Todos os repasses foram processados.</p>
-        </div>
+        <EmptyState
+          icon={CheckCircle2}
+          title={VOCAB.attention.emptyTitle}
+          description={VOCAB.attention.emptyHint}
+        />
       ) : (
         <div className="grid gap-6">
           {handoffs.map((handoff) => (
@@ -286,8 +271,9 @@ export function HandoffQueue() {
               </div>
 
               <div className="mb-4">
-                <h4 className="text-sm font-medium text-text-primary mb-2">Motivo</h4>
-                <p className="text-sm text-text-secondary">{handoff.reason}</p>
+                <h4 className="text-sm font-medium text-text-primary mb-2">
+                  {handoff.fromMember?.type === "ai" ? "A IA pediu ajuda" : "Pedido de ajuda"} · {handoff.reason}
+                </h4>
               </div>
 
               {handoff.summary && (
@@ -299,7 +285,7 @@ export function HandoffQueue() {
 
               {handoff.suggestedActions.length > 0 && (
                 <div className="mb-6">
-                  <h4 className="text-sm font-medium text-text-primary mb-2">Ações Sugeridas</h4>
+                  <h4 className="text-sm font-medium text-text-primary mb-2">Ações sugeridas</h4>
                   <ul className="space-y-1">
                     {handoff.suggestedActions.map((action, index) => (
                       <li key={index} className="text-sm text-text-secondary flex items-start gap-2">
@@ -328,7 +314,7 @@ export function HandoffQueue() {
                     className="w-full sm:w-auto whitespace-nowrap"
                   >
                     <Eye size={16} />
-                    Espiar conversa
+                    {VOCAB.attention.view}
                   </Button>
                   <div className="relative w-full sm:w-auto">
                     <Button
@@ -339,19 +325,19 @@ export function HandoffQueue() {
                       size="md"
                       className="w-full sm:w-auto whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
                     >
-                      Devolver à IA
+                      {VOCAB.attention.giveBack}
                     </Button>
                     {returnPopoverFor === handoff._id && (
                       <AiInstructionPopover
                         title={
                           handoff.isGroup
-                            ? "Devolver à IA — o que ela precisa saber (opcional)"
-                            : "Devolver à IA — responda o que ela precisa (opcional)"
+                            ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                            : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
                         }
                         placeholder={
                           handoff.isGroup
-                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só rejeitar.'
-                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                            ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                            : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
                         }
                         submitLabel="Devolver"
                         direction="up"
@@ -369,7 +355,7 @@ export function HandoffQueue() {
                     size="md"
                     className="w-full sm:w-auto"
                   >
-                    Aceitar
+                    {VOCAB.attention.accept}
                   </Button>
                 </div>
               </div>

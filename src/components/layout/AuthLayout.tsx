@@ -18,7 +18,10 @@ import { Card } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Building2, LogOut, Plus } from "lucide-react";
 import { toast } from "sonner";
-import { OnboardingWizard } from "../onboarding/OnboardingWizard";
+import { useUiTheme } from "@/hooks/useUiTheme";
+import { clearStoredTheme } from "@/lib/themeDom";
+import type { UiTheme } from "../../../convex/lib/uiTheme";
+import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
@@ -37,6 +40,9 @@ import {
 
 export type AppOutletContext = {
   organizationId: Id<"organizations">;
+  /** Active UI theme and its setter (consumed by the appearance picker, fv2-15). */
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
 };
 
 const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
@@ -78,7 +84,7 @@ function writeKnownOrgIds(userId: string, ids: string[]) {
 }
 
 /**
- * O assistente é para o admin configurar uma org nova. O backend decide em
+ * O assistente (v2) é para o admin configurar uma org nova. O backend decide em
  * `shouldShowWizard`; o ramo legado (sem o campo) vale só para admin, porque
  * os passos chamam mutations admin-only e prenderiam um agente convidado.
  */
@@ -100,10 +106,6 @@ export function AuthLayout() {
   const location = useLocation();
   const [selectedOrgId, setSelectedOrgIdState] =
     useState<Id<"organizations"> | null>(readStoredOrgId);
-  // Por org: concluir/pular o assistente na A não pode pular o da B.
-  const [wizardClosedOrgs, setWizardClosedOrgs] = useState<ReadonlySet<string>>(
-    () => new Set()
-  );
   const [switcherMode, setSwitcherMode] = useState<"list" | "create" | null>(null);
   const { signOut } = useAuthActions();
 
@@ -212,6 +214,11 @@ export function AuthLayout() {
     api.teamMembers.getCurrentTeamMember,
     activeOrgId ? { organizationId: activeOrgId } : "skip"
   );
+  const { theme, setTheme } = useUiTheme(currentMember, activeOrgId);
+  // Sessão expirada (sem "Sair"): o tema do aparelho também não pode passar para o próximo usuário.
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) clearStoredTheme();
+  }, [isLoading, isAuthenticated]);
   const mustChangePassword = useQuery(
     api.teamMembers.getMustChangePassword,
     isAuthenticated ? {} : "skip"
@@ -304,6 +311,8 @@ export function AuthLayout() {
     // (Só o storage: zerar o estado agora faria o auto-select da org única
     // regravá-la antes do signOut terminar.)
     clearStoredOrgId();
+    // O tema do aparelho também é da pessoa: não migra para a conta de outro usuário.
+    clearStoredTheme();
     // Toasts da sessão (ex.: "você foi adicionado…", com botão de trocar de
     // org) não podem sobrar para o próximo usuário deste navegador.
     toast.dismiss();
@@ -375,23 +384,27 @@ export function AuthLayout() {
     return <FullScreenSpinner />;
   }
 
+  // Sem saber se o assistente vale, não mostrar o app para trocá-lo logo depois.
+  if (onboardingProgress === undefined) {
+    return <FullScreenSpinner />;
+  }
+
   if (
-    onboardingProgress !== undefined &&
-    !wizardClosedOrgs.has(activeOrgId) &&
     shouldShowWizard(onboardingProgress, currentMember.role)
   ) {
-    const closeWizard = () =>
-      setWizardClosedOrgs((prev) => new Set(prev).add(activeOrgId));
+    // Tela cheia no lugar do AppShell. "Continuar depois" (`deferWizard`) e "Ir para o Painel"
+    // (`completeWizard`) gravam no servidor e `shouldShowWizard` passa a falso, então
+    // recarregar a página não reabre o assistente (`computeShouldShowWizard` respeita `wizardDeferredAt`).
     return (
       <>
-        <OnboardingWizard
+        <OnboardingWizardV2
           key={activeOrgId}
           organizationId={activeOrgId}
-          organizationName={activeOrg?.name ?? ""}
-          onComplete={closeWizard}
-          onSkip={closeWizard}
-          onOpenOrgSwitcher={() => setSwitcherMode("list")}
-          onSignOut={handleSignOut}
+          chrome={{
+            organizationName: activeOrg?.name ?? "",
+            onOpenOrgSwitcher: () => setSwitcherMode("list"),
+            onSignOut: handleSignOut,
+          }}
         />
         {switcher}
       </>
@@ -409,6 +422,8 @@ export function AuthLayout() {
         organizationId={activeOrgId}
         orgName={activeOrg?.name ?? ""}
         onOpenOrgSwitcher={() => setSwitcherMode("list")}
+        theme={theme}
+        setTheme={setTheme}
       >
         {/* resetKey: navegar para outra tela sai do "Algo deu errado" sem F5 */}
         <ErrorBoundary resetKey={location.pathname}>
@@ -419,7 +434,7 @@ export function AuthLayout() {
               <Spinner size="lg" />
             </div>
           ) : (
-            <Outlet context={{ organizationId: activeOrgId } satisfies AppOutletContext} />
+            <Outlet context={{ organizationId: activeOrgId, theme, setTheme } satisfies AppOutletContext} />
           )}
         </ErrorBoundary>
       </AppShell>
@@ -430,7 +445,7 @@ export function AuthLayout() {
 
 function FullScreenSpinner() {
   return (
-    <div className="flex justify-center items-center h-screen bg-surface-base">
+    <div className="flex justify-center items-center h-screen supports-[height:100dvh]:h-[100dvh] bg-surface-base">
       <Spinner size="lg" />
     </div>
   );
@@ -452,7 +467,7 @@ function WelcomeScreen({
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   return (
-    <div className="flex items-center justify-center min-h-screen px-4 py-8">
+    <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
           <img

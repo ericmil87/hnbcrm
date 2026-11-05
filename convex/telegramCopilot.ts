@@ -50,6 +50,7 @@ import {
   SUGGEST_SYSTEM_TEXT,
   UNDO_WINDOW_MS,
   autoActionsLeft,
+  autoTurnAllowsTool,
   autoModeSystemText,
   autoWriteTools,
   effectiveAssistantMode,
@@ -76,8 +77,8 @@ export const DOWNLOAD_TIMEOUT_MS = 15_000;
 export const THINKING_TEXT = "Pensando…";
 
 export const COPILOT_COPY = {
-  aiOff: (org: string) => `🤖 A IA não está ativada na ${escapeHtml(org)}. Um admin ativa em Configurações → IA.`,
-  copilotOff: (org: string) => `🤖 O Copiloto está desligado na ${escapeHtml(org)}. Um admin liga em Configurações → IA.`,
+  aiOff: (org: string) => `🤖 A IA não está ativada na ${escapeHtml(org)}. Um admin ativa em Configurações › Atendente IA.`,
+  copilotOff: (org: string) => `🤖 O Copiloto está desligado na ${escapeHtml(org)}. Um admin liga em Configurações › Atendente IA.`,
   spendCap: (org: string) =>
     `💸 A ${escapeHtml(org)} atingiu o teto de gastos de IA do mês. Notificações e botões continuam; o Copiloto e o modo automático voltam quando o teto for ajustado.`,
   noRoute: "⚠️ Nenhum provedor de IA disponível agora. Tente de novo em instantes.",
@@ -500,7 +501,7 @@ async function prepareSession(
     month: monthKeyUtc(Date.now()),
   });
   if (gate.blocked) {
-    await say({ chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai") });
+    await say({ chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return null;
   }
   try {
@@ -756,7 +757,7 @@ async function promptVoiceGate(ctx: ActionCtx, target: RunTarget): Promise<boole
     month: monthKeyUtc(Date.now()),
   });
   if (gate.blocked) {
-    await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai") });
+    await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return false;
   }
   return true;
@@ -1057,7 +1058,7 @@ async function assistantAutoTurnLocked(ctx: ActionCtx, args: AssistantTurnArgs):
   const allowed = new Set(event.allowedWriteTools);
   const outcome = await runTelegramTurn(ctx, target, event.text, {
     extraSystem: autoModeSystemText(event.allowedWriteTools),
-    toolFilter: (spec) => spec.effect === "read" || (spec.effect === "write" && allowed.has(spec.name)),
+    toolFilter: (spec) => autoTurnAllowsTool(spec, allowed),
     interactive: false,
     quiet: true,
     toolVia: "telegram_auto",

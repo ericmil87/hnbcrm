@@ -238,7 +238,7 @@ function TrafficSplitControls({
       toast.success("Divisão de tráfego atualizada.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
-      toast.error(`Falha ao atualizar: ${message}`);
+      toast.error(`Não foi possível atualizar. ${message}`);
     } finally {
       setIsSaving(false);
     }
@@ -432,7 +432,7 @@ export function FormExperimentPage() {
       toast.success("Experimento iniciado com sucesso.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
-      toast.error(`Falha ao iniciar: ${message}`);
+      toast.error(`Não foi possível iniciar. ${message}`);
     }
   }
 
@@ -445,7 +445,7 @@ export function FormExperimentPage() {
       toast.success("Experimento pausado.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
-      toast.error(`Falha ao pausar: ${message}`);
+      toast.error(`Não foi possível pausar. ${message}`);
     }
   }
 
@@ -458,7 +458,7 @@ export function FormExperimentPage() {
       toast.success("Experimento retomado.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
-      toast.error(`Falha ao retomar: ${message}`);
+      toast.error(`Não foi possível retomar. ${message}`);
     }
   }
 
@@ -472,7 +472,7 @@ export function FormExperimentPage() {
       toast.success("Vencedor declarado. Experimento encerrado.");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Erro desconhecido";
-      toast.error(`Falha ao encerrar: ${message}`);
+      toast.error(`Não foi possível encerrar. ${message}`);
     }
   }
 
@@ -685,7 +685,7 @@ export function FormExperimentPage() {
                     </div>
                     <div className="grid grid-cols-3 gap-2 text-center">
                       <div>
-                        <p className="text-[11px] text-text-muted uppercase tracking-wide">
+                        <p className="text-caption text-text-muted uppercase tracking-wide">
                           Visitantes
                         </p>
                         <p className="text-sm font-semibold text-text-primary tabular-nums">
@@ -693,7 +693,7 @@ export function FormExperimentPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[11px] text-text-muted uppercase tracking-wide">
+                        <p className="text-caption text-text-muted uppercase tracking-wide">
                           Conversoes
                         </p>
                         <p className="text-sm font-semibold text-text-primary tabular-nums">
@@ -701,7 +701,7 @@ export function FormExperimentPage() {
                         </p>
                       </div>
                       <div>
-                        <p className="text-[11px] text-text-muted uppercase tracking-wide">
+                        <p className="text-caption text-text-muted uppercase tracking-wide">
                           Taxa
                         </p>
                         <p
@@ -770,7 +770,7 @@ export function FormExperimentPage() {
                           "transition-colors",
                           isLeading && status === "running"
                             ? "bg-brand-500/5"
-                            : "hover:bg-surface-overlay/50"
+                            : ""
                         )}
                       >
                         <td className="px-6 py-4">

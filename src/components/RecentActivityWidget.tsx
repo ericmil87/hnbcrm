@@ -182,11 +182,11 @@ export function RecentActivityWidget({
             <div key={gi}>
               {/* Date group header */}
               <div className="flex items-center gap-3 py-2">
-                <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                <span className="text-caption font-semibold text-text-muted uppercase tracking-wider">
                   {group.label}
                 </span>
                 <div className="flex-1 h-px bg-border" />
-                <span className="text-[10px] text-text-muted">
+                <span className="text-caption text-text-muted">
                   {group.logs.length} {group.logs.length === 1 ? "evento" : "eventos"}
                 </span>
               </div>
@@ -225,13 +225,13 @@ export function RecentActivityWidget({
                         <div className="flex-1 min-w-0">
                           {/* Badges */}
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <Badge variant={actionInfo.variant as any} className="text-[10px]">
+                            <Badge variant={actionInfo.variant as any} className="text-caption">
                               {actionInfo.label}
                             </Badge>
                             {log.severity !== "low" && (
                               <span
                                 className={cn(
-                                  "text-[10px]",
+                                  "text-caption",
                                   log.severity === "medium" && "text-semantic-warning",
                                   (log.severity === "high" || log.severity === "critical") &&
                                     "text-semantic-error"
@@ -262,7 +262,7 @@ export function RecentActivityWidget({
                         {/* Timestamp + chevron */}
                         <div className="flex flex-col items-end gap-1 shrink-0">
                           <span
-                            className="text-[10px] text-text-muted"
+                            className="text-caption text-text-muted"
                             title={new Date(log.createdAt).toLocaleString("pt-BR")}
                           >
                             {formatRelativeTime(log.createdAt)}
@@ -297,13 +297,13 @@ export function RecentActivityWidget({
                               <div className="rounded-lg border border-border overflow-hidden">
                                 {/* Header */}
                                 <div className="grid grid-cols-1 sm:grid-cols-3 bg-surface-sunken">
-                                  <div className="px-3 py-1.5 text-[10px] font-medium text-text-muted">
+                                  <div className="px-3 py-1.5 text-caption font-medium text-text-muted">
                                     Campo
                                   </div>
-                                  <div className="px-3 py-1.5 text-[10px] font-medium text-semantic-error/70 hidden sm:block">
+                                  <div className="px-3 py-1.5 text-caption font-medium text-semantic-error/70 hidden sm:block">
                                     Antes
                                   </div>
-                                  <div className="px-3 py-1.5 text-[10px] font-medium text-semantic-success/70 hidden sm:block">
+                                  <div className="px-3 py-1.5 text-caption font-medium text-semantic-success/70 hidden sm:block">
                                     Depois
                                   </div>
                                 </div>
@@ -317,22 +317,22 @@ export function RecentActivityWidget({
                                       <div key={key}>
                                         {/* Desktop: 3-col grid */}
                                         <div className="hidden sm:grid sm:grid-cols-3 bg-surface-raised">
-                                          <div className="px-3 py-1.5 text-[10px] text-text-secondary font-medium">
+                                          <div className="px-3 py-1.5 text-caption text-text-secondary font-medium">
                                             {label}
                                           </div>
-                                          <div className="px-3 py-1.5 text-[10px] text-text-muted">
+                                          <div className="px-3 py-1.5 text-caption text-text-muted">
                                             {formatDiffValue(before)}
                                           </div>
-                                          <div className="px-3 py-1.5 text-[10px] text-text-primary">
+                                          <div className="px-3 py-1.5 text-caption text-text-primary">
                                             {formatDiffValue(after)}
                                           </div>
                                         </div>
                                         {/* Mobile: stacked */}
                                         <div className="sm:hidden px-3 py-1.5 bg-surface-raised space-y-0.5">
-                                          <div className="text-[10px] text-text-secondary font-medium">
+                                          <div className="text-caption text-text-secondary font-medium">
                                             {label}
                                           </div>
-                                          <div className="text-[10px]">
+                                          <div className="text-caption">
                                             <span className="text-text-muted">
                                               {formatDiffValue(before)}
                                             </span>
@@ -354,7 +354,7 @@ export function RecentActivityWidget({
 
                           {/* IP + User Agent */}
                           {(log.ipAddress || log.userAgent) && (
-                            <div className="flex items-center gap-3 mt-1.5 text-[10px] text-text-muted">
+                            <div className="flex items-center gap-3 mt-1.5 text-caption text-text-muted">
                               {log.ipAddress && (
                                 <span className="flex items-center gap-1">
                                   <Monitor size={10} /> {log.ipAddress}
@@ -383,7 +383,7 @@ export function RecentActivityWidget({
                 className="w-full"
                 onClick={() => navigate("/app/auditoria")}
               >
-                Ver mais na Auditoria
+                Ver mais no histórico de alterações
                 <ChevronRight size={14} />
               </Button>
             </div>

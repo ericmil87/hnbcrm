@@ -142,7 +142,9 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     // Entramos num grupo novo: a decisão de acompanhar é humana e mora na
     // página de Grupos.
     if (n.type === "channel_session_lost") {
-      navigate(`${TAB_ROUTES.settings}?secao=channels`);
+      // Instagram/Messenger desconectado mora em "Instagram e Messenger", não em "Números conectados".
+      const isMeta = Boolean((n.data as { metaConnectionId?: unknown } | undefined)?.metaConnectionId);
+      navigate(`${TAB_ROUTES.settings}?secao=${isMeta ? "instagram" : "channels"}`);
       return;
     }
     if (n.type === "group_joined") {
@@ -167,9 +169,9 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       );
       return;
     }
-    // Gasto de IA do mês: o painel de uso e o teto ficam em Configurações → IA.
+    // Gasto de IA do mês: o painel de uso e o teto ficam em Configurações → Atendente IA → Uso e limites de gasto.
     if (n.type === "ai_spend_warning" || n.type === "ai_spend_reached") {
-      navigate(`${TAB_ROUTES.settings}?secao=ai`);
+      navigate(`${TAB_ROUTES.settings}?secao=ai-usage`);
       return;
     }
     if (n.type === "ai_followup_needs_human") {
@@ -191,7 +193,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
     try {
       await markAllRead({ organizationId });
     } catch {
-      toast.error("Falha ao marcar notificações como lidas");
+      toast.error("Não foi possível marcar as notificações como lidas.");
     }
   };
 
@@ -223,7 +225,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
       });
       toast.success("Lead criado — a conversa privada está aberta");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Falha ao criar o lead");
+      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Não foi possível criar o lead.");
     } finally {
       setConvertingId(null);
     }
@@ -320,7 +322,7 @@ export function NotificationPanel({ organizationId, open, onClose }: Notificatio
                         {n.body && (
                           <span className="block text-xs text-text-secondary truncate mt-0.5">{n.body}</span>
                         )}
-                        <span className="block text-[11px] text-text-muted mt-1">
+                        <span className="block text-caption text-text-muted mt-1">
                           {formatRelativeTime(n.createdAt)}
                         </span>
                       </span>

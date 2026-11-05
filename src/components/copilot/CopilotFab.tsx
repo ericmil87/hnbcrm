@@ -218,9 +218,9 @@ export function CopilotFab({ onOpen, hidden = false }: CopilotFabProps) {
         pos.side === "right" ? "before:-left-3" : "before:-right-3",
         dragging ? "cursor-grabbing scale-105" : "cursor-pointer transition-transform duration-200",
       )}
-      aria-label="Abrir Copiloto IA"
+      aria-label="Abrir Copiloto"
       aria-description="Arraste para reposicionar"
-      title="Copiloto IA — arraste para reposicionar"
+      title="Copiloto — arraste para reposicionar"
     >
       <Sparkles size={isMobile ? 20 : 22} />
     </button>

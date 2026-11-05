@@ -44,7 +44,7 @@ async function seedCoachOrg(
 ) {
   return await t.run(async (ctx) => {
     const now = Date.now();
-    const adminUserId = await ctx.db.insert("users", {});
+    const adminUserId = await ctx.db.insert("users", { email: "admin@teste.com" });
     const sellerUserId = await ctx.db.insert("users", {});
     const viewerUserId = await ctx.db.insert("users", {});
     const organizationId = await ctx.db.insert("organizations", {
@@ -585,6 +585,26 @@ describe("métricas de aceitação (gate do autopilot)", () => {
     expect(metrics.coached).toBe(2);
     expect(metrics.reviewed).toBe(1); // só o autônomo
     expect(metrics.sent).toBe(1);
+  });
+});
+
+describe("updateAgentProfile: rename", () => {
+  test("renomeia pela mutation pública e audita; nome inválido é recusado", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const run = (rename: string) =>
+      asUser(t, seed.adminUserId).mutation(api.aiSettings.updateAgentProfile, {
+        agentMemberId: seed.agentId,
+        patch: {},
+        rename,
+      });
+    await run("  Clara  ");
+    expect((await t.run((ctx) => ctx.db.get(seed.agentId)))?.name).toBe("Clara");
+
+    await expect(run("Linha 1\nLinha 2")).rejects.toThrow(/60 caracteres e uma só linha/);
+    await expect(run("a".repeat(61))).rejects.toThrow(/60 caracteres/);
+    await expect(run("   ")).rejects.toThrow(/vazio/);
+    expect((await t.run((ctx) => ctx.db.get(seed.agentId)))?.name).toBe("Clara");
   });
 });
 

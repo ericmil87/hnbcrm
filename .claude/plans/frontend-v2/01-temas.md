@@ -218,7 +218,7 @@ Fonte canônica do WhatsApp: `src/components/campaigns/WhatsAppPreview.tsx:69-81
 | `composer-field` | `#09090B` (= sunken) | `#F4F4F5` | `#FFFFFF` |
 | `bubble-in` | `#18181B` | `#FFFFFF` | `#FFFFFF` |
 | `bubble-in-link` | `#FB923C` (= brand-400) | `#C2410C` | `#0565A0` |
-| `bubble-out` (equipe) | `#EA580C` | `#C2410C` | `#D9FDD3` |
+| `bubble-out` (equipe) | `#EA580C` | `#9A3412` | `#D9FDD3` |
 | `bubble-out-fg` (equipe e IA) | `#FFFFFF` | `#FFFFFF` | `#111B21` |
 | `bubble-out-label` ("Equipe") | `#FED7AA` | `#FFEDD5` | `#017561` |
 | `bubble-out-link` | `#FFFFFF` | `#FFFFFF` | `#0565A0` |
@@ -233,6 +233,8 @@ Fonte canônica do WhatsApp: `src/components/campaigns/WhatsAppPreview.tsx:69-81
 | `chat-send` (botão enviar do composer) | `#EA580C` (= brand-600) | `#AD3A0B` | `#00A884` |
 | `badge-unread` / `-fg` | `#EA580C` / `#FFFFFF` | `#AD3A0B` / `#FFFFFF` | `#25D366` / `#111B21` |
 | `--shadow-bubble` | `none` | `0 1px 0.5px rgba(11,20,26,.13)` | `0 1px 0.5px rgba(11,20,26,.13)` |
+
+Nota: no Claro, `bubble-out` é `#9A3412` (brand-700) e não `#C2410C`, que reprovava AA a 75% no rodapé da bolha.
 
 (*) Hoje a bolha da IA é `bg-purple-600/80` sobre `#0F0F11`. `#792CBF` é a composição exata (diferença ≤ 1 nível por canal), o que permite uma cor sólida por tema sem alfa.
 

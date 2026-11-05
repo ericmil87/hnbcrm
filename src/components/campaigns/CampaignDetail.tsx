@@ -88,7 +88,7 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
       await fn();
       toast.success(label);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na ação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível concluir a ação."));
     } finally {
       setBusy(false);
     }
@@ -218,13 +218,13 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
           <Tile label="Lidas" value={s.read + s.replied} sub={formatPercent(report.rates.read)} tone="success" />
           <Tile label="Responderam" value={s.replied} sub={formatPercent(report.rates.replied)} tone="brand" />
           <Tile label="Falhas" value={s.failed} sub={formatPercent(report.rates.failed)} tone={s.failed > 0 ? "error" : undefined} />
-          <Tile label="Opt-out" value={s.optedOut} sub={formatPercent(report.rates.optedOut)} tone={s.optedOut > 0 ? "warning" : undefined} />
+          <Tile label="Descadastrados" value={s.optedOut} sub={formatPercent(report.rates.optedOut)} tone={s.optedOut > 0 ? "warning" : undefined} />
           <Tile label="Pulados" value={s.skipped} tone={s.skipped > 0 ? "warning" : undefined} />
           <Tile label="Custo" value={campaign.provider === "bridge" ? "—" : formatUsd(report.estimatedCostUsd)} />
         </div>
         {(s.optedOut > 0 || s.failed > 0) && (
           <p className="text-xs text-text-muted">
-            Opt-out e bloqueio são os indicadores que antecedem uma restrição do número — se subirem, pause e revise a lista antes de continuar.
+            Descadastros e bloqueios são os indicadores que antecedem uma restrição do número — se subirem, pause e revise a lista antes de continuar.
           </p>
         )}
 
@@ -273,7 +273,7 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
               </table>
             </div>
             {campaign.audience.source === "group_members" && (
-              <p className="mt-2 text-[11px] text-text-muted">
+              <p className="mt-2 text-caption text-text-muted">
                 O envio é espalhado em dias respeitando o teto por grupo — a coluna "Na fila" cai a cada dia.
               </p>
             )}
@@ -332,7 +332,7 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
 function Tile({ label, value, sub, tone }: { label: string; value: number | string; sub?: string; tone?: "success" | "error" | "warning" | "brand" }) {
   return (
     <div className="rounded-lg bg-surface-raised border border-border px-3 py-2">
-      <p className="text-[11px] text-text-muted">{label}</p>
+      <p className="text-caption text-text-muted">{label}</p>
       <p
         className={cn(
           "text-lg font-semibold tabular-nums",
@@ -345,7 +345,7 @@ function Tile({ label, value, sub, tone }: { label: string; value: number | stri
       >
         {typeof value === "number" ? value.toLocaleString("pt-BR") : value}
       </p>
-      {sub && <p className="text-[11px] text-text-muted tabular-nums">{sub}</p>}
+      {sub && <p className="text-caption text-text-muted tabular-nums">{sub}</p>}
     </div>
   );
 }
@@ -474,7 +474,7 @@ function RecipientsTable({
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-text-muted">
+              <tr className="text-left text-caption uppercase tracking-wide text-text-muted">
                 <th className="px-3 py-2 font-medium">Destinatário</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium hidden md:table-cell">Enviada</th>
@@ -491,7 +491,7 @@ function RecipientsTable({
                   </td>
                   <td className="px-3 py-2">
                     <Badge variant={RECIPIENT_STATUS_VARIANT[r.status]}>{RECIPIENT_STATUS_LABELS[r.status]}</Badge>
-                    {r.isNewContact && <span className="ml-1 text-[10px] text-text-muted">novo</span>}
+                    {r.isNewContact && <span className="ml-1 text-caption text-text-muted">novo</span>}
                   </td>
                   <td className="px-3 py-2 hidden md:table-cell text-xs text-text-muted tabular-nums">{formatDateTime(r.sentAt)}</td>
                   <td className="px-3 py-2 hidden lg:table-cell text-xs text-text-secondary max-w-[260px] truncate">

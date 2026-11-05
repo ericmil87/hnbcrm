@@ -1,3 +1,5 @@
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
@@ -7,6 +9,8 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { campaignProviderCodec, campaignStatusCodec, type CampaignStatusFilter } from "@/lib/campaignFilters";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -26,7 +30,7 @@ import {
   formatUsd,
 } from "@/components/campaigns/campaignUtils";
 
-const STATUS_FILTERS: { id: CampaignStatus | "all" | "active"; label: string }[] = [
+const STATUS_FILTERS: { id: CampaignStatusFilter; label: string }[] = [
   { id: "all", label: "Todas" },
   { id: "active", label: "Ativas" },
   { id: "draft", label: "Rascunhos" },
@@ -36,6 +40,7 @@ const STATUS_FILTERS: { id: CampaignStatus | "all" | "active"; label: string }[]
 ];
 
 export function CampaignsPage() {
+  usePageTitle(VOCAB.campaigns.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can, isLoading } = usePermissions(organizationId);
   const canView = can("campaigns", "view");
@@ -46,8 +51,9 @@ export function CampaignsPage() {
   const selectedId = (searchParams.get("campanha") as Id<"campaigns"> | null) ?? null;
   const [wizardId, setWizardId] = useState<Id<"campaigns"> | null | "new">(null);
   const [prefill, setPrefill] = useState<CampaignPrefill | null>(null);
-  const [statusFilter, setStatusFilter] = useState<(typeof STATUS_FILTERS)[number]["id"]>("all");
-  const [providerFilter, setProviderFilter] = useState<CampaignProvider | "all">("all");
+  // Filtros na URL (replace): sobrevivem ao recarregar e ao compartilhar o link.
+  const { value: statusFilter, set: setStatusFilter } = useSearchParamState("status", campaignStatusCodec, { preventScrollReset: true });
+  const { value: providerFilter, set: setProviderFilter } = useSearchParamState("provider", campaignProviderCodec, { preventScrollReset: true });
   const [confirmDelete, setConfirmDelete] = useState<Id<"campaigns"> | null>(null);
   const [optOutsOpen, setOptOutsOpen] = useState(false);
   const [menuFor, setMenuFor] = useState<Id<"campaigns"> | null>(null);
@@ -132,7 +138,7 @@ export function CampaignsPage() {
       await fn();
       toast.success(label);
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha na ação"));
+      toast.error(mutationErrorMessage(e, "Não foi possível concluir a ação."));
     }
   };
 
@@ -159,7 +165,7 @@ export function CampaignsPage() {
           <h1 className="text-xl font-semibold text-text-primary">Campanhas</h1>
         </div>
         <Button variant="secondary" onClick={() => setOptOutsOpen(true)}>
-          <Ban size={16} /> Supressão
+          <Ban size={16} /> Descadastrados
         </Button>
         {canManage && (
           <Button onClick={() => setWizardId("new")}>
@@ -192,8 +198,8 @@ export function CampaignsPage() {
           aria-label="Filtrar por canal"
         >
           <option value="all">Todos os canais</option>
-          <option value="meta">Cloud API (Meta)</option>
-          <option value="bridge">Bridge</option>
+          <option value="meta">WhatsApp oficial (Meta)</option>
+          <option value="bridge">WhatsApp por QR code</option>
         </select>
       </div>
 
@@ -204,10 +210,10 @@ export function CampaignsPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={Megaphone}
-          title={campaigns.length === 0 ? "Nenhuma campanha ainda" : "Nada com esse filtro"}
+          title={campaigns.length === 0 ? VOCAB.campaigns.empty.title : "Nada com esse filtro"}
           description={
             campaigns.length === 0
-              ? "Dispare mensagens segmentadas ou importe uma lista de números, com limites anti-ban e relatório por destinatário."
+              ? VOCAB.campaigns.empty.hint
               : undefined
           }
           action={canManage && campaigns.length === 0 ? { label: "Criar a primeira", onClick: () => setWizardId("new") } : undefined}
@@ -238,7 +244,7 @@ export function CampaignsPage() {
           <div className="hidden md:block rounded-card border border-border bg-surface-raised overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-[11px] uppercase tracking-wide text-text-muted border-b border-border">
+                <tr className="text-left text-caption uppercase tracking-wide text-text-muted border-b border-border">
                   <th className="px-4 py-2.5 font-medium">Campanha</th>
                   <th className="px-3 py-2.5 font-medium">Canal</th>
                   <th className="px-3 py-2.5 font-medium">Status</th>
@@ -248,7 +254,7 @@ export function CampaignsPage() {
                   <th className="px-3 py-2.5 font-medium text-right">Lidas</th>
                   <th className="px-3 py-2.5 font-medium text-right">Resp.</th>
                   <th className="px-3 py-2.5 font-medium text-right">Falhas</th>
-                  <th className="px-3 py-2.5 font-medium text-right">Opt-out</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Descadastrados</th>
                   <th className="px-3 py-2.5 font-medium text-right">Custo</th>
                   <th className="px-3 py-2.5 font-medium">Quando</th>
                   <th className="px-2 py-2.5" />
@@ -259,7 +265,7 @@ export function CampaignsPage() {
                   const s = c.stats;
                   const isRunning = c.status === "running" || c.status === "scheduled";
                   return (
-                    <tr key={c._id} className="hover:bg-surface-overlay/60 cursor-pointer" onClick={() => openDetail(c._id)}>
+                    <tr key={c._id} className="cursor-pointer" onClick={() => openDetail(c._id)}>
                       <td className="px-4 py-2.5">
                         <p className="font-medium text-text-primary truncate max-w-[220px]">{c.name}</p>
                         <p className="text-xs text-text-muted truncate max-w-[220px]">{c.creatorName ?? ""}{c.pausedReason ? ` · ${c.pausedReason}` : ""}</p>
@@ -379,7 +385,7 @@ function ProviderPill({ provider }: { provider: CampaignProvider }) {
     <Badge variant={provider === "bridge" ? "warning" : "brand"}>
       <span className="inline-flex items-center gap-1">
         {provider === "bridge" ? <Radio size={11} /> : <Cloud size={11} />}
-        {provider === "bridge" ? "Bridge" : "Cloud API"}
+        {provider === "bridge" ? "WhatsApp por QR code" : "WhatsApp oficial (Meta)"}
       </span>
     </Badge>
   );
@@ -393,7 +399,7 @@ function ProgressBar({ item }: { item: CampaignListItem }) {
       <div className="flex-1 bg-surface-sunken rounded-full h-1.5 overflow-hidden">
         <div className="h-1.5 rounded-full bg-brand-600" style={{ width: `${Math.min(100, Math.max(done, s.total > 0 ? 1 : 0))}%` }} />
       </div>
-      <span className="text-[11px] text-text-muted tabular-nums w-9 text-right">{Math.round(done)}%</span>
+      <span className="text-caption text-text-muted tabular-nums w-9 text-right">{Math.round(done)}%</span>
     </div>
   );
 }

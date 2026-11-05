@@ -276,8 +276,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
         <div key={fieldKey}>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
             {param.name}
-            <Badge variant="default" className="ml-2 text-[10px] px-1 py-0 font-normal">{param.type}</Badge>
-            {param.required && <Badge variant="error" className="ml-1 text-[10px] px-1.5">obrigatório</Badge>}
+            <Badge variant="default" className="ml-2 text-caption px-1 py-0 font-normal">{param.type}</Badge>
+            {param.required && <Badge variant="error" className="ml-1 text-caption px-1.5">obrigatório</Badge>}
           </label>
           <select
             value={String(value)}
@@ -293,8 +293,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
               </option>
             ))}
           </select>
-          {fieldError && <p className="mt-1 text-[11px] text-semantic-error">{fieldError}</p>}
-          <p className="mt-1 text-[11px] text-text-muted">{param.description}</p>
+          {fieldError && <p className="mt-1 text-caption text-semantic-error">{fieldError}</p>}
+          <p className="mt-1 text-caption text-text-muted">{param.description}</p>
         </div>
       );
     }
@@ -309,8 +309,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
             label={
               <span className="text-[13px] font-medium">
                 {param.name}
-                <Badge variant="default" className="ml-2 text-[10px] px-1 py-0 font-normal">boolean</Badge>
-                {param.required && <Badge variant="error" className="ml-1 text-[10px] px-1.5">obrigatório</Badge>}
+                <Badge variant="default" className="ml-2 text-caption px-1 py-0 font-normal">boolean</Badge>
+                {param.required && <Badge variant="error" className="ml-1 text-caption px-1.5">obrigatório</Badge>}
               </span>
             }
           />
@@ -323,10 +323,10 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
         <div key={fieldKey} className="border border-border rounded-lg p-3 space-y-3">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-text-primary">{param.name}</span>
-            <Badge variant="default" className="text-[10px] px-1 py-0 font-normal">object</Badge>
-            {param.required && <Badge variant="error" className="text-[10px] px-1.5">obrigatório</Badge>}
+            <Badge variant="default" className="text-caption px-1 py-0 font-normal">object</Badge>
+            {param.required && <Badge variant="error" className="text-caption px-1.5">obrigatório</Badge>}
           </div>
-          <p className="text-[11px] text-text-muted -mt-1">{param.description}</p>
+          <p className="text-caption text-text-muted -mt-1">{param.description}</p>
           <div className="pl-3 space-y-3 border-l-2 border-border-subtle">
             {param.nested.map((nestedParam) => renderFormField(nestedParam, param.name))}
           </div>
@@ -339,8 +339,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
         <div key={fieldKey}>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
             {param.name}
-            <Badge variant="default" className="ml-2 text-[10px] px-1 py-0 font-normal">{param.type}</Badge>
-            {param.required && <Badge variant="error" className="ml-1 text-[10px] px-1.5">obrigatório</Badge>}
+            <Badge variant="default" className="ml-2 text-caption px-1 py-0 font-normal">{param.type}</Badge>
+            {param.required && <Badge variant="error" className="ml-1 text-caption px-1.5">obrigatório</Badge>}
           </label>
           <textarea
             value={String(value)}
@@ -357,8 +357,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
               fieldError ? "border-semantic-error" : "border-border-strong"
             }`}
           />
-          {fieldError && <p className="mt-1 text-[11px] text-semantic-error">{fieldError}</p>}
-          <p className="mt-1 text-[11px] text-text-muted">JSON: {param.description}</p>
+          {fieldError && <p className="mt-1 text-caption text-semantic-error">{fieldError}</p>}
+          <p className="mt-1 text-caption text-text-muted">JSON: {param.description}</p>
         </div>
       );
     }
@@ -367,8 +367,8 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
       <div key={fieldKey}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[13px] font-medium text-text-secondary">{param.name}</span>
-          <Badge variant="default" className="text-[10px] px-1 py-0 font-normal">{param.type}</Badge>
-          {param.required && <Badge variant="error" className="text-[10px] px-1.5">obrigatório</Badge>}
+          <Badge variant="default" className="text-caption px-1 py-0 font-normal">{param.type}</Badge>
+          {param.required && <Badge variant="error" className="text-caption px-1.5">obrigatório</Badge>}
         </div>
         <Input
           type={param.type === "number" ? "text" : "text"}
@@ -431,7 +431,7 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
             {isLoading ? "Enviando..." : "Enviar"}
           </Button>
         </div>
-        <p className="text-[11px] text-text-muted">{endpoint.description}</p>
+        <p className="text-caption text-text-muted">{endpoint.description}</p>
       </div>
 
       {/* Form fields */}
@@ -443,7 +443,7 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
             </label>
             <button
               onClick={handleFormatJson}
-              className="flex items-center gap-1 text-[11px] text-text-muted hover:text-text-secondary transition-colors"
+              className="flex items-center gap-1 text-caption text-text-muted hover:text-text-secondary transition-colors"
             >
               <WrapText size={12} />
               Formatar
@@ -455,7 +455,7 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
             onBlur={handleJsonBlur}
             hasError={!!jsonError}
           />
-          {jsonError && <p className="text-[11px] text-semantic-error flex-shrink-0">{jsonError}</p>}
+          {jsonError && <p className="text-caption text-semantic-error flex-shrink-0">{jsonError}</p>}
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-3">

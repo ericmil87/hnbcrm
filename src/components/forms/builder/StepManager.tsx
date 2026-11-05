@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/Switch";
 import { Button } from "@/components/ui/Button";
 import {
   Plus,
@@ -22,42 +23,6 @@ function genStepId(): string {
     id += CHARS[Math.floor(Math.random() * CHARS.length)];
   }
   return id;
-}
-
-// ── Toggle switch (shared pattern from FieldConfigPanel) ────────────────────
-
-interface ToggleSwitchProps {
-  checked: boolean;
-  onToggle: () => void;
-  label: string;
-}
-
-function ToggleSwitch({ checked, onToggle, label }: ToggleSwitchProps) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={onToggle}
-      className={cn(
-        "relative flex-shrink-0 w-10 h-6 rounded-full transition-colors duration-200",
-        "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-overlay",
-        checked
-          ? "bg-brand-600"
-          : "bg-surface-overlay border border-border-strong"
-      )}
-    >
-      <span
-        className={cn(
-          "absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm",
-          "transition-transform duration-200",
-          checked ? "translate-x-4" : "translate-x-0"
-        )}
-        aria-hidden="true"
-      />
-    </button>
-  );
 }
 
 // ── Icon-only action button ─────────────────────────────────────────────────
@@ -169,7 +134,7 @@ function StepCard({
         </span>
 
         {/* Step number badge */}
-        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-500/10 text-brand-400 text-[11px] font-bold flex items-center justify-center tabular-nums select-none">
+        <span className="flex-shrink-0 w-6 h-6 rounded-full bg-brand-500/10 text-brand-400 text-caption font-bold flex items-center justify-center tabular-nums select-none">
           {index + 1}
         </span>
 
@@ -190,7 +155,7 @@ function StepCard({
         />
 
         {/* Field count pill */}
-        <span className="flex-shrink-0 px-2 py-0.5 rounded-full bg-surface-overlay text-text-secondary text-[11px] font-medium tabular-nums">
+        <span className="flex-shrink-0 px-2 py-0.5 rounded-full bg-surface-overlay text-text-secondary text-caption font-medium tabular-nums">
           {step.fieldIds.length} {step.fieldIds.length === 1 ? "campo" : "campos"}
         </span>
 
@@ -418,9 +383,9 @@ export function StepManager({ steps, onChange, fields }: StepManagerProps) {
             Divida o formulário em etapas para melhorar a experiência do usuário
           </p>
         </div>
-        <ToggleSwitch
+        <Switch hideLabel className="focus-visible:ring-offset-surface-overlay"
           checked={isEnabled}
-          onToggle={handleToggle}
+          onCheckedChange={() => handleToggle()}
           label="Ativar formulário multi-etapas"
         />
       </div>

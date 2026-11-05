@@ -1,3 +1,6 @@
+import { EmptyState } from "@/components/ui/EmptyState";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { VOCAB } from "@/lib/vocab";
 import { useState, useMemo } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
@@ -6,7 +9,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -14,10 +17,12 @@ import { PermissionGate } from "@/components/guards/PermissionGate";
 import { InviteMemberModal } from "@/components/team/InviteMemberModal";
 import { MemberDetailSlideOver } from "@/components/team/MemberDetailSlideOver";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { stringParam } from "@/lib/searchParamState";
 import { cn } from "@/lib/utils";
 import { isPendingMember } from "@/lib/teamMembers";
 import {
-  Search,
   UserPlus,
   Users,
   Bot,
@@ -30,9 +35,9 @@ type TypeFilter = "all" | "human" | "ai";
 type StatusFilter = "all" | "active" | "busy" | "pending" | "removed";
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
   ai: "IA",
 };
 
@@ -62,13 +67,22 @@ function memberStatus(m: {
 }
 
 export function TeamPage() {
+  usePageTitle(VOCAB.team.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can, member: currentMember } = usePermissions(organizationId);
   const canManage = can("team", "manage");
 
   const [showInvite, setShowInvite] = useState(false);
-  const [selectedMemberId, setSelectedMemberId] = useState<Id<"teamMembers"> | null>(null);
-  const [search, setSearch] = useState("");
+  // Membro aberto (push: o "voltar" fecha) e busca (replace) moram na URL.
+  const memberParam = useOpenEntityParam("member");
+  const selectedMemberId = memberParam.id as Id<"teamMembers"> | null;
+  const setSelectedMemberId = (id: Id<"teamMembers"> | null) =>
+    id ? memberParam.open(id) : memberParam.close();
+  const { value: searchParam, set: setSearchParam } = useSearchParamState("q", stringParam, {
+    preventScrollReset: true,
+  });
+  const search = searchParam ?? "";
+  const setSearch = (value: string) => setSearchParam(value);
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -175,7 +189,7 @@ export function TeamPage() {
         >
           <Button onClick={() => setShowInvite(true)}>
             <UserPlus size={18} />
-            Adicionar Membro
+            Adicionar membro
           </Button>
         </PermissionGate>
       </div>
@@ -206,7 +220,7 @@ export function TeamPage() {
           </div>
           <div>
             <p className="text-xl font-bold text-text-primary tabular-nums">{stats.ais}</p>
-            <p className="text-xs text-text-muted">Agentes IA</p>
+            <p className="text-xs text-text-muted">Agentes de IA</p>
           </div>
         </Card>
         <Card className="flex items-center gap-3 !p-3">
@@ -224,11 +238,11 @@ export function TeamPage() {
       <div className="space-y-3">
         <div className="flex gap-2">
           <div className="flex-1">
-            <Input
-              icon={<Search size={18} />}
-              placeholder="Buscar por nome ou email..."
+            <SearchInput
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onValueChange={setSearch}
+              placeholder="Buscar por nome ou e-mail…"
+              ariaLabel="Buscar membros"
             />
           </div>
           <Button
@@ -316,7 +330,7 @@ export function TeamPage() {
             {hasActiveFilters && (
               <div className="flex items-end">
                 <Button variant="ghost" size="sm" onClick={clearFilters}>
-                  Limpar Filtros
+                  Limpar filtros
                 </Button>
               </div>
             )}
@@ -326,19 +340,12 @@ export function TeamPage() {
 
       {/* Members grid */}
       {filteredMembers.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Users size={48} className="text-text-muted mb-4" />
-          <p className="text-text-secondary text-sm">
-            {search || hasActiveFilters
-              ? "Nenhum membro encontrado com os filtros atuais."
-              : "Nenhum membro na equipe ainda."}
-          </p>
-          {(search || hasActiveFilters) && (
-            <Button variant="ghost" size="sm" onClick={clearFilters} className="mt-2">
-              Limpar Filtros
-            </Button>
-          )}
-        </div>
+        <EmptyState
+          icon={Users}
+          title={search || hasActiveFilters ? "Nenhum membro encontrado" : VOCAB.team.empty.title}
+          description={search || hasActiveFilters ? "Tente ajustar a busca ou os filtros." : VOCAB.team.empty.hint}
+          action={search || hasActiveFilters ? { label: "Limpar filtros", onClick: clearFilters } : undefined}
+        />
       ) : (
         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {filteredMembers.map((member) => {
@@ -402,7 +409,7 @@ export function TeamPage() {
 
       {/* Member detail slide-over */}
       <MemberDetailSlideOver
-        open={!!selectedMemberId}
+        open={!!selectedMember}
         onClose={() => setSelectedMemberId(null)}
         member={selectedMember as any}
         organizationId={organizationId}

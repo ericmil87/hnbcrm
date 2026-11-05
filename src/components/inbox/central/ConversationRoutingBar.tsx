@@ -102,13 +102,13 @@ interface ConversationRoutingBarProps {
   lead: LeadSummary | null;
   canReply: boolean;
   canEditLead: boolean;
-  /** Membros atribuíveis da org (fallback do responsável sem setor). */
+  /** Membros atribuíveis da org (fallback do responsável sem departamento). */
   teamMembers: { _id: Id<"teamMembers">; name: string; type: "human" | "ai"; removed?: boolean }[];
 }
 
 /**
  * Barra "CRM dentro do chat" da Central, logo abaixo do header da conversa:
- * unidade, setor, responsável, tipo de contato, Transferir e o desfecho
+ * unidade, departamento, responsável, tipo de contato, Transferir e o desfecho
  * (Convertido / Não convertido). Cada peça aparece só com o módulo dela; a
  * faixa de origem do anúncio vem logo abaixo (módulo attribution).
  */
@@ -177,13 +177,13 @@ export function ConversationRoutingBar({
     run(
       moveLeadToStage({ leadId: lead._id, stageId: reopenStage._id }),
       `Desfecho desfeito — lead voltou para "${reopenStage.name}"`,
-      "Falha ao desfazer o desfecho"
+      "Não foi possível desfazer o desfecho."
     );
   };
 
   return (
     <>
-      <div className="shrink-0 border-b border-border bg-surface-raised/60 px-4 py-2">
+      <div className="shrink-0 border-b border-border px-4 py-2">
         <div
           role="toolbar"
           aria-label="Roteamento e desfecho da conversa"
@@ -206,7 +206,7 @@ export function ConversationRoutingBar({
                 run(
                   setUnit({ conversationId, unitId: v ? (v as Id<"units">) : null }),
                   v ? "Unidade definida" : "Unidade removida",
-                  "Falha ao definir a unidade"
+                  "Não foi possível definir a unidade."
                 )
               }
             />
@@ -215,24 +215,24 @@ export function ConversationRoutingBar({
           {modules.departments && (
             <>
               <PillSelect
-                label="Setor da conversa"
+                label="Departamento da conversa"
                 value={dept?._id ?? ""}
-                display={dept?.name ?? "Sem setor"}
+                display={dept?.name ?? "Sem departamento"}
                 color={dept?.color}
                 muted={!dept}
                 icon={<Layers size={13} className="text-text-muted" aria-hidden />}
                 disabled={!canReply || departments === undefined}
                 options={[
-                  ...(dept ? [] : [{ value: "", label: "Sem setor" }]),
+                  ...(dept ? [] : [{ value: "", label: "Sem departamento" }]),
                   ...deptList.map((d) => ({ value: d._id, label: d.name })),
                 ]}
                 onChange={(v) => {
                   if (!v || v === dept?._id) return;
-                  const name = deptList.find((d) => d._id === v)?.name ?? "setor";
+                  const name = deptList.find((d) => d._id === v)?.name ?? "departamento";
                   run(
                     transfer({ conversationId, toDepartmentId: v as Id<"departments"> }),
                     `Conversa movida para ${name}`,
-                    "Falha ao mudar o setor"
+                    "Não foi possível mudar o departamento."
                   );
                 }}
               />
@@ -254,7 +254,7 @@ export function ConversationRoutingBar({
                   run(
                     assign({ conversationId, memberId: v ? (v as Id<"teamMembers">) : null }),
                     v ? "Responsável definido" : "Conversa voltou para a fila",
-                    "Falha ao definir o responsável"
+                    "Não foi possível definir o responsável."
                   )
                 }
               />
@@ -272,7 +272,7 @@ export function ConversationRoutingBar({
               run(
                 setKind({ conversationId, contactKind: v as ContactKind }),
                 "Tipo de contato atualizado",
-                "Falha ao classificar o contato"
+                "Não foi possível classificar o contato."
               )
             }
           />
@@ -316,7 +316,6 @@ export function ConversationRoutingBar({
                       onClick={() => setConfirmReopen(true)}
                       className="-mr-1.5 ml-0.5 inline-flex h-7 items-center gap-1 rounded-full px-2 text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary focus:outline-none focus:ring-2 focus:ring-brand-500"
                       aria-label="Desfazer desfecho"
-                      title="Desfazer desfecho"
                     >
                       <Undo2 size={13} aria-hidden />
                       <span className="hidden sm:inline">Desfazer</span>
@@ -348,7 +347,7 @@ export function ConversationRoutingBar({
             </div>
           )}
           {!isSalesLead && (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-text-muted md:ml-auto">
+            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-text-muted md:ml-auto">
               <Tag size={11} aria-hidden />
               fora das métricas de venda
             </span>
@@ -388,7 +387,7 @@ export function ConversationRoutingBar({
         title="Desfazer desfecho?"
         description={
           reopenStage
-            ? `O lead volta para o estágio "${reopenStage.name}" e deixa de contar como ${
+            ? `O lead volta para a etapa "${reopenStage.name}" e deixa de contar como ${
                 outcome?.status === "converted" ? "convertido" : "perdido"
               } no painel.`
             : undefined

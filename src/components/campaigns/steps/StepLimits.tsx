@@ -366,7 +366,7 @@ export function StepLimits({ draft, setDraft, now, editable }: StepLimitsProps) 
               disabled={!editable}
               onChange={(e) => setDraft((d) => ({ ...d, safety: { ...d.safety, checkNumbersFirst: e.target.checked } }))}
               label="Verificar se o número tem WhatsApp antes de enviar"
-              description="Grátis no bridge. Enviar para número inexistente é sinal de lista comprada."
+              description="Grátis no WhatsApp por QR code. Enviar para número inexistente é sinal de lista comprada."
             />
           )}
         </div>
@@ -411,7 +411,7 @@ function NumberField({
         }}
         className="w-full h-10 rounded-lg border border-border bg-surface-raised px-3 text-base md:text-sm text-text-primary tabular-nums focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-50"
       />
-      {hint && <span className="block text-[11px] text-text-muted mt-1">{hint}</span>}
+      {hint && <span className="block text-caption text-text-muted mt-1">{hint}</span>}
     </label>
   );
 }

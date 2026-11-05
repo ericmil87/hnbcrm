@@ -29,8 +29,8 @@ interface TransferModalProps {
 }
 
 /**
- * Transferir conversa para outro setor (e, opcionalmente, uma pessoa dele),
- * com nota interna. Setor sem pessoa = a conversa volta para a FILA do setor.
+ * Transferir conversa para outro departamento (e, opcionalmente, uma pessoa dele),
+ * com nota interna. Departamento sem pessoa = a conversa volta para a FILA do departamento.
  */
 export function TransferModal({
   open,
@@ -48,7 +48,7 @@ export function TransferModal({
 
   useEffect(() => {
     if (!open) return;
-    // Sugere o primeiro setor diferente do atual.
+    // Sugere o primeiro departamento diferente do atual.
     setDeptId(departments.find((d) => d._id !== currentDepartment?._id)?._id ?? null);
     setMemberId("");
     setNote("");
@@ -76,7 +76,7 @@ export function TransferModal({
       toast.success(`Conversa transferida para ${target.name}${memberName ? ` · ${memberName}` : ""}`);
       onClose();
     } catch (err) {
-      toast.error(mutationErrorMessage(err, "Falha ao transferir a conversa"));
+      toast.error(mutationErrorMessage(err, "Não foi possível transferir a conversa."));
     } finally {
       setSubmitting(false);
     }
@@ -87,11 +87,11 @@ export function TransferModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         {departments.length === 0 ? (
           <p className="text-sm text-text-muted">
-            Nenhum setor cadastrado. Crie setores em Configurações → Central.
+            Nenhum departamento cadastrado. Crie departamentos em Configurações → Unidades e departamentos.
           </p>
         ) : (
           <fieldset>
-            <legend className="mb-2 text-[13px] font-medium text-text-secondary">Para qual setor?</legend>
+            <legend className="mb-2 text-[13px] font-medium text-text-secondary">Para qual departamento?</legend>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {departments.map((d) => {
                 const selected = d._id === deptId;
@@ -126,7 +126,7 @@ export function TransferModal({
                       <span className="block truncate text-sm font-medium">{d.name}</span>
                       <span className="block truncate text-xs text-text-muted">
                         {isCurrent
-                          ? "Setor atual"
+                          ? "Departamento atual"
                           : `${d.members.length} pessoa${d.members.length === 1 ? "" : "s"}`}
                       </span>
                     </span>
@@ -141,7 +141,7 @@ export function TransferModal({
         {target && (
           <div>
             <label htmlFor="transfer-member" className="mb-1.5 block text-[13px] font-medium text-text-secondary">
-              Pessoa do setor <span className="font-normal text-text-muted">(opcional)</span>
+              Pessoa do departamento <span className="font-normal text-text-muted">(opcional)</span>
             </label>
             <select
               id="transfer-member"
@@ -149,7 +149,7 @@ export function TransferModal({
               onChange={(e) => setMemberId(e.target.value as Id<"teamMembers"> | "")}
               className="h-11 w-full rounded-lg border border-border-strong bg-surface-raised px-3 text-base text-text-primary focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 md:text-sm"
             >
-              <option value="">Fila do setor (quem estiver livre pega)</option>
+              <option value="">Fila do departamento (quem estiver livre pega)</option>
               {members.map((m) => (
                 <option key={m._id} value={m._id}>
                   {m.name}
@@ -181,7 +181,7 @@ export function TransferModal({
             aria-live="polite"
           >
             <ArrowRightLeft size={15} className="shrink-0 text-brand-500" aria-hidden />
-            <span className="text-text-secondary">{currentDepartment?.name ?? "Sem setor"}</span>
+            <span className="text-text-secondary">{currentDepartment?.name ?? "Sem departamento"}</span>
             <ArrowRight size={14} className="shrink-0 text-text-muted" aria-hidden />
             <span className="font-medium text-text-primary">
               {target.name}
@@ -191,7 +191,7 @@ export function TransferModal({
         )}
         {sameAsCurrent && (
           <p className="text-xs text-semantic-warning">
-            A conversa já está neste setor — escolha outro setor ou uma pessoa.
+            A conversa já está neste departamento — escolha outro departamento ou uma pessoa.
           </p>
         )}
 

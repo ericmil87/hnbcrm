@@ -133,7 +133,7 @@ export function PendingApprovalCard({ post, canManage, busy, onApprove, onReject
                 Rejeitar
               </Button>
               {edited && (
-                <span className="text-[11px] text-text-muted">
+                <span className="text-caption text-text-muted">
                   O texto editado substitui o da IA neste horário.
                 </span>
               )}

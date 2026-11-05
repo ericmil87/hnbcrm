@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { Switch } from "@/components/ui/Switch";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -12,18 +13,18 @@ import { TelegramCard } from "./TelegramCard";
 
 const NOTIFICATION_EVENTS = [
   { key: "invite", label: "Convites de equipe", desc: "Quando você é convidado para uma organização", alwaysOn: true },
-  { key: "handoffRequested", label: "Repasse solicitado", desc: "Quando um repasse é solicitado para você ou para a equipe (no sino e por e-mail)" },
-  { key: "handoffResolved", label: "Repasse resolvido", desc: "Quando um repasse e aceito ou rejeitado" },
-  { key: "aiDraftPending", label: "Rascunho da IA aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
+  { key: "handoffRequested", label: "Pedido de ajuda da IA", desc: "Quando a IA pede ajuda para você ou para a equipe (no sino e por e-mail)" },
+  { key: "handoffResolved", label: "Pedido de ajuda resolvido", desc: "Quando um pedido de ajuda é assumido ou devolvido à IA" },
+  { key: "aiDraftPending", label: "Resposta sugerida aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
   { key: "campaignCompleted", label: "Campanha concluída", desc: "Quando uma campanha de WhatsApp termina de enviar" },
   { key: "campaignPaused", label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha automaticamente" },
   { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuída a você está atrasada" },
-  { key: "taskAssigned", label: "Tarefa atribuida", desc: "Quando uma tarefa é atribuída a você" },
+  { key: "taskAssigned", label: "Tarefa atribuída", desc: "Quando uma tarefa é atribuída a você" },
   { key: "taskCommentMention", label: "Menção em comentário de tarefa", desc: "Quando alguém te menciona em um comentário de tarefa" },
   { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuída a você está prestes a vencer" },
-  { key: "leadAssigned", label: "Lead atribuido", desc: "Quando um lead é atribuído a você" },
+  { key: "leadAssigned", label: "Lead atribuído", desc: "Quando um lead é atribuído a você" },
   { key: "aiFollowupNeedsHuman", label: "Follow-up da IA precisa de você", desc: "Quando a IA não consegue executar sozinha um follow-up que ela mesma agendou" },
-  { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu setor" },
+  { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu departamento" },
   { key: "channelSessionLost", label: "Canal desconectado", desc: "Avisa quando um canal conectado perde a conexão" },
   { key: "aiSpendAlert", label: "Gasto de IA do mês", desc: "Para administradores: quando o gasto de IA chega perto do teto mensal em R$ ou o atinge (no sino e por e-mail, uma vez por mês)" },
   { key: "newMessage", label: "Novas mensagens nas conversas que eu atendo", desc: "Agrupadas; chegam no sino e no Telegram quando a IA não está no comando" },
@@ -88,7 +89,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-text-primary">{event.label}</span>
             {isAlwaysOn && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
+              <span className="text-caption px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
                 Sempre ativo
               </span>
             )}
@@ -97,26 +98,13 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         </div>
 
         <div className="flex md:justify-center">
-          <button
-            type="button"
-            role="switch"
-            aria-checked={isOn}
-            aria-label={`Notificação por email: ${event.label}`}
+          <Switch
+            checked={isOn}
+            onCheckedChange={() => handleToggle(event.key)}
+            label={`Notificação por e-mail: ${event.label}`}
+            hideLabel
             disabled={isAlwaysOn}
-            onClick={() => !isAlwaysOn && handleToggle(event.key)}
-            className={cn(
-              "relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-              isOn ? "bg-brand-500" : "bg-surface-overlay border border-border-strong",
-              isAlwaysOn && "opacity-50 cursor-not-allowed"
-            )}
-          >
-            <span
-              className={cn(
-                "pointer-events-none h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-                isOn ? "translate-x-5" : "translate-x-1"
-              )}
-            />
-          </button>
+          />
         </div>
       </div>
     );
@@ -137,9 +125,9 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         organizationId,
         ...localPrefs,
       });
-      toast.success("Preferências salvas com sucesso");
+      toast.success("Preferências salvas");
     } catch {
-      toast.error("Erro ao salvar preferências");
+      toast.error("Não foi possível salvar preferências.");
     } finally {
       setSaving(false);
     }
@@ -152,7 +140,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
       <div className="p-6">
         <div className="flex items-center gap-3 mb-1">
           <Bell size={20} className="text-brand-500" />
-          <h3 className="text-lg font-semibold text-text-primary">Preferências de Notificação por Email</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Preferências de notificação por e-mail</h3>
         </div>
         <p className="text-sm text-text-secondary mb-6">
           Escolha quais eventos devem gerar notificações por email.
@@ -161,7 +149,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         {/* Header row — desktop only */}
         <div className="hidden md:grid grid-cols-[1fr_80px] gap-4 pb-3 border-b border-border mb-2">
           <span className="text-xs font-medium text-text-muted uppercase tracking-wider">Evento</span>
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider text-center">Email</span>
+          <span className="text-xs font-medium text-text-muted uppercase tracking-wider text-center">E-mail</span>
         </div>
 
         {/* Event rows */}

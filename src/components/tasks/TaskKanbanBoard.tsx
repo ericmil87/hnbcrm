@@ -38,6 +38,7 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
+import { formatDueRelative } from "@/lib/format";
 
 // Kanban do projeto: uma coluna por `taskColumns`, ordem manual por `order`
 // fracionário. Este arquivo também hospeda as primitivas visuais do card
@@ -148,29 +149,10 @@ export const PRIORITY_BADGE: Record<
 
 export const STATUS_LABELS: Record<string, string> = {
   pending: "Pendente",
-  in_progress: "Em Progresso",
+  in_progress: "Em progresso",
   completed: "Concluída",
   cancelled: "Cancelada",
 };
-
-export function formatRelativeDate(dueDate: number, now: number): string {
-  const due = new Date(dueDate);
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-
-  const diffDays = Math.round(
-    (dueDay.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atrás`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanhã";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return due.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
-}
 
 // ============================================================================
 // Primitivas de card (usadas no kanban e na lista)
@@ -204,7 +186,7 @@ export function TaskLeadChip({
         aria-label={`Abrir o lead ${lead.title} no funil`}
         className={cn(
           "inline-flex items-center gap-1 max-w-[140px] min-h-[24px] px-1.5 -mx-1.5 rounded-full",
-          "text-[10px] text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+          "text-caption text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
           "focus:outline-none focus:ring-2 focus:ring-brand-500",
           className
         )}
@@ -223,7 +205,7 @@ export function TaskLeadChip({
     return (
       <span
         className={cn(
-          "inline-flex items-center gap-1 max-w-[140px] text-[10px] text-text-muted",
+          "inline-flex items-center gap-1 max-w-[140px] text-caption text-text-muted",
           className
         )}
         title={name}
@@ -255,7 +237,7 @@ export function TaskLabelChips({
       {visible.map((label) => (
         <span
           key={label._id}
-          className="inline-flex items-center gap-1 max-w-[110px] rounded-full px-2 py-0.5 text-[10px] font-medium border truncate"
+          className="inline-flex items-center gap-1 max-w-[110px] rounded-full px-2 py-0.5 text-micro font-medium border truncate"
           style={{
             color: label.color,
             borderColor: `${label.color}59`,
@@ -268,7 +250,7 @@ export function TaskLabelChips({
       ))}
       {hidden > 0 && (
         <span
-          className="text-[10px] font-medium text-text-muted tabular-nums"
+          className="text-caption font-medium text-text-muted tabular-nums"
           title={labels
             .slice(max)
             .map((l) => l.name)
@@ -313,7 +295,7 @@ export function TaskAssigneeStack({
         ))}
       </div>
       {hidden > 0 && (
-        <span className="ml-1 text-[10px] font-medium text-text-muted tabular-nums">
+        <span className="ml-1 text-caption font-medium text-text-muted tabular-nums">
           +{hidden}
         </span>
       )}
@@ -460,7 +442,7 @@ export function TaskKanbanBoard({
         if (destColumn?.isDoneColumn) toast.success("Tarefa concluída!");
       }
     } catch {
-      toast.error("Falha ao mover tarefa");
+      toast.error("Não foi possível mover a tarefa.");
     }
   };
 
@@ -726,24 +708,24 @@ export function TaskCard({
         <TaskLabelChips labels={task.labels} className="mb-2 flex-wrap" />
 
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={priorityBadge.variant} className="text-[10px]">
+          <Badge variant={priorityBadge.variant} className="text-caption">
             {priorityBadge.label}
           </Badge>
           {checklistTotal > 0 && (
-            <span className="text-[10px] text-text-muted tabular-nums">
+            <span className="text-caption text-text-muted tabular-nums">
               {checklistDone}/{checklistTotal}
             </span>
           )}
           {task.dueDate && (
             <span
               className={cn(
-                "text-[10px] font-medium tabular-nums",
+                "text-caption font-medium tabular-nums",
                 task.dueDate < now && !isClosed
                   ? "text-semantic-error"
                   : "text-text-muted"
               )}
             >
-              {formatRelativeDate(task.dueDate, now)}
+              {formatDueRelative(task.dueDate, now)}
             </span>
           )}
           <TaskAssigneeStack assignees={task.assignees} className="ml-auto" />

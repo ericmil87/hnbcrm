@@ -61,7 +61,7 @@ export function FollowUpChip({ conversationId }: { conversationId: Id<"conversat
       await cancelAuto({ followUpId });
       toast.success("Execução automática desligada");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao cancelar o follow-up"));
+      toast.error(mutationErrorMessage(e, "Não foi possível cancelar o follow-up."));
     } finally {
       setCancelingId(null);
     }
@@ -73,7 +73,7 @@ export function FollowUpChip({ conversationId }: { conversationId: Id<"conversat
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 px-2.5 py-1 text-xs font-medium text-purple-300 transition-colors hover:bg-purple-500/20"
+        className="inline-flex items-center gap-1.5 rounded-full bg-ai-500/10 px-2.5 py-1 text-xs font-medium text-ai-300 transition-colors hover:bg-ai-500/20"
       >
         <Bot size={12} />
         {label}
