@@ -22,6 +22,7 @@ import {
 } from "./lib/permissions";
 import { normalizeEmail } from "./lib/emailAddress";
 import { stripAgentTexts } from "./lib/agentProfileTexts";
+import { uiThemeValidator } from "./lib/uiTheme";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { revokeTelegramLinksForMember } from "./lib/telegramLinks";
 
@@ -151,6 +152,28 @@ export const getCurrentTeamMember = query({
     if (!userId) return null;
 
     return await getActiveMembership(ctx, args.organizationId, userId);
+  },
+});
+
+// Tema de interface pessoal (fv2-14). Preferência sem audit/webhook (como
+// notificationPreferences). Replicada em todas as associações humanas ativas
+// da pessoa, para o tema valer ao trocar de org.
+export const setMyUiTheme = mutation({
+  args: { organizationId: v.id("organizations"), theme: uiThemeValidator },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const me = await requireAuth(ctx, args.organizationId);
+    if (!me.userId) throw new Error("Not authorized");
+    const rows = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_user", (q) => q.eq("userId", me.userId))
+      .collect();
+    const now = Date.now();
+    for (const row of rows) {
+      if (row.type !== "human" || isMembershipRevoked(row)) continue;
+      await ctx.db.patch(row._id, { uiTheme: args.theme, updatedAt: now });
+    }
+    return null;
   },
 });
 

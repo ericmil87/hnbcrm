@@ -10,9 +10,10 @@
 import { v } from "convex/values";
 import { action, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { spendStatusFor } from "./aiSpend";
 import { requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { orgAiActive } from "./lib/agentSecurity";
-import { monthKeyUtc, SPEND_CAP_BLOCKED_MESSAGE } from "./lib/aiSpend";
+import { isValidMonthKey, monthKeyUtc, SPEND_CAP_BLOCKED_MESSAGE } from "./lib/aiSpend";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { resolveOrgRoutes, type OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
@@ -66,10 +67,8 @@ export const internalGetDraftSetup = internalQuery({
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new Error("Organização não encontrada");
     if (!orgAiActive(org)) throw new Error("Ative a IA primeiro");
-    const gate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
-      organizationId: args.organizationId,
-      month: args.month,
-    });
+    if (!isValidMonthKey(args.month)) throw new Error("Mês inválido (use AAAA-MM)");
+    const gate = await spendStatusFor(ctx, org, args.month);
     if (gate.blocked) throw new Error(SPEND_CAP_BLOCKED_MESSAGE);
     return {
       memberId: member._id,

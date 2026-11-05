@@ -210,6 +210,7 @@ import type * as lib_telegramOnboarding from "../lib/telegramOnboarding.js";
 import type * as lib_telegramPacing from "../lib/telegramPacing.js";
 import type * as lib_telegramQuota from "../lib/telegramQuota.js";
 import type * as lib_telegramRelay from "../lib/telegramRelay.js";
+import type * as lib_uiTheme from "../lib/uiTheme.js";
 import type * as lib_webhookDispatch from "../lib/webhookDispatch.js";
 import type * as lib_whatsappDispatch from "../lib/whatsappDispatch.js";
 import type * as lib_whatsappParse from "../lib/whatsappParse.js";
@@ -474,6 +475,7 @@ declare const fullApi: ApiFromModules<{
   "lib/telegramPacing": typeof lib_telegramPacing;
   "lib/telegramQuota": typeof lib_telegramQuota;
   "lib/telegramRelay": typeof lib_telegramRelay;
+  "lib/uiTheme": typeof lib_uiTheme;
   "lib/webhookDispatch": typeof lib_webhookDispatch;
   "lib/whatsappDispatch": typeof lib_whatsappDispatch;
   "lib/whatsappParse": typeof lib_whatsappParse;
