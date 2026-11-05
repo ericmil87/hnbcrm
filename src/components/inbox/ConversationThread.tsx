@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
@@ -55,11 +55,17 @@ export function ConversationThread({
   const { setReplyTo, pendingJumpRef, jumpRequest } = useConversationInteraction();
 
   const conversation = useConversationDoc(conversationId);
-  const paging = useThreadPaging(conversationId, pendingJumpRef);
+  // Bolhas só aparecem com o canal conhecido: o scroll inicial e o salto esperam o mesmo `ready`.
+  const messageDocReady = conversation !== undefined && conversation !== null;
+  const paging = useThreadPaging(conversationId, pendingJumpRef, messageDocReady);
   const { messages, loadingOlder } = paging;
   // Resultado da busca na conversa já aberta: rola (e sobe o limite se preciso).
+  // Um pedido que já existia ao montar é de antes deste thread e é ignorado.
+  const handledJumpRef = useRef(jumpRequest?.nonce ?? null);
   useEffect(() => {
-    if (jumpRequest) paging.jumpToMessage(jumpRequest.id);
+    if (!jumpRequest || jumpRequest.nonce === handledJumpRef.current) return;
+    handledJumpRef.current = jumpRequest.nonce;
+    paging.jumpToMessage(jumpRequest.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpRequest]);
   const { contactTyping } = useMarkReadAndPresence({
@@ -83,8 +89,7 @@ export function ConversationThread({
   const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
 
-  // Só desenha as bolhas com o canal conhecido (ticks, reação e encaminhar dependem dele).
-  const ready = conversation !== undefined && conversation !== null && messages !== undefined;
+  const ready = messageDocReady && messages !== undefined;
   const convChannel: string | undefined = conversation?.channel;
   const convTransport: string | undefined = conversation?.channelProvider;
   const contactName =

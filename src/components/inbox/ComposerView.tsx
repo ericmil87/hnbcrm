@@ -231,7 +231,7 @@ export function ComposerView({
               size="md"
               className={cn(
                 "shrink-0",
-                isInternal && "bg-semantic-warning hover:bg-semantic-warning/90 text-bubble-out-fg"
+                isInternal && "bg-semantic-warning hover:bg-semantic-warning/90 text-surface-base"
               )}
               aria-label={sendLabel}
             >

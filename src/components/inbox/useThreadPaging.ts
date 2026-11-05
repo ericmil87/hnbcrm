@@ -32,7 +32,9 @@ import type { InboxMessage } from "@/components/inbox/types";
  */
 export function useThreadPaging(
   conversationId: string | null,
-  pendingJumpRef: MutableRefObject<string | null>
+  pendingJumpRef: MutableRefObject<string | null>,
+  /** As bolhas já estão na tela (conversa e mensagens carregadas): só então rola ou salta. */
+  ready = true
 ) {
   const [page, setPage] = useState<{ key: string | null; limit: number }>(() => ({
     key: null,
@@ -81,7 +83,7 @@ export function useThreadPaging(
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el || !messages) return;
+    if (!el || !messages || !ready) return;
     const decision = decideThreadScroll({
       anchor: anchorRef.current,
       conversationId,
@@ -96,7 +98,7 @@ export function useThreadPaging(
     nearBottomRef.current = decision.nearBottom;
     if (decision.scrollTop === "bottom") el.scrollTop = el.scrollHeight;
     else if (decision.scrollTop !== null) el.scrollTop = decision.scrollTop;
-  }, [messages, messagesRaw, limit, conversationId]);
+  }, [messages, messagesRaw, limit, conversationId, ready]);
 
   const flash = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);
@@ -109,7 +111,7 @@ export function useThreadPaging(
   // lote do limite ATUAL chega (não o anterior mantido na espera).
   useEffect(() => {
     const target = pendingJumpRef.current;
-    if (!target || !messagesRaw || !conversationId) return;
+    if (!target || !messagesRaw || !conversationId || !ready) return;
     const decision = decideJump({
       found: !!document.getElementById(`msg-${target}`),
       loaded: messagesRaw.length,
@@ -123,7 +125,7 @@ export function useThreadPaging(
     if (decision.kind === "give-up") toast(decision.message);
     else flash(target);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messagesRaw, limit, conversationId]);
+  }, [messagesRaw, limit, conversationId, ready]);
 
   /** Citação ou resultado da busca: rola até a mensagem, subindo o limite se preciso. */
   const jumpToMessage = (messageId: string) => {

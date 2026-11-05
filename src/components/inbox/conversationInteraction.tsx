@@ -19,7 +19,7 @@ export interface ConversationInteraction {
   /** Pedido de salto na conversa JÁ aberta (resultado da busca); o thread rola até a mensagem. */
   jumpRequest: { id: string; nonce: number } | null;
   requestJump: (messageId: string) => void;
-  /** Troca de conversa: limpa a citação e o rascunho (não o salto pendente). */
+  /** Troca de conversa: limpa citação, rascunho e pedido de salto (não o `pendingJumpRef`, que atravessa a troca). */
   reset: () => void;
 }
 
@@ -41,6 +41,8 @@ export function useInteractionState(): ConversationInteraction {
   const reset = useCallback(() => {
     setReplyTo(null);
     setDraftState(null);
+    // Um salto pedido na conversa anterior não pode disparar na próxima.
+    setJumpRequest(null);
   }, []);
   return useMemo(
     () => ({

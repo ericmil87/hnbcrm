@@ -14,6 +14,11 @@ import type { InboxMessage } from "@/components/inbox/types";
  * de serviço, rascunho pendente e standby. Lê as mensagens mais recentes com os
  * mesmos args da primeira página do thread (o Convex reaproveita a assinatura)
  * e a mesma query de presença (ver `useContactTyping`).
+ *
+ * TODO(fv2-29): depois de "Carregar mensagens anteriores" o thread assina um
+ * limite maior e esta assinatura (50) vira uma segunda `getMessages` por
+ * conversa. O ideal é o thread expor as mensagens carregadas pelo provider e o
+ * cabeçalho ler de lá.
  */
 export function useConversationHeaderState(
   conversationId: string | null,
