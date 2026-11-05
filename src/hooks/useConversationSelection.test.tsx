@@ -173,4 +173,78 @@ describe("useConversationSelection", () => {
     expect(onDraft).toHaveBeenCalledWith("Olá!");
     expect(router.state.location.state).toBeNull();
   });
+
+  it("abrir e fechar pelo app volta no histórico em vez de deixar entrada morta", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      screen.getByText("abrir c2").click();
+    });
+    await act(async () => {
+      screen.getByText("fechar").click();
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+    expect(params(router).has("conversation")).toBe(false);
+    expect(router.state.historyAction).toBe("POP");
+    // A entrada aberta ainda está à frente (foi voltada, não substituída).
+    await act(async () => {
+      await router.navigate(1);
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("c2");
+  });
+
+  it("trocar de conversa substitui a entrada: um fechar volta para a lista", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      screen.getByText("abrir c2").click();
+    });
+    await act(async () => {
+      screen.getByText("abrir c1 e limpar").click();
+    });
+    expect(params(router).get("conversation")).toBe("c1");
+    await act(async () => {
+      screen.getByText("fechar").click();
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+    expect(params(router).has("conversation")).toBe(false);
+    await act(async () => {
+      await router.navigate(1);
+    });
+    expect(screen.getByTestId("selected")).toHaveTextContent("c1");
+  });
+
+  it("deep link (entrada que não é nossa): fechar só substitui", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/?conversation=c1" });
+    await act(async () => {
+      screen.getByText("fechar").click();
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(router.state.location.search).toBe("");
+  });
+
+  it("abrir a partir do modal Nova conversa substitui a entrada ?nova=: voltar não reabre o modal", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await act(async () => {
+      await router.navigate("/?nova=1");
+    });
+    expect(screen.getByTestId("nova")).toHaveTextContent("true:-");
+    await act(async () => {
+      screen.getByText("abrir c1 e limpar").click();
+    });
+    expect(router.state.location.search).toBe("?conversation=c1");
+    expect(router.state.historyAction).toBe("REPLACE");
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(router.state.location.search).toBe("");
+    expect(screen.getByTestId("nova")).toHaveTextContent("false:-");
+    expect(screen.getByTestId("selected")).toHaveTextContent("nada");
+  });
+
+  it("reabrir a conversa já aberta não cria entrada", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/?conversation=c1" });
+    await act(async () => {
+      screen.getByText("abrir c1 e limpar").click();
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
 });

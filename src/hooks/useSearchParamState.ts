@@ -13,6 +13,8 @@ export interface SetParamOptions {
   history?: "push" | "replace";
   /** Outros parâmetros escritos na MESMA navegação (`null` remove). */
   also?: Readonly<Record<string, string | null>>;
+  /** `location.state` da entrada escrita (ex.: marcar a entrada criada por um push nosso). */
+  state?: unknown;
 }
 
 export interface SearchParamState<T> {
@@ -27,6 +29,11 @@ export interface SearchParamState<T> {
    * vez por execução do efeito; o resultado vale para o render atual.
    */
   isInFlight: () => boolean;
+  /**
+   * Avisa que uma navegação NOSSA que não passa por `set` (ex.: `navigate(-1)`)
+   * vai levar o param a `target`: o efeito URL → estado fica quieto até lá.
+   */
+  expectWrite: (target: string | null) => void;
 }
 
 /**
@@ -35,6 +42,16 @@ export interface SearchParamState<T> {
  * `push`. O mecanismo de "escrita em voo" fica aqui, uma vez só: o router
  * aplica `setSearchParams` de forma assíncrona e, sem ele, um efeito
  * URL → estado reaplicava o valor antigo e desfazia o clique.
+ *
+ * Cuidados:
+ * - `codec` deve ser uma CONSTANTE de módulo (`stringParam`, ou um
+ *   `const X = enumParam(...)` fora do componente). Chamar `numberParam({...})`
+ *   ou `enumParam(...)` inline recria o codec a cada render; um codec que
+ *   devolve objeto/array novo no `parse` faria o `useMemo` e os efeitos que
+ *   dependem de `value` rodarem em loop.
+ * - O estado de "escrita em voo" é POR INSTÂNCIA do hook: duas instâncias da
+ *   mesma chave (em componentes diferentes) não enxergam as escritas uma da
+ *   outra. Use uma instância por chave e passe `value`/`set` para baixo.
  */
 export function useSearchParamState<T>(
   key: string,
@@ -52,7 +69,10 @@ export function useSearchParamState<T>(
       inFlightRef.current = beginWrite(raw, serialized);
       setSearchParams(
         (prev) => writeParams(prev, { [key]: serialized, ...options.also }),
-        { replace: (options.history ?? history) === "replace" }
+        {
+          replace: (options.history ?? history) === "replace",
+          ...(options.state !== undefined ? { state: options.state } : {}),
+        }
       );
     },
     [codec, history, key, raw, setSearchParams]
@@ -64,5 +84,12 @@ export function useSearchParamState<T>(
     return result.hold;
   }, [raw]);
 
-  return { value, raw, set, isInFlight };
+  const expectWrite = useCallback(
+    (target: string | null) => {
+      inFlightRef.current = beginWrite(raw, target);
+    },
+    [raw]
+  );
+
+  return { value, raw, set, isInFlight, expectWrite };
 }

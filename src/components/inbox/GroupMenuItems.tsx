@@ -3,6 +3,7 @@ import { EyeOff, LogOut, Send, Sparkles, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { mutationErrorMessage } from "@/lib/errors";
 import { VOCAB } from "@/lib/vocab";
 
@@ -70,24 +71,29 @@ export function GroupMenuItems({
         mas desabilitado com o motivo — esconder o item faria a pessoa procurar
         um recurso que existe e ela não sabe como ligar.
       */}
-      <button
-        type="button"
-        disabled={!groupAiEnabled}
-        title={groupAiEnabled ? undefined : "Ative a IA em grupos em Configurações → IA para usar o resumo"}
-        onClick={() => {
-          close();
-          actions.onOpenSummary();
-        }}
-        className={
-          groupAiEnabled
-            ? itemClass
-            : "w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
-        }
+      <Tooltip
+        content={groupAiEnabled ? null : "Ative a IA em grupos em Configurações → IA para usar o resumo"}
+        wrapperClassName="flex w-full"
+        asInfo
       >
-        <Sparkles size={15} />
-        Resumo por IA
-        {!groupAiEnabled && <span className="ml-auto text-micro uppercase tracking-wide">IA desligada</span>}
-      </button>
+        <button
+          type="button"
+          disabled={!groupAiEnabled}
+          onClick={() => {
+            close();
+            actions.onOpenSummary();
+          }}
+          className={
+            groupAiEnabled
+              ? itemClass
+              : "w-full flex items-center gap-2.5 px-3 py-2 coarse:min-h-11 text-left text-sm text-text-muted opacity-60 cursor-not-allowed"
+          }
+        >
+          <Sparkles size={15} />
+          Resumo por IA
+          {!groupAiEnabled && <span className="ml-auto text-micro uppercase tracking-wide">IA desligada</span>}
+        </button>
+      </Tooltip>
       {canManageCampaigns && (
         <button
           type="button"

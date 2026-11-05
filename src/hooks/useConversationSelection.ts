@@ -85,24 +85,49 @@ export function useConversationSelection({
     latest.current.onSelectionChange();
   }, []);
 
-  /** Clique do usuário: abre e escreve `?conversation=` (push), limpando `?nova=` na mesma escrita. */
+  // A entrada de histórico criada por um push NOSSO leva este marcador no
+  // `location.state`: fechar a conversa então volta (`navigate(-1)`) em vez de
+  // deixar uma entrada morta por abertura.
+  const ownsEntry = (location.state as { inboxPushed?: boolean } | null)?.inboxPushed === true;
+  const OWN_ENTRY = { inboxPushed: true };
+
+  /**
+   * Clique do usuário: abre e escreve `?conversation=`, limpando `?nova=` na
+   * mesma escrita. Push só quando a tela estava sem conversa e sem modal
+   * "Nova conversa"; trocar de conversa (ou abrir a partir do modal) substitui a
+   * entrada, para o "voltar" fechar a conversa em vez de reabrir o modal ou a
+   * anterior. Reabrir a que já está aberta não cria entrada.
+   */
   const select = useCallback(
     (conversationId: string, extra?: Readonly<Record<string, string | null>>) => {
       applySelection(conversationId);
-      if (conversationParam.raw !== conversationId || extra) {
-        conversationParam.set(conversationId, { also: { nova: null, ...extra } });
-      }
+      if (conversationParam.raw === conversationId && !extra) return;
+      const push = conversationParam.raw === null && novaParam.raw === null;
+      conversationParam.set(conversationId, {
+        also: { nova: null, ...extra },
+        history: push ? "push" : "replace",
+        ...(push || ownsEntry ? { state: OWN_ENTRY } : {}),
+      });
     },
-    [applySelection, conversationParam]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [applySelection, conversationParam, novaParam.raw, ownsEntry]
   );
 
-  /** Fecha a conversa (botão Voltar, arquivar, lead excluído): estado + `replace` do param. */
+  /**
+   * Fecha a conversa (botão Voltar, arquivar, lead excluído, sair da sala).
+   * Entrada criada por nós: `navigate(-1)`; senão (deep link, recarga): `replace`.
+   */
   const close = useCallback(() => {
     latest.current.onSelectionChange();
     setShowMessages(false);
     setSelectedConversation(null);
-    conversationParam.set(null, { history: "replace" });
-  }, [conversationParam]);
+    if (ownsEntry && conversationParam.raw !== null) {
+      conversationParam.expectWrite(null);
+      navigate(-1);
+    } else {
+      conversationParam.set(null, { history: "replace" });
+    }
+  }, [conversationParam, navigate, ownsEntry]);
 
   // URL → estado. Quando o id está na lista carregada, abre direto. Fora dela
   // (arquivada ou além do lote carregado), o resolver busca o documento avulso:

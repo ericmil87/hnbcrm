@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Clock, X } from "lucide-react";
+import { formatDateTime } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
 /*  Mensagem agendada pendente — linha com contagem regressiva         */
@@ -38,19 +39,14 @@ export function ScheduledPendingRow({
       <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
         <Clock size={12} className="shrink-0 text-brand-500" />
         <span className="shrink-0 text-text-secondary tabular-nums">
-          {new Date(item.scheduledAt).toLocaleString("pt-BR", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
+          {formatDateTime(item.scheduledAt)}
         </span>
         <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
         <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>
         <button
           type="button"
           onClick={onCancel}
-          className="shrink-0 p-1 rounded-full text-text-muted hover:text-semantic-error hover:bg-surface-raised transition-colors"
+          className="shrink-0 flex items-center justify-center p-1 coarse:min-h-11 coarse:min-w-11 rounded-full text-text-muted hover:text-semantic-error hover:bg-surface-raised transition-colors"
           aria-label="Cancelar agendamento"
         >
           <X size={12} />
