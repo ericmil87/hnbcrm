@@ -1,74 +1,58 @@
-import { usePageTitle } from "@/hooks/usePageTitle";
-import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../convex/lib/orgPhone";
-import { countryLabel } from "@/lib/defaultCountry";
-import { timezoneOptions } from "@/lib/timezones";
-import { VOCAB } from "@/lib/vocab";
-import { useEffect, useRef, useState } from "react";
-import { useOutletContext, useSearchParams } from "react-router";
-import { useQuery, useMutation, useAction } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { Suspense, useMemo, useState } from "react";
+import { Navigate, useLocation, useNavigate, useOutletContext, useSearchParams } from "react-router";
+import { SearchX, ShieldAlert } from "lucide-react";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
-import { usePermissions } from "@/hooks/usePermissions";
-import { toast } from "sonner";
 import { Card } from "@/components/ui/Card";
-import { Checkbox } from "@/components/ui/Checkbox";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
-import { Badge } from "@/components/ui/Badge";
-import { Modal } from "@/components/ui/Modal";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { ApiKeyRevealModal } from "@/components/ui/ApiKeyRevealModal";
-import { Spinner } from "@/components/ui/Spinner";
-import { Select } from "@/components/ui/Select";
-import { Tabs, TabPanel } from "@/components/ui/Tabs";
-import { cn } from "@/lib/utils";
-import { ShieldAlert } from "lucide-react";
-import { NotificationsSection } from "@/components/notifications/NotificationPreferences";
-import { ChannelsSection } from "@/components/settings/ChannelsSection";
-import { AiSection } from "@/components/settings/AiSection";
-import { DataSection } from "@/components/settings/DataSection";
-import { CentralSection } from "@/components/settings/CentralSection";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Skeleton } from "@/components/ui/Skeleton";
+import { SettingsNavView } from "@/components/settings/SettingsNavView";
+import { DEFAULT_SETTINGS_PANEL_ID, SETTINGS_PANELS } from "@/components/settings/registry";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { usePageTitle } from "@/hooks/usePageTitle";
+import { usePermissions } from "@/hooks/usePermissions";
+import { groupOf, groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels } from "@/lib/settingsNav";
+import { searchSettingsPanels } from "@/lib/settingsSearch";
+import { VOCAB } from "@/lib/vocab";
 
-type SettingsSection = "general" | "ai" | "apikeys" | "fields" | "sources" | "webhooks" | "channels" | "data" | "notifications" | "central";
+const GENERIC_LABELS: ReadonlySet<string> = new Set(["Visão geral"]);
 
-const SETTINGS_SECTIONS: Array<{ id: SettingsSection; name: string }> = [
-  { id: "general", name: "Geral" },
-  { id: "ai", name: "IA" },
-  { id: "apikeys", name: VOCAB.apiKeys },
-  { id: "fields", name: "Campos personalizados" },
-  { id: "sources", name: VOCAB.origin.leadSources },
-  { id: "webhooks", name: "Webhooks" },
-  { id: "channels", name: "Canais" },
-  { id: "data", name: "Dados" },
-  { id: "notifications", name: "Notificações" },
-  { id: "central", name: VOCAB.unitsAndDepartments },
-];
-
-function isSettingsSection(value: string | null): value is SettingsSection {
-  return SETTINGS_SECTIONS.some((section) => section.id === value);
+/** Fallback estático dos painéis lazy (sem spinner piscando). */
+function PanelSkeleton() {
+  return (
+    <Card aria-busy="true">
+      <Skeleton className="mb-4 h-6 w-48" />
+      <Skeleton className="mb-2 h-4 w-full" />
+      <Skeleton className="h-4 w-2/3" />
+    </Card>
+  );
 }
 
+/**
+ * Configurações em dois níveis. A URL (`?secao=<painel>`) é o estado: clicar num
+ * painel escreve o parâmetro (push). Painéis e grupos vêm de `settings/registry.ts`.
+ */
 export function Settings() {
-  usePageTitle(VOCAB.settings.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const { anyEnabled: anyModuleEnabled } = useOrgModules(organizationId);
+  const { modules, isLoading: modulesLoading } = useOrgModules(organizationId);
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState("");
 
-  // Deep-link `/app/configuracoes?secao=<id>` (usado pelo Painel).
-  const [searchParams] = useSearchParams();
-  const sectionParam = searchParams.get("secao");
-  const [activeSection, setActiveSection] = useState<SettingsSection>(
-    isSettingsSection(sectionParam) ? sectionParam : "general"
-  );
-  const lastParamRef = useRef<string | null>(sectionParam);
+  const visible = useMemo(() => visibleSettingsPanels({ can, modules }), [can, modules]);
+  // Param desconhecido: lista (celular) ou `general` (desktop), sem erro.
+  const resolved = resolveSettingsPanel(searchParams.get("secao"), visible);
+  const active =
+    resolved ?? (isMobile ? null : (visible.find((p) => p.id === DEFAULT_SETTINGS_PANEL_ID) ?? visible.find((p) => p.Component) ?? null));
 
-  useEffect(() => {
-    if (lastParamRef.current === sectionParam) return;
-    lastParamRef.current = sectionParam;
-    if (isSettingsSection(sectionParam)) setActiveSection(sectionParam);
-  }, [sectionParam]);
+  // Rótulo genérico ("Visão geral") ganha o grupo na frente: "Atendente IA · Visão geral".
+  const panelTitle = active ? (GENERIC_LABELS.has(active.label) ? `${groupOf(active).label} · ${active.label}` : active.label) : null;
+  usePageTitle(panelTitle ? `${VOCAB.settings.title} · ${panelTitle}` : VOCAB.settings.title);
 
   if (!can("settings", "view")) {
     return (
@@ -79,841 +63,69 @@ export function Settings() {
     );
   }
 
-  // "Central" (módulos opcionais): quem pode ligar vê sempre; os demais só
-  // depois que algum módulo estiver ligado.
-  const showCentral = can("settings", "manage") || anyModuleEnabled;
-  const sections = SETTINGS_SECTIONS.filter((section) => section.id !== "central" || showCentral);
+  // Push: o "voltar" do navegador retorna à lista. Params de outro painel (ex.: `meta`) não acompanham.
+  const select = (id: string) => {
+    const panel = SETTINGS_PANELS.find((p) => p.id === id);
+    if (panel?.href) return navigate(panel.href);
+    setSearchParams({ secao: id }, { state: { fromList: true } });
+  };
+  const goBack = () => {
+    if ((location.state as { fromList?: boolean } | null)?.fromList) navigate(-1);
+    else setSearchParams({}, { replace: true });
+  };
+
+  if (active?.href) return <Navigate to={active.href} replace />;
+
+  // Módulos ainda carregando: `central` pareceria invisível e cairia noutro painel por um instante.
+  if (modulesLoading) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title={VOCAB.settings.title} />
+        <PanelSkeleton />
+      </div>
+    );
+  }
+
+  const Panel = active?.Component;
+  const navItems = (panels: typeof visible) => groupSettingsPanels(panels);
+
+  if (isMobile && !active) {
+    const found = searchSettingsPanels(visible, query);
+    return (
+      <div className="space-y-4">
+        <PageHeader title={VOCAB.settings.title} />
+        <SearchInput value={query} onValueChange={setQuery} placeholder="Buscar nas configurações" ariaLabel="Buscar nas configurações" />
+        {found.length === 0 ? (
+          <EmptyState icon={SearchX} size="sm" title="Nada encontrado" description="Tente outra palavra, como “número” ou “chave”." />
+        ) : (
+          <SettingsNavView groups={navItems(found)} active={null} onSelect={select} variant="list" />
+        )}
+      </div>
+    );
+  }
+
+  const body = Panel && (
+    <Suspense fallback={<PanelSkeleton />}>
+      <Panel key={active.id} organizationId={organizationId} />
+    </Suspense>
+  );
+
+  if (isMobile) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title={panelTitle!} back={{ onClick: goBack }} />
+        {body}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-bold text-text-primary">Configurações</h2>
-
-      {/* Section tabs */}
-      <div className="flex gap-2 flex-wrap">
-        {sections.map((section) => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            className={cn(
-              "px-4 py-2 rounded-full text-sm font-medium transition-colors",
-              activeSection === section.id
-                ? "bg-brand-600 text-white"
-                : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
-            )}
-          >
-            {section.name}
-          </button>
-        ))}
+      <PageHeader title={VOCAB.settings.title} />
+      <div className="grid grid-cols-[14rem_minmax(0,1fr)] items-start gap-6 lg:grid-cols-[16rem_minmax(0,1fr)]">
+        <SettingsNavView groups={navItems(visible)} active={active?.id ?? null} onSelect={select} />
+        <div className="min-w-0">{body}</div>
       </div>
-
-      {activeSection === "general" && <OrgProfileSection organizationId={organizationId} />}
-      {activeSection === "ai" && <AiSection organizationId={organizationId} />}
-      {activeSection === "apikeys" && <ApiKeysSection organizationId={organizationId} />}
-      {activeSection === "fields" && <CustomFieldsSection organizationId={organizationId} />}
-      {activeSection === "sources" && <LeadSourcesSection organizationId={organizationId} />}
-      {activeSection === "webhooks" && <WebhooksSection organizationId={organizationId} />}
-      {activeSection === "channels" && <ChannelsSection organizationId={organizationId} />}
-      {activeSection === "data" && <DataSection organizationId={organizationId} />}
-      {activeSection === "notifications" && <NotificationsSection organizationId={organizationId} />}
-      {activeSection === "central" && showCentral && <CentralSection organizationId={organizationId} />}
     </div>
-  );
-}
-
-// --- General / Org Profile Section ---
-function OrgProfileSection({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const orgs = useQuery(api.organizations.getUserOrganizations);
-  const updateOrganization = useMutation(api.organizations.updateOrganization);
-  const org = orgs?.find((o) => o?._id === organizationId);
-
-  const [name, setName] = useState("");
-  const [timezone, setTimezone] = useState("");
-  const [currency, setCurrency] = useState("");
-  const [countryCode, setCountryCode] = useState("55");
-  const [saving, setSaving] = useState(false);
-
-  // Sincroniza o formulário com a org carregada — e de novo se a org mudar.
-  // O antigo `useState(() => …)` rodava uma vez só, então trocar de org com a
-  // tela aberta e clicar Salvar gravava nome/fuso/moeda da org anterior na nova.
-  const orgLoaded = !!org;
-  useEffect(() => {
-    if (!org) return;
-    setName(org.name || "");
-    setTimezone(org.settings?.timezone || "UTC");
-    setCurrency(org.settings?.currency || "USD");
-    setCountryCode(resolveDefaultCountry(org.settings));
-    // Só na chegada da org/troca de id: re-sincronizar a cada update reativo
-    // apagaria o que a pessoa está digitando.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organizationId, orgLoaded]);
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await updateOrganization({
-        organizationId,
-        name,
-        // Só o que esta tela edita: o servidor faz merge no resto de
-        // `settings` (aiConfig, opt-out, campanhas) — reenviar uma cópia
-        // lida antes sobrescreveria mudanças feitas em outra aba.
-        settings: { timezone, currency, defaultCountryCode: countryCode },
-      });
-      toast.success("Organização atualizada");
-    } catch (error) {
-      toast.error("Não foi possível atualizar organização.");
-    }
-    setSaving(false);
-  };
-
-  return (
-    <Card>
-      <h3 className="text-lg font-semibold text-text-primary mb-4">Perfil da organização</h3>
-      <div className="space-y-4 max-w-md">
-        <Input
-          label="Nome da organização"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-
-        <div>
-          <Select
-            label="Fuso horário"
-            value={timezone}
-            onValueChange={setTimezone}
-            options={timezoneOptions(timezone)}
-          />
-        </div>
-
-        <div>
-          <Select
-            label="Moeda"
-            value={currency}
-            onValueChange={setCurrency}
-            options={[
-              { value: "USD", label: "USD ($)" },
-              { value: "BRL", label: "BRL (R$)" },
-              { value: "EUR", label: "EUR (€)" },
-              { value: "GBP", label: "GBP (£)" },
-              { value: "CAD", label: "CAD" },
-              { value: "AUD", label: "AUD" },
-            ]}
-          />
-        </div>
-
-        <div>
-          <Select
-            id="org-default-country"
-            label="País padrão dos telefones"
-            hint="Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados."
-            value={countryCode}
-            onValueChange={setCountryCode}
-            options={SUPPORTED_DEFAULT_COUNTRIES.map((c) => ({
-              value: c.dialCode,
-              label: countryLabel(c),
-            }))}
-          />
-        </div>
-
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? "Salvando..." : "Salvar"}
-        </Button>
-      </div>
-    </Card>
-  );
-}
-
-// --- API Keys Section ---
-function ApiKeysSection({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showCreateApiKey, setShowCreateApiKey] = useState(false);
-  const [newApiKeyName, setNewApiKeyName] = useState("");
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
-  const [expiresAt, setExpiresAt] = useState<string>("");
-  const [revealedApiKey, setRevealedApiKey] = useState<string | null>(null);
-  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
-
-  const apiKeys = useQuery(api.apiKeys.listApiKeysWithMembers, {
-    organizationId,
-  });
-
-  const teamMembers = useQuery(api.teamMembers.getTeamMembers, {
-    organizationId,
-  });
-
-  const createApiKey = useAction(api.nodeActions.createApiKey);
-  const revokeApiKey = useMutation(api.apiKeys.revokeApiKey);
-
-  // Chave API para membro removido nasceria morta (a autenticação recusa).
-  const aiAgents = teamMembers?.filter(m => m.type === "ai" && !m.removed) ?? [];
-
-  const handleCreateApiKey = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newApiKeyName.trim()) return;
-
-    const agentId = selectedAgentId || aiAgents[0]?._id;
-    if (!agentId) {
-      toast.error("Nenhum agente de IA encontrado. Crie um membro IA primeiro.");
-      return;
-    }
-
-    try {
-      const result = await createApiKey({
-        organizationId,
-        teamMemberId: agentId as Id<"teamMembers">,
-        name: newApiKeyName,
-        expiresAt: expiresAt ? new Date(expiresAt).getTime() : undefined,
-      });
-
-      setRevealedApiKey(result.apiKey);
-      setNewApiKeyName("");
-      setSelectedAgentId("");
-      setExpiresAt("");
-      setShowCreateApiKey(false);
-    } catch (error) {
-      toast.error("Não foi possível criar a chave de integração.");
-    }
-  };
-
-  const handleRevoke = async (apiKeyId: string) => {
-    try {
-      await revokeApiKey({
-        apiKeyId: apiKeyId as Id<"apiKeys">,
-        organizationId,
-      });
-      toast.success("Chave revogada");
-      setConfirmRevokeId(null);
-    } catch (error) {
-      toast.error("Não foi possível revogar chave.");
-    }
-  };
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Chaves de integração</h3>
-        <Button onClick={() => setShowCreateApiKey(true)}>
-          Criar chave
-        </Button>
-      </div>
-
-      {!apiKeys && (
-        <div className="flex justify-center py-8">
-          <Spinner />
-        </div>
-      )}
-
-      {apiKeys && apiKeys.length > 0 ? (
-        <div className="space-y-3">
-          {apiKeys.map((key: any) => (
-            <div key={key._id} className="flex items-center justify-between p-3 bg-surface-sunken rounded-lg gap-3">
-              <div className="min-w-0 flex-1">
-                <h4 className="font-medium text-text-primary">{key.name}</h4>
-                <p className="text-sm text-text-secondary">
-                  {key.teamMemberName && <span className="text-text-muted">{key.teamMemberName} &bull; </span>}
-                  Criada em {new Date(key.createdAt).toLocaleDateString("pt-BR")}
-                  {key.lastUsed && ` \u2022 Último uso ${new Date(key.lastUsed).toLocaleDateString("pt-BR")}`}
-                  {key.expiresAt && ` \u2022 Expira ${new Date(key.expiresAt).toLocaleDateString("pt-BR")}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Badge variant={key.isActive ? "success" : "default"}>
-                  {key.isActive ? "Ativa" : "Revogada"}
-                </Badge>
-                {key.isActive && (
-                  <button
-                    onClick={() => setConfirmRevokeId(key._id)}
-                    className="text-sm text-semantic-error hover:text-semantic-error/80"
-                  >
-                    Revogar
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : apiKeys ? (
-        <p className="text-text-secondary">Nenhuma chave de integração criada.</p>
-      ) : null}
-
-      <ConfirmDialog
-        open={!!confirmRevokeId}
-        onClose={() => setConfirmRevokeId(null)}
-        onConfirm={() => {
-          if (confirmRevokeId) handleRevoke(confirmRevokeId);
-        }}
-        title="Revogar chave de integração"
-        description="Tem certeza que deseja revogar esta chave? Todas as integrações que a utilizam pararão de funcionar imediatamente."
-        confirmLabel="Revogar"
-        variant="danger"
-      />
-
-      <Modal
-        open={showCreateApiKey}
-        onClose={() => setShowCreateApiKey(false)}
-        title="Criar chave de integração"
-      >
-        <form onSubmit={handleCreateApiKey} className="space-y-4">
-          <Input
-            label="Nome da chave"
-            type="text"
-            value={newApiKeyName}
-            onChange={(e) => setNewApiKeyName(e.target.value)}
-            placeholder="ex: Chave de Produção"
-            required
-          />
-          {aiAgents.length > 1 && (
-            <div>
-              <Select
-                label="Agente de IA"
-                value={selectedAgentId}
-                onValueChange={setSelectedAgentId}
-                options={aiAgents.map((agent) => ({ value: agent._id, label: agent.name }))}
-              />
-            </div>
-          )}
-          <div>
-            <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Expiração (opcional)
-            </label>
-            <input
-              type="date"
-              value={expiresAt}
-              onChange={(e) => setExpiresAt(e.target.value)}
-              min={new Date().toISOString().split("T")[0]}
-              className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
-              style={{ fontSize: "16px" }}
-            />
-          </div>
-          {aiAgents.length === 0 && (
-            <p className="text-sm text-semantic-warning">
-              Nenhum agente de IA encontrado. Crie um membro IA na página de Equipe primeiro.
-            </p>
-          )}
-          <div className="flex gap-2 pt-4">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setShowCreateApiKey(false)}
-              className="flex-1"
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" className="flex-1" disabled={aiAgents.length === 0}>
-              Criar chave
-            </Button>
-          </div>
-        </form>
-      </Modal>
-
-      {revealedApiKey && (
-        <ApiKeyRevealModal
-          open={!!revealedApiKey}
-          onClose={() => setRevealedApiKey(null)}
-          apiKey={revealedApiKey}
-        />
-      )}
-    </Card>
-  );
-}
-
-// --- Custom Fields Section ---
-function CustomFieldsSection({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", key: "", type: "text" as string, options: "", isRequired: false });
-  const [entityTab, setEntityTab] = useState<"lead" | "contact">("lead");
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const fieldDefs = useQuery(api.fieldDefinitions.getFieldDefinitions, {
-    organizationId,
-    entityType: entityTab,
-  });
-  const createField = useMutation(api.fieldDefinitions.createFieldDefinition);
-  const updateField = useMutation(api.fieldDefinitions.updateFieldDefinition);
-  const deleteField = useMutation(api.fieldDefinitions.deleteFieldDefinition);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const options = form.options ? form.options.split(",").map(s => s.trim()).filter(Boolean) : undefined;
-      if (editingId) {
-        await updateField({
-          fieldDefinitionId: editingId as Id<"fieldDefinitions">,
-          name: form.name,
-          type: form.type as any,
-          options,
-          isRequired: form.isRequired,
-        });
-      } else {
-        await createField({
-          organizationId,
-          name: form.name,
-          key: form.key,
-          type: form.type as any,
-          entityType: entityTab,
-          options,
-          isRequired: form.isRequired,
-          order: fieldDefs?.length || 0,
-        });
-      }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", key: "", type: "text", options: "", isRequired: false });
-    } catch (error) {
-      console.error("Failed to save field definition:", error);
-    }
-  };
-
-  const handleEdit = (field: any) => {
-    setEditingId(field._id);
-    setForm({
-      name: field.name,
-      key: field.key,
-      type: field.type,
-      options: field.options?.join(", ") || "",
-      isRequired: field.isRequired,
-    });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteField({ fieldDefinitionId: id as Id<"fieldDefinitions"> });
-    } catch (error) {
-      console.error("Failed to delete:", error);
-    }
-  };
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Campos personalizados</h3>
-        <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", key: "", type: "text", options: "", isRequired: false }); }}
-        >
-          Adicionar campo
-        </Button>
-      </div>
-
-      <Tabs
-        value={entityTab}
-        onValueChange={(v) => setEntityTab(v as "lead" | "contact")}
-        items={[
-          { id: "lead", label: "Leads" },
-          { id: "contact", label: "Contatos" },
-        ]}
-        ariaLabel="Tipo de entidade dos campos"
-        variant="pills"
-        idPrefix="custom-fields"
-        className="mb-4"
-      />
-
-      <TabPanel id={entityTab} idPrefix="custom-fields">
-      {!fieldDefs && (
-        <div className="flex justify-center py-8">
-          <Spinner />
-        </div>
-      )}
-
-      {fieldDefs && fieldDefs.length > 0 ? (
-        <div className="space-y-2">
-          {fieldDefs.map((field) => (
-            <div key={field._id} className="flex items-center justify-between p-3 bg-surface-sunken rounded-lg">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-text-primary">{field.name}</span>
-                <span className="text-sm text-text-muted">({field.key})</span>
-                <Badge variant="info">{field.type}</Badge>
-                {field.entityType && (
-                  <Badge variant="brand">{field.entityType === "lead" ? "Lead" : "Contato"}</Badge>
-                )}
-                {field.isRequired && <Badge variant="error">Obrigatório</Badge>}
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => handleEdit(field)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => setConfirmDeleteId(field._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : fieldDefs ? (
-        <p className="text-text-secondary">Nenhum campo personalizado definido.</p>
-      ) : null}
-      </TabPanel>
-
-      <ConfirmDialog
-        open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
-        onConfirm={() => {
-          if (confirmDeleteId) handleDelete(confirmDeleteId);
-        }}
-        title="Excluir campo personalizado"
-        description="Tem certeza que deseja excluir este campo personalizado? Esta ação não pode ser desfeita."
-        confirmLabel="Excluir"
-        variant="danger"
-      />
-
-      <Modal
-        open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar campo personalizado" : "Adicionar campo personalizado"}
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Nome"
-            type="text"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            required
-          />
-          {!editingId && (
-            <Input
-              label="Chave"
-              type="text"
-              value={form.key}
-              onChange={(e) => setForm({ ...form, key: e.target.value })}
-              placeholder="unique_key"
-              required
-            />
-          )}
-          <div>
-            <Select
-            label="Tipo"
-            value={form.type}
-            onValueChange={(type) => setForm({ ...form, type })}
-            options={[
-              { value: "text", label: "Texto" },
-              { value: "number", label: "Número" },
-              { value: "boolean", label: "Sim ou não" },
-              { value: "date", label: "Data" },
-              { value: "select", label: "Lista de opções" },
-              { value: "multiselect", label: "Lista de várias opções" },
-            ]}
-          />
-          </div>
-          {(form.type === "select" || form.type === "multiselect") && (
-            <Input
-              label="Opções (separadas por vírgula)"
-              type="text"
-              value={form.options}
-              onChange={(e) => setForm({ ...form, options: e.target.value })}
-              placeholder="Opção 1, Opção 2, Opção 3"
-            />
-          )}
-          <Checkbox
-            checked={form.isRequired}
-            onChange={(e) => setForm({ ...form, isRequired: e.target.checked })}
-            label="Obrigatório"
-          />
-          <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
-            <Button type="submit" className="flex-1">Salvar</Button>
-          </div>
-        </form>
-      </Modal>
-    </Card>
-  );
-}
-
-// --- Lead Sources Section ---
-function LeadSourcesSection({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", type: "website" as string });
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const sources = useQuery(api.leadSources.getLeadSources, {
-    organizationId,
-  });
-  const createSource = useMutation(api.leadSources.createLeadSource);
-  const updateSource = useMutation(api.leadSources.updateLeadSource);
-  const deleteSource = useMutation(api.leadSources.deleteLeadSource);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      if (editingId) {
-        await updateSource({
-          leadSourceId: editingId as Id<"leadSources">,
-          name: form.name,
-          type: form.type as any,
-        });
-      } else {
-        await createSource({
-          organizationId,
-          name: form.name,
-          type: form.type as any,
-        });
-      }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", type: "website" });
-    } catch (error) {
-      console.error("Failed to save lead source:", error);
-    }
-  };
-
-  const handleEdit = (source: any) => {
-    setEditingId(source._id);
-    setForm({ name: source.name, type: source.type });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteSource({ leadSourceId: id as Id<"leadSources"> });
-    } catch (error) {
-      console.error("Failed to delete:", error);
-    }
-  };
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">{VOCAB.origin.leadSources}</h3>
-        <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", type: "website" }); }}
-        >
-          Adicionar origem
-        </Button>
-      </div>
-
-      {!sources && (
-        <div className="flex justify-center py-8">
-          <Spinner />
-        </div>
-      )}
-
-      {sources && sources.length > 0 ? (
-        <div className="space-y-2">
-          {sources.map((source) => (
-            <div key={source._id} className="flex items-center justify-between p-3 bg-surface-sunken rounded-lg">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-text-primary">{source.name}</span>
-                <Badge variant="brand">{source.type}</Badge>
-                <Badge variant={source.isActive ? "success" : "default"}>
-                  {source.isActive ? "Ativa" : "Inativa"}
-                </Badge>
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => handleEdit(source)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                <button onClick={() => setConfirmDeleteId(source._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : sources ? (
-        <p className="text-text-secondary">Nenhuma origem de lead configurada.</p>
-      ) : null}
-
-      <ConfirmDialog
-        open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
-        onConfirm={() => {
-          if (confirmDeleteId) handleDelete(confirmDeleteId);
-        }}
-        title="Excluir origem do lead"
-        description="Tem certeza que deseja excluir esta origem do lead? Esta ação não pode ser desfeita."
-        confirmLabel="Excluir"
-        variant="danger"
-      />
-
-      <Modal
-        open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar origem do lead" : "Adicionar origem do lead"}
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Nome"
-            type="text"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            required
-          />
-          <div>
-            <Select
-            label="Tipo"
-            value={form.type}
-            onValueChange={(type) => setForm({ ...form, type })}
-            options={[
-              { value: "website", label: "Site" },
-              { value: "social", label: "Redes sociais" },
-              { value: "email", label: "E-mail" },
-              { value: "phone", label: "Telefone" },
-              { value: "referral", label: "Indicação" },
-              { value: "api", label: "API" },
-              { value: "other", label: "Outra" },
-            ]}
-          />
-          </div>
-          <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
-            <Button type="submit" className="flex-1">Salvar</Button>
-          </div>
-        </form>
-      </Modal>
-    </Card>
-  );
-}
-
-// --- Webhooks Section ---
-function WebhooksSection({ organizationId }: { organizationId: Id<"organizations"> }) {
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", url: "", events: "", secret: "" });
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const webhooks = useQuery(api.webhooks.getWebhooks, {
-    organizationId,
-  });
-  const createWebhook = useMutation(api.webhooks.createWebhook);
-  const updateWebhook = useMutation(api.webhooks.updateWebhook);
-  const deleteWebhook = useMutation(api.webhooks.deleteWebhook);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const events = form.events.split(",").map(s => s.trim()).filter(Boolean);
-      if (editingId) {
-        await updateWebhook({
-          webhookId: editingId as Id<"webhooks">,
-          name: form.name,
-          url: form.url,
-          events,
-        });
-      } else {
-        await createWebhook({
-          organizationId,
-          name: form.name,
-          url: form.url,
-          events,
-          secret: form.secret || `whsec_${Math.random().toString(36).substring(2, 15)}`,
-        });
-      }
-      setShowForm(false);
-      setEditingId(null);
-      setForm({ name: "", url: "", events: "", secret: "" });
-    } catch (error) {
-      console.error("Failed to save webhook:", error);
-    }
-  };
-
-  const handleEdit = (webhook: any) => {
-    setEditingId(webhook._id);
-    setForm({ name: webhook.name, url: webhook.url, events: webhook.events.join(", "), secret: "" });
-    setShowForm(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteWebhook({ webhookId: id as Id<"webhooks"> });
-    } catch (error) {
-      console.error("Failed to delete:", error);
-    }
-  };
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-text-primary">Webhooks</h3>
-        <Button
-          onClick={() => { setShowForm(true); setEditingId(null); setForm({ name: "", url: "", events: "", secret: "" }); }}
-        >
-          Adicionar Webhook
-        </Button>
-      </div>
-
-      {!webhooks && (
-        <div className="flex justify-center py-8">
-          <Spinner />
-        </div>
-      )}
-
-      {webhooks && webhooks.length > 0 ? (
-        <div className="space-y-2">
-          {webhooks.map((webhook) => (
-            <div key={webhook._id} className="p-3 bg-surface-sunken rounded-lg">
-              <div className="flex items-start justify-between mb-2">
-                <div className="flex-1 min-w-0">
-                  <span className="font-medium text-text-primary">{webhook.name}</span>
-                  <p className="text-sm text-text-secondary truncate">{webhook.url}</p>
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                  <Badge variant={webhook.isActive ? "success" : "default"}>
-                    {webhook.isActive ? "Ativo" : "Inativo"}
-                  </Badge>
-                  <button onClick={() => handleEdit(webhook)} className="text-sm text-brand-500 hover:text-brand-400">Editar</button>
-                  <button onClick={() => setConfirmDeleteId(webhook._id)} className="text-sm text-semantic-error hover:text-semantic-error/80">Excluir</button>
-                </div>
-              </div>
-              <div className="flex gap-1 flex-wrap">
-                {webhook.events.map((event, i) => (
-                  <Badge key={i} variant="default">{event}</Badge>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : webhooks ? (
-        <p className="text-text-secondary">Nenhum webhook configurado.</p>
-      ) : null}
-
-      <ConfirmDialog
-        open={!!confirmDeleteId}
-        onClose={() => setConfirmDeleteId(null)}
-        onConfirm={() => {
-          if (confirmDeleteId) handleDelete(confirmDeleteId);
-        }}
-        title="Excluir Webhook"
-        description="Tem certeza que deseja excluir este webhook? Esta ação não pode ser desfeita."
-        confirmLabel="Excluir"
-        variant="danger"
-      />
-
-      <Modal
-        open={showForm}
-        onClose={() => { setShowForm(false); setEditingId(null); }}
-        title={editingId ? "Editar Webhook" : "Adicionar Webhook"}
-      >
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <Input
-            label="Nome"
-            type="text"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            required
-          />
-          <Input
-            label="URL"
-            type="url"
-            value={form.url}
-            onChange={(e) => setForm({ ...form, url: e.target.value })}
-            placeholder="https://exemplo.com/webhook"
-            required
-          />
-          <Input
-            label="Eventos (separados por vírgula)"
-            type="text"
-            value={form.events}
-            onChange={(e) => setForm({ ...form, events: e.target.value })}
-            placeholder="lead.created, lead.stage_changed, message.sent"
-            required
-          />
-          {!editingId && (
-            <Input
-              label="Segredo (gerado automaticamente se vazio)"
-              type="text"
-              value={form.secret}
-              onChange={(e) => setForm({ ...form, secret: e.target.value })}
-              placeholder="Auto-gerado"
-            />
-          )}
-          <div className="flex gap-2 pt-4">
-            <Button type="button" variant="secondary" onClick={() => { setShowForm(false); setEditingId(null); }} className="flex-1">Cancelar</Button>
-            <Button type="submit" className="flex-1">Salvar</Button>
-          </div>
-        </form>
-      </Modal>
-    </Card>
   );
 }
