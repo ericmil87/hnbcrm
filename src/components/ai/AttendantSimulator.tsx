@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAction } from "convex/react";
 import { toast } from "sonner";
 import { Send, SlidersHorizontal } from "lucide-react";
@@ -18,7 +18,7 @@ import {
   type SimTurn,
 } from "./attendantSimulatorTypes";
 
-// ── Chat simulado da Atendente IA (sandbox: não toca o WhatsApp nem os dados do CRM) ──
+// ── Chat simulado do Atendente IA (sandbox: não toca o WhatsApp nem os dados do CRM) ──
 
 export interface AttendantSimulatorViewProps {
   variant: "inline" | "modal";
@@ -64,6 +64,11 @@ export function AttendantSimulatorView({
   onTransportChange,
 }: AttendantSimulatorViewProps) {
   const advanced = variant === "modal";
+  const logRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = logRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [transcript.length, busy]);
   const plainTextChannel = transport === "instagram" || transport === "messenger";
 
   return (
@@ -125,6 +130,7 @@ export function AttendantSimulatorView({
       )}
 
       <div
+        ref={logRef}
         role="log"
         aria-live="polite"
         aria-label="Conversa simulada"
@@ -210,7 +216,6 @@ export function AttendantSimulatorView({
               role="switch"
               aria-checked={kind === k}
               aria-label={hint}
-              title={hint}
               onClick={() => onKindChange(kind === k ? "text" : k)}
               className={cn(
                 "rounded-field border px-3 transition-colors coarse:min-h-11 coarse:min-w-11",
@@ -247,20 +252,20 @@ export function AttendantSimulatorView({
   );
 }
 
-export interface AttendantSimulatorProps {
+interface AttendantSimulatorBaseProps {
   organizationId: Id<"organizations">;
   agentMemberId: Id<"teamMembers">;
   /** Perguntas prontas (3 por segmento, de `segmentTemplate(key).simulatorPrompts`). */
   suggestions?: string[];
-  variant: "inline" | "modal";
   onAdjustPersona?: () => void;
   /** Dispara uma vez, na primeira resposta da IA. */
   onFirstReply?: () => void;
-  /** Só no `modal`: fecha o diálogo. */
-  onClose?: () => void;
   /** Org com Meta oficial: libera a troca de canal simulado (só `modal`). */
   metaEnabled?: boolean;
 }
+
+export type AttendantSimulatorProps = AttendantSimulatorBaseProps &
+  ({ variant: "inline"; onClose?: undefined } | { variant: "modal"; onClose: () => void });
 
 export function AttendantSimulator({
   organizationId,
@@ -285,7 +290,7 @@ export function AttendantSimulator({
   const send = async (override?: string) => {
     const text = (override ?? input).trim();
     if (!text || busy) return;
-    setInput("");
+    if (override === undefined) setInput("");
     const next: SimTurn[] = [
       ...transcript,
       {
@@ -363,7 +368,7 @@ export function AttendantSimulator({
     return (
       <Modal
         open
-        onClose={onClose ?? (() => {})}
+        onClose={onClose}
         title={groupMode ? "Simulador — testar num grupo" : "Simulador — testar o Atendente IA"}
       >
         {view}

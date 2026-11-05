@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HOURS_PRESETS, applyHoursPreset, matchHoursPreset } from "./attendantHoursPresets";
+import { HOURS_PRESETS, applyHoursPreset, formatDays, matchHoursPreset } from "./attendantHoursPresets";
 
 describe("attendantHoursPresets", () => {
   it("Sempre é 24 h e Comercial é seg–sex 8–18", () => {
@@ -9,6 +9,11 @@ describe("attendantHoursPresets", () => {
   it("preserva o fuso da organização", () => {
     expect(applyHoursPreset(HOURS_PRESETS[1], { startHour: 9, endHour: 20, timezone: "America/Manaus" }).timezone).toBe("America/Manaus");
     expect(applyHoursPreset(HOURS_PRESETS[1], { startHour: 9, endHour: 20 })).not.toHaveProperty("timezone");
+  });
+  it("formata os dias", () => {
+    expect(formatDays([1, 2, 3, 4, 5])).toBe("seg–sex");
+    expect(formatDays([1, 3, 5])).toBe("seg, qua, sex");
+    expect(formatDays(undefined)).toBeUndefined();
   });
   it("reconhece o preset atual ou cai em custom", () => {
     expect(matchHoursPreset(HOURS_PRESETS, { allDay: true, startHour: 9, endHour: 18 })).toBe("always");

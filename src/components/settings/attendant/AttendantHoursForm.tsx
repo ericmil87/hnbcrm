@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { NumberField, SwitchRow } from "./fields";
@@ -6,6 +6,7 @@ import {
   CUSTOM_PRESET_ID,
   CUSTOM_PRESET_LABEL,
   applyHoursPreset,
+  formatDays,
   matchHoursPreset,
 } from "@/lib/attendantHoursPresets";
 import type { ConfigFormProps, ScheduleForm } from "@/lib/attendantConfig";
@@ -13,6 +14,8 @@ import type { ConfigFormProps, ScheduleForm } from "@/lib/attendantConfig";
 export interface HoursPreset {
   id: string;
   label: string;
+  /** Linha de apoio sob o controle (variante wizard). */
+  detail?: string;
   value: ScheduleForm;
 }
 
@@ -35,15 +38,25 @@ export function AttendantHoursForm({
 }: AttendantHoursFormProps) {
   const wizardPresets = variant === "wizard" && presets && presets.length > 0 ? presets : undefined;
   const [customOpen, setCustomOpen] = useState(false);
+  // 24 h escolhido de fora (ex.: Copiloto) fecha o "Personalizado".
+  useEffect(() => {
+    if (value.allDay) setCustomOpen(false);
+  }, [value.allDay]);
   const selected = wizardPresets
-    ? customOpen
+    ? customOpen && !value.allDay
       ? CUSTOM_PRESET_ID
       : matchHoursPreset(wizardPresets, value)
     : undefined;
+  const selectedDetail =
+    selected === CUSTOM_PRESET_ID
+      ? formatDays(value.days) && !value.allDay
+        ? `Dias: ${formatDays(value.days)}`
+        : undefined
+      : wizardPresets?.find((p) => p.id === selected)?.detail;
   const showFields = !wizardPresets || selected === CUSTOM_PRESET_ID;
 
   const pick = (id: string) => {
-    if (!wizardPresets) return;
+    if (!wizardPresets || disabled) return;
     if (id === CUSTOM_PRESET_ID) {
       setCustomOpen(true);
       if (value.allDay) onChange({ ...value, allDay: false });
@@ -58,6 +71,7 @@ export function AttendantHoursForm({
   return (
     <div className="space-y-3">
       {wizardPresets && (
+        <div className="space-y-1.5" aria-disabled={disabled || undefined}>
         <SegmentedControl
           ariaLabel="Horário de atendimento"
           value={selected ?? CUSTOM_PRESET_ID}
@@ -68,6 +82,8 @@ export function AttendantHoursForm({
           ]}
           className={disabled ? "pointer-events-none opacity-60" : undefined}
         />
+        {selectedDetail && <p className="text-xs text-text-muted">{selectedDetail}</p>}
+        </div>
       )}
       {!wizardPresets && presets && presets.length > 0 && (
         <div className="flex flex-wrap gap-2">

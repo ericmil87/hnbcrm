@@ -1,7 +1,7 @@
 import { FileText, Image as ImageIcon, Mic } from "lucide-react";
 
-// Tipos e constantes do simulador da Atendente IA (cópia de settings/ai/SimulatorModal.tsx,
-// que segue intocado até o fv2-19/23 trocá-lo pelo AttendantSimulator).
+// Tipos e constantes do simulador do Atendente IA (cópia de settings/ai/SimulatorModal.tsx,
+// que segue intocado até o fv2-23 trocá-lo pelo AttendantSimulator).
 
 export type SimKind = "text" | "audio" | "image" | "file";
 

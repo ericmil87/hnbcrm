@@ -81,4 +81,4 @@ Os campos são formulários controlados sem Convex (`ConfigFormProps<T>`), reuti
 
 Na divisão, em vez de um `settings/ai/AiOverviewPanel.tsx` monolítico, foram criados `ActivationWizardCard`, `ActivationCard` e `AttendantCard`; o `AiOverviewPanel` (fv2-19) os compõe.
 
-O chat de teste da Atendente IA (`src/components/ai/AttendantSimulator.tsx`, variantes `inline` e `modal`) chama a mesma action `simulateAttendant` do `SimulatorModal`, com sugestões de perguntas por segmento.
+O chat de teste do Atendente IA (`src/components/ai/AttendantSimulator.tsx`, variantes `inline` e `modal`) chama a mesma action `simulateAttendant` do `SimulatorModal`, com sugestões de perguntas por segmento.

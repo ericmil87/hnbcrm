@@ -38,9 +38,11 @@ export function FunnelEditor({
   onRestore,
   disabled = false,
   variant = "wizard",
-  maxStages = FUNNEL_MAX_STAGES,
-  minStages = FUNNEL_MIN_STAGES,
+  maxStages: maxProp = FUNNEL_MAX_STAGES,
+  minStages: minProp = FUNNEL_MIN_STAGES,
 }: FunnelEditorProps) {
+  const minStages = Math.min(FUNNEL_MAX_STAGES, Math.max(FUNNEL_MIN_STAGES, minProp));
+  const maxStages = Math.min(FUNNEL_MAX_STAGES, Math.max(minStages, maxProp));
   const { errors } = validateFunnel(value, { min: minStages, max: maxStages });
   const iconBtn = "shrink-0";
 

@@ -1,4 +1,6 @@
 import { STAGE_COLORS } from "@/lib/onboardingTemplates";
+import type { FunctionArgs } from "convex/server";
+import type { api } from "../../convex/_generated/api";
 import type { FieldSeed, SegmentTemplate } from "../../convex/lib/onboardingTemplates";
 
 // Regras puras do editor de funil (passo "Seu funil" da configuração inicial e
@@ -24,10 +26,15 @@ export const FUNNEL_MIN_STAGES = 2;
 export const FUNNEL_MAX_STAGES = 12;
 export const FUNNEL_NAME_MAX = 60;
 
+// Prefixo aleatório por sessão: chaves de um rascunho restaurado não colidem com as novas.
+const SESSION_PREFIX =
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().slice(0, 8)
+    : Math.random().toString(36).slice(2, 10);
 let keySeq = 0;
 export function newStageKey(): string {
   keySeq += 1;
-  return `stage-${keySeq}`;
+  return `stage-${SESSION_PREFIX}-${keySeq}`;
 }
 
 const isClosed = (s: { isClosedWon?: boolean; isClosedLost?: boolean }) =>
@@ -174,7 +181,7 @@ export interface ApplyFunnelTemplateArgs {
 }
 
 export function toApplyFunnelTemplateArgs(value: FunnelValue, fields?: FieldSeed[]): ApplyFunnelTemplateArgs {
-  return {
+  const args = {
     boardName: value.boardName.trim(),
     ...(value.boardColor ? { boardColor: value.boardColor } : {}),
     stages: value.stages.map((s) => ({
@@ -193,5 +200,6 @@ export function toApplyFunnelTemplateArgs(value: FunnelValue, fields?: FieldSeed
           })),
         }
       : {}),
-  };
+  } satisfies Omit<FunctionArgs<typeof api.onboarding.applyFunnelTemplate>, "organizationId">;
+  return args;
 }
