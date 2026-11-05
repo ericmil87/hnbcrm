@@ -1,5 +1,5 @@
 import { useInlineCrud } from "@/hooks/useInlineCrud";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
@@ -22,7 +22,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
     showForm: showCreateApiKey,
     form: { name: newApiKeyName, agentId: selectedAgentId, expiresAt },
     confirmDeleteId: confirmRevokeId,
-    startCreate,
+    openForm,
     cancel,
     saved,
     patchForm,
@@ -87,7 +87,7 @@ export function ApiKeysPanel({ organizationId }: { organizationId: Id<"organizat
     <Card>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-semibold text-text-primary">Chaves de integração</h3>
-        <Button onClick={() => startCreate()}>
+        <Button onClick={() => openForm()}>
           Criar chave
         </Button>
       </div>

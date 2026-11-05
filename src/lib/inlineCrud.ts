@@ -13,6 +13,7 @@ export interface InlineCrudState<F> {
 
 export type InlineCrudAction<F> =
   | { type: "startCreate" }
+  | { type: "openForm" }
   | { type: "startEdit"; id: string; form: F }
   | { type: "cancel" }
   | { type: "saved" }
@@ -35,6 +36,9 @@ export function inlineCrudReducer<F>(
   switch (action.type) {
     case "startCreate":
       return { ...state, showForm: true, editingId: null, form: emptyForm };
+    case "openForm":
+      // Só abre o modal; o rascunho (nome, agente, validade) fica como estava.
+      return { ...state, showForm: true };
     case "startEdit":
       return { ...state, showForm: true, editingId: action.id, form: action.form };
     case "cancel":

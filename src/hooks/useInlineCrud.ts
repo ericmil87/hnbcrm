@@ -13,6 +13,7 @@ export function useInlineCrud<F>(emptyForm: F) {
   const actions = useMemo(
     () => ({
       startCreate: () => dispatch({ type: "startCreate" }),
+      openForm: () => dispatch({ type: "openForm" }),
       startEdit: (id: string, form: F) => dispatch({ type: "startEdit", id, form }),
       cancel: () => dispatch({ type: "cancel" }),
       saved: () => dispatch({ type: "saved" }),

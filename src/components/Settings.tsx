@@ -13,9 +13,11 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { usePermissions } from "@/hooks/usePermissions";
-import { groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels } from "@/lib/settingsNav";
+import { groupOf, groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels } from "@/lib/settingsNav";
 import { searchSettingsPanels } from "@/lib/settingsSearch";
 import { VOCAB } from "@/lib/vocab";
+
+const GENERIC_LABELS: ReadonlySet<string> = new Set(["Visão geral"]);
 
 /** Fallback estático dos painéis lazy (sem spinner piscando). */
 function PanelSkeleton() {
@@ -35,7 +37,7 @@ function PanelSkeleton() {
 export function Settings() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const { can } = usePermissions(organizationId);
-  const { modules } = useOrgModules(organizationId);
+  const { modules, isLoading: modulesLoading } = useOrgModules(organizationId);
   const isMobile = useMediaQuery("(max-width: 767px)");
   const navigate = useNavigate();
   const location = useLocation();
@@ -48,7 +50,9 @@ export function Settings() {
   const active =
     resolved ?? (isMobile ? null : (visible.find((p) => p.id === DEFAULT_SETTINGS_PANEL_ID) ?? visible.find((p) => p.Component) ?? null));
 
-  usePageTitle(active ? `${VOCAB.settings.title} · ${active.label}` : VOCAB.settings.title);
+  // Rótulo genérico ("Visão geral") ganha o grupo na frente: "Atendente IA · Visão geral".
+  const panelTitle = active ? (GENERIC_LABELS.has(active.label) ? `${groupOf(active).label} · ${active.label}` : active.label) : null;
+  usePageTitle(panelTitle ? `${VOCAB.settings.title} · ${panelTitle}` : VOCAB.settings.title);
 
   if (!can("settings", "view")) {
     return (
@@ -71,6 +75,16 @@ export function Settings() {
   };
 
   if (active?.href) return <Navigate to={active.href} replace />;
+
+  // Módulos ainda carregando: `central` pareceria invisível e cairia noutro painel por um instante.
+  if (modulesLoading) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title={VOCAB.settings.title} />
+        <PanelSkeleton />
+      </div>
+    );
+  }
 
   const Panel = active?.Component;
   const navItems = (panels: typeof visible) => groupSettingsPanels(panels);
@@ -99,7 +113,7 @@ export function Settings() {
   if (isMobile) {
     return (
       <div className="space-y-4">
-        <PageHeader title={active!.label} back={{ onClick: goBack }} />
+        <PageHeader title={panelTitle!} back={{ onClick: goBack }} />
         {body}
       </div>
     );

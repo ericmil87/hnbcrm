@@ -16,6 +16,12 @@ describe("inlineCrudReducer", () => {
     expect(s).toMatchObject({ showForm: true, editingId: null, form: EMPTY });
   });
 
+  it("openForm só abre o modal, mantendo rascunho e modo", () => {
+    let s = run(initialInlineCrud(EMPTY), { type: "patchForm", patch: { name: "Rascunho" } });
+    s = run(s, { type: "openForm" });
+    expect(s).toMatchObject({ showForm: true, editingId: null, form: { name: "Rascunho", type: "website" } });
+  });
+
   it("startEdit abre com os dados do item", () => {
     const s = run(initialInlineCrud(EMPTY), { type: "startEdit", id: "a", form: { name: "X", type: "ads" } });
     expect(s).toMatchObject({ showForm: true, editingId: "a", form: { name: "X", type: "ads" } });
