@@ -14,6 +14,15 @@ const TOOL_LABELS: Record<string, string> = {
   listBoardsAndStages: "consultando pipelines",
   listQuickReplies: "consultando respostas rápidas",
   listTasks: "listando tarefas",
+  getAttendantConfig: "lendo o atendente",
+  getAttendantSetupGuide: "consultando o guia do atendente",
+  updateAttendantPersona: "propondo ajuste no atendente",
+  updateAttendantKnowledge: "propondo ajuste no conhecimento do atendente",
+  setAttendantMode: "propondo o modo do atendente",
+  setAttendantHours: "propondo o horário do atendente",
+  setHandoffRules: "propondo regras de repasse",
+  setFollowUpSettings: "propondo ajuste de follow-up",
+  setAiFeatures: "propondo ajuste de áudio e imagens",
 };
 
 export function toolLabel(name: string): string {

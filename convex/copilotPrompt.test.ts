@@ -23,6 +23,15 @@ const session = {
 const SEXTA_1432_SP = Date.UTC(2026, 8, 18, 17, 32);
 
 describe("buildSystemPrompt (copiloto)", () => {
+  test("prompt fala de ATENDENTE IA e proíbe aceites", () => {
+    const prompt = buildSystemPrompt(session, SEXTA_1432_SP);
+    expect(prompt).toContain("ATENDENTE IA:");
+    expect(prompt).toContain("getAttendantConfig");
+    expect(prompt).toContain('conferir "Antes/Depois"');
+    expect(prompt).toContain("NUNCA liga a IA, nunca aceita termos");
+    expect(prompt).toContain("nunca mexe em modelos ou custos");
+  });
+
   test("carimba data e hora no fuso da org, no fim do prompt", () => {
     const prompt = buildSystemPrompt(session, SEXTA_1432_SP);
     expect(prompt).toContain(

@@ -113,6 +113,8 @@ import type * as lib_conversationRuntime from "../lib/conversationRuntime.js";
 import type * as lib_conversationTiming from "../lib/conversationTiming.js";
 import type * as lib_conversationTransfer from "../lib/conversationTransfer.js";
 import type * as lib_copilotAttendantTools from "../lib/copilotAttendantTools.js";
+import type * as lib_copilotConfigPreview from "../lib/copilotConfigPreview.js";
+import type * as lib_copilotConfigTools from "../lib/copilotConfigTools.js";
 import type * as lib_copilotPendingActions from "../lib/copilotPendingActions.js";
 import type * as lib_copilotTurn from "../lib/copilotTurn.js";
 import type * as lib_cronGuard from "../lib/cronGuard.js";
@@ -372,6 +374,8 @@ declare const fullApi: ApiFromModules<{
   "lib/conversationTiming": typeof lib_conversationTiming;
   "lib/conversationTransfer": typeof lib_conversationTransfer;
   "lib/copilotAttendantTools": typeof lib_copilotAttendantTools;
+  "lib/copilotConfigPreview": typeof lib_copilotConfigPreview;
+  "lib/copilotConfigTools": typeof lib_copilotConfigTools;
   "lib/copilotPendingActions": typeof lib_copilotPendingActions;
   "lib/copilotTurn": typeof lib_copilotTurn;
   "lib/cronGuard": typeof lib_cronGuard;

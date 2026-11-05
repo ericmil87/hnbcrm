@@ -19,6 +19,7 @@ import { assertAgentCan } from "./agentSecurity";
 import { hardDeleteLead, scheduleLeadCascade } from "./leadCascade";
 import { cancelCampaignHandler } from "../campaigns";
 import { confirmGroupPendingAction, isGroupPendingTool } from "./groupCopilotTools";
+import { executeConfigPendingAction, isConfigPendingTool } from "./copilotConfigTools";
 import { executeAttendantPendingAction, isAttendantPendingTool } from "./copilotAttendantTools";
 
 export type PendingActionOutcome = { ok: true; message: string };
@@ -98,6 +99,14 @@ export async function confirmPendingActionCore(
       // repasse, regenerar — re-checa `inbox:reply` e a org da conversa AGORA.
       if (isAttendantPendingTool(pending.tool)) {
         const outcome = await executeAttendantPendingAction(ctx, pending, member, via);
+        if (!outcome.ok) throw new ConvexError(outcome.message);
+        message = outcome.message;
+        break;
+      }
+      // Configuração do Atendente IA (fv2-16): re-checa `settings:manage`, e-mail,
+      // atendente e `beforeHash` AGORA; executa pelos cores com o `via` da confirmação.
+      if (isConfigPendingTool(pending.tool)) {
+        const outcome = await executeConfigPendingAction(ctx, pending, member, via);
         if (!outcome.ok) throw new ConvexError(outcome.message);
         message = outcome.message;
         break;
