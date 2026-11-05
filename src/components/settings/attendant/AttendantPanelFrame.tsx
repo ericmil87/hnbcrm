@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { useBlocker } from "react-router";
 import { Bot, Lock } from "lucide-react";
@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
-import { buildPanelPatch, type PanelPart as PanelPartData } from "@/lib/attendantConfig";
+import { buildPanelPatch, snapshotDirtyParts, partsToResetAfterSave, type PanelPart as PanelPartData } from "@/lib/attendantConfig";
 import { TAB_ROUTES } from "@/lib/routes";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { MultiAttendantNotice } from "./MultiAttendantNotice";
 import { useAttendantProfile, type AgentProfilePatch } from "./useAttendantProfile";
 
 type ProfileCtx = ReturnType<typeof useAttendantProfile>;
@@ -34,7 +35,7 @@ export function SaveBar({
     <div
       role="region"
       aria-label="Alterações pendentes"
-      className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-2 rounded-card border border-border bg-surface-raised p-3 shadow-lg"
+      className="sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-10 -mx-1 md:bottom-0 flex flex-wrap items-center justify-between gap-2 rounded-card border border-border bg-surface-raised p-3 shadow-lg"
     >
       <p className="text-sm text-text-secondary">Você tem alterações não salvas.</p>
       <div className="flex gap-2">
@@ -111,6 +112,7 @@ export function AttendantPanelFrame({
           Só quem gerencia as configurações pode alterar estes campos.
         </p>
       )}
+      <MultiAttendantNotice count={ctx.activeAttendantCount} name={ctx.attendant.name} />
       {children(ctx as ReadyProfileCtx)}
     </div>
   );
@@ -125,6 +127,11 @@ export function usePanelSave(parts: PanelPart[], save: (patch: AgentProfilePatch
   const [saving, setSaving] = useState(false);
   const dirty = parts.some((p) => p.dirty);
   const guardDialog = useUnsavedGuard(dirty);
+  // Estado mais recente dos formulários: o `await` do salvar pode terminar depois de novas edições.
+  const latest = useRef(parts);
+  useEffect(() => {
+    latest.current = parts;
+  });
 
   const onSave = async () => {
     const built = buildPanelPatch(parts);
@@ -132,10 +139,12 @@ export function usePanelSave(parts: PanelPart[], save: (patch: AgentProfilePatch
       toast.error(built.message);
       return;
     }
+    const submitted = snapshotDirtyParts(parts);
     setSaving(true);
     try {
       await save(built.patch as AgentProfilePatch);
-      parts.filter((p) => p.dirty).forEach((p) => p.reset());
+      // Só zera o rascunho que ainda é o que foi enviado; edição feita durante o salvar permanece.
+      partsToResetAfterSave(submitted, latest.current).forEach((i) => latest.current[i].reset());
       toast.success("Alterações salvas");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");

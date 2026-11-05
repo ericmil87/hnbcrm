@@ -586,3 +586,32 @@ export function buildPanelPatch(parts: ReadonlyArray<PanelPart>): PanelPatchResu
   if (message) return { ok: false, message };
   return { ok: true, patch: Object.assign({}, ...changed.map((p) => p.patch())) };
 }
+
+/** Foto dos patches enviados ao salvar (`null` = formulário sem alteração, não enviado). */
+export function snapshotDirtyParts(parts: ReadonlyArray<PanelPart>): Array<string | null> {
+  return parts.map((p) => (p.dirty ? JSON.stringify(p.patch()) : null));
+}
+
+/**
+ * Índices dos formulários que podem voltar ao valor salvo depois do salvar:
+ * os enviados cujo rascunho atual ainda é igual ao enviado. Quem foi editado
+ * durante o salvar continua com o rascunho (e continua "alterado").
+ */
+export function partsToResetAfterSave(submitted: ReadonlyArray<string | null>, current: ReadonlyArray<PanelPart>): number[] {
+  const out: number[] = [];
+  submitted.forEach((snap, i) => {
+    if (snap !== null && current[i] && JSON.stringify(current[i].patch()) === snap) out.push(i);
+  });
+  return out;
+}
+
+/** Atendente que os painéis editam: o primeiro ativo e não removido; senão o primeiro da lista. */
+export function pickEditableAttendant<T extends { status: string; removedAt?: number | null }>(list: ReadonlyArray<T> | undefined): T | undefined {
+  if (!list || list.length === 0) return undefined;
+  return list.find((a) => a.status === "active" && !a.removedAt) ?? list[0];
+}
+
+/** Quantos atendentes ativos (não removidos) existem. */
+export function countActiveAttendants(list: ReadonlyArray<{ status: string; removedAt?: number | null }> | undefined): number {
+  return (list ?? []).filter((a) => a.status === "active" && !a.removedAt).length;
+}

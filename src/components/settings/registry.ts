@@ -256,7 +256,7 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     id: "ai-models",
     group: "avancado",
     label: "Modelo de IA e privacidade",
-    description: "Modelo e rota de cada produto, zero-retention e chave própria",
+    description: "Escolha do modelo, privacidade dos dados e uso de chave própria",
     icon: ShieldCheck,
     keywords: ["modelo", "privacidade", "zdr", "zero-retention", "byo", "openrouter", "rota", "provedor", "lgpd"],
     permission: { category: "settings", level: "manage" },

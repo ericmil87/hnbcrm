@@ -1,6 +1,7 @@
 import { Suspense, useMemo, useState } from "react";
 import { Navigate, useLocation, useNavigate, useOutletContext, useSearchParams } from "react-router";
-import { SearchX, ShieldAlert } from "lucide-react";
+import { AlertTriangle, Lock, SearchX, ShieldAlert } from "lucide-react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -13,9 +14,23 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { usePermissions } from "@/hooks/usePermissions";
-import { groupOf, groupSettingsPanels, resolveSettingsPanel, visibleSettingsPanels } from "@/lib/settingsNav";
+import { groupOf, groupSettingsPanels, resolveSettingsPanelState, visibleSettingsPanels } from "@/lib/settingsNav";
 import { searchSettingsPanels } from "@/lib/settingsSearch";
 import { VOCAB } from "@/lib/vocab";
+
+/** Painel que falhou ao abrir (ex.: pedaço lazy não carregou): só ele quebra, o resto da tela segue. */
+function PanelError() {
+  return (
+    <EmptyState
+      icon={AlertTriangle}
+      size="sm"
+      title="Não foi possível abrir esta seção."
+      description="Verifique sua conexão e tente de novo."
+      // Recarrega a página: um pedaço lazy que falhou fica em cache como erro e só um reload o busca de novo.
+      action={{ label: "Tentar de novo", onClick: () => window.location.reload() }}
+    />
+  );
+}
 
 const GENERIC_LABELS: ReadonlySet<string> = new Set(["Visão geral"]);
 
@@ -46,7 +61,7 @@ export function Settings() {
 
   const visible = useMemo(() => visibleSettingsPanels({ can, modules }), [can, modules]);
   // Param desconhecido: lista (celular) ou `general` (desktop), sem erro.
-  const resolved = resolveSettingsPanel(searchParams.get("secao"), visible);
+  const { panel: resolved, denied, requested } = resolveSettingsPanelState(searchParams.get("secao"), visible);
   const active =
     resolved ?? (isMobile ? null : (visible.find((p) => p.id === DEFAULT_SETTINGS_PANEL_ID) ?? visible.find((p) => p.Component) ?? null));
 
@@ -105,9 +120,19 @@ export function Settings() {
   }
 
   const body = Panel && (
-    <Suspense fallback={<PanelSkeleton />}>
-      <Panel key={active.id} organizationId={organizationId} />
-    </Suspense>
+    <div className="space-y-4">
+      {denied && requested && active && (
+        <p role="status" className="flex items-center gap-2 rounded-lg border border-border bg-surface-sunken p-3 text-sm text-text-secondary">
+          <Lock size={14} className="shrink-0" aria-hidden="true" />
+          Você não tem permissão para abrir «{requested.label}». Mostrando {active.label}.
+        </p>
+      )}
+      <ErrorBoundary resetKey={active.id} fallback={<PanelError />}>
+        <Suspense fallback={<PanelSkeleton />}>
+          <Panel key={active.id} organizationId={organizationId} />
+        </Suspense>
+      </ErrorBoundary>
+    </div>
   );
 
   if (isMobile) {

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { FunctionArgs } from "convex/server";
 import { usePermissions } from "@/hooks/usePermissions";
-import { isSameForm } from "@/lib/attendantConfig";
+import { countActiveAttendants, isSameForm, pickEditableAttendant } from "@/lib/attendantConfig";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import type { Attendant } from "./types";
@@ -20,7 +20,7 @@ export function useAttendantProfile(organizationId: Id<"organizations">, opts: {
   const attendants = useQuery(api.aiSettings.listAttendants, { organizationId }) as Attendant[] | undefined;
   const { can } = usePermissions(organizationId);
   const canManage = can("settings", "manage");
-  const attendant = attendants?.[0];
+  const attendant = pickEditableAttendant(attendants);
   const texts = useQuery(
     api.aiSettings.getAttendantTexts,
     opts.needsTexts && canManage && attendant ? { agentMemberId: attendant._id } : "skip",
@@ -37,6 +37,7 @@ export function useAttendantProfile(organizationId: Id<"organizations">, opts: {
     ready: Boolean(status?.active && attendant),
     status,
     attendant,
+    activeAttendantCount: countActiveAttendants(attendants),
     profile: attendant?.agentProfile,
     texts: texts ?? null,
     canManage,

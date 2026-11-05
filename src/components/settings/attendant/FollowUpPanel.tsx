@@ -22,7 +22,7 @@ function Body({ ctx }: { ctx: ReadyProfileCtx }) {
         <FollowUpForm
           value={followUp.value}
           onChange={followUp.setValue}
-          disabled={!ctx.canManage}
+          disabled={!ctx.canManage || saving}
           errors={errors}
           isAutopilot={ctx.profile.mode === "autopilot"}
         />
