@@ -84,7 +84,7 @@ export function WizardStep2Pipeline({
       {/* Header */}
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-bold text-text-primary">
-          Personalize seu Pipeline
+          Personalize seu funil
         </h2>
         <p className="text-text-secondary">
           Ajuste as etapas do seu funil de vendas
@@ -94,10 +94,10 @@ export function WizardStep2Pipeline({
       {/* Board Name */}
       <div>
         <Input
-          label="Nome do Pipeline"
+          label="Nome do funil"
           value={boardName}
           onChange={(e) => onBoardNameChange(e.target.value)}
-          placeholder="Ex: Pipeline de Vendas"
+          placeholder="Ex.: Funil de vendas"
         />
       </div>
 
@@ -179,7 +179,7 @@ export function WizardStep2Pipeline({
           className="w-full"
         >
           <Plus size={16} />
-          Adicionar Etapa
+          Adicionar etapa
         </Button>
       </div>
 

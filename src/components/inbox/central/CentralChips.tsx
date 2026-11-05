@@ -18,7 +18,7 @@ interface ColorChipProps {
   className?: string;
 }
 
-/** Chip pequeno com a cor da unidade/setor (lista de conversas, header). */
+/** Chip pequeno com a cor da unidade/departamento (lista de conversas, header). */
 export function ColorChip({ name, color, title, className }: ColorChipProps) {
   return (
     <span
@@ -108,7 +108,7 @@ interface TransferEventProps {
   createdAt: number;
 }
 
-/** Transferência de setor na timeline: evento de sistema centralizado, não bolha. */
+/** Transferência de departamento na timeline: evento de sistema centralizado, não bolha. */
 export function TransferEvent({ actorName, transfer, createdAt }: TransferEventProps) {
   const time = new Date(createdAt).toLocaleString("pt-BR", {
     day: "2-digit",

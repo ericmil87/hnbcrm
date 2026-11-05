@@ -19,6 +19,7 @@ import { RecentActivityWidget } from "@/components/RecentActivityWidget";
 import { UpcomingTasksWidget } from "@/components/UpcomingTasksWidget";
 import { UpcomingEventsWidget } from "@/components/UpcomingEventsWidget";
 import { TaskLabelChips } from "@/components/tasks/TaskKanbanBoard";
+import { VOCAB } from "@/lib/vocab";
 import { toast } from "sonner";
 import {
   Handshake,
@@ -56,7 +57,7 @@ export function DashboardOverview() {
   // seriam convites a telas que ele não pode usar.
   const { can } = usePermissions(organizationId);
   const canConfigure = can("settings", "manage");
-  // Atalho do Painel da Central — só com o módulo opcional ligado.
+  // Atalho do Relatórios — só com o módulo opcional ligado.
   const { modules } = useOrgModules(organizationId);
   const showCentral = modules.central && can("reports", "view");
 
@@ -78,7 +79,7 @@ export function DashboardOverview() {
         <div>
           <h1 className="text-2xl md:text-3xl font-bold text-text-primary">Olá, {firstName}!</h1>
           <p className="text-sm md:text-base text-text-secondary">
-            {stats.organizationName} — Humanos e bots, juntos no seu CRM.
+            {stats.organizationName} — Sua equipe e a IA, juntas no seu CRM.
           </p>
         </div>
       </div>
@@ -97,25 +98,25 @@ export function DashboardOverview() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
         <StatCard
           icon={DollarSign}
-          label="Valor do Pipeline"
+          label="Valor do funil"
           value={formatMoney(totalPipelineValue, "BRL", { compact: true })}
           colorClass="bg-semantic-success/10 text-semantic-success"
         />
         <StatCard
           icon={Target}
-          label="Leads Ativos"
+          label="Leads ativos"
           value={totalLeads.toString()}
           colorClass="bg-brand-500/10 text-brand-500"
         />
         <StatCard
           icon={ArrowRightLeft}
-          label="Repasses Pendentes"
+          label={VOCAB.attention.title}
           value={stats.pendingHandoffs.toString()}
           colorClass="bg-semantic-warning/10 text-semantic-warning"
         />
         <StatCard
           icon={Users}
-          label="Membros da Equipe"
+          label="Membros da equipe"
           value={stats.teamMemberCount.toString()}
           colorClass="bg-semantic-info/10 text-semantic-info"
         />
@@ -123,12 +124,12 @@ export function DashboardOverview() {
 
       {/* 3. Quick Actions */}
       <div>
-        <h2 className="text-lg font-semibold text-text-primary mb-3">Ações Rápidas</h2>
+        <h2 className="text-lg font-semibold text-text-primary mb-3">Ações rápidas</h2>
         <div className="flex gap-3 overflow-x-auto pb-2 md:grid md:grid-cols-4 md:overflow-visible">
-          <QuickActionCard icon={Kanban} label="Ir ao Pipeline" onClick={() => onTabChange("board")} />
-          <QuickActionCard icon={MessageSquare} label="Caixa de Entrada" onClick={() => onTabChange("inbox")} />
-          <QuickActionCard icon={ArrowRightLeft} label="Ver Repasses" onClick={() => onTabChange("handoffs")} />
-          <QuickActionCard icon={Users} label="Gerenciar Equipe" onClick={() => onTabChange("team")} />
+          <QuickActionCard icon={Kanban} label={`Ir ao ${VOCAB.funnel.one}`} onClick={() => onTabChange("board")} />
+          <QuickActionCard icon={MessageSquare} label={VOCAB.conversations.nav} onClick={() => onTabChange("inbox")} />
+          <QuickActionCard icon={ArrowRightLeft} label={VOCAB.attention.nav} onClick={() => onTabChange("handoffs")} />
+          <QuickActionCard icon={Users} label="Gerenciar equipe" onClick={() => onTabChange("team")} />
         </div>
       </div>
 
@@ -139,7 +140,7 @@ export function DashboardOverview() {
 
         {/* Desempenho da Equipe */}
         <Card>
-          <h3 className="text-lg font-semibold text-text-primary mb-4">Desempenho da Equipe</h3>
+          <h3 className="text-lg font-semibold text-text-primary mb-4">Desempenho da equipe</h3>
           {stats.teamPerformance.length === 0 ? (
             <p className="text-text-muted">Nenhum dado de equipe ainda.</p>
           ) : (
@@ -194,7 +195,7 @@ export function DashboardOverview() {
       {/* 6. Coming Soon Section */}
       <div>
         <div className="flex items-center gap-3 mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Em Breve</h2>
+          <h2 className="text-lg font-semibold text-text-primary">Em breve</h2>
           <Badge variant="warning">Próximas funcionalidades</Badge>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -214,7 +215,7 @@ export function DashboardOverview() {
 }
 
 // ============================================================================
-// Atalho do Painel da Central (módulo opcional)
+// Atalho do Relatórios (módulo opcional)
 // ============================================================================
 
 function CentralShortcutCard({ onClick }: { onClick: () => void }) {
@@ -228,9 +229,9 @@ function CentralShortcutCard({ onClick }: { onClick: () => void }) {
         <BarChart3 size={22} aria-hidden="true" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="font-semibold text-text-primary">Painel da Central</p>
+        <p className="font-semibold text-text-primary">{VOCAB.reports.title}</p>
         <p className="text-sm text-text-secondary">
-          Reservas, receita, conversão e ROAS de mídia paga por unidade, campanha e setor, em tempo real.
+          Reservas, receita, conversão e ROAS de mídia paga por unidade, campanha e departamento, em tempo real.
         </p>
       </div>
       <ChevronRight size={20} className="shrink-0 text-text-muted transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
@@ -267,9 +268,9 @@ function MyTasksWidget({
   const handleComplete = async (taskId: Id<"tasks">) => {
     try {
       await completeTask({ taskId });
-      toast.success("Tarefa concluída!");
+      toast.success("Tarefa concluída");
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -277,7 +278,7 @@ function MyTasksWidget({
     <Card>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <h3 className="text-lg font-semibold text-text-primary">Minhas Tarefas</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Minhas tarefas</h3>
           {taskCounts && taskCounts.overdue > 0 && (
             <Badge variant="error">{taskCounts.overdue} atrasada{taskCounts.overdue > 1 ? "s" : ""}</Badge>
           )}
@@ -374,7 +375,7 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
   if (pipelineStats.length === 0) {
     return (
       <Card>
-        <h3 className="text-lg font-semibold text-text-primary mb-4">Pipeline por Board</h3>
+        <h3 className="text-lg font-semibold text-text-primary mb-4">Resumo dos funis</h3>
         <p className="text-text-muted">Nenhum lead no pipeline ainda.</p>
       </Card>
     );
@@ -386,7 +387,7 @@ function PipelineByBoardWidget({ pipelineStats }: PipelineByBoardWidgetProps) {
 
   return (
     <Card>
-      <h3 className="text-lg font-semibold text-text-primary mb-4">Pipeline por Board</h3>
+      <h3 className="text-lg font-semibold text-text-primary mb-4">Resumo dos funis</h3>
 
       {/* Board tabs (only show if 2+ boards) */}
       {pipelineStats.length > 1 && (
@@ -640,7 +641,7 @@ function existingFeatures(
   return [
     {
       icon: Kanban,
-      title: "Pipeline Kanban",
+      title: "Funil de vendas",
       description: "Gerencie leads com drag-and-drop entre etapas configuráveis",
       dataBadge: `${totalLeads} leads`,
       tab: "board" as Tab,
@@ -648,7 +649,7 @@ function existingFeatures(
     },
     {
       icon: Target,
-      title: "Gestão de Leads",
+      title: "Gestão de leads",
       description: "Qualificação BANT, temperatura, prioridade e campos personalizados",
       dataBadge: formatMoney(totalPipelineValue, "BRL", { compact: true }),
       tab: "board" as Tab,
@@ -657,37 +658,37 @@ function existingFeatures(
     {
       icon: Contact2,
       title: "Contatos",
-      description: "Cadastro completo com busca por nome, email e empresa",
+      description: "Cadastro completo com busca por nome, e-mail e empresa",
       tab: "contacts" as Tab,
       onClick: () => onTabChange("contacts"),
     },
     {
       icon: MessageSquare,
-      title: "Conversas Multicanal",
-      description: "WhatsApp, Telegram, email e webchat em uma caixa unificada",
+      title: "Conversas de vários canais",
+      description: "WhatsApp, Telegram, e-mail e chat do site em um só lugar",
       dataBadge: "Multicanal",
       tab: "inbox" as Tab,
       onClick: () => onTabChange("inbox"),
     },
     {
       icon: ArrowRightLeft,
-      title: "Repasses IA-Humano",
-      description: "Transferência inteligente de leads entre bots e humanos",
+      title: VOCAB.attention.title,
+      description: "Quando a IA precisa de alguém da equipe, a conversa vai para você",
       dataBadge: stats.pendingHandoffs > 0 ? `${stats.pendingHandoffs} pendentes` : undefined,
       tab: "handoffs" as Tab,
       onClick: () => onTabChange("handoffs"),
     },
     {
       icon: Users,
-      title: "Equipe Colaborativa",
-      description: "Gerencie membros humanos e bots de IA como uma equipe unificada",
+      title: "Equipe e IA juntas",
+      description: "Gerencie pessoas e agentes de IA como uma só equipe",
       dataBadge: `${stats.teamMemberCount} membros`,
       tab: "team" as Tab,
       onClick: () => onTabChange("team"),
     },
     {
       icon: ScrollText,
-      title: "Auditoria Completa",
+      title: VOCAB.audit.title,
       description: "Histórico detalhado de todas as ações com filtros e exportação",
       dataBadge: "Exportável",
       tab: "audit" as Tab,
@@ -703,15 +704,15 @@ function existingFeatures(
     },
     {
       icon: Webhook,
-      title: "Sistema de Webhooks",
-      description: "Notificações em tempo real para eventos do CRM via HTTP",
+      title: "Avisos automáticos",
+      description: "Avise outros sistemas em tempo real sobre o que acontece no CRM",
       dataBadge: "Tempo real",
       tab: "settings" as Tab,
       onClick: () => onTabChange("settings"),
     },
     {
       icon: Bookmark,
-      title: "Visões Salvas",
+      title: VOCAB.viewMode.saved,
       description: "Filtros personalizados para leads e contatos com compartilhamento",
       tab: "board" as Tab,
       onClick: () => onTabChange("board"),
@@ -723,25 +724,25 @@ function comingSoonFeatures(onOpenAiSettings: () => void, onOpenDataSettings: ()
   return [
     {
       icon: Sparkles,
-      title: "IA Copiloto & Atendente",
-      description: "Já disponível — ative em Configurações → IA",
+      title: "Copiloto e Atendente IA",
+      description: "Já disponível. Ative em Configurações → IA",
       available: true,
       onClick: onOpenAiSettings,
     },
     {
       icon: Zap,
-      title: "Motor de Automações",
+      title: "Automações",
       description: "Regras automáticas para mover leads, atribuir e notificar a equipe",
     },
     {
       icon: Search,
-      title: "Paleta de Comandos",
-      description: "Busca rápida com Cmd+K para acessar qualquer recurso do CRM",
+      title: "Busca rápida",
+      description: "Atalho Cmd+K para acessar qualquer recurso do CRM",
     },
     {
       icon: FileUp,
-      title: "Importar/Exportar",
-      description: "Já disponível — abra Configurações → Dados",
+      title: "Importar e exportar",
+      description: "Já disponível. Abra Configurações → Dados",
       available: true,
       onClick: onOpenDataSettings,
     },

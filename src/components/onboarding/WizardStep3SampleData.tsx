@@ -16,7 +16,7 @@ const SAMPLE_DATA_ITEMS = [
   },
   {
     icon: Target,
-    label: "6 leads em diferentes etapas do pipeline",
+    label: "6 leads em diferentes etapas do funil",
   },
   {
     icon: MessageSquare,
@@ -24,7 +24,7 @@ const SAMPLE_DATA_ITEMS = [
   },
   {
     icon: ArrowRightLeft,
-    label: "1 repasse IA-humano pendente",
+    label: "1 pedido de ajuda da IA pendente",
   },
 ];
 
@@ -38,7 +38,7 @@ export function WizardStep3SampleData({
     <div className="space-y-6 animate-fade-in-up">
       {/* Header */}
       <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-text-primary">Dados de Exemplo</h2>
+        <h2 className="text-2xl font-bold text-text-primary">Dados de exemplo</h2>
         <p className="text-text-secondary">
           Explore o CRM com dados realistas gerados automaticamente
         </p>

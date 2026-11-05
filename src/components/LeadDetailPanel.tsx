@@ -114,7 +114,7 @@ export function LeadDetailPanel({ leadId, organizationId, onClose, initialTab }:
     <SlideOver
       open={true}
       onClose={onClose}
-      title="Detalhes do Lead"
+      title="Detalhes do lead"
       headerActions={
         <LeadActionsMenu leadId={leadId} organizationId={organizationId} onDeleted={onClose} />
       }
@@ -205,7 +205,7 @@ function LeadActionsMenu({
       toast.success(archived ? "Lead restaurado" : "Lead arquivado");
     } catch (error) {
       toast.error(
-        mutationErrorMessage(error, archived ? "Falha ao restaurar o lead" : "Falha ao arquivar o lead")
+        mutationErrorMessage(error, archived ? "Não foi possível restaurar o lead." : "Não foi possível arquivar o lead.")
       );
     } finally {
       setArchiving(false);
@@ -614,7 +614,7 @@ function ConversationTab({
       stopTyping();
     } catch (error) {
       console.error("Failed to send message:", error);
-      toast.error("Falha ao enviar mensagem");
+      toast.error("Não foi possível enviar a mensagem.");
     } finally {
       setSending(false);
     }
@@ -634,7 +634,7 @@ function ConversationTab({
     try {
       await reactToMessage({ messageId: message._id as Id<"messages">, emoji: next });
     } catch {
-      toast.error("Falha ao reagir à mensagem");
+      toast.error("Não foi possível reagir à mensagem.");
     }
   };
 
@@ -1234,7 +1234,7 @@ function CustomFieldsSection({
       await updateLead({ leadId, customFields: values });
       toast.success("Campos personalizados atualizados");
     } catch (error: any) {
-      toast.error(error?.message || "Falha ao salvar campos personalizados");
+      toast.error(error?.message || "Não foi possível salvar campos personalizados.");
     } finally {
       setSaving(false);
     }
@@ -1244,7 +1244,7 @@ function CustomFieldsSection({
     return (
       <div>
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Campos Personalizados
+          Campos personalizados
         </h3>
         <div className="flex justify-center py-4">
           <Spinner size="sm" />
@@ -1257,7 +1257,7 @@ function CustomFieldsSection({
     return (
       <div>
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Campos Personalizados
+          Campos personalizados
         </h3>
         <button
           type="button"
@@ -1273,7 +1273,7 @@ function CustomFieldsSection({
   return (
     <div>
       <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-        Campos Personalizados
+        Campos personalizados
       </h3>
       <div className="space-y-4">
         {leadFieldDefs.map((field) => (
@@ -1412,18 +1412,18 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       await linkContactMutation({ leadId, contactId });
       setShowContactPicker(false);
       setContactSearchText("");
-      toast.success("Contato vinculado com sucesso");
+      toast.success("Contato vinculado");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao vincular contato");
+      toast.error(error.message || "Não foi possível vincular o contato.");
     }
   };
 
   const handleUnlinkContact = async () => {
     try {
       await linkContactMutation({ leadId });
-      toast.success("Contato desvinculado com sucesso");
+      toast.success("Contato desvinculado");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao desvincular contato");
+      toast.error(error.message || "Não foi possível desvincular o contato.");
     }
   };
 
@@ -1440,7 +1440,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       setShowAssigneePicker(false);
       toast.success(assignedTo ? "Lead atribuído com sucesso" : "Lead desatribuído com sucesso");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao atribuir lead"));
+      toast.error(mutationErrorMessage(error, "Não foi possível atribuir o lead."));
     }
   };
 
@@ -1457,9 +1457,9 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       await moveLeadToStageMutation({ leadId, stageId });
       setShowStagePicker(false);
       setSelectedBoardId(null);
-      toast.success("Lead movido com sucesso");
+      toast.success("Lead movido");
     } catch (error: any) {
-      toast.error(error.message || "Falha ao mover lead");
+      toast.error(error.message || "Não foi possível mover o lead.");
     }
   };
 
@@ -1481,7 +1481,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       {/* Contact Section - Interactive */}
       <div>
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Contato Vinculado
+          Contato vinculado
         </h3>
         {lead.contact ? (
           <div className="bg-surface-sunken rounded-card p-4 space-y-3">
@@ -1499,7 +1499,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                 />
               </div>
               <div className="flex justify-between">
-                <span className="text-text-muted">Email</span>
+                <span className="text-text-muted">E-mail</span>
                 <span className="text-text-primary">{lead.contact.email || "—"}</span>
               </div>
               <div className="flex justify-between">
@@ -1540,7 +1540,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
               size="sm"
             >
               <LinkIcon size={16} />
-              Vincular Contato
+              Vincular contato
             </Button>
           </div>
         )}
@@ -1563,7 +1563,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                     type="text"
                     value={contactSearchText}
                     onChange={(e) => setContactSearchText(e.target.value)}
-                    placeholder="Buscar contato..."
+                    placeholder="Buscar contato…"
                     className="w-full pl-9 pr-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
                     style={{ fontSize: "16px" }}
                     autoFocus
@@ -1624,7 +1624,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
               </span>
               {lead.assignee && (
                 <Badge variant="default" className="text-xs">
-                  {lead.assignee.type === "ai" ? "IA" : lead.assignee.role === "admin" ? "Admin" : lead.assignee.role === "manager" ? "Gerente" : "Agente"}
+                  {lead.assignee.type === "ai" ? "IA" : lead.assignee.role === "admin" ? "Administrador" : lead.assignee.role === "manager" ? "Gerente" : "Atendente"}
                 </Badge>
               )}
             </div>
@@ -1638,7 +1638,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
             </span>
             {lead.assignee && (
               <Badge variant="default" className="text-xs">
-                {lead.assignee.type === "ai" ? "IA" : lead.assignee.role === "admin" ? "Admin" : lead.assignee.role === "manager" ? "Gerente" : "Agente"}
+                {lead.assignee.type === "ai" ? "IA" : lead.assignee.role === "admin" ? "Administrador" : lead.assignee.role === "manager" ? "Gerente" : "Atendente"}
               </Badge>
             )}
           </div>
@@ -1677,7 +1677,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-text-primary font-medium">{memberLabel(member)}</span>
                       <Badge variant="default" className="text-xs">
-                        {member.type === "ai" ? "IA" : member.role === "admin" ? "Admin" : member.role === "manager" ? "Gerente" : "Agente"}
+                        {member.type === "ai" ? "IA" : member.role === "admin" ? "Administrador" : member.role === "manager" ? "Gerente" : "Atendente"}
                       </Badge>
                     </div>
                   </div>
@@ -1699,7 +1699,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       {/* Stage Section */}
       <div className="relative">
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Pipeline e Etapa
+          Funil e etapa
         </h3>
         <button
           onClick={() => {
@@ -1711,7 +1711,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
           className="w-full px-4 py-3 bg-surface-sunken rounded-card text-left hover:bg-surface-raised transition-colors flex items-center justify-between"
         >
           <div>
-            <div className="text-xs text-text-muted">{lead.board?.name || "Pipeline"}</div>
+            <div className="text-xs text-text-muted">{lead.board?.name || "Funil"}</div>
             <div className="text-sm text-text-primary font-medium mt-0.5">
               {lead.stage?.name || "Sem etapa"}
             </div>
@@ -1732,7 +1732,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
             <div className="absolute left-0 right-0 top-full mt-2 z-50 bg-surface-overlay border border-border rounded-xl shadow-xl max-h-96 overflow-hidden">
               {/* Board selector */}
               <div className="p-3 border-b border-border bg-surface-raised">
-                <label className="block text-xs text-text-muted mb-1.5">Pipeline</label>
+                <label className="block text-xs text-text-muted mb-1.5">Funil</label>
                 <select
                   value={selectedBoardId || ""}
                   onChange={(e) => setSelectedBoardId(e.target.value as Id<"boards">)}
@@ -1792,7 +1792,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
       {/* Editable Fields */}
       <div>
         <h3 className="text-[13px] font-semibold text-text-secondary uppercase tracking-wide mb-3">
-          Detalhes do Lead
+          Detalhes do lead
         </h3>
         <div className="space-y-4">
           <div>
@@ -1848,7 +1848,7 @@ function DetailsTab({ leadId, organizationId }: { leadId: Id<"leads">; organizat
 
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1">
-              Tags <span className="text-text-muted font-normal">(separadas por vírgula)</span>
+              Etiquetas <span className="text-text-muted font-normal">(separadas por vírgula)</span>
             </label>
             <input
               type="text"
@@ -2014,9 +2014,9 @@ function TasksTab({
   const handleComplete = async (taskId: Id<"tasks">) => {
     try {
       await completeTask({ taskId });
-      toast.success("Tarefa concluída!");
+      toast.success("Tarefa concluída");
     } catch {
-      toast.error("Falha ao concluir tarefa");
+      toast.error("Não foi possível concluir a tarefa.");
     }
   };
 
@@ -2040,7 +2040,7 @@ function TasksTab({
           onClick={() => setShowCreateModal(true)}
         >
           <Plus size={14} />
-          Nova Tarefa
+          Nova tarefa
         </Button>
       </div>
 

@@ -177,7 +177,7 @@ export function QuickRepliesModal({ organizationId, open, onClose }: QuickReplie
       }
       setEditing(null);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message.replace(/^.*Uncaught Error: /, "").split("\n")[0] : "Falha ao salvar");
+      toast.error(err instanceof Error ? err.message.replace(/^.*Uncaught Error: /, "").split("\n")[0] : "Não foi possível salvar.");
     } finally {
       setSaving(false);
     }
@@ -188,7 +188,7 @@ export function QuickRepliesModal({ organizationId, open, onClose }: QuickReplie
       await removeReply({ quickReplyId: item._id });
       toast.success(`/${item.shortcut} excluída`);
     } catch {
-      toast.error("Falha ao excluir");
+      toast.error("Não foi possível excluir.");
     }
   };
 
@@ -214,7 +214,7 @@ export function QuickRepliesModal({ organizationId, open, onClose }: QuickReplie
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 rows={4}
-                placeholder="Olá! Obrigado pelo contato..."
+                placeholder="Olá! Obrigado pelo contato…"
                 className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
               />
             </div>

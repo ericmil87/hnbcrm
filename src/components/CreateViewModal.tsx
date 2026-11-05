@@ -73,7 +73,7 @@ export function CreateViewModal({
     e.preventDefault();
 
     if (!name.trim()) {
-      toast.error("Digite um nome para a visão");
+      toast.error("Digite um nome para o filtro salvo");
       return;
     }
 
@@ -110,10 +110,10 @@ export function CreateViewModal({
         sortOrder,
       });
 
-      toast.success("Visão criada com sucesso");
+      toast.success("Filtro salvo criado");
       onCreated?.(viewId);
     } catch (error: any) {
-      toast.error(error.message || "Erro ao criar visão");
+      toast.error(error.message || "Não foi possível criar o filtro salvo.");
     } finally {
       setIsSubmitting(false);
     }
@@ -128,14 +128,14 @@ export function CreateViewModal({
   };
 
   return (
-    <Modal open={true} onClose={onClose} title="Criar Nova Visão">
+    <Modal open={true} onClose={onClose} title="Criar filtro salvo">
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Name */}
         <Input
-          label="Nome da Visão"
+          label="Nome do filtro salvo"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Ex: Leads Urgentes do Pipeline A"
+          placeholder="Ex.: Leads urgentes do funil A"
           required
           style={{ fontSize: "16px" }}
         />
@@ -172,7 +172,7 @@ export function CreateViewModal({
             <>
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Pipeline
+                  Funil
                 </label>
                 <select
                   value={selectedBoardId || ""}
@@ -203,7 +203,7 @@ export function CreateViewModal({
               {selectedBoardId && stages && stages.length > 0 && (
                 <div>
                   <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                    Estágios
+                    Etapas
                   </label>
                   <div className="space-y-2 max-h-40 overflow-y-auto p-2 bg-surface-raised border border-border-strong rounded-field">
                     {stages.map((stage) => (
@@ -346,7 +346,7 @@ export function CreateViewModal({
               {/* Value Range */}
               <div className="grid grid-cols-2 gap-3">
                 <Input
-                  label="Valor Mínimo"
+                  label="Valor mínimo"
                   type="number"
                   value={minValue}
                   onChange={(e) => setMinValue(e.target.value)}
@@ -354,7 +354,7 @@ export function CreateViewModal({
                   style={{ fontSize: "16px" }}
                 />
                 <Input
-                  label="Valor Máximo"
+                  label="Valor máximo"
                   type="number"
                   value={maxValue}
                   onChange={(e) => setMaxValue(e.target.value)}
@@ -413,12 +413,12 @@ export function CreateViewModal({
             />
           )}
 
-          {/* Tags (both) */}
+          {/* Etiquetas (both) */}
           <Input
-            label="Tags"
+            label="Etiquetas"
             value={tags}
             onChange={(e) => setTags(e.target.value)}
-            placeholder="Tag1, Tag2, Tag3"
+            placeholder="etiqueta1, etiqueta2, etiqueta3"
             style={{ fontSize: "16px" }}
           />
         </div>
@@ -444,8 +444,8 @@ export function CreateViewModal({
                 )}
                 style={{ fontSize: "16px" }}
               >
-                <option value="createdAt">Data de Criação</option>
-                <option value="updatedAt">Última Atualização</option>
+                <option value="createdAt">Data de criação</option>
+                <option value="updatedAt">Última atualização</option>
                 {entityType === "leads" && (
                   <>
                     <option value="value">Valor</option>
@@ -493,7 +493,7 @@ export function CreateViewModal({
             disabled={isSubmitting || !name.trim()}
             className="flex-1"
           >
-            {isSubmitting ? <Spinner size="sm" /> : "Criar Visão"}
+            {isSubmitting ? <Spinner size="sm" /> : "Criar filtro salvo"}
           </Button>
         </div>
       </form>

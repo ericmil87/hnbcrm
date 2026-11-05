@@ -54,7 +54,7 @@ const STATUS_VARIANTS: Record<string, "default" | "brand" | "success" | "error">
 
 const ACTIVITY_TYPE_LABELS: Record<string, string> = {
   call: "Ligação",
-  email: "Email",
+  email: "E-mail",
   meeting: "Reunião",
   follow_up: "Acompanhamento",
   demo: "Demonstração",

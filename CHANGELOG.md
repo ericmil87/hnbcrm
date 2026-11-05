@@ -13,6 +13,13 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
 - Os controles de ligar e desligar, as abas e as listas de seleção (em Configurações e nos ajustes de formulários) ficaram mais fáceis de tocar no celular e podem ser usados pelo teclado.
 - O anel laranja de foco só aparece quando você navega pelo teclado. No celular, os menus de ações abrem como folha na parte de baixo da tela e as dicas abrem com pressão longa (ou com um toque, quando são só informativas).
+- Novos nomes no menu: Caixa de Entrada agora é **Conversas**, Repasses agora é **Requer atenção**, Pipeline agora é **Funil**, Auditoria agora é **Histórico de alterações**, Central agora é **Relatórios** e Calendário agora é **Agenda**. As telas e os endereços continuam os mesmos; o que mudou foi o nome.
+- Em **Requer atenção**, cada cartão diz "A IA pediu ajuda" e traz o motivo; os botões são **Assumir conversa**, **Devolver à IA** e **Ver conversa**. Quando não há nada pendente aparece "Tudo em dia".
+- Na Atendente IA, os modos agora se chamam **Sugerir respostas** (você revisa antes de enviar) e **Responder sozinha** (antes "Autopilot"). O texto pronto aguardando revisão é a **Resposta sugerida**, e o bloco de instruções é o **Jeito de atender**. O Copiloto é descrito como o assistente da sua equipe.
+- Os canais de WhatsApp aparecem como **WhatsApp oficial (Meta)** e **WhatsApp por QR code**, com **Conectar número**; sem termos como "gateway", "instância" ou "Cloud API" nas telas comuns.
+- Textos padronizados: só a primeira palavra em maiúscula ("Novo funil", "Adicionar nota"), "e-mail" com hífen, "Etiquetas" no lugar de "Tags", "Etapa" no lugar de "Estágio", "Descadastrados" no lugar de "Opt-out", papéis **Atendente**, **Gerente** e **Administrador**. Mensagens de sucesso ficaram curtas ("Lead criado") e as de erro dizem "Não foi possível salvar".
+- Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
+- O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
 
 ### Configuração inicial e Copiloto
 

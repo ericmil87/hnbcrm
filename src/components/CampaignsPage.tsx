@@ -159,7 +159,7 @@ export function CampaignsPage() {
           <h1 className="text-xl font-semibold text-text-primary">Campanhas</h1>
         </div>
         <Button variant="secondary" onClick={() => setOptOutsOpen(true)}>
-          <Ban size={16} /> Supressão
+          <Ban size={16} /> Descadastrados
         </Button>
         {canManage && (
           <Button onClick={() => setWizardId("new")}>
@@ -192,8 +192,8 @@ export function CampaignsPage() {
           aria-label="Filtrar por canal"
         >
           <option value="all">Todos os canais</option>
-          <option value="meta">Cloud API (Meta)</option>
-          <option value="bridge">Bridge</option>
+          <option value="meta">WhatsApp oficial (Meta)</option>
+          <option value="bridge">WhatsApp por QR code</option>
         </select>
       </div>
 
@@ -248,7 +248,7 @@ export function CampaignsPage() {
                   <th className="px-3 py-2.5 font-medium text-right">Lidas</th>
                   <th className="px-3 py-2.5 font-medium text-right">Resp.</th>
                   <th className="px-3 py-2.5 font-medium text-right">Falhas</th>
-                  <th className="px-3 py-2.5 font-medium text-right">Opt-out</th>
+                  <th className="px-3 py-2.5 font-medium text-right">Descadastrados</th>
                   <th className="px-3 py-2.5 font-medium text-right">Custo</th>
                   <th className="px-3 py-2.5 font-medium">Quando</th>
                   <th className="px-2 py-2.5" />
@@ -379,7 +379,7 @@ function ProviderPill({ provider }: { provider: CampaignProvider }) {
     <Badge variant={provider === "bridge" ? "warning" : "brand"}>
       <span className="inline-flex items-center gap-1">
         {provider === "bridge" ? <Radio size={11} /> : <Cloud size={11} />}
-        {provider === "bridge" ? "Bridge" : "Cloud API"}
+        {provider === "bridge" ? "WhatsApp por QR code" : "WhatsApp oficial (Meta)"}
       </span>
     </Badge>
   );

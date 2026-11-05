@@ -73,7 +73,7 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
     if (!pending) return;
     if (pending.kind === "disconnect") {
       toast.promise(disconnect({ organizationId, connectionId: pending.connectionId }), {
-        loading: "Desconectando...",
+        loading: "Desconectando…",
         success: "Página desconectada",
         error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
       });
@@ -83,7 +83,7 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
   };
 
   const deleteChannel = async (configId: Id<"channelConfigs">, force = false) => {
-    const toastId = toast.loading("Excluindo canal...");
+    const toastId = toast.loading("Excluindo canal…");
     try {
       await deleteConfig(force ? { configId, force: true } : { configId });
       toast.success("Canal excluído", { id: toastId });
@@ -104,7 +104,7 @@ export function MetaChannelCards({ organizationId, configs }: MetaChannelCardsPr
   const disconnectInstead = () => {
     if (!historyConnectionId) return;
     toast.promise(disconnect({ organizationId, connectionId: historyConnectionId }), {
-      loading: "Desconectando...",
+      loading: "Desconectando…",
       success: "Página desconectada",
       error: (e) => mutationErrorMessage(e, "Não foi possível desconectar"),
     });

@@ -25,8 +25,8 @@ const MODES: { id: Mode; label: string; hint: string }[] = [
 
 const REPLY_MODES: { id: ReplyMode; label: string; hint: string }[] = [
   { id: "inherit", label: "Herdar do atendente", hint: "Usa o modo configurado em Configurações → IA." },
-  { id: "suggest", label: "Sugestão", hint: "Escreve um rascunho para alguém revisar no inbox." },
-  { id: "autopilot", label: "Autopilot", hint: "Envia direto, sem revisão humana." },
+  { id: "suggest", label: "Sugerir respostas", hint: "Escreve uma resposta sugerida para alguém revisar em Conversas." },
+  { id: "autopilot", label: "Responder sozinha", hint: "Envia direto, sem revisão humana." },
 ];
 
 /**
@@ -199,13 +199,13 @@ export function GroupAiPolicyModal({
         {replyMode === "autopilot" && mode !== "off" && aiStatus?.groupAutopilotAckDone === false && (
           <div className="space-y-2 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10 p-3">
             <p className="text-xs text-semantic-warning">
-              No autopilot a IA publica direto na sala, sem ninguém revisar — para todos os
+              Em Responder sozinha, a IA publica direto na sala, sem ninguém revisar — para todos os
               participantes, inclusive gente que nunca falou com a empresa. O aceite vale para a
-              organização inteira e fica registrado na auditoria.
+              organização inteira e fica registrado no histórico de alterações.
             </p>
             <p className="text-[11px] text-text-muted">
-              Com o atendente 1 a 1 já em autopilot esta sala salva sem o aceite — ele existe para
-              quando o atendente está em sugestão e só a sala vai sozinha.
+              Com o Atendente IA 1 a 1 já em Responder sozinha, esta sala salva sem o aceite — ele existe para
+              quando o atendente está em Sugerir respostas e só a sala vai sozinha.
             </p>
             {can("settings", "manage") ? (
               <Button

@@ -132,11 +132,11 @@ export function CreateTaskModal({
         tags: tags.length > 0 ? tags : undefined,
       });
 
-      toast.success("Tarefa criada com sucesso!");
+      toast.success("Tarefa criada");
       resetForm();
       onClose();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao criar tarefa");
+      toast.error(err instanceof Error ? err.message : "Não foi possível criar a tarefa.");
     } finally {
       setSubmitting(false);
     }
@@ -198,7 +198,7 @@ export function CreateTaskModal({
   };
 
   return (
-    <Modal open={isOpen} onClose={onClose} title="Nova Tarefa">
+    <Modal open={isOpen} onClose={onClose} title="Nova tarefa">
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Title */}
         <div>
@@ -225,7 +225,7 @@ export function CreateTaskModal({
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Detalhes adicionais..."
+            placeholder="Detalhes adicionais…"
             rows={2}
             className="w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted resize-none text-sm"
             style={{ fontSize: "16px" }}
@@ -266,7 +266,7 @@ export function CreateTaskModal({
         {/* Activity Type */}
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1">
-            Tipo de Atividade
+            Tipo de atividade
           </label>
           <select
             value={activityType}
@@ -306,7 +306,7 @@ export function CreateTaskModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1">
-              Data de Vencimento
+              Data de vencimento
             </label>
             <input
               type="date"
@@ -403,7 +403,7 @@ export function CreateTaskModal({
                   type="text"
                   value={leadSearch}
                   onChange={(e) => setLeadSearch(e.target.value)}
-                  placeholder="Buscar lead pelo título..."
+                  placeholder="Buscar lead pelo título…"
                   aria-label="Buscar lead"
                   className="w-full pl-9 pr-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                   style={{ fontSize: "16px" }}
@@ -513,7 +513,7 @@ export function CreateTaskModal({
                   addChecklistItem();
                 }
               }}
-              placeholder="Adicionar item..."
+              placeholder="Adicionar item…"
               className="flex-1 px-3 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
               style={{ fontSize: "16px" }}
             />
@@ -529,9 +529,9 @@ export function CreateTaskModal({
           </div>
         </div>
 
-        {/* Tags */}
+        {/* Etiquetas */}
         <div>
-          <label className="block text-[13px] font-medium text-text-secondary mb-1">Tags</label>
+          <label className="block text-[13px] font-medium text-text-secondary mb-1">Etiquetas</label>
           {tags.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {tags.map((tag) => (
@@ -544,7 +544,7 @@ export function CreateTaskModal({
                     type="button"
                     onClick={() => removeTag(tag)}
                     className="hover:text-brand-300"
-                    aria-label={`Remover tag ${tag}`}
+                    aria-label={`Remover etiqueta ${tag}`}
                   >
                     <X size={12} />
                   </button>
@@ -563,7 +563,7 @@ export function CreateTaskModal({
                   addTag();
                 }
               }}
-              placeholder="Adicionar tag..."
+              placeholder="Adicionar etiqueta…"
               className="flex-1 px-3 py-1.5 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted"
               style={{ fontSize: "16px" }}
             />
@@ -572,7 +572,7 @@ export function CreateTaskModal({
               variant="ghost"
               size="sm"
               onClick={addTag}
-              aria-label="Adicionar tag"
+              aria-label="Adicionar etiqueta"
             >
               <Plus size={16} />
             </Button>

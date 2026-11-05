@@ -29,7 +29,7 @@ const SESSION_LABELS: Record<string, { label: string; variant: "success" | "warn
   banned: { label: "Banido", variant: "error" },
   logged_out: { label: "Deslogado", variant: "error" },
   temporarily_banned: { label: "Banimento temporário", variant: "error" },
-  outdated: { label: "Gateway desatualizado", variant: "error" },
+  outdated: { label: "Conexão desatualizada", variant: "error" },
 };
 
 export function StepChannel({ organizationId, draft, setDraft, locked, now }: StepChannelProps) {
@@ -121,7 +121,7 @@ export function StepChannel({ organizationId, draft, setDraft, locked, now }: St
                     <Badge variant={isBridge ? "warning" : "brand"}>
                       <span className="inline-flex items-center gap-1">
                         {isBridge ? <Radio size={11} /> : <Cloud size={11} />}
-                        {isBridge ? "Bridge" : "Cloud API"}
+                        {isBridge ? "WhatsApp por QR code" : "WhatsApp oficial (Meta)"}
                       </span>
                     </Badge>
                     {session && <Badge variant={session.variant}>{session.label}</Badge>}

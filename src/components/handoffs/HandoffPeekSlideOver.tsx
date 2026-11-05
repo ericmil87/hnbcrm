@@ -13,6 +13,7 @@ import { getAiDraft, AiInstructionPopover } from "@/components/inbox/AiDraftCard
 import type { InboxMessage } from "@/components/inbox/types";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import { VOCAB } from "@/lib/vocab";
 
 // Últimas mensagens exibidas no peek — contexto suficiente para decidir sem
 // carregar a conversa inteira.
@@ -129,9 +130,9 @@ export function HandoffPeekSlideOver({
       });
       setInstruction("");
       setInstructOpen(false);
-      toast.success("Instrução enviada — a IA vai propor uma resposta para você revisar no inbox");
+      toast.success("Instrução enviada. A IA vai propor uma resposta para você revisar em Conversas");
     } catch (e) {
-      toast.error(mutationErrorMessage(e, "Falha ao enviar a instrução"));
+      toast.error(mutationErrorMessage(e, "Não foi possível enviar a instrução. Tente de novo."));
     } finally {
       setInstructing(false);
     }
@@ -155,9 +156,9 @@ export function HandoffPeekSlideOver({
         organizationId,
         messageId: message._id as Id<"messages">,
       });
-      if (result.status === "failed") toast.error("Falha na transcrição");
+      if (result.status === "failed") toast.error("Não foi possível transcrever o áudio.");
     } catch {
-      toast.error("Falha na transcrição");
+      toast.error("Não foi possível transcrever o áudio.");
     } finally {
       setTranscribingIds((prev) => {
         const next = new Set(prev);
@@ -174,9 +175,9 @@ export function HandoffPeekSlideOver({
         organizationId,
         messageId: message._id as Id<"messages">,
       });
-      if (result.status === "failed") toast.error("Não foi possível ler a imagem");
+      if (result.status === "failed") toast.error("Não foi possível ler a imagem.");
     } catch {
-      toast.error("Não foi possível ler a imagem");
+      toast.error("Não foi possível ler a imagem.");
     } finally {
       setDescribingIds((prev) => {
         const next = new Set(prev);
@@ -211,7 +212,7 @@ export function HandoffPeekSlideOver({
     <SlideOver
       open
       onClose={onClose}
-      title={`Repasse — ${handoff.title ?? handoff.lead?.title ?? "Conversa"}`}
+      title={`${VOCAB.attention.title}: ${handoff.title ?? handoff.lead?.title ?? "Conversa"}`}
       titleIcon={<ArrowLeftRight size={18} className="text-semantic-warning shrink-0" />}
       className="md:w-[540px]"
       bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
@@ -226,7 +227,7 @@ export function HandoffPeekSlideOver({
         )}
 
         <div className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 px-3 py-2.5">
-          <p className="text-xs font-medium text-semantic-warning mb-1">Motivo do repasse</p>
+          <p className="text-xs font-medium text-semantic-warning mb-1">Motivo do pedido de ajuda</p>
           <p className="text-sm text-text-primary">{handoff.reason}</p>
         </div>
 
@@ -300,7 +301,7 @@ export function HandoffPeekSlideOver({
             <MessageSquareOff size={22} className="text-text-muted" />
             <p className="text-sm text-text-secondary">Sem conversa vinculada</p>
             <p className="text-xs text-text-muted">
-              Este repasse não tem histórico de mensagens para exibir.
+              Este pedido de ajuda não tem histórico de mensagens para exibir.
             </p>
           </div>
         ) : messages === undefined ? (
@@ -324,12 +325,12 @@ export function HandoffPeekSlideOver({
                 // ou substituído por uma nova versão) fica em tom neutro.
                 const pendingDraft = draft.status === "pending";
                 const draftLabel = pendingDraft
-                  ? "Rascunho da IA aguardando revisão"
+                  ? "Resposta sugerida aguardando revisão"
                   : draft.status === "revised"
-                    ? "Rascunho substituído por nova versão"
+                    ? "Resposta sugerida substituída por nova versão"
                     : draft.status === "discarded"
-                      ? "Rascunho da IA descartado"
-                      : "Sugestão da IA enviada";
+                      ? "Resposta sugerida descartada"
+                      : "Resposta sugerida enviada";
                 return (
                   <div
                     key={message._id}
@@ -417,7 +418,7 @@ export function HandoffPeekSlideOver({
                   </Button>
                 </div>
                 <p className="text-xs text-text-muted">
-                  O repasse continua pendente — revise o rascunho na conversa.
+                  O pedido de ajuda continua pendente. Revise a resposta sugerida na conversa.
                 </p>
               </div>
             ) : (
@@ -437,19 +438,19 @@ export function HandoffPeekSlideOver({
               onClick={() => setReturnOpen((v) => !v)}
               className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
             >
-              Devolver à IA
+              {VOCAB.attention.giveBack}
             </Button>
             {returnOpen && (
               <AiInstructionPopover
                 title={
                   handoff.isGroup
-                    ? "Devolver à IA — o que ela precisa saber (opcional)"
-                    : "Devolver à IA — responda o que ela precisa (opcional)"
+                    ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                    : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
                 }
                 placeholder={
                   handoff.isGroup
-                    ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só rejeitar.'
-                    : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só rejeitar.'
+                    ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                    : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
                 }
                 submitLabel="Devolver"
                 direction="up"
@@ -466,7 +467,7 @@ export function HandoffPeekSlideOver({
             onClick={() => void onAccept(handoff._id)}
             className="flex-1 whitespace-nowrap"
           >
-            Aceitar e abrir conversa
+            Assumir conversa e abrir
           </Button>
         </div>
       </div>

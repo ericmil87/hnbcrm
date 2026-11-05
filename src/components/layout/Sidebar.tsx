@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import type { Tab } from "./BottomTabBar";
 import { TAB_ROUTES, activeTabForPath } from "@/lib/routes";
+import { VOCAB } from "@/lib/vocab";
 import { useOrgModules, type OrgModules } from "@/hooks/useOrgModules";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 
@@ -39,16 +40,16 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { id: "dashboard", label: "Painel", icon: LayoutDashboard },
-  { id: "central", label: "Central", icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
-  { id: "board", label: "Pipeline", icon: Kanban, permission: { category: "leads", level: "view_own" } },
+  { id: "dashboard", label: VOCAB.dashboard.nav, icon: LayoutDashboard },
+  { id: "central", label: VOCAB.reports.nav, icon: BarChart3, permission: { category: "reports", level: "view" }, module: "central" },
+  { id: "board", label: VOCAB.funnel.nav, icon: Kanban, permission: { category: "leads", level: "view_own" } },
   { id: "contacts", label: "Contatos", icon: Contact2, permission: { category: "contacts", level: "view" } },
-  { id: "inbox", label: "Caixa de Entrada", icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
-  { id: "handoffs", label: "Repasses", icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
+  { id: "inbox", label: VOCAB.conversations.nav, icon: MessageSquare, permission: { category: "inbox", level: "view_own" } },
+  { id: "handoffs", label: VOCAB.attention.nav, icon: ArrowRightLeft, permission: { category: "inbox", level: "view_own" } },
   { id: "tasks", label: "Tarefas", icon: CheckSquare, permission: { category: "tasks", level: "view_own" } },
-  { id: "calendar", label: "Calendário", icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
+  { id: "calendar", label: VOCAB.agenda.nav, icon: CalendarDays, permission: { category: "tasks", level: "view_own" } },
   { id: "team", label: "Equipe", icon: Users, permission: { category: "team", level: "view" } },
-  { id: "audit", label: "Auditoria", icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
+  { id: "audit", label: VOCAB.audit.nav, icon: ScrollText, permission: { category: "auditLogs", level: "view" } },
   { id: "forms", label: "Formulários", icon: FileText, permission: { category: "settings", level: "manage" } },
   { id: "campaigns", label: "Campanhas", icon: Megaphone, permission: { category: "campaigns", level: "view" } },
   { id: "groups", label: "Grupos", icon: Users2, permission: { category: "inbox", level: "view_own" } },
@@ -78,7 +79,7 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher 
   }, [can, modules]);
 
   // Badges reativos (estilo sino de notificações): mensagens não lidas na
-  // Caixa de Entrada + repasses pendentes. Skip sem permissão de inbox.
+  // Conversas + repasses pendentes. Skip sem permissão de inbox.
   const canSeeInbox = can("inbox", "view_own");
   const inboxUnread = useQuery(
     api.conversations.getInboxUnreadCount,

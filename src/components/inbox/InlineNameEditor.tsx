@@ -113,7 +113,7 @@ export function InlineNameEditor({
       toast.success("Nome atualizado");
       setEditing(false);
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao atualizar o nome"));
+      toast.error(mutationErrorMessage(error, "Não foi possível atualizar o nome."));
       settledRef.current = false;
       inputRef.current?.focus();
     } finally {

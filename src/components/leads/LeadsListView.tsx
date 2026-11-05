@@ -140,7 +140,7 @@ export function LeadsListView({
                 />
               </th>
               <SortableHeader label="Título" columnKey="title" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />
-              <SortableHeader label="Estágio" columnKey="stage" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />
+              <SortableHeader label="Etapa" columnKey="stage" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />
               <SortableHeader label="Valor" columnKey="value" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />
               <SortableHeader label="Prioridade" columnKey="priority" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />
               <SortableHeader label="Temperatura" columnKey="temperature" sortKey={sortKey} sortOrder={sortOrder} onSort={onSort} />

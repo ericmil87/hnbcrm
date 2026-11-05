@@ -34,7 +34,7 @@ export function WizardStep5Complete({
         </div>
 
         <div className="space-y-2 animate-scale-in" style={{ animationDelay: "100ms" }}>
-          <h2 className="text-3xl font-bold text-text-primary">Tudo Pronto!</h2>
+          <h2 className="text-3xl font-bold text-text-primary">Tudo pronto</h2>
           <p className="text-text-secondary">
             Seu CRM está configurado e pronto para usar
           </p>
@@ -49,7 +49,7 @@ export function WizardStep5Complete({
               <Kanban size={20} className="text-brand-500" />
             </div>
             <p className="text-sm text-text-primary text-left">
-              Pipeline <span className="font-semibold">"{pipelineName}"</span> com{" "}
+              Funil <span className="font-semibold">"{pipelineName}"</span> com{" "}
               {stageCount} etapa{stageCount !== 1 ? "s" : ""}
             </p>
           </div>
@@ -94,7 +94,7 @@ export function WizardStep5Complete({
             onClick={onGoToDashboard}
             className="w-full md:w-auto"
           >
-            Ir ao Painel
+            Ir ao painel
           </Button>
         </div>
       </div>

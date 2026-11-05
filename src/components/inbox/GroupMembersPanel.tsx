@@ -155,7 +155,7 @@ export function GroupMembersPanel({
       navigate(`${TAB_ROUTES.board}?lead=${result.leadId}`);
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Falha ao criar o lead"));
+      toast.error(mutationErrorMessage(error, "Não foi possível criar o lead."));
     } finally {
       setBusyKey(null);
     }

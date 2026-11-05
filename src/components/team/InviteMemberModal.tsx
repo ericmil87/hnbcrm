@@ -47,9 +47,9 @@ function slugify(text: string): string {
 }
 
 const HUMAN_ROLES: { value: Role; label: string; desc: string }[] = [
-  { value: "agent", label: "Agente", desc: "Acesso básico a leads e contatos" },
+  { value: "agent", label: "Atendente", desc: "Acesso básico a leads e contatos" },
   { value: "manager", label: "Gerente", desc: "Gerencia leads, equipe e relatórios" },
-  { value: "admin", label: "Admin", desc: "Acesso total a toda organização" },
+  { value: "admin", label: "Administrador", desc: "Acesso total a toda organização" },
 ];
 
 export function InviteMemberModal({
@@ -113,7 +113,7 @@ export function InviteMemberModal({
     try {
       if (memberType === "human") {
         if (!email.trim()) {
-          toast.error("Email é obrigatório para membros humanos.");
+          toast.error("E-mail é obrigatório para membros humanos.");
           setIsSubmitting(false);
           return;
         }
@@ -135,7 +135,7 @@ export function InviteMemberModal({
         setStep("result");
         toast.success(
           outcome === "new"
-            ? "Convite criado!"
+            ? "Convite criado"
             : outcome === "reactivated"
               ? `Acesso de ${name.trim()} reativado.`
               : `${name.trim()} já tinha conta e entrou na organização.`
@@ -163,11 +163,11 @@ export function InviteMemberModal({
 
         setResultMemberName(name.trim());
         setStep("result");
-        toast.success("Agente IA criado com sucesso!");
+        toast.success("Agente de IA criado");
       }
     } catch (error) {
       // Recusas do servidor vêm como ConvexError (legíveis também em produção)
-      toast.error(mutationErrorMessage(error, "Falha ao adicionar membro."));
+      toast.error(mutationErrorMessage(error, "Não foi possível adicionar membro."));
     } finally {
       setIsSubmitting(false);
     }
@@ -176,7 +176,7 @@ export function InviteMemberModal({
   const handleCopy = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
-    toast.success("Copiado!");
+    toast.success("Copiado");
     setTimeout(() => setCopied(false), 2000);
   };
 
@@ -223,7 +223,7 @@ export function InviteMemberModal({
           <div className="text-center">
             <p className="text-sm font-semibold text-text-primary">Humano</p>
             <p className="text-xs text-text-muted mt-1">
-              Convide por email com senha temporária
+              Convide por e-mail com senha temporária
             </p>
           </div>
         </button>
@@ -240,7 +240,7 @@ export function InviteMemberModal({
             <Bot size={24} className="text-semantic-warning" />
           </div>
           <div className="text-center">
-            <p className="text-sm font-semibold text-text-primary">Agente IA</p>
+            <p className="text-sm font-semibold text-text-primary">Agente de IA</p>
             <p className="text-xs text-text-muted mt-1">
               Crie um agente com chave API para automações
             </p>
@@ -262,7 +262,7 @@ export function InviteMemberModal({
       />
 
       <Input
-        label="Email *"
+        label="E-mail *"
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
@@ -334,13 +334,13 @@ export function InviteMemberModal({
       <div className="flex items-start gap-3 p-3 bg-surface-sunken rounded-lg border border-border">
         <Sparkles size={18} className="text-semantic-warning shrink-0 mt-0.5" />
         <p className="text-xs text-text-secondary leading-relaxed">
-          Agentes IA operam via <strong>chave API</strong> para automações, bots e integrações.
+          Agentes de IA operam via <strong>chave de integração</strong> para automações e integrações.
           Após criar, use a chave no header <code className="text-text-primary bg-surface-overlay px-1 rounded">X-API-Key</code> das requisições.
         </p>
       </div>
 
       <Input
-        label="Nome do Agente *"
+        label="Nome do agente *"
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Ex: Bot de Vendas, Agente de Qualificação"
@@ -352,7 +352,7 @@ export function InviteMemberModal({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Key size={16} className="text-brand-500" />
-            <span className="text-sm font-medium text-text-primary">Gerar Chave API</span>
+            <span className="text-sm font-medium text-text-primary">Gerar chave API</span>
           </div>
           <button
             type="button"
@@ -444,9 +444,9 @@ export function InviteMemberModal({
           className="flex-1"
         >
           {isSubmitting
-            ? "Criando..."
+            ? "Criando…"
             : memberType === "human"
-              ? "Convidar Membro"
+              ? "Convidar membro"
               : generateApiKey
                 ? "Criar Agente e Chave"
                 : "Criar Agente"}
@@ -467,7 +467,7 @@ export function InviteMemberModal({
         </p>
         <p className="text-sm text-text-secondary mt-1">
           {memberType === "ai"
-            ? "Agente IA criado com sucesso."
+            ? "Agente de IA criado."
             : resultOutcome === "reactivated"
               ? "Já tinha sido membro: o acesso foi reativado."
               : resultOutcome === "existing"
@@ -545,7 +545,7 @@ export function InviteMemberModal({
             className="w-full"
           >
             {copied ? <Check size={18} /> : <Copy size={18} />}
-            {copied ? "Copiada!" : "Copiar Senha"}
+            {copied ? "Copiada" : "Copiar senha"}
           </Button>
 
           <div className="flex gap-3 bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-3">
@@ -585,7 +585,7 @@ export function InviteMemberModal({
             className="w-full"
           >
             {copied ? <Check size={18} /> : <Copy size={18} />}
-            {copied ? "Copiada!" : "Copiar Chave API"}
+            {copied ? "Copiada" : "Copiar chave API"}
           </Button>
 
           <div className="flex gap-3 bg-semantic-warning/5 border border-semantic-warning/20 rounded-lg p-3">
@@ -606,10 +606,10 @@ export function InviteMemberModal({
 
   const titles: Record<Step, string> = {
     type: "Adicionar Membro",
-    form: memberType === "human" ? "Convidar Membro" : "Criar Agente IA",
+    form: memberType === "human" ? "Convidar membro" : "Criar agente de IA",
     result:
       memberType === "ai"
-        ? "Agente IA Criado"
+        ? "Agente de IA criado"
         : resultOutcome === "new"
           ? "Membro Convidado"
           : "Membro Adicionado",

@@ -14,8 +14,8 @@ interface OnboardingChecklistProps {
 }
 
 const ITEM_NAV: Record<string, { tab: Tab; label: string }> = {
-  pipelineCustomized: { tab: "board", label: "Concluído!" },
-  firstLeadCreated: { tab: "board", label: "Pipeline" },
+  pipelineCustomized: { tab: "board", label: "Concluído" },
+  firstLeadCreated: { tab: "board", label: "Funil" },
   firstContactAdded: { tab: "contacts", label: "Contatos" },
   teamMemberInvited: { tab: "team", label: "Equipe" },
   webhookOrApiKey: { tab: "settings", label: "Config" },
@@ -50,7 +50,7 @@ export function OnboardingChecklist({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="text-base font-semibold text-text-primary">
-              Primeiros Passos
+              Primeiros passos
             </h3>
             <span className="text-xs text-text-muted">
               {completedCount}/{totalCount}
@@ -134,7 +134,7 @@ export function OnboardingChecklist({
               {/* Action */}
               {isCompleted ? (
                 <span className="text-xs text-semantic-success font-medium">
-                  Concluído!
+                  Concluído
                 </span>
               ) : nav ? (
                 <span className="flex items-center gap-1 text-xs text-brand-500 font-medium">
@@ -151,7 +151,7 @@ export function OnboardingChecklist({
       {allDone && (
         <div className="mt-4 pt-3 border-t border-border text-center">
           <p className="text-sm text-semantic-success font-medium">
-            Parabéns! Todos os passos concluídos!
+            Parabéns! Todos os passos concluídos
           </p>
         </div>
       )}

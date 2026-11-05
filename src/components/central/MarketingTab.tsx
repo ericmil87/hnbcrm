@@ -108,7 +108,7 @@ export function MarketingTab({ data, showSpend }: { data: CentralDashboard; show
           <Info size={18} className="mt-0.5 shrink-0 text-semantic-info" aria-hidden="true" />
           <p>
             Para ver gasto, CAC e ROAS, ligue o módulo <strong className="text-text-primary">Origem e investimento</strong>{" "}
-            em Configurações → Central e registre o investimento em mídia.
+            em Configurações → Unidades e departamentos e registre o investimento em mídia.
           </p>
         </div>
       )}

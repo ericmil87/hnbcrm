@@ -47,7 +47,7 @@ const FIELD_ICONS: Record<FormField["type"], React.ElementType> = {
 
 const FIELD_LABELS: Record<FormField["type"], string> = {
   text: "Texto",
-  email: "Email",
+  email: "E-mail",
   phone: "Telefone",
   number: "Número",
   select: "Seleção",

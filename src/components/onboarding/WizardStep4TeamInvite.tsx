@@ -14,9 +14,9 @@ interface WizardStep4TeamInviteProps {
 }
 
 const roleLabels: Record<"admin" | "manager" | "agent", string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
 };
 
 export function WizardStep4TeamInvite({
@@ -51,7 +51,7 @@ export function WizardStep4TeamInvite({
     <div className="space-y-6">
       <div className="text-center space-y-2">
         <h2 className="text-2xl font-bold text-text-primary">
-          Convide sua Equipe
+          Convide sua equipe
         </h2>
         <p className="text-text-secondary">
           Adicione membros humanos e agentes de IA para colaborar no CRM
@@ -77,12 +77,12 @@ export function WizardStep4TeamInvite({
               <>
                 <input
                   type="text"
-                  placeholder="Nome do agente IA"
+                  placeholder="Nome do agente de IA"
                   value={invite.name}
                   onChange={(e) => update(index, { name: e.target.value })}
                   className="flex-1 bg-surface-raised border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-semantic-warning focus:ring-2 focus:ring-semantic-warning/20 focus:outline-none transition-colors"
                   style={{ fontSize: "16px" }}
-                  aria-label={`Nome do agente IA ${index + 1}`}
+                  aria-label={`Nome do agente de IA ${index + 1}`}
                 />
                 <span className="flex-shrink-0 px-2 py-1 text-xs font-medium rounded-md bg-semantic-warning/15 text-semantic-warning border border-semantic-warning/30">
                   IA
@@ -97,7 +97,7 @@ export function WizardStep4TeamInvite({
                   onChange={(e) => update(index, { email: e.target.value })}
                   className="flex-1 bg-surface-raised border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none transition-colors"
                   style={{ fontSize: "16px" }}
-                  aria-label={`Email do membro ${index + 1}`}
+                  aria-label={`E-mail do membro ${index + 1}`}
                 />
                 <select
                   value={invite.role}
@@ -143,7 +143,7 @@ export function WizardStep4TeamInvite({
             className="flex-1 sm:flex-none"
           >
             <User size={16} />
-            + Humano
+            + humano
           </Button>
           <Button
             variant="ghost"
@@ -152,7 +152,7 @@ export function WizardStep4TeamInvite({
             className="flex-1 sm:flex-none text-semantic-warning hover:text-semantic-warning hover:bg-semantic-warning/10"
           >
             <Bot size={16} />
-            + Agente IA
+            + agente de IA
           </Button>
         </div>
       )}

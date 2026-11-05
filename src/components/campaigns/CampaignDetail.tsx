@@ -218,13 +218,13 @@ export function CampaignDetail({ organizationId, campaignId, onClose, onEdit, on
           <Tile label="Lidas" value={s.read + s.replied} sub={formatPercent(report.rates.read)} tone="success" />
           <Tile label="Responderam" value={s.replied} sub={formatPercent(report.rates.replied)} tone="brand" />
           <Tile label="Falhas" value={s.failed} sub={formatPercent(report.rates.failed)} tone={s.failed > 0 ? "error" : undefined} />
-          <Tile label="Opt-out" value={s.optedOut} sub={formatPercent(report.rates.optedOut)} tone={s.optedOut > 0 ? "warning" : undefined} />
+          <Tile label="Descadastrados" value={s.optedOut} sub={formatPercent(report.rates.optedOut)} tone={s.optedOut > 0 ? "warning" : undefined} />
           <Tile label="Pulados" value={s.skipped} tone={s.skipped > 0 ? "warning" : undefined} />
           <Tile label="Custo" value={campaign.provider === "bridge" ? "—" : formatUsd(report.estimatedCostUsd)} />
         </div>
         {(s.optedOut > 0 || s.failed > 0) && (
           <p className="text-xs text-text-muted">
-            Opt-out e bloqueio são os indicadores que antecedem uma restrição do número — se subirem, pause e revise a lista antes de continuar.
+            Descadastros e bloqueios são os indicadores que antecedem uma restrição do número — se subirem, pause e revise a lista antes de continuar.
           </p>
         )}
 

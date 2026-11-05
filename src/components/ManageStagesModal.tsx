@@ -100,9 +100,9 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
       setLocalStages((prev) =>
         prev.map((s) => (s._id === stageId ? { ...s, ...updates, editing: false } : s))
       );
-      toast.success("Etapa atualizada!");
+      toast.success("Etapa atualizada");
     } catch (error) {
-      toast.error("Falha ao atualizar etapa");
+      toast.error("Não foi possível atualizar a etapa.");
     }
   };
 
@@ -110,12 +110,12 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
     try {
       await deleteStage({ stageId });
       setLocalStages((prev) => prev.filter((s) => s._id !== stageId));
-      toast.success("Etapa excluída!");
+      toast.success("Etapa excluída");
     } catch (error) {
       toast.error(
         error instanceof Error && error.message.includes("leads")
           ? "Não é possível excluir uma etapa com leads. Mova ou exclua todos os leads primeiro."
-          : "Falha ao excluir etapa"
+          : "Não foi possível excluir a etapa."
       );
     }
   };
@@ -132,9 +132,9 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
           color: newStageColor,
         }),
         {
-          loading: "Criando etapa...",
-          success: "Etapa criada!",
-          error: "Falha ao criar etapa",
+          loading: "Criando etapa…",
+          success: "Etapa criada",
+          error: "Não foi possível criar a etapa.",
         }
       );
       setNewStageName("");
@@ -153,9 +153,9 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
           stageIds: localStages.map((s) => s._id),
         }),
         {
-          loading: "Salvando ordem...",
-          success: "Ordem salva!",
-          error: "Falha ao salvar ordem",
+          loading: "Salvando ordem…",
+          success: "Ordem salva",
+          error: "Não foi possível salvar a ordem.",
         }
       );
     } catch (error) {
@@ -168,7 +168,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
   }
 
   return (
-    <Modal open={true} onClose={onClose} title="Gerenciar Etapas">
+    <Modal open={true} onClose={onClose} title="Gerenciar etapas">
       <div className="space-y-3">
         {localStages.map((stage, index) => (
           <div
@@ -256,7 +256,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
                   );
                   handleUpdateStage(stage._id, { isClosedWon: newValue, isClosedLost: false });
                 }}
-                label={<span className="text-xs">Fechado - Ganho</span>}
+                label={<span className="text-xs">Fechado - ganho</span>}
               />
 
               <Checkbox
@@ -272,7 +272,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
                   );
                   handleUpdateStage(stage._id, { isClosedLost: newValue, isClosedWon: false });
                 }}
-                label={<span className="text-xs">Fechado - Perdido</span>}
+                label={<span className="text-xs">Fechado - perdido</span>}
               />
             </div>
           </div>
@@ -292,7 +292,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
                 type="text"
                 value={newStageName}
                 onChange={(e) => setNewStageName(e.target.value)}
-                placeholder="Nome da etapa..."
+                placeholder="Nome da etapa…"
                 className="flex-1 px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field focus:outline-none focus:ring-2 focus:ring-brand-500 text-sm"
                 style={{ fontSize: "16px" }}
                 autoFocus
@@ -325,14 +325,14 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
             className="w-full"
           >
             <Plus size={18} />
-            Adicionar Etapa
+            Adicionar etapa
           </Button>
         )}
 
         {/* Save Order Button */}
         <div className="pt-4 border-t border-border">
           <Button onClick={handleSaveOrder} variant="primary" size="md" className="w-full">
-            Salvar Ordem
+            Salvar ordem
           </Button>
         </div>
       </div>
@@ -343,7 +343,7 @@ export function ManageStagesModal({ boardId, organizationId, onClose }: ManageSt
         onConfirm={() => {
           if (confirmDeleteStageId) handleDeleteStage(confirmDeleteStageId);
         }}
-        title="Excluir Etapa"
+        title="Excluir etapa"
         description="Tem certeza que deseja excluir esta etapa? Leads vinculados precisarão ser movidos primeiro."
         confirmLabel="Excluir"
         variant="danger"

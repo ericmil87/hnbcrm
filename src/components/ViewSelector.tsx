@@ -59,31 +59,31 @@ export function ViewSelector({
   const defaultViews: DefaultView[] =
     entityType === "leads"
       ? [
-          { id: "all", label: "Todos os Leads", filters: {} },
+          { id: "all", label: "Todos os leads", filters: {} },
           {
             id: "my-leads",
-            label: "Meus Leads",
+            label: "Meus leads",
             filters: currentTeamMember
               ? { assignedTo: currentTeamMember._id }
               : {},
           },
           {
             id: "unassigned",
-            label: "Não Atribuídos",
+            label: "Não atribuídos",
             filters: { assignedTo: undefined },
           },
-          { id: "hot", label: "Leads Quentes", filters: { temperature: "hot" } },
+          { id: "hot", label: "Leads quentes", filters: { temperature: "hot" } },
           {
             id: "high-priority",
-            label: "Alta Prioridade",
+            label: "Alta prioridade",
             filters: { priority: "urgent" },
           },
         ]
       : [
-          { id: "all", label: "Todos os Contatos", filters: {} },
+          { id: "all", label: "Todos os contatos", filters: {} },
           {
             id: "no-leads",
-            label: "Sem Leads Vinculados",
+            label: "Sem leads vinculados",
             filters: { hasContact: false },
           },
         ];
@@ -134,14 +134,14 @@ export function ViewSelector({
 
     try {
       await deleteSavedView({ viewId });
-      toast.success("Visão excluída");
+      toast.success("Filtro salvo excluído");
 
       // If we're deleting the current view, switch to default
       if (currentViewId === viewId) {
         handleSelectView(defaultViews[0].id, defaultViews[0].filters);
       }
     } catch (error: any) {
-      toast.error(error.message || "Erro ao excluir visão");
+      toast.error(error.message || "Não foi possível excluir o filtro salvo.");
     }
   };
 
@@ -206,7 +206,7 @@ export function ViewSelector({
               <div className="border-t border-border" />
               <div className="p-2">
                 <div className="px-3 py-2 text-xs font-medium text-text-muted uppercase tracking-wide">
-                  Salvos
+                  Filtros salvos
                 </div>
                 {savedViews.map((view) => (
                   <div
@@ -245,7 +245,7 @@ export function ViewSelector({
                         "text-text-muted hover:text-semantic-error",
                         "transition-all"
                       )}
-                      aria-label="Excluir visão"
+                      aria-label="Excluir filtro salvo"
                     >
                       <X size={14} />
                     </button>
@@ -270,7 +270,7 @@ export function ViewSelector({
               )}
             >
               <Plus size={16} />
-              <span>Criar Nova Visão</span>
+              <span>Criar filtro salvo</span>
             </button>
           </div>
         </div>

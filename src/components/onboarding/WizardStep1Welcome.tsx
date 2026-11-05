@@ -1,5 +1,6 @@
 import { SUPPORTED_DEFAULT_COUNTRIES } from "../../../convex/lib/orgPhone";
 import { countryLabel } from "@/lib/defaultCountry";
+import { TIMEZONES } from "@/lib/timezones";
 import {
   Building2,
   ShoppingCart,
@@ -58,21 +59,6 @@ const CURRENCIES = [
   { key: "EUR", flag: "🇪🇺", symbol: "€", label: "Euro", sublabel: "" },
 ];
 
-const TIMEZONES = [
-  { value: "America/Sao_Paulo", label: "América/São Paulo (GMT-3)" },
-  { value: "America/Manaus", label: "América/Manaus (GMT-4)" },
-  { value: "America/Fortaleza", label: "América/Fortaleza (GMT-3)" },
-  { value: "America/New_York", label: "América/Nova York (GMT-5)" },
-  { value: "America/Chicago", label: "América/Chicago (GMT-6)" },
-  { value: "America/Denver", label: "América/Denver (GMT-7)" },
-  { value: "America/Los_Angeles", label: "América/Los Angeles (GMT-8)" },
-  { value: "Europe/Paris", label: "Europa/Paris (GMT+1)" },
-  { value: "Europe/London", label: "Europa/Londres (GMT+0)" },
-  { value: "Europe/Berlin", label: "Europa/Berlim (GMT+1)" },
-  { value: "Asia/Tokyo", label: "Ásia/Tóquio (GMT+9)" },
-  { value: "UTC", label: "UTC (GMT+0)" },
-];
-
 export function WizardStep1Welcome({
   industry,
   companySize,
@@ -102,7 +88,7 @@ export function WizardStep1Welcome({
       {/* Section 1: Industry */}
       <div className="space-y-3">
         <label className="block text-sm font-semibold text-text-primary">
-          Qual o setor do seu negócio?
+          Qual o ramo de atividade do seu negócio?
         </label>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {INDUSTRY_TEMPLATES.map((template) => {
@@ -302,7 +288,7 @@ export function WizardStep1Welcome({
           ))}
         </select>
         <p className="text-xs text-text-muted">
-          Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados.
+          Usado quando um telefone é digitado ou importado sem o código do país (código do país). Números com + sempre valem como digitados.
         </p>
       </div>
     </div>

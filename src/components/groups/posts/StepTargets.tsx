@@ -103,7 +103,7 @@ export function StepTargets({ draft, setDraft, groups, channels, onGoToGroups }:
                 <div key={channelId} className="rounded-card border border-border bg-surface-raised">
                   <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
                     <span className="text-sm font-medium text-text-primary">
-                      {info?.displayName ?? "Número bridge"}
+                      {info?.displayName ?? "Número por QR code"}
                     </span>
                     {connected ? (
                       <Badge variant="success">

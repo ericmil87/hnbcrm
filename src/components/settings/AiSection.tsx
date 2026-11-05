@@ -36,6 +36,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { Spinner } from "@/components/ui/Spinner";
 import { TAB_ROUTES } from "@/lib/routes";
+import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 import { ExternalAgendaSection } from "./ExternalAgendaSection";
 import {
@@ -48,7 +49,7 @@ import { formatMoney, parseDecimal } from "@/lib/format";
 const PERSONAS = [
   { id: "geral", label: "Atendimento geral" },
   { id: "imobiliaria", label: "Imobiliária" },
-  { id: "clinica", label: "Clínica / Saúde" },
+  { id: "clinica", label: "Clínica e saúde" },
   { id: "ecommerce", label: "E-commerce" },
   { id: "servicos_b2b", label: "Serviços B2B" },
 ];
@@ -134,7 +135,7 @@ function ActivationWizardCard({
           <div className="min-w-0">
             <h3 className="text-lg font-semibold text-text-primary">Ativar atendente IA</h3>
             <p className="text-sm text-text-secondary mt-1">
-              Um atendente virtual responde clientes no WhatsApp em modo sugestão — cada resposta
+              Um Atendente IA responde clientes no WhatsApp em modo Sugerir respostas — cada resposta
               é revisada por você antes de sair. Leva menos de um minuto para configurar.
             </p>
           </div>
@@ -186,12 +187,12 @@ function ActivationWizardModal({
       });
       toast.success(
         result.bridgeEnabled
-          ? "Atendente IA ativado — inclusive em canais bridge"
-          : "Atendente IA ativado em modo sugestão"
+          ? "Atendente IA ativado — inclusive no WhatsApp por QR code"
+          : "Atendente IA ativado em modo Sugerir respostas"
       );
       onClose();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao ativar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível ativar.");
     } finally {
       setBusy(false);
     }
@@ -202,8 +203,8 @@ function ActivationWizardModal({
       <div className="space-y-5">
         <ul className="space-y-2">
           {[
-            "Um atendente virtual é criado em modo sugestão — nada é enviado ao cliente sem a sua revisão",
-            "Você pode personalizar persona, conhecimento e funil depois",
+            "Um Atendente IA é criado em modo Sugerir respostas: nada é enviado ao cliente sem a sua revisão",
+            "Você pode personalizar o jeito de atender, o que a IA sabe do seu negócio e o funil depois",
             "Desativável a qualquer momento",
           ].map((bullet) => (
             <li key={bullet} className="flex items-start gap-2 text-sm text-text-secondary">
@@ -215,7 +216,7 @@ function ActivationWizardModal({
 
         <div>
           <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-            Persona
+            Jeito de atender
           </label>
           <select
             value={personaId}
@@ -509,7 +510,7 @@ function FeatureTogglesCard({
       await setFeatureToggles({ organizationId, ...args });
       toast.success(okMessage);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível alterar.");
     } finally {
       setBusy(false);
     }
@@ -541,7 +542,7 @@ function FeatureTogglesCard({
       });
       toast.success("Modelo atualizado");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
     }
   };
 
@@ -553,7 +554,7 @@ function FeatureTogglesCard({
         ...(patch.order !== undefined ? { order: patch.order as never } : {}),
         ...(patch.model !== undefined ? { model: patch.model } : {}),
       }),
-      { loading: "Salvando...", success: "Configuração salva", error: "Falha ao salvar" }
+      { loading: "Salvando…", success: "Configuração salva", error: "Não foi possível salvar." }
     );
 
   const ModelField = ({
@@ -617,14 +618,14 @@ function FeatureTogglesCard({
         </ProductRow>
 
         <ProductRow
-          title="Atendente virtual"
-          description="Responde clientes no WhatsApp — começa em modo sugestão, com revisão humana."
+          title={VOCAB.attendant.name}
+          description="Responde clientes no WhatsApp — começa em Sugerir respostas, com revisão humana."
           enabled={status.attendantEnabled}
           busy={busy}
           onToggle={() =>
             void toggle(
               { attendantEnabled: !status.attendantEnabled },
-              status.attendantEnabled ? "Atendente virtual desativado" : "Atendente virtual ativado"
+              status.attendantEnabled ? "Atendente IA desativado" : "Atendente IA ativado"
             )
           }
         >
@@ -719,7 +720,7 @@ function FeatureTogglesCard({
         >
           <div className="sm:col-span-2">
             <p className="text-xs text-text-muted">
-              O modelo é o mesmo do atendente virtual (a persona e o conhecimento dele também).
+              O modelo é o mesmo do Atendente IA (o jeito de atender e o que ele sabe do negócio também).
               Só o roteamento pode ser diferente.
             </p>
           </div>
@@ -799,10 +800,10 @@ function BridgeAiCard({
     setBusy(true);
     try {
       await setBridgeAiAck({ organizationId, accept: true, riskAck: true });
-      toast.success("Atendente IA liberado em canais bridge");
+      toast.success("Atendente IA liberado no WhatsApp por QR code");
       setShowRiskModal(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao ativar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível ativar.");
     } finally {
       setBusy(false);
     }
@@ -812,9 +813,9 @@ function BridgeAiCard({
     setBusy(true);
     try {
       await setBridgeAiAck({ organizationId, accept: false });
-      toast.success("Atendente IA bloqueado em canais bridge");
+      toast.success("Atendente IA bloqueado no WhatsApp por QR code");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao desativar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível desativar.");
     } finally {
       setBusy(false);
     }
@@ -828,10 +829,10 @@ function BridgeAiCard({
             <AlertTriangle size={20} className="text-semantic-warning" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-lg font-semibold text-text-primary">Canais não oficiais (bridge)</h3>
+            <h3 className="text-lg font-semibold text-text-primary">{VOCAB.whatsappQr}</h3>
             <p className="text-sm text-text-secondary mt-1">
-              Libera o atendente IA para responder também nos canais WhatsApp conectados via
-              bridge (API não oficial). Sem isso, a IA só atende pelos canais oficiais (Meta).
+              Libera o Atendente IA para responder também nos números conectados por QR code.
+              Sem isso, a IA só atende pelo WhatsApp oficial (Meta).
             </p>
           </div>
         </div>
@@ -839,7 +840,7 @@ function BridgeAiCard({
           checked={status.bridgeAiAckDone}
           onCheckedChange={() => handleToggle()}
           hideLabel
-          label="Canais não oficiais (bridge)"
+          label={VOCAB.whatsappQr}
           disabled={busy}
         />
       </div>
@@ -847,7 +848,7 @@ function BridgeAiCard({
       <Modal
         open={showRiskModal}
         onClose={() => setShowRiskModal(false)}
-        title="Atendente IA em canais bridge"
+        title="Atendente IA no WhatsApp por QR code"
       >
         <div className="space-y-4">
           <div className="flex items-start gap-2.5 p-3.5 rounded-lg border border-semantic-error/40 bg-semantic-error/10">
@@ -871,7 +872,7 @@ function BridgeAiCard({
               disabled={!riskChecked || busy}
               className="flex-1"
             >
-              Liberar no bridge
+              Liberar no WhatsApp por QR code
             </Button>
           </div>
         </div>
@@ -881,8 +882,8 @@ function BridgeAiCard({
         open={showRevokeConfirm}
         onClose={() => setShowRevokeConfirm(false)}
         onConfirm={() => void handleRevoke()}
-        title="Bloquear o atendente IA em canais bridge?"
-        description="O atendente para de responder canais bridge imediatamente, inclusive respostas já em geração."
+        title="Bloquear o Atendente IA no WhatsApp por QR code?"
+        description="O atendente para de responder no WhatsApp por QR code imediatamente, inclusive respostas já em geração."
         confirmLabel="Bloquear"
         variant="danger"
       />
@@ -914,7 +915,7 @@ function ActivationCard({
       await setAiEnabled({ organizationId, enabled: !status.enabled });
       toast.success(status.enabled ? "IA desativada" : "IA ativada");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível alterar.");
     } finally {
       setBusy(false);
     }
@@ -927,7 +928,7 @@ function ActivationCard({
       toast.success("IA ativada");
       setShowAckModal(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao ativar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível ativar.");
     } finally {
       setBusy(false);
     }
@@ -942,14 +943,14 @@ function ActivationCard({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-lg font-semibold text-text-primary">Inteligência Artificial</h3>
+              <h3 className="text-lg font-semibold text-text-primary">Inteligência artificial</h3>
               <Badge variant={status.active ? "success" : "default"}>
                 {status.active ? "Ativa" : "Desativada"}
               </Badge>
             </div>
             <p className="text-sm text-text-secondary mt-1">
-              Copiloto in-app (opera o CRM com você) e Atendente virtual no WhatsApp (responde
-              clientes com repasse para humanos). Tudo opcional — nada roda sem ativar aqui.
+              Copiloto (assistente da sua equipe) e Atendente IA no WhatsApp (responde
+              clientes e chama a equipe quando precisa). Tudo opcional: nada roda sem ativar aqui.
             </p>
             {status.lgpdAckDone && (
               <p className="flex items-center gap-1.5 text-xs text-text-muted mt-2">
@@ -1057,9 +1058,9 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
         organizationId,
         ...(personaId ? { personaId } : {}),
       });
-      toast.success("Atendente IA criado em modo sugestão");
+      toast.success("Atendente IA criado em modo Sugerir respostas");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao criar atendente");
+      toast.error(e instanceof Error ? e.message : "Não foi possível criar atendente.");
     } finally {
       setBusy(false);
     }
@@ -1083,17 +1084,17 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
             <Bot size={20} className="text-purple-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <h3 className="text-lg font-semibold text-text-primary">Atendente virtual</h3>
+            <h3 className="text-lg font-semibold text-text-primary">{VOCAB.attendant.name}</h3>
             <p className="text-sm text-text-secondary mt-1 mb-4">
-              Nasce pronto: persona pelo seu ramo, conhecimento das suas respostas rápidas,
-              horário comercial. Começa em <strong>modo sugestão</strong> — cada resposta vira um
-              rascunho que sua equipe aprova antes de enviar. Funciona em canais WhatsApp
+              Nasce pronto: jeito de atender pelo seu ramo, o que a IA sabe do seu negócio a partir das suas respostas rápidas,
+              horário comercial. Começa em <strong>Sugerir respostas</strong>: cada resposta vira uma
+              resposta sugerida que sua equipe aprova antes de enviar. Funciona em canais WhatsApp
               oficiais (Meta).
             </p>
             <div className="flex flex-wrap items-end gap-3">
               <div>
                 <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                  Persona
+                  Jeito de atender
                 </label>
                 <select
                   value={personaId}
@@ -1110,7 +1111,7 @@ function AttendantCard({ organizationId }: { organizationId: Id<"organizations">
               </div>
               <Button onClick={() => void handleCreate()} disabled={busy}>
                 <Bot size={16} className="mr-1.5" />
-                Ativar Atendente
+                Ativar atendente
               </Button>
             </div>
           </div>
@@ -1227,7 +1228,7 @@ function replyLimitWarning(raw: string, label: string): string | null {
   const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed < 0) return null; // erro tratado no salvar
   if (parsed === 0) return `${label}: sem limite — a IA responde indefinidamente. Só para testes.`;
-  if (parsed > 100) return `${label}: ${parsed} é alto demais para servir de guarda-corpo.`;
+  if (parsed > 100) return `${label}: ${parsed} é alto demais para servir de limite.`;
   return null;
 }
 
@@ -1491,10 +1492,10 @@ function AttendantConfig({
         patch: { mode: isAutopilot ? "suggest" : "autopilot" },
       });
       toast.success(
-        isAutopilot ? "Voltou ao modo sugestão" : "Autopilot ativado — respostas saem sem revisão"
+        isAutopilot ? "Voltou para Sugerir respostas" : "Responder sozinha ativado. As respostas saem sem revisão"
       );
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar o modo");
+      toast.error(e instanceof Error ? e.message : "Não foi possível alterar o modo.");
     }
   };
 
@@ -1506,10 +1507,10 @@ function AttendantConfig({
         patch: { mode: "autopilot" },
         autopilotRiskAck: true,
       });
-      toast.success("Autopilot ativado antecipadamente — respostas saem sem revisão");
+      toast.success("Responder sozinha ativado antes da hora. As respostas saem sem revisão");
       setShowEarlyAutopilot(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao ativar o autopilot");
+      toast.error(e instanceof Error ? e.message : "Não foi possível ativar Responder sozinha.");
     } finally {
       setEarlyBusy(false);
     }
@@ -1620,7 +1621,7 @@ function AttendantConfig({
       toast.success("Perfil do atendente atualizado");
       setShowCustomize(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar.");
     }
   };
 
@@ -1635,13 +1636,13 @@ function AttendantConfig({
             <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-lg font-semibold text-text-primary">{attendant.name}</h3>
               <Badge variant={isAutopilot ? "warning" : "info"}>
-                {isAutopilot ? "Autopilot" : "Modo sugestão"}
+                {isAutopilot ? VOCAB.attendant.modeAuto : VOCAB.attendant.modeSuggest}
               </Badge>
             </div>
             <p className="text-sm text-text-secondary mt-1">
               {isAutopilot
-                ? "Responde clientes automaticamente (com repasse para humanos quando preciso)."
-                : "Gera rascunhos que sua equipe revisa e envia — nada sai sozinho."}
+                ? "Responde clientes sozinha e chama a equipe quando precisa."
+                : "Sugere respostas que sua equipe revisa e envia: nada sai sozinho."}
             </p>
             {pipelineConfig?.boardId ? (
               <button
@@ -1653,7 +1654,7 @@ function AttendantConfig({
                 <span className="font-medium text-text-secondary">{infoBoardName ?? "…"}</span>
                 {" → "}
                 <span className="font-medium text-text-secondary">
-                  {infoStageName ?? "primeiro estágio"}
+                  {infoStageName ?? "primeira etapa"}
                 </span>
               </button>
             ) : (
@@ -1704,15 +1705,15 @@ function AttendantConfig({
           <div className="flex-1" />
           {isAutopilot ? (
             <Button variant="secondary" onClick={() => void handleModeToggle()}>
-              Voltar ao modo sugestão
+              Voltar para Sugerir respostas
             </Button>
           ) : metrics.autopilotUnlocked ? (
-            <Button onClick={() => void handleModeToggle()}>Ativar autopilot</Button>
+            <Button onClick={() => void handleModeToggle()}>Ativar Responder sozinha</Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
                 <Lock size={13} />
-                Autopilot libera com 10+ sugestões revisadas e 60%+ de aceitação
+                Responder sozinha libera com 10+ respostas sugeridas revisadas e 60%+ de aceitação
               </span>
               <Button
                 variant="secondary"
@@ -1729,14 +1730,14 @@ function AttendantConfig({
           {isAutopilot && profile.autopilotEarlyAck && (
             <p className="w-full flex items-center gap-1.5 text-xs text-semantic-warning">
               <AlertTriangle size={12} className="shrink-0" />
-              Autopilot ativado antecipadamente (sem o gate de métricas) em{" "}
+              Responder sozinha ativado antes da hora (sem atingir as métricas) em{" "}
               {new Date(profile.autopilotEarlyAck.acceptedAt).toLocaleDateString("pt-BR")}.
             </p>
           )}
           {(isAutopilot || metrics.autopilotUnlocked) && (
             <p className="w-full flex items-center gap-1.5 text-xs text-text-muted">
               <Clock size={12} className="shrink-0" />
-              Em autopilot, considere definir um horário de atendimento (
+              Em Responder sozinha, considere definir um horário de atendimento (
               <button
                 type="button"
                 onClick={() => setShowCustomize(true)}
@@ -1753,11 +1754,11 @@ function AttendantConfig({
       <Modal
         open={showEarlyAutopilot}
         onClose={() => setShowEarlyAutopilot(false)}
-        title="Ativar o autopilot antes do gate"
+        title="Ativar Responder sozinha antes da hora"
       >
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            O gate de métricas existe para você ver a IA responder em modo sugestão antes de
+            As métricas existem para você ver a IA sugerir respostas antes de
             deixá-la falar sozinha com seus clientes. Se você já conhece o atendente e sabe o que
             esperar, pode pular essa etapa.
           </p>
@@ -1769,22 +1770,22 @@ function AttendantConfig({
                 humana, a partir de agora.
               </li>
               <li>
-                Persona, conhecimento e regras do funil ainda não foram validados com conversas
+                O jeito de atender, o que a IA sabe do seu negócio e as regras do funil ainda não foram validados com conversas
                 reais desta conta — erros de tom ou de informação chegam ao cliente.
               </li>
               <li>
-                Os tetos de resposta, o horário de atendimento e as palavras de repasse continuam
-                valendo. Você pode voltar ao modo sugestão a qualquer momento.
+                Os tetos de resposta, o horário de atendimento e as palavras que chamam a equipe continuam
+                valendo. Você pode voltar para Sugerir respostas a qualquer momento.
               </li>
               <li>
-                Esta ativação fica registrada na auditoria com seu nome e a data.
+                Esta ativação fica registrada no histórico de alterações com seu nome e a data.
               </li>
             </ul>
           </div>
           <Checkbox
             checked={earlyRiskChecked}
             onChange={(e) => setEarlyRiskChecked(e.target.checked)}
-            label="Entendo os riscos e quero ativar o autopilot agora"
+            label="Entendo os riscos e quero ativar Responder sozinha agora"
           />
           <div className="flex gap-2 pt-2">
             <Button
@@ -1799,7 +1800,7 @@ function AttendantConfig({
               disabled={!earlyRiskChecked || earlyBusy}
               className="flex-1"
             >
-              Ativar autopilot
+              Ativar Responder sozinha
             </Button>
           </div>
         </div>
@@ -1808,13 +1809,13 @@ function AttendantConfig({
       {showCustomize && (
         <div className="mt-4 pt-4 border-t border-border space-y-5">
           <FieldGroup
-            title="Persona"
+            title={VOCAB.persona}
             description="Quem é o atendente e o que ele pode afirmar ao cliente."
             divided={false}
           >
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Conhecimento do negócio (a IA só afirma o que estiver aqui)
+                O que a IA sabe do seu negócio (ela só afirma o que estiver aqui)
               </label>
               <textarea
                 value={knowledge}
@@ -1829,7 +1830,7 @@ function AttendantConfig({
             </div>
             <div>
               <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                Persona (instruções de comportamento)
+                Jeito de atender (como a IA deve se apresentar e conversar)
               </label>
               <textarea
                 value={systemPrompt}
@@ -1911,7 +1912,7 @@ function AttendantConfig({
             <div className="pt-1">
               <p className="text-[13px] font-medium text-text-secondary">Limites de resposta</p>
               <p className="text-xs text-text-muted mt-0.5">
-                Guarda-corpos anti-loop (para quando o outro lado também é um bot), contados por
+                Limite de respostas seguidas (para quando o outro lado também é uma automação), contados por
                 conversa. Em branco = padrão ({DEFAULT_REPLIES_PER_CONVERSATION} por conversa,{" "}
                 {DEFAULT_REPLIES_PER_HOUR} por hora). 0 = sem limite (use só em testes).
               </p>
@@ -1978,8 +1979,7 @@ function AttendantConfig({
                     Proteção contra robôs e mensagens automáticas
                   </p>
                   <p className="text-xs text-text-muted mt-0.5">
-                    Quando o outro lado parece um robô (auto-resposta, boletim, outro assistente
-                    virtual), a IA para de responder, abre um repasse para verificação e etiqueta o
+                    Quando o outro lado parece um robô (auto-resposta, boletim, outra IA), a IA para de responder, abre um pedido de ajuda para verificação e etiqueta o
                     lead. Evita loops entre dois robôs. Ligado por padrão.
                   </p>
                 </div>
@@ -2041,8 +2041,8 @@ function AttendantConfig({
               <FollowUpModeCard
                 active={fuMode === "draft"}
                 icon={FileEdit}
-                title="Preparar rascunho"
-                subtitle="No vencimento, a IA deixa um rascunho no inbox — você revisa e envia."
+                title="Preparar resposta sugerida"
+                subtitle="No vencimento, a IA deixa uma resposta sugerida em Conversas — você revisa e envia."
                 badge="Recomendado"
                 onClick={() => setFuMode("draft")}
               />
@@ -2050,7 +2050,7 @@ function AttendantConfig({
                 active={fuMode === "send"}
                 icon={Send}
                 title="Enviar sozinho"
-                subtitle="No vencimento, a IA manda a mensagem sozinha (em autopilot)."
+                subtitle="No vencimento, a IA manda a mensagem sozinha (em Responder sozinha)."
                 onClick={() => setFuMode("send")}
               />
             </div>
@@ -2059,14 +2059,14 @@ function AttendantConfig({
               <div className="flex items-start gap-2 p-2.5 rounded-lg border border-semantic-warning/40 bg-semantic-warning/10">
                 <AlertTriangle size={14} className="shrink-0 text-semantic-warning mt-0.5" />
                 <p className="text-xs text-text-secondary">
-                  A IA manda a mensagem sem o cliente ter escrito nada antes. No WhatsApp não
-                  oficial (bridge) isso conta como envio frio; no oficial (Meta), fora da janela de
-                  24h o texto vira rascunho automaticamente.
+                  A IA manda a mensagem sem o cliente ter escrito nada antes. No WhatsApp por
+                  QR code isso conta como envio frio; no oficial (Meta), fora da janela de
+                  24h o texto vira resposta sugerida automaticamente.
                   {!isAutopilot && (
                     <>
                       {" "}
-                      Este atendente está em <strong>modo sugestão</strong> — na prática, os
-                      follow-ups também viram rascunho até você ativar o autopilot.
+                      Este atendente está em <strong>Sugerir respostas</strong> — na prática, os
+                      follow-ups também viram resposta sugerida até você ativar Responder sozinha.
                     </>
                   )}
                 </p>
@@ -2187,12 +2187,12 @@ function AttendantConfig({
           </FieldGroup>
 
           <FieldGroup
-            title="Repasse para humanos"
+            title="Chamar a equipe"
             description="Palavras que fazem a IA parar na hora e chamar alguém do time."
           >
             <div className="max-w-md">
               <Input
-                label="Palavras de repasse (separadas por vírgula)"
+                label="Palavras que chamam a equipe (separadas por vírgula)"
                 type="text"
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
@@ -2230,7 +2230,7 @@ function AttendantConfig({
                   </div>
                   <div className="flex-1 min-w-[220px]">
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                      Estágio inicial
+                      Etapa inicial
                     </label>
                     <select
                       value={pcInitialStageId}
@@ -2238,7 +2238,7 @@ function AttendantConfig({
                       disabled={!pcBoardId}
                       className="w-full bg-surface-raised border border-border-strong text-text-primary rounded-field px-3.5 py-2.5 text-sm focus:outline-none focus:border-brand-500 disabled:opacity-50"
                     >
-                      <option value="">Primeiro estágio do funil</option>
+                      <option value="">Primeira etapa do funil</option>
                       {(pcStages ?? []).map((s) => (
                         <option key={s._id} value={s._id}>
                           {s.name}
@@ -2251,7 +2251,7 @@ function AttendantConfig({
                 <div className="flex flex-wrap gap-4 items-end">
                   <div className="flex-1 min-w-[220px]">
                     <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-                      Mover para este estágio ao qualificar
+                      Mover para esta etapa ao qualificar
                     </label>
                     <select
                       value={pcQualifiedStageId}
@@ -2282,7 +2282,7 @@ function AttendantConfig({
                   </div>
                 </div>
                 <p className="text-xs text-text-muted -mt-2">
-                  Ao atingir o limiar, o lead é movido automaticamente (apenas em autopilot).
+                  Ao atingir o limiar, o lead é movido automaticamente (apenas em Responder sozinha).
                 </p>
 
                 <div>
@@ -2304,7 +2304,7 @@ function AttendantConfig({
                       Atendente pode mover leads no funil
                     </p>
                     <p className="text-xs text-text-muted mt-0.5">
-                      Desligado, a IA não move estágios por conta própria; a regra de qualificação
+                      Desligado, a IA não move etapas por conta própria; a regra de qualificação
                       acima continua valendo.
                     </p>
                   </div>
@@ -2400,7 +2400,7 @@ const SIM_KINDS: Array<{
     Icon: Mic,
     label: "nota de voz (transcrita)",
     hint: "Enviar como nota de voz — o texto vira a transcrição",
-    placeholder: "Transcrição da nota de voz...",
+    placeholder: "Transcrição da nota de voz…",
   },
   {
     kind: "image",
@@ -2421,8 +2421,8 @@ const SIM_KINDS: Array<{
 type SimTransport = "meta" | "bridge" | "instagram" | "messenger";
 
 const SIM_TRANSPORT_OPTIONS: Array<{ value: SimTransport; label: string }> = [
-  { value: "meta", label: "WhatsApp oficial" },
-  { value: "bridge", label: "WhatsApp não oficial" },
+  { value: "meta", label: "WhatsApp oficial (Meta)" },
+  { value: "bridge", label: "WhatsApp por QR code" },
   { value: "instagram", label: "Instagram" },
   { value: "messenger", label: "Messenger" },
 ];
@@ -2672,7 +2672,7 @@ const USAGE_KIND_LABELS: Record<string, string> = {
 
 const SPEND_MODE_OPTIONS = [
   { value: "warn", label: "Avisar (a IA continua funcionando)" },
-  { value: "block", label: "Bloquear (atendente em rascunho + repasse; demais recursos suspensos)" },
+  { value: "block", label: "Bloquear (atendente só sugere respostas e chama a equipe; demais recursos suspensos)" },
   { value: "off", label: "Desligado (sem avisos)" },
 ] as const;
 
@@ -2729,7 +2729,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
       setCapDraft(null);
       toast.success("Teto de gastos atualizado");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar o teto");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar. o teto");
     } finally {
       setSavingCap(false);
     }
@@ -2757,8 +2757,8 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
           <div className="flex gap-2 rounded-card border border-semantic-error/40 bg-semantic-error/10 p-3 text-sm text-text-primary">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-semantic-error" />
             <span>
-              Teto de gastos do mês atingido. O atendente está deixando as respostas como rascunho
-              (com repasse para a equipe) e copiloto, leitura de imagens, IA em grupos,
+              Teto de gastos do mês atingido. O atendente está deixando as respostas como resposta sugerida
+              (chamando a equipe) e copiloto, leitura de imagens, IA em grupos,
               publicações e resumos estão suspensos até o próximo mês — ou até você aumentar o
               teto.
             </span>
@@ -2882,7 +2882,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
           <p className="text-xs text-text-muted">
             Os administradores recebem um aviso (sino e e-mail) ao chegar no percentual escolhido e
             outro ao atingir o teto — uma vez por mês cada. Em "Bloquear", ao atingir o teto o
-            atendente passa a deixar rascunhos para a equipe (abrindo um repasse) e os demais
+            atendente passa a deixar respostas sugeridas para a equipe (abrindo um pedido de ajuda) e os demais
             recursos de IA ficam suspensos até virar o mês.
           </p>
         </div>
@@ -2930,7 +2930,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
                     organizationId,
                     budget: budgetInput ? Number(budgetInput) : null,
                   }),
-                  { loading: "Salvando...", success: "Limite atualizado", error: "Falha ao salvar" }
+                  { loading: "Salvando…", success: "Limite atualizado", error: "Não foi possível salvar." }
                 )
               }
             >
@@ -2939,7 +2939,7 @@ function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) 
           </div>
           <p className="text-xs text-text-muted">
             Ao atingir o limite, a IA não atende conversas novas até o próximo mês (as já iniciadas
-            continuam) e abre um repasse para a equipe responder.
+            continuam) e abre um pedido de ajuda para a equipe responder.
           </p>
         </div>
       </div>
@@ -3032,7 +3032,7 @@ function PrivacyCard({
       setByoForm({ provider: "openrouter", baseUrl: "", apiKey: "" });
       setTestResults(null);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao salvar provider");
+      toast.error(e instanceof Error ? e.message : "Não foi possível salvar. provider");
     } finally {
       setByoSaving(false);
     }
@@ -3092,7 +3092,7 @@ function PrivacyCard({
                         | "opencode-only"
                         | "openrouter-only",
                     }),
-                    { loading: "Salvando...", success: "Roteamento atualizado", error: "Falha ao salvar" }
+                    { loading: "Salvando…", success: "Roteamento atualizado", error: "Não foi possível salvar." }
                   )
                 }
                 className={SELECT_CLS}
@@ -3141,9 +3141,9 @@ function PrivacyCard({
               type="button"
               onClick={() =>
                 toast.promise(setProviderMode({ organizationId, mode: "platform" }), {
-                  loading: "Voltando...",
+                  loading: "Voltando…",
                   success: "De volta às keys da plataforma",
-                  error: "Falha ao trocar",
+                  error: "Não foi possível trocar.",
                 })
               }
               className="text-xs text-brand-500 hover:text-brand-400"
@@ -3203,7 +3203,7 @@ function PrivacyCard({
                 Cancelar
               </Button>
               <Button size="sm" onClick={() => void handleSaveByo()} disabled={byoSaving}>
-                {byoSaving ? "Salvando..." : "Salvar e ativar"}
+                {byoSaving ? "Salvando…" : "Salvar e ativar"}
               </Button>
             </div>
           </div>
@@ -3253,9 +3253,9 @@ function PrivacyCard({
         checked={status.strictZdr}
         onChange={(e) =>
           toast.promise(setStrictZdr({ organizationId, strictZdr: e.target.checked }), {
-            loading: "Salvando...",
+            loading: "Salvando…",
             success: "Preferência salva",
-            error: "Falha ao salvar",
+            error: "Não foi possível salvar.",
           })
         }
         label="Modo estrito: recusar qualquer rota que retenha dados (compliance rígida)"

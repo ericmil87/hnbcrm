@@ -138,7 +138,7 @@ function bridgeStateBadge(state: BridgeSessionState): {
     case "temporarily_banned":
       return { variant: "error", label: "Banimento temporário" };
     case "outdated":
-      return { variant: "error", label: "Gateway desatualizado" };
+      return { variant: "error", label: "Conexão desatualizada" };
     case "logged_out":
       return { variant: "error", label: "Deslogado" };
     case "disconnected":
@@ -309,33 +309,33 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
     toast.promise(setChannelConfigStatus({ configId: config._id, status: nextStatus }), {
       loading: nextStatus === "active" ? "Ativando número..." : "Desativando número...",
       success: nextStatus === "active" ? "Número ativado" : "Número desativado",
-      error: "Falha ao atualizar status do número",
+      error: "Não foi possível atualizar status do número.",
     });
   };
 
   const handleToggleAutoTranscribe = (config: ChannelConfig) => {
     const next = !config.autoTranscribeAudio;
     toast.promise(updateChannelConfig({ configId: config._id, autoTranscribeAudio: next }), {
-      loading: "Atualizando...",
+      loading: "Atualizando…",
       success: next ? "Transcrição automática ativada" : "Transcrição automática desativada",
-      error: "Falha ao atualizar transcrição automática",
+      error: "Não foi possível atualizar transcrição automática.",
     });
   };
 
   const handleTogglePhoneNotifications = (config: ChannelConfig) => {
     const next = !(config.bridgePhoneNotifications ?? true);
     toast.promise(updateChannelConfig({ configId: config._id, bridgePhoneNotifications: next }), {
-      loading: "Atualizando...",
+      loading: "Atualizando…",
       success: next ? "Notificações no celular ativadas" : "Notificações no celular desativadas",
-      error: "Falha ao atualizar notificações no celular",
+      error: "Não foi possível atualizar notificações no celular.",
     });
   };
 
   const handleDelete = (configId: Id<"channelConfigs">) => {
     toast.promise(deleteChannelConfig({ configId }), {
-      loading: "Excluindo número...",
+      loading: "Excluindo número…",
       success: "Número desconectado",
-      error: "Falha ao excluir número",
+      error: "Não foi possível excluir número.",
     });
     setConfirmDeleteId(null);
   };
@@ -351,10 +351,10 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
             : `Conectado: ${result.verifiedName ?? config.displayName} (${result.displayPhoneNumber ?? config.phoneNumberId})`
         );
       } else {
-        toast.error(result.error ?? "Falha ao testar conexão");
+        toast.error(result.error ?? "Não foi possível testar conexão.");
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Falha ao testar conexão");
+      toast.error(error instanceof Error ? error.message : "Não foi possível testar conexão.");
     } finally {
       setTestingId(null);
     }
@@ -412,7 +412,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
             <div>
               <h3 className="text-lg font-semibold text-text-primary">Canais</h3>
               <p className="text-sm text-text-secondary">
-                Conecte números de WhatsApp — via Cloud API oficial (Meta) ou por um gateway não oficial.
+                Conecte números de WhatsApp pelo WhatsApp oficial (Meta) ou por QR code.
               </p>
             </div>
           </div>
@@ -502,7 +502,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
           </Button>
         </div>
         <p className="text-xs text-text-muted mt-2">
-          O verify token de cada número da Cloud API está listado no card correspondente acima.
+          O verify token de cada número do WhatsApp oficial está listado no card correspondente acima.
         </p>
       </Card>
 
@@ -541,7 +541,7 @@ export function ChannelsSection({ organizationId }: { organizationId: Id<"organi
                 rel="noopener noreferrer"
                 className="underline hover:text-text-primary"
               >
-                WhatsApp Cloud API — Get Started
+                Guia do WhatsApp oficial (Meta)
               </a>
               .
             </p>
@@ -635,7 +635,7 @@ function ChannelCard({
       const r = await syncTemplates({ channelConfigId: config._id });
       toast.success(`${r.approved} templates aprovados de ${r.synced} sincronizados`);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Falha ao sincronizar templates");
+      toast.error(e instanceof Error ? e.message.replace(/^.*Uncaught Error: /, "") : "Não foi possível sincronizar templates.");
     } finally {
       setSyncingTemplates(false);
     }
@@ -659,11 +659,11 @@ function ChannelCard({
             <Badge variant={isBridge ? "warning" : "brand"}>
               {isBridge ? (
                 <span className="inline-flex items-center gap-1">
-                  <Radio size={11} /> Gateway não oficial
+                  <Radio size={11} /> WhatsApp por QR code
                 </span>
               ) : (
                 <span className="inline-flex items-center gap-1">
-                  <Cloud size={11} /> Cloud API
+                  <Cloud size={11} /> WhatsApp oficial (Meta)
                 </span>
               )}
             </Badge>
@@ -852,12 +852,12 @@ function ChannelCard({
         <div className="mt-3 rounded-lg bg-surface-base border border-border-subtle p-2.5 text-xs text-text-muted space-y-0.5 break-all">
           {config.bridgeBaseUrl && (
             <div>
-              Gateway: <span className="font-mono text-text-secondary">{config.bridgeBaseUrl}</span>
+              Servidor de conexão: <span className="font-mono text-text-secondary">{config.bridgeBaseUrl}</span>
             </div>
           )}
           {config.bridgeInstanceId && (
             <div>
-              Instância: <span className="font-mono text-text-secondary">{config.bridgeInstanceId}</span>
+              ID da conexão: <span className="font-mono text-text-secondary">{config.bridgeInstanceId}</span>
             </div>
           )}
         </div>
@@ -953,7 +953,7 @@ function BridgeHistoryPanel({
       const result = await syncHistory({ configId: config._id });
       toast.success(result.detail);
     } catch (e: any) {
-      toast.error(e?.message ?? "Falha ao sincronizar");
+      toast.error(e?.message ?? "Não foi possível sincronizar.");
     } finally {
       setSyncing(false);
     }
@@ -1020,7 +1020,7 @@ function BridgeHistoryPanel({
       {expanded && (
         <div className="mt-3 space-y-3 border-t border-border-subtle pt-3">
           <p className="text-xs text-text-muted leading-relaxed">
-            O gateway guarda uma cópia das mensagens deste número e o CRM importa o
+            A conexão guarda uma cópia das mensagens deste número e o CRM importa o
             que estiver faltando — mensagens digitadas no app do celular, ou
             recebidas enquanto o CRM estava fora do ar. Importar duas vezes não
             duplica nada.
@@ -1193,7 +1193,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
     } catch (e) {
       if (doneRef.current) return;
       // Keep the modal (and any existing QR) alive; surface a discreet warning.
-      setPollError(e instanceof Error ? e.message : "Falha ao consultar o gateway — tentando de novo...");
+      setPollError(e instanceof Error ? e.message : "Não foi possível consultar a conexão. Tentando de novo…");
     } finally {
       inFlightRef.current = false;
       setLoading(false);
@@ -1213,7 +1213,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
   const isConnected = result?.state === "connected";
 
   return (
-    <Modal open onClose={onClose} title="Parear número via QR">
+    <Modal open onClose={onClose} title="Conectar número por QR code">
       <div className="space-y-4">
         <p className="text-sm text-text-secondary">
           No celular do número dedicado, abra o WhatsApp e vá em{" "}
@@ -1222,13 +1222,13 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
         </p>
 
         {/* Aviso ANTES de escanear. Genérico porque o número só é conhecido
-            depois do pareamento — não dá para nomear a conta antes. */}
+            depois da conexão — não dá para nomear a conta antes. */}
         <div className="flex gap-2.5 rounded-lg border border-semantic-warning/30 bg-semantic-warning/5 p-3">
           <AlertTriangle size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
           <p className="text-xs leading-relaxed text-text-secondary">
             Um número de WhatsApp só pode estar ativo em <span className="text-text-primary">uma conta</span> do
             HNBCRM. Se este número já estiver conectado em outra conta, aquela conexão será{" "}
-            <span className="text-text-primary">encerrada automaticamente</span> ao concluir o pareamento — o
+            <span className="text-text-primary">encerrada automaticamente</span> ao concluir a conexão — o
             canal de lá é desativado e as campanhas em andamento são pausadas. O histórico não é apagado.
           </p>
         </div>
@@ -1254,7 +1254,7 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
                 <Check size={24} className="text-semantic-success" />
               </div>
               <p className="text-sm font-medium text-text-primary">
-                {pairedNow ? "Conectado!" : "Número já conectado"}
+                {pairedNow ? "Conectado" : "Número já conectado"}
               </p>
               {result?.displayPhoneNumber && (
                 <p className="text-xs text-text-muted tabular-nums">{result.displayPhoneNumber}</p>
@@ -1263,14 +1263,14 @@ function BridgeQrModal({ config, onClose }: { config: ChannelConfig; onClose: ()
           ) : loading && !result ? (
             <div className="flex flex-col items-center gap-3 text-text-muted">
               <Spinner />
-              <span className="text-sm">Consultando o gateway...</span>
+              <span className="text-sm">Consultando a conexão…</span>
             </div>
           ) : result?.qrCode ? (
             <div className="flex flex-col items-center gap-3">
               {/* wuzapi returns a base64 PNG data-URI — safe to render directly */}
               <img
                 src={result.qrCode}
-                alt="QR code para parear o WhatsApp"
+                alt="QR code para conectar o WhatsApp"
                 className="h-56 w-56 rounded-lg bg-white p-2"
               />
               <p className="text-xs text-text-muted flex items-center gap-1.5">
@@ -1377,8 +1377,8 @@ function ChannelFormModal({
     : provider === null
       ? "Conectar número"
       : provider === "meta"
-        ? "Conectar via Cloud API"
-        : "Conectar via gateway não oficial";
+        ? "Conectar WhatsApp oficial (Meta)"
+        : "Conectar WhatsApp por QR code";
 
   return (
     <Modal open onClose={onClose} title={title}>
@@ -1445,7 +1445,7 @@ function ProviderChooser({
       >
         <div className="flex items-center gap-2 mb-1">
           <Cloud size={18} className="text-brand-500" />
-          <span className="font-medium text-text-primary">WhatsApp Cloud API (oficial/Meta)</span>
+          <span className="font-medium text-text-primary">WhatsApp oficial (Meta)</span>
         </div>
         <p className="text-sm text-text-secondary">
           Recomendado. Aprovado pela Meta, com janela de 24h e templates. Requer app no Meta for
@@ -1458,7 +1458,7 @@ function ProviderChooser({
       >
         <div className="flex items-center gap-2 mb-1">
           <Radio size={18} className="text-semantic-warning" />
-          <span className="font-medium text-text-primary">WhatsApp via gateway (não oficial)</span>
+          <span className="font-medium text-text-primary">WhatsApp por QR code</span>
         </div>
         <p className="text-sm text-text-secondary">
           Ponte rápida via protocolo não sancionado pela Meta. Sem janela de 24h nem templates.{" "}
@@ -1548,9 +1548,9 @@ function MetaForm({
             accessToken: form.accessToken ? form.accessToken : undefined,
           }),
           {
-            loading: "Salvando alterações...",
-            success: "Número atualizado com sucesso",
-            error: (error) => (error instanceof Error ? error.message : "Falha ao atualizar número"),
+            loading: "Salvando alterações…",
+            success: "Número atualizado",
+            error: (error) => (error instanceof Error ? error.message : "Não foi possível atualizar número."),
           }
         );
       } else {
@@ -1567,9 +1567,9 @@ function MetaForm({
             accessToken: form.accessToken,
           }),
           {
-            loading: "Conectando número...",
-            success: "Número conectado com sucesso",
-            error: (error) => (error instanceof Error ? error.message : "Falha ao conectar número"),
+            loading: "Conectando número…",
+            success: "Número conectado",
+            error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar número."),
           }
         );
       }
@@ -1588,7 +1588,7 @@ function MetaForm({
         type="text"
         value={form.displayName}
         onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-        placeholder="ex: Atendimento Comercial"
+        placeholder="ex.: Atendimento comercial"
         required
       />
       <Input
@@ -1675,7 +1675,7 @@ function MetaForm({
           {onBack ? "Voltar" : "Cancelar"}
         </Button>
         <Button type="submit" className="flex-1" disabled={saving}>
-          {saving ? "Salvando..." : "Salvar"}
+          {saving ? "Salvando…" : "Salvar"}
         </Button>
       </div>
     </form>
@@ -1731,7 +1731,7 @@ function BridgeForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (needsRiskAck && !riskAccepted) {
-      toast.error("É preciso aceitar os termos de risco para conectar um canal não oficial.");
+      toast.error("É preciso aceitar os termos de risco para conectar por QR code.");
       return;
     }
     setSaving(true);
@@ -1746,9 +1746,9 @@ function BridgeForm({
             bridgeToken: form.bridgeToken ? form.bridgeToken : undefined,
           }),
           {
-            loading: "Salvando alterações...",
-            success: "Canal atualizado com sucesso",
-            error: (error) => (error instanceof Error ? error.message : "Falha ao atualizar canal"),
+            loading: "Salvando alterações…",
+            success: "Canal atualizado",
+            error: (error) => (error instanceof Error ? error.message : "Não foi possível atualizar canal."),
           }
         );
       } else if (mode === "assisted") {
@@ -1762,9 +1762,9 @@ function BridgeForm({
               : { bridgeBaseUrl: form.bridgeBaseUrl, adminToken: form.adminToken }),
           }),
           {
-            loading: "Provisionando instância no gateway...",
-            success: "Instância provisionada — mostre o QR para parear",
-            error: (error) => (error instanceof Error ? error.message : "Falha ao provisionar instância"),
+            loading: "Conectando número…",
+            success: "Número criado. Mostre o QR code para conectar",
+            error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar o número."),
           }
         );
       } else {
@@ -1779,9 +1779,9 @@ function BridgeForm({
             bridgeToken: form.bridgeToken,
           }),
           {
-            loading: "Conectando canal...",
-            success: "Canal conectado — mostre o QR para parear",
-            error: (error) => (error instanceof Error ? error.message : "Falha ao conectar canal"),
+            loading: "Conectando canal…",
+            success: "Canal conectado. Mostre o QR code para conectar",
+            error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar canal."),
           }
         );
       }
@@ -1814,7 +1814,7 @@ function BridgeForm({
             </span>
           </div>
           <ul className="text-xs text-text-secondary space-y-1 list-disc list-inside">
-            <li>Usa um protocolo não sancionado pela Meta e viola os Termos de Uso do WhatsApp.</li>
+            <li>Usa um protocolo não sancionado pela Meta e viola os Termos de uso do WhatsApp.</li>
             <li>O número pode ser banido permanentemente, sem aviso e sem recurso.</li>
             <li>Use um número dedicado e descartável — nunca o principal do seu negócio.</li>
             <li>Não dispare mensagens para desconhecidos (é o gatilho nº 1 de banimento).</li>
@@ -1828,7 +1828,7 @@ function BridgeForm({
               rel="noopener noreferrer"
               className="text-brand-500 hover:text-brand-400 underline"
             >
-              Termos de Uso
+              Termos de uso
             </a>{" "}
             para os detalhes sobre o canal WhatsApp não oficial.
           </p>
@@ -1858,7 +1858,7 @@ function BridgeForm({
                 : "text-text-secondary hover:text-text-primary"
             )}
           >
-            Instância existente
+            Conexão existente
           </button>
           <button
             type="button"
@@ -1870,7 +1870,7 @@ function BridgeForm({
                 : "text-text-secondary hover:text-text-primary"
             )}
           >
-            Provisionar nova
+            Criar nova conexão
           </button>
         </div>
       )}
@@ -1880,12 +1880,12 @@ function BridgeForm({
         type="text"
         value={form.displayName}
         onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-        placeholder="ex: WhatsApp Vendas (não oficial)"
+        placeholder="ex.: WhatsApp vendas (QR code)"
         required
       />
       {(isEditing || mode === "manual" || gatewayChoice === "custom") && (
         <Input
-          label="URL do gateway"
+          label="URL do servidor de conexão"
           type="text"
           value={form.bridgeBaseUrl}
           onChange={(e) => setForm({ ...form, bridgeBaseUrl: e.target.value })}
@@ -1897,7 +1897,7 @@ function BridgeForm({
       {isEditing || mode === "manual" ? (
         <>
           <Input
-            label="ID da instância"
+            label="ID da conexão"
             type="text"
             value={form.bridgeInstanceId}
             onChange={(e) => setForm({ ...form, bridgeInstanceId: e.target.value })}
@@ -1906,16 +1906,16 @@ function BridgeForm({
             disabled={isEditing}
           />
           <Input
-            label="Token da instância"
+            label="Token da conexão"
             type="password"
             value={form.bridgeToken}
             onChange={(e) => setForm({ ...form, bridgeToken: e.target.value })}
-            placeholder={isEditing ? "•••• (cole para substituir)" : "Token da instância no gateway"}
+            placeholder={isEditing ? "•••• (cole para substituir)" : "Token da conexão"}
             required={!isEditing}
           />
           {isEditing && (
             <p className="text-[13px] text-text-muted -mt-2">
-              O ID da instância não pode ser alterado. Deixe o token em branco para manter o atual.
+              O ID da conexão não pode ser alterado. Deixe o token em branco para manter o atual.
             </p>
           )}
         </>
@@ -1934,17 +1934,17 @@ function BridgeForm({
             </button>
           </div>
           <p className="text-xs text-text-secondary">
-            A instância será criada automaticamente no servidor gerenciado do HNBCRM{" "}
+            A conexão será criada automaticamente no servidor gerenciado do HNBCRM{" "}
             {bridgeDefaults?.managedGatewayUrl && (
               <span className="font-mono break-all">({bridgeDefaults.managedGatewayUrl})</span>
             )}{" "}
-            — sem URL nem token para configurar. Depois é só escanear o QR para parear o número.
+            — sem URL nem token para configurar. Depois é só escanear o QR code para conectar o número.
           </p>
         </div>
       ) : (
         <>
           <Input
-            label="Admin token do gateway"
+            label="Token de administrador do servidor"
             type="password"
             value={form.adminToken}
             onChange={(e) => setForm({ ...form, adminToken: e.target.value })}
@@ -1977,7 +1977,7 @@ function BridgeForm({
           className="flex-1"
           disabled={saving || (needsRiskAck && !riskAccepted)}
         >
-          {saving ? "Salvando..." : mode === "assisted" && !isEditing ? "Provisionar" : "Salvar"}
+          {saving ? "Salvando…" : mode === "assisted" && !isEditing ? "Conectar" : "Salvar"}
         </Button>
       </div>
     </form>

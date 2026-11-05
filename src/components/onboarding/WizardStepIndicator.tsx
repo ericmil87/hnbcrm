@@ -6,7 +6,7 @@ interface WizardStepIndicatorProps {
   totalSteps: number; // 5
 }
 
-const STEP_LABELS = ["Perfil", "Pipeline", "Dados", "Equipe", "Pronto"];
+const STEP_LABELS = ["Perfil", "Funil", "Dados", "Equipe", "Pronto"];
 
 export function WizardStepIndicator({
   currentStep,

@@ -7,6 +7,10 @@ paths:
 
 ## Language and copy
 - All user-facing text is Portuguese (BR). Code, comments and identifiers stay as the surrounding file does.
+- Glossary lives in `src/lib/vocab.ts` (`VOCAB`, `BANNED_UI_TERMS`): one name per concept (Conversas, Requer atenção, Funil/Etapa, Atendente IA, Sugerir respostas/Responder sozinha, Etiqueta, Histórico de alterações, Relatórios, Agenda...). Menu labels, page titles and empty states import `VOCAB`; running text does not have to, `src/lib/vocabGuard.test.ts` protects it. Only labels change: routes, `?secao=` ids, `Tab` ids, enums and function names keep their code names.
+- Sentence case everywhere (buttons, titles, tabs, selects); only proper nouns and acronyms stay capitalized (`PROPER_NOUNS` in `src/lib/uiStrings.ts`). "E-mail" with hyphen, "…" for loading, IA is feminine, second person.
+- Toasts: success is a past participle without "com sucesso" or "!" ("Lead criado"); error is "Não foi possível {verbo}." and a `ConvexError` message from the server wins (`mutationErrorMessage`).
+- Technical terms (Webhooks, Chaves de integração, Modelo de IA, Cloud API, bridge, gateway) only inside `settings/advanced/` and `/developers`. `vocabGuard.test.ts` fails with `file:line — "text" -> use "X"`; do not add to `src/lib/vocabGuard.allowlist.ts` without a reason (max 30 punctual entries, each with `reason`; `PENDING_SCOPE` is for files not yet migrated, with `TODO(fv2-29)`).
 - Icons come from `lucide-react`, imported individually. Never use emoji as icons. Icon-only buttons need `aria-label`.
 - Numbers, money and counters get `tabular-nums`.
 

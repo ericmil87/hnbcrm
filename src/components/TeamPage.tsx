@@ -30,9 +30,9 @@ type TypeFilter = "all" | "human" | "ai";
 type StatusFilter = "all" | "active" | "busy" | "pending" | "removed";
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Admin",
+  admin: "Administrador",
   manager: "Gerente",
-  agent: "Agente",
+  agent: "Atendente",
   ai: "IA",
 };
 
@@ -206,7 +206,7 @@ export function TeamPage() {
           </div>
           <div>
             <p className="text-xl font-bold text-text-primary tabular-nums">{stats.ais}</p>
-            <p className="text-xs text-text-muted">Agentes IA</p>
+            <p className="text-xs text-text-muted">Agentes de IA</p>
           </div>
         </Card>
         <Card className="flex items-center gap-3 !p-3">

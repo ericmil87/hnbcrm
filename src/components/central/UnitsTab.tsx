@@ -40,7 +40,7 @@ export function UnitsTab({
       <EmptyState
         icon={Building2}
         title="Nenhuma unidade cadastrada"
-        description="Cadastre os hotéis em Configurações → Central para ver o desempenho de cada um."
+        description="Cadastre os hotéis em Configurações → Unidades e departamentos para ver o desempenho de cada um."
       />
     );
   }

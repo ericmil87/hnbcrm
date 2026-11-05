@@ -34,7 +34,7 @@ const MEMBER_EXCLUSION_LABELS: Record<string, string> = {
   no_phone: "sem telefone visível",
   invalid_phone: "telefone inválido",
   duplicate: "repetidos entre grupos",
-  opted_out: "em supressão (opt-out)",
+  opted_out: "descadastrado",
   admin: "administradores",
   existing_contact: "já são contatos",
   campaigned_recently: "receberam campanha há pouco",
@@ -517,7 +517,7 @@ export function GroupMembersTab({ organizationId, draft, setDraft, isDraft, now 
               <FunnelRow label="Membros" value={funnel.total} />
               <FunnelRow label="Com telefone" value={funnel.withPhone} />
               <FunnelRow label="Sem duplicata" value={funnel.deduped} />
-              <FunnelRow label="Fora da supressão" value={funnel.afterOptOut} />
+              <FunnelRow label="Fora dos descadastrados" value={funnel.afterOptOut} />
               <FunnelRow label="Depois dos filtros" value={funnel.final} strong />
             </ul>
             <ExclusionList excluded={preview?.excluded ?? {}} labels={MEMBER_EXCLUSION_LABELS} />

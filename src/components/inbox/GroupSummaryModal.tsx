@@ -63,7 +63,7 @@ export function GroupSummaryModal({
       setAt(result.at);
       setHours(window);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Falha ao gerar o resumo");
+      toast.error(e instanceof Error ? e.message.split("\n")[0] : "Não foi possível gerar o resumo.");
     } finally {
       setLoading(false);
     }

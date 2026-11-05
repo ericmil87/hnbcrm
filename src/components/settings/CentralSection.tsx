@@ -27,6 +27,7 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { Avatar } from "@/components/ui/Avatar";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Switch } from "@/components/ui/Switch";
+import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { assignableMembers } from "@/lib/teamMembers";
@@ -50,8 +51,8 @@ const MODULES: Array<{ key: ModuleKey; label: string; description: string; icon:
   },
   {
     key: "departments",
-    label: "Setores",
-    description: "Filas de atendimento (Reservas, Financeiro, Compras…) com transferência entre setores na Caixa de Entrada.",
+    label: "Departamentos",
+    description: "Filas de atendimento (Reservas, Financeiro, Compras…) com transferência entre departamentos em Conversas.",
     icon: Layers,
   },
   {
@@ -62,8 +63,8 @@ const MODULES: Array<{ key: ModuleKey; label: string; description: string; icon:
   },
   {
     key: "central",
-    label: "Painel da Central",
-    description: "Painel em tempo real com KPIs por hotel, campanha e setor (menu \"Central\").",
+    label: VOCAB.reports.title,
+    description: "Painel em tempo real com KPIs por hotel, campanha e departamento (menu \"Relatórios\").",
     icon: LayoutDashboard,
   },
 ];
@@ -141,7 +142,7 @@ function ModulesCard({
 
   return (
     <Card>
-      <h3 className="text-lg font-semibold text-text-primary">Central de atendimento</h3>
+      <h3 className="text-lg font-semibold text-text-primary">Unidades e departamentos</h3>
       <p className="mt-1 mb-4 text-sm text-text-secondary">
         Módulos opcionais para quem atende várias unidades num só WhatsApp. Desligados, nada muda no seu CRM.
       </p>
@@ -239,7 +240,7 @@ function UnitsCard({ organizationId, canManage }: { organizationId: Id<"organiza
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-text-primary">Unidades</h3>
-          <p className="mt-1 text-sm text-text-secondary">Hotéis e pousadas atendidos pela Central.</p>
+          <p className="mt-1 text-sm text-text-secondary">Hotéis e pousadas atendidos pelo seu WhatsApp.</p>
         </div>
         {canManage && (
           <Button size="sm" onClick={() => setEditing("new")}>
@@ -471,7 +472,7 @@ function UnitModal({
   );
 }
 
-// --- Setores ---------------------------------------------------------------
+// --- Departamentos ---------------------------------------------------------------
 
 type DepartmentRow = NonNullable<ReturnType<typeof useDepartments>>[number];
 function useDepartments(organizationId: Id<"organizations">) {
@@ -498,9 +499,9 @@ function DepartmentsCard({
     if (!confirmDelete) return;
     try {
       await deleteDepartment({ departmentId: confirmDelete._id });
-      toast.success("Setor excluído");
+      toast.success("Departamento excluído");
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível excluir o setor"));
+      toast.error(mutationErrorMessage(error, "Não foi possível excluir o departamento"));
     }
     setConfirmDelete(null);
   };
@@ -509,12 +510,12 @@ function DepartmentsCard({
     <Card>
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold text-text-primary">Setores</h3>
+          <h3 className="text-lg font-semibold text-text-primary">Departamentos</h3>
           <p className="mt-1 text-sm text-text-secondary">Filas de atendimento e quem responde em cada uma.</p>
         </div>
         {canManage && (
           <Button size="sm" onClick={() => setEditing("new")}>
-            <Plus size={16} aria-hidden="true" /> Novo setor
+            <Plus size={16} aria-hidden="true" /> Novo departamento
           </Button>
         )}
       </div>
@@ -525,7 +526,7 @@ function DepartmentsCard({
           <Skeleton className="h-14 w-full" />
         </div>
       ) : departments.length === 0 ? (
-        <p className="py-4 text-sm text-text-muted">Nenhum setor cadastrado ainda.</p>
+        <p className="py-4 text-sm text-text-muted">Nenhum departamento cadastrado ainda.</p>
       ) : (
         <ul className="divide-y divide-border-subtle">
           {departments.map((d) => {
@@ -597,8 +598,8 @@ function DepartmentsCard({
         open={confirmDelete !== null}
         onClose={() => setConfirmDelete(null)}
         onConfirm={onDelete}
-        title="Excluir setor?"
-        description={`"${confirmDelete?.name ?? ""}" será removido. Setores com conversas não podem ser excluídos — transfira as conversas antes.`}
+        title="Excluir departamento?"
+        description={`"${confirmDelete?.name ?? ""}" será removido. Departamentos com conversas não podem ser excluídos — transfira as conversas antes.`}
         confirmLabel="Excluir"
         variant="danger"
       />
@@ -643,7 +644,7 @@ function DepartmentModal({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      toast.error("Informe o nome do setor");
+      toast.error("Informe o nome do departamento");
       return;
     }
     const fields = {
@@ -659,21 +660,21 @@ function DepartmentModal({
     try {
       if (department) {
         await updateDepartment({ departmentId: department._id, ...fields });
-        toast.success("Setor atualizado");
+        toast.success("Departamento atualizado");
       } else {
         await createDepartment({ organizationId, ...fields });
-        toast.success("Setor criado");
+        toast.success("Departamento criado");
       }
       onClose();
     } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível salvar o setor"));
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar o departamento"));
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <Modal open onClose={onClose} title={department ? "Editar setor" : "Novo setor"}>
+    <Modal open onClose={onClose} title={department ? "Editar departamento" : "Novo departamento"}>
       <form onSubmit={submit} className="space-y-4">
         <Input id="dept-name" label="Nome" placeholder="Ex.: Reservas" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         <div>
@@ -681,7 +682,7 @@ function DepartmentModal({
           <textarea
             id="dept-description"
             rows={2}
-            placeholder="O que chega para este setor"
+            placeholder="O que chega para este departamento"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             className={textareaClass}
@@ -690,7 +691,7 @@ function DepartmentModal({
 
         <div>
           <span className={labelClass}>Ícone</span>
-          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Ícone do setor">
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Ícone do departamento">
             {Object.entries(DEPARTMENT_ICONS).map(([key, { icon: Icon, label }]) => (
               <button
                 key={key}
@@ -788,7 +789,7 @@ function DepartmentModal({
           checked={isEntry}
           onChange={(e) => setIsEntry(e.target.checked)}
           label="Fila de entrada"
-          description="Conversas novas, ainda sem setor, aparecem para este setor."
+          description="Conversas novas, ainda sem departamento, aparecem para este departamento."
         />
 
         <div className="flex justify-end gap-2 pt-2">

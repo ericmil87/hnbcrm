@@ -1,5 +1,5 @@
 /**
- * Formatação e rótulos do Painel da Central (pt-BR). Puro — testado em
+ * Formatação e rótulos do Relatórios (pt-BR). Puro — testado em
  * `centralFormat.test.ts`.
  */
 
