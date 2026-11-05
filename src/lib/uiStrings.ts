@@ -30,7 +30,7 @@ export const PROPER_PHRASES: readonly string[] = [
   "Histórico de alterações", "Jeito de atender", "Chaves de integração", "Ramo de atividade",
   "Modo quadro", "Modo lista", "Filtros salvos", "Unidades e departamentos", "Modelo de IA",
   "Resposta sugerida", "Conectar número", "WhatsApp Web", "Google Agenda", "São Paulo",
-  "Mercado Pago", "Instagram Direct", "Telegram Bot",
+  "Mercado Pago", "Instagram Direct", "Telegram Bot", "DeepSeek Flash",
 ];
 
 const ENTITIES: Record<string, string> = {
