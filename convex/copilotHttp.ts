@@ -22,8 +22,8 @@ import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { ResolvedRoute } from "./lib/llm";
-// Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import { buildSetupContextBlock } from "./lib/onboardingSetupContext";
+// Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import { SPEND_CAP_BLOCKED_MESSAGE, monthKeyUtc } from "./lib/aiSpend";
 import {
   CopilotSession,
