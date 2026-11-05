@@ -19,6 +19,8 @@ interface StepWhatsappProps {
   onNext: () => void;
   onSkip: () => void;
   skipLoading?: boolean;
+  /** Tela cheia do gating: Configurações fica fora do alcance, então sem o link. */
+  hideSettingsLink?: boolean;
 }
 
 /** Passo 3: conectar o WhatsApp. Toda a conexão é do `ChannelConnectCard` (escolha, aviso de risco, código/QR). */
@@ -31,6 +33,7 @@ export function StepWhatsapp({
   onNext,
   onSkip,
   skipLoading,
+  hideSettingsLink,
 }: StepWhatsappProps) {
   const availability = stepAvailability("whatsapp", status);
   const connected = status.steps?.whatsapp === "done" || connectedChannelId !== undefined;
@@ -79,12 +82,16 @@ export function StepWhatsapp({
             />
           )}
 
-          <Link
-            to={`${TAB_ROUTES.settings}?secao=channels`}
-            className="inline-flex min-h-11 items-center text-sm text-brand-500 hover:text-brand-400"
-          >
-            Outras opções
-          </Link>
+          {hideSettingsLink ? (
+            <p className="text-xs text-text-muted">Outras opções (API oficial da Meta, Instagram) ficam depois, em Configurações.</p>
+          ) : (
+            <Link
+              to={`${TAB_ROUTES.settings}?secao=channels`}
+              className="inline-flex min-h-11 items-center text-sm text-brand-500 hover:text-brand-400"
+            >
+              Outras opções
+            </Link>
+          )}
         </div>
       </SectionCard>
       <WizardNav

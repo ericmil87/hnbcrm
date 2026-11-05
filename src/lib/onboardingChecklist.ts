@@ -65,7 +65,7 @@ export function checklistAction(item: ChecklistItemInput): ChecklistAction | nul
         ? { to: wizardStepHref(item.step as WizardStepId), label: item.skipped ? "Retomar" : "Fazer agora" }
         : null;
     case "settings_ai":
-      return { to: `${TAB_ROUTES.settings}?secao=ai`, label: "Abrir" };
+      return { to: `${TAB_ROUTES.settings}?secao=ai-features`, label: "Abrir" };
     case "inbox":
       return { to: TAB_ROUTES.inbox, label: "Ver conversas" };
     default:

@@ -35,8 +35,6 @@ export const ALLOWED_TERMS: readonly AllowedTerm[] = [];
  * TODO(fv2-29): zerar esta lista (cada PR de tela remove seus arquivos).
  */
 export const PENDING_SCOPE: readonly string[] = [
-  // Nomes padrão de funil gravados na organização (dado persistido): decidir se muda no fv2-29.
-  "src/lib/onboardingTemplates.ts",
 ];
 
 /** Pastas/arquivos cobertos pelo teste de sentence case (cresce por PR). */
@@ -49,6 +47,7 @@ export const SENTENCE_CASE_SCOPE: readonly string[] = [
   "src/components/inbox/",
   "src/components/HandoffQueue.tsx",
   "src/components/KanbanBoard.tsx",
+  "src/components/onboarding/",
 ];
 
 export function matchesPath(file: string, pattern: string): boolean {

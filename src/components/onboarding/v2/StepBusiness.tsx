@@ -51,10 +51,12 @@ interface StepBusinessProps {
   aiActive: boolean;
   orgDefaults?: OrgDefaults;
   onSaved: () => void;
+  /** Tela cheia do gating: Configurações fica fora do alcance, então sem o link. */
+  hideSettingsLink?: boolean;
 }
 
 /** Passo 1: segmento, o que a empresa vende, tom e o aceite opcional para a IA ajudar. */
-export function StepBusiness({ organizationId, status, aiActive, orgDefaults, onSaved }: StepBusinessProps) {
+export function StepBusiness({ organizationId, status, aiActive, orgDefaults, onSaved, hideSettingsLink }: StepBusinessProps) {
   const saveProfile = useMutation(api.onboarding.saveBusinessProfile);
   const setAiEnabled = useMutation(api.aiSettings.setAiEnabled);
   const [draft, setDraft] = useState<BusinessDraft>(() => ({ ...businessDraftFromStatus(status), aiHelp: aiActive }));
@@ -194,9 +196,13 @@ export function StepBusiness({ organizationId, status, aiActive, orgDefaults, on
               <p>
                 Moeda: <span className="text-text-primary">{orgDefaults?.currency ?? "BRL"}</span>
               </p>
-              <Link to={`${TAB_ROUTES.settings}?secao=general`} className="inline-flex min-h-11 items-center text-brand-500 hover:text-brand-400">
-                Alterar em Configurações
-              </Link>
+              {hideSettingsLink ? (
+                <p className="text-xs text-text-muted">Dá para alterar depois, em Configurações.</p>
+              ) : (
+                <Link to={`${TAB_ROUTES.settings}?secao=general`} className="inline-flex min-h-11 items-center text-brand-500 hover:text-brand-400">
+                  Alterar em Configurações
+                </Link>
+              )}
             </div>
           </CollapsibleSection>
 

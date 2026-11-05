@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { Eye, Mic } from "lucide-react";
@@ -11,7 +10,6 @@ import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
 import { EXTRAS_COSTS, extrasAvailability, stepAvailability, type OnboardingStatus } from "@/lib/onboardingWizard";
-import { TAB_ROUTES } from "@/lib/routes";
 import { WizardNav } from "./OnboardingWizardV2View";
 
 interface ChannelRow {
@@ -29,13 +27,15 @@ interface StepExtrasProps {
   /** Visão ligada (`getAiStatus.visionEnabled`). */
   visionEnabled: boolean;
   onBack: () => void;
+  /** Volta ao passo "Conectar WhatsApp". */
+  onGoToWhatsapp: () => void;
   onNext: () => void;
   onSkip: () => void;
   skipLoading?: boolean;
 }
 
 /** Passo 6: ouvir áudios (por número) e ler imagens. Cada interruptor grava na hora, pela mesma porta das Configurações. */
-export function StepExtras({ organizationId, status, aiActive, visionEnabled, onBack, onNext, onSkip, skipLoading }: StepExtrasProps) {
+export function StepExtras({ organizationId, status, aiActive, visionEnabled, onBack, onGoToWhatsapp, onNext, onSkip, skipLoading }: StepExtrasProps) {
   const channels = useQuery(api.channelConfigs.getChannelConfigs, { organizationId }) as ChannelRow[] | undefined;
   const setFeatureToggles = useMutation(api.aiSettings.setFeatureToggles);
   const { can } = usePermissions(organizationId);
@@ -74,9 +74,9 @@ export function StepExtras({ organizationId, status, aiActive, visionEnabled, on
         ) : whatsapp.length === 0 ? (
           <p className="text-xs text-text-muted">
             Nenhum número conectado ainda.{" "}
-            <Link to={`${TAB_ROUTES.settings}?secao=channels`} className="font-medium text-brand-500 hover:text-brand-400">
+            <button type="button" onClick={onGoToWhatsapp} className="inline-flex min-h-11 items-center font-medium text-brand-500 hover:text-brand-400">
               Conectar um número
-            </Link>
+            </button>
           </p>
         ) : availability.audio.available && !locked ? (
           whatsapp.map((c) => (

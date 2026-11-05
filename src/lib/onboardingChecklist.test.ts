@@ -38,7 +38,7 @@ describe("checklist v2", () => {
       label: "Fazer agora",
     });
     expect(checklistAction(item("extras", false, { target: "wizard", step: "extras", skipped: true }))?.label).toBe("Retomar");
-    expect(checklistAction(item("bridgeAiAck", false, { target: "settings_ai" }))?.to).toBe("/app/configuracoes?secao=ai");
+    expect(checklistAction(item("bridgeAiAck", false, { target: "settings_ai" }))?.to).toBe("/app/configuracoes?secao=ai-features");
     expect(checklistAction(item("firstAiReply", false, { target: "inbox" }))?.to).toBe("/app/entrada");
     expect(checklistAction(item("business", true, { target: "wizard", step: "business" }))).toBeNull();
   });

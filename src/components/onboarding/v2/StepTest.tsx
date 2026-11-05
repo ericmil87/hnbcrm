@@ -24,10 +24,12 @@ interface StepTestProps {
   onNext: () => void;
   onSkip: () => void;
   skipLoading?: boolean;
+  /** Avisa o container que "feito" já foi enviado (evita um "pulou" por cima ao continuar logo). */
+  onMarked?: () => void;
 }
 
 /** Passo 5: conversa simulada com o Atendente IA (sandbox). A primeira resposta marca o passo como feito. */
-export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNext, onSkip, skipLoading }: StepTestProps) {
+export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNext, onSkip, skipLoading, onMarked }: StepTestProps) {
   const attendants = useQuery(api.aiSettings.listAttendants, { organizationId }) as
     | Array<{ _id: Id<"teamMembers">; status: string; removedAt?: number | null }>
     | undefined;
@@ -40,6 +42,7 @@ export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNe
   const handleFirstReply = () => {
     if (marked.current || tested) return;
     marked.current = true;
+    onMarked?.();
     markStep({ organizationId, step: "test", status: "done" }).catch((e) => {
       marked.current = false;
       toast.error(mutationErrorMessage(e, "Não foi possível salvar o teste."));

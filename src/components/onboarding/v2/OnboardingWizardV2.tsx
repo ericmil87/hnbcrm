@@ -71,6 +71,7 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
   const markStep = useMutation(api.onboarding.markWizardStep);
   const deferWizard = useMutation(api.onboarding.deferWizard);
   const completeWizard = useMutation(api.onboarding.completeWizard);
+  const testMarked = useRef(false);
 
   // Passo de retomada (primeiro pendente); `?passo=` vale mais quando presente e válido.
   const [resume, setResume] = useState<WizardStepId | null>(null);
@@ -174,7 +175,8 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
     setFinishing(true);
     try {
       await progressReady.current;
-      await completeWizard({ organizationId, version: 2 });
+      // Org legada: completar em v2 viraria `wizardVersion: 2` e reabriria "negócio" e "teste" como pendentes.
+      if (!status.legacy) await completeWizard({ organizationId, version: 2 });
       navigate(TAB_ROUTES.dashboard);
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível concluir."));
@@ -184,7 +186,8 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
 
   // Teste, Extras e Equipe: seguir adiante sem fazer grava "pulou" só se ainda estava pendente.
   const forwardMarking = async () => {
-    const mark = markOnContinue(current, status);
+    // "Teste" feito na própria sessão: a query pode ainda não ter chegado e o "pulou" venceria o "feito".
+    const mark = current === "test" && testMarked.current ? null : markOnContinue(current, status);
     if (mark) {
       try {
         await markStep({ organizationId, step: current as "test" | "extras" | "team", status: mark });
@@ -209,6 +212,7 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
           aiActive={aiActive}
           orgDefaults={org?.settings}
           onSaved={forward}
+          hideSettingsLink={!!chrome}
         />
       );
       break;
@@ -242,6 +246,7 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
           onNext={forward}
           onSkip={() => void skip("whatsapp")}
           skipLoading={skipping}
+          hideSettingsLink={!!chrome}
         />
       );
       break;
@@ -270,6 +275,9 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
           onNext={() => void forwardMarking()}
           onSkip={() => void skip("test")}
           skipLoading={skipping}
+          onMarked={() => {
+            testMarked.current = true;
+          }}
         />
       );
       break;
@@ -281,6 +289,7 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
           aiActive={aiActive}
           visionEnabled={aiStatus?.visionEnabled === true}
           onBack={back}
+          onGoToWhatsapp={() => goTo("whatsapp")}
           onNext={() => void forwardMarking()}
           onSkip={() => void skip("extras")}
           skipLoading={skipping}

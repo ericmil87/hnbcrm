@@ -384,8 +384,12 @@ export function AuthLayout() {
     return <FullScreenSpinner />;
   }
 
+  // Sem saber se o assistente vale, não mostrar o app para trocá-lo logo depois.
+  if (onboardingProgress === undefined) {
+    return <FullScreenSpinner />;
+  }
+
   if (
-    onboardingProgress !== undefined &&
     shouldShowWizard(onboardingProgress, currentMember.role)
   ) {
     // Tela cheia no lugar do AppShell. "Continuar depois" (`deferWizard`) e "Ir para o Painel"
