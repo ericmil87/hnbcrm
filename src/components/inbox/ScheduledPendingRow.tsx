@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Clock, X } from "lucide-react";
-import { formatDateTime } from "@/lib/format";
+import { formatDateTimeShort } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
 /*  Mensagem agendada pendente — linha com contagem regressiva         */
@@ -39,7 +39,7 @@ export function ScheduledPendingRow({
       <div className="flex items-center gap-2 px-3 py-1.5 text-xs">
         <Clock size={12} className="shrink-0 text-brand-500" />
         <span className="shrink-0 text-text-secondary tabular-nums">
-          {formatDateTime(item.scheduledAt)}
+          {formatDateTimeShort(item.scheduledAt, tick)}
         </span>
         <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
         <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>

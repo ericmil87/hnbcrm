@@ -42,11 +42,13 @@ export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNe
   const handleFirstReply = () => {
     if (marked.current || tested) return;
     marked.current = true;
-    onMarked?.();
-    markStep({ organizationId, step: "test", status: "done" }).catch((e) => {
-      marked.current = false;
-      toast.error(mutationErrorMessage(e, "Não foi possível salvar o teste."));
-    });
+    // `onMarked` só depois da gravação: se a rede falhar, o passo continua pendente (e a tela também).
+    markStep({ organizationId, step: "test", status: "done" })
+      .then(() => onMarked?.())
+      .catch((e) => {
+        marked.current = false;
+        toast.error(mutationErrorMessage(e, "Não foi possível salvar o teste."));
+      });
   };
 
   return (

@@ -17,6 +17,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { Avatar } from "@/components/ui/Avatar";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
+import { formatDate, formatDateTime } from "@/lib/format";
 import {
   Shield,
   Download,
@@ -85,7 +86,7 @@ export function AuditLogs() {
       return { startTimestamp: now - 30 * 86400000, endTimestamp: now };
     if (datePreset === "custom") {
       return {
-        startTimestamp: startDate ? new Date(startDate).getTime() : 0,
+        startTimestamp: startDate ? new Date(startDate + "T00:00:00").getTime() : 0,
         endTimestamp: endDate
           ? new Date(endDate + "T23:59:59").getTime()
           : 0,
@@ -175,10 +176,10 @@ export function AuditLogs() {
 
     if (startDate || endDate) {
       const start = startDate
-        ? new Date(startDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(startDate + "T00:00:00").getTime())
         : "início";
       const end = endDate
-        ? new Date(endDate).toLocaleDateString("pt-BR")
+        ? formatDate(new Date(endDate + "T00:00:00").getTime())
         : "agora";
       result.push({ key: "date", label: `Período: ${start} até ${end}` });
     }
@@ -257,7 +258,7 @@ export function AuditLogs() {
     const rows = auditLogs.logs.map((log) => {
       const desc = log.description || buildClientDescription(log);
       return [
-        new Date(log.createdAt).toLocaleString("pt-BR"),
+        formatDateTime(log.createdAt),
         log.action,
         log.entityType,
         log.entityId,
@@ -612,9 +613,7 @@ export function AuditLogs() {
                             <div className="flex flex-col items-end gap-1 shrink-0">
                               <span
                                 className="text-xs text-text-muted"
-                                title={new Date(log.createdAt).toLocaleString(
-                                  "pt-BR"
-                                )}
+                                title={formatDateTime(log.createdAt)}
                               >
                                 {formatRelativeTime(log.createdAt)}
                               </span>

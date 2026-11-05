@@ -142,3 +142,16 @@ export function parseDecimal(raw: string): number | null {
   const value = Number(raw.replace(",", "."));
   return Number.isFinite(value) ? value : null;
 }
+
+/**
+ * Data e hora compactas: sem o ano quando `ts` cai no mesmo ano de `now` ("09/03 14:30"),
+ * com o ano completo nos demais casos ("09/03/2024 14:30"). Para linhas estreitas (375 px).
+ */
+export function formatDateTimeShort(ts: Timestamp, now: number, opts: TimeZoneOption = {}): string {
+  if (!isValid(ts)) return EMPTY;
+  const year = (value: Timestamp | number) =>
+    new Date(value).toLocaleDateString(LOCALE, { year: "numeric", timeZone: opts.timeZone });
+  if (year(ts) !== year(now)) return formatDateTime(ts, opts);
+  const day = new Date(ts).toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", timeZone: opts.timeZone });
+  return `${day} ${formatTime(ts, opts)}`;
+}

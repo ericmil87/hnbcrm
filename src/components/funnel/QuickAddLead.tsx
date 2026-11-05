@@ -74,7 +74,7 @@ export function QuickAddLead({
           <Button type="submit" variant="primary" size="sm" className="flex-1">
             Criar
           </Button>
-          <Button type="button" onClick={onClose} variant="secondary" size="sm">
+          <Button type="button" onClick={onClose} variant="secondary" size="sm" aria-label="Cancelar">
             <X size={16} />
           </Button>
         </div>

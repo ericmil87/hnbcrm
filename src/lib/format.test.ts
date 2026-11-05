@@ -3,6 +3,7 @@ import {
   formatCount,
   formatDate,
   formatDateTime,
+  formatDateTimeShort,
   formatDueRelative,
   formatMoney,
   formatUsd,
@@ -153,5 +154,22 @@ describe("formatUsd", () => {
     expect(formatUsd(0.004)).toBe("menos de US$ 0,01");
     expect(formatUsd(0)).not.toBe("menos de US$ 0,01");
     expect(norm(formatUsd(12.5))).toBe("US$ 12,50");
+  });
+});
+
+describe("formatDateTimeShort", () => {
+  const NOW_2025 = Date.UTC(2025, 5, 1, 12);
+  it("omite o ano quando é o ano corrente", () => {
+    expect(formatDateTimeShort(TS, NOW_2025, SP)).toBe("08/03 23:30");
+  });
+  it("mantém o ano em outro ano", () => {
+    expect(formatDateTimeShort(TS, Date.UTC(2026, 0, 10), SP)).toBe("08/03/2025 23:30");
+  });
+  it("respeita o fuso na comparação do ano (virada de ano)", () => {
+    // 01/01/2026 01:00 UTC ainda é 31/12/2025 em São Paulo.
+    expect(formatDateTimeShort(Date.UTC(2026, 0, 1, 1), Date.UTC(2025, 5, 1), SP)).toBe("31/12 22:00");
+  });
+  it("devolve traço para data inválida", () => {
+    expect(formatDateTimeShort(Number.NaN, NOW_2025)).toBe("—");
   });
 });

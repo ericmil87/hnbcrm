@@ -1,7 +1,8 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { VOCAB } from "@/lib/vocab";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { useState, useMemo, useEffect, useCallback } from "react";
-import { useOutletContext, useSearchParams } from "react-router";
+import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -94,8 +95,9 @@ export function TasksPage() {
   const canEdit = can("tasks", "edit_own");
   const canManageProjects = role === "admin" || role === "manager";
 
-  const [searchParams, setSearchParams] = useSearchParams();
-  const selectedTaskId = (searchParams.get("task") as Id<"tasks"> | null) ?? null;
+  // `?task=`: abrir = push marcado; fechar = voltar quando a entrada é nossa, replace nos demais casos.
+  const taskParam = useOpenEntityParam("task");
+  const selectedTaskId = (taskParam.id as Id<"tasks"> | null) ?? null;
 
   // Modo, filtro rápido, status, responsável, etiquetas e projeto moram na URL;
   // prioridade, tipo e o select de projeto da visão "Todas" seguem locais.
@@ -245,30 +247,9 @@ export function TasksPage() {
   }, [projects]);
 
   // Deep-link ?task=<id> — o sino e os e-mails apontam para /app/tarefas?task=…
-  const openTaskDetail = useCallback(
-    (taskId: Id<"tasks">) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev);
-          next.set("task", taskId);
-          return next;
-        },
-        { preventScrollReset: true }
-      );
-    },
-    [setSearchParams]
-  );
-
-  const closeTaskDetail = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("task");
-        return next;
-      },
-      { replace: true, preventScrollReset: true }
-    );
-  }, [setSearchParams]);
+  const { open: openTask, close: closeTask } = taskParam;
+  const openTaskDetail = useCallback((taskId: Id<"tasks">) => openTask(taskId), [openTask]);
+  const closeTaskDetail = closeTask;
 
   // Smart filters continuam no cliente (dependem do relógio local)
   const filteredTasks = useMemo(() => {

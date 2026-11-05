@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Building2, ChevronsUpDown, Lock, LogOut } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { CopilotPanel } from "@/components/copilot/CopilotPanel";
+import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
@@ -316,7 +316,7 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
     const copilotOffered = status?.capabilities?.llm !== false && aiStatus !== undefined;
     const copilotReady = aiStatus?.active === true && aiStatus.copilotEnabled;
     const panel = (
-      <CopilotPanel
+      <LazyCopilotPanel
         variant="embedded"
         purpose="setup"
         organizationId={organizationId}

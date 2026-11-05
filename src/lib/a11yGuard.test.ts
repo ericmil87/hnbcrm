@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Guarda de acessibilidade dos controles (analisa o JSX de `src/components`):
- * 1. `<button>` / `<Button iconOnly>` cujo conteúdo é só um ícone do lucide precisa de `aria-label`
+ * 1. `<button>` / `<Button>` (com ou sem `iconOnly`) cujo conteúdo é só um ícone do lucide precisa de `aria-label`
  *    (ou `aria-labelledby`);
  * 2. `title=` não é permitido em `<button>`, `<Button>`, `<a>`, `<Link>` e `<input>` dentro de
  *    layout/ ui/ inbox/ funnel/ settings/: use `Tooltip` (dica) ou `aria-label` (nome).
@@ -77,7 +77,7 @@ function scan(file: string) {
       counters[tag] = (counters[tag] ?? 0) + 1;
       const key = `${rel}:${tag}:${counters[tag]}`;
 
-      const iconOnlyButton = tag === "button" || (tag === "Button" && attrs.has("iconOnly"));
+      const iconOnlyButton = tag === "button" || tag === "Button";
       if (iconOnlyButton && ts.isJsxElement(node)) {
         const kids = node.children.filter((c) => !(ts.isJsxText(c) && c.containsOnlyTriviaWhiteSpaces));
         const onlyIcons = kids.length > 0 && kids.every(isIcon);
