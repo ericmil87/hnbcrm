@@ -51,6 +51,12 @@ export const savedViewFiltersValidator = v.object({
 
 
 // Shared permissions validator — used by teamMembers and apiKeys
+// Estado de um passo da configuração inicial que não dá para derivar de dados.
+const onboardingStepStateValidator = v.object({
+  status: v.union(v.literal("done"), v.literal("skipped")),
+  at: v.number(),
+});
+
 const permissionsValidator = v.object({
   leads: v.union(v.literal("none"), v.literal("view_own"), v.literal("view_all"), v.literal("edit_own"), v.literal("edit_all"), v.literal("full")),
   contacts: v.union(v.literal("none"), v.literal("view"), v.literal("edit"), v.literal("full")),
@@ -715,6 +721,27 @@ const applicationTables = {
       companySize: v.optional(v.string()),
       mainGoal: v.optional(v.string()),
       wizardCompletedAt: v.optional(v.number()),
+      // ── v2 (aditivo; docs/architecture/leads-pipeline.md › Configuração inicial) ──
+      wizardVersion: v.optional(v.number()), // 2 = entrou no fluxo novo
+      business: v.optional(v.object({
+        displayName: v.optional(v.string()), // ≤ 80
+        offer: v.optional(v.string()), // ≤ 600
+        audience: v.optional(v.string()), // ≤ 400
+        tone: v.optional(v.union(v.literal("formal"), v.literal("amigavel"), v.literal("descontraido"))),
+        region: v.optional(v.string()), // ≤ 80
+      })),
+      aiAssisted: v.optional(v.boolean()),
+      // Só o que NÃO dá para derivar de dados reais (pulou, testou, revisou).
+      steps: v.optional(v.object({
+        business: v.optional(onboardingStepStateValidator),
+        funnel: v.optional(onboardingStepStateValidator),
+        whatsapp: v.optional(onboardingStepStateValidator),
+        attendant: v.optional(onboardingStepStateValidator),
+        test: v.optional(onboardingStepStateValidator),
+        extras: v.optional(onboardingStepStateValidator),
+        team: v.optional(onboardingStepStateValidator),
+      })),
+      wizardDeferredAt: v.optional(v.number()), // "Continuar depois"
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
