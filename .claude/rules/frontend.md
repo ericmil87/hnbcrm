@@ -25,6 +25,8 @@ paths:
 ## UI primitives (`src/components/ui/`): reuse, do not recreate
 - `Button`: variants `primary` (CTA), `secondary`, `ghost` (tertiary/links), `dark`, `danger` (destructive); sizes `sm` 32px, `md` 40px, `lg` 48px (use `lg` for mobile CTAs).
 - `Input`, `Checkbox`: bordered style with label/error/icon. Inputs are `text-base md:text-sm` (16px minimum on mobile or iOS zooms).
+- Form controls: `Switch` (`role="switch"`, `hideLabel` when the visible text is elsewhere), `Select` (native `<select>`, `options` or `groups`), `SegmentedControl` (`radiogroup`), `Tabs` + `TabPanel` (roving tabindex, arrows/Home/End, horizontal scroll on mobile), `FormField` (label/hint/error wiring), `Textarea` (`autoGrow`, `maxLength` counter). `useMediaQuery` (`src/hooks`) replaces manual `window.innerWidth` checks.
+- No raw `<select>`, hand-made switch or ad-hoc tab buttons in new code; use the primitives above.
 - `Badge`: `default | brand | success | error | warning | info`. `Card`: `default | sunken | interactive`.
 - `Modal`: bottom sheet on mobile, centered dialog on sm+. It renders in a portal on `body`; do not wrap it in your own z-index hacks.
 - `SlideOver`: full screen on mobile, 480px side panel on md+. For stacked panels render the child as a DOM sibling AFTER the parent (both `z-50`, DOM order decides).

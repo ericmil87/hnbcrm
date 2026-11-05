@@ -342,6 +342,16 @@ Todos os botões seguem o formato **pill** (bordas totalmente arredondadas).
 - **Com erro:** Borda `semantic-error`, mensagem de erro abaixo em `text-semantic-error`
 - **Com ícone:** Ícone à esquerda com `padding-left: 40px`
 
+### 3.2.1 Controles de formulário
+
+Primitivos em `src/components/ui/`, todos com teste de teclado e `aria-*`:
+
+- `Switch`: `button role="switch"`, rótulo clicável (ou `hideLabel` quando o texto está fora), área de toque de 44 px também no `sm`.
+- `Select`: `<select>` nativo estilizado, `text-base md:text-sm`, opções planas (`options`) ou agrupadas (`groups`).
+- `SegmentedControl`: escolha única entre poucas opções (`radiogroup`, setas).
+- `Tabs` + `TabPanel`: `tablist`/`tab`/`tabpanel`, setas, Home/End; rolagem horizontal no celular. Variantes `underline` e `pills`.
+- `FormField` e `Textarea`: rótulo, dica e erro ligados por id; `(opcional)` com `showOptional`; contador com `maxLength`.
+
 ### 3.3 Cards
 
 > **Componente:** `src/components/ui/Card.tsx`
