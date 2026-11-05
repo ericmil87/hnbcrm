@@ -35,7 +35,7 @@ describe("retorno do OAuth da Meta aponta para uma tela real", () => {
   });
 
   test("o frontend lê meta e pendente da URL", () => {
-    const channels = read("src/components/settings/ChannelsSection.tsx");
+    const channels = read("src/components/settings/channels/ChannelsPanel.tsx");
     expect(channels).toMatch(/"meta"/);
     expect(channels).toMatch(/"pendente"/);
   });
