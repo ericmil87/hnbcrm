@@ -59,6 +59,19 @@ describe("pathAfterOrgSwitch", () => {
     expect(pathAfterOrgSwitch("/app/equipe", "?q=ana&member=m1")).toBe("/app/equipe?q=ana");
   });
 
+  it("derruba o contato aberto (id da org anterior) e mantém busca e página de Contatos", () => {
+    expect(pathAfterOrgSwitch("/app/contatos", "?contact=k17abc&contactTab=leads&q=ana&page=3")).toBe(
+      "/app/contatos?contactTab=leads&q=ana&page=3"
+    );
+    expect(pathAfterOrgSwitch("/app/contatos", "?contact=k17abc")).toBe("/app/contatos");
+  });
+
+  it("mantém as abas dos painéis de lead e contato, sem o id do lead", () => {
+    expect(pathAfterOrgSwitch("/app/pipeline", "?lead=l1&leadTab=tasks&board=b1")).toBe(
+      "/app/pipeline?leadTab=tasks"
+    );
+  });
+
   it("sobe para a raiz da aba quando o caminho carrega id", () => {
     expect(pathAfterOrgSwitch("/app/formularios/f1/submissoes", "?x=1")).toBe("/app/formularios");
   });

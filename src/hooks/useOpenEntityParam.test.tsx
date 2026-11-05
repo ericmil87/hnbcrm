@@ -64,4 +64,17 @@ describe("useOpenEntityParam", () => {
     await click("abrir a");
     expect(router.state.location.key).toBe(key);
   });
+
+  it("fechar, avançar, fechar: o segundo fechar também volta", async () => {
+    const { router } = renderWithRouter(<Harness />, { route: "/" });
+    await click("abrir a");
+    await click("fechar");
+    expect(screen.getByTestId("id")).toHaveTextContent("nada");
+    await act(async () => {
+      await router.navigate(1);
+    });
+    expect(screen.getByTestId("id")).toHaveTextContent("a");
+    await click("fechar");
+    expect(screen.getByTestId("id")).toHaveTextContent("nada");
+  });
 });

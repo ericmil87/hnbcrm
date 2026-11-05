@@ -11,7 +11,7 @@ import { useTasksUrlState } from "@/hooks/useTasksUrlState";
 import { resolveTaskIds, type SmartFilter, type TaskStatusFilter } from "@/lib/tasksFilters";
 import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
+import { TaskDetailSlideOver } from "./tasks/detail/TaskDetailSlideOver";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";

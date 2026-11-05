@@ -26,6 +26,9 @@ export function useOpenEntityParam(key: string) {
   liveRef.current = { ownsEntry, raw: param.raw, key: location.key };
   /** `navigate(-1)` já pedido a partir desta entrada: um segundo fechar não pode voltar 2. */
   const backPendingKey = useRef<string | null>(null);
+  // Voltar/avançar reaproveita a `key` da entrada: ao mudar de entrada a marca expira
+  // (senão, fechar → avançar → fechar viraria um no-op).
+  if (backPendingKey.current !== null && backPendingKey.current !== location.key) backPendingKey.current = null;
 
   const { set, expectWrite } = param;
 

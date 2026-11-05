@@ -96,9 +96,11 @@ export function useConversationSelection({
   // render velho; se a pessoa já voltou pelo navegador, um `navigate(-1)` com
   // dados velhos sairia da tela.
   const liveRef = useRef({ ownsEntry, conversation: conversationParam.raw, nova: novaParam.raw, key: location.key });
-  liveRef.current = { ownsEntry, conversation: conversationParam.raw, nova: novaParam.raw, key: location.key };
   // `navigate(-1)` já pedido a partir desta entrada: um segundo fechar não pode voltar 2.
   const backPendingKey = useRef<string | null>(null);
+  // Voltar/avançar reaproveita a `key` da entrada: ao mudar de entrada a marca expira.
+  if (backPendingKey.current !== null && backPendingKey.current !== location.key) backPendingKey.current = null;
+  liveRef.current = { ownsEntry, conversation: conversationParam.raw, nova: novaParam.raw, key: location.key };
 
   /** Volta uma entrada, uma única vez por entrada de origem. */
   const goBackOnce = (param: { expectWrite: (target: string | null) => void }) => {

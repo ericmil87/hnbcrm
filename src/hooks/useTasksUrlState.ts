@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from "react";
-import { useSearchParams } from "react-router";
+import { useCallback, useMemo, useRef } from "react";
+import { useLocation, useSearchParams } from "react-router";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import { writeParams } from "@/lib/searchParamState";
 import {
@@ -44,6 +44,10 @@ export function useTasksUrlState() {
   );
 
   const [, setSearchParams] = useSearchParams();
+  // `replace` sem `state` apagaria a marca de entrada nossa (ex.: ?task=): relê o state vivo.
+  const locationState = useLocation().state;
+  const stateRef = useRef<unknown>(locationState);
+  stateRef.current = locationState;
   const update = useCallback(
     (patch: Partial<TasksUrlState>) => {
       // Só as chaves do `patch` entram na escrita, sobre a URL VIVA (`prev`):
@@ -61,7 +65,11 @@ export function useTasksUrlState() {
       for (const field of Object.keys(patch) as (keyof TasksUrlState)[]) {
         picked[keys[field]] = writes[keys[field]];
       }
-      setSearchParams((prev) => writeParams(prev, picked), { replace: true, preventScrollReset: true });
+      setSearchParams((prev) => writeParams(prev, picked), {
+        replace: true,
+        preventScrollReset: true,
+        ...(stateRef.current != null ? { state: stateRef.current } : {}),
+      });
     },
     [setSearchParams]
   );

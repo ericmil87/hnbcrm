@@ -2,9 +2,10 @@ import { activeTabForPath, TAB_ROUTES } from "./routes";
 
 /**
  * Parâmetros de busca que só controlam a UI (seção/aba, filtro de arquivadas,
- * modo, busca e dia do Funil/Agenda, filtros de enum e datas de Tarefas,
- * Histórico e Campanhas) e valem em qualquer org. Todo o resto
- * (`owner`, `assignee`, `actor`, `project`, `member`, `log`, `unit`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`,
+ * modo, busca, dia e página do Funil/Agenda/Contatos, aba dos painéis de lead e
+ * contato, filtros de enum e datas de Tarefas, Histórico e Campanhas) e valem em
+ * qualquer org. Todo o resto (`owner`, `assignee`, `actor`, `project`, `member`,
+ * `log`, `unit`, `?contact=`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`,
  * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as queries
  * autorizam pela org da entidade, então a tela da org nova mostraria o registro
  * da antiga ao lado das listas dela.
@@ -24,6 +25,9 @@ const ORG_AGNOSTIC_PARAMS = new Set([
   "from",
   "to",
   "provider",
+  "page",
+  "leadTab",
+  "contactTab",
 ]);
 
 /**

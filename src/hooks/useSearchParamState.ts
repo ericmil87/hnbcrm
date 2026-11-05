@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import {
   beginWrite,
   settleWrite,
@@ -67,19 +67,25 @@ export function useSearchParamState<T>(
   const raw = searchParams.get(key);
   const value = useMemo(() => codec.parse(raw), [codec, raw]);
   const inFlightRef = useRef<InFlightWrite | null>(null);
+  // `setSearchParams` sem `state` apaga o `location.state` da entrada. Um
+  // `replace` (filtro, aba) não pode apagar a marca de "entrada criada por um
+  // push nosso", então relemos o state VIVO na hora da escrita.
+  const locationState = useLocation().state;
+  const stateRef = useRef<unknown>(locationState);
+  stateRef.current = locationState;
 
   const set = useCallback(
     (next: T, options: SetParamOptions = {}) => {
       const serialized = codec.serialize(next);
       inFlightRef.current = beginWrite(raw, serialized);
-      setSearchParams(
-        (prev) => writeParams(prev, { [key]: serialized, ...options.also }),
-        {
-          replace: (options.history ?? history) === "replace",
-          ...((options.preventScrollReset ?? preventScrollReset) ? { preventScrollReset: true } : {}),
-          ...(options.state !== undefined ? { state: options.state } : {}),
-        }
-      );
+      const replace = (options.history ?? history) === "replace";
+      // Estado explícito vence; `replace` preserva o da entrada atual; `push` começa limpo.
+      const state = options.state !== undefined ? options.state : replace ? stateRef.current : undefined;
+      setSearchParams((prev) => writeParams(prev, { [key]: serialized, ...options.also }), {
+        replace,
+        ...((options.preventScrollReset ?? preventScrollReset) ? { preventScrollReset: true } : {}),
+        ...(state !== undefined && state !== null ? { state } : {}),
+      });
     },
     [codec, history, key, preventScrollReset, raw, setSearchParams]
   );
