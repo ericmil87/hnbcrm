@@ -26,6 +26,8 @@ export type NavBadgeSource = "inboxUnread" | "pendingAttention" | "pausedCampaig
 export interface NavItemDef {
   id: Tab;
   label: string;
+  /** Título da aba do navegador (o mesmo que a página usa em `usePageTitle`). */
+  title: string;
   icon: LucideIcon;
   /** `null` = item solto no topo, sem grupo nem rótulo (Painel). */
   group: NavGroupId | null;
@@ -50,20 +52,20 @@ export const NAV_GROUPS: ReadonlyArray<{ id: NavGroupId | "topo"; label: string 
 
 /** Item novo no menu = uma linha aqui (mais a rota em `TAB_ROUTES`). */
 export const NAV_ITEMS: ReadonlyArray<NavItemDef> = [
-  { id: "dashboard", label: VOCAB.dashboard.nav, icon: LayoutDashboard, group: null, mobile: "primary" },
-  { id: "inbox", label: VOCAB.conversations.nav, icon: MessageSquare, group: "atendimento", permission: { category: "inbox", level: "view_own" }, badge: "inboxUnread", mobile: "primary" },
-  { id: "handoffs", label: VOCAB.attention.nav, icon: BellRing, group: "atendimento", permission: { category: "inbox", level: "view_own" }, badge: "pendingAttention", mobile: "primary" },
-  { id: "board", label: VOCAB.funnel.nav, icon: Kanban, group: "atendimento", permission: { category: "leads", level: "view_own" }, mobile: "primary" },
-  { id: "contacts", label: VOCAB.contact.nav, icon: Contact2, group: "atendimento", permission: { category: "contacts", level: "view" }, mobile: "more" },
-  { id: "tasks", label: VOCAB.tasks.nav, icon: CheckSquare, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
-  { id: "calendar", label: VOCAB.agenda.nav, icon: CalendarDays, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
-  { id: "campaigns", label: VOCAB.campaigns.nav, icon: Megaphone, group: "divulgacao", permission: { category: "campaigns", level: "view" }, badge: "pausedCampaigns", mobile: "more" },
-  { id: "groups", label: VOCAB.groups.nav, icon: Users2, group: "divulgacao", permission: { category: "inbox", level: "view_own" }, mobile: "more" },
-  { id: "forms", label: VOCAB.forms.nav, icon: FileText, group: "divulgacao", permission: { category: "settings", level: "manage" }, mobile: "more" },
-  { id: "central", label: VOCAB.reports.nav, icon: BarChart3, group: "gestao", permission: { category: "reports", level: "view" }, module: "central", mobile: "more" },
-  { id: "team", label: VOCAB.team.nav, icon: Users, group: "gestao", permission: { category: "team", level: "view" }, mobile: "more" },
-  { id: "audit", label: VOCAB.audit.nav, icon: ScrollText, group: "gestao", permission: { category: "auditLogs", level: "view" }, mobile: "more" },
-  { id: "settings", label: VOCAB.settings.nav, icon: Settings, group: "gestao", permission: { category: "settings", level: "view" }, mobile: "more" },
+  { id: "dashboard", label: VOCAB.dashboard.nav, title: VOCAB.dashboard.title, icon: LayoutDashboard, group: null, mobile: "primary" },
+  { id: "inbox", label: VOCAB.conversations.nav, title: VOCAB.conversations.title, icon: MessageSquare, group: "atendimento", permission: { category: "inbox", level: "view_own" }, badge: "inboxUnread", mobile: "primary" },
+  { id: "handoffs", label: VOCAB.attention.nav, title: VOCAB.attention.title, icon: BellRing, group: "atendimento", permission: { category: "inbox", level: "view_own" }, badge: "pendingAttention", mobile: "primary" },
+  { id: "board", label: VOCAB.funnel.nav, title: VOCAB.funnel.title, icon: Kanban, group: "atendimento", permission: { category: "leads", level: "view_own" }, mobile: "primary" },
+  { id: "contacts", label: VOCAB.contact.nav, title: VOCAB.contact.nav, icon: Contact2, group: "atendimento", permission: { category: "contacts", level: "view" }, mobile: "more" },
+  { id: "tasks", label: VOCAB.tasks.nav, title: VOCAB.tasks.title, icon: CheckSquare, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
+  { id: "calendar", label: VOCAB.agenda.nav, title: VOCAB.agenda.title, icon: CalendarDays, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
+  { id: "campaigns", label: VOCAB.campaigns.nav, title: VOCAB.campaigns.title, icon: Megaphone, group: "divulgacao", permission: { category: "campaigns", level: "view" }, badge: "pausedCampaigns", mobile: "more" },
+  { id: "groups", label: VOCAB.groups.nav, title: VOCAB.groups.title, icon: Users2, group: "divulgacao", permission: { category: "inbox", level: "view_own" }, mobile: "more" },
+  { id: "forms", label: VOCAB.forms.nav, title: VOCAB.forms.title, icon: FileText, group: "divulgacao", permission: { category: "settings", level: "manage" }, mobile: "more" },
+  { id: "central", label: VOCAB.reports.nav, title: VOCAB.reports.title, icon: BarChart3, group: "gestao", permission: { category: "reports", level: "view" }, module: "central", mobile: "more" },
+  { id: "team", label: VOCAB.team.nav, title: VOCAB.team.title, icon: Users, group: "gestao", permission: { category: "team", level: "view" }, mobile: "more" },
+  { id: "audit", label: VOCAB.audit.nav, title: VOCAB.audit.title, icon: ScrollText, group: "gestao", permission: { category: "auditLogs", level: "view" }, mobile: "more" },
+  { id: "settings", label: VOCAB.settings.nav, title: VOCAB.settings.title, icon: Settings, group: "gestao", permission: { category: "settings", level: "view" }, mobile: "more" },
 ];
 
 /** Filtra por permissão e módulo. Pura: recebe `can` e `modules`. */

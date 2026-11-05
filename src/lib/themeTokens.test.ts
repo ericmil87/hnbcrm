@@ -125,9 +125,12 @@ describe("themeTokens: aliases", () => {
   it("--color-brand-500 references its channel", () => {
     expect(root["--color-brand-500"]).toBe("rgb(var(--rgb-brand-500))");
   });
+  it("--color-brand-600 references its channel", () => {
+    expect(root["--color-brand-600"]).toBe("rgb(var(--rgb-brand-600))");
+  });
   it("defines wallpaper, shadows and shimmer for the dark theme", () => {
     expect(root["--chat-wallpaper"]).toBe("none");
-    expect(root["--shadow-bubble"]).toBe("none");
+    expect(root["--shadow-bubble"]).toBe("0 0 #0000");
     for (const v of ["card", "card-hover", "elevated", "glow"]) expect(root[`--shadow-${v}`]).toBeTruthy();
     expect(root["--shimmer-highlight"]).toBe("rgba(255, 255, 255, 0.04)");
   });

@@ -6,6 +6,8 @@
 
 Recursos do inbox 1 a 1 (`convex/conversations.ts`, `src/components/inbox/`), Nova conversa pela equipe com checagem do número no gateway (v0.66–0.67.1) e o FAB do Copiloto.
 
+A conversa usa os tokens de chat do sistema de temas (Frontend v2, fv2-12): `getBubbleStyle` (`MessageBubble.tsx`, exportada e testada em `bubbleStyle.test.ts`) devolve só classes `bubble-*`; a área de mensagens é `bg-chat-bg chat-wallpaper`, o cabeçalho mobile `bg-chat-header`, o composer `bg-composer`/`bg-composer-field`, a pílula "Exibindo as últimas N" `bg-bubble-system`, o recibo "lida" `text-tick-read` e o badge de não lidas `bg-badge-unread`. Nos ramos de saída dos componentes de `inbox/`, `white` virou `bubble-out-fg[/N]` (texto secundário a 75%, nunca `/70` ou `/60`). No Escuro mudam: a bolha da IA (`purple-600/80` para `#792CBF` sólido, até 1 nível por canal), os hovers (`hover:bg-amber-600` para `semantic-warning/90`; links inbound `hover:text-brand-500` para `hover:opacity-80`) e 5% de opacidade nos textos secundários da bolha de saída (`/70` para `/75`). `--shadow-bubble` é `0 0 #0000` (não `none`) no Escuro: `none` invalidaria o `box-shadow` composto dos anéis `ring-*`.
+
 ## Decisões, pegadinhas medidas e histórico
 
 ### Inbox features

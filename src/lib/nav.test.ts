@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { NAV_GROUPS, NAV_ITEMS, badgeA11yText, formatBadgeCount, groupNavItems, moreSheetSections, splitMobile, visibleNavItems } from "./nav";
 import { TAB_ROUTES, activeTabForPath } from "./routes";
-import { vocabLabels } from "./vocab";
+import { VOCAB, vocabLabels } from "./vocab";
 
 describe("NAV_ITEMS", () => {
   it("cada Tab de TAB_ROUTES aparece exatamente uma vez", () => {
@@ -20,6 +20,18 @@ describe("NAV_ITEMS", () => {
   it("todo rótulo vem de VOCAB", () => {
     const labels = new Set(vocabLabels());
     for (const item of NAV_ITEMS) expect(labels.has(item.label), item.label).toBe(true);
+  });
+
+  it("todo item tem title vindo de VOCAB, igual ao título que a página usa", () => {
+    const labels = new Set(vocabLabels());
+    for (const item of NAV_ITEMS) {
+      expect(item.title, item.id).toBeTruthy();
+      expect(labels.has(item.title), item.title).toBe(true);
+    }
+    const byId = Object.fromEntries(NAV_ITEMS.map((i) => [i.id, i.title]));
+    expect(byId.board).toBe(VOCAB.funnel.title);
+    expect(byId.inbox).toBe(VOCAB.conversations.title);
+    expect(byId.contacts).toBe(VOCAB.contact.nav);
   });
 
   it("todo grupo usado existe em NAV_GROUPS", () => {
