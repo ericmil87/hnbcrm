@@ -1,6 +1,12 @@
-import { THEME_COLOR, type UiTheme } from "./theme";
+import { THEME_COLOR, isUiTheme, type UiTheme } from "./theme";
 
-let applied: UiTheme = "dark";
+function readInitial(): UiTheme {
+  if (typeof document === "undefined") return "dark";
+  const attr = document.documentElement.getAttribute("data-theme");
+  return isUiTheme(attr) ? attr : "dark";
+}
+
+let applied: UiTheme = readInitial();
 const listeners = new Set<() => void>();
 
 function setMetaThemeColor(color: string) {

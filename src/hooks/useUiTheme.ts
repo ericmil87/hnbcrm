@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   THEME_STORAGE_KEY,
+  isAppPath,
   isUiTheme,
   resolveTheme,
   shouldPushLocalToServer,
@@ -29,7 +30,7 @@ function writeLocal(theme: UiTheme) {
 }
 
 const SAVE_ERROR =
-  "Não foi possível salvar sua preferência de tema. Ela vale só neste aparelho por enquanto.";
+  "Não foi possível salvar sua preferência de tema. Tente de novo.";
 
 /** Call only in AuthLayout, before any conditional return. */
 export function useUiTheme(
@@ -39,12 +40,16 @@ export function useUiTheme(
   const setMyUiTheme = useMutation(api.teamMembers.setMyUiTheme);
   const theme = useSyncExternalStore(subscribe, getAppliedTheme);
   const pushedRef = useRef(false);
+  const pendingRef = useRef(0); // in-flight setTheme mutations
+  const lastChoiceRef = useRef<UiTheme | null>(null);
   const server = currentMember?.uiTheme;
   const hasMember = !!currentMember;
 
   useEffect(() => {
-    if (!hasMember) return;
+    if (!hasMember || !isAppPath(window.location.pathname)) return;
     const local = readLocal();
+    // Ignore the server echo while our own change is still being saved (avoids flicker).
+    if (pendingRef.current > 0 && lastChoiceRef.current) return;
     const resolved = resolveTheme({ server, local });
     applyTheme(resolved);
     if (isUiTheme(server) && server !== local) writeLocal(server);
@@ -64,9 +69,15 @@ export function useUiTheme(
       applyTheme(next);
       writeLocal(next);
       if (!organizationId) return;
-      setMyUiTheme({ organizationId, theme: next }).catch(() => {
-        toast.error(SAVE_ERROR);
-      });
+      lastChoiceRef.current = next;
+      pendingRef.current += 1;
+      setMyUiTheme({ organizationId, theme: next })
+        .catch(() => {
+          toast.error(SAVE_ERROR);
+        })
+        .finally(() => {
+          pendingRef.current -= 1;
+        });
     },
     [organizationId, setMyUiTheme],
   );

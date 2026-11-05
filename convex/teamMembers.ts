@@ -171,6 +171,7 @@ export const setMyUiTheme = mutation({
     const now = Date.now();
     for (const row of rows) {
       if (row.type !== "human" || isMembershipRevoked(row)) continue;
+      if (row.uiTheme === args.theme) continue;
       await ctx.db.patch(row._id, { uiTheme: args.theme, updatedAt: now });
     }
     return null;

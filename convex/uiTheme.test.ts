@@ -93,3 +93,17 @@ describe("setMyUiTheme", () => {
     expect(isUiTheme("dark")).toBe(true);
   });
 });
+
+describe("setMyUiTheme idempotência", () => {
+  test("gravar o mesmo tema não altera updatedAt", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const as = t.withIdentity({ subject: `${s.user}|s1` });
+    await as.mutation(api.teamMembers.setMyUiTheme, { organizationId: s.orgA, theme: "light" });
+    const before = await t.run(async (ctx) => (await ctx.db.get(s.mA))?.updatedAt);
+    vi.advanceTimersByTime(60_000);
+    await as.mutation(api.teamMembers.setMyUiTheme, { organizationId: s.orgA, theme: "light" });
+    const after = await t.run(async (ctx) => (await ctx.db.get(s.mA))?.updatedAt);
+    expect(after).toBe(before);
+  });
+});

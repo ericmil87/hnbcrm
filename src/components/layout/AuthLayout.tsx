@@ -19,6 +19,7 @@ import { Badge } from "../ui/Badge";
 import { Building2, LogOut, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useUiTheme } from "@/hooks/useUiTheme";
+import { THEME_STORAGE_KEY } from "@/lib/theme";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizard } from "../onboarding/OnboardingWizard";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -310,6 +311,12 @@ export function AuthLayout() {
     // (Só o storage: zerar o estado agora faria o auto-select da org única
     // regravá-la antes do signOut terminar.)
     clearStoredOrgId();
+    // O tema do aparelho também é da pessoa: não migra para a conta de outro usuário.
+    try {
+      localStorage.removeItem(THEME_STORAGE_KEY);
+    } catch {
+      // storage indisponível
+    }
     // Toasts da sessão (ex.: "você foi adicionado…", com botão de trocar de
     // org) não podem sobrar para o próximo usuário deste navegador.
     toast.dismiss();
