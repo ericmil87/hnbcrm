@@ -12,6 +12,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Formatos que mudam na tela: o tempo relativo em Formulários passa a aparecer como "há 3 dias" e o valor do pipeline no Painel como "R$ 1,5 mi".
 - Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
 - Os controles de ligar e desligar, as abas e as listas de seleção (em Configurações e nos ajustes de formulários) ficaram mais fáceis de tocar no celular e podem ser usados pelo teclado.
+- O anel laranja de foco só aparece quando você navega pelo teclado. No celular, os menus de ações abrem como folha na parte de baixo da tela e as dicas abrem com pressão longa (ou com um toque, quando são só informativas).
 
 ### Configuração inicial e Copiloto
 
