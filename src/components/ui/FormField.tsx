@@ -10,18 +10,29 @@ export interface FormFieldControlProps {
   "aria-required"?: true;
 }
 
-interface FormFieldProps {
+interface FormFieldBaseProps {
   label: string;
-  /** Id do controle. Se omitido, é gerado e entregue a `children` (função). */
-  htmlFor?: string;
   hint?: string;
   error?: string;
   required?: boolean;
   /** Mostra "(opcional)" ao lado do rótulo quando o campo não é obrigatório. */
   showOptional?: boolean;
   className?: string;
-  children: ReactNode | ((props: FormFieldControlProps) => ReactNode);
 }
+
+type FormFieldProps = FormFieldBaseProps &
+  (
+    | {
+        /** Id do controle filho (obrigatório quando `children` é um nó comum). */
+        htmlFor: string;
+        children: ReactNode;
+      }
+    | {
+        /** Se omitido, é gerado e entregue à função `children`. */
+        htmlFor?: string;
+        children: (props: FormFieldControlProps) => ReactNode;
+      }
+  );
 
 /**
  * Rótulo + dica + erro ligados ao controle por id. Aceita um nó comum (use

@@ -51,15 +51,15 @@ export function Tabs({
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (enabled.length === 0) return;
-    const idx = enabled.findIndex((i) => i.id === value);
+    const found = enabled.findIndex((i) => i.id === value);
     switch (e.key) {
       case "ArrowRight":
         e.preventDefault();
-        move(enabled[(idx + 1) % enabled.length].id);
+        move(enabled[(found + 1) % enabled.length].id);
         break;
       case "ArrowLeft":
         e.preventDefault();
-        move(enabled[(idx - 1 + enabled.length) % enabled.length].id);
+        move(enabled[(found < 0 ? enabled.length - 1 : found - 1 + enabled.length) % enabled.length].id);
         break;
       case "Home":
         e.preventDefault();
@@ -97,13 +97,14 @@ export function Tabs({
             role="tab"
             id={tabDomId(idPrefix, item.id)}
             aria-selected={selected}
-            aria-controls={tabPanelDomId(idPrefix, item.id)}
+            // Só a aba selecionada tem painel no DOM.
+            aria-controls={selected ? tabPanelDomId(idPrefix, item.id) : undefined}
             tabIndex={item.id === focusableId ? 0 : -1}
             disabled={item.disabled}
             onClick={() => onValueChange(item.id)}
             className={cn(
               "inline-flex min-h-11 shrink-0 snap-start items-center gap-2 whitespace-nowrap text-sm font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
               "disabled:cursor-not-allowed disabled:opacity-50",
               variant === "underline"
                 ? cn(
@@ -149,7 +150,7 @@ export function TabPanel({ id, idPrefix = "tabs", className, children }: TabPane
       id={tabPanelDomId(idPrefix, id)}
       aria-labelledby={tabDomId(idPrefix, id)}
       tabIndex={0}
-      className={cn("focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500", className)}
+      className={cn("focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500", className)}
     >
       {children}
     </div>

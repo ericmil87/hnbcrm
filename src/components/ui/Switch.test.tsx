@@ -52,6 +52,7 @@ describe("Switch", () => {
     const sw = screen.getByRole("switch", { name: "Ativar" });
     expect(sw).toHaveClass("minha-classe");
     expect(sw.className).toContain("before:-inset-y-3");
+    expect(sw.className).not.toMatch(/(^|\s)border(\s|$)/);
   });
 
   it("liga a descrição por aria-describedby", () => {

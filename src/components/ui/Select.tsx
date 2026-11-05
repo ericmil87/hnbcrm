@@ -61,8 +61,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
             error && "border-semantic-error focus:border-semantic-error focus:ring-semantic-error/20",
             className
           )}
-          {...aria}
           {...props}
+          {...aria}
         >
           {placeholder && (
             <option value="" disabled>
@@ -85,12 +85,29 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     );
 
     if (!label) {
-      return renderControl(id, error ? { "aria-invalid": true } : {});
+      const errorId = error ? `${id ?? "select"}-error` : undefined;
+      const describedBy = [errorId, props["aria-describedby"]].filter(Boolean).join(" ") || undefined;
+      return (
+        <>
+          {renderControl(id, { ...(error ? { "aria-invalid": true } : {}), "aria-describedby": describedBy })}
+          {error && (
+            <p id={errorId} role="alert" className="mt-1.5 text-[13px] text-semantic-error">
+              {error}
+            </p>
+          )}
+        </>
+      );
     }
 
     return (
       <FormField label={label} htmlFor={id} hint={hint} error={error} required={required} showOptional={showOptional}>
-        {({ id: controlId, ...aria }) => renderControl(controlId, aria)}
+        {({ id: controlId, ...aria }) =>
+          renderControl(controlId, {
+            ...aria,
+            "aria-describedby":
+              [aria["aria-describedby"], props["aria-describedby"]].filter(Boolean).join(" ") || undefined,
+          })
+        }
       </FormField>
     );
   }

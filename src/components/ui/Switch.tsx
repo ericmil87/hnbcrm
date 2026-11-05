@@ -18,6 +18,7 @@ interface SwitchProps {
 
 const TRACK = {
   // O pseudo-elemento amplia a área de toque para >= 44 px sem mexer no layout.
+  // O estado desligado usa ring inset (não borda), que não encolhe a área de toque.
   sm: { track: "h-5 w-9 before:-inset-x-1.5 before:-inset-y-3", thumb: "h-4 w-4", on: "translate-x-4" },
   md: { track: "h-6 w-11 before:-inset-x-0.5 before:-inset-y-2.5", thumb: "h-5 w-5", on: "translate-x-5" },
 } as const;
@@ -50,11 +51,11 @@ export function Switch({
       disabled={disabled}
       onClick={() => onCheckedChange(!checked)}
       className={cn(
-        "relative inline-flex shrink-0 rounded-full transition-colors duration-200",
+        "relative inline-flex shrink-0 rounded-full motion-safe:transition-colors motion-safe:duration-200",
         "before:absolute before:content-['']",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
         s.track,
-        checked ? "bg-brand-600" : "bg-surface-overlay border border-border-strong",
+        checked ? "bg-brand-600" : "bg-surface-overlay ring-1 ring-inset ring-border-strong focus-visible:ring-brand-500",
         disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
         hideLabel && className
       )}
@@ -62,7 +63,7 @@ export function Switch({
       <span
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 rounded-full bg-white shadow-sm transition-transform duration-200",
+          "pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 rounded-full bg-white shadow-sm motion-safe:transition-transform motion-safe:duration-200",
           s.thumb,
           checked && s.on,
           !checked && "translate-x-0"

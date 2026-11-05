@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useLayoutEffect, useRef } from "react";
+import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { FormField } from "./FormField";
 
@@ -43,12 +43,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
 
     useLayoutEffect(resize, [resize, value]);
 
-    const currentLength =
-      typeof value === "string"
-        ? value.length
-        : typeof defaultValue === "string"
-          ? defaultValue.length
-          : 0;
+    const [uncontrolledLength, setUncontrolledLength] = useState(
+      typeof defaultValue === "string" ? defaultValue.length : 0
+    );
+    const currentLength = typeof value === "string" ? value.length : uncontrolledLength;
+    const errorId = error && !label ? `${id ?? "textarea"}-error` : undefined;
 
     const renderControl = (aria: Record<string, unknown>, controlId: string | undefined) => (
       <>
@@ -62,6 +61,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           required={required}
           onChange={(e) => {
             resize();
+            if (value === undefined) setUncontrolledLength(e.target.value.length);
             onChange?.(e);
           }}
           className={cn(
@@ -70,8 +70,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
             error && "border-semantic-error focus:border-semantic-error focus:ring-semantic-error/20",
             className
           )}
-          {...aria}
           {...props}
+          {...aria}
         />
         {maxLength !== undefined && (
           <p aria-live="off" className="mt-1 text-right text-xs tabular-nums text-text-muted">
@@ -82,7 +82,18 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
     );
 
     if (!label) {
-      return renderControl(error ? { "aria-invalid": true } : {}, id);
+      const aria: Record<string, unknown> = error ? { "aria-invalid": true } : {};
+      if (errorId) aria["aria-describedby"] = [errorId, props["aria-describedby"]].filter(Boolean).join(" ");
+      return (
+        <>
+          {renderControl(aria, id)}
+          {error && (
+            <p id={errorId} role="alert" className="mt-1.5 text-[13px] text-semantic-error">
+              {error}
+            </p>
+          )}
+        </>
+      );
     }
 
     return (

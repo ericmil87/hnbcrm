@@ -211,6 +211,7 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
           <Select
             id="org-default-country"
             label="País padrão dos telefones"
+            hint="Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados."
             value={countryCode}
             onValueChange={setCountryCode}
             options={SUPPORTED_DEFAULT_COUNTRIES.map((c) => ({
@@ -218,9 +219,6 @@ function OrgProfileSection({ organizationId }: { organizationId: Id<"organizatio
               label: countryLabel(c),
             }))}
           />
-          <p className="mt-1.5 text-xs text-text-muted">
-            Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados.
-          </p>
         </div>
 
         <Button onClick={handleSave} disabled={saving}>

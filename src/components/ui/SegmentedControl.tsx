@@ -74,8 +74,9 @@ export function SegmentedControl({
             onClick={() => onValueChange(o.value)}
             className={cn(
               "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 font-medium transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-              size === "md" ? "min-h-11 text-sm" : "min-h-9 text-[13px]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
+              // sm também mantém 44 px de altura até existir a variante `coarse` (fv2-05).
+              size === "md" ? "min-h-11 text-sm" : "min-h-11 text-[13px]",
               selected
                 ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:bg-surface-overlay"
