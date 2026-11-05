@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -21,6 +21,15 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
 import { memberLabel } from "@/lib/teamMembers";
+
+/** Fallback vazio que limpa o `?event=` inválido ao montar. */
+function ClearEventParam({ onClear }: { onClear: () => void }) {
+  useEffect(() => {
+    onClear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return <></>;
+}
 
 export function CalendarPage() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -276,7 +285,7 @@ export function CalendarPage() {
 
       {eventParam && (
         // Id inválido ou de outra org: a query falha dentro do filho e o deep-link é ignorado.
-        <ErrorBoundary key={eventParam} fallback={null}>
+        <ErrorBoundary key={eventParam} fallback={<ClearEventParam onClear={() => setSelectedEvent(null)} />}>
           <EventDetailSlideOver
             open
             onClose={() => setSelectedEvent(null)}
