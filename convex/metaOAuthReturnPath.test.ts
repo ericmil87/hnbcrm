@@ -20,11 +20,12 @@ describe("retorno do OAuth da Meta aponta para uma tela real", () => {
     expect(read("src/components/settings/registry.ts")).toMatch(new RegExp(`\\{\\s*id:\\s*"${section}"`));
   });
 
-  test("o painel de canais existe com componente e sem regra de visibilidade extra", async () => {
-    const { SETTINGS_PANELS } = await import("../src/components/settings/registry");
-    const channels = SETTINGS_PANELS.find((p) => p.id === "channels");
-    expect(channels?.Component).toBeDefined();
-    expect(channels?.visible).toBeUndefined();
+  test("o painel de canais tem componente e nenhuma regra de visibilidade extra", () => {
+    const registry = read("src/components/settings/registry.ts");
+    const start = registry.indexOf('id: "channels"');
+    const block = registry.slice(start, registry.indexOf("\n  },", start));
+    expect(block).toMatch(/Component:/);
+    expect(block).not.toMatch(/visible:/);
   });
 
   test("o caminho está sob /app/configuracoes, como o roteador do app", () => {
