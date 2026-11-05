@@ -62,6 +62,8 @@ describe("AttentionRow", () => {
     setup({ expanded: true });
     expect(screen.getByText("Ações sugeridas")).toBeInTheDocument();
     expect(screen.getByText("Ligar para o cliente")).toBeInTheDocument();
+    // O motivo completo fica legível nos detalhes (o selo da linha pode truncar).
+    expect(screen.getAllByText(/Objeto perdido na clínica/).length).toBeGreaterThan(1);
     expect(screen.getByText(/guarda-chuva/)).not.toHaveClass("line-clamp-1");
     expect(screen.getByRole("button", { name: /Ocultar detalhes/ })).toHaveAttribute("aria-expanded", "true");
   });
@@ -72,6 +74,7 @@ describe("AttentionRow", () => {
     expect(screen.getByText("Ações sugeridas")).toBeInTheDocument();
     expect(screen.getByText("De")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Assumir conversa" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ver conversa" })).toHaveTextContent("Ver conversa");
   });
 
   it("repasse de grupo mostra o subtítulo de grupo quando não há resumo", () => {

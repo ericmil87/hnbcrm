@@ -73,29 +73,45 @@ export function AttentionRow({
   const subtitle = subtitleOf(handoff);
   const fromAi = handoff.fromMember?.type === "ai";
 
-  const actions = (
-    <div className="flex items-center gap-2 shrink-0">
-      <Button
-        onClick={onView}
-        variant="ghost"
-        size="sm"
-        iconOnly
-        aria-label={`${VOCAB.attention.view}: ${title}`}
-      >
-        <Eye size={16} aria-hidden="true" />
-      </Button>
-      <div className="relative">
+  const comfortable = density === "comfortable";
+  const btnSize = comfortable ? "md" : "sm";
+  const stackBtn = comfortable ? "w-full md:w-auto" : "";
+
+  // Abaixo de `md` a barra ocupa a largura toda e o popover ancora nela (não no
+  // botão), para a caixa de instrução não sair da tela no celular.
+  const renderActions = (leading?: ReactNode) => (
+    <div
+      className={cn(
+        "relative flex gap-2 w-full md:w-auto md:shrink-0",
+        comfortable ? "flex-col md:flex-row md:items-center" : "flex-wrap items-center"
+      )}
+    >
+      {leading}
+      {comfortable ? (
+        <Button onClick={onView} variant="ghost" size="md" className="w-full md:w-auto whitespace-nowrap">
+          <Eye size={16} aria-hidden="true" />
+          {VOCAB.attention.view}
+        </Button>
+      ) : (
+        <Button onClick={onView} variant="ghost" size="sm" iconOnly aria-label={`${VOCAB.attention.view}: ${title}`}>
+          <Eye size={16} aria-hidden="true" />
+        </Button>
+      )}
+      <div className={cn("md:relative", stackBtn)}>
         <Button
           onClick={onToggleGiveBack}
           variant="secondary"
-          size="sm"
-          className="whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
+          size={btnSize}
+          className={cn(
+            "whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
+            stackBtn
+          )}
         >
           {VOCAB.attention.giveBack}
         </Button>
         {giveBackPopover}
       </div>
-      <Button onClick={onAccept} variant="primary" size="sm" className="whitespace-nowrap">
+      <Button onClick={onAccept} variant="primary" size={btnSize} className={cn("whitespace-nowrap", stackBtn)}>
         {VOCAB.attention.accept}
       </Button>
     </div>
@@ -151,13 +167,13 @@ export function AttentionRow({
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-4 border-t border-border">
           <span className="text-xs text-text-muted tabular-nums">Solicitado em {formatDate(handoff.createdAt)}</span>
-          {actions}
+          {renderActions()}
         </div>
       </Card>
     );
   }
 
-  const hasDetails = handoff.suggestedActions.length > 0 || Boolean(handoff.summary);
+  const hasDetails = handoff.suggestedActions.length > 0 || Boolean(handoff.summary) || Boolean(handoff.reason);
   const detailsId = `attention-details-${handoff._id}`;
 
   return (
@@ -169,7 +185,7 @@ export function AttentionRow({
               {handoff.isGroup && <Users size={14} className="inline-block mr-1.5 -mt-0.5 text-brand-500" aria-hidden="true" />}
               {title}
             </h3>
-            <Badge variant="warning" className="shrink-0 max-w-[50%] truncate">
+            <Badge variant="warning" className="inline-block shrink-0 max-w-[50%] truncate">
               {handoff.reason}
             </Badge>
             <span className="ml-auto shrink-0 text-caption text-text-muted tabular-nums">
@@ -188,8 +204,8 @@ export function AttentionRow({
             )}
           </div>
         </div>
-        <div className="flex items-center gap-1 justify-between lg:justify-end">
-          {hasDetails ? (
+        {renderActions(
+          hasDetails ? (
             <Button
               variant="ghost"
               size="sm"
@@ -201,20 +217,18 @@ export function AttentionRow({
             >
               <ChevronDown size={16} aria-hidden="true" className={cn("transition-transform", expanded && "rotate-180")} />
             </Button>
-          ) : (
-            <span />
-          )}
-          {actions}
-        </div>
+          ) : undefined
+        )}
       </div>
 
       {expanded && (
         <div id={detailsId} className="mt-3 border-t border-border pt-3 space-y-3">
-          {handoff.fromMember && (
-            <p className="sm:hidden text-caption text-text-muted">
-              {fromAi ? "A IA pediu ajuda" : "Pedido de"} · {handoff.fromMember.name}
-            </p>
-          )}
+          <p className="text-sm text-text-secondary">
+            <span className="font-medium text-text-primary">{fromAi ? "A IA pediu ajuda" : "Pedido de ajuda"}</span>
+            {" · "}
+            {handoff.reason}
+            {handoff.fromMember?.name && <span className="sm:hidden text-text-muted"> · {handoff.fromMember.name}</span>}
+          </p>
           {handoff.suggestedActions.length > 0 && (
             <div>
               <h4 className="text-sm font-medium text-text-primary mb-1">Ações sugeridas</h4>
