@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   THEME_COLOR,
+  THEME_OPTIONS,
+  UI_THEMES,
+  themeLabel,
   THEME_STORAGE_KEY,
   isAppPath,
   resolveTheme,
@@ -62,5 +65,36 @@ describe("toasterTheme and constants", () => {
   it("exposes theme-color per theme and the storage key", () => {
     expect(THEME_COLOR).toEqual({ dark: "#0F0F11", light: "#FAFAFA", whatsapp: "#008069" });
     expect(THEME_STORAGE_KEY).toBe("hnbcrm:theme");
+  });
+});
+
+describe("THEME_OPTIONS", () => {
+  it("tem 3 opções com os ids de UI_THEMES", () => {
+    expect(THEME_OPTIONS.map((o) => o.id)).toEqual([...UI_THEMES]);
+  });
+
+  it("textos em português, sem inglês", () => {
+    const text = THEME_OPTIONS.map((o) => `${o.label} ${o.description}`).join(" ");
+    expect(text).not.toMatch(/\b(dark|light|theme|default|appearance)\b/i);
+    expect(THEME_OPTIONS.find((o) => o.id === "whatsapp")?.label).toBe("Estilo WhatsApp");
+  });
+
+  it("rótulos em sentence case (só a primeira palavra e marcas em maiúscula)", () => {
+    for (const o of THEME_OPTIONS) {
+      const [, ...rest] = o.label.split(" ");
+      for (const w of rest) expect(w).toBe(w === "WhatsApp" ? w : w.toLowerCase());
+    }
+  });
+
+  it("previews usam hex fixo", () => {
+    for (const o of THEME_OPTIONS) {
+      for (const v of Object.values(o.preview)) expect(v).toMatch(/^#[0-9A-F]{6}$/);
+    }
+  });
+
+  it("themeLabel", () => {
+    expect(themeLabel("dark")).toBe("Escuro");
+    expect(themeLabel("light")).toBe("Claro");
+    expect(themeLabel("whatsapp")).toBe("Estilo WhatsApp");
   });
 });

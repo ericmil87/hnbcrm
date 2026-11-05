@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { LogOut } from "lucide-react";
+import { LogOut, Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -18,6 +18,8 @@ import {
 } from "@/lib/nav";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
+import type { UiTheme } from "@/lib/theme";
 
 type NavGroups = ReturnType<typeof groupNavItems>;
 
@@ -32,6 +34,7 @@ interface SidebarViewProps {
   onNavigate: (tab: Tab) => void;
   onSignOut: () => void;
   onOpenOrgSwitcher: () => void;
+  onOpenAppearance: () => void;
 }
 
 /** Sidebar pura: recebe o modelo já filtrado e as contagens. */
@@ -44,6 +47,7 @@ export function SidebarView({
   onNavigate,
   onSignOut,
   onOpenOrgSwitcher,
+  onOpenAppearance,
 }: SidebarViewProps) {
   const withTip = (label: string, node: React.ReactElement<{ "aria-describedby"?: string }>) =>
     collapsed ? (
@@ -141,6 +145,19 @@ export function SidebarView({
           <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
         )}
         {withTip(
+          "Aparência",
+          <button
+            type="button"
+            onClick={onOpenAppearance}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            aria-label="Aparência"
+            aria-haspopup="dialog"
+          >
+            <Palette size={20} className="shrink-0" aria-hidden="true" />
+            <span className="hidden lg:block">Aparência</span>
+          </button>
+        )}
+        {withTip(
           "Sair",
           <button
             type="button"
@@ -162,9 +179,12 @@ interface SidebarProps {
   organizationId: Id<"organizations">;
   orgName: string;
   onOpenOrgSwitcher: () => void;
+  theme: UiTheme;
+  setTheme: (theme: UiTheme) => void;
 }
 
-export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher }: SidebarProps) {
+export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme }: SidebarProps) {
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = activeTabForPath(location.pathname);
@@ -177,6 +197,7 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher 
   const badges = useNavBadges(organizationId, items);
 
   return (
+    <>
     <SidebarView
       items={items}
       groups={groups}
@@ -187,6 +208,9 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher 
       onNavigate={(tab) => navigate(TAB_ROUTES[tab])}
       onSignOut={onSignOut}
       onOpenOrgSwitcher={onOpenOrgSwitcher}
+      onOpenAppearance={() => setAppearanceOpen(true)}
     />
+    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    </>
   );
 }
