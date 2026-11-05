@@ -43,6 +43,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Base da nova configuração inicial: perfil do negócio, funil que pode ser refeito sem apagar contatos e andamento que lembra onde você parou. Os "Primeiros passos" no Painel passam a refletir o que já está feito de verdade (WhatsApp conectado, Atendente IA ligado, equipe convidada...), sem os itens técnicos de webhook/API e campos personalizados.
 - Peça ao Copiloto, no painel ou no Telegram, para ler e ajustar o Atendente IA: jeito de atender, o que a IA sabe, horário, quando chamar a equipe, follow-up, áudio e imagens. Toda mudança mostra "Antes → Depois" (com as linhas de antes e depois destacadas no cartão de confirmação) e só vale depois que você confirma; se a configuração mudar nesse meio-tempo, a confirmação é recusada. No modo automático do Telegram isso nunca acontece sozinho. Ligar a IA, aceitar termos e mexer em modelo, custo ou canais continua sendo feito por você nas Configurações.
 - Base do "Escrever com IA": a IA redige um rascunho do jeito de atender, do que ela sabe e de quando chamar a equipe, a partir da descrição do seu negócio. Nada é salvo até você confirmar; se a IA falhar, você recebe o modelo do seu segmento. A tela chega na configuração inicial nova.
+- Base dos passos "Seu funil" (editor de etapas com "Restaurar sugestão") e "Teste" (conversa de teste com a Atendente IA e perguntas prontas por segmento) da nova configuração inicial. Nada visível ainda.
 
 ## [0.78.1] - 2026-11-03
 

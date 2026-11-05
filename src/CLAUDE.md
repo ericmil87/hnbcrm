@@ -16,6 +16,7 @@ src/
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/settingsNav.ts          # Settings: resolveSettingsPanel(), visibleSettingsPanels(), groupOf(), groupSettingsPanels(); test next to it
 ├── lib/settingsSearch.ts       # searchSettingsPanels(): label + keywords + description, accent/case-insensitive; test next to it
+├── lib/funnelEditor.ts         # pure funnel-editor rules (rename/move/add/remove stage, fromTemplate, validateFunnel, toApplyFunnelTemplateArgs); test next to it
 ├── lib/inlineCrud.ts           # pure reducer for list + modal form + delete confirm (useInlineCrud); test next to it
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
@@ -57,6 +58,8 @@ src/
     ├── TeamPage.tsx, AuditLogs.tsx, ContactsPage.tsx  # /app/equipe, /app/auditoria, /app/contatos
     ├── Settings.tsx            # /app/configuracoes shell (two levels: 6 groups > panels). Panel = ?secao=<id> (push on click); group is derived. Mobile: ajustes-style list + search; desktop: sidebar + panel
     ├── settings/               # registry.ts (SETTINGS_GROUPS/SETTINGS_PANELS: one entry per panel, lazy Component or href; PLANNED_PANEL_IDS), SettingsNavView (presentational), OrgProfilePanel, AppearancePanel + AppearancePicker + ThemePickerModal (theme choice; sidebar/"Mais" open the modal), CustomFieldsPanel, LeadSourcesPanel, advanced/ (ApiKeysPanel, WebhooksPanel: technical terms allowed here), AiSection (orchestrator only), ChannelsSection (Meta + bridge, QR), ChannelHealthPanel (7-day stats), DataSection (export/import), ImportWizard (5 steps)
+    │   ├── pipeline/FunnelEditor.tsx  # controlled funnel editor (name + stages, "Restaurar sugestão"), no Convex; shared by the v2 setup wizard and Settings
+    │   ├── ai/AttendantSimulator.tsx  # simulateAttendant chat, variant inline|modal (+ AttendantSimulatorView, presentational)
     │   ├── settings/ai/        # AI section cards: ActivationWizardCard, ActivationCard, FeatureTogglesCard, BridgeAiCard, AttendantCard, SimulatorModal, UsagePanel (AiSection.tsx only orchestrates, order from `aiSectionOrder`)
     │   ├── settings/attendant/ # AttendantConfig (editor, still monolithic until fv2-19), fields (FieldGroup, WarningNote, FollowUpModeCard), types
     │   └── settings/advanced/AiModelsPanel.tsx  # model routing selects, ProductRow, PrivacyCard (technical terms allowed here)

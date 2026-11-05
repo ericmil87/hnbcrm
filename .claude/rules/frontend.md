@@ -85,3 +85,4 @@ paths:
 - Build chunks (`vite.config.ts` `manualChunks`): `react-vendor`, `convex-vendor`, `utils-vendor`, `icons-vendor`, `xlsx-vendor` (xlsx only via dynamic `import()`). Keep heavy libs lazy; new origins (fonts, CDN, iframe) also need the CSP in `vercel.json`.
 
 Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.md`
+- Components shared between the setup wizard and Settings (`FunnelEditor`, `AttendantSimulator`) are controlled/presentational and never call a different mutation than the one Settings calls today; the caller owns the Convex call.
