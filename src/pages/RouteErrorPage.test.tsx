@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lazy, Suspense } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -39,5 +40,27 @@ describe("RouteErrorPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Recarregar" }));
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("mostra Recarregar quando o chunk lazy falha ao carregar", async () => {
+    const Broken = lazy(() =>
+      Promise.reject(new TypeError("Failed to fetch dynamically imported module"))
+    );
+    const router = createMemoryRouter(
+      [
+        {
+          path: "/",
+          element: (
+            <Suspense fallback={null}>
+              <Broken />
+            </Suspense>
+          ),
+          errorElement: <RouteErrorPage />,
+        },
+      ],
+      { initialEntries: ["/"] }
+    );
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByRole("button", { name: "Recarregar" })).toBeInTheDocument();
   });
 });

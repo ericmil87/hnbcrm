@@ -9,6 +9,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Endereço que não existe agora mostra a página "Página não encontrada", com atalhos para o app e para a página inicial; dentro do app, um endereço desconhecido leva de volta ao Painel.
 - Se uma tela falhar ao carregar (por exemplo, logo depois de uma atualização do sistema), aparece "Algo deu errado." com o botão "Recarregar", em vez de uma tela em branco.
 - Na Agenda, o link de um evento (como o de "Próximos eventos" no Painel) abre direto o dia e o detalhe do evento; visão, data e evento ficam no endereço e podem ser compartilhados.
+- Formatos que mudam na tela: o tempo relativo em Formulários passa a aparecer como "há 3 dias" e o valor do pipeline no Painel como "R$ 1,5 mi".
 - Em Formulários, o item do menu continua destacado ao abrir um formulário, as submissões ou a análise.
 
 ## [0.78.1] - 2026-11-03

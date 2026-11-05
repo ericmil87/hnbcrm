@@ -41,7 +41,7 @@ import {
   ChevronRight,
   BarChart3,
 } from "lucide-react";
-import { formatMoney } from "@/lib/format";
+import { formatDueRelative, formatMoney } from "@/lib/format";
 
 export function DashboardOverview() {
   const { organizationId } = useOutletContext<AppOutletContext>();
@@ -328,7 +328,7 @@ function MyTasksWidget({
                       isOverdue ? "text-semantic-error" : "text-text-muted"
                     )}
                   >
-                    {formatTaskRelativeDate(task.dueDate, now)}
+                    {formatDueRelative(task.dueDate, now)}
                   </span>
                 )}
               </div>
@@ -338,21 +338,6 @@ function MyTasksWidget({
       )}
     </Card>
   );
-}
-
-function formatTaskRelativeDate(dueDate: number, now: number): string {
-  const today = new Date(now);
-  today.setHours(0, 0, 0, 0);
-  const dueDay = new Date(dueDate);
-  dueDay.setHours(0, 0, 0, 0);
-  const diffMs = dueDay.getTime() - today.getTime();
-  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
-  if (diffDays < -1) return `${Math.abs(diffDays)}d atrás`;
-  if (diffDays === -1) return "Ontem";
-  if (diffDays === 0) return "Hoje";
-  if (diffDays === 1) return "Amanhã";
-  if (diffDays <= 7) return `${diffDays}d`;
-  return new Date(dueDate).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
 }
 
 // ============================================================================

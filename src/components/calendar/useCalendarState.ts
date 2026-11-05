@@ -15,7 +15,7 @@ export function useCalendarState() {
   const currentDate = useMemo(() => date ?? fallbackDate, [date, fallbackDate]);
 
   const update = useCallback(
-    (changes: Record<string, string | null>, push: boolean) => {
+    (changes: Record<string, string | null>, push: boolean, keepScroll = false) => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
@@ -25,7 +25,7 @@ export function useCalendarState() {
           }
           return next;
         },
-        { replace: !push }
+        { replace: !push, preventScrollReset: keepScroll }
       );
     },
     [setSearchParams]
@@ -33,7 +33,8 @@ export function useCalendarState() {
 
   const setView = (next: CalendarView) => update({ view: next }, false);
   const setCurrentDate = (next: Date) => update({ date: formatDateParam(next) }, false);
-  const setSelectedEvent = (id: string | null) => update({ event: id }, true);
+  const setSelectedEvent = (id: string | null) =>
+    id === null ? update({ event: null }, false, true) : update({ event: id }, true);
 
   const dateRange = useMemo(() => {
     const start = new Date(currentDate);

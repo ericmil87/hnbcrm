@@ -45,9 +45,9 @@ paths:
 - Mutations: `useMutation` plus `sonner` toasts (`toast.promise`). Convex user errors are `ConvexError` with PT-BR text; show it.
 
 ## Routing and deep links
-- Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `PATH_TO_TAB`); navigate with `useNavigate`, derive active state from `useLocation`.
+- Route constants live in `src/lib/routes.ts` (`TAB_ROUTES`, `activeTabForPath`); navigate with `useNavigate`, derive active state from `useLocation`.
 - Authenticated routes are lazy (`React.lazy`) under `AuthLayout`. Public pages call `<SEO />` (`src/components/SEO.tsx`).
-- The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).
+- The URL is the source of truth for open entities. Params: `?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?board=`, `?secao=`, and the Agenda's `?view=`, `?date=`, `?event=`. Open/close and selection must write the param (so browser back works); selecting something else clears stale params in the same write. Org switch clears entity params (`src/lib/orgSwitch.ts`).
 
 ## Anti-patterns (each causes real bugs)
 - No `Date.now()`, `new Set()`/`new Map()`/`[]`/`{}` in `useQuery` args or passed directly to `useState`; use `useState(() => ...)`.

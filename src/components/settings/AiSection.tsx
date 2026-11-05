@@ -2716,7 +2716,7 @@ type SpendMode = (typeof SPEND_MODE_OPTIONS)[number]["value"];
 
 function formatUsd(value: number): string {
   if (value > 0 && value < 0.01) return "menos de US$ 0,01";
-  return `US$ ${value.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatMoney(value, "USD");
 }
 
 function UsageCard({ organizationId }: { organizationId: Id<"organizations"> }) {

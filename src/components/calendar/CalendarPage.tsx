@@ -17,6 +17,7 @@ import { EventDetailSlideOver } from "./EventDetailSlideOver";
 import { TaskDetailSlideOver } from "./TaskDetailSlideOver";
 import { EventBlock } from "./EventBlock";
 import type { CalendarEventType } from "./constants";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
 import { memberLabel } from "@/lib/teamMembers";
@@ -274,12 +275,15 @@ export function CalendarPage() {
       />
 
       {eventParam && (
-        <EventDetailSlideOver
-          open
-          onClose={() => setSelectedEvent(null)}
-          eventId={eventParam}
-          onEdit={handleEditEvent}
-        />
+        // Id inválido ou de outra org: a query falha dentro do filho e o deep-link é ignorado.
+        <ErrorBoundary key={eventParam} fallback={null}>
+          <EventDetailSlideOver
+            open
+            onClose={() => setSelectedEvent(null)}
+            eventId={eventParam}
+            onEdit={handleEditEvent}
+          />
+        </ErrorBoundary>
       )}
 
       {selectedTaskId && (

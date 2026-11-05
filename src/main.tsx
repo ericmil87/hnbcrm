@@ -7,6 +7,7 @@ import { Toaster } from "sonner";
 import { HelmetProvider } from 'react-helmet-async';
 import "./index.css";
 import { AuthLayout } from "./components/layout/AuthLayout";
+import { TAB_ROUTES } from "./lib/routes";
 import { RouteErrorPage } from "./pages/RouteErrorPage";
 import { Spinner } from "./components/ui/Spinner";
 
@@ -57,9 +58,9 @@ const router = createBrowserRouter([
   { path: "/developers", element: <LazyRoute Component={DevelopersPage} />, errorElement: <RouteErrorPage /> },
   { path: "/developers/playground", element: <LazyRoute Component={PlaygroundPage} />, errorElement: <RouteErrorPage /> },
   { path: "/entrar", element: <LazyRoute Component={AuthPage} />, errorElement: <RouteErrorPage /> },
-  { path: "/termos", element: <LazyRoute Component={TermsPage} /> },
-  { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} /> },
-  { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} /> },
+  { path: "/termos", element: <LazyRoute Component={TermsPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} />, errorElement: <RouteErrorPage /> },
   {
     path: "/app",
     element: <AuthLayout />,
@@ -84,7 +85,7 @@ const router = createBrowserRouter([
       { path: "grupos", element: <LazyRoute Component={GroupsPage} /> },
       { path: "central", element: <LazyRoute Component={CentralPage} /> },
       { path: "configuracoes", element: <LazyRoute Component={Settings} /> },
-      { path: "*", element: <Navigate to="painel" replace /> },
+      { path: "*", element: <Navigate to={TAB_ROUTES.dashboard} replace /> },
     ],
   },
   { path: "*", element: <LazyRoute Component={NotFoundPage} />, errorElement: <RouteErrorPage /> },
