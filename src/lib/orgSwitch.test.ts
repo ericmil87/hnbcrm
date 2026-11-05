@@ -21,6 +21,15 @@ describe("pathAfterOrgSwitch", () => {
     expect(pathAfterOrgSwitch("/app/grupos", "?aba=posts&post=p1")).toBe("/app/grupos?aba=posts");
   });
 
+  it("preserva modo e busca do Funil/Agenda, mas descarta filtros com id", () => {
+    expect(
+      pathAfterOrgSwitch("/app/pipeline", "?view=list&q=acme&owner=m1&unit=u1&board=b1&lead=l1&temp=hot")
+    ).toBe("/app/pipeline?view=list&q=acme");
+    expect(pathAfterOrgSwitch("/app/calendario", "?view=week&date=2026-11-04&event=e1")).toBe(
+      "/app/calendario?view=week"
+    );
+  });
+
   it("sobe para a raiz da aba quando o caminho carrega id", () => {
     expect(pathAfterOrgSwitch("/app/formularios/f1/submissoes", "?x=1")).toBe("/app/formularios");
   });
