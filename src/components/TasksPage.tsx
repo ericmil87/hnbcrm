@@ -7,6 +7,8 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useTasksUrlState } from "@/hooks/useTasksUrlState";
+import { resolveTaskIds, type SmartFilter, type TaskStatusFilter } from "@/lib/tasksFilters";
 import { useRoundedNow } from "@/hooks/useRoundedNow";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { TaskDetailSlideOver } from "./tasks/detail/TaskDetailSlideOver";
@@ -75,8 +77,6 @@ import { formatDueRelative } from "@/lib/format";
 // Types & Constants
 // ============================================================================
 
-type ViewMode = "list" | "board";
-type SmartFilter = "all" | "today" | "overdue" | "week" | "unassigned" | "reminders";
 type TaskStatus = "pending" | "in_progress" | "completed" | "cancelled";
 type TaskPriority = "low" | "medium" | "high" | "urgent";
 type ActivityType = "todo" | "call" | "email" | "follow_up" | "meeting" | "research";
@@ -97,15 +97,18 @@ export function TasksPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedTaskId = (searchParams.get("task") as Id<"tasks"> | null) ?? null;
 
-  const [selectedProjectId, setSelectedProjectId] =
-    useState<Id<"taskProjects"> | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [smartFilter, setSmartFilter] = useState<SmartFilter>("all");
+  // Modo, filtro rápido, status, responsável, etiquetas e projeto moram na URL;
+  // prioridade, tipo e o select de projeto da visão "Todas" seguem locais.
+  const { state: urlState, update: updateUrl } = useTasksUrlState();
+  const viewMode = urlState.view === "status" ? "board" : "list";
+  const smartFilter = urlState.smart;
+  const [localFilters, setLocalFilters] = useState(() => ({
+    priority: EMPTY_TASK_FILTERS.priority,
+    activityType: EMPTY_TASK_FILTERS.activityType,
+    projectId: EMPTY_TASK_FILTERS.projectId,
+  }));
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<TaskFilters>(() => ({
-    ...EMPTY_TASK_FILTERS,
-  }));
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(() => new Set());
   const [showBulkCancelConfirm, setShowBulkCancelConfirm] = useState(false);
@@ -148,6 +151,48 @@ export function TasksPage() {
     | undefined;
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
   const taskCounts = useQuery(api.tasks.getTaskCounts, { organizationId, now: queryNow });
+  // Ids vindos da URL só valem se existirem na org atual.
+  const resolvedIds = useMemo(
+    () =>
+      resolveTaskIds(urlState, {
+        projectIds: projects?.map((p) => p._id),
+        memberIds: teamMembers?.map((m) => m._id),
+        labelIds: labels?.map((l) => l._id),
+      }),
+    [urlState, projects, teamMembers, labels]
+  );
+  const selectedProjectId = resolvedIds.projectId as Id<"taskProjects"> | null;
+  const filters = useMemo<TaskFilters>(
+    () => ({
+      ...localFilters,
+      status: urlState.status,
+      assigneeId: resolvedIds.assigneeId ?? "",
+      labelIds: resolvedIds.labelIds as Id<"taskLabels">[],
+    }),
+    [localFilters, urlState.status, resolvedIds]
+  );
+  const setSmartFilter = useCallback(
+    (smart: SmartFilter) => updateUrl({ smart }),
+    [updateUrl]
+  );
+  const setViewMode = (mode: "list" | "board") =>
+    updateUrl({ view: mode === "board" ? "status" : "list" });
+  const setFilters = useCallback(
+    (next: TaskFilters) => {
+      setLocalFilters({
+        priority: next.priority,
+        activityType: next.activityType,
+        projectId: next.projectId,
+      });
+      updateUrl({
+        status: next.status as TaskStatusFilter,
+        assigneeId: next.assigneeId || null,
+        labelIds: next.labelIds,
+      });
+    },
+    [updateUrl]
+  );
+
   const columns = useQuery(
     api.taskProjects.getColumns,
     selectedProjectId ? { projectId: selectedProjectId } : "skip"
@@ -181,7 +226,10 @@ export function TasksPage() {
     [organizationId, projectFilterId, search, filters, isProjectBoard]
   );
 
-  const tasks = useQuery(api.tasks.getTasks, taskQueryArgs) as
+  const tasks = useQuery(
+    api.tasks.getTasks,
+    resolvedIds.pending ? "skip" : taskQueryArgs
+  ) as
     | TaskListItem[]
     | undefined;
 
@@ -337,29 +385,30 @@ export function TasksPage() {
   }, [filters, projectFilterId, smartFilter]);
 
   const applySavedFilters = useCallback((saved: TaskSavedFilters) => {
-    setSelectedProjectId(saved.projectId ?? null);
-    setFilters({
-      status: saved.statuses?.[0] ?? "",
+    setLocalFilters({
       priority: saved.priorities?.[0] ?? "",
-      assigneeId: saved.assigneeIds?.[0] ?? "",
       activityType: saved.activityType ?? "",
-      labelIds: saved.labelIds ?? [],
       projectId: "",
     });
-    if (saved.taskType === "reminder") {
-      setSmartFilter("reminders");
-    } else if (
+    let smart: SmartFilter = "all";
+    if (saved.taskType === "reminder") smart = "reminders";
+    else if (
       saved.dueFilter === "today" ||
       saved.dueFilter === "overdue" ||
       saved.dueFilter === "week"
     ) {
-      setSmartFilter(saved.dueFilter);
-    } else {
-      setSmartFilter("all");
+      smart = saved.dueFilter;
     }
+    updateUrl({
+      projectId: saved.projectId ?? null,
+      status: (saved.statuses?.[0] ?? "") as TaskStatusFilter,
+      assigneeId: saved.assigneeIds?.[0] ?? null,
+      labelIds: saved.labelIds ?? [],
+      smart,
+    });
     setSelectedTasks(new Set());
     toast.success("Filtro aplicado");
-  }, []);
+  }, [updateUrl]);
 
   const handleCompleteTask = async (taskId: Id<"tasks">) => {
     try {
@@ -406,11 +455,11 @@ export function TasksPage() {
   };
 
   const handleSelectProject = (projectId: Id<"taskProjects"> | null) => {
-    setSelectedProjectId(projectId);
+    updateUrl({ projectId });
     setSelectedTasks(new Set());
     // Sem projeto não existe kanban de colunas; o filtro de projeto é exclusivo
     // da visão "Todas as tarefas".
-    if (projectId) setFilters((prev) => ({ ...prev, projectId: "" }));
+    if (projectId) setLocalFilters((prev) => ({ ...prev, projectId: "" }));
   };
 
   const handleConfirmProjectAction = async () => {
@@ -424,7 +473,7 @@ export function TasksPage() {
         await deleteProject({ projectId: project._id });
         toast.success("Projeto excluído");
       }
-      if (selectedProjectId === project._id) setSelectedProjectId(null);
+      if (selectedProjectId === project._id) updateUrl({ projectId: null });
     } catch (error: any) {
       toast.error(error?.message || "Falha ao atualizar projeto");
     } finally {

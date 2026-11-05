@@ -42,6 +42,10 @@ src/
 ├── lib/searchParamState.ts     # pure URL-state codecs (stringParam, enumParam, booleanParam `1`, numberParam, listParam), writeParams (several params in one write) and the in-flight write (beginWrite/settleWrite); test next to it
 ├── hooks/useSearchParamState.ts # typed search-param state: replace for filters, push for entities; `isInFlight()` guards URL → state effects (single copy of the `{target, stale}` mechanism)
 ├── lib/inboxState.ts           # pure Conversas logic: activeBotSuspicion, isHandoffPending, aiStateChipInfo, readKindFilter, filterConversations, listFilterKey, linkedMatchesView, decideConversationParamAction (param → selection state machine), emptyListMessage; test next to it
+├── hooks/useOpenEntityParam.ts # open item in a URL param (?log=, ?member=): push + own-entry mark, close = navigate(-1) or replace, no scroll reset; test next to it
+├── hooks/useTasksUrlState.ts   # Tarefas URL state: ?view=list|status, ?smart=, ?status=, ?assignee=, ?label=, ?project= (replace, one write for compound changes); pure part in lib/tasksFilters.ts (codecs, resolveTaskIds) + test
+├── hooks/useAuditUrlState.ts   # Histórico URL state: ?entity=&action=&actor=&severity=&from=&to= (replace) and ?log= (push); pure part in lib/auditFilters.ts + test; cursorStack stays in state
+├── lib/campaignFilters.ts      # Campanhas ?status=&provider= codecs (replace)
 ├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1` and `?label=<id>` (URL, replace); direct/group and channel/account (localStorage); Central queue
 ├── hooks/useConversationList.ts # list batches 50→500, keep-previous, infinite sentinel
 ├── hooks/useConversationSelection.ts # `?conversation=` (push) ↔ open conversation, deep-link resolver state, `?nova=`, `location.state` draft; test next to it

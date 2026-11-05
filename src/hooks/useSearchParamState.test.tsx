@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { act, screen } from "@testing-library/react";
 import { renderWithRouter } from "@/test/render";
 import { booleanParam, stringParam } from "@/lib/searchParamState";
@@ -129,5 +129,42 @@ describe("useSearchParamState", () => {
       screen.getByText("aba com state").click();
     });
     expect(router.state.location.state).toEqual({ other: true });
+  });
+});
+
+describe("useSearchParamState: preventScrollReset", () => {
+  function Scroll({ perCall = false }: { perCall?: boolean }) {
+    const q = useSearchParamState("q", stringParam, perCall ? {} : { preventScrollReset: true });
+    return (
+      <button onClick={() => q.set("x", perCall ? { preventScrollReset: true } : undefined)}>escrever</button>
+    );
+  }
+  function Default() {
+    const q = useSearchParamState("q", stringParam);
+    return <button onClick={() => q.set("x")}>escrever</button>;
+  }
+
+  const lastOptions = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls[spy.mock.calls.length - 1][1] as { preventScrollReset?: boolean } | undefined;
+
+  it("opção do hook repassa preventScrollReset à navegação", async () => {
+    const { router } = renderWithRouter(<Scroll />);
+    const spy = vi.spyOn(router, "navigate");
+    await act(async () => screen.getByText("escrever").click());
+    expect(lastOptions(spy)?.preventScrollReset).toBe(true);
+  });
+
+  it("opção da chamada também repassa", async () => {
+    const { router } = renderWithRouter(<Scroll perCall />);
+    const spy = vi.spyOn(router, "navigate");
+    await act(async () => screen.getByText("escrever").click());
+    expect(lastOptions(spy)?.preventScrollReset).toBe(true);
+  });
+
+  it("o padrão global não muda: sem opção, a rolagem é redefinida", async () => {
+    const { router } = renderWithRouter(<Default />);
+    const spy = vi.spyOn(router, "navigate");
+    await act(async () => screen.getByText("escrever").click());
+    expect(lastOptions(spy)?.preventScrollReset).toBeUndefined();
   });
 });
