@@ -176,8 +176,14 @@ test("applyFunnelTemplate é idempotente", async () => {
   const s = await seed(t);
   const call = () => as(t, s.adminUserId).mutation(api.onboarding.applyFunnelTemplate, { organizationId: s.organizationId, ...FUNNEL });
   const a = await call();
+  const idsOf = () =>
+    t.run(async (ctx) =>
+      (await ctx.db.query("stages").withIndex("by_board", (q) => q.eq("boardId", s.boardId)).collect()).map((x) => x._id).sort(),
+    );
+  const before = await idsOf();
   const b = await call();
   expect(b).toEqual(a);
+  expect(await idsOf()).toEqual(before);
   expect(await orgBoards(t, s.organizationId)).toHaveLength(1);
 
   // Com leads: a segunda chamada devolve o board criado antes, sem duplicar.
@@ -398,4 +404,36 @@ test("org criada antes do PR (sem campos novos) lê sem erro em todas as queries
   await a.query(api.onboarding.getPlatformCapabilities, { organizationId });
   await t.query(internal.onboarding.internalGetSetupContext, { organizationId });
   await as(t, s.agentUserId).query(api.onboarding.getOnboardingChecklist, { organizationId });
+});
+
+test("applyFunnelTemplate não substitui funil referenciado por formulário/campanha", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.insert("forms", {
+      organizationId: s.organizationId, name: "Contato", slug: "contato", status: "published",
+      fields: [], theme: { primaryColor: "#000000", backgroundColor: "#ffffff", textColor: "#000000", borderRadius: "md", showBranding: false },
+      settings: {
+        submitButtonText: "Enviar", successMessage: "Ok", notifyOnSubmission: false, assignmentMode: "none", defaultPriority: "low", defaultTemperature: "cold", tags: [], honeypotEnabled: false,
+        leadTitle: "Lead", boardId: s.boardId, stageId: s.stageIds[1],
+      },
+      createdAt: now, updatedAt: now,
+      createdBy: s.adminId, submissionCount: 0,
+    } as never);
+  });
+  const r = await as(t, s.adminUserId).mutation(api.onboarding.applyFunnelTemplate, { organizationId: s.organizationId, ...FUNNEL });
+  expect(r.mode).toBe("created");
+  const stages = await t.run((ctx) => ctx.db.query("stages").withIndex("by_board", (q) => q.eq("boardId", s.boardId)).collect());
+  expect(stages).toHaveLength(5);
+});
+
+test("applyFunnelTemplate exige primeira etapa aberta", async () => {
+  const t = convexTest(schema, modules);
+  const s = await seed(t);
+  await expect(
+    as(t, s.adminUserId).mutation(api.onboarding.applyFunnelTemplate, {
+      organizationId: s.organizationId, ...FUNNEL, stages: [FUNNEL.stages[2], FUNNEL.stages[0]],
+    }),
+  ).rejects.toThrow(/primeira etapa/);
 });

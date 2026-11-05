@@ -211,7 +211,7 @@ async function loadOnboardingSnapshot(
       q.eq("organizationId", organizationId).eq("kind", "attendant"),
     )
     .order("desc")
-    .take(20);
+    .take(50);
   const firstAiReplyDone = runs.some((r) => r.status === "done" && r.resultMessageId !== undefined);
 
   const saved: OnboardingSnapshot["saved"] = {};
@@ -429,7 +429,14 @@ export const getOnboardingStatus = query({
 // negócio já informou e o que falta configurar.
 export const internalGetSetupContext = internalQuery({
   args: { organizationId: v.id("organizations") },
-  returns: v.any(),
+  returns: v.union(
+    v.null(),
+    v.object({
+      organizationName: v.string(),
+      timezone: v.string(),
+      ...statusDetailValidator.fields,
+    }),
+  ),
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
     if (!org) return null;
@@ -523,7 +530,9 @@ export const saveBusinessProfile = mutation({
         industry: segment,
         business,
         ...(args.aiAssisted !== undefined ? { aiAssisted: args.aiAssisted } : {}),
-        steps: { ...(meta.steps ?? {}), business: { status: "done", at: now } },
+        steps: business.offer
+          ? { ...(meta.steps ?? {}), business: { status: "done", at: now } }
+          : meta.steps,
       }),
       now,
     );
@@ -613,6 +622,9 @@ export const applyFunnelTemplate = mutation({
     if (stages.some((s) => s.name.length < 1 || s.name.length > 60)) {
       throw new Error("Cada etapa precisa de um nome de 1 a 60 caracteres");
     }
+    if (stages[0].isClosedWon || stages[0].isClosedLost) {
+      throw new Error("A primeira etapa do funil precisa ser uma etapa aberta");
+    }
     if (stages.some((s) => s.isClosedWon && s.isClosedLost)) {
       throw new Error("Uma etapa não pode ser ganha e perdida ao mesmo tempo");
     }
@@ -651,7 +663,7 @@ export const applyFunnelTemplate = mutation({
       if (canReplace) {
         oldStages = await ctx.db
           .query("stages")
-          .withIndex("by_board", (q) => q.eq("boardId", defaultBoard._id))
+          .withIndex("by_board_and_order", (q) => q.eq("boardId", defaultBoard._id))
           .take(100);
         for (const st of oldStages) {
           const lead = await ctx.db
@@ -665,13 +677,46 @@ export const applyFunnelTemplate = mutation({
         }
         const routed = org.settings.inboundLeadRouting?.rules ?? [];
         if (routed.some((r) => oldStages.some((st) => st._id === r.stageId))) canReplace = false;
+        // Formulários e campanhas não finalizadas também guardam `stageId`:
+        // apagar a etapa faria o envio seguinte falhar e perder o lead.
+        const isOld = (id: Id<"stages"> | undefined) =>
+          id !== undefined && oldStages.some((st) => st._id === id);
+        const forms = await ctx.db
+          .query("forms")
+          .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+          .take(200);
+        if (forms.some((f) => isOld(f.settings.stageId))) canReplace = false;
+        const campaigns = await ctx.db
+          .query("campaigns")
+          .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+          .take(200);
+        if (
+          campaigns.some(
+            (c) =>
+              !["completed", "canceled", "failed"].includes(c.status) &&
+              isOld(c.audience.targetStageId),
+          )
+        ) {
+          canReplace = false;
+        }
       }
     }
 
     let boardId: Id<"boards">;
     let mode: "replaced" | "created";
 
-    if (canReplace && defaultBoard) {
+    const sameStages =
+      oldStages.length === stages.length &&
+      oldStages.every((st, i) => stageSignature(st) === stageSignature(stages[i]));
+    if (canReplace && defaultBoard && sameStages) {
+      // Mesmo funil já aplicado: ids das etapas ficam estáveis, nada é recriado.
+      mode = "replaced";
+      boardId = defaultBoard._id;
+      const color = args.boardColor ?? defaultBoard.color;
+      if (defaultBoard.name !== boardName || defaultBoard.color !== color) {
+        await ctx.db.patch(boardId, { name: boardName, color, updatedAt: now });
+      }
+    } else if (canReplace && defaultBoard) {
       mode = "replaced";
       boardId = defaultBoard._id;
       const removed = new Set<Id<"stages">>(oldStages.map((s) => s._id));
@@ -697,7 +742,7 @@ export const applyFunnelTemplate = mutation({
         });
         if (!firstOpen && !s.isClosedWon && !s.isClosedLost) firstOpen = id;
       }
-      await repointAttendants(ctx, member, removed, firstOpen);
+      await repointAttendants(ctx, member, removed, boardId, firstOpen);
       const metadata = {
         action: "onboarding_funnel_applied",
         mode,
@@ -741,7 +786,7 @@ export const applyFunnelTemplate = mutation({
           name: boardName,
           color: args.boardColor ?? "#3B82F6",
           stages,
-          isDefault: false,
+          isDefault: defaultBoard ? false : undefined,
           auditAction: "onboarding_funnel_applied",
         });
       }
@@ -781,7 +826,8 @@ async function upsertLeadFields(
     );
     const name = f.name.trim();
     if (found) {
-      await ctx.db.patch(found._id, { name, type: f.type, options: f.options });
+      // Só o nome: tipo/opções podem já estar em uso por leads existentes.
+      await ctx.db.patch(found._id, { name });
     } else {
       await ctx.db.insert("fieldDefinitions", {
         organizationId,
@@ -807,6 +853,7 @@ async function repointAttendants(
   ctx: MutationCtx,
   member: Doc<"teamMembers">,
   removed: Set<Id<"stages">>,
+  boardId: Id<"boards">,
   firstOpen: Id<"stages"> | undefined,
 ) {
   const agents = await ctx.db
@@ -830,7 +877,7 @@ async function repointAttendants(
         pipelineConfig: {
           ...rest,
           ...(initialGone
-            ? firstOpen
+            ? firstOpen && (pc.boardId === undefined || pc.boardId === boardId)
               ? { initialStageId: firstOpen }
               : {}
             : initialStageId
@@ -856,7 +903,7 @@ export const markWizardStep = mutation({
     await requirePermission(ctx, args.organizationId, "settings", "manage");
     const markable: Record<string, SavedStepStatus[]> = {
       test: ["done", "skipped"],
-      attendant: ["done", "skipped"],
+      attendant: ["skipped"],
       whatsapp: ["skipped"],
       team: ["skipped"],
       extras: ["skipped"],
@@ -1350,8 +1397,6 @@ export const requestSampleData = mutation({
   },
 });
 
-// Capacidades da plataforma neste deployment (o assistente e o Copiloto decidem
-// o que oferecer). Só booleanos — NUNCA devolve valor de env nem segredo.
 // Capacidades da plataforma neste deployment (o assistente e o Copiloto decidem
 // o que oferecer). Só booleanos — NUNCA devolve valor de env nem segredo.
 export const getPlatformCapabilities = query({

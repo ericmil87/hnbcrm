@@ -20,6 +20,14 @@ const ITEM_NAV: Record<string, { tab: Tab; label: string }> = {
   teamMemberInvited: { tab: "team", label: "Equipe" },
   webhookOrApiKey: { tab: "settings", label: "Config" },
   customFieldsExplored: { tab: "settings", label: "Config" },
+  // Itens da configuração inicial v2 (provisório até o novo Painel, fv2-24).
+  business: { tab: "settings", label: "Config" },
+  whatsapp: { tab: "settings", label: "Config" },
+  attendant: { tab: "settings", label: "Config" },
+  bridgeAiAck: { tab: "settings", label: "Config" },
+  test: { tab: "inbox", label: "Entrada" },
+  extras: { tab: "settings", label: "Config" },
+  firstAiReply: { tab: "inbox", label: "Entrada" },
 };
 
 export function OnboardingChecklist({
