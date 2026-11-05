@@ -156,7 +156,7 @@ export function ContactInfoTab({
           <div className="space-y-3">
             <ViewField label="Empresa" value={contact.company} enrichMeta={meta("company")} />
             <ViewField label="Cargo" value={contact.title} enrichMeta={meta("title")} />
-            <ViewField label="Setor" value={contact.industry} enrichMeta={meta("industry")} />
+            <ViewField label="Ramo de atividade" value={contact.industry} enrichMeta={meta("industry")} />
             <ViewField label="Porte da empresa" value={contact.companySize} enrichMeta={meta("companySize")} />
             <ViewField label="CNPJ" value={contact.cnpj} enrichMeta={meta("cnpj")} />
             <ViewField label="Site da empresa" value={contact.companyWebsite} enrichMeta={meta("companyWebsite")} link />
@@ -168,7 +168,7 @@ export function ContactInfoTab({
           <div className="space-y-3">
             <EditField label="Empresa" value={form.company} onChange={edit("company")} />
             <EditField label="Cargo" value={form.title} onChange={edit("title")} />
-            <EditField label="Setor" value={form.industry} onChange={edit("industry")} />
+            <EditField label="Ramo de atividade" value={form.industry} onChange={edit("industry")} />
             <EditSelect label="Porte da empresa" value={form.companySize} onChange={edit("companySize")} options={COMPANY_SIZES} />
             <EditField label="CNPJ" value={form.cnpj} onChange={edit("cnpj")} />
             <EditField label="Site da empresa" value={form.companyWebsite} onChange={edit("companyWebsite")} placeholder="https://…" />
