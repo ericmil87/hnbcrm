@@ -105,15 +105,15 @@ type BubbleStyle = {
   footerText: string;
 };
 
-function getBubbleStyle(message: InboxMessage): BubbleStyle {
+export function getBubbleStyle(message: InboxMessage): BubbleStyle {
   if (message.isInternal) {
     return {
       align: "justify-end",
       side: "end",
-      bg: "bg-surface-overlay border border-dashed border-semantic-warning/30 text-text-primary",
+      bg: "bg-bubble-note border border-dashed border-bubble-note-border/30 text-text-primary",
       rounded: "rounded-lg rounded-br-none",
       label: "Nota interna",
-      labelColor: "text-semantic-warning",
+      labelColor: "text-bubble-note-label",
       variant: "inbound",
       footerText: "text-text-muted",
     };
@@ -122,7 +122,7 @@ function getBubbleStyle(message: InboxMessage): BubbleStyle {
     return {
       align: "justify-start",
       side: "start",
-      bg: "bg-surface-raised text-text-primary",
+      bg: "bg-bubble-in text-text-primary shadow-bubble",
       rounded: "rounded-lg rounded-bl-none",
       label: "Contato",
       labelColor: "text-text-secondary",
@@ -134,23 +134,23 @@ function getBubbleStyle(message: InboxMessage): BubbleStyle {
     return {
       align: "justify-end",
       side: "end",
-      bg: "bg-ai-600/80 text-white",
+      bg: "bg-bubble-ai text-bubble-out-fg shadow-bubble",
       rounded: "rounded-lg rounded-br-none",
       label: "Agente de IA",
-      labelColor: "text-ai-300",
+      labelColor: "text-bubble-ai-label",
       variant: "outbound",
-      footerText: "text-white/75",
+      footerText: "text-bubble-out-fg/75",
     };
   }
   return {
     align: "justify-end",
     side: "end",
-    bg: "bg-brand-600 text-white",
+    bg: "bg-bubble-out text-bubble-out-fg shadow-bubble",
     rounded: "rounded-lg rounded-br-none",
     label: "Equipe",
-    labelColor: "text-brand-200",
+    labelColor: "text-bubble-out-label",
     variant: "outbound",
-    footerText: "text-white/75",
+    footerText: "text-bubble-out-fg/75",
   };
 }
 
@@ -178,7 +178,7 @@ function DeliveryTick({ message, readOnly = false }: { message: InboxMessage; re
     return <AlertCircle className="size-3.5 text-semantic-error shrink-0" aria-label={title} />;
   }
   if (status === "read") {
-    return <CheckCheck className="size-3.5 text-brand-400 shrink-0" aria-label={title} />;
+    return <CheckCheck className="size-3.5 text-tick-read shrink-0" aria-label={title} />;
   }
   if (status === "delivered") {
     return <CheckCheck className="size-3.5 text-current opacity-70 shrink-0" aria-label={title} />;
@@ -476,7 +476,7 @@ export function MessageBubble({
               aria-label="Versões anteriores"
               className={cn(
                 "flex flex-col gap-1 rounded-md px-2 py-1.5 text-[11px]",
-                style.variant === "outbound" ? "bg-white/10 text-white/85" : "text-text-secondary"
+                style.variant === "outbound" ? "bg-bubble-out-fg/10 text-bubble-out-fg/85" : "text-text-secondary"
               )}
             >
               {editHistory.map((v, i) => (
@@ -514,8 +514,8 @@ export function MessageBubble({
             {groupSender ? (
               <>
                 <span
-                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                  style={{ backgroundColor: groupSender.color }}
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{ backgroundColor: groupSender.color, color: "#fff" }}
                   aria-hidden
                 >
                   {groupSender.initials}
@@ -527,7 +527,7 @@ export function MessageBubble({
                   <button
                     type="button"
                     onClick={() => group.onOpenContact?.(groupSender.contactId!)}
-                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-[10px] font-medium text-brand-400 transition-colors hover:bg-brand-500/25"
+                    className="inline-flex items-center gap-0.5 rounded-full bg-brand-500/15 px-1.5 py-px text-[10px] font-medium text-bubble-in-link transition-colors hover:bg-brand-500/25"
                     title="Abrir contato"
                   >
                     <UserRound size={9} />
@@ -588,7 +588,7 @@ export function MessageBubble({
             <div
               className={cn(
                 "flex items-center gap-1.5 text-xs italic",
-                style.variant === "outbound" ? "text-white/80" : "text-text-muted"
+                style.variant === "outbound" ? "text-bubble-out-fg/80" : "text-text-muted"
               )}
             >
               <AlertCircle size={14} className="shrink-0" />
@@ -640,7 +640,7 @@ export function MessageBubble({
             <span
               className={cn(
                 "inline-flex w-fit items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-                style.variant === "outbound" ? "bg-white/15 text-white/90" : "bg-surface-sunken text-text-secondary"
+                style.variant === "outbound" ? "bg-bubble-out-fg/15 text-bubble-out-fg/90" : "bg-surface-sunken text-text-secondary"
               )}
             >
               <Eye size={10} aria-hidden /> Visualização única
@@ -651,7 +651,7 @@ export function MessageBubble({
             <div
               className={cn(
                 "flex items-center gap-1.5 text-sm italic",
-                style.variant === "outbound" ? "text-white/80" : "text-text-muted"
+                style.variant === "outbound" ? "text-bubble-out-fg/80" : "text-text-muted"
               )}
             >
               <Ban size={14} className="shrink-0" aria-hidden />
@@ -665,7 +665,7 @@ export function MessageBubble({
 
           {special?.kind === "interactive_reply" && (
             <span
-              className={cn("text-[10px] font-medium uppercase tracking-wide", style.variant === "outbound" ? "text-white/70" : "text-text-muted")}
+              className={cn("text-[10px] font-medium uppercase tracking-wide", style.variant === "outbound" ? "text-bubble-out-fg/75" : "text-text-muted")}
             >
               resposta de botão
             </span>

@@ -2223,7 +2223,7 @@ export function Inbox() {
                     )}
                     {(conversation.unreadCount ?? 0) > 0 && (
                       <span
-                        className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-[10px] font-semibold leading-none tabular-nums"
+                        className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-[10px] font-semibold leading-none tabular-nums"
                         aria-label={`${conversation.unreadCount} mensagens não lidas`}
                       >
                         {conversation.unreadCount > 99 ? "99+" : conversation.unreadCount}
@@ -2326,7 +2326,7 @@ export function Inbox() {
         {selectedConversation ? (
           <>
             {/* Mobile header with back button */}
-            <div className="md:hidden shrink-0 p-4 border-b border-border bg-surface-raised flex flex-col gap-1">
+            <div className="md:hidden shrink-0 p-4 border-b border-border bg-chat-header flex flex-col gap-1">
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleBackToList}
@@ -2605,7 +2605,7 @@ export function Inbox() {
             <div
               ref={messagesScrollRef}
               onScroll={handleMessagesScroll}
-              className="flex-1 min-h-0 overflow-y-auto"
+              className="flex-1 min-h-0 overflow-y-auto bg-chat-bg chat-wallpaper"
             >
               <div className="min-h-full flex flex-col justify-end max-w-4xl mx-auto w-full p-4 space-y-4">
                 {messages &&
@@ -2632,7 +2632,7 @@ export function Inbox() {
                   </div>
                 ) : messages && messages.length >= MESSAGES_MAX_LIMIT ? (
                   <div className="text-center py-2 mb-2">
-                    <span className="text-xs text-text-muted bg-surface-overlay inline-block px-3 py-1.5 rounded-full">
+                    <span className="text-xs text-bubble-system-fg bg-bubble-system inline-block px-3 py-1.5 rounded-full">
                       Exibindo as últimas {MESSAGES_MAX_LIMIT} mensagens
                     </span>
                   </div>
@@ -2689,7 +2689,7 @@ export function Inbox() {
 
             {/* Message Input */}
             {canReply ? (
-              <form onSubmit={handleSendMessage} className="shrink-0 border-t border-border bg-surface-raised">
+              <form onSubmit={handleSendMessage} className="shrink-0 border-t border-border bg-composer">
                 <div className="max-w-4xl mx-auto w-full p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Checkbox
@@ -2808,7 +2808,7 @@ export function Inbox() {
                         }
                         rows={1}
                         className={cn(
-                          "bg-surface-sunken",
+                          "bg-composer-field",
                           isInternal
                             ? "border-semantic-warning/30 focus:border-semantic-warning focus:ring-semantic-warning/20"
                             : "border-border-strong focus:border-brand-500 focus:ring-brand-500/20"
@@ -2868,7 +2868,7 @@ export function Inbox() {
                       size="md"
                       className={cn(
                         "shrink-0",
-                        isInternal && "bg-semantic-warning hover:bg-amber-600 text-white"
+                        isInternal && "bg-semantic-warning hover:bg-semantic-warning/90 text-white"
                       )}
                       aria-label={isInternal ? "Adicionar Nota" : "Enviar"}
                     >

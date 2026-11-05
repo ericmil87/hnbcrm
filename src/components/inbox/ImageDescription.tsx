@@ -54,7 +54,7 @@ export function ImageDescription({
 }: ImageDescriptionProps) {
   const [expanded, setExpanded] = useState(false);
   const outbound = variant === "outbound";
-  const muted = outbound ? "text-white/70" : "text-text-muted";
+  const muted = outbound ? "text-bubble-out-fg/75" : "text-text-muted";
 
   const status = vision?.status;
 
@@ -79,7 +79,7 @@ export function ImageDescription({
         <p
           className={cn(
             "text-xs italic whitespace-pre-wrap break-words",
-            outbound ? "text-white/85" : "text-text-secondary"
+            outbound ? "text-bubble-out-fg/85" : "text-text-secondary"
           )}
         >
           {shown}
@@ -88,7 +88,7 @@ export function ImageDescription({
           <dl
             className={cn(
               "mt-0.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-[11px]",
-              outbound ? "text-white/75" : "text-text-muted"
+              outbound ? "text-bubble-out-fg/75" : "text-text-muted"
             )}
           >
             {fields.map(([label, value]) => (
@@ -105,7 +105,7 @@ export function ImageDescription({
             onClick={() => setExpanded((v) => !v)}
             className={cn(
               "flex items-center gap-0.5 self-start text-[11px] font-medium",
-              outbound ? "text-white/70 hover:text-white" : "text-brand-400 hover:text-brand-500"
+              outbound ? "text-bubble-out-fg/75 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
             )}
           >
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -119,7 +119,7 @@ export function ImageDescription({
   if (status === "failed") {
     return (
       <div className="flex items-center gap-2">
-        <span className={cn("text-xs italic", outbound ? "text-white/70" : "text-semantic-error")}>
+        <span className={cn("text-xs italic", outbound ? "text-bubble-out-fg/75" : "text-semantic-error")}>
           Não foi possível ler a imagem
         </span>
         {canDescribe && (
@@ -128,7 +128,7 @@ export function ImageDescription({
             onClick={onDescribe}
             className={cn(
               "flex items-center gap-1 text-[11px] font-medium",
-              outbound ? "text-white/80 hover:text-white" : "text-brand-400 hover:text-brand-500"
+              outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
             )}
           >
             <RefreshCw size={12} />
@@ -151,7 +151,7 @@ export function ImageDescription({
       onClick={onDescribe}
       className={cn(
         "flex items-center gap-1 self-start text-[11px] font-medium",
-        outbound ? "text-white/80 hover:text-white" : "text-brand-400 hover:text-brand-500"
+        outbound ? "text-bubble-out-fg/80 hover:text-bubble-out-fg" : "text-bubble-in-link hover:opacity-80"
       )}
     >
       <ScanText size={12} />

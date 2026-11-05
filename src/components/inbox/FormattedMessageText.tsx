@@ -63,7 +63,7 @@ function renderNodes(nodes: WaInlineNode[], variant: "inbound" | "outbound"): Re
             onClick={(e) => e.stopPropagation()}
             className={cn(
               "break-all underline underline-offset-2",
-              variant === "outbound" ? "text-white hover:text-white/80" : "text-brand-400 hover:text-brand-500"
+              variant === "outbound" ? "text-bubble-out-link hover:opacity-80" : "text-bubble-in-link hover:opacity-80"
             )}
           >
             {node.href}

@@ -9,7 +9,7 @@ import { CopilotPanel } from "@/components/copilot/CopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { activeTabForPath } from "@/lib/routes";
 import { navItemFor } from "@/lib/nav";
-import { usePageTitle } from "@/hooks/usePageTitle";
+import { APP_NAME, usePageTitle } from "@/hooks/usePageTitle";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 
@@ -25,9 +25,9 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
   const [showMore, setShowMore] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const location = useLocation();
-  const pageTitle = navItemFor(activeTabForPath(location.pathname))?.label;
+  const pageTitle = navItemFor(activeTabForPath(location.pathname))?.title;
   // Título padrão da aba do navegador; as páginas sobrescrevem quando precisam.
-  usePageTitle(pageTitle ?? "HNBCRM");
+  usePageTitle(pageTitle ?? APP_NAME);
 
   // Voltar do navegador (ou qualquer troca de rota) fecha a folha "Mais".
   useEffect(() => {

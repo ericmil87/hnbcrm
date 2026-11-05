@@ -60,7 +60,7 @@ function CopyButton({ value, outbound }: { value: string; outbound: boolean }) {
       className={cn(
         "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-        outbound ? "text-white/80 hover:bg-white/15" : "text-text-muted hover:bg-surface-overlay hover:text-text-primary"
+        outbound ? "text-bubble-out-fg/80 hover:bg-bubble-out-fg/15" : "text-text-muted hover:bg-surface-overlay hover:text-text-primary"
       )}
       aria-label={copied ? "Telefone copiado" : `Copiar telefone ${value}`}
       title={copied ? "Copiado" : "Copiar"}
@@ -72,22 +72,22 @@ function CopyButton({ value, outbound }: { value: string; outbound: boolean }) {
 
 export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
   const outbound = variant === "outbound";
-  const muted = outbound ? "text-white/75" : "text-text-muted";
-  const secondary = outbound ? "text-white/85" : "text-text-secondary";
+  const muted = outbound ? "text-bubble-out-fg/75" : "text-text-muted";
+  const secondary = outbound ? "text-bubble-out-fg/85" : "text-text-secondary";
   const unknown = info.kind === "unknown";
 
   return (
     <div
       className={cn(
         "flex min-w-0 flex-col gap-2 rounded-lg p-2.5",
-        outbound ? "bg-white/10" : ""
+        outbound ? "bg-bubble-out-fg/10" : ""
       )}
     >
       <div className="flex min-w-0 items-start gap-2">
         <span
           className={cn(
             "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-            outbound ? "bg-white/15 text-white" : "bg-brand-500/15 text-brand-400"
+            outbound ? "bg-bubble-out-fg/15 text-bubble-out-fg" : "bg-brand-500/15 text-bubble-in-link"
           )}
         >
           <SpecialIconView name={info.icon} size={16} />
@@ -112,11 +112,11 @@ export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
               key={i}
               className={cn(
                 "flex items-start gap-2 break-words rounded-md border px-2.5 py-1.5 text-xs",
-                outbound ? "border-white/25" : "border-border"
+                outbound ? "border-bubble-out-fg/25" : "border-border"
               )}
             >
               <span
-                className={cn("mt-0.5 h-3 w-3 shrink-0 rounded-full border", outbound ? "border-white/60" : "border-border-strong")}
+                className={cn("mt-0.5 h-3 w-3 shrink-0 rounded-full border", outbound ? "border-bubble-out-fg/60" : "border-border-strong")}
                 aria-hidden
               />
               <span className="min-w-0">{opt}</span>
@@ -145,7 +145,7 @@ export function SpecialMessageCard({ info, variant }: SpecialMessageCardProps) {
           className={cn(
             "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full px-4 text-xs font-semibold transition-colors",
             "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-            outbound ? "bg-white/20 text-white hover:bg-white/30" : "bg-brand-600 text-white hover:bg-brand-700"
+            outbound ? "bg-bubble-out-fg/20 text-bubble-out-fg hover:bg-bubble-out-fg/30" : "bg-brand-600 text-white hover:bg-brand-700"
           )}
         >
           <ExternalLink size={14} aria-hidden />

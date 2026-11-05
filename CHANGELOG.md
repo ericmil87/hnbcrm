@@ -26,6 +26,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - Base técnica dos temas de cor: as cores do app passaram a aceitar transparência em todo o sistema, sem nenhuma mudança visível no tema escuro. Também foram corrigidas as cores das métricas em Formulários, que não apareciam.
 - A base dos temas Claro e Estilo WhatsApp está pronta, ainda sem seletor. Nenhuma mudança visível por enquanto.
+- A conversa fica com a cara do tema: papel de parede, bolhas, campo de mensagem e recibos acompanham o tema escolhido (bolhas verdes e papel de parede no Estilo WhatsApp quando o seletor chegar). No tema Escuro nada muda, exceto a bolha da Atendente IA, que fica com um roxo sólido quase idêntico. O título da aba do navegador também deixou de repetir "HNBCRM · HNBCRM".
 
 ### Configuração inicial e Copiloto
 
