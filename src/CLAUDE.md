@@ -28,6 +28,8 @@ src/
 ├── lib/themeTokens.test.ts     # reads index.css: dark palette frozen (--rgb-* channels), aliases, AA pairs + DARK_KNOWN_FAILURES
 ├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
 ├── lib/themeDom.ts             # applyTheme/clearTheme on <html> + meta theme-color; subscribe/getAppliedTheme
+├── lib/funnelFilters.ts        # Funil labels/variants, client filter, sort, URL (de)serialization (?view=&q=&owner=&temp=&priority=&unit=), initial-funnel pick (+ test)
+├── hooks/useFunnelUrlState.ts  # Funil URL state: ?board= (initial pick), ?lead= (panel, replace), filters/view (replace), last funnel per org in localStorage
 ├── hooks/useUiTheme.ts         # AuthLayout only: syncs theme with teamMembers.uiTheme + localStorage; exposes {theme, setTheme}
 ├── lib/themeLegacy.test.ts     # guard: no .light in index.css, no [.light_&] in src, no darkMode in tailwind.config.js, index.html without class="dark" and with /theme-init.js first
 ├── lib/rawColorsGuard.test.ts  # ratchet: raw Tailwind palette classes / [#hex] per file (ALLOWLIST ceilings only go down); purple- only in JsonHighlighter
@@ -50,7 +52,10 @@ src/
     ├── layout/                 # AuthLayout (auth → org → onboarding → ScrollRestoration → AppShell + Outlet), AppShell (Sidebar md+ / BottomTabBar mobile), Sidebar, BottomTabBar
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
-    ├── KanbanBoard.tsx         # Pipeline drag-and-drop (/app/pipeline); deep-links ?board=<id>, ?lead=<id> (opens LeadDetailPanel, param synced for browser back)
+    ├── KanbanBoard.tsx         # re-export of funnel/FunnelPage (main.tsx lazy import, route /app/pipeline)
+    ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista) + FunnelSelector (funnel/archived/settings Menus),
+    │                           #   StageColumn (useDroppable id=stageId), LeadCard (LeadCardView + DraggableCard useDraggable id=leadId, optional `lastMessage`), QuickAddLead,
+    │                           #   StageEditPopover (on Popover), AddStageColumn, FunnelDialogs (modals), useFunnelBulkActions, LeadDeepLinkResolver
     ├── LeadDetailPanel.tsx, CreateLeadModal.tsx  # Lead SlideOver / creation modal
     ├── leads/                  # LeadsListView (sortable table, row selection), LeadsBulkActionBar (move/assign/archive)
     ├── Inbox.tsx               # Inbox (/app/entrada): search, labels, scheduling, bulk select, pending-handoff banner, ?conversation=<id> (getConversationById fallback)

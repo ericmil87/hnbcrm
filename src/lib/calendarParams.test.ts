@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDateParam, parseCalendarParams, parseDateParam } from "./calendarParams";
+import { defaultCalendarView, formatDateParam, parseCalendarParams, parseDateParam } from "./calendarParams";
 
 describe("parseDateParam", () => {
   it("lê YYYY-MM-DD como data local", () => {
@@ -48,5 +48,28 @@ describe("parseCalendarParams", () => {
 
   it("aceita URLSearchParams", () => {
     expect(parseCalendarParams(new URLSearchParams("view=month")).view).toBe("month");
+  });
+
+  it("visão inválida cai em dia no celular e em semana no desktop", () => {
+    expect(parseCalendarParams("?view=year", defaultCalendarView(true)).view).toBe("day");
+    expect(parseCalendarParams("?view=year", defaultCalendarView(false)).view).toBe("week");
+    expect(parseCalendarParams("", defaultCalendarView(false)).view).toBe("week");
+  });
+
+  it("visão válida na URL vence o padrão da tela", () => {
+    expect(parseCalendarParams("?view=month", defaultCalendarView(false)).view).toBe("month");
+    expect(parseCalendarParams("?view=day", defaultCalendarView(false)).view).toBe("day");
+  });
+
+  it("data inválida vira null (o chamador usa hoje)", () => {
+    expect(parseCalendarParams("?date=2026-02-31&view=week").date).toBeNull();
+    expect(parseCalendarParams("?date=ontem").date).toBeNull();
+  });
+
+  it("?date=2026-11-04&event=x&view=week produz o estado esperado", () => {
+    const p = parseCalendarParams("?date=2026-11-04&event=x&view=week", defaultCalendarView(true));
+    expect(p.view).toBe("week");
+    expect(formatDateParam(p.date!)).toBe("2026-11-04");
+    expect(p.event).toBe("x");
   });
 });
