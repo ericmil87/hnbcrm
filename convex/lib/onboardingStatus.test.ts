@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import { deriveOnboardingStatus, type OnboardingSnapshot } from "./onboardingStatus";
+
+const EMPTY: OnboardingSnapshot = {
+  hasBusinessOffer: false,
+  legacyWizardCompleted: false,
+  whatsappConnected: false,
+  hasBridgeChannel: false,
+  bridgeAiAckDone: false,
+  hasAttendant: false,
+  aiActive: false,
+  extrasEnabled: false,
+  humanMemberCount: 1,
+  firstAiReplyDone: false,
+  saved: {},
+};
+
+describe("deriveOnboardingStatus", () => {
+  it("deriveOnboardingStatus escolhe o próximo passo", () => {
+    expect(deriveOnboardingStatus(EMPTY).nextStep).toBe("business");
+    const r = deriveOnboardingStatus({
+      ...EMPTY,
+      hasBusinessOffer: true,
+      saved: { funnel: "done", whatsapp: "skipped" },
+    });
+    expect(r.steps.funnel).toBe("done");
+    expect(r.steps.whatsapp).toBe("skipped");
+    expect(r.nextStep).toBe("attendant");
+    const all = deriveOnboardingStatus({
+      ...EMPTY,
+      hasBusinessOffer: true,
+      legacyWizardCompleted: true,
+      whatsappConnected: true,
+      hasAttendant: true,
+      aiActive: true,
+      extrasEnabled: true,
+      humanMemberCount: 2,
+      saved: { test: "done" },
+    });
+    expect(all.nextStep).toBeNull();
+  });
+
+  it("atendente sem IA ativa não conta como feito e o aceite bridge depende do canal", () => {
+    const r = deriveOnboardingStatus({ ...EMPTY, hasAttendant: true, hasBridgeChannel: true });
+    expect(r.steps.attendant).toBe("pending");
+    expect(r.bridgeAckPending).toBe(true);
+    expect(deriveOnboardingStatus({ ...EMPTY, hasAttendant: true }).bridgeAckPending).toBe(false);
+  });
+});

@@ -3,6 +3,7 @@ import { query, mutation, internalQuery, internalMutation, QueryCtx, MutationCtx
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth } from "./lib/auth";
+import { createBoardWithStagesCore } from "./lib/boardOps";
 import { buildAuditDescription } from "./lib/auditDescription";
 import {
   CASCADE_WRITE_BUDGET,
@@ -757,55 +758,14 @@ export const createBoardWithStages = mutation({
       throw new Error("Not authorized");
     }
 
-    const boards = await ctx.db
-      .query("boards")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(100);
-
-    const maxOrder = Math.max(...boards.map(b => b.order), -1);
-    const now = Date.now();
-
-    const boardId = await ctx.db.insert("boards", {
+    return await createBoardWithStagesCore(ctx, {
       organizationId: args.organizationId,
+      member: userMember,
       name: args.name,
       description: args.description,
       color: args.color,
-      isDefault: boards.filter(isActiveBoard).length === 0,
-      order: maxOrder + 1,
-      createdAt: now,
-      updatedAt: now,
+      stages: args.stages,
     });
-
-    // Create all stages
-    for (let i = 0; i < args.stages.length; i++) {
-      const stage = args.stages[i];
-      await ctx.db.insert("stages", {
-        organizationId: args.organizationId,
-        boardId,
-        name: stage.name,
-        color: stage.color,
-        order: i,
-        isClosedWon: stage.isClosedWon || false,
-        isClosedLost: stage.isClosedLost || false,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    await ctx.db.insert("auditLogs", {
-      organizationId: args.organizationId,
-      entityType: "board",
-      entityId: boardId,
-      action: "create",
-      actorId: userMember._id,
-      actorType: "human",
-      metadata: { name: args.name, stageCount: args.stages.length },
-      description: buildAuditDescription({ action: "create", entityType: "board", metadata: { name: args.name, stageCount: args.stages.length } }),
-      severity: "medium",
-      createdAt: now,
-    });
-
-    return boardId;
   },
 });
 
