@@ -18,7 +18,7 @@ import {
 import type { PermissionCategory } from "../../convex/lib/permissions";
 import type { OrgModuleKey } from "@/hooks/useOrgModules";
 import { VOCAB } from "./vocab";
-import type { Tab } from "./routes";
+import { activeTabForPath, type Tab } from "./routes";
 
 export type NavGroupId = "atendimento" | "organizacao" | "divulgacao" | "gestao";
 export type NavBadgeSource = "inboxUnread" | "pendingAttention" | "pausedCampaigns";
@@ -103,6 +103,16 @@ export function groupNavItems(
 /** Item de `NAV_ITEMS` por id de aba. */
 export function navItemFor(tab: Tab | undefined): NavItemDef | undefined {
   return tab ? NAV_ITEMS.find((i) => i.id === tab) : undefined;
+}
+
+/**
+ * Título da aba definido pelo AppShell: `null` quando a página define o seu
+ * (Configurações); "HNBCRM" para rota sem item de menu.
+ */
+export function shellPageTitle(pathname: string): string | null {
+  const tab = activeTabForPath(pathname);
+  if (tab === "settings") return null;
+  return navItemFor(tab)?.title ?? "HNBCRM";
 }
 
 /** Texto do badge: "99+" acima de 99; `null` sem contagem. */

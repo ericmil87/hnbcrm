@@ -51,7 +51,7 @@ export function Settings() {
     resolved ?? (isMobile ? null : (visible.find((p) => p.id === DEFAULT_SETTINGS_PANEL_ID) ?? visible.find((p) => p.Component) ?? null));
 
   // Rótulo genérico ("Visão geral") ganha o grupo na frente: "Atendente IA · Visão geral".
-  const panelTitle = active ? (GENERIC_LABELS.has(active.label) ? `${groupOf(active).label} · ${active.label}` : active.label) : null;
+  const panelTitle = active && can("settings", "view") ? (GENERIC_LABELS.has(active.label) ? `${groupOf(active).label} · ${active.label}` : active.label) : null;
   usePageTitle(panelTitle ? `${VOCAB.settings.title} · ${panelTitle}` : VOCAB.settings.title);
 
   if (!can("settings", "view")) {

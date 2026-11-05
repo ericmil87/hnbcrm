@@ -22,14 +22,17 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Textos padronizados: só a primeira palavra em maiúscula ("Novo funil", "Adicionar nota"), "e-mail" com hífen, "Etiquetas" no lugar de "Tags", "Etapa" no lugar de "Estágio", "Descadastrados" no lugar de "Opt-out", papéis **Atendente**, **Gerente** e **Administrador**. Mensagens de sucesso ficaram curtas ("Lead criado") e as de erro dizem "Não foi possível salvar".
 - Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
 - O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
+- No Atendente IA, as listas de seleção (jeito de atender, funil, etapas, canal do simulador) ficaram mais fáceis de usar no celular.
 
-### Aparência
+### Aparência: escolha entre Escuro, Claro e Estilo WhatsApp
 
-- Base técnica dos temas de cor: as cores do app passaram a aceitar transparência em todo o sistema, sem nenhuma mudança visível no tema escuro. Também foram corrigidas as cores das métricas em Formulários, que não apareciam.
-- A base dos temas Claro e Estilo WhatsApp está pronta, ainda sem seletor. Nenhuma mudança visível por enquanto.
-- A preferência de tema passa a acompanhar sua conta em qualquer aparelho. O seletor chega no próximo passo; nada visível muda por enquanto.
-- A conversa fica com a cara do tema: papel de parede, bolhas, campo de mensagem e recibos acompanham o tema escolhido (bolhas verdes e papel de parede no Estilo WhatsApp quando o seletor chegar). No tema Escuro nada muda, exceto a bolha da Atendente IA, que fica com um roxo sólido quase idêntico. O título da aba do navegador também deixou de repetir "HNBCRM · HNBCRM". No Escuro, além da bolha da IA, mudam só detalhes mínimos: o hover do botão de nota interna (âmbar para o tom de aviso do app), o hover dos links nas mensagens recebidas (fica mais claro em vez de trocar de tom) e 5% de opacidade nos textos secundários da bolha de saída.
-- Corrigido: a borda de imagens anexadas, tabelas e trechos de código nas mensagens ficava num cinza fora do padrão; agora usa a cor de borda do tema.
+- Cada pessoa da equipe escolhe as cores do painel em **Aparência** (menu lateral, **Mais** no celular ou Configurações › Conta › Aparência). A escolha acompanha a conta em qualquer aparelho.
+- **Estilo WhatsApp**: acento verde, conversas com fundo bege e bolhas verdes, como no aplicativo.
+- **Claro** revisado para leitura confortável (contraste AA em textos, links e avisos).
+- O **Escuro** continua o padrão e não mudou, exceto a bolha da Atendente IA, que fica num roxo sólido quase idêntico.
+- Corrigido: a borda de imagens anexadas, tabelas e trechos de código nas mensagens ficava num cinza fora do padrão; agora usa a cor de borda do tema. Os hovers do botão de nota interna e dos links nas mensagens recebidas também acompanham o tema.
+- Corrigido: as cores das métricas em Formulários não apareciam.
+- O título da aba do navegador deixou de repetir "HNBCRM · HNBCRM" e, em Configurações, mostra o painel aberto.
 
 ### Configuração inicial e Copiloto
 

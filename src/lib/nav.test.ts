@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NAV_GROUPS, NAV_ITEMS, badgeA11yText, formatBadgeCount, groupNavItems, moreSheetSections, splitMobile, visibleNavItems } from "./nav";
+import { NAV_GROUPS, NAV_ITEMS, badgeA11yText, formatBadgeCount, groupNavItems, shellPageTitle, moreSheetSections, splitMobile, visibleNavItems } from "./nav";
 import { TAB_ROUTES, activeTabForPath } from "./routes";
 import { VOCAB, vocabLabels } from "./vocab";
 
@@ -117,5 +117,17 @@ describe("moreSheetSections", () => {
   it("sem Organização não funde nada", () => {
     const { more } = splitMobile(visibleNavItems((c) => c === "contacts", {}));
     expect(moreSheetSections(more).map((s) => s.id)).toEqual(["atendimento"]);
+  });
+});
+
+describe("shellPageTitle", () => {
+  it("Configurações define o próprio título", () => {
+    expect(shellPageTitle("/app/configuracoes")).toBeNull();
+  });
+  it("rota com item usa o título do item", () => {
+    expect(shellPageTitle("/app/entrada")).toBe(VOCAB.conversations.title);
+  });
+  it("rota desconhecida cai no nome do app", () => {
+    expect(shellPageTitle("/app/nao-existe")).toBe("HNBCRM");
   });
 });
