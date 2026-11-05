@@ -175,7 +175,7 @@ function DeliveryTick({ message, readOnly = false }: { message: InboxMessage; re
       ? `${DELIVERY_LABELS[status] ?? status} · Lido por ${readCount}`
       : DELIVERY_LABELS[status] ?? status;
   if (status === "failed") {
-    return <AlertCircle className="size-3.5 text-semantic-error shrink-0" aria-label={title} />;
+    return <AlertCircle className="size-3.5 text-bubble-out-fg shrink-0" aria-label={title} />;
   }
   if (status === "read") {
     return <CheckCheck className="size-3.5 text-tick-read shrink-0" aria-label={title} />;
@@ -685,11 +685,13 @@ export function MessageBubble({
           {footer}
 
           {isFailed && message.metadata?.deliveryError && (
-            <p className="text-[10px] text-semantic-error">{message.metadata.deliveryError}</p>
+            <p className={cn("text-[10px]", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}>
+              {message.metadata.deliveryError}
+            </p>
           )}
           {/* Falha parcial / "só o texto saiu": aparece mesmo sem status failed. */}
           {!message.isInternal && typeof message.metadata?.dispatchNote === "string" && message.metadata.dispatchNote && (
-            <p className="mt-1 flex items-start gap-1 text-[11px] text-semantic-warning">
+            <p className={cn("mt-1 flex items-start gap-1 text-[11px]", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-warning")}>
               <AlertTriangle className="size-3 mt-0.5 shrink-0" aria-hidden="true" />
               <span>{message.metadata.dispatchNote}</span>
             </p>

@@ -4,8 +4,10 @@ import {
   THEME_OPTIONS,
   UI_THEMES,
   themeLabel,
+  THEME_OWNER_KEY,
   THEME_STORAGE_KEY,
   isAppPath,
+  isForeignLocalTheme,
   resolveTheme,
   shouldPushLocalToServer,
   toasterTheme,
@@ -56,6 +58,22 @@ describe("shouldPushLocalToServer", () => {
   });
 });
 
+describe("theme owner", () => {
+  it("does not push another user's local theme", () => {
+    expect(shouldPushLocalToServer({ server: undefined, local: "light", owner: "userA", userId: "userB" })).toBe(false);
+  });
+  it("pushes when the owner matches or is absent (legacy)", () => {
+    expect(shouldPushLocalToServer({ server: undefined, local: "light", owner: "userA", userId: "userA" })).toBe(true);
+    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp", owner: null, userId: "userA" })).toBe(true);
+  });
+  it("isForeignLocalTheme", () => {
+    expect(isForeignLocalTheme({ owner: "a", userId: "b" })).toBe(true);
+    expect(isForeignLocalTheme({ owner: "a", userId: "a" })).toBe(false);
+    expect(isForeignLocalTheme({ owner: null, userId: "a" })).toBe(false);
+    expect(isForeignLocalTheme({ owner: "a" })).toBe(true);
+  });
+});
+
 describe("toasterTheme and constants", () => {
   it("maps themes to the Toaster theme", () => {
     expect(toasterTheme("dark")).toBe("dark");
@@ -65,6 +83,7 @@ describe("toasterTheme and constants", () => {
   it("exposes theme-color per theme and the storage key", () => {
     expect(THEME_COLOR).toEqual({ dark: "#0F0F11", light: "#FAFAFA", whatsapp: "#008069" });
     expect(THEME_STORAGE_KEY).toBe("hnbcrm:theme");
+    expect(THEME_OWNER_KEY).toBe("hnbcrm:theme-user");
   });
 });
 

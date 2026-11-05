@@ -24,6 +24,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Fuso horário em Configurações e na configuração inicial agora tem os nomes das cidades em português; os fusos já salvos continuam valendo. As origens (Site, Redes sociais, Telefone...) e os tipos de campo (Texto, Número, Lista de opções...) também aparecem em português.
 - O ícone de clipe na Resposta sugerida com imagem passou a ser um ícone da interface, e o acento de "Tarefa atribuída" e "Lead atribuído" nas preferências de notificação foi corrigido.
 - No Atendente IA, as listas de seleção (jeito de atender, funil, etapas, canal do simulador) ficaram mais fáceis de usar no celular.
+- Se uma seção de Configurações falhar ao abrir, só ela mostra "Não foi possível abrir esta seção." com "Tentar de novo"; o resto da tela continua funcionando.
+- No celular, a barra "Salvar alterações" do Atendente IA não fica mais escondida atrás do menu inferior. Os campos ficam bloqueados enquanto salva, e o que você digitar durante o salvamento não se perde.
+- Com mais de um atendente ativo, os painéis editam o primeiro ativo e avisam qual é.
+- Abrir uma seção sem permissão agora mostra um aviso dizendo qual seção foi pedida e qual está sendo mostrada.
+- Em Atendente IA › Visão geral há o atalho "Uso e limites de gasto", e a descrição de Modelo de IA e privacidade ficou em linguagem simples.
 
 ### Aparência: escolha entre Escuro, Claro e Estilo WhatsApp
 
@@ -34,6 +39,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Corrigido: a borda de imagens anexadas, tabelas e trechos de código nas mensagens ficava num cinza fora do padrão; agora usa a cor de borda do tema. Os hovers do botão de nota interna e dos links nas mensagens recebidas também acompanham o tema.
 - Corrigido: as cores das métricas em Formulários não apareciam.
 - O título da aba do navegador deixou de repetir "HNBCRM · HNBCRM" e, em Configurações, mostra o painel aberto.
+- Corrigido: mensagem que falhou ou aviso de envio dentro das bolhas enviadas ficava ilegível no tema Claro; agora usa a cor do texto da bolha.
+- Corrigido: o tema salvo no aparelho não passa mais para a conta de outra pessoa quando a sessão expira, e ele é esquecido ao sair.
+- Corrigido: se salvar o tema falhar, a tela volta ao tema que estava salvo, em vez de ficar num tema que não foi gravado.
+- A cor da barra do navegador no celular já nasce no tema escolhido, sem piscar.
+- Trocar de tema pelas setas do teclado salva só a escolha final.
 
 ### Configuração inicial e Copiloto
 
