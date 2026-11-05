@@ -80,6 +80,27 @@
 - `gh` não está autenticado nesta sessão (token inválido). PRs de feature não são abertos; integração é local por `git merge --no-ff` com push dos ramos. O PR em rascunho `frontend-v2 → main` será tentado pelo GitHub MCP.
 - Ambiente: ramo de integração `frontend-v2` criado de `origin/main` em `9d7f8af` (05/11/2026); worktrees em `/home/user/wt/fv2-NN` com `node_modules` linkado.
 
+## Pronto para main (rascunho; fecha depois do fv2-29b)
+
+**Ordem de publicação (do Eric, nada disto foi executado nesta sessão):**
+1. `npm run test` verde em `frontend-v2` e `npx convex dev --once` no DEV sem erro (feito a cada PR; refazer no final).
+2. **Backend primeiro:** `npm run deploy:prod` a partir de `frontend-v2` (o front novo chama funções que PROD ainda não tem; o front antigo continua compatível com o backend novo: nenhum argumento público foi removido ou ficou obrigatório, schema só aditivo).
+3. Conferir envs em PROD (`npx convex env list --prod`, sem imprimir valores): `CONVEX_SITE_URL` (o cliente não manda mais `webhookUrl`), `WA_BRIDGE_DEFAULT_URL`, `WA_BRIDGE_ADMIN_TOKEN`, `WA_BRIDGE_HMAC_SECRET` (≥ 32), `WHISPER_SERVICE_URL`/`WHISPER_SERVICE_TOKEN`, `OPENROUTER_API_KEY` (gerador de persona e Copiloto no onboarding).
+4. Só então o merge de `frontend-v2` em `main` (PR #40, sair do rascunho) — a Vercel publica o frontend no push. Depois `/release`.
+5. Pós-deploy: smoke no celular (temas, Configurações, wizard numa org nova, Conversas) e as validações vivas pendentes abaixo.
+
+**Funções públicas novas do backend que precisam estar em PROD antes do merge:** `getOnboardingStatus`, `saveBusinessProfile`, `applyFunnelTemplate`, `markWizardStep`, `deferWizard`, `reopenWizard`, `getPlatformCapabilities` (onboarding); `startBridgePairing`, `pollBridgePairing` (canais); `generateAttendantDraft` (atendente); `setMyUiTheme` (tema); `completeWizard` com `version`, `updateAgentProfile` com `rename`, `provisionBridgeChannel` com `webhookUrl` opcional, `activateOneFlow` (reativação em Sugerir), `initOnboardingProgress` (registro já concluído p/ org antiga); `purpose:"setup"` em `/api/copilot/stream`; 9 tools de configuração do Copiloto; `agentRuns.kind = attendant_draft`. Schema aditivo: `organizations.onboardingMeta.{wizardVersion,business,aiAssisted,steps,wizardDeferredAt}`, `teamMembers.uiTheme`.
+
+**Validações vivas feitas (DEV, pelo orquestrador, 05/11/2026):** temas Escuro/Claro/WhatsApp (inclusive páginas públicas isoladas e persistência por conta); Configurações em 2 níveis e salvamento parcial do atendente; Copiloto propondo horário com Antes → Depois e cancelamento; wizard v2 completo numa org nova (8 passos, "Escrever com IA", simulador, checklist, recarga, "Retomar"); Conversas (deep link, histórico, filtros na URL, cabeçalho) e a mesma conversa pelo painel do lead; Funil (arrastar nos dois sentidos, `?view=list`); contato e lead com abas na URL.
+
+**Validações vivas que faltam (Eric):** Conectar número com código num aparelho real (até a tela do código e o pareamento; validade/2º código/rótulos do app); enviar/responder/assumir/devolver numa conversa real do bridge (DEV não tem bridge armado → só em PROD); convite de equipe por e-mail; tudo em 375/768 px no celular (busca de Configurações só existe na lista mobile); tema Estilo WhatsApp no aparelho.
+
+**Textos para o Eric revisar:** checkbox LGPD do passo 1/4 (`TODO(Eric)` em `StepBusiness.tsx`/`StepAttendant.tsx`); 7 templates de segmento (`convex/lib/onboardingTemplates.ts`); `VOCAB.lead` ("Lead" × "Oportunidade"); textos do checkbox de risco do WhatsApp por QR code.
+
+**Decisões de produto em aberto (não bloqueiam):** teto por org para códigos de pareamento (hoje 3/h por canal, telefone livre); `provisionBridgeChannel` ainda aceita `webhookUrl` do cliente e `getBridgeQrCode` sem e-mail (remover depois que o front de PROD migrar); `color-scheme` por tema (mudaria o Escuro congelado); `spendCap` padrão para orgs novas (Copiloto/persona gastam a chave da plataforma no onboarding).
+
+**Opcionais fv2-30 (Inter self-hosted), fv2-31 (vocabulário novo nos textos do backend: Telegram/e-mail/sino), fv2-32 (Escuro acessível), fv2-33 (limpeza `setupPipelineFromWizard`/`requestSampleData`/`seed.ts`):** não iniciados; decisão do Eric.
+
 ## Para retomar
 
 - **Último PR integrado:** fv2-22 (merge `9e0729a` em `frontend-v2`). Todos os 22 PRs do escopo da nuvem (fv2-01 a fv2-22) estão integrados; nenhum ficou parado.
