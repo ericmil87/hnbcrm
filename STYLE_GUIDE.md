@@ -743,6 +743,10 @@ Use sempre tokens, que mudam sozinhos com o tema. Para o par inevitável claro/e
 <div className="bg-[#005c4b] light-theme:bg-[#d9fdd3]" />
 ```
 
+Como escolher: (1) token semântico (`bg-surface-raised`, `text-text-secondary`, `bg-bubble-in`...), que muda sozinho; (2) escala com alfa (`bg-brand-500/10`); (3) `light-theme:` só quando a cor é um dado fixo que precisa de par claro/escuro; (4) nunca classe de paleta crua nem `[#hex]` em arquivo novo (`rawColorsGuard`). Tokens de chat: `bg-chat-bg|chat-header|chat-send`, `bg-composer`, `bg-composer-field`, `bg-bubble-in|out|ai|note|system`, `text-bubble-out-fg|out-label|ai-label|note-label|in-link|out-link|system-fg`, `border-bubble-note-border`, `text-tick-read`, `bg-badge-unread` + `text-badge-unread-fg`, `shadow-bubble` e `.chat-wallpaper`.
+
+Seletor: o `AppearancePicker` (`src/components/settings/`) aparece na sidebar e no "Mais" (via `ThemePickerModal`) e em Configurações › Conta › Aparência (`AppearancePanel`). As miniaturas são a exceção às cores cruas: o hex vem de `THEME_OPTIONS[].preview` (`src/lib/theme.ts`) e entra por `style={{ background }}`, como dado, para não depender do tema ativo.
+
 ---
 
 ## 9. Telas de Autenticação

@@ -422,6 +422,8 @@ export function AuthLayout() {
         organizationId={activeOrgId}
         orgName={activeOrg?.name ?? ""}
         onOpenOrgSwitcher={() => setSwitcherMode("list")}
+        theme={theme}
+        setTheme={setTheme}
       >
         {/* resetKey: navegar para outra tela sai do "Algo deu errado" sem F5 */}
         <ErrorBoundary resetKey={location.pathname}>

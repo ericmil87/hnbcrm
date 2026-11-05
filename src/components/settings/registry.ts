@@ -88,15 +88,14 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     Component: lazy(() => import("./OrgProfilePanel").then((m) => ({ default: m.OrgProfilePanel }))),
   },
   {
-    // Reservado para a seção de temas (fv2-15): some até lá.
     id: "appearance",
     group: "conta",
     label: "Aparência",
     description: "Tema e cores da interface",
     icon: Palette,
-    keywords: ["tema", "escuro", "claro", "cores"],
-    visible: () => false,
-    Component: lazy(() => import("./AppearancePanelPlaceholder")),
+    keywords: ["tema", "escuro", "claro", "whatsapp", "cores", "aparência"],
+    // Preferência pessoal: sem permissão (agentes sem settings:view usam a sidebar / "Mais").
+    Component: lazy(() => import("./AppearancePanel").then((m) => ({ default: m.AppearancePanel }))),
   },
   {
     id: "notifications",

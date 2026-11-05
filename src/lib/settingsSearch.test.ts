@@ -24,6 +24,11 @@ describe("searchSettingsPanels", () => {
     expect(ids("fuso")).toContain("general");
   });
 
+  it('"tema" e "escuro" encontram Aparência', () => {
+    expect(ids("tema")).toContain("appearance");
+    expect(ids("escuro")).toContain("appearance");
+  });
+
   it("busca vazia devolve tudo; sem resultado devolve vazio", () => {
     expect(ids("  ")).toHaveLength(SETTINGS_PANELS.length);
     expect(ids("zzzxxx")).toEqual([]);
