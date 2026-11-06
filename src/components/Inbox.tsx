@@ -228,8 +228,10 @@ export function Inbox() {
         {selectedConversation ? (
           <ConversationInteractionProvider value={interaction}>
             {currentConversation ? (
+              // Cabeçalho e composer são irmãos: chaves com prefixo próprio. Com o mesmo id
+              // nos dois o React perde o cabeçalho antigo e eles empilham a cada troca.
               <ConversationHeader
-                key={currentConversation._id}
+                key={`header:${currentConversation._id}`}
                 organizationId={organizationId}
                 conversation={currentConversation}
                 canReply={canReply}
@@ -321,7 +323,7 @@ export function Inbox() {
               onOpenGroupMemberContact={groupPanels.setMemberContactId}
             />
             <Composer
-              key={selectedConversation}
+              key={`composer:${selectedConversation}`}
               organizationId={organizationId}
               conversationId={selectedConversation as Id<"conversations">}
               canReply={canReply}

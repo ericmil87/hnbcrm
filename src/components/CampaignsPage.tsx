@@ -336,7 +336,7 @@ export function CampaignsPage() {
       */}
       {wizardId !== null && (
         <ErrorBoundary
-          key={wizardId === "new" ? `new-${prefill?.groupChatIds?.[0] ?? "0"}` : wizardId}
+          key={wizardId === "new" ? `wizard:new-${prefill?.groupChatIds?.[0] ?? "0"}` : `wizard:${wizardId}`}
           fallback={<></>}
         >
           <CampaignWizard
@@ -352,7 +352,7 @@ export function CampaignsPage() {
         </ErrorBoundary>
       )}
       {selectedId && wizardId === null && (
-        <ErrorBoundary key={selectedId} fallback={<></>}>
+        <ErrorBoundary key={`detail:${selectedId}`} fallback={<></>}>
           <CampaignDetail
             organizationId={organizationId}
             campaignId={selectedId}
