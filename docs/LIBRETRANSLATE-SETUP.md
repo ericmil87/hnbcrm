@@ -16,8 +16,18 @@ Itens marcados **a confirmar** ainda não foram verificados. Instalação real f
 | Envs | `LIBRETRANSLATE_URL=https://lt.hnbcrm.com` e `LIBRETRANSLATE_API_KEY` em DEV e PROD, mesma chave (120 req/min) |
 | RAM | container em cerca de 530 MB depois de carregar os 6 idiomas com 2 workers; disponível no VPS caiu de 9,3 GB para 8,8 GB |
 | 1ª subida | cerca de 1 minuto: baixou cerca de 1,26 GB de modelos e passou a escutar |
-| Latência | `/translate` 0,6 a 2,5 s, `/detect` 0,5 a 1,0 s (pelo HTTPS público, textos curtos; varia com o worker que atende) |
+| Latência | tabela abaixo |
 | `.env` | `LT_UPDATE_MODELS=false` depois da 1ª subida (vale no próximo `docker compose up -d`) |
+
+Latência medida em 06/11/2026 (textos curtos, de fora do VPS; varia com o worker que atende):
+
+| Caminho | `/translate` | `/detect` |
+|---|---|---|
+| `https://lt.hnbcrm.com` (produção) | 1,7 a 2,5 s | 0,6 a 0,7 s |
+| `https://<dominio-do-bridge>/lt` (reserva) | 0,6 a 1,0 s | 0,5 a 1,0 s |
+| loopback no VPS | cerca de 0,9 s | n/d |
+
+O backend não chama `/detect` (a detecção de idioma é local); a tabela serve para dimensionar a prévia do composer, que custa uma chamada a cada pausa de 700 ms.
 
 O `watchtower` do VPS usa `WATCHTOWER_LABEL_ENABLE=true`; o container `libretranslate` não tem o label, então a tag fixada não é trocada sozinha.
 Backup do Caddyfile anterior: `/etc/caddy/Caddyfile.bak-2026-11-06-libretranslate`.
@@ -55,7 +65,7 @@ vira AGPL. Se alterarmos o LibreTranslate e o oferecermos a usuários, as altera
 3. `docker compose up -d`.
 4. Acompanhe: `docker compose logs -f`. Na **primeira subida** ele baixa os modelos dos 6 idiomas (`LT_UPDATE_MODELS=true`); no VPS levou cerca de
    1 minuto (cerca de 1,26 GB). Os modelos ficam no volume `libretranslate_models` e não são baixados de novo.
-   Depois da primeira subida, pode trocar `LT_UPDATE_MODELS` para `false` no `.env` para acelerar reinícios.
+   Depois da primeira subida, troque `LT_UPDATE_MODELS` para `false` no `.env` para acelerar reinícios. Em produção isso já está no `.env` do VPS, mas só vale no próximo `docker compose up -d` (o container em execução não foi reiniciado).
 5. `docker compose ps` deve mostrar `healthy` (o `start_period` é de 5 minutos). Atenção: o healthcheck já marca `healthy`
    enquanto os modelos baixam. O sinal real de pronto é `Listening at: http://[::]:5000` no log ou `curl 127.0.0.1:5000/languages` = 200.
 
@@ -182,8 +192,8 @@ npx convex env set --prod LIBRETRANSLATE_URL https://lt.hnbcrm.com
 npx convex env set --prod LIBRETRANSLATE_API_KEY '<chave>'
 ```
 
-Sem barra final na URL. Use chaves separadas para DEV e PROD se quiser revogar uma sem afetar a outra. Depois, em Configurações > Tradução
-(quando a tela existir) use "Testar conexão" para confirmar. Para remover: `npx convex env remove LIBRETRANSLATE_URL` (e `--prod` no PROD).
+Sem barra final na URL. Use chaves separadas para DEV e PROD se quiser revogar uma sem afetar a outra. Depois, em Configurações > Tradução automática
+use "Testar conexão" para confirmar. Para remover: `npx convex env remove LIBRETRANSLATE_URL` (e `--prod` no PROD).
 Não imprima a chave em logs de operação.
 
 **Sem a env:** o provedor LibreTranslate fica indisponível e a cadeia usa só o LLM (OpenRouter). Nada quebra e nada precisa ser desligado.
@@ -215,3 +225,15 @@ Se a env existir mas o serviço cair, a chamada falha e a cadeia cai no LLM.
 | Chaves sumiram após recriar | volume `libretranslate_api_keys` removido (`down -v`) | nunca use `down -v`; recriar as chaves |
 
 Chave ausente ou errada: 429 reproduzido no VPS (06/11/2026). O 403 da versão upstream não apareceu nesta configuração.
+
+## 10. Como o app usa o LibreTranslate
+
+Contrato do lado do backend (`convex/lib/translationCore.ts`, `convex/lib/translationText.ts`; visão completa em `docs/architecture/translation.md`). Leia antes de "melhorar" qualquer formato abaixo.
+
+- **Ordem da cadeia:** LibreTranslate primeiro, LLM da org (OpenRouter) depois, e só se a IA da org estiver ligada com o aceite de LGPD. `settings.translation.provider` pode fixar um dos dois. Sem `LIBRETRANSLATE_URL` o motor é pulado.
+- **Só https:** o app recusa a URL que não seja `https://` (exceção: `http://` para `localhost`/`127.0.0.1`), com o erro "URL do LibreTranslate precisa ser https". O texto do cliente não trafega em claro.
+- **Chamada:** `POST {URL}/translate` com `{q, source, target, format:"text", api_key}`, timeout de 12 s. `source` é o idioma detectado localmente (`auto` quando incerto); idiomas em ISO-639-1 (`pt-BR` vira `pt`). Qualquer resposta que não seja 200 conta como falha do motor e a cadeia segue para o LLM, inclusive o **429** de chave ausente, errada ou revogada.
+- **Guard depois da tradução:** URLs, números (com reformatação tolerada: `10h` = `10:00`, `R$ 1.500,00` = `1,500.00`, `1º` = `1st`), emojis e marcas do WhatsApp precisam sobreviver, e o tamanho fica entre 0,3x e 3,5x. Falhou = próximo motor. Horário de 24h virado para 12h sem am/pm (`14h30` para `2:30`) é reprovado de propósito.
+- **Tokens que o app envia (não "conserte"):** o modelo pt para en do servidor corta o texto no primeiro `⟦` e no primeiro emoji. Por isso o app manda `{1}`, `{2}`... no lugar de links, e-mails, menções, telefones (com o `(` do DDD dentro do token) e termos do glossário; emoji no meio da linha vira `XEMO1X`; emoji na borda da linha sai do texto e volta colado depois. Texto que sobra só com emoji, link ou telefone nem chega ao servidor. O formato `⟦U1⟧` existe apenas para o LLM. Cada formato foi escolhido por medição no servidor real (45 de 45 frases em en, es, fr, it, de).
+- **O que não vai para o servidor:** nota interna, grupos, campanhas, texto acima de 4000 caracteres e mensagens curtas demais para detectar o idioma sem contexto.
+- **Teste de conexão:** Configurações > Tradução automática > "Testar conexão" traduz uma frase com horário e valor por cada motor e mostra a latência.

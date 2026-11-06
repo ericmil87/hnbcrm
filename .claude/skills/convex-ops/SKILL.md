@@ -37,6 +37,7 @@ Ops print masked PII only. Record what was run in `docs/OPS-SEPARAR-DEV-PROD.md`
 - **Inbound lead** `inboundLeadWelcome:internalSetInboundLeadSettings {dryRun, …}`.
 - **Seed** `seed:seedMockData` (DEV only — internal since v0.69.1). Demo engine `demoSim.ts` refuses orgs without `settings.demoMode`.
 - **Goldens** `agentEvals:internalSeedCuratedGoldens`.
+- **Translation** `translation:internalDetectProbe '{"text":"hola, tienen disponibilidad?"}'` (internal action, read-only, no PII): proves `tinyld/light` loads in the deployment's V8 runtime and returns `{lang?, confidence?, alphaChars, minAlphaChars}` (< 20 letters = no `lang`); run after the first deploy of a deployment or a `tinyld` bump. `translation:pingProviders {organizationId}` is the UI's "Testar conexão" (public action, `settings:manage`, so it needs `--identity`; measures LibreTranslate and the LLM chain with a sample text that has a time and a price) — prefer the Settings button. Envs, set per deployment (PROD only with `--prod`): `LIBRETRANSLATE_URL` (`https://` only; `http://` just for localhost) and `LIBRETRANSLATE_API_KEY`; without the URL the chain is LLM-only. Never print the key; runbook `docs/LIBRETRANSLATE-SETUP.md`.
 
 ## Safety checklist before any PROD run
 1. Tests green on the code that defines the op. 2. Dry run output read end to end. 3. Scope args (`organizationId`, `expectTargetIds`) set. 4. Backup/export if destructive (`npx convex export --prod`). 5. Log the run.
