@@ -138,7 +138,7 @@ Stages marked `isClosedWon` or `isClosedLost` are terminal — use them to close
 
 - **Read before replying**: Always call `crm_get_messages` to read the full thread before responding
 - **Internal notes**: Use `isInternal: true` for AI reasoning, observations, or team coordination — the contact won't see these
-- **Translation (v0.80, optional per organization)**: messages may carry `translatedText` (the team-language version) and `metadata.translation`; `content` is always the text that travelled the channel. Reply in the customer's language, or pass `language` (`"auto"`, `"off"` or a code like `es`) to `crm_send_message` when you write in the team's language
+- **Translation (v0.80, optional per organization)**: messages may carry `translatedText` (the team-language version) and `metadata.translation`; `content` is always the text that travelled the channel. Reply in the customer's language, or pass `language` (`"auto"`, `"off"` or a code like `es`) to `crm_send_message` when you write in the team's language (an invalid value is a 400). Contacts carry `preferredLanguage`, settable with `crm_create_contact`/`crm_update_contact`
 - **Don't over-respond**: If a human team member is already handling the conversation, don't jump in unless explicitly asked
 
 ### 6b. Start a WhatsApp Conversation (v0.66)

@@ -55,7 +55,7 @@ Rules: (1) no flag = DEV; PROD only with `--prod` (`run`, `env`, `data`, `logs`,
 
 ## Where to look
 
-- `docs/architecture/README.md` — map of 20 area files (auth, e-mail, WhatsApp bridge, groups, campaigns, AI attendant/vision/core, leads, inbox, tasks, central, export/import, security, frontend, ops). Read the area file before touching the area.
+- `docs/architecture/README.md` — map of 21 area files (auth, e-mail, WhatsApp bridge, groups, campaigns, AI attendant/vision/core, leads, inbox, tasks, central, export/import, security, frontend, ops). Read the area file before touching the area.
 - `.claude/rules/` — auto-loaded by path: `convex-official`, `backend-invariants` (convex/**), `whatsapp-bridge`, `ai-pipeline`, `frontend` (src/**), `tests` (*.test.ts).
 - Skills: `/convex-ops` (dev×prod runbook, ops catalog), `/release` (version bump, CHANGELOG, docs). Agents: `frontend-specialist`, `convex-backend`, `reviewer`.
 - `CHANGELOG.md` (PT-BR, user-facing). Plans, status logs, ops runbooks and `docs/perf/` are LOCAL files (gitignored, see `CLAUDE.local.md`); `docs/architecture/` is the public, anonymized record.
