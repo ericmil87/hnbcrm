@@ -346,6 +346,43 @@ describe("translationText", () => {
     expect(checkTranslation(source, back.text)).toEqual({ ok: true });
   });
 
+  it("formato libre: hora da tarde vai como HH:MM; manhã, duração e HH:MM ficam como estão", () => {
+    expect(protectText("Quinta, às 19h, no Espaço. Chega 18h45.", [], "libre").text).toBe(
+      "Quinta, às 19:00, no Espaço. Chega 18:45."
+    );
+    expect(protectText("Às 10h ou 7h30; dura 2h; 14:30; 48h; 25h; 19horas", [], "libre").text).toBe(
+      "Às 10h ou 7h30; dura 2h; 14:30; 48h; 25h; 19horas"
+    );
+    // O formato do LLM não muda: o modelo entende "19h".
+    expect(protectText("às 19h", [], "llm").text).toBe("às 19h");
+  });
+
+  // Mensagem REAL do incidente de 06/11/2026 ("horário convertido para 12h sem
+  // am/pm"): com "19h"/"18h45" o servidor devolvia "6:45"; já protegida, a
+  // resposta medida no mesmo servidor mantém os horários e passa no guard.
+  it.each([
+    ["en", "Payment checked, your spot in Experience Tide Nova is confirmed! Thursday, 08/10, at 19:00, in the Sacred Heart Space ({1}). Comes 18:45, comfortable clothes and water bottle. I'll wait for you. All right!"],
+    ["fr", "Paiement vérifié, votre place dans Experience Tide Nova est confirmée! Jeudi 08/10, à 19h00, dans l'Espace Sacré-Cœur ({1}). Livré à 18h45, vêtements confortables et bouteille d'eau. Je t'attends. Très bien !"],
+  ])("formato libre: horário da tarde da mensagem real → %s passa no guard", (_lang, engineOut) => {
+    const source =
+      "Pagamento conferido, sua vaga na Vivência Maré Nova tá confirmada! Quinta, 08/10, às 19h, no Espaço Coração Sagrado (https://maps.app.goo.gl/BMkniuCXqWrhsp1L7). Chega 18h45, roupa confortável e garrafa d'água. Te espero. muito bem!";
+    const p = protectText(source, [], "libre");
+    expect(p.text).toContain("às 19:00");
+    expect(p.text).toContain("Chega 18:45");
+    const back = restoreText(engineOut, p, "libre");
+    expect(back.ok).toBe(true);
+    expect(back.text).toContain("https://maps.app.goo.gl/BMkniuCXqWrhsp1L7");
+    expect(checkTranslation(source, back.text)).toEqual({ ok: true });
+  });
+
+  it("formato libre: servidor que ainda converte para 12h continua reprovado (vai para a IA)", () => {
+    // Medido: "Visita às 14:30 ou às 18:00." → "Visit at 2:30 or 6:00."
+    expect(checkTranslation("Visita às 14h30 ou às 18h.", "Visit at 2:30 or 6:00.")).toEqual({
+      ok: false,
+      reason: "horário convertido para 12h sem am/pm",
+    });
+  });
+
   it("formato libre: tokens, bordas de linha e emoji no meio", () => {
     const p = protectText("Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏", [], "libre");
     expect(p.text).toBe("Oi!\nA casa é linda XEMO2X e fica perto da praia.\nMe chama no {1}");
@@ -459,9 +496,11 @@ describe("translationCore (prompt)", () => {
     expect(p).toMatch(/formal/);
     expect(p).toMatch(/\{"lang"/);
   });
-  it("max tokens proporcional e limitado", () => {
-    expect(translationMaxTokens("abc")).toBe(128);
-    expect(translationMaxTokens("x".repeat(3000))).toBe(2064);
+  it("max tokens proporcional, com folga de raciocínio, e limitado", () => {
+    expect(translationMaxTokens("abc")).toBe(2 + 64 + 512);
+    // A mensagem real de 06/11/2026 (~260 caracteres) cortava com ~238 tokens.
+    expect(translationMaxTokens("x".repeat(260))).toBeGreaterThanOrEqual(700);
+    expect(translationMaxTokens("x".repeat(3000))).toBe(2576);
     expect(translationMaxTokens("x".repeat(100000))).toBe(4000);
   });
   it("idioma fixo para grupos/publicações", () => {

@@ -96,6 +96,21 @@ export function withReasoningEffort(
   );
 }
 
+/**
+ * Raciocínio DESLIGADO (`reasoning.enabled:false`), só nas rotas OpenRouter.
+ * Para tarefas mecânicas (tradução) em que pensar só gasta o `max_tokens`:
+ * medido em 06/11/2026 no `deepseek-flash-latest`, uma mensagem de ~260
+ * caracteres gastou 609 tokens pensando com `effort:"low"` (teto da tradução
+ * era ~238, a resposta saía cortada) e 0 com `enabled:false` (73 no total).
+ */
+export function withoutReasoning(routes: ResolvedRoute[]): ResolvedRoute[] {
+  return routes.map((route) =>
+    route.providerId === "openrouter"
+      ? { ...route, extraBody: { ...route.extraBody, reasoning: { enabled: false } } }
+      : route
+  );
+}
+
 // BYO: a single route from the org's own credentials. No platform fallback.
 export function resolveByoRoute(
   byo: { provider: string; baseUrl?: string; apiKey: string },

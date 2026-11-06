@@ -14,7 +14,7 @@
 import { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
-import { chatWithFallback, withReasoningEffort, ResolvedRoute } from "./llm";
+import { chatWithFallback, withoutReasoning, ResolvedRoute } from "./llm";
 import { sanitizeLlmError } from "./llm/sanitize";
 import { resolveProductRoutes, OrgProviderConfig } from "./agentRoutes";
 import { addUsage, finishRunCostFields, monthKeyUtc, newUsageTotals, SPEND_CAP_BLOCKED_MESSAGE } from "./aiSpend";
@@ -224,8 +224,17 @@ export function buildTranslationSystemPrompt(opts: {
     .join("\n");
 }
 
+/**
+ * Teto de tokens da tradução. A parte proporcional cobre o JSON da resposta; a
+ * folga fixa (`TRANSLATION_TOKEN_HEADROOM`) cobre o modelo que raciocina mesmo
+ * com `reasoning.enabled:false` (rota fora do OpenRouter, modelo que ignora o
+ * parâmetro). Medido em 06/11/2026: sem folga, `deepseek-flash-latest` com
+ * `effort:"low"` estourava o teto de ~238 tokens pensando ("resposta cortada").
+ */
+export const TRANSLATION_TOKEN_HEADROOM = 512;
+export const TRANSLATION_MAX_TOKENS = 4000;
 export function translationMaxTokens(text: string): number {
-  return Math.min(4000, Math.max(128, Math.ceil(text.length / 3) * 2 + 64));
+  return Math.min(TRANSLATION_MAX_TOKENS, Math.ceil(text.length / 3) * 2 + 64 + TRANSLATION_TOKEN_HEADROOM);
 }
 
 const LEAK_NUDGE =
@@ -251,7 +260,8 @@ async function translateWithLlm(
   let canonicalModel: string;
   try {
     const resolved = await resolveProductRoutes(ctx, args.org._id, providerConfig, "translation");
-    routes = withReasoningEffort(resolved.routes, "low");
+    // Traduzir não pede raciocínio; pensar só come o teto de tokens.
+    routes = withoutReasoning(resolved.routes);
     canonicalModel = resolved.canonicalModel;
   } catch (e) {
     return { ok: false, error: sanitizeLlmError(e instanceof Error ? e.message : "rota indisponível") };
@@ -276,6 +286,7 @@ async function translateWithLlm(
   let lastError = "resposta inválida";
   let provider: string | undefined;
   let model: string | undefined;
+  let maxTokens = translationMaxTokens(protectedText.text);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       requestCount++;
@@ -287,7 +298,7 @@ async function translateWithLlm(
             { role: "user", content: userContent },
           ],
           temperature: 0,
-          maxTokens: translationMaxTokens(protectedText.text),
+          maxTokens,
           responseFormat: { type: "json_object" },
         },
         { timeoutMs: LLM_TRANSLATION_TIMEOUT_MS }
@@ -296,7 +307,9 @@ async function translateWithLlm(
       provider = res.usedRoute.providerId;
       model = res.usedRoute.canonicalModel;
       if (res.finishReason === "length") {
+        // Repetir com o mesmo teto corta no mesmo lugar: a 2ª tentativa vai ao máximo.
         lastError = "resposta cortada";
+        maxTokens = TRANSLATION_MAX_TOKENS;
         continue;
       }
       const raw = typeof res.message.content === "string" ? res.message.content : "";

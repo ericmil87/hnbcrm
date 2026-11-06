@@ -545,6 +545,37 @@ describe("LLM como provedor", () => {
     await cancelPendingJobs(t);
   });
 
+  test("raciocínio desligado na rota OpenRouter e resposta cortada repete com teto máximo", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-test-fake-openrouter");
+    let call = 0;
+    const fetchSpy = vi.fn(async () => {
+      call++;
+      if (call === 1) {
+        return new Response(
+          JSON.stringify({
+            id: "chatcmpl-teste",
+            choices: [{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "length" }],
+            usage: { prompt_tokens: 120, completion_tokens: 600 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return llmResponse('{"lang":"es","text":"Olá, quero saber o preço do apartamento por favor"}');
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { module: true, ai: true });
+    const id = await receive(t, s, ES);
+    await runTranslationJobs(t);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const bodies = fetchSpy.mock.calls.map((c) => JSON.parse(((c as unknown as [string, RequestInit])[1].body as string)));
+    expect(bodies[0].reasoning).toEqual({ enabled: false });
+    expect(bodies[0].max_tokens).toBeGreaterThanOrEqual(512);
+    expect(bodies[1].max_tokens).toBe(4000);
+    expect((await getMsg(t, id)).metadata?.translation).toMatchObject({ status: "done", engine: "llm" });
+    await cancelPendingJobs(t);
+  });
+
   test("marcação vazada do modelo: 1 retry e depois falha", async () => {
     vi.stubEnv("OPENROUTER_API_KEY", "sk-test-fake-openrouter");
     const leak = '{"lang":"es","text":"<|tool_call_begin|>functions.replyToCustomer:0<|tool_call_argument_begin|>{}"}';
