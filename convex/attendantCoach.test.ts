@@ -1167,6 +1167,16 @@ describe("origem do pedido pelo Telegram (D23)", () => {
   });
 });
 
+async function cancelPendingJobs(t: TestConvex<typeof schema>) {
+  await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    for (const job of jobs) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
+
 describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em autopilot", () => {
   const instructAndRun = async (t: TestConvex<typeof schema>, seed: Seed, via?: "telegram") => {
     await t.run(async (ctx) => {
@@ -1187,6 +1197,10 @@ describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em
       (await ctx.db.query("messages").withIndex("by_conversation_and_created", (q) => q.eq("conversationId", seed.conversationId)).collect())
         .filter((m) => m.direction === "outbound"),
     );
+    // O turno agenda jobs (dispatch, tradução, notificação) que ninguém drena
+    // aqui; sem cancelar, eles disparavam DEPOIS do teste ("Write outside of
+    // transaction") e quebravam o describe seguinte.
+    await cancelPendingJobs(t);
     return { item: item!, outbound };
   };
 
