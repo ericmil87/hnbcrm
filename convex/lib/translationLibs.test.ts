@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ConvexError } from "convex/values";
 import {
   availableEngines,
   resolveTranslationSettings,
@@ -6,17 +7,21 @@ import {
   shouldTranslateDisplay,
   shouldTranslateInbound,
   shouldTranslateOutbound,
+  conversationHasForeignLanguage,
+  editedDraftNeedsTranslation,
+  isTeamEditedAiDraft,
   translatableText,
   translationEnabledForOrg,
 } from "./translationGate";
 import {
   effectiveSourceLanguage,
   nextConversationTranslation,
+  firstDetectionFixesLanguage,
   resolveTargetLanguage,
 } from "./translationLang";
 import { checkTranslation, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
 import { outboundTranslationInsertFields, shouldScheduleMessageTranslation } from "./translationOps";
-import { buildTranslationSystemPrompt, translationMaxTokens } from "./translationCore";
+import { buildTranslationSystemPrompt, libreTranslateUrlProblem, translationMaxTokens } from "./translationCore";
 import { fixedAgentLanguage } from "./languages";
 
 const aiOn = { enabled: true, autoAssign: false, handoffThreshold: 0.5, lgpdAck: { acceptedAt: 1, acceptedBy: "m" as any } };
@@ -144,13 +149,24 @@ describe("translationLang", () => {
     expect(resolveTargetLanguage({ conversation: { lang: "es", mode: "off" } })).toEqual({ source: "off", hintOnly: false });
   });
 
-  it("1ª detecção define o idioma da conversa", () => {
-    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.9 }, 10)).toEqual({
-      lang: "es",
-      source: "auto",
-      detectedAt: 10,
-      divergentStreak: 0,
+  it("1ª detecção só fixa o idioma com evidência (review #11)", () => {
+    const fixed = { lang: "es", source: "auto", detectedAt: 10, divergentStreak: 0 };
+    // Forte: confiança ≥ 0,85 em texto com ≥ 40 letras.
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.9 }, 10, { alphaChars: 45 })).toEqual(fixed);
+    // Concordância com o contato ou com o DDI.
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.7 }, 10, { contactPreferredLanguage: "es" })).toEqual(fixed);
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.7 }, 10, { dialHint: "es" })).toEqual(fixed);
+    // Sem evidência: só candidato; a 2ª consecutiva no mesmo idioma fixa.
+    const one = nextConversationTranslation(undefined, { lang: "es", confidence: 0.9 }, 10, { alphaChars: 25 })!;
+    expect(one).toEqual({ candidateLang: "es", divergentStreak: 1 });
+    expect(nextConversationTranslation(one, { lang: "es", confidence: 0.7 }, 11)).toEqual({ ...fixed, detectedAt: 11 });
+    // Candidato trocado recomeça a contagem; DDI de outro idioma não ajuda.
+    expect(nextConversationTranslation(one, { lang: "en", confidence: 0.7 }, 11, { dialHint: "es" })).toEqual({
+      candidateLang: "en",
+      divergentStreak: 1,
     });
+    expect(firstDetectionFixesLanguage({ lang: "es", confidence: 0.84 }, { alphaChars: 100 })).toBe(false);
+    expect(firstDetectionFixesLanguage({ lang: "es", confidence: 0.95 }, { alphaChars: 39 })).toBe(false);
   });
 
   it("curta / pouco confiante não muda nada", () => {
@@ -299,5 +315,65 @@ describe("atendente: language auto", () => {
       "Responda no idioma em que o cliente escreve (siga o idioma da última mensagem dele; padrão pt-BR)."
     );
     expect(languageInstruction("auto", "es")).toMatch(/Idioma detectado desta conversa: Espanhol \(es\)\./);
+  });
+});
+
+describe("review da tradução (backend)", () => {
+  const PT = "Olá, boa tarde! Vocês têm disponibilidade para o fim de semana?";
+  it("#10: inbound em pt-BR (ou curta) numa conversa sem idioma estrangeiro não agenda", () => {
+    const on = org({ module: true });
+    expect(shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: PT }), role: "inbound" })).toBe(false);
+    expect(shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: "ok" }), role: "inbound" })).toBe(false);
+    // Conversa ativa (idioma ou candidato estrangeiro): agenda (o `skipped` aparece na bolha).
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv({ translation: { lang: "es" } }), message: msg({ content: PT }), role: "inbound" })
+    ).toBe(true);
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv({ translation: { candidateLang: "en" } }), message: msg({ content: "ok" }), role: "inbound" })
+    ).toBe(true);
+    // Dica externa estrangeira (Whisper) também agenda.
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: "ok" }), role: "inbound", hintLang: "en" })
+    ).toBe(true);
+    expect(conversationHasForeignLanguage(conv({ translation: { lang: "pt-BR" } }), "pt-BR")).toBe(false);
+    expect(conversationHasForeignLanguage(conv({ translation: { lang: "es", mode: "off" } }), "pt-BR")).toBe(false);
+  });
+
+  it("#1: legenda de arquivo conta na saída; texto longo só recusa quando a tradução é devida", () => {
+    expect(translatableText(msg({ contentType: "file", content: "Segue o contrato assinado" }), { fileCaption: true })).toBeTruthy();
+    expect(translatableText(msg({ contentType: "file", content: "Segue o contrato assinado" }))).toBeUndefined();
+    const long = outMsg({ content: "Olá ".repeat(1100) });
+    const o = org({ module: true });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: "es" })).toEqual({ ok: false, reason: "texto_longo" });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: "pt-BR" })).toEqual({ ok: false, reason: "mesma_lingua" });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: undefined })).toEqual({ ok: false, reason: "sem_idioma" });
+  });
+
+  it("#3: rascunho da IA editado em pt-BR vira elegível; sem a marca segue recusado", () => {
+    const o = org({ module: true });
+    const es = conv({ translation: { lang: "es" } });
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: PT })).toBe(true);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: "Ok!" })).toBe(true);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: "Hola, el apartamento cuesta quinientos mil reales" })).toBe(false);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: conv(), finalText: PT })).toBe(false);
+    expect(editedDraftNeedsTranslation({ org: org(), conversation: es, finalText: PT })).toBe(false);
+    const ai = outMsg({ senderType: "ai" });
+    expect(shouldTranslateOutbound({ org: o, conversation: es, message: ai, targetLang: "es" }).ok).toBe(false);
+    const edited = outMsg({ senderType: "ai", metadata: { aiDraft: { edited: true, editedInTeamLanguage: true } } });
+    expect(isTeamEditedAiDraft(edited)).toBe(true);
+    expect(shouldTranslateOutbound({ org: o, conversation: es, message: edited, targetLang: "es" }).ok).toBe(true);
+  });
+
+  it("#14: LibreTranslate só por https (http só em localhost)", () => {
+    expect(libreTranslateUrlProblem("https://lt.hnbcrm.com")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://localhost:5000")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://127.0.0.1:5000")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://10.0.0.5:5000")).toBe("URL do LibreTranslate precisa ser https");
+    expect(libreTranslateUrlProblem("ftp://lt")).toBe("URL do LibreTranslate precisa ser https");
+    expect(libreTranslateUrlProblem("nada")).toBe("URL do LibreTranslate inválida");
+  });
+
+  it("#8: idioma inválido no insert é ConvexError (REST responde 400)", () => {
+    expect(() => outboundTranslationInsertFields({ language: "klingon" }, 5)).toThrow(ConvexError);
   });
 });

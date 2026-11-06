@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bubbleTranslation,
   canRequestTranslation,
   conversationLanguageState,
   hasFreshUntranslated,
@@ -59,6 +60,28 @@ describe("conversationLanguageState", () => {
     expect(conversationLanguageState({ kind: "group", translation: { lang: "es" } }, ON).eligible).toBe(false);
     expect(conversationLanguageState({ translation: { lang: "es" } }, { ...ON, moduleEnabled: false }).active).toBe(false);
   });
+  it("só candidateLang + divergentStreak (primeiro idioma não confirmado) não ativa nada", () => {
+    const translation = { candidateLang: "es", divergentStreak: 1 };
+    const state = conversationLanguageState({ translation }, ON);
+    expect(state).toMatchObject({ lang: undefined, foreign: false, active: false, awaitingChoice: false });
+    expect(conversationLanguageState({ translation }, { ...ON, inboundMode: "ask" }).awaitingChoice).toBe(false);
+    expect(languageChipLabel(state, "pt-BR")).toBeNull();
+    expect(translationView(inbound(), { conversationActive: state.active, now: NOW }).kind).toBe("none");
+    expect(hasFreshUntranslated([inbound()], NOW, state.active)).toBe(false);
+    expect(
+      translationBannerKind({
+        state,
+        translation: { ...translation, detectedAt: NOW },
+        settings: ON,
+        isGroup: false,
+        openedAt: NOW,
+        dismissed: false,
+        canManageSettings: true,
+        contactLanguageHint: "es",
+      })
+    ).toBeNull();
+  });
+
   it("mesma língua da equipe não é estrangeira", () => {
     expect(conversationLanguageState({ translation: { lang: "pt-PT" } }, ON).foreign).toBe(false);
   });
@@ -105,6 +128,20 @@ describe("translationView", () => {
     expect(translationView(inbound(), ctx)).toEqual({ kind: "translating", inferred: true });
     expect(translationView(inbound({ createdAt: NOW - 31_000 }), ctx).kind).toBe("none");
     expect(translationView(inbound(), { ...ctx, conversationActive: false }).kind).toBe("none");
+  });
+
+  it("'Traduzindo…' inferido só em conversa ativa e mensagem de texto (o servidor não grava nada nas inativas)", () => {
+    // Conversa no idioma da equipe ou desligada: `active` é false e nada é inferido.
+    const ptConversation = conversationLanguageState({ translation: { lang: "pt-BR", mode: "auto" } }, ON);
+    const offConversation = conversationLanguageState({ translation: { lang: "es", mode: "off" } }, ON);
+    const noLang = conversationLanguageState({ translation: {} }, ON);
+    const esConversation = conversationLanguageState({ translation: { lang: "es", mode: "auto" } }, ON);
+    for (const state of [ptConversation, offConversation, noLang]) {
+      expect(translationView(inbound(), { conversationActive: state.active, now: NOW }).kind).toBe("none");
+    }
+    expect(translationView(inbound(), { conversationActive: esConversation.active, now: NOW }).kind).toBe("translating");
+    expect(translationView(inbound({ contentType: "image" }), ctx).kind).toBe("none");
+    expect(translationView(inbound({ contentType: "text" }), ctx).kind).toBe("translating");
   });
 
   it("pending, failed e skipped da recebida", () => {
@@ -180,9 +217,53 @@ describe("canRequestTranslation e hasFreshUntranslated", () => {
     expect(canRequestTranslation(inbound({ content: " " }), { moduleEnabled: true })).toBe(false);
   });
   it("relógio só liga com recebida recente sem estado", () => {
-    expect(hasFreshUntranslated([inbound()], NOW)).toBe(true);
-    expect(hasFreshUntranslated([inbound({ createdAt: NOW - 40_000 })], NOW)).toBe(false);
-    expect(hasFreshUntranslated([inbound(tr({ status: "done", role: "inbound" }))], NOW)).toBe(false);
+    expect(hasFreshUntranslated([inbound()], NOW, true)).toBe(true);
+    expect(hasFreshUntranslated([inbound()], NOW, false)).toBe(false);
+    expect(hasFreshUntranslated([inbound({ contentType: "audio" })], NOW, true)).toBe(false);
+    expect(hasFreshUntranslated([inbound({ createdAt: NOW - 40_000 })], NOW, true)).toBe(false);
+    expect(hasFreshUntranslated([inbound(tr({ status: "done", role: "inbound" }))], NOW, true)).toBe(false);
+  });
+});
+
+describe("bubbleTranslation", () => {
+  const out = (t: Record<string, unknown>) => ({
+    ...inbound(),
+    direction: "outbound",
+    senderType: "user",
+    ...tr({ role: "outbound", ...t }),
+  });
+  const base = { isGroup: false, teamLanguage: "pt-BR", conversationActive: true, now: NOW };
+
+  it("módulo desligado: enviada retida (pending/failed) mantém o bloco com as ações", () => {
+    const off = { ...base, moduleEnabled: false };
+    expect(bubbleTranslation(out({ status: "failed", error: "x" }), off)).toEqual({
+      view: { kind: "outbound_failed", error: "x" },
+      canRequest: false,
+    });
+    expect(bubbleTranslation(out({ status: "pending" }), off)?.view.kind).toBe("outbound_pending");
+    expect(bubbleTranslation(out({ status: "failed", reason: "long_text" }), off)?.view).toEqual({
+      kind: "outbound_failed",
+      error: undefined,
+      tooLong: true,
+    });
+  });
+
+  it("módulo desligado: todo o resto some", () => {
+    const off = { ...base, moduleEnabled: false };
+    expect(bubbleTranslation(out({ status: "done" }), off)).toBeNull();
+    expect(bubbleTranslation(out({ status: "skipped" }), off)).toBeNull();
+    expect(bubbleTranslation(inbound(), off)).toBeNull();
+    expect(bubbleTranslation(inbound(tr({ status: "done", role: "inbound" })), off)).toBeNull();
+    expect(bubbleTranslation({ ...out({ status: "failed" }), isInternal: true }, off)).toBeNull();
+  });
+
+  it("módulo ligado: mesma decisão de antes (inferência, idioma incerto, pedido manual)", () => {
+    const on = { ...base, moduleEnabled: true };
+    expect(bubbleTranslation(inbound(), on)).toEqual({ view: { kind: "translating", inferred: true }, canRequest: true });
+    expect(
+      bubbleTranslation(inbound(tr({ status: "skipped", role: "inbound", reason: "low_confidence", candidateLang: "es" })), on)?.view
+    ).toEqual({ kind: "uncertain", lang: "es" });
+    expect(bubbleTranslation(out({ status: "failed" }), on)?.view.kind).toBe("outbound_failed");
   });
 });
 

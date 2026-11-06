@@ -1,13 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { useShowOriginalPref } from "@/lib/translationPrefs";
-import {
-  canRequestTranslation,
-  conversationLanguageState,
-  hasFreshUntranslated,
-  translationView,
-  uncertainLanguageOffer,
-} from "@/lib/translationRules";
+import { bubbleTranslation, conversationLanguageState, hasFreshUntranslated } from "@/lib/translationRules";
 import { ConversationTranslationBanner } from "@/components/inbox/ConversationTranslationBanner";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
@@ -106,7 +100,7 @@ export function ConversationThread({
   // Relógio do "Traduzindo…" inferido: só anda enquanto há recebida recente sem estado.
   const [now, setNow] = useState(() => Date.now());
   const freshUntranslated =
-    languageState.active && hasFreshUntranslated(messages as InboxMessage[] | undefined, now);
+    hasFreshUntranslated(messages as InboxMessage[] | undefined, now, languageState.active);
   useEffect(() => {
     if (!freshUntranslated) return;
     const timer = setInterval(() => setNow(Date.now()), 5_000);
@@ -349,25 +343,20 @@ export function ConversationThread({
                   ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
                   : {})}
                 onJumpToMessage={paging.jumpToMessage}
-                translation={
-                  translationSettings.moduleEnabled && !isGroupConversation
-                    ? {
-                        view: (() => {
-                          const lang = uncertainLanguageOffer(message, {
-                            moduleEnabled: true,
-                            teamLanguage: translationSettings.teamLanguage,
-                            conversation,
-                          });
-                          return lang
-                            ? ({ kind: "uncertain", lang } as const)
-                            : translationView(message, { conversationActive: languageState.active, now });
-                        })(),
-                        canRequest: canRequestTranslation(message, { moduleEnabled: true }),
-                        showBoth,
-                        busy: translatingIds.has(message._id),
-                      }
-                    : undefined
-                }
+                translation={(() => {
+                  // Módulo desligado: só a enviada retida (pending/failed) mantém as ações.
+                  const decided = bubbleTranslation(message, {
+                    moduleEnabled: translationSettings.moduleEnabled,
+                    isGroup: isGroupConversation,
+                    teamLanguage: translationSettings.teamLanguage,
+                    conversationActive: languageState.active,
+                    now,
+                    conversation,
+                  });
+                  return decided
+                    ? { ...decided, showBoth, busy: translatingIds.has(message._id) }
+                    : undefined;
+                })()}
                 onTranslate={(m) => void handleTranslate(m)}
                 onTranslateAs={canReply ? (m, lang) => void handleTranslateAs(m, lang) : undefined}
                 onRetryOutbound={(m) => void handleRetryOutbound(m)}

@@ -107,7 +107,8 @@ describe("porta única da tradução", () => {
 
   test("fiação: receivers, transcrição e commits do atendente chamam a porta", () => {
     const conv = stripComments(read("conversations.ts"));
-    expect((conv.match(/scheduleMessageTranslation\(ctx, \{ messageId, role: "inbound" \}\)/g) ?? []).length).toBe(4);
+    // 4 receivers; os que já têm a conversa carregada a passam junto (review #10).
+    expect((conv.match(/scheduleMessageTranslation\(ctx, \{ messageId, role: "inbound"(, conversation(: \w+)?)? \}\)/g) ?? []).length).toBe(4);
     for (const fn of ["internalReceiveMessage", "internalReceiveDeviceMessage", "internalReceiveGroupMessage", "internalReceiveGroupDeviceMessage"]) {
       const start = conv.indexOf(`export const ${fn} = internalMutation(`);
       const next = conv.indexOf("\nexport ", start + 10);

@@ -1037,6 +1037,22 @@ http.route({
       if (body.translation !== undefined && !isTranslationBody(body.translation)) {
         return errorResponse("translation must be {authoredText, sourceLang, targetLang, edited?}", 400);
       }
+      if (
+        isTranslationBody(body.translation) &&
+        (!normalizeLanguageCode(body.translation.sourceLang) || !normalizeLanguageCode(body.translation.targetLang))
+      ) {
+        return errorResponse(
+          `translation.sourceLang/targetLang inválido: use um destes códigos: ${LANGUAGE_CODES.join(", ")}`,
+          400
+        );
+      }
+      // `language`: "auto" | "off" | código do catálogo (review #8: inválido = 400).
+      if (body.language !== undefined && !isValidSendLanguage(body.language)) {
+        return errorResponse(
+          `language inválido: use "auto", "off" ou um destes códigos: ${LANGUAGE_CODES.join(", ")}`,
+          400
+        );
+      }
 
       const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
         conversationId: body.conversationId as Id<"conversations">,
@@ -1051,13 +1067,15 @@ http.route({
         teamMemberId: apiKeyRecord.teamMemberId,
         // Tradução automática (F1): "auto" | "off" | código; ignorado sem o módulo.
         ...(typeof body.language === "string" && body.language.trim()
-          ? { language: body.language.trim().slice(0, 16) }
+          ? { language: body.language.trim() }
           : {}),
         ...(isTranslationBody(body.translation) ? { translation: body.translation } : {}),
       });
 
       return jsonResponse({ success: true, messageId }, 201);
     } catch (error) {
+      // Erro de regra/validação (ConvexError PT-BR) = 400, não 500.
+      if (error instanceof ConvexError) return errorResponse(plainErrorMessage(error), 400);
       return errorResponse(error instanceof Error ? error.message : "Internal server error");
     }
   }),
@@ -1073,6 +1091,14 @@ http.route({
 function isValidPreferredLanguageBody(raw: unknown): boolean {
   if (typeof raw !== "string") return false;
   return raw.trim() === "" || normalizeLanguageCode(raw) !== undefined;
+}
+
+/** `language` de `POST /conversations/send`: "auto", "off" ou código do catálogo. */
+function isValidSendLanguage(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  const value = raw.trim();
+  if (!value) return true; // vazio = não informado ("auto")
+  return value === "auto" || value === "off" || normalizeLanguageCode(value) !== undefined;
 }
 
 /** Corpo `translation` de `POST /conversations/send` (F3: o cliente já traduziu). */

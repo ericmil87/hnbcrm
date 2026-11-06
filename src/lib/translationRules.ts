@@ -29,8 +29,11 @@ export interface TranslationMeta {
   upstream?: string;
   edited?: boolean;
   error?: string;
-  /** F3: motivo do `skipped` (só código). */
-  reason?: "low_confidence" | "short" | "same_language" | "ask_mode" | "language_off";
+  /**
+   * Motivo (só código): do `skipped` (F3) ou, na enviada `failed`, `long_text`
+   * (texto grande demais para traduzir; tentar de novo não adianta).
+   */
+  reason?: "low_confidence" | "short" | "same_language" | "ask_mode" | "language_off" | "long_text";
   /** F3: idioma provável quando a detecção ficou incerta. */
   candidateLang?: string;
   at: number;
@@ -141,6 +144,11 @@ export interface ConversationLanguageState {
   eligible: boolean;
 }
 
+/**
+ * Só `translation.lang` conta como idioma da conversa. Enquanto o primeiro
+ * idioma não se confirma, o servidor guarda apenas `candidateLang` +
+ * `divergentStreak`: isso NÃO ativa nada (chip, "Traduzindo…", aviso).
+ */
 export function conversationLanguageState(
   conversation: { translation?: ConversationTranslation | null; kind?: string | null } | null | undefined,
   settings: Pick<TranslationOrgSettings, "moduleEnabled" | "teamLanguage" | "inboundMode">
@@ -227,13 +235,19 @@ export type TranslationView =
   | { kind: "translating"; inferred: boolean }
   | { kind: "failed" }
   | { kind: "outbound_pending" }
-  | { kind: "outbound_failed"; error?: string }
+  /** `tooLong`: falhou por `long_text`; só "Enviar sem traduzir" resolve. */
+  | { kind: "outbound_failed"; error?: string; tooLong?: boolean }
   | { kind: "outbound_skipped" }
   /** F3: recebida pulada com detecção incerta; oferece traduzir como `lang`. */
   | { kind: "uncertain"; lang: string };
 
 export interface TranslationViewContext {
-  /** A conversa traduz as recebidas agora (`conversationLanguageState().active`). */
+  /**
+   * A conversa traduz as recebidas agora (`conversationLanguageState().active`:
+   * idioma conhecido e diferente do da equipe, modo diferente de `off`). O
+   * servidor não grava nada nas recebidas de conversas inativas, então só uma
+   * conversa ativa infere "Traduzindo…".
+   */
   conversationActive: boolean;
   now: number;
   /** Conversa de grupo nunca traduz. */
@@ -242,29 +256,43 @@ export interface TranslationViewContext {
 
 const NONE: TranslationView = { kind: "none" };
 
+function outboundFailedView(meta: TranslationMeta): TranslationView {
+  return meta.reason === "long_text"
+    ? { kind: "outbound_failed", error: meta.error, tooLong: true }
+    : { kind: "outbound_failed", error: meta.error };
+}
+
 const isInbound = (m: TranslatableMessage) => m.direction === "inbound" || m.senderType === "contact";
+const isTextMessage = (m: TranslatableMessage) => !m.contentType || m.contentType === "text";
+
+/**
+ * Recebida de texto, sem `metadata.translation`, com menos de 30 s, numa
+ * conversa ativa: o servidor ainda vai gravar o estado, então "Traduzindo…".
+ */
+function infersTranslating(m: TranslatableMessage, conversationActive: boolean, now: number): boolean {
+  return (
+    conversationActive &&
+    isInbound(m) &&
+    !m.isInternal &&
+    isTextMessage(m) &&
+    !getTranslationMeta(m) &&
+    (m.content ?? "").trim().length > 0 &&
+    now - m.createdAt < INFER_TRANSLATING_MS
+  );
+}
 
 /** Como a bolha mostra a tradução desta mensagem. */
 export function translationView(message: TranslatableMessage, ctx: TranslationViewContext): TranslationView {
   if (message.isInternal || ctx.isGroup) return NONE;
   const meta = getTranslationMeta(message);
-  const text = (message.content ?? "").trim();
 
   if (!meta) {
-    if (
-      isInbound(message) &&
-      ctx.conversationActive &&
-      text.length > 0 &&
-      ctx.now - message.createdAt < INFER_TRANSLATING_MS
-    ) {
-      return { kind: "translating", inferred: true };
-    }
-    return NONE;
+    return infersTranslating(message, ctx.conversationActive, ctx.now) ? { kind: "translating", inferred: true } : NONE;
   }
 
   if (meta.role === "outbound") {
     if (meta.status === "pending") return { kind: "outbound_pending" };
-    if (meta.status === "failed") return { kind: "outbound_failed", error: meta.error };
+    if (meta.status === "failed") return outboundFailedView(meta);
     if (meta.status === "skipped") return { kind: "outbound_skipped" };
     if (meta.status === "done" && message.translatedText) {
       const team = teamLanguageLabel(meta.sourceLang);
@@ -340,15 +368,58 @@ export function canRequestTranslation(
 /** Alguma recebida ainda pode ganhar o "Traduzindo…" inferido (liga o relógio do thread). */
 export function hasFreshUntranslated(
   messages: readonly TranslatableMessage[] | undefined,
-  now: number
+  now: number,
+  conversationActive: boolean
 ): boolean {
-  if (!messages) return false;
+  if (!messages || !conversationActive) return false;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (now - m.createdAt >= INFER_TRANSLATING_MS) return false;
-    if (isInbound(m) && !m.isInternal && !getTranslationMeta(m) && (m.content ?? "").trim()) return true;
+    if (infersTranslating(m, true, now)) return true;
   }
   return false;
+}
+
+/** O que a bolha recebe de tradução (`null` = nada, a bolha fica como antes). */
+export interface BubbleTranslation {
+  view: TranslationView;
+  canRequest: boolean;
+}
+
+/**
+ * Decisão de tradução por bolha no thread. Módulo desligado (ou grupo) esconde
+ * tudo, MENOS a enviada retida em `pending`/`failed`: ela não saiu e precisa de
+ * "Tentar de novo"/"Enviar sem traduzir" mesmo depois que alguém desliga o módulo.
+ */
+export function bubbleTranslation(
+  message: TranslatableMessage,
+  ctx: {
+    moduleEnabled: boolean;
+    isGroup: boolean;
+    teamLanguage: string;
+    conversationActive: boolean;
+    now: number;
+    conversation?: { translation?: ConversationTranslation | null } | null;
+  }
+): BubbleTranslation | null {
+  if (!ctx.moduleEnabled || ctx.isGroup) {
+    const meta = getTranslationMeta(message);
+    if (message.isInternal || meta?.role !== "outbound") return null;
+    if (meta.status === "pending") return { view: { kind: "outbound_pending" }, canRequest: false };
+    if (meta.status === "failed") return { view: outboundFailedView(meta), canRequest: false };
+    return null;
+  }
+  const lang = uncertainLanguageOffer(message, {
+    moduleEnabled: true,
+    teamLanguage: ctx.teamLanguage,
+    conversation: ctx.conversation,
+  });
+  return {
+    view: lang
+      ? { kind: "uncertain", lang }
+      : translationView(message, { conversationActive: ctx.conversationActive, now: ctx.now }),
+    canRequest: canRequestTranslation(message, { moduleEnabled: true }),
+  };
 }
 
 // ── Aviso da conversa ──────────────────────────────────────────────────────

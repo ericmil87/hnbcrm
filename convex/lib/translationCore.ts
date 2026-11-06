@@ -91,6 +91,25 @@ export async function runTranslation(ctx: ActionCtx, args: RunTranslationArgs): 
 
 // ── LibreTranslate (self-hosted) ────────────────────────────────────────────
 
+export const LIBRETRANSLATE_HTTPS_ERROR = "URL do LibreTranslate precisa ser https";
+
+/**
+ * Review #14: o texto do cliente nunca trafega em claro. Só `https://`, salvo
+ * `localhost`/`127.0.0.1` (túnel local). Devolve o motivo legível ou undefined.
+ */
+export function libreTranslateUrlProblem(raw: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return "URL do LibreTranslate inválida";
+  }
+  if (parsed.protocol === "https:") return undefined;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (parsed.protocol === "http:" && (host === "localhost" || host === "127.0.0.1" || host === "::1")) return undefined;
+  return LIBRETRANSLATE_HTTPS_ERROR;
+}
+
 function isAbortError(e: unknown): boolean {
   const name = typeof e === "object" && e !== null ? (e as { name?: unknown }).name : undefined;
   return name === "TimeoutError" || name === "AbortError";
@@ -104,6 +123,8 @@ async function translateWithLibre(
 ): Promise<EngineAttempt> {
   const url = process.env.LIBRETRANSLATE_URL?.trim();
   if (!url) return { ok: false, error: "não configurado" };
+  const urlProblem = libreTranslateUrlProblem(url);
+  if (urlProblem) return { ok: false, error: urlProblem };
   const protectedText = protectText(text, glossary);
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/translate`, {

@@ -128,6 +128,7 @@ import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { maybeScheduleAiReplyRelay, maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
 import { scheduleMessageTranslation } from "./lib/translationOps";
+import { editedDraftNeedsTranslation } from "./lib/translationGate";
 import { languageName, normalizeLanguageCode } from "./lib/languages";
 
 export { isWithinSchedule };
@@ -4297,6 +4298,17 @@ export async function acceptAiDraftCore(
   const finalText = (args.editedText ?? draft.content).trim();
   if (!finalText) throw new Error("Resposta vazia");
   const wasEdited = args.editedText !== undefined && args.editedText.trim() !== draft.content.trim();
+  // Review #3: edição humana na língua da equipe numa conversa em idioma
+  // estrangeiro passa pelo desvio de tradução da porta (só lê a org quando
+  // a conversa tem idioma conhecido).
+  const editedInTeamLanguage =
+    wasEdited &&
+    !!conversation.translation?.lang &&
+    editedDraftNeedsTranslation({
+      org: await ctx.db.get(conversation.organizationId),
+      conversation,
+      finalText,
+    });
 
   const now = Date.now();
   // Conversa de GRUPO (F4): as menções que o agente escolheu ficaram
@@ -4339,7 +4351,12 @@ export async function acceptAiDraftCore(
     isInternal: false,
     ...(draftMentions ? { mentions: draftMentions } : {}),
     metadata: {
-      aiDraft: { approvedBy: member._id, fromDraftId: draft._id, edited: wasEdited },
+      aiDraft: {
+        approvedBy: member._id,
+        fromDraftId: draft._id,
+        edited: wasEdited,
+        ...(editedInTeamLanguage ? { editedInTeamLanguage: true } : {}),
+      },
       ...(args.via ? { via: args.via } : {}),
       // Chip "follow-up" na bolha do inbox + rastro do que originou o envio.
       ...(aiDraft.followUpId ? { followUp: { followUpId: aiDraft.followUpId } } : {}),

@@ -14,6 +14,7 @@
 import { Doc } from "../_generated/dataModel";
 import { orgAiActive } from "./agentSecurity";
 import { DEFAULT_TEAM_LANGUAGE, normalizeLanguageCode, sameLanguage } from "./languages";
+import { detectLanguage } from "./languageDetect";
 
 export type TranslationEngine = "libretranslate" | "llm";
 export type TranslationRole = "inbound" | "outbound" | "display";
@@ -40,7 +41,14 @@ export type TranslationMeta = {
   at: number;
 };
 
-export type TranslationSkipReason = "low_confidence" | "short" | "same_language" | "ask_mode" | "language_off";
+export type TranslationSkipReason =
+  | "low_confidence"
+  | "short"
+  | "same_language"
+  | "ask_mode"
+  | "language_off"
+  /** Review: saída longa demais para traduzir (fica `failed`, retida). */
+  | "long_text";
 
 export type ResolvedTranslationSettings = {
   provider: "auto" | "libretranslate" | "llm";
@@ -116,9 +124,19 @@ export function isPlaceholderContent(content: string): boolean {
   return /^\s*\[[^\]]{1,40}\]\s*$/.test(content);
 }
 
-/** Texto traduzível da mensagem (texto puro ou legenda de imagem). */
-export function translatableText(message: Pick<Doc<"messages">, "contentType" | "content">): string | undefined {
-  if (message.contentType !== "text" && message.contentType !== "image") return undefined;
+/**
+ * Texto traduzível da mensagem (texto puro ou legenda de imagem). Com
+ * `fileCaption` (só SAÍDA: o composer grava a legenda digitada em `content`;
+ * na entrada um documento traz o NOME do arquivo ali), a legenda de um
+ * arquivo/vídeo (`contentType:"file"`) também conta.
+ */
+export function translatableText(
+  message: Pick<Doc<"messages">, "contentType" | "content">,
+  opts: { fileCaption?: boolean } = {}
+): string | undefined {
+  const allowed =
+    message.contentType === "text" || message.contentType === "image" || (opts.fileCaption && message.contentType === "file");
+  if (!allowed) return undefined;
   const text = String(message.content ?? "").trim();
   if (!text || isPlaceholderContent(text)) return undefined;
   return text;
@@ -203,21 +221,49 @@ export function shouldTranslateOutbound(args: {
   const refusal = commonRefusal(args.org, args.conversation, args.message);
   if (refusal) return { ok: false, reason: refusal };
   if (args.message.direction !== "outbound") return { ok: false, reason: "nao_e_outbound" };
-  if (args.message.senderType === "ai") return { ok: false, reason: "resposta_da_ia" };
+  // Rascunho da IA editado por um humano na língua da equipe (review #3): o
+  // commit de aprovação marca `aiDraft.editedInTeamLanguage` e a saída é
+  // traduzida como a de um humano.
+  if (args.message.senderType === "ai" && !isTeamEditedAiDraft(args.message)) {
+    return { ok: false, reason: "resposta_da_ia" };
+  }
   for (const key of OUTBOUND_EXCLUDED_METADATA) {
     if (args.message.metadata?.[key] !== undefined && args.message.metadata?.[key] !== false) {
       return { ok: false, reason: key };
     }
   }
   if (translationOf(args.message)) return { ok: false, reason: "ja_tratada" };
-  const text = translatableText(args.message);
+  const text = translatableText(args.message, { fileCaption: true });
   if (!text) return { ok: false, reason: "sem_texto" };
-  if (text.length > MAX_TRANSLATION_CHARS) return { ok: false, reason: "texto_longo" };
   const target = normalizeLanguageCode(args.targetLang);
   if (!target) return { ok: false, reason: "sem_idioma" };
   const team = resolveTranslationSettings(args.org).teamLanguage;
   if (sameLanguage(target, team)) return { ok: false, reason: "mesma_lingua" };
+  // Por último: só "longa demais" quando a tradução seria DEVIDA. O desvio
+  // retém a mensagem como `failed` (nunca sai em pt-BR sozinha).
+  if (text.length > MAX_TRANSLATION_CHARS) return { ok: false, reason: "texto_longo" };
   return { ok: true };
+}
+
+/** Rascunho da IA que um humano editou na língua da equipe (marcado no commit). */
+export function isTeamEditedAiDraft(message: Pick<Doc<"messages">, "senderType" | "metadata">): boolean {
+  if (message.senderType !== "ai") return false;
+  const draft = message.metadata?.aiDraft as { editedInTeamLanguage?: unknown } | undefined;
+  return draft?.editedInTeamLanguage === true;
+}
+
+/**
+ * A conversa tem idioma estrangeiro ATIVO (ou um candidato a ele)? Só nela a
+ * inbound na língua da equipe ganha `skipped` gravado; fora dela, nada é
+ * escrito (review #10: custo por inbound com o módulo ligado).
+ */
+export function conversationHasForeignLanguage(conversation: ConversationLike, teamLanguage: string): boolean {
+  const t = conversation?.translation;
+  if (!t || t.mode === "off") return false;
+  const lang = normalizeLanguageCode(t.lang);
+  if (lang && !sameLanguage(lang, teamLanguage)) return true;
+  const candidate = normalizeLanguageCode(t.candidateLang);
+  return !!candidate && !sameLanguage(candidate, teamLanguage);
 }
 
 /**
@@ -247,4 +293,25 @@ export function shouldTranslateDraft(args: {
   if (!lang) return { ok: false, reason: "sem_idioma" };
   if (sameLanguage(lang, resolveTranslationSettings(args.org).teamLanguage)) return { ok: false, reason: "mesma_lingua" };
   return { ok: true };
+}
+
+/**
+ * Review #3: o humano editou o rascunho da IA ao aprovar. Se o texto final
+ * está na língua da equipe (ou é curto demais para detectar) numa conversa 1 a
+ * 1 com idioma estrangeiro ativo, a saída precisa do desvio de tradução como a
+ * de um humano — o commit marca `aiDraft.editedInTeamLanguage`.
+ */
+export function editedDraftNeedsTranslation(args: {
+  org: OrgLike;
+  conversation: ConversationLike;
+  finalText: string;
+}): boolean {
+  if (!translationEnabledForOrg(args.org)) return false;
+  const conversation = args.conversation;
+  if (!conversation || conversation.kind === "group" || conversation.translation?.mode === "off") return false;
+  const team = resolveTranslationSettings(args.org).teamLanguage;
+  const lang = normalizeLanguageCode(conversation.translation?.lang);
+  if (!lang || sameLanguage(lang, team)) return false;
+  const detected = detectLanguage(args.finalText);
+  return !detected || sameLanguage(detected.lang, team);
 }

@@ -8,7 +8,11 @@ import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
-import { outboundTranslationInsertFields, scheduleMessageTranslation } from "./lib/translationOps";
+import {
+  auditUntranslatedSend,
+  scheduleMessageTranslation,
+  translationInsertFieldsFor,
+} from "./lib/translationOps";
 import {
   applyCampaignDeliveryUpdate,
   applyCampaignInboundHooks,
@@ -88,27 +92,9 @@ const outboundTranslationArgValidator = v.object({
   edited: v.optional(v.boolean()),
 });
 
-/**
- * Junta `metadata`/`translatedText` da tradução ao insert de uma outbound. Sem
- * `language`/`translation` devolve `base` intacto — byte a byte o insert de antes.
- */
-function withTranslationInsertFields(
-  base: { metadata?: Record<string, unknown> },
-  args: {
-    language?: string;
-    translation?: { authoredText: string; sourceLang: string; targetLang: string; edited?: boolean };
-    isInternal?: boolean;
-  },
-  now: number
-): { metadata?: Record<string, unknown>; translatedText?: string } {
-  if (args.language === undefined && args.translation === undefined) return base;
-  const extra = outboundTranslationInsertFields(args, now);
-  if (!extra.metadata && !extra.translatedText) return base;
-  return {
-    ...(extra.metadata || base.metadata ? { metadata: { ...(base.metadata ?? {}), ...(extra.metadata ?? {}) } } : {}),
-    ...(extra.translatedText !== undefined ? { translatedText: extra.translatedText } : {}),
-  };
-}
+// Campos de tradução do insert: `translationInsertFieldsFor` (lib/translationOps).
+// Sem `language`/`translation`, módulo desligado ou grupo devolve `base` intacto
+// — byte a byte o insert de antes (review #9).
 
 // Tipo de janela para a cópia da UI: `template` = WhatsApp Cloud API (fora da
 // janela só com template aprovado); `wait` = Instagram/Messenger (fora da
@@ -1117,6 +1103,13 @@ export const sendMessage = mutation({
     const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
 
     const now = Date.now();
+    const translationInsert = await translationInsertFieldsFor(
+      ctx,
+      conversation,
+      replyMeta ? { metadata: replyMeta } : {},
+      args,
+      now
+    );
 
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
@@ -1131,9 +1124,18 @@ export const sendMessage = mutation({
       isInternal: args.isInternal || false,
       mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
-      ...withTranslationInsertFields(replyMeta ? { metadata: replyMeta } : {}, args, now),
+      ...translationInsert.fields,
       createdAt: now,
     });
+    if (translationInsert.untranslatedTarget) {
+      await auditUntranslatedSend(ctx, {
+        conversation,
+        messageId,
+        actor: userMember,
+        targetLang: translationInsert.untranslatedTarget,
+        now,
+      });
+    }
 
     // Link attachment files back to this message
     if (args.attachments && args.attachments.length > 0) {
@@ -1631,6 +1633,13 @@ export async function internalSendMessageCore(
   const mentions = await resolveGroupMentions(ctx, conversation, args.mentions);
 
   const now = Date.now();
+  const translationInsert = await translationInsertFieldsFor(
+    ctx,
+    conversation,
+    replyMeta || args.via ? { metadata: { ...(replyMeta ?? {}), ...(args.via ? { via: args.via } : {}) } } : {},
+    args,
+    now
+  );
 
   const messageId = await ctx.db.insert("messages", {
     organizationId: conversation.organizationId,
@@ -1645,15 +1654,19 @@ export async function internalSendMessageCore(
     isInternal: args.isInternal || false,
     mentionedUserIds: args.isInternal ? args.mentionedUserIds : undefined,
     ...(mentions && mentions.length > 0 ? { mentions } : {}),
-    ...withTranslationInsertFields(
-      replyMeta || args.via
-        ? { metadata: { ...(replyMeta ?? {}), ...(args.via ? { via: args.via } : {}) } }
-        : {},
-      args,
-      now
-    ),
+    ...translationInsert.fields,
     createdAt: now,
   });
+  if (translationInsert.untranslatedTarget) {
+    await auditUntranslatedSend(ctx, {
+      conversation,
+      messageId,
+      actor: teamMember,
+      targetLang: translationInsert.untranslatedTarget,
+      ...(args.via ? { via: args.via } : {}),
+      now,
+    });
+  }
 
   // Link attachment files back to this message
   if (args.attachments && args.attachments.length > 0) {
@@ -1967,8 +1980,9 @@ export const internalReceiveMessage = internalMutation({
 
     // Campanhas: resposta a campanha (→ replied) e palavra-chave de opt-out
     // (→ lista de supressão). No-op para conversas sem campanha.
+    const freshConversation = (await ctx.db.get(conversationId))!;
     await applyCampaignInboundHooks(ctx, {
-      conversation: (await ctx.db.get(conversationId))!,
+      conversation: freshConversation,
       text: args.content,
       now,
     });
@@ -1982,8 +1996,9 @@ export const internalReceiveMessage = internalMutation({
     });
 
     // Tradução automática (F1): no-op sem o módulo; grupo e mensagem do
-    // aparelho são recusados pelo gate (lib/translationGate).
-    await scheduleMessageTranslation(ctx, { messageId, role: "inbound" });
+    // aparelho são recusados pelo gate (lib/translationGate). A conversa já
+    // lida acima vai junto (sem leitura extra).
+    await scheduleMessageTranslation(ctx, { messageId, role: "inbound", conversation: freshConversation });
 
     // Imagens: o passe de visão também é no-op silencioso a menos que o gate
     // (org com IA ativa + aiConfig.visionEnabled + canal/atendente) passe, e
@@ -2391,9 +2406,9 @@ export const internalReceiveGroupMessage = internalMutation({
       attachments: args.attachments,
     });
 
-    // Tradução automática (F1): no-op sem o módulo; grupo e mensagem do
-    // aparelho são recusados pelo gate (lib/translationGate).
-    await scheduleMessageTranslation(ctx, { messageId, role: "inbound" });
+    // Tradução automática (F1): grupo nunca é traduzido — a conversa já
+    // carregada vai junto e a porta sai sem nenhuma leitura (review #10).
+    await scheduleMessageTranslation(ctx, { messageId, role: "inbound", conversation });
     if (args.contentType === "image" && args.attachments && args.attachments.length > 0) {
       await ctx.scheduler.runAfter(0, internal.vision.autoDescribe, { messageId });
     }
@@ -2557,9 +2572,9 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
       metadata: args.metadata,
     });
 
-    // Tradução automática (F1): no-op sem o módulo; grupo e mensagem do
-    // aparelho são recusados pelo gate (lib/translationGate).
-    await scheduleMessageTranslation(ctx, { messageId, role: "inbound" });
+    // Tradução automática (F1): grupo nunca é traduzido — a conversa já
+    // carregada vai junto e a porta sai sem nenhuma leitura (review #10).
+    await scheduleMessageTranslation(ctx, { messageId, role: "inbound", conversation });
 
     return messageId;
   },

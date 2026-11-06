@@ -178,10 +178,15 @@ export function MessageTranslation({
         <div className="flex flex-col gap-1.5 rounded-md bg-bubble-out-fg/10 px-2 py-1.5">
           <p className="flex items-start gap-1.5 text-xs text-bubble-out-fg">
             <AlertCircle size={13} className="mt-0.5 shrink-0" aria-hidden />
-            <span>Não consegui traduzir agora. A mensagem não foi enviada.</span>
+            <span>
+              {view.tooLong
+                ? "Mensagem longa demais para traduzir. A mensagem não foi enviada."
+                : "Não consegui traduzir agora. A mensagem não foi enviada."}
+            </span>
           </p>
           <div className="flex flex-wrap gap-1.5">
-            {onRetryOutbound && (
+            {/* Longa demais: tentar de novo falharia igual; só "Enviar sem traduzir". */}
+            {onRetryOutbound && !view.tooLong && (
               <Button type="button" size="sm" variant="secondary" onClick={onRetryOutbound} loading={busy}>
                 <RefreshCw size={14} aria-hidden />
                 Tentar de novo

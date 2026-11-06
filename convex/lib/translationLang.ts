@@ -9,6 +9,11 @@
  *   idioma da conversa. Mensagem curta (detecção `undefined`) herda; troca só
  *   depois de 2 mensagens longas consecutivas divergentes (`divergentStreak` +
  *   `candidateLang`); manual/off nunca são sobrescritos pela detecção.
+ *   O PRIMEIRO idioma (conversa sem `lang`) só é fixado com evidência
+ *   (review #11): 2 mensagens longas consecutivas no mesmo idioma, OU detecção
+ *   forte (confiança ≥ 0,85 em texto com ≥ 40 letras), OU concordância com
+ *   `contact.preferredLanguage`/dica do DDI. Sem isso fica só `candidateLang`
+ *   (a mensagem em si é traduzida para exibição do mesmo jeito).
  */
 import { DetectedLanguage } from "./languageDetect";
 import { languageHintFromDialCode, normalizeLanguageCode, sameLanguage } from "./languages";
@@ -35,6 +40,32 @@ export type ResolvedTargetLanguage = {
 export const MIN_DETECTION_CONFIDENCE = 0.6;
 /** Mensagens longas divergentes consecutivas para trocar o idioma da conversa. */
 export const DIVERGENT_STREAK_TO_SWITCH = 2;
+/** Detecção forte o bastante para fixar o 1º idioma da conversa sozinha. */
+export const STRONG_DETECTION_CONFIDENCE = 0.85;
+export const STRONG_DETECTION_ALPHA_CHARS = 40;
+
+/** Evidência extra para fixar o 1º idioma (todas opcionais). */
+export type LanguageEvidence = {
+  /** Letras do texto detectado (`countAlphaChars`). */
+  alphaChars?: number;
+  contactPreferredLanguage?: string | null;
+  /** Dica do DDI do contato (`languageHintFromDialCode`). */
+  dialHint?: string | null;
+};
+
+/** O 1º idioma detectado pode ser fixado já nesta mensagem? */
+export function firstDetectionFixesLanguage(detected: DetectedLanguage, evidence: LanguageEvidence = {}): boolean {
+  const lang = normalizeLanguageCode(detected.lang);
+  if (!lang) return false;
+  if (
+    detected.confidence >= STRONG_DETECTION_CONFIDENCE &&
+    (evidence.alphaChars ?? 0) >= STRONG_DETECTION_ALPHA_CHARS
+  ) {
+    return true;
+  }
+  if (sameLanguage(normalizeLanguageCode(evidence.contactPreferredLanguage), lang)) return true;
+  return sameLanguage(normalizeLanguageCode(evidence.dialHint), lang);
+}
 
 export function resolveTargetLanguage(input: {
   conversation?: ConversationTranslation | null;
@@ -65,9 +96,10 @@ export function resolveTargetLanguage(input: {
 export function nextConversationTranslation(
   current: ConversationTranslation | null | undefined,
   detected: DetectedLanguage | undefined,
-  now: number
+  now: number,
+  evidence: LanguageEvidence = {}
 ): ConversationTranslation | undefined {
-  const next = nextConversationTranslationRaw(current, detected, now);
+  const next = nextConversationTranslationRaw(current, detected, now, evidence);
   return next === undefined ? undefined : compactTranslation(next);
 }
 
@@ -79,7 +111,8 @@ export function compactTranslation(t: ConversationTranslation): ConversationTran
 function nextConversationTranslationRaw(
   current: ConversationTranslation | null | undefined,
   detected: DetectedLanguage | undefined,
-  now: number
+  now: number,
+  evidence: LanguageEvidence
 ): ConversationTranslation | undefined {
   if (current?.mode === "off" || current?.mode === "manual" || current?.source === "manual") return undefined;
   if (!detected || detected.confidence < MIN_DETECTION_CONFIDENCE) return undefined;
@@ -88,14 +121,18 @@ function nextConversationTranslationRaw(
 
   const base: ConversationTranslation = { ...(current ?? {}) };
   if (!current?.lang) {
-    return {
-      ...base,
-      lang,
-      source: "auto",
-      detectedAt: now,
-      divergentStreak: 0,
-      candidateLang: undefined,
-    };
+    const streak = sameLanguage(current?.candidateLang, lang) ? (current?.divergentStreak ?? 0) + 1 : 1;
+    if (streak >= DIVERGENT_STREAK_TO_SWITCH || firstDetectionFixesLanguage({ lang, confidence: detected.confidence }, evidence)) {
+      return {
+        ...base,
+        lang,
+        source: "auto",
+        detectedAt: now,
+        divergentStreak: 0,
+        candidateLang: undefined,
+      };
+    }
+    return { ...base, divergentStreak: streak, candidateLang: lang };
   }
   if (sameLanguage(current.lang, lang)) {
     if ((current.divergentStreak ?? 0) === 0 && current.candidateLang === undefined) return undefined;

@@ -586,7 +586,7 @@ export const orgTranslationSettingsValidator = v.object({
   inboundMode: v.optional(v.union(v.literal("auto"), v.literal("ask"))), // ausente = auto
   outboundMode: v.optional(
     v.union(v.literal("direct"), v.literal("quick_review"), v.literal("strict_review"))
-  ), // ausente = direct
+  ), // ausente = quick_review
   skipWhenSameLanguage: v.optional(v.boolean()), // ausente = true
   tone: v.optional(v.union(v.literal("neutral"), v.literal("formal"), v.literal("informal"))), // ausente = neutral
   glossary: v.optional(v.array(v.string())), // ≤ 100 termos que NÃO se traduzem

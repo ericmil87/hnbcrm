@@ -16,7 +16,7 @@ import { scheduleMessageTranslation } from "./lib/translationOps";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const TEST_KEY = btoa("A".repeat(32));
-const LT_URL = "http://lt.test:5000";
+const LT_URL = "https://lt.test";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -236,12 +236,12 @@ describe("inbound com o módulo (LibreTranslate)", () => {
     await cancelPendingJobs(t);
   });
 
-  test("mesma língua da equipe: skipped, zero chamada ao provedor", async () => {
+  test("mesma língua da equipe numa conversa ATIVA: skipped, zero chamada ao provedor", async () => {
     vi.stubEnv("LIBRETRANSLATE_URL", LT_URL);
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const t = convexTest(schema, modules);
-    const s = await seed(t, { module: true });
+    const s = await seed(t, { module: true, convLang: "es" });
     const id = await receive(t, s, "Olá, boa tarde! Vocês têm disponibilidade para o fim de semana?");
     await runTranslationJobs(t);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -756,7 +756,7 @@ describe("F3: prévia no composer", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t, { module: true, convLang: "es" });
     const same = await s.asAdmin.action(api.translation.preview, { conversationId: s.conversationId, text: ES });
-    expect(same).toMatchObject({ skipped: true, reason: "ja_no_idioma", text: ES, engine: null });
+    expect(same).toMatchObject({ skipped: true, reason: "same_language", text: ES, engine: null });
     expect(fetchSpy).not.toHaveBeenCalled();
     const out = await s.asAdmin.action(api.translation.preview, { conversationId: s.conversationId, text: PT_OUT });
     expect(out).toMatchObject({ skipped: false, text: "¡Hola! El apartamento cuesta R$ 500 mil y tiene 3 habitaciones.", sourceLang: "pt-BR", targetLang: "es" });
@@ -809,13 +809,18 @@ describe("F3: motivo do skipped", () => {
     vi.stubGlobal("fetch", vi.fn());
     const t = convexTest(schema, modules);
     const s = await seed(t, { module: true });
-    // Curta primeiro: a conversa ainda não tem idioma (a de pt-BR depois o fixaria).
+    // Curta numa conversa com idioma só CANDIDATO (ativa, review #10/#11): `short`.
+    await t.run(async (ctx) =>
+      ctx.db.patch(s.conversationId, { translation: { candidateLang: "es", divergentStreak: 1, source: "auto" } })
+    );
     const short = await receive(t, s, "ok");
     await runTranslationJobs(t);
+    expect((await getMsg(t, short)).metadata?.translation).toMatchObject({ status: "skipped", reason: "short", candidateLang: "es" });
+    await t.run(async (ctx) => ctx.db.patch(s.conversationId, { translation: { lang: "es", source: "auto", mode: "auto" } }));
     const same = await receive(t, s, "Olá, boa tarde! Vocês têm disponibilidade para o fim de semana?");
     await runTranslationJobs(t);
     expect((await getMsg(t, same)).metadata?.translation).toMatchObject({ status: "skipped", reason: "same_language" });
-    expect((await getMsg(t, short)).metadata?.translation).toMatchObject({ status: "skipped", reason: "short" });
+    await t.run(async (ctx) => ctx.db.patch(s.conversationId, { translation: undefined }));
 
     await t.run(async (ctx) => {
       const org = (await ctx.db.get(s.organizationId))!;

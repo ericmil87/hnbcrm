@@ -77,6 +77,36 @@ describe("MessageTranslation", () => {
     expect(onSendUntranslated).toHaveBeenCalledTimes(1);
   });
 
+  it("enviada longa demais (long_text): sem 'Tentar de novo', só 'Enviar sem traduzir'", () => {
+    const view = translationView(
+      {
+        ...base,
+        direction: "outbound",
+        senderType: "user",
+        content: "Texto enorme",
+        metadata: { translation: { status: "failed", role: "outbound", reason: "long_text", at: 1 } },
+      },
+      ctx
+    );
+    expect(view).toMatchObject({ kind: "outbound_failed", tooLong: true });
+    if (view.kind === "none") throw new Error("esperava falha");
+    render(
+      <MessageTranslation view={view} text="Texto enorme" variant="outbound" onRetryOutbound={vi.fn()} onSendUntranslated={vi.fn()} />
+    );
+    expect(screen.getByText(/Mensagem longa demais para traduzir/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tentar de novo/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /Enviar sem traduzir/ })).toBeInTheDocument();
+  });
+
+  it("sem inbox:reply (thread não passa as ações): falha da enviada sem botões; leitura continua", async () => {
+    render(<MessageTranslation view={{ kind: "outbound_failed" }} text="Temos sim" variant="outbound" />);
+    expect(screen.queryByRole("button", { name: /Tentar de novo/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Enviar sem traduzir/ })).toBeNull();
+    if (inboundDone.kind === "none") throw new Error("esperava tradução");
+    render(<MessageTranslation view={inboundDone} text="Hola, ¿qué tal?" variant="inbound" />);
+    expect(screen.getByRole("button", { name: /Ver original/ })).toBeInTheDocument();
+  });
+
   it("enviada sem tradução ganha o rótulo", () => {
     render(<MessageTranslation view={{ kind: "outbound_skipped" }} text="Oi" variant="outbound" />);
     expect(screen.getByText("Enviado sem tradução")).toBeInTheDocument();

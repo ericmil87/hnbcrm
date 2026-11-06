@@ -127,6 +127,7 @@ Regra do projeto (`CLAUDE.md`, "Deployments: DEV vs PROD"): **sem flag = DEV; PR
 ```bash
 # DEV (tacit-chicken-195)
 npx convex env set LIBRETRANSLATE_URL https://lt.hnbcrm.com
+# só https:// é aceito (http:// apenas para localhost/127.0.0.1); outro esquema = "URL do LibreTranslate precisa ser https"
 npx convex env set LIBRETRANSLATE_API_KEY '<chave>'
 
 # PROD (careful-anaconda-127): só depois de validar no DEV

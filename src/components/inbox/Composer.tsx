@@ -25,6 +25,7 @@ import {
   defaultScheduleValue,
   deriveContentType,
   hasContentToSend,
+  isSendKey,
   placeholderFor,
   replyAuthorLabel,
   replyPreviewText,
@@ -44,7 +45,7 @@ import { ConversationLanguageChip } from "@/components/inbox/ConversationLanguag
 import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { conversationLanguageState, languageDisplayName } from "@/lib/translationRules";
-import { composerTranslationMode, planTranslatedSend, type SendPlan } from "@/lib/composerTranslation";
+import { composerTranslationMode, planTranslatedSend, sendArgsForPlan, type SendPlan } from "@/lib/composerTranslation";
 import { useComposerTranslation } from "@/components/inbox/useComposerTranslation";
 import { TranslationPreviewRow } from "@/components/inbox/TranslationPreviewRow";
 
@@ -227,14 +228,6 @@ export function Composer({
     },
   });
 
-  /** Args de tradução do envio a partir do plano da prévia (vazio = como antes). */
-  const translationSendArgs = (plan: SendPlan, typed: string) =>
-    plan.kind === "translated"
-      ? { content: plan.content, translation: plan.translation }
-      : plan.kind === "untranslated"
-        ? { content: typed, language: "off" as const }
-        : { content: typed };
-
   const handleSend = async (opts: { untranslated?: boolean } = {}) => {
     const trimmed = text.trim();
     if (!hasContentToSend(text, stagedFiles.length) || blocked || sending) return;
@@ -258,7 +251,7 @@ export function Composer({
         isGroupConversation && !isInternal ? groupMentions.mentionsFor(trimmed) : [];
       await sendMessage({
         conversationId: id,
-        ...translationSendArgs(plan, trimmed),
+        ...sendArgsForPlan(plan, trimmed),
         contentType: attachments.length ? deriveContentType(stagedFiles) : "text",
         isInternal,
         attachments: attachments.length ? attachments : undefined,
@@ -266,8 +259,10 @@ export function Composer({
         replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
         mentions: memberMentions.length ? memberMentions : undefined,
       });
-      setText("");
-      setStagedFiles([]);
+      // Defensivo: só limpa o que foi enviado. Texto (ou anexo) que entrou
+      // depois do Enter fica no campo em vez de sumir.
+      setText((current) => (current.trim() === trimmed ? "" : current));
+      setStagedFiles((prev) => prev.filter((f) => !attachments.includes(f.fileId)));
       setReplyTo(null);
       groupMentions.reset();
       typing.stop();
@@ -315,7 +310,7 @@ export function Composer({
         editedText: preview.editedText,
         strictArmed: true,
       });
-      const args = translationSendArgs(plan, trimmed);
+      const args = sendArgsForPlan(plan, trimmed);
       await scheduleMessage({
         conversationId,
         ...args,
@@ -385,8 +380,8 @@ export function Composer({
         canSend={hasContentToSend(text, stagedFiles.length)}
         sending={sending}
         onSend={() => void handleSend()}
-        onSendUntranslated={preview.active ? () => void handleSend({ untranslated: true }) : undefined}
         sendingLabel={preview.waitingSend ? "Traduzindo…" : null}
+        fieldReadOnly={preview.waitingSend}
         translationPreview={
           preview.view ? (
             <TranslationPreviewRow
@@ -395,6 +390,8 @@ export function Composer({
               editedText={preview.editedText}
               edited={preview.edited}
               armed={preview.armed}
+              strict={translationMode === "strict"}
+              onRetry={preview.retry}
               onEdit={() => {
                 preview.startEdit();
                 requestAnimationFrame(() => previewEditRef.current?.focus());
@@ -406,9 +403,9 @@ export function Composer({
               }}
               onUntranslated={() => void handleSend({ untranslated: true })}
               onEditKeyDown={(e) => {
-                if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                if (!isSendKey(e)) return;
                 e.preventDefault();
-                void handleSend(e.ctrlKey || e.metaKey ? { untranslated: true } : {});
+                void handleSend();
               }}
               editRef={previewEditRef}
             />

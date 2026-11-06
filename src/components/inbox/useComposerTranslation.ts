@@ -6,18 +6,20 @@ import {
   PreviewCache,
   planTranslatedSend,
   previewCacheKey,
+  previewNeedsReview,
   previewResultFrom,
   textForCounter,
   type ComposerTranslationMode,
   type PreviewResponse,
   type PreviewResult,
+  type PreviewSkipReason,
   type SendPlan,
 } from "@/lib/composerTranslation";
 
 export type ComposerPreviewView =
   | { kind: "loading" }
   | { kind: "ready"; text: string; targetLang: string }
-  | { kind: "skipped"; targetLang: string }
+  | { kind: "skipped"; targetLang: string; reason: PreviewSkipReason }
   | { kind: "error"; message: string };
 
 // Compartilhado entre composers: trocar de conversa e voltar não paga de novo.
@@ -41,8 +43,10 @@ export interface UseComposerTranslationArgs {
 /**
  * Prévia viva da tradução no composer ("Revisar rápido"/"Revisar antes"): pede
  * `translation.preview` ~700 ms depois da última tecla, guarda num LRU e decide
- * o que o Enter envia (`decide`). Nunca trava o envio: prévia em voo espera no
- * máximo `capMs` e depois o texto digitado segue para o desvio do servidor.
+ * o que o Enter envia (`decide`). "Revisar rápido" nunca trava o envio: prévia
+ * em voo espera no máximo `capMs` e depois o texto segue para o desvio do
+ * servidor. "Revisar antes" nunca envia sem mostrar: sem prévia pronta o Enter
+ * só arma, e erro do provedor pede "Tentar de novo" ou "Sem traduzir".
  */
 export function useComposerTranslation({
   conversationId,
@@ -121,12 +125,15 @@ export function useComposerTranslation({
 
   const result: PreviewResult | null = key ? (cache.get(key) ?? null) : null;
   const errorMessage = key ? errors.current.get(key) : undefined;
-  const view: ComposerPreviewView | null = !key
+  // Pulada por um motivo que não tem o que mostrar: a linha some (exceto armada,
+  // para o "Enter de novo envia" não ficar invisível).
+  const hiddenSkip = result?.kind === "skipped" && !previewNeedsReview(result) && !armed;
+  const view: ComposerPreviewView | null = !key || hiddenSkip
     ? null
     : result?.kind === "ready"
       ? { kind: "ready", text: result.text, targetLang: result.targetLang }
       : result?.kind === "skipped"
-        ? { kind: "skipped", targetLang: result.targetLang }
+        ? { kind: "skipped", targetLang: result.targetLang, reason: result.reason }
         : errorMessage
           ? { kind: "error", message: errorMessage }
           : { kind: "loading" };
@@ -137,10 +144,20 @@ export function useComposerTranslation({
     const k = keyFor(t);
     if (!k) return { kind: "plain" };
     if (opts.untranslated) return { kind: "untranslated" };
-    if (mode === "strict" && !armed) {
-      if (!cache.get(k) && !errors.current.has(k)) void fetchPreview(k, t);
-      setArmed(true);
-      return { kind: "confirm" };
+    if (mode === "strict") {
+      const cached = cache.get(k) ?? null;
+      // Nada a revisar (ex.: modo da conversa desligou): envia sem pedir confirmação.
+      if (cached && !previewNeedsReview(cached)) {
+        return planTranslatedSend({ mode, typed: t, preview: cached, editedText, strictArmed: true });
+      }
+      if (!armed) {
+        if (!cached && !errors.current.has(k)) void fetchPreview(k, t);
+        setArmed(true);
+        return { kind: "confirm" };
+      }
+      // Armado: só a prévia pronta envia. Em voo ou com erro, continua armando
+      // (sem prazo, sem envio sem tradução sozinho).
+      return planTranslatedSend({ mode, typed: t, preview: cached, editedText, strictArmed: true });
     }
     let preview = cache.get(k) ?? null;
     if (!preview && !errors.current.has(k)) {
@@ -184,6 +201,13 @@ export function useComposerTranslation({
       setEditing(false);
     },
     decide,
+    /** "Tentar de novo" depois de erro do provedor: pede a prévia outra vez. */
+    retry: () => {
+      if (!key) return;
+      errors.current.delete(key);
+      bump();
+      void fetchPreview(key, trimmed);
+    },
     counterText: (typed: string) => textForCounter(typed, result, editedText),
   };
 }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ComposerView, type ComposerViewProps } from "./ComposerView";
+import { isSendKey } from "@/lib/composerRules";
 import { ScheduledPendingRow } from "./ScheduledPendingRow";
 import { TranslationPreviewRow } from "./TranslationPreviewRow";
 import { useComposerTranslation } from "./useComposerTranslation";
@@ -172,12 +173,14 @@ function TranslatingHarness({
   const [cache] = useState(() => new PreviewCache<PreviewResult>());
   const tr = useComposerTranslation({ conversationId: "c1", mode, targetLang: "es", text, requestPreview, cache });
   const send = async (opts: { untranslated?: boolean } = {}) => {
+    const trimmed = text.trim();
     setSending(true);
     try {
       const plan = await tr.decide(text, opts);
       if (plan.kind === "confirm") return;
-      onSent(plan, text.trim());
-      setText("");
+      onSent(plan, trimmed);
+      // Igual ao Composer: só limpa o que foi enviado.
+      setText((current) => (current.trim() === trimmed ? "" : current));
     } finally {
       setSending(false);
     }
@@ -192,8 +195,8 @@ function TranslatingHarness({
       canSend={text.trim().length > 0}
       sending={sending}
       onSend={() => void send()}
-      onSendUntranslated={tr.active ? () => void send({ untranslated: true }) : undefined}
       sendingLabel={tr.waitingSend ? "Traduzindo…" : null}
+      fieldReadOnly={tr.waitingSend}
       teamMembers={[]}
       translationPreview={
         tr.view ? (
@@ -203,14 +206,16 @@ function TranslatingHarness({
             editedText={tr.editedText}
             edited={tr.edited}
             armed={tr.armed}
+            strict={mode === "strict"}
+            onRetry={tr.retry}
             onEdit={tr.startEdit}
             onEditChange={tr.setEditedText}
             onRestore={tr.restoreTranslation}
             onUntranslated={() => void send({ untranslated: true })}
             onEditKeyDown={(e) => {
-              if (e.key !== "Enter" || e.shiftKey) return;
+              if (!isSendKey(e)) return;
               e.preventDefault();
-              void send(e.ctrlKey ? { untranslated: true } : {});
+              void send();
             }}
           />
         ) : null
@@ -266,7 +271,7 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     );
   });
 
-  it("Ctrl+Enter envia sem traduzir, uma vez", async () => {
+  it("Ctrl/Cmd+Enter é um Enter comum: envia a tradução (sem atalho de 'sem traduzir')", async () => {
     const requestPreview = vi.fn(async (a: { text: string }) => ES_PREVIEW(a.text));
     const onSent = vi.fn();
     render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
@@ -274,7 +279,41 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     await settle(700);
     fireEvent.keyDown(field(), { key: "Enter", ctrlKey: true });
     await settle();
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent.mock.calls[0][0]).toMatchObject({ kind: "translated", content: "Hola, ¿qué tal?" });
+    type("Olá, tudo bem?");
+    await settle();
+    fireEvent.keyDown(field(), { key: "Enter", metaKey: true });
+    await settle();
+    expect(onSent.mock.calls[1][0]).toMatchObject({ kind: "translated" });
+  });
+
+  it("Enter durante composição IME não envia, nem com Ctrl", async () => {
+    const requestPreview = vi.fn(async (a: { text: string }) => ES_PREVIEW(a.text));
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    await settle(700);
+    fireEvent.keyDown(field(), { key: "Enter", isComposing: true });
+    fireEvent.keyDown(field(), { key: "Enter", ctrlKey: true, isComposing: true });
+    await settle();
+    expect(onSent).not.toHaveBeenCalled();
+  });
+
+  it("o botão Sem traduzir da prévia envia como escrito, uma vez", async () => {
+    const requestPreview = vi.fn(async (a: { text: string }) => ES_PREVIEW(a.text));
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    await settle(700);
+    fireEvent.click(screen.getByRole("button", { name: "Sem traduzir" }));
+    await settle();
     expect(onSent).toHaveBeenCalledWith({ kind: "untranslated" }, "Olá, tudo bem?");
+    type("Olá, tudo bem?");
+    await settle();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    expect(onSent.mock.calls[1][0]).toMatchObject({ kind: "translated" });
   });
 
   it("revisar antes: o primeiro Enter só mostra a prévia; o segundo envia", async () => {
@@ -308,6 +347,26 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     await act(async () => resolve(ES_PREVIEW("Olá, tudo bem?")));
     await settle();
     expect(onSent.mock.calls[0][0]).toMatchObject({ kind: "translated", content: "Hola, ¿qué tal?" });
+  });
+
+  it("texto digitado durante a espera não se perde: campo só leitura e envio só limpa o que saiu", async () => {
+    let resolve: (r: PreviewResponse) => void = () => {};
+    const requestPreview = vi.fn(() => new Promise<PreviewResponse>((r) => (resolve = r)));
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    expect(field()).toHaveAttribute("readonly");
+    expect(screen.getByRole("button", { name: "Traduzindo…" })).toBeDisabled();
+    // Mesmo que algo entre no campo (colar programático), o envio não apaga.
+    type("Olá, tudo bem? Mais uma coisa");
+    await act(async () => resolve(ES_PREVIEW("Olá, tudo bem?")));
+    await settle();
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent.mock.calls[0][1]).toBe("Olá, tudo bem?");
+    expect(field()).toHaveValue("Olá, tudo bem? Mais uma coisa");
+    expect(field()).not.toHaveAttribute("readonly");
   });
 
   it("prévia que não chega em 4 s: envia o digitado e o servidor traduz", async () => {
@@ -354,9 +413,9 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     expect(screen.getByText("Hola, ¿qué tal?")).toBeInTheDocument();
   });
 
-  it("já no idioma do lead: avisa e envia sem traduzir", async () => {
+  it("já no idioma do lead (same_language): avisa e envia sem traduzir", async () => {
     const requestPreview = vi.fn(async (a: { text: string }) => ({
-      text: a.text, sourceLang: "pt-BR", targetLang: "es", engine: null, skipped: true, reason: "ja_no_idioma",
+      text: a.text, sourceLang: "pt-BR", targetLang: "es", engine: null, skipped: true, reason: "same_language",
     }));
     const onSent = vi.fn();
     render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
@@ -366,6 +425,101 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     fireEvent.keyDown(field(), { key: "Enter" });
     await settle();
     expect(onSent).toHaveBeenCalledWith({ kind: "untranslated" }, "Hola, ¿qué tal?");
+  });
+
+  it("texto longo (long_text): linha neutra e envio sem args, o servidor traduz", async () => {
+    const requestPreview = vi.fn(async (a: { text: string }) => ({
+      text: a.text, sourceLang: "pt-BR", targetLang: "es", engine: null, skipped: true, reason: "long_text",
+    }));
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    await settle(700);
+    expect(screen.getByText("Será traduzido ao enviar.")).toBeInTheDocument();
+    expect(screen.queryByText(/Enviando sem traduzir/)).toBeNull();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    expect(onSent).toHaveBeenCalledWith({ kind: "plain" }, "Olá, tudo bem?");
+  });
+
+  it.each(["short", "low_confidence", "ask_mode", "language_off", "codigo_novo"])(
+    "pulada por %s: nenhuma linha e envio sem args (nunca language:off)",
+    async (reason) => {
+      const requestPreview = vi.fn(async (a: { text: string }) => ({
+        text: a.text, sourceLang: "pt-BR", targetLang: "es", engine: null, skipped: true, reason,
+      }));
+      const onSent = vi.fn();
+      render(<TranslatingHarness mode="quick" requestPreview={requestPreview} onSent={onSent} />);
+      type("Olá, tudo bem?");
+      await settle(700);
+      expect(screen.queryByTestId("translation-preview")).toBeNull();
+      fireEvent.keyDown(field(), { key: "Enter" });
+      await settle();
+      expect(onSent).toHaveBeenCalledWith({ kind: "plain" }, "Olá, tudo bem?");
+    }
+  );
+
+  it("revisar antes com a prévia em voo: Enter só arma, sem prazo, nada sai até a prévia aparecer", async () => {
+    let resolve: (r: PreviewResponse) => void = () => {};
+    const requestPreview = vi.fn(() => new Promise<PreviewResponse>((r) => (resolve = r)));
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="strict" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle(10_000);
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle(10_000);
+    expect(onSent).not.toHaveBeenCalled();
+    expect(screen.getByText("Aguarde a tradução para revisar e enviar.")).toBeInTheDocument();
+    await act(async () => resolve(ES_PREVIEW("Olá, tudo bem?")));
+    await settle();
+    expect(onSent).not.toHaveBeenCalled();
+    expect(screen.getByText("Hola, ¿qué tal?")).toBeInTheDocument();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(onSent.mock.calls[0][0]).toMatchObject({ kind: "translated", content: "Hola, ¿qué tal?" });
+  });
+
+  it("revisar antes com erro do provedor: não envia sozinho; Tentar de novo e Enviar sem traduzir", async () => {
+    let fail = true;
+    const requestPreview = vi.fn(async (a: { text: string }) => {
+      if (fail) throw new Error("Nenhum provedor de tradução disponível");
+      return ES_PREVIEW(a.text);
+    });
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="strict" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    await settle(700);
+    expect(screen.getByText(/Nada é enviado sem você ver a tradução/)).toBeInTheDocument();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle(10_000);
+    expect(onSent).not.toHaveBeenCalled();
+    fail = false;
+    fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
+    await settle();
+    expect(requestPreview).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("Hola, ¿qué tal?")).toBeInTheDocument();
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await settle();
+    expect(onSent.mock.calls[0][0]).toMatchObject({ kind: "translated" });
+  });
+
+  it("revisar antes com erro: Enviar sem traduzir é explícito", async () => {
+    const requestPreview = vi.fn(async () => {
+      throw new Error("Nenhum provedor de tradução disponível");
+    });
+    const onSent = vi.fn();
+    render(<TranslatingHarness mode="strict" requestPreview={requestPreview} onSent={onSent} />);
+    type("Olá, tudo bem?");
+    await settle(700);
+    fireEvent.click(screen.getByRole("button", { name: "Enviar sem traduzir" }));
+    await settle();
+    expect(onSent).toHaveBeenCalledWith({ kind: "untranslated" }, "Olá, tudo bem?");
   });
 
   it("erro do provedor: mostra o motivo e o Enter cai no desvio do servidor", async () => {

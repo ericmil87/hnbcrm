@@ -63,10 +63,13 @@ export interface ComposerViewProps {
   languageControl?: ReactNode;
   /** Prévia da tradução ("Será enviado em espanhol: …"), abaixo do campo. */
   translationPreview?: ReactNode;
-  /** Ctrl+Enter (ou Cmd+Enter): enviar sem traduzir, uma vez. */
-  onSendUntranslated?: () => void;
   /** Rótulo do botão enquanto envia (ex.: "Traduzindo…" com a prévia em voo). */
   sendingLabel?: string | null;
+  /**
+   * Campo só leitura (ex.: Enter esperando a prévia da tradução): o que fosse
+   * digitado nesse intervalo seria apagado quando o envio termina.
+   */
+  fieldReadOnly?: boolean;
 }
 
 /**
@@ -102,8 +105,8 @@ export function ComposerView({
   voice,
   languageControl,
   translationPreview,
-  onSendUntranslated,
   sendingLabel,
+  fieldReadOnly = false,
 }: ComposerViewProps) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -112,11 +115,7 @@ export function ComposerView({
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (onKeyDownBefore?.(e)) return;
-    if (onSendUntranslated && e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
-      e.preventDefault();
-      if (canSend && !blocked && !sending) onSendUntranslated();
-      return;
-    }
+    // Ctrl/Cmd+Enter é um Enter comum (envia). "Sem traduzir" é só o botão da prévia.
     if (isSendKey(e)) {
       e.preventDefault();
       if (canSend && !blocked && !sending) onSend();
@@ -189,6 +188,7 @@ export function ComposerView({
                 teamMembers={teamMembers}
                 mentionEnabled={isInternal}
                 disabled={blocked}
+                readOnly={fieldReadOnly}
                 placeholder={placeholder}
                 rows={1}
                 className={cn(

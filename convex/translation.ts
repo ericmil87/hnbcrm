@@ -32,8 +32,8 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
 import { orgAiActive } from "./lib/agentSecurity";
-import { detectLanguage } from "./lib/languageDetect";
-import { languageName, normalizeLanguageCode, sameLanguage } from "./lib/languages";
+import { countAlphaChars, detectLanguage, MIN_ALPHA_CHARS } from "./lib/languageDetect";
+import { languageHintFromDialCode, languageName, normalizeLanguageCode, sameLanguage } from "./lib/languages";
 import {
   effectiveSourceLanguage,
   nextConversationTranslation,
@@ -41,6 +41,7 @@ import {
   MIN_DETECTION_CONFIDENCE,
 } from "./lib/translationLang";
 import {
+  conversationHasForeignLanguage,
   resolveTranslationSettings,
   sanitizeGlossary,
   shouldTranslateDisplay,
@@ -60,6 +61,8 @@ import {
   outboundTargetLanguage,
   scheduleOutboundTranslation,
   OUTBOUND_TIMEOUT_ERROR,
+  LONG_OUTBOUND_ERROR,
+  isOutboundTooLong,
 } from "./lib/translationOps";
 import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 import { lastMessagePatchFor } from "./lib/conversationListFields";
@@ -71,7 +74,8 @@ const skipReasonValidator = v.union(
   v.literal("short"),
   v.literal("same_language"),
   v.literal("ask_mode"),
-  v.literal("language_off")
+  v.literal("language_off"),
+  v.literal("long_text")
 );
 
 type TranslationContext = {
@@ -177,18 +181,40 @@ export const internalSetInboundResult = internalMutation({
     if (args.role !== "inbound" || !args.detectedLang) return null;
     const conversation = await ctx.db.get(message.conversationId);
     if (!conversation || conversation.kind === "group") return null;
+    // Evidência para fixar o 1º idioma (review #11): só lida quando a conversa
+    // ainda não tem idioma (o contato vem junto, e serve à troca abaixo).
+    const needsEvidence = !conversation.translation?.lang;
+    let contactLoaded = false;
+    let contact: Doc<"contacts"> | null = null;
+    const loadContact = async () => {
+      if (contactLoaded) return contact;
+      contactLoaded = true;
+      const lead = await getLeadRef(ctx.db, conversation.leadId);
+      const found = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
+      contact = found && found.organizationId === conversation.organizationId ? found : null;
+      return contact;
+    };
+    const evidenceContact = needsEvidence ? await loadContact() : null;
+    const detectedText =
+      message.contentType === "audio" ? (message.transcriptText ?? "") : String(message.content ?? "");
     const next = nextConversationTranslation(
       conversation.translation,
       { lang: args.detectedLang, confidence: args.detectedConfidence ?? 0 },
-      now
+      now,
+      needsEvidence
+        ? {
+            alphaChars: countAlphaChars(detectedText),
+            contactPreferredLanguage: evidenceContact?.preferredLanguage,
+            dialHint: languageHintFromDialCode(evidenceContact?.phone),
+          }
+        : {}
     );
     if (!next) return null;
     await ctx.db.patch(conversation._id, { translation: next });
 
     // Idioma novo da conversa vira o preferido do contato, salvo escolha manual.
     if (next.lang && next.lang !== conversation.translation?.lang) {
-      const lead = await getLeadRef(ctx.db, conversation.leadId);
-      const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
+      const contact = await loadContact();
       if (
         contact &&
         contact.organizationId === conversation.organizationId &&
@@ -223,6 +249,9 @@ async function translateForTeam(
       : translatableText(message);
   const settings = resolveTranslationSettings(org);
   const team = settings.teamLanguage;
+  // Review #10: conversa sem idioma estrangeiro (nem candidato) não ganha
+  // `skipped` gravado para mesma língua/curta — só a conversa ATIVA mostra isso.
+  const activeConversation = conversationHasForeignLanguage(conversation, team);
 
   let waitingChoice = false;
   if (opts.role === "inbound") {
@@ -256,6 +285,14 @@ async function translateForTeam(
     lang: string | undefined,
     reason: "low_confidence" | "short" | "same_language" | "ask_mode"
   ): Promise<InboundRunResult> => {
+    if (
+      opts.role === "inbound" &&
+      !opts.force &&
+      !activeConversation &&
+      (reason === "short" || reason === "same_language")
+    ) {
+      return { status: "skipped", sourceLang: lang, targetLang: team };
+    }
     // Idioma provável para o "Idioma incerto · Traduzir como …?" da bolha.
     const candidate =
       reason === "low_confidence" && detected
@@ -276,7 +313,10 @@ async function translateForTeam(
   };
 
   if (waitingChoice) return await writeSkipped(sourceLang, "ask_mode");
-  if (sourceLang && sameLanguage(sourceLang, team) && (settings.skipWhenSameLanguage || !opts.force)) {
+  // "Traduzir mesmo assim" (`force`, review #15) não pula pela mesma língua:
+  // o provedor recebe `source:"auto"` e decide.
+  const forceAcrossSameLanguage = !!opts.force && !!sourceLang && sameLanguage(sourceLang, team);
+  if (sourceLang && sameLanguage(sourceLang, team) && !opts.force) {
     // Detecção fraca apontando OUTRO idioma, vencida pelo idioma da conversa: incerto.
     const uncertain =
       !!detected && detected.confidence < MIN_DETECTION_CONFIDENCE && !sameLanguage(detected.lang, team);
@@ -290,7 +330,7 @@ async function translateForTeam(
     conversationId: conversation._id,
     messageId: message._id,
     text,
-    from: sourceLang,
+    from: forceAcrossSameLanguage ? undefined : sourceLang,
     to: team,
     role: opts.role,
   });
@@ -462,6 +502,14 @@ export const translateAndDispatch = internalAction({
     if (!loaded) return null;
     const t = translationOf(loaded.message);
     if (!t || t.role !== "outbound" || t.status !== "pending" || !t.targetLang) return null;
+    if (isOutboundTooLong(loaded.message)) {
+      await ctx.runMutation(internal.translation.internalMarkTranslationFailed, {
+        messageId: args.messageId,
+        error: LONG_OUTBOUND_ERROR,
+        expectedAt: t.at,
+      });
+      return null;
+    }
     const outcome = await runTranslation(ctx, {
       org: loaded.org,
       conversationId: loaded.conversation._id,
@@ -633,7 +681,8 @@ async function loadOutboundForMember(
 ): Promise<{ message: Doc<"messages">; conversation: Doc<"conversations">; member: Doc<"teamMembers"> }> {
   const message = (await ctx.db.get(messageId)) as Doc<"messages"> | null;
   if (!message) throw new ConvexError("Mensagem não encontrada");
-  const member = await requirePermission(ctx as any, message.organizationId, "inbox", "view_own");
+  // Reenviar/enviar sem traduzir é RESPONDER ao cliente (review #7).
+  const member = await requirePermission(ctx as any, message.organizationId, "inbox", "reply");
   const conversation = (await ctx.db.get(message.conversationId)) as Doc<"conversations"> | null;
   if (!conversation || conversation.organizationId !== message.organizationId) {
     throw new ConvexError("Conversa não encontrada");
@@ -657,6 +706,9 @@ export const retryOutbound = mutation({
     const t = translationOf(message);
     if (!t || t.role !== "outbound" || t.status !== "failed") {
       throw new ConvexError("Só dá para tentar de novo uma tradução que falhou");
+    }
+    if (isOutboundTooLong(message)) {
+      throw new ConvexError(`${LONG_OUTBOUND_ERROR}. Divida em mensagens menores ou envie sem traduzir.`);
     }
     const pending: TranslationMeta = {
       status: "pending",
@@ -714,6 +766,20 @@ export const sendUntranslated = mutation({
       severity: "medium",
       createdAt: now,
     });
+    // Timeline do lead (review #13): a escolha fica visível para o time.
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
+    if (lead && lead.organizationId === conversation.organizationId) {
+      await ctx.db.insert("activities", {
+        organizationId: conversation.organizationId,
+        leadId: lead._id,
+        type: "note",
+        actorId: member._id,
+        actorType: member.type === "ai" ? "ai" : "human",
+        content: `Mensagem enviada sem tradução por ${member.name}`,
+        metadata: { conversationId: conversation._id, messageId: message._id, sentUntranslated: true },
+        createdAt: now,
+      });
+    }
     await scheduleOutboundDispatch(ctx, conversation, message._id);
     return null;
   },
@@ -730,7 +796,7 @@ export const setConversationLanguage = mutation({
   handler: async (ctx, args) => {
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new ConvexError("Conversa não encontrada");
-    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "view_own");
+    const member = await requirePermission(ctx, conversation.organizationId, "inbox", "reply");
     if (conversation.kind === "group") throw new ConvexError("Conversas de grupo não são traduzidas");
     const lang = args.lang !== undefined ? normalizeLanguageCode(args.lang) : undefined;
     if (args.lang !== undefined && !lang) throw new ConvexError(`Idioma "${args.lang}" não suportado`);
@@ -758,6 +824,23 @@ export const setConversationLanguage = mutation({
       const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
       if (contact && contact.organizationId === conversation.organizationId) {
         await ctx.db.patch(contact._id, { preferredLanguage: lang, languageSource: "manual", updatedAt: now });
+        // A mudança no CONTATO tem audit próprio (review #13).
+        await ctx.db.insert("auditLogs", {
+          organizationId: conversation.organizationId,
+          entityType: "contact",
+          entityId: contact._id,
+          action: "update",
+          actorId: member._id,
+          actorType: member.type === "ai" ? "ai" : "human",
+          changes: {
+            before: { preferredLanguage: contact.preferredLanguage ?? null, languageSource: contact.languageSource ?? null },
+            after: { preferredLanguage: lang, languageSource: "manual" },
+          },
+          metadata: { translation: true, conversationId: conversation._id },
+          description: `Definiu o idioma preferido do contato: ${languageName(lang)}`,
+          severity: "low",
+          createdAt: now,
+        });
       }
     }
     await ctx.db.insert("auditLogs", {
@@ -817,6 +900,8 @@ const previewResult = v.object({
 });
 
 const PREVIEW_MAX_CHARS = 4000;
+/** Confiança mínima da detecção local para a prévia dizer "já está no idioma do lead". */
+const PREVIEW_SAME_LANGUAGE_CONFIDENCE = 0.85;
 
 export const preview = action({
   args: { conversationId: v.id("conversations"), text: v.string() },
@@ -835,15 +920,26 @@ export const preview = action({
       skipped: true,
       reason,
     });
-    if (!translationEnabledForOrg(org)) return skip("modulo_desligado");
-    if (conversation.kind === "group") return skip("grupo");
-    if (conversation.translation?.mode === "off") return skip("conversa_sem_traducao");
-    if (!text.trim()) return skip("sem_texto");
-    if (text.length > PREVIEW_MAX_CHARS) return skip("texto_longo");
-    if (!targetLang) return skip("sem_idioma");
-    if (sameLanguage(targetLang, team)) return skip("mesma_lingua");
+    // Códigos (review #2): o composer só manda `language:"off"` com
+    // `same_language`; qualquer outro envia sem args e o desvio do servidor decide.
+    if (!translationEnabledForOrg(org)) return skip("module_off");
+    if (conversation.kind === "group") return skip("group");
+    if (conversation.translation?.mode === "off") return skip("language_off");
+    if (!text.trim()) return skip("no_text");
+    if (text.length > PREVIEW_MAX_CHARS) return skip("long_text");
+    if (!targetLang) return skip("no_language");
+    if (sameLanguage(targetLang, team)) return skip("no_language");
+    // "Já está no idioma do lead" só com detecção forte em texto suficiente:
+    // um pt-BR mal detectado como es não pode sair sem tradução.
     const own = detectLanguage(text);
-    if (own && own.confidence >= 0.8 && sameLanguage(own.lang, targetLang)) return skip("ja_no_idioma");
+    if (
+      own &&
+      own.confidence >= PREVIEW_SAME_LANGUAGE_CONFIDENCE &&
+      countAlphaChars(text) >= MIN_ALPHA_CHARS &&
+      sameLanguage(own.lang, targetLang)
+    ) {
+      return skip("same_language");
+    }
     const outcome = await runTranslation(ctx, {
       org,
       conversationId: conversation._id,
@@ -853,7 +949,7 @@ export const preview = action({
       role: "outbound",
     });
     if (outcome.status === "failed") throw new ConvexError(outcome.error);
-    if (outcome.status === "same_language") return skip("ja_no_idioma");
+    if (outcome.status === "same_language") return skip("same_language");
     return { text: outcome.text, sourceLang: team, targetLang, engine: outcome.engine, skipped: false };
   },
 });

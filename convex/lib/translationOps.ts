@@ -16,14 +16,18 @@
  *   traduzida (`failed` + `deliveryStatus:"failed"` legível), usado pela action,
  *   pelo watchdog por mensagem e pelo ops de presas.
  */
+import { ConvexError } from "convex/values";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { getLeadRef } from "./leadRef";
 import { maybeNotifyTelegramSendFailed } from "./telegramRelay";
-import { normalizeLanguageCode } from "./languages";
+import { languageName as languageNameOf, normalizeLanguageCode, sameLanguage } from "./languages";
+import { detectLanguage } from "./languageDetect";
 import { resolveTargetLanguage } from "./translationLang";
 import {
+  conversationHasForeignLanguage,
+  MAX_TRANSLATION_CHARS,
   resolveTranslationSettings,
   shouldTranslateDisplay,
   shouldTranslateDraft,
@@ -31,6 +35,7 @@ import {
   shouldTranslateOutbound,
   translationEnabledForOrg,
   translationOf,
+  translatableText,
   TranslationMeta,
 } from "./translationGate";
 
@@ -41,13 +46,21 @@ export const OUTBOUND_TIMEOUT_ERROR =
 
 type MessageDoc = Doc<"messages">;
 
-/** Decisão pura do agendamento (inbound/display). */
+export const LONG_OUTBOUND_ERROR = "Mensagem longa demais para traduzir";
+
+/**
+ * Decisão pura do agendamento (inbound/display). Inbound numa conversa SEM
+ * idioma estrangeiro (nem candidato) cuja detecção local dá a língua da
+ * equipe, ou não detecta (curta), não agenda nada (review #10: zero job e
+ * zero escrita por mensagem de conversa em pt-BR).
+ */
 export function shouldScheduleMessageTranslation(args: {
   org: Doc<"organizations"> | null | undefined;
   conversation: Doc<"conversations"> | null | undefined;
   message: MessageDoc;
   role: "inbound" | "display";
   text?: string;
+  hintLang?: string;
 }): boolean {
   if (!translationEnabledForOrg(args.org)) return false;
   if (args.role === "display") {
@@ -61,7 +74,14 @@ export function shouldScheduleMessageTranslation(args: {
     message: args.message,
     text: args.text,
   });
-  return decision.ok || (!decision.ok && decision.reason === "aguardando_escolha");
+  if (!decision.ok && decision.reason !== "aguardando_escolha") return false;
+  const team = resolveTranslationSettings(args.org).teamLanguage;
+  if (conversationHasForeignLanguage(args.conversation, team)) return true;
+  const hint = normalizeLanguageCode(args.hintLang);
+  if (hint && !sameLanguage(hint, team)) return true;
+  const text = args.text ?? translatableText(args.message);
+  const detected = text ? detectLanguage(text) : undefined;
+  return !!detected && !sameLanguage(detected.lang, team);
 }
 
 /**
@@ -80,6 +100,8 @@ export async function scheduleMessageTranslation(
   }
 ): Promise<boolean> {
   if (args.role === "draft") return await scheduleDraftTranslation(ctx, args.messageId, args.conversation);
+  // Conversa já carregada pelo receiver: grupo sai sem NENHUMA leitura.
+  if (args.conversation?.kind === "group") return false;
   const message = await ctx.db.get(args.messageId);
   if (!message || message.isInternal) return false;
   if (args.role === "inbound" && message.direction !== "inbound") return false;
@@ -88,10 +110,12 @@ export async function scheduleMessageTranslation(
   // Grupo e nota interna saem antes de ler a org (nenhuma leitura extra no caminho quente de grupo).
   if (!conversation || conversation.kind === "group" || message.isInternal) return false;
   const org = await ctx.db.get(message.organizationId);
-  if (!shouldScheduleMessageTranslation({ org, conversation, message, role: args.role, text: args.text })) {
+  const hint = normalizeLanguageCode(args.hintLang);
+  if (
+    !shouldScheduleMessageTranslation({ org, conversation, message, role: args.role, text: args.text, hintLang: hint })
+  ) {
     return false;
   }
-  const hint = normalizeLanguageCode(args.hintLang);
   if (args.role === "display") {
     await ctx.scheduler.runAfter(0, internal.translation.autoTranslateDisplay, { messageId: args.messageId });
   } else {
@@ -162,13 +186,30 @@ export async function maybeDivertOutboundForTranslation(
   const org = await ctx.db.get(conversation.organizationId);
   if (!translationEnabledForOrg(org)) return "dispatch";
   const targetLang = await outboundTargetLanguage(ctx, conversation, message);
-  if (!shouldTranslateOutbound({ org, conversation, message, targetLang }).ok) return "dispatch";
-
+  const decision = shouldTranslateOutbound({ org, conversation, message, targetLang });
   const now = Date.now();
+  const sourceLang = resolveTranslationSettings(org).teamLanguage;
+  if (!decision.ok && decision.reason === "texto_longo") {
+    // Tradução devida, mas o texto passa do teto: RETIDA como `failed`
+    // (review #1). A UI oferece "Enviar sem traduzir"; nunca sai em pt-BR sozinha.
+    const failed: TranslationMeta = {
+      status: "failed",
+      role: "outbound",
+      sourceLang,
+      targetLang: normalizeLanguageCode(targetLang)!,
+      reason: "long_text",
+      error: LONG_OUTBOUND_ERROR,
+      at: now,
+    };
+    await writeOutboundFailed(ctx, message, failed, LONG_OUTBOUND_ERROR);
+    return "held";
+  }
+  if (!decision.ok) return "dispatch";
+
   const pending: TranslationMeta = {
     status: "pending",
     role: "outbound",
-    sourceLang: resolveTranslationSettings(org).teamLanguage,
+    sourceLang,
     targetLang: normalizeLanguageCode(targetLang)!,
     at: now,
   };
@@ -202,9 +243,9 @@ export function outboundTranslationInsertFields(
   if (args.translation) {
     const sourceLang = normalizeLanguageCode(args.translation.sourceLang);
     const targetLang = normalizeLanguageCode(args.translation.targetLang);
-    if (!sourceLang || !targetLang) throw new Error("Idioma da tradução não suportado");
+    if (!sourceLang || !targetLang) throw new ConvexError("Idioma da tradução não suportado");
     const authored = args.translation.authoredText;
-    if (authored.length > 20_000) throw new Error("Texto original longo demais");
+    if (authored.length > 20_000) throw new ConvexError("Texto original longo demais");
     const meta: TranslationMeta = {
       status: "done",
       role: "outbound",
@@ -221,7 +262,7 @@ export function outboundTranslationInsertFields(
     return { metadata: { translation: meta } };
   }
   const code = normalizeLanguageCode(args.language);
-  if (!code) throw new Error(`Idioma "${args.language}" não suportado`);
+  if (!code) throw new ConvexError(`Idioma "${args.language}" não suportado`);
   return { metadata: { translationTarget: code } };
 }
 
@@ -239,9 +280,20 @@ export async function markOutboundTranslationFailed(
   const current = translationOf(message);
   if (!current || current.role !== "outbound" || current.status !== "pending") return false;
   if (message.externalId) return false;
-  const now = Date.now();
+  const translation: TranslationMeta = { ...current, status: "failed", error: error.slice(0, 300), at: Date.now() };
+  await writeOutboundFailed(ctx, message, translation, error);
+  return true;
+}
+
+/** A escrita de uma saída reprovada (estado + entrega legível + timeline + Telegram). */
+async function writeOutboundFailed(
+  ctx: MutationCtx,
+  message: MessageDoc,
+  translation: TranslationMeta,
+  error: string
+): Promise<void> {
+  const now = translation.at;
   const detail = `Tradução falhou: ${error}`.slice(0, 300);
-  const translation: TranslationMeta = { ...current, status: "failed", error: error.slice(0, 300), at: now };
   await ctx.db.patch(message._id, {
     deliveryStatus: "failed",
     metadata: { ...(message.metadata ?? {}), translation, deliveryError: detail },
@@ -258,11 +310,86 @@ export async function markOutboundTranslationFailed(
     });
   }
   await maybeNotifyTelegramSendFailed(ctx, message, detail);
-  return true;
+}
+
+/** Saída longa demais para a tradução automática (o retry recusa; a UI oferece enviar sem traduzir). */
+export function isOutboundTooLong(message: Pick<MessageDoc, "content">): boolean {
+  return String(message.content ?? "").trim().length > MAX_TRANSLATION_CHARS;
 }
 
 /** Ops de presas: a saída está retida numa tradução `pending` velha? */
 export function isStuckOutboundTranslation(message: MessageDoc, now: number): boolean {
   const t = translationOf(message);
   return t?.role === "outbound" && t.status === "pending" && now - t.at > OUTBOUND_PENDING_TIMEOUT_MS;
+}
+
+/**
+ * Campos de tradução do insert de uma outbound humana (app, REST, MCP,
+ * Telegram), já com as guardas do review #9: módulo desligado, conversa de
+ * grupo ou nota interna IGNORAM `language`/`translation` (nenhum campo
+ * escrito, nenhum erro). `untranslatedTarget` = a conversa tem idioma
+ * estrangeiro ativo e o envio pediu `language:"off"`: quem insere grava o
+ * audit (`auditUntranslatedSend`, review #4).
+ */
+export async function translationInsertFieldsFor(
+  ctx: { db: QueryCtx["db"] },
+  conversation: Doc<"conversations">,
+  base: { metadata?: Record<string, unknown> },
+  args: {
+    language?: string;
+    translation?: { authoredText: string; sourceLang: string; targetLang: string; edited?: boolean };
+    isInternal?: boolean;
+  },
+  now: number
+): Promise<{ fields: { metadata?: Record<string, unknown>; translatedText?: string }; untranslatedTarget?: string }> {
+  if (args.language === undefined && args.translation === undefined) return { fields: base };
+  if (args.isInternal || conversation.kind === "group") return { fields: base };
+  const org = await ctx.db.get(conversation.organizationId);
+  if (!translationEnabledForOrg(org)) return { fields: base };
+  const extra = outboundTranslationInsertFields(args, now);
+  const fields =
+    !extra.metadata && !extra.translatedText
+      ? base
+      : {
+          ...(extra.metadata || base.metadata ? { metadata: { ...(base.metadata ?? {}), ...(extra.metadata ?? {}) } } : {}),
+          ...(extra.translatedText !== undefined ? { translatedText: extra.translatedText } : {}),
+        };
+  let untranslatedTarget: string | undefined;
+  if (args.language === "off" && args.translation === undefined && conversation.translation?.mode !== "off") {
+    const lang = normalizeLanguageCode(conversation.translation?.lang);
+    if (lang && !sameLanguage(lang, resolveTranslationSettings(org).teamLanguage)) untranslatedTarget = lang;
+  }
+  return { fields, ...(untranslatedTarget ? { untranslatedTarget } : {}) };
+}
+
+/** Audit `medium` do envio com `language:"off"` numa conversa em idioma estrangeiro. */
+export async function auditUntranslatedSend(
+  ctx: MutationCtx,
+  args: {
+    conversation: Doc<"conversations">;
+    messageId: Id<"messages">;
+    actor: Doc<"teamMembers">;
+    targetLang: string;
+    via?: string;
+    now: number;
+  }
+): Promise<void> {
+  await ctx.db.insert("auditLogs", {
+    organizationId: args.conversation.organizationId,
+    entityType: "message",
+    entityId: args.messageId,
+    action: "update",
+    actorId: args.actor._id,
+    actorType: args.actor.type === "ai" ? "ai" : "human",
+    changes: { after: { translation: "skipped", reason: "language_off" } },
+    metadata: {
+      conversationId: args.conversation._id,
+      sentUntranslated: true,
+      targetLang: args.targetLang,
+      ...(args.via ? { via: args.via } : {}),
+    },
+    description: `Mensagem enviada sem tradução (o cliente fala ${languageNameOf(args.targetLang)})`,
+    severity: "medium",
+    createdAt: args.now,
+  });
 }

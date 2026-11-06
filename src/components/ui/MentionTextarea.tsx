@@ -19,6 +19,8 @@ interface MentionTextareaProps {
   placeholder?: string;
   rows?: number;
   disabled?: boolean;
+  /** Só leitura: mantém foco e valor, mas não aceita digitação. */
+  readOnly?: boolean;
   className?: string;
   mentionEnabled?: boolean;
   /** Expõe o textarea interno (ex.: inserir emoji na posição do cursor). */
@@ -45,6 +47,7 @@ export function MentionTextarea({
   placeholder,
   rows = 2,
   disabled,
+  readOnly,
   className,
   mentionEnabled = false,
   inputRef,
@@ -239,6 +242,7 @@ export function MentionTextarea({
         placeholder={placeholder}
         rows={rows}
         disabled={disabled}
+        readOnly={readOnly}
         className={cn(
           "w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted",
           className,

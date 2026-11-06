@@ -14,11 +14,15 @@ export interface TranslationPreviewRowProps {
   edited: boolean;
   /** "Revisar antes": o primeiro Enter já mostrou a prévia; o próximo envia. */
   armed?: boolean;
+  /** "Revisar antes": nada sai sem prévia pronta (muda o texto do erro e da espera). */
+  strict?: boolean;
+  /** Erro do provedor: pedir a prévia de novo. */
+  onRetry?: () => void;
   onEdit: () => void;
   onEditChange: (value: string) => void;
   onRestore: () => void;
   onUntranslated: () => void;
-  /** Enter/Ctrl+Enter dentro do campo de edição (o container envia). */
+  /** Enter dentro do campo de edição (o container envia). */
   onEditKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   editRef?: RefObject<HTMLTextAreaElement | null>;
 }
@@ -33,6 +37,8 @@ export function TranslationPreviewRow({
   editedText,
   edited,
   armed = false,
+  strict = false,
+  onRetry,
   onEdit,
   onEditChange,
   onRestore,
@@ -41,12 +47,13 @@ export function TranslationPreviewRow({
   editRef,
 }: TranslationPreviewRowProps) {
   const untranslatedButton = (
-    <Tooltip content="Envia o texto como você escreveu (Ctrl+Enter)">
+    <Tooltip content="Envia o texto como você escreveu, só desta vez">
       <Button type="button" variant="ghost" size="sm" onClick={onUntranslated}>
         Sem traduzir
       </Button>
     </Tooltip>
   );
+  const skipReason = view.kind === "skipped" ? view.reason : null;
 
   return (
     <div
@@ -63,21 +70,42 @@ export function TranslationPreviewRow({
         </p>
       )}
 
-      {view.kind === "skipped" && (
+      {view.kind === "skipped" && view.reason === "same_language" && (
         <p className="flex items-center gap-1.5 text-text-secondary" aria-live="polite">
           <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
           Já está em {languageDisplayName(view.targetLang, { lower: true })}. Enviando sem traduzir.
         </p>
       )}
 
-      {view.kind === "error" && (
-        <p className="flex items-start gap-1.5 text-semantic-warning" aria-live="polite">
-          <AlertCircle size={12} className="mt-0.5 shrink-0" aria-hidden />
-          <span>
-            Prévia indisponível: {view.message} Ao enviar, tentamos traduzir de novo, e nada sai sem tradução sem você
-            confirmar.
-          </span>
+      {view.kind === "skipped" && view.reason === "long_text" && (
+        <p className="flex items-center gap-1.5 text-text-secondary" aria-live="polite">
+          <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
+          Será traduzido ao enviar.
         </p>
+      )}
+
+      {view.kind === "error" && (
+        <div className="space-y-1.5">
+          <p className="flex items-start gap-1.5 text-semantic-warning" aria-live="polite">
+            <AlertCircle size={12} className="mt-0.5 shrink-0" aria-hidden />
+            <span>
+              {strict
+                ? `Prévia indisponível: ${view.message} Nada é enviado sem você ver a tradução.`
+                : `Prévia indisponível: ${view.message} Ao enviar, tentamos traduzir de novo, e nada sai sem tradução sem você confirmar.`}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {onRetry && (
+              <Button type="button" variant="ghost" size="sm" onClick={onRetry}>
+                <RotateCcw size={14} aria-hidden />
+                Tentar de novo
+              </Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" onClick={onUntranslated}>
+              Enviar sem traduzir
+            </Button>
+          </div>
+        </div>
       )}
 
       {view.kind === "ready" && (
@@ -122,12 +150,16 @@ export function TranslationPreviewRow({
         </div>
       )}
 
-      {view.kind !== "ready" && view.kind !== "skipped" && (
+      {(view.kind === "loading" || skipReason === "long_text") && (
         <div className="mt-1 flex justify-end">{untranslatedButton}</div>
       )}
 
       <p className="mt-1 text-text-muted" aria-live="polite">
-        {armed ? (
+        {armed && view.kind === "loading" ? (
+          <span className="font-medium text-brand-500">Aguarde a tradução para revisar e enviar.</span>
+        ) : armed && view.kind === "skipped" && skipReason !== "same_language" && skipReason !== "long_text" ? (
+          <span className="font-medium text-brand-500">Nada a traduzir. Enter de novo envia como está.</span>
+        ) : armed && view.kind !== "error" ? (
           <span className="font-medium text-brand-500">Revise e confirme: Enter de novo envia.</span>
         ) : view.kind === "ready" ? (
           <span className="hidden md:inline">Enter envia a versão traduzida · Shift+Enter nova linha</span>
