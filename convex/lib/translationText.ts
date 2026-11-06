@@ -7,7 +7,9 @@
  *    - `llm` (padrão): `⟦U1⟧`, `⟦E1⟧`, `⟦P1⟧`, `⟦M1⟧`, `⟦G1⟧`, citados pelo
  *      prompt do modelo, que os copia sem problema.
  *    - `libre`: `{1}`, `{2}`… (um contador só) para links/telefones/menções/
- *      e-mails/glossário. EMOJI no começo ou no fim de uma linha sai do texto e
+ *      e-mails/glossário. Hora da tarde "19h"/"18h45" vai como "19:00"/"18:45"
+ *      (com "h" o servidor pt→en a trocava por 12h sem am/pm; ver
+ *      `LIBRE_PM_TIME_RE`). EMOJI no começo ou no fim de uma linha sai do texto e
  *      volta colado na mesma linha; emoji no meio da linha vira `XEMO1X`.
  *      Medido no servidor próprio em 06/11/2026: o modelo pt→en corta o texto
  *      no primeiro `⟦` ("Me liga no ⟦P1⟧ ou…" → "Call me at ") e no primeiro
@@ -37,6 +39,14 @@ const EMAIL_RE = /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
 // O "(" do DDD entra no token: "(⟦P1⟧" solto faz o servidor alucinar.
 const PHONE_RE = /(?<![\w⟦{])(?:\(\+?|\+)?\d[\d\s().-]{6,}\d(?![\w⟧}])/g;
 const MENTION_RE = /(?<![\w@])@[\w.]{2,}/g;
+// Só `libre`: hora da tarde/noite no formato brasileiro ("19h", "18h45").
+// Medido em 06/11/2026 no servidor: pt→en devolve "6:45"/"7:00" sem am/pm (o
+// guard reprova com razão) e "Chega 18h45" vira "It's 6:45". Reescrito como
+// "18:45" antes do envio, ele costuma sair intacto ("Comes 18:45", "at 19:00").
+// Token `{n}` foi medido e descartado: o número some do contexto e o modelo
+// erra o sentido sem o guard perceber ("Chega {3}" → "Enough {3}"). Só 13–23h:
+// "2h de duração" não pode virar relógio, e "10h" → "10:00" já não é ambíguo.
+const LIBRE_PM_TIME_RE = /(?<![\p{L}\p{N}{.,:/])(1[3-9]|2[0-3])h([0-5]\d)?(?![\p{L}\p{N}:])/giu;
 const TOKEN_RE = /⟦[A-Z]\d+⟧/g;
 const LIBRE_TOKEN_RE = /\{\d+\}|XEMO\d+X/gi;
 // Sequência de emojis (com tom de pele, seletor de variação, ZWJ, bandeira e
@@ -86,6 +96,7 @@ export function protectText(text: string, glossary: readonly string[] = [], shap
     out = replace(out, re, "G");
   }
   if (shape !== "libre") return { text: out, tokens };
+  out = out.replace(LIBRE_PM_TIME_RE, (_m, h: string, mm: string | undefined) => `${h}:${mm ?? "00"}`);
   // Emoji na borda da linha sai do texto; no meio da linha vira token-palavra.
   const edges: NonNullable<ProtectedText["edges"]> = [];
   const lines = out.split("\n").map((line) => {

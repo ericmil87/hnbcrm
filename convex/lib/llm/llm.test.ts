@@ -2,7 +2,7 @@
 import { expect, test, describe, afterEach, vi } from "vitest";
 import { chat, chatWithRetry, streamChat, accumulateToolCallDeltas, isUpstreamMislabeled400 } from "./openaiCompatible";
 import { resolvePlatformChain,
-  withReasoningEffort, chatWithFallback } from "./index";
+  withReasoningEffort, withoutReasoning, chatWithFallback } from "./index";
 import { sanitizeLlmError } from "./sanitize";
 import {
   resolveModelId,
@@ -538,6 +538,17 @@ describe("deepseek-v4-flash-0731 e withReasoningEffort", () => {
     expect(chain.map((r) => r.providerId)).toEqual(["openrouter"]);
     expect(chain[0].model).toBe("~deepseek/deepseek-flash-latest");
     expect(resolvePlatformChain("deepseek-flash-latest", { opencodeGoKey: "sk-go" })).toHaveLength(0);
+  });
+
+  test("withoutReasoning desliga o raciocínio só na rota OpenRouter e preserva a trava ZDR", () => {
+    const chain = withoutReasoning(
+      resolvePlatformChain("deepseek-v4-flash", { opencodeGoKey: "sk-go", openrouterKey: "sk-or" })
+    );
+    expect(chain.find((r) => r.providerId === "opencode-go")!.extraBody).toBeUndefined();
+    expect(chain.find((r) => r.providerId === "openrouter")!.extraBody).toMatchObject({
+      reasoning: { enabled: false },
+      provider: { data_collection: "deny", require_parameters: true },
+    });
   });
 
   test("reasoning.effort entra só na rota OpenRouter e preserva a trava ZDR", () => {
