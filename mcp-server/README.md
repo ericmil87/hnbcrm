@@ -32,6 +32,10 @@ npm install -g hnbcrm-mcp
 
 > **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
 
+## v0.80 note (automatic translation, MCP server 0.4.0)
+
+No new tools (still 68). When the organization turns on the optional translation module, `crm_get_messages` returns `translatedText` (the message in the team's language) and `metadata.translation` on each message; `content` is always the text that travelled the channel. `crm_send_message` gains an optional `language`: `"auto"` (translate to the conversation's language), `"off"` (send as written) or a language code such as `es`. Omitted, the conversation's own behaviour applies, so existing integrations are unchanged. `preferredLanguage` on contacts is not exposed through `crm_create_contact`/`crm_update_contact` yet (the REST contacts routes do not accept it).
+
 ## v0.67 note (start a conversation, international phones)
 
 Two new tools: `crm_list_whatsapp_channels` and `crm_start_conversation` (MCP server 0.3.0, 68 tools). List the channels, then start with `channelConfigId` + `phone` (or `contactId`). On a **bridge** number the phone is verified with the gateway and the canonical WhatsApp spelling is adopted (`phoneChanged`); a number without WhatsApp is refused. `content` (first message) works only on bridge — on an official (Meta) number the new conversation is outside the 24h window, so open it and send a template. An opted-out number returns 409 `optOut: true`: set `optOutAck: true` **only after a human confirmed** contacting that person. Needs `inbox: reply` (plus `contacts: edit` / `leads: edit_own` when a contact/lead is created). Phones without a country code get the **organization's default country** (Settings → Organization profile; Brazil +55 when unset); send `+` and the country code for contacts outside it.
@@ -198,8 +202,8 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | Tool | Description |
 |------|-------------|
 | `crm_list_conversations` | List conversations, optionally filtered by lead |
-| `crm_get_messages` | Get all messages in a conversation thread |
-| `crm_send_message` | Send a message or internal note in a conversation |
+| `crm_get_messages` | Get all messages in a conversation thread (with `translatedText` / `metadata.translation` when the translation module is on) |
+| `crm_send_message` | Send a message or internal note in a conversation; optional `language` (`auto`, `off` or a code) for translation |
 | `crm_list_whatsapp_channels` | List the organization's active WhatsApp numbers that can start conversations |
 | `crm_start_conversation` | Start a 1:1 WhatsApp conversation (verifies the number on bridge, reuses or creates the lead) |
 

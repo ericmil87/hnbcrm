@@ -34,6 +34,16 @@ describe("contactForm", () => {
     expect(contactFormToUpdate(form).customFields).toEqual({ vip: true });
   });
 
+  it("idioma preferido só viaja quando muda (vazio limpa)", () => {
+    const original = { preferredLanguage: "es", languageSource: "auto" };
+    const form = contactToForm(original);
+    expect(form.preferredLanguage).toBe("es");
+    expect("preferredLanguage" in contactFormToUpdate(form, original)).toBe(false);
+    expect(contactFormToUpdate({ ...form, preferredLanguage: "en" }, original).preferredLanguage).toBe("en");
+    expect(contactFormToUpdate({ ...form, preferredLanguage: "" }, original).preferredLanguage).toBe("");
+    expect("preferredLanguage" in contactFormToUpdate(contactToForm({}), {})).toBe(false);
+  });
+
   it("countFilled conta só valores preenchidos", () => {
     expect(countFilled(["a", "", null, undefined, "b"])).toBe(2);
   });

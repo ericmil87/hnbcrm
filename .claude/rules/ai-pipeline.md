@@ -77,3 +77,6 @@ Rules distilled from incidents in production. Reasoning and timelines: `docs/arc
 - Prompt/persona edits via `opsAgentProfile.internalSetAgentProfileText` (UTF-16 length cap, audit with before/after). Curated goldens (`CURATED_GOLDENS`, 7) protect: audio, receipt image + D13, PDF, "receipt arrived → no follow-up", "customer silent → gentle resume", Instagram and Messenger plain text (channel comes from the tag via `goldenTransport`, no schema field). Re-run them when touching prompts.
 - `simulateAttendant` accepts `audio`/`image`/`file` transcript items, `followUp`, `simulatedNow`, `transport` (`instagram`/`messenger` = plain-text exit + channel name in the default persona); it must mirror production guards (output guard, no plain-text send in follow-up). `agentEvals.replayEval` runs on the live clock (known drift for date goldens).
 - Contexto do Copiloto é sempre montado no servidor (ex.: `purpose:"setup"` + `buildSetupContextBlock`); o cliente só manda `purpose`, nunca texto de contexto, e o bloco nunca leva telefone, e-mail nem id.
+
+## Tradução
+- Atendente com `agentProfile.language:"auto"` responde no idioma do lead; a tradução de exibição para a equipe é assíncrona (`metadata.translation.role:"display"`) e nunca atrasa nem altera o envio. A rota LLM de tradução é só fallback do LibreTranslate e respeita `orgAiActive`.

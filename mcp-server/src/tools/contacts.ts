@@ -19,6 +19,11 @@ const extendedContactFields = {
   instagramUrl: z.string().optional().describe("Instagram profile URL"),
   facebookUrl: z.string().optional().describe("Facebook profile URL"),
   twitterUrl: z.string().optional().describe("Twitter/X profile URL"),
+  preferredLanguage: z
+    .string()
+    .regex(/^([a-z]{2,3}(-[A-Za-z]{2,4})?)?$/, "Use a language code such as es, en, pt-BR (empty string clears)")
+    .optional()
+    .describe('Language the contact writes and reads (translation module, v0.80): es, en, pt-BR... Pass "" on update to clear'),
   city: z.string().optional().describe("City"),
   state: z.string().optional().describe("State or province"),
   country: z.string().optional().describe("Country"),

@@ -1,3 +1,4 @@
+import { getTranslationMeta, type TranslationMeta } from "@/lib/translationRules";
 // Shared types + media helpers for the Inbox message rendering.
 // The backend `getMessages` query returns `v.any()`, so we describe the
 // fields we actually consume here rather than relying on generated types.
@@ -22,6 +23,12 @@ export interface InboxMessage {
   deliveryStatus?: "sent" | "delivered" | "read" | "failed";
   /** Espelho pesquisável da leitura da imagem (campo de topo, indexado). */
   imageDescription?: string;
+  /**
+   * Tradução automática (v0.80): SEMPRE a versão na língua da equipe (recebida:
+   * a tradução; enviada: o que o humano digitou; resposta da IA: o pt-BR dela).
+   * `content` continua sendo o texto que trafegou no canal.
+   */
+  translatedText?: string;
   metadata?: Record<string, any>;
   attachmentFiles?: InboxAttachmentFile[];
   sender?: { name?: string | null } | null;
@@ -202,6 +209,13 @@ export function getReactions(message: InboxMessage): ReactionMeta[] {
   return r.filter(
     (x): x is ReactionMeta => x && typeof x === "object" && typeof x.emoji === "string" && x.emoji.length > 0
   );
+}
+
+export type { TranslationMeta } from "@/lib/translationRules";
+
+/** Estado da tradução desta mensagem (`metadata.translation`), ou null. */
+export function getTranslation(message: InboxMessage): TranslationMeta | null {
+  return getTranslationMeta(message);
 }
 
 export function getTranscription(message: InboxMessage): TranscriptionMeta | null {

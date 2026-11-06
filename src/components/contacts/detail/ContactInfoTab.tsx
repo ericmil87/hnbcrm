@@ -6,6 +6,7 @@ import { CustomFieldsRenderer } from "@/components/CustomFieldsRenderer";
 import { countFilled, PREFERRED_TIME_LABELS, type ContactForm } from "@/lib/contactForm";
 import { EditField, EditSelect, ViewField, type EnrichMeta } from "./ContactFields";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { languageDisplayName, languageSelectOptions } from "@/lib/translationRules";
 
 type FieldDefinitions = React.ComponentProps<typeof CustomFieldsRenderer>["fieldDefinitions"];
 
@@ -19,6 +20,7 @@ const DEVICES = [
 ];
 
 const numberText = (n: number | null | undefined) => (n != null ? String(n) : undefined);
+const LANGUAGE_OPTIONS = languageSelectOptions();
 
 interface ContactInfoTabProps {
   /** Contato como veio de `getContactWithLeads` (retorno solto). */
@@ -61,7 +63,7 @@ export function ContactInfoTab({
     contact.city, contact.state, contact.country,
   ];
   const originFields = [
-    contact.preferredContactTime, contact.deviceType, contact.utmSource, contact.acquisitionChannel,
+    contact.preferredContactTime, contact.deviceType, contact.preferredLanguage, contact.utmSource, contact.acquisitionChannel,
     numberText(contact.instagramFollowers), numberText(contact.linkedinConnections), numberText(contact.socialInfluenceScore),
   ];
   const notesFields = [contact.bio, (contact.tags ?? []).length > 0 ? "tags" : undefined];
@@ -196,6 +198,14 @@ export function ContactInfoTab({
               value={PREFERRED_TIME_LABELS[contact.preferredContactTime as string]}
               enrichMeta={meta("preferredContactTime")}
             />
+            <ViewField
+              label="Idioma preferido"
+              value={
+                contact.preferredLanguage
+                  ? `${languageDisplayName(contact.preferredLanguage)}${contact.languageSource === "auto" ? " (detectado)" : ""}`
+                  : undefined
+              }
+            />
             <ViewField label="Seguidores no Instagram" value={numberText(contact.instagramFollowers)} enrichMeta={meta("instagramFollowers")} />
             <ViewField label="Conexões no LinkedIn" value={numberText(contact.linkedinConnections)} enrichMeta={meta("linkedinConnections")} />
             <ViewField label="Pontuação de influência (0 a 100)" value={numberText(contact.socialInfluenceScore)} enrichMeta={meta("socialInfluenceScore")} />
@@ -206,6 +216,13 @@ export function ContactInfoTab({
             <EditField label="Campanha de anúncio (UTM)" value={form.utmSource} onChange={edit("utmSource")} />
             <EditSelect label="Dispositivo" value={form.deviceType} onChange={edit("deviceType")} options={DEVICES} />
             <EditSelect label="Horário preferido" value={form.preferredContactTime} onChange={edit("preferredContactTime")} options={PREFERRED_TIMES} />
+            <EditSelect
+              label={contact.languageSource === "auto" && form.preferredLanguage === contact.preferredLanguage ? "Idioma preferido (detectado)" : "Idioma preferido"}
+              value={form.preferredLanguage}
+              onChange={edit("preferredLanguage")}
+              options={LANGUAGE_OPTIONS}
+              emptyLabel="Não definido"
+            />
             <EditField label="Seguidores no Instagram" value={form.instagramFollowers} onChange={edit("instagramFollowers")} type="number" />
             <EditField label="Conexões no LinkedIn" value={form.linkedinConnections} onChange={edit("linkedinConnections")} type="number" />
             <EditField label="Pontuação de influência (0 a 100)" value={form.socialInfluenceScore} onChange={edit("socialInfluenceScore")} type="number" />

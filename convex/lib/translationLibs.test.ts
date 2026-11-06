@@ -1,0 +1,379 @@
+import { describe, expect, it } from "vitest";
+import { ConvexError } from "convex/values";
+import {
+  availableEngines,
+  resolveTranslationSettings,
+  sanitizeGlossary,
+  shouldTranslateDisplay,
+  shouldTranslateInbound,
+  shouldTranslateOutbound,
+  conversationHasForeignLanguage,
+  editedDraftNeedsTranslation,
+  isTeamEditedAiDraft,
+  translatableText,
+  translationEnabledForOrg,
+} from "./translationGate";
+import {
+  effectiveSourceLanguage,
+  nextConversationTranslation,
+  firstDetectionFixesLanguage,
+  resolveTargetLanguage,
+} from "./translationLang";
+import { checkTranslation, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
+import { outboundTranslationInsertFields, shouldScheduleMessageTranslation } from "./translationOps";
+import { buildTranslationSystemPrompt, libreTranslateUrlProblem, translationMaxTokens } from "./translationCore";
+import { fixedAgentLanguage } from "./languages";
+
+const aiOn = { enabled: true, autoAssign: false, handoffThreshold: 0.5, lgpdAck: { acceptedAt: 1, acceptedBy: "m" as any } };
+function org(opts: { module?: boolean; ai?: boolean; translation?: Record<string, unknown> } = {}): any {
+  return {
+    settings: {
+      timezone: "America/Sao_Paulo",
+      currency: "BRL",
+      ...(opts.module !== undefined ? { modules: { translation: opts.module } } : {}),
+      ...(opts.ai ? { aiConfig: aiOn } : {}),
+      ...(opts.translation ? { translation: opts.translation } : {}),
+    },
+  };
+}
+const conv = (extra: Record<string, unknown> = {}): any => ({ channel: "whatsapp", ...extra });
+const msg = (extra: Record<string, unknown> = {}): any => ({
+  direction: "inbound",
+  senderType: "contact",
+  isInternal: false,
+  contentType: "text",
+  content: "Hola, quiero saber el precio del apartamento",
+  ...extra,
+});
+const outMsg = (extra: Record<string, unknown> = {}): any =>
+  msg({ direction: "outbound", senderType: "human", content: "Olá, o valor é R$ 500 mil", ...extra });
+
+describe("translationGate", () => {
+  it("módulo ausente = desligado", () => {
+    expect(translationEnabledForOrg(org())).toBe(false);
+    expect(translationEnabledForOrg(org({ module: false }))).toBe(false);
+    expect(translationEnabledForOrg(org({ module: true }))).toBe(true);
+  });
+
+  it("defaults das configurações", () => {
+    expect(resolveTranslationSettings(org())).toEqual({
+      provider: "auto",
+      teamLanguage: "pt-BR",
+      inboundMode: "auto",
+      outboundMode: "quick_review",
+      skipWhenSameLanguage: true,
+      tone: "neutral",
+      glossary: [],
+    });
+  });
+
+  it("glossário: corta, dedup e teto", () => {
+    expect(sanitizeGlossary(["  Mar Azul ", "mar azul", "", "X"])).toEqual(["Mar Azul", "X"]);
+    expect(sanitizeGlossary(Array.from({ length: 150 }, (_, i) => `t${i}`))).toHaveLength(100);
+  });
+
+  it("cadeia de provedores: self-hosted primeiro, LLM só com IA ativa", () => {
+    const lt = { libretranslateUrl: "http://lt:5000" };
+    expect(availableEngines(org({ module: true, ai: true }), lt)).toEqual(["libretranslate", "llm"]);
+    expect(availableEngines(org({ module: true }), lt)).toEqual(["libretranslate"]);
+    expect(availableEngines(org({ module: true, ai: true }), {})).toEqual(["llm"]);
+    expect(availableEngines(org({ module: true }), {})).toEqual([]);
+    expect(availableEngines(org({ module: true, ai: true, translation: { provider: "llm" } }), lt)).toEqual(["llm"]);
+    expect(
+      availableEngines(org({ module: true, ai: true, translation: { provider: "libretranslate" } }), lt)
+    ).toEqual(["libretranslate"]);
+  });
+
+  it("texto traduzível: texto e legenda, nunca placeholder nem arquivo", () => {
+    expect(translatableText(msg())).toBeTruthy();
+    expect(translatableText(msg({ contentType: "image", content: "[imagem]" }))).toBeUndefined();
+    expect(translatableText(msg({ contentType: "image", content: "Mira esta foto por favor" }))).toBeTruthy();
+    expect(translatableText(msg({ contentType: "file", content: "contrato.pdf" }))).toBeUndefined();
+    expect(translatableText(msg({ contentType: "audio", content: "[áudio]" }))).toBeUndefined();
+  });
+
+  it("inbound: recusas", () => {
+    const o = org({ module: true });
+    expect(shouldTranslateInbound({ org: org(), conversation: conv(), message: msg() })).toEqual({ ok: false, reason: "modulo_desligado" });
+    expect(shouldTranslateInbound({ org: o, conversation: conv({ kind: "group" }), message: msg() }).ok).toBe(false);
+    expect(shouldTranslateInbound({ org: o, conversation: conv(), message: msg({ isInternal: true }) }).ok).toBe(false);
+    expect(shouldTranslateInbound({ org: o, conversation: conv({ translation: { mode: "off" } }), message: msg() }).ok).toBe(false);
+    expect(shouldTranslateInbound({ org: o, conversation: conv(), message: msg({ metadata: { deletedByCustomer: true } }) }).ok).toBe(false);
+    expect(
+      shouldTranslateInbound({ org: o, conversation: conv(), message: msg({ metadata: { translation: { status: "done" } } }) }).ok
+    ).toBe(false);
+    expect(shouldTranslateInbound({ org: o, conversation: conv(), message: msg({ direction: "outbound" }) }).ok).toBe(false);
+    expect(shouldTranslateInbound({ org: o, conversation: conv(), message: msg() })).toEqual({ ok: true });
+  });
+
+  it("inbound em modo ask aguarda a escolha da conversa", () => {
+    const o = org({ module: true, translation: { inboundMode: "ask" } });
+    expect(shouldTranslateInbound({ org: o, conversation: conv(), message: msg() })).toEqual({ ok: false, reason: "aguardando_escolha" });
+    expect(shouldTranslateInbound({ org: o, conversation: conv({ translation: { mode: "auto" } }), message: msg() }).ok).toBe(true);
+  });
+
+  it("display: só resposta da IA", () => {
+    const o = org({ module: true });
+    expect(shouldTranslateDisplay({ org: o, conversation: conv(), message: outMsg({ senderType: "ai" }) }).ok).toBe(true);
+    expect(shouldTranslateDisplay({ org: o, conversation: conv(), message: outMsg() }).ok).toBe(false);
+  });
+
+  it("outbound: recusas e caminho feliz", () => {
+    const o = org({ module: true });
+    const ok = (message: any, targetLang: string | undefined = "es", c = conv()) =>
+      shouldTranslateOutbound({ org: o, conversation: c, message, targetLang });
+    expect(ok(outMsg())).toEqual({ ok: true });
+    expect(ok(outMsg({ senderType: "ai" })).ok).toBe(false);
+    expect(ok(outMsg({ isInternal: true, direction: "internal" })).ok).toBe(false);
+    expect(ok(outMsg({ metadata: { template: { name: "x" } } })).ok).toBe(false);
+    expect(ok(outMsg({ metadata: { forwarded: true } })).ok).toBe(false);
+    expect(ok(outMsg({ metadata: { campaign: { campaignId: "c" } } })).ok).toBe(false);
+    expect(ok(outMsg({ metadata: { inboundWelcome: { leadId: "l" } } })).ok).toBe(false);
+    expect(ok(outMsg({ metadata: { translation: { status: "done" } } })).ok).toBe(false);
+    expect(ok(outMsg({ contentType: "audio", content: "" })).ok).toBe(false);
+    expect(ok(outMsg(), "pt-PT").ok).toBe(false); // mesma língua da equipe
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: outMsg(), targetLang: undefined }).ok).toBe(false);
+    expect(ok(outMsg(), "es", conv({ kind: "group" })).ok).toBe(false);
+    expect(shouldTranslateOutbound({ org: org(), conversation: conv(), message: outMsg(), targetLang: "es" }).ok).toBe(false);
+  });
+});
+
+describe("translationLang", () => {
+  it("precedência do idioma de destino", () => {
+    expect(resolveTargetLanguage({ conversation: { lang: "fr", mode: "manual" }, contactPreferredLanguage: "es" })).toEqual({ lang: "fr", source: "manual", hintOnly: false });
+    expect(resolveTargetLanguage({ conversation: { lang: "en", source: "auto" }, contactPreferredLanguage: "es" }).lang).toBe("en");
+    expect(resolveTargetLanguage({ contactPreferredLanguage: "es", lastInboundLang: "en" }).source).toBe("contact");
+    expect(resolveTargetLanguage({ lastInboundLang: "en" }).source).toBe("last_inbound");
+    expect(resolveTargetLanguage({ phone: "34612345678" })).toEqual({ lang: "es", source: "dial_code", hintOnly: true });
+    expect(resolveTargetLanguage({})).toEqual({ source: "none", hintOnly: false });
+    expect(resolveTargetLanguage({ conversation: { lang: "es", mode: "off" } })).toEqual({ source: "off", hintOnly: false });
+  });
+
+  it("1ª detecção só fixa o idioma com evidência (review #11)", () => {
+    const fixed = { lang: "es", source: "auto", detectedAt: 10, divergentStreak: 0 };
+    // Forte: confiança ≥ 0,85 em texto com ≥ 40 letras.
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.9 }, 10, { alphaChars: 45 })).toEqual(fixed);
+    // Concordância com o contato ou com o DDI.
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.7 }, 10, { contactPreferredLanguage: "es" })).toEqual(fixed);
+    expect(nextConversationTranslation(undefined, { lang: "es", confidence: 0.7 }, 10, { dialHint: "es" })).toEqual(fixed);
+    // Sem evidência: só candidato; a 2ª consecutiva no mesmo idioma fixa.
+    const one = nextConversationTranslation(undefined, { lang: "es", confidence: 0.9 }, 10, { alphaChars: 25 })!;
+    expect(one).toEqual({ candidateLang: "es", divergentStreak: 1 });
+    expect(nextConversationTranslation(one, { lang: "es", confidence: 0.7 }, 11)).toEqual({ ...fixed, detectedAt: 11 });
+    // Candidato trocado recomeça a contagem; DDI de outro idioma não ajuda.
+    expect(nextConversationTranslation(one, { lang: "en", confidence: 0.7 }, 11, { dialHint: "es" })).toEqual({
+      candidateLang: "en",
+      divergentStreak: 1,
+    });
+    expect(firstDetectionFixesLanguage({ lang: "es", confidence: 0.84 }, { alphaChars: 100 })).toBe(false);
+    expect(firstDetectionFixesLanguage({ lang: "es", confidence: 0.95 }, { alphaChars: 39 })).toBe(false);
+  });
+
+  it("curta / pouco confiante não muda nada", () => {
+    expect(nextConversationTranslation({ lang: "es" }, undefined, 1)).toBeUndefined();
+    expect(nextConversationTranslation({ lang: "es" }, { lang: "en", confidence: 0.4 }, 1)).toBeUndefined();
+    expect(nextConversationTranslation({ lang: "es", divergentStreak: 0 }, { lang: "es", confidence: 0.9 }, 1)).toBeUndefined();
+  });
+
+  it("troca só com 2 divergentes consecutivas", () => {
+    const one = nextConversationTranslation({ lang: "es", source: "auto" }, { lang: "en", confidence: 0.9 }, 1)!;
+    expect(one).toMatchObject({ lang: "es", divergentStreak: 1, candidateLang: "en" });
+    const two = nextConversationTranslation(one, { lang: "en", confidence: 0.9 }, 2)!;
+    expect(two).toMatchObject({ lang: "en", divergentStreak: 0, detectedAt: 2 });
+    expect(two.candidateLang).toBeUndefined();
+    // divergente interrompida por uma na língua atual zera a contagem
+    const reset = nextConversationTranslation(one, { lang: "es", confidence: 0.9 }, 3)!;
+    expect(reset).toMatchObject({ lang: "es", divergentStreak: 0 });
+  });
+
+  it("manual e off nunca são sobrescritos pela detecção", () => {
+    expect(nextConversationTranslation({ lang: "fr", mode: "manual", source: "manual" }, { lang: "en", confidence: 1 }, 1)).toBeUndefined();
+    expect(nextConversationTranslation({ mode: "off" }, { lang: "en", confidence: 1 }, 1)).toBeUndefined();
+  });
+
+  it("idioma de origem efetivo: detecção > conversa > dica", () => {
+    expect(effectiveSourceLanguage({ detected: { lang: "en", confidence: 0.9 }, conversationLang: "es" })).toBe("en");
+    expect(effectiveSourceLanguage({ detected: { lang: "en", confidence: 0.3 }, conversationLang: "es" })).toBe("es");
+    expect(effectiveSourceLanguage({ hint: "fr" })).toBe("fr");
+    expect(effectiveSourceLanguage({})).toBeUndefined();
+  });
+});
+
+describe("translationText", () => {
+  it("protege e restaura URL, e-mail, telefone, menção e glossário", () => {
+    const text = "Veja https://ex.com/a_b e fale com joao@ex.com ou +55 11 99999-8888, @maria. Residencial Mar Azul";
+    const p = protectText(text, ["Residencial Mar Azul"]);
+    expect(p.text).not.toContain("https://");
+    expect(p.text).not.toContain("joao@ex.com");
+    expect(p.text).not.toContain("99999");
+    expect(p.text).not.toContain("Mar Azul");
+    expect(p.text).toContain("⟦U1⟧");
+    expect(p.text).toContain("⟦G1⟧");
+    const back = restoreText(p.text, p.tokens);
+    expect(back).toEqual({ ok: true, text });
+  });
+
+  it("restauração falha se um token sumir ou for inventado", () => {
+    const p = protectText("link https://ex.com", []);
+    expect(restoreText("link", p.tokens).ok).toBe(false);
+    expect(restoreText("link ⟦U1⟧ ⟦U9⟧", p.tokens).ok).toBe(false);
+    expect(restoreText("enlace ⟦ U1 ⟧", p.tokens)).toEqual({ ok: true, text: "enlace https://ex.com" });
+  });
+
+  it("guard aceita tradução fiel", () => {
+    expect(checkTranslation("O valor é *R$ 500* 👍 https://ex.com", "El valor es *R$ 500* 👍 https://ex.com")).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["links", "Veja https://ex.com agora mesmo", "Mira agora mismo"],
+    ["números", "São 3 quartos e 2 banheiros", "Son tres cuartos y dos baños"],
+    ["emojis", "Obrigado pela visita 🙏🙏", "Gracias por la visita 🙏"],
+    ["marcas", "Isso é *muito* importante", "Esto es *muy importante"],
+    ["tamanho", "Olá, tudo bem com você hoje?", "Hola"],
+    ["vazio", "Olá, tudo bem?", "  "],
+  ])("guard reprova %s", (_k, a, b) => {
+    expect(checkTranslation(a, b).ok).toBe(false);
+  });
+
+  it("parser do JSON do modelo", () => {
+    expect(parseLlmTranslationReply('{"lang":"es","text":"Hola"}')).toEqual({ lang: "es", text: "Hola" });
+    expect(parseLlmTranslationReply('```json\n{"lang":"en","text":"Hi"}\n```')).toEqual({ lang: "en", text: "Hi" });
+    expect(parseLlmTranslationReply('Claro! {"text":"Oi"}')).toEqual({ text: "Oi" });
+    expect(parseLlmTranslationReply("Hola")).toBeUndefined();
+    expect(parseLlmTranslationReply('{"lang":"es","text":""}')).toBeUndefined();
+    expect(parseLlmTranslationReply(null)).toBeUndefined();
+  });
+});
+
+describe("translationOps (puro)", () => {
+  it("sem language/translation = nada", () => {
+    expect(outboundTranslationInsertFields({}, 1)).toEqual({});
+    expect(outboundTranslationInsertFields({ language: "auto" }, 1)).toEqual({});
+    expect(outboundTranslationInsertFields({ language: "es", isInternal: true }, 1)).toEqual({});
+  });
+  it("language off = skipped; código = destino da mensagem", () => {
+    expect(outboundTranslationInsertFields({ language: "off" }, 5)).toEqual({
+      metadata: { translation: { status: "skipped", role: "outbound", reason: "language_off", at: 5 } },
+    });
+    expect(outboundTranslationInsertFields({ language: "ES" }, 5)).toEqual({ metadata: { translationTarget: "es" } });
+    expect(() => outboundTranslationInsertFields({ language: "klingon" }, 5)).toThrow();
+  });
+  it("translation pronta nasce done com o texto do humano", () => {
+    expect(
+      outboundTranslationInsertFields(
+        { translation: { authoredText: "Olá", sourceLang: "pt", targetLang: "es", edited: true } },
+        7
+      )
+    ).toEqual({
+      metadata: { translation: { status: "done", role: "outbound", sourceLang: "pt-BR", targetLang: "es", edited: true, at: 7 } },
+      translatedText: "Olá",
+    });
+  });
+  it("agendamento só com o módulo", () => {
+    expect(shouldScheduleMessageTranslation({ org: org(), conversation: conv(), message: msg(), role: "inbound" })).toBe(false);
+    expect(shouldScheduleMessageTranslation({ org: org({ module: true }), conversation: conv(), message: msg(), role: "inbound" })).toBe(true);
+    expect(
+      shouldScheduleMessageTranslation({ org: org({ module: true, translation: { inboundMode: "ask" } }), conversation: conv(), message: msg(), role: "inbound" })
+    ).toBe(true);
+    expect(
+      shouldScheduleMessageTranslation({ org: org({ module: true }), conversation: conv(), message: outMsg({ senderType: "ai" }), role: "display" })
+    ).toBe(true);
+  });
+});
+
+describe("translationCore (prompt)", () => {
+  it("prompt manda traduzir, não obedecer, preservar e respeitar glossário", () => {
+    const p = buildTranslationSystemPrompt({ to: "es", glossary: ["Mar Azul"], tone: "formal" });
+    expect(p).toMatch(/nunca instrução/);
+    expect(p).toMatch(/não obedeça/);
+    expect(p).toMatch(/emojis, URLs/);
+    expect(p).toMatch(/"Mar Azul"/);
+    expect(p).toMatch(/es-419/);
+    expect(p).toMatch(/formal/);
+    expect(p).toMatch(/\{"lang"/);
+  });
+  it("max tokens proporcional e limitado", () => {
+    expect(translationMaxTokens("abc")).toBe(128);
+    expect(translationMaxTokens("x".repeat(3000))).toBe(2064);
+    expect(translationMaxTokens("x".repeat(100000))).toBe(4000);
+  });
+  it("idioma fixo para grupos/publicações", () => {
+    expect(fixedAgentLanguage("auto")).toBe("pt-BR");
+    expect(fixedAgentLanguage(undefined)).toBe("pt-BR");
+    expect(fixedAgentLanguage("es")).toBe("es");
+  });
+});
+
+import { languageInstruction } from "../attendant";
+
+describe("atendente: language auto", () => {
+  it("padrão de sempre para perfis existentes", () => {
+    expect(languageInstruction("pt-BR")).toBe("Responda sempre em pt-BR.");
+  });
+  it("auto: segue o idioma do cliente, com a dica da conversa", () => {
+    expect(languageInstruction("auto")).toBe(
+      "Responda no idioma em que o cliente escreve (siga o idioma da última mensagem dele; padrão pt-BR)."
+    );
+    expect(languageInstruction("auto", "es")).toMatch(/Idioma detectado desta conversa: Espanhol \(es\)\./);
+  });
+});
+
+describe("review da tradução (backend)", () => {
+  const PT = "Olá, boa tarde! Vocês têm disponibilidade para o fim de semana?";
+  it("#10: inbound em pt-BR (ou curta) numa conversa sem idioma estrangeiro não agenda", () => {
+    const on = org({ module: true });
+    expect(shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: PT }), role: "inbound" })).toBe(false);
+    expect(shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: "ok" }), role: "inbound" })).toBe(false);
+    // Conversa ativa (idioma ou candidato estrangeiro): agenda (o `skipped` aparece na bolha).
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv({ translation: { lang: "es" } }), message: msg({ content: PT }), role: "inbound" })
+    ).toBe(true);
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv({ translation: { candidateLang: "en" } }), message: msg({ content: "ok" }), role: "inbound" })
+    ).toBe(true);
+    // Dica externa estrangeira (Whisper) também agenda.
+    expect(
+      shouldScheduleMessageTranslation({ org: on, conversation: conv(), message: msg({ content: "ok" }), role: "inbound", hintLang: "en" })
+    ).toBe(true);
+    expect(conversationHasForeignLanguage(conv({ translation: { lang: "pt-BR" } }), "pt-BR")).toBe(false);
+    expect(conversationHasForeignLanguage(conv({ translation: { lang: "es", mode: "off" } }), "pt-BR")).toBe(false);
+  });
+
+  it("#1: legenda de arquivo conta na saída; texto longo só recusa quando a tradução é devida", () => {
+    expect(translatableText(msg({ contentType: "file", content: "Segue o contrato assinado" }), { fileCaption: true })).toBeTruthy();
+    expect(translatableText(msg({ contentType: "file", content: "Segue o contrato assinado" }))).toBeUndefined();
+    const long = outMsg({ content: "Olá ".repeat(1100) });
+    const o = org({ module: true });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: "es" })).toEqual({ ok: false, reason: "texto_longo" });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: "pt-BR" })).toEqual({ ok: false, reason: "mesma_lingua" });
+    expect(shouldTranslateOutbound({ org: o, conversation: conv(), message: long, targetLang: undefined })).toEqual({ ok: false, reason: "sem_idioma" });
+  });
+
+  it("#3: rascunho da IA editado em pt-BR vira elegível; sem a marca segue recusado", () => {
+    const o = org({ module: true });
+    const es = conv({ translation: { lang: "es" } });
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: PT })).toBe(true);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: "Ok!" })).toBe(true);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: es, finalText: "Hola, el apartamento cuesta quinientos mil reales" })).toBe(false);
+    expect(editedDraftNeedsTranslation({ org: o, conversation: conv(), finalText: PT })).toBe(false);
+    expect(editedDraftNeedsTranslation({ org: org(), conversation: es, finalText: PT })).toBe(false);
+    const ai = outMsg({ senderType: "ai" });
+    expect(shouldTranslateOutbound({ org: o, conversation: es, message: ai, targetLang: "es" }).ok).toBe(false);
+    const edited = outMsg({ senderType: "ai", metadata: { aiDraft: { edited: true, editedInTeamLanguage: true } } });
+    expect(isTeamEditedAiDraft(edited)).toBe(true);
+    expect(shouldTranslateOutbound({ org: o, conversation: es, message: edited, targetLang: "es" }).ok).toBe(true);
+  });
+
+  it("#14: LibreTranslate só por https (http só em localhost)", () => {
+    expect(libreTranslateUrlProblem("https://lt.hnbcrm.com")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://localhost:5000")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://127.0.0.1:5000")).toBeUndefined();
+    expect(libreTranslateUrlProblem("http://10.0.0.5:5000")).toBe("URL do LibreTranslate precisa ser https");
+    expect(libreTranslateUrlProblem("ftp://lt")).toBe("URL do LibreTranslate precisa ser https");
+    expect(libreTranslateUrlProblem("nada")).toBe("URL do LibreTranslate inválida");
+  });
+
+  it("#8: idioma inválido no insert é ConvexError (REST responde 400)", () => {
+    expect(() => outboundTranslationInsertFields({ language: "klingon" }, 5)).toThrow(ConvexError);
+  });
+});

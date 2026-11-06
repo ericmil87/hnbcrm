@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import {
@@ -23,6 +23,10 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
 import { Avatar } from "@/components/ui/Avatar";
+import { Select } from "@/components/ui/Select";
+import { useTranslationSettings } from "@/hooks/useTranslationSettings";
+import { languageDisplayName, languageSelectOptions } from "@/lib/translationRules";
+import { languageHintFromDialCode, sameLanguage } from "../../../convex/lib/languages";
 import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../../convex/lib/orgPhone";
 import { formatPhoneForDisplay, looksLikePhone } from "../../../convex/lib/phone";
 import { NOT_ON_WHATSAPP_ERROR, OPT_OUT_ERROR_PREFIX } from "../../../convex/lib/startConversation";
@@ -103,6 +107,12 @@ export function NewConversationModal({
   const checkSeq = useRef(0);
   const startConversation = useAction(api.startConversation.startConversation);
   const checkWhatsappNumber = useAction(api.startConversation.checkWhatsappNumber);
+  const setConversationLanguage = useMutation(api.translation.setConversationLanguage);
+  const sendMessage = useMutation(api.conversations.sendMessage);
+  const translationSettings = useTranslationSettings(open ? organizationId : null);
+  // Idioma inicial (tradução automática): "" = deixar a conversa detectar.
+  const [language, setLanguage] = useState("");
+  const [languageTouched, setLanguageTouched] = useState(false);
 
   // Cada abertura começa do zero (ou do contato pedido).
   useEffect(() => {
@@ -121,6 +131,8 @@ export function NewConversationModal({
     setError(null);
     setSubmitting(false);
     setNumberCheck(null);
+    setLanguage("");
+    setLanguageTouched(false);
   }, [open, initialContactId]);
 
   const orgs = useQuery(api.organizations.getUserOrganizations, open ? {} : "skip") as any[] | undefined;
@@ -222,6 +234,22 @@ export function NewConversationModal({
   }, [contactId, debouncedTerm]);
 
   const optedOut = !!preview?.optedOut || forceOptOut;
+
+  // Dica de idioma pelo DDI (só sugestão: aparece escrita e pode ser trocada).
+  const contactPreferredLanguage: string | undefined = (preview?.contact as { preferredLanguage?: string } | null | undefined)
+    ?.preferredLanguage;
+  const dialHint = languageHintFromDialCode(preview?.phone ?? undefined);
+  const languageSuggestion = contactPreferredLanguage ?? dialHint;
+  const suggestionForeign =
+    !!languageSuggestion && !sameLanguage(languageSuggestion, translationSettings.teamLanguage);
+  useEffect(() => {
+    if (languageTouched) return;
+    setLanguage(suggestionForeign && languageSuggestion ? languageSuggestion : "");
+  }, [languageSuggestion, suggestionForeign, languageTouched]);
+  const chosenLanguage =
+    translationSettings.moduleEnabled && language && !sameLanguage(language, translationSettings.teamLanguage)
+      ? language
+      : null;
   const existingConversation = preview?.conversation ?? null;
 
   const resolvedStage = useMemo(() => {
@@ -267,6 +295,9 @@ export function NewConversationModal({
     setSubmitting(true);
     setError(null);
     try {
+      // Com idioma escolhido, a 1ª mensagem sai pelo envio normal (que traduz)
+      // depois de fixar o idioma; com opt-out ela segue no caminho de sempre.
+      const translateFirst = !!chosenLanguage && !isMeta && !!content.trim() && !optedOut;
       const res = await startConversation({
         organizationId,
         channelConfigId: channel._id,
@@ -276,11 +307,27 @@ export function NewConversationModal({
         ...(!preview.contact && lastName.trim() ? { lastName: lastName.trim() } : {}),
         ...(needsPipeline && effectiveBoardId ? { boardId: effectiveBoardId } : {}),
         ...(needsPipeline && resolvedStage ? { stageId: resolvedStage.id } : {}),
-        ...(!isMeta && content.trim() ? { content: content.trim() } : {}),
+        ...(!isMeta && content.trim() && !translateFirst ? { content: content.trim() } : {}),
         ...(optedOut && optOutAck ? { optOutAck: true } : {}),
       });
+      let sentTranslated = false;
+      if (chosenLanguage) {
+        try {
+          await setConversationLanguage({ conversationId: res.conversationId, lang: chosenLanguage, mode: "manual" });
+          if (translateFirst) {
+            await sendMessage({ conversationId: res.conversationId, content: content.trim(), contentType: "text" });
+            sentTranslated = true;
+          }
+        } catch (e) {
+          toast.error(mutationErrorMessage(e, "Conversa aberta, mas não foi possível definir o idioma."));
+        }
+      }
       toast.success(
-        res.createdConversation ? "Conversa iniciada" : res.messageId ? "Mensagem enviada" : "Conversa aberta",
+        res.createdConversation
+          ? "Conversa iniciada"
+          : res.messageId || sentTranslated
+            ? "Mensagem enviada"
+            : "Conversa aberta",
         res.phoneChanged ? { description: `Número do contato atualizado para ${formatPhoneForDisplay(res.canonicalPhone)}` } : undefined
       );
       onStarted(res.conversationId);
@@ -631,6 +678,30 @@ export function NewConversationModal({
                 )}
               </div>
             ) : null}
+          </div>
+        )}
+
+        {/* 3b. Idioma (tradução automática) */}
+        {translationSettings.moduleEnabled && channel && preview?.phoneValid && !isMeta && (
+          <div>
+            <Select
+              label="Idioma da conversa (opcional)"
+              value={language}
+              onValueChange={(v) => {
+                setLanguage(v);
+                setLanguageTouched(true);
+              }}
+              options={[
+                { value: "", label: "Detectar pela resposta do lead" },
+                ...languageSelectOptions().filter((o) => !sameLanguage(o.value, translationSettings.teamLanguage)),
+              ]}
+            />
+            {suggestionForeign && languageSuggestion && (
+              <p className="mt-1.5 text-xs text-text-muted">
+                Sugerido: {languageDisplayName(languageSuggestion, { lower: true })},{" "}
+                {contactPreferredLanguage ? "pelo contato" : "pelo número"}. A primeira mensagem sai traduzida.
+              </p>
+            )}
           </div>
         )}
 

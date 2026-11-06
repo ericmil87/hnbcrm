@@ -4,6 +4,19 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Tradução automática
+
+- Nova opção em **Configurações → Tradução automática**: as mensagens de clientes que escrevem em outro idioma aparecem também em português, e o que você responde sai no idioma do cliente. O recurso é opcional, vem desligado e só um administrador liga.
+- Cada mensagem recebida mostra a tradução como texto principal, com o original logo abaixo. Se a tradução ainda não chegou, aparece "Traduzindo…", e se falhar há um botão para tentar de novo.
+- O idioma de cada conversa é detectado sozinho e pode ser corrigido pelo seletor de idioma no campo de resposta. Também dá para definir o **Idioma preferido** de um contato.
+- Ao responder em português numa conversa em outro idioma, a mensagem sai traduzida e a bolha mostra o que foi enviado. Se a tradução falhar, nada é enviado sozinho: você escolhe entre tentar de novo e **Enviar sem traduzir**.
+- O Atendente IA pode responder no idioma do cliente, e a equipe lê a resposta em português.
+- Enquanto você digita, uma prévia mostra como a mensagem vai sair no idioma do cliente; Enter envia a versão traduzida. Em **Configurações → Tradução automática** dá para escolher entre **Revisar rápido** (padrão), **Enviar direto** e **Revisar antes de enviar**. Dá para editar a tradução antes de enviar ou mandar sem traduzir.
+- Mensagens agendadas são traduzidas na hora de agendar, e o rascunho do Atendente IA numa conversa em outro idioma ganha o botão **Ver em pt-BR**. Mensagens curtas ou de idioma duvidoso não são traduzidas às cegas: aparece "Idioma incerto" com a opção de traduzir.
+- A tradução usa primeiro um serviço hospedado na infraestrutura da própria empresa e, se ele não estiver disponível, a IA configurada. Notas internas, grupos e campanhas não são traduzidos.
+- API e MCP: o envio de mensagem aceita o campo opcional `language`, e as mensagens podem trazer `translatedText` e `metadata.translation`. O campo `content` continua sendo sempre o texto que passou pelo canal. Servidor MCP na versão 0.4.0.
+- A Política de Privacidade e os Termos de Uso ganharam o texto sobre a tradução automática.
+
 ### Funil
 
 - Os cards do Funil ficaram compactos: título em uma linha, contato e valor numa linha de apoio, prioridade e temperatura em bolinhas coloridas, e o responsável em um avatar pequeno. Cabem bem mais leads por coluna. O botão **Exibição dos cards** (ao lado de Arquivados) deixa escolher entre **Compacto** e **Confortável** e marcar quais campos aparecem (Contato, Valor, Prioridade, Temperatura, Etiquetas, Responsável, Tempo e Última mensagem). A escolha é pessoal, vale para cada organização e fica salva neste navegador.

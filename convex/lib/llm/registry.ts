@@ -22,6 +22,9 @@ export const DEFAULT_MODELS = {
   // Copiloto no Telegram (D16): alias do OpenRouter para o DeepSeek Flash mais
   // novo. Só OpenRouter: sem rota, `resolveProductRoutes` cai no `copilot`.
   telegramCopilot: "deepseek-flash-latest",
+  // Tradução automática (F1): mesmo alias barato (~US$0,0001/mensagem); sem
+  // OpenRouter, `resolveProductRoutes` cai no `classify`.
+  translation: "deepseek-flash-latest",
 } as const;
 
 // Os papéis que a org PERSISTE em aiConfig.providerConfig.models (schema:

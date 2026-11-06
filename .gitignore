@@ -41,4 +41,5 @@ docs/*
 !docs/architecture/
 !docs/AI-WHATSAPP-LIMITS.md
 !docs/META-MESSAGING-SETUP.md
+!docs/LIBRETRANSLATE-SETUP.md
 CLAUDE.local.md

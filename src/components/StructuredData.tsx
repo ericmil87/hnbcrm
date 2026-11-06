@@ -12,7 +12,7 @@ export function OrganizationStructuredData() {
       "priceCurrency": "BRL"
     },
     "operatingSystem": "Web",
-    "description": "CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados, com central de atendimento opcional (setores, filas e painel com CAC e ROAS).",
+    "description": "CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados, com central de atendimento opcional (setores, filas e painel com CAC e ROAS) e tradução automática de mensagens para atendimento multilíngue.",
   };
 
   return (

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "28 de setembro de 2026";
+const EFFECTIVE_DATE = "5 de novembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -199,6 +199,21 @@ export function TermsPage() {
               <p>
                 Enquanto o aplicativo não for aprovado pela Meta (App Review), a disponibilidade fica
                 restrita a contas que tenham papel no aplicativo.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="traducao-automatica" title="5-B. Tradução automática">
+              <p>
+                A tradução automática de mensagens é um recurso opcional, desligado por padrão, que só um
+                administrador da organização pode ativar. Ela gera uma versão da mensagem em outro idioma
+                para a equipe ler e, se a organização assim configurar, para o cliente receber. A tradução
+                é automática e pode conter imprecisões: o texto original sempre é mantido, e a organização
+                é responsável por revisar o que envia aos seus clientes.
+              </p>
+              <p>
+                O HNBCRM usa primeiro um mecanismo de tradução hospedado na infraestrutura da organização
+                e, na falta dele, o provedor de modelo de linguagem configurado por ela. Notas internas e
+                grupos de WhatsApp não são traduzidos.
               </p>
             </LegalSection>
 

@@ -1,0 +1,52 @@
+# LibreTranslate para o HNBCRM (módulo de tradução automática). Guia completo: docs/LIBRETRANSLATE-SETUP.md
+#
+# Imagem: libretranslate/libretranslate, tag estável v1.9.6 (Docker Hub, 26/05/2026; `latest` é de 26/10/2026 e
+# ainda não tem tag de versão publicada na listagem). Verificado em https://hub.docker.com/r/libretranslate/libretranslate/tags.
+# Fixe a versão: troque a tag abaixo só depois de testar com infra/libretranslate/probe.sh.
+#
+# Flags e variáveis (todo argumento tem variável LT_<NOME_EM_SNAKE_CASE>):
+#   https://docs.libretranslate.com/guides/installation/#arguments
+#   https://docs.libretranslate.com/guides/manage_api_keys/
+# Para EXIGIR chave sempre: LT_API_KEYS=true + LT_REQ_LIMIT=0 ("Requests made without a proper API key will be rejected").
+# Não use LT_REQUIRE_API_KEY_SECRET/ORIGIN para isso: são exceções para clientes que mandam um segredo/origem.
+#
+# Uso: cp env.example .env && docker compose up -d   (rodar dentro desta pasta, no VPS)
+services:
+  libretranslate:
+    container_name: libretranslate
+    image: libretranslate/libretranslate:v1.9.6
+    # Só loopback: o proxy reverso (Caddy/nginx) termina o TLS. Nunca publicar 0.0.0.0:5000.
+    ports:
+      - "127.0.0.1:5000:5000"
+    restart: unless-stopped
+    environment:
+      - LT_API_KEYS=true
+      - LT_API_KEYS_DB_PATH=/app/db/api_keys.db
+      - LT_REQ_LIMIT=0                 # 0 = anônimo bloqueado; o limite por minuto vem da chave (ltmanage keys add <N>)
+      - LT_CHAR_LIMIT=5000
+      - LT_LOAD_ONLY=${LT_LOAD_ONLY:-pt,es,en,fr,it,de}
+      - LT_UPDATE_MODELS=${LT_UPDATE_MODELS:-true}   # baixa os modelos na primeira subida (fica no volume)
+      - LT_DISABLE_WEB_UI=true
+      - LT_DISABLE_FILES_TRANSLATION=true
+      - LT_THREADS=${LT_THREADS:-2}    # no entrypoint oficial vira nº de workers gunicorn; cada worker carrega os modelos (RAM)
+    volumes:
+      - libretranslate_api_keys:/app/db
+      - libretranslate_models:/home/libretranslate/.local:rw
+    mem_limit: ${LT_MEM_LIMIT:-4g}
+    healthcheck:
+      # /languages é público no LibreTranslate. Com chave obrigatória pode responder 403; por isso o healthcheck oficial
+      # (scripts/healthcheck.py, o mesmo do compose do projeto) em vez de curl.
+      test: ['CMD-SHELL', './venv/bin/python scripts/healthcheck.py']
+      interval: 30s
+      timeout: 10s
+      retries: 4
+      start_period: 300s   # primeira subida baixa modelos
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  libretranslate_api_keys:
+  libretranslate_models:

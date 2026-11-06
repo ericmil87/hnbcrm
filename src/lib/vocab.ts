@@ -29,6 +29,7 @@ export const VOCAB = {
     draft: "Resposta sugerida",
   },
   copilot: { name: "Copiloto", hint: "Assistente da sua equipe" },
+  translation: { name: "Tradução automática", hint: "Ler e responder em outros idiomas sem sair da conversa" },
   whatsappQr: "WhatsApp por QR code",
   whatsappOfficial: "WhatsApp oficial (Meta)",
   connectNumber: "Conectar número",

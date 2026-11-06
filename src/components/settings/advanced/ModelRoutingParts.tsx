@@ -8,7 +8,8 @@ export type ProductKey =
   | "vision"
   | "groupPosts"
   | "groupAgent"
-  | "telegramCopilot";
+  | "telegramCopilot"
+  | "translation";
 
 export type ModelOption = {
   id: string;

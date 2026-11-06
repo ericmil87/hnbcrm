@@ -174,6 +174,14 @@ describe("porta única de envio", () => {
     expect(findDirectDispatches(cutExportedFunction(src, META_SELF_RESCHEDULE_FN))).toEqual([]);
   });
 
+  test("tradução automática: o desvio vem antes do ramo por canal", () => {
+    const src = stripComments(readFileSync(path.join(CONVEX_DIR, PORT), "utf8"));
+    const divert = src.indexOf("maybeDivertOutboundForTranslation(ctx, conversation, messageId)");
+    const channel = src.indexOf('conversation.channel === "whatsapp"');
+    expect(divert, "o desvio de tradução sumiu da porta").toBeGreaterThan(-1);
+    expect(channel, "o desvio precisa vir antes do despacho por canal").toBeGreaterThan(divert);
+  });
+
   test("os pontos de envio importam só a porta", () => {
     for (const r of [
       "conversations.ts",

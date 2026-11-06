@@ -110,6 +110,8 @@ export const getAiStatus = query({
       groupAgent: v.object({ order: v.string(), model: v.string() }),
       // Telegram F3 (D16): `model: ""` = padrão (deepseek-flash-latest no OpenRouter).
       telegramCopilot: v.object({ order: v.string(), model: v.string() }),
+      // Tradução automática (F1): `model: ""` = padrão (deepseek-flash-latest no OpenRouter).
+      translation: v.object({ order: v.string(), model: v.string() }),
     }),
     byo: v.union(
       v.object({
@@ -167,6 +169,7 @@ export const getAiStatus = query({
         groupPosts: productRoutingOf(aiConfig?.providerConfig?.products?.groupPosts),
         groupAgent: productRoutingOf(aiConfig?.providerConfig?.products?.groupAgent),
         telegramCopilot: productRoutingOf(aiConfig?.providerConfig?.products?.telegramCopilot),
+        translation: productRoutingOf(aiConfig?.providerConfig?.products?.translation),
       },
       providerMode: aiConfig?.providerConfig?.mode ?? "platform",
       platformOrder: aiConfig?.providerConfig?.platformOrder ?? "auto",
@@ -1462,7 +1465,9 @@ export const setProductRouting = mutation({
       v.literal("groupPosts"),
       v.literal("groupAgent"),
       // Copiloto no Telegram (D16): rota E modelo (lista de modelos de texto).
-      v.literal("telegramCopilot")
+      v.literal("telegramCopilot"),
+      // Tradução automática (F1): rota E modelo (lista de modelos de texto).
+      v.literal("translation")
     ),
     // "inherit" limpa o override e volta a seguir o padrão da org.
     order: v.optional(
@@ -1485,8 +1490,13 @@ export const setProductRouting = mutation({
     const current = org.settings.aiConfig;
     if (!current) throw new Error("Ative a IA primeiro");
 
-    if (args.model !== undefined && args.product !== "vision" && args.product !== "telegramCopilot") {
-      throw new Error("Só a leitura de imagens e o Copiloto no Telegram escolhem o modelo por aqui");
+    if (
+      args.model !== undefined &&
+      args.product !== "vision" &&
+      args.product !== "telegramCopilot" &&
+      args.product !== "translation"
+    ) {
+      throw new Error("Só a leitura de imagens, o Copiloto no Telegram e a tradução escolhem o modelo por aqui");
     }
     // Fail-closed: um id fora da allowlist medida entraria como uma cadeia vazia
     // e a org descobriria só quando a primeira imagem não fosse lida. Recusar
@@ -1496,7 +1506,7 @@ export const setProductRouting = mutation({
       const known = visionModelOptions().some((o) => o.id === pinned);
       if (!known) throw new Error(`"${pinned}" não é um modelo de visão validado`);
     }
-    if (pinned && args.product === "telegramCopilot") {
+    if (pinned && (args.product === "telegramCopilot" || args.product === "translation")) {
       const known = ([...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[]).includes(pinned);
       if (!known) throw new Error(`"${pinned}" não é um modelo de texto conhecido`);
     }

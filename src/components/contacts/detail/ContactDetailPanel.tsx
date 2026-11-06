@@ -98,7 +98,7 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
 
   const handleSave = () => {
     if (!contactData || !form) return;
-    const updatePromise = updateContact({ contactId, ...contactFormToUpdate(form) } as Parameters<typeof updateContact>[0]);
+    const updatePromise = updateContact({ contactId, ...contactFormToUpdate(form, contactData) } as Parameters<typeof updateContact>[0]);
     toast.promise(updatePromise, {
       loading: "Salvando…",
       success: () => {

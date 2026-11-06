@@ -20,6 +20,7 @@
 
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./promptEnvelope";
 import { toWhatsAppText } from "./whatsappText";
+import { fixedAgentLanguage } from "./languages";
 
 export interface GroupPostPromptContext {
   /** Nome do agente/assinatura (o atendente IA da org, ou o nome da empresa). */
@@ -65,7 +66,7 @@ export function buildGroupPostPrompt(ctx: GroupPostPromptContext): GroupPostProm
 
   const system = [
     persona,
-    `Responda sempre em ${ctx.language}.`,
+    `Responda sempre em ${fixedAgentLanguage(ctx.language)}.`,
     "TAREFA: escrever UMA mensagem para ser PUBLICADA num grupo de WhatsApp da empresa. Não é uma conversa: ninguém te perguntou nada, e não há um cliente específico do outro lado.",
     "REGRAS OBRIGATÓRIAS:",
     `1. Devolva SOMENTE o texto da mensagem, pronto para publicar. Sem aspas em volta, sem "aqui está", sem título, sem assinatura e sem explicação.`,

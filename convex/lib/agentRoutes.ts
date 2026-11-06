@@ -23,7 +23,12 @@ export type AiProduct =
   /** Agente que responde DENTRO de um grupo de WhatsApp (F4). */
   | "groupAgent"
   /** Copiloto no Telegram (D16): rota e modelo próprios. */
-  | "telegramCopilot";
+  | "telegramCopilot"
+  /** Tradução automática (F1): rota e modelo próprios, modelo barato fixo. */
+  | "translation";
+
+/** Produtos que escolhem o PRÓPRIO modelo de texto (padrão só no OpenRouter). */
+export type ModelPinnedProduct = "telegramCopilot" | "translation";
 
 export interface ProductRouting {
   order?: PlatformOrder;
@@ -100,7 +105,7 @@ export function effectivePlatformOrder(
   const perProduct = product ? providerConfig?.products?.[product]?.order : undefined;
   // D16: o Copiloto no Telegram nasce em "openrouter-first" (o modelo padrão
   // só existe no OpenRouter); a escolha do produto ou da org ainda vence.
-  if (product === "telegramCopilot") {
+  if (product === "telegramCopilot" || product === "translation") {
     return perProduct ?? providerConfig?.platformOrder ?? "openrouter-first";
   }
   return perProduct ?? providerConfig?.platformOrder ?? envPlatformOrder();
@@ -114,12 +119,15 @@ export function effectivePlatformOrder(
  */
 export function productModel(
   providerConfig: OrgProviderConfig | null | undefined,
-  product: "telegramCopilot"
+  product: ModelPinnedProduct
 ): { model: string; fallback: string } {
   const copilot = providerConfig?.models?.copilot ?? DEFAULT_MODELS.copilot;
   const pinned = providerConfig?.products?.[product]?.model?.trim();
   if (pinned) return { model: pinned, fallback: copilot };
   if (providerConfig?.mode === "byo") return { model: copilot, fallback: copilot };
+  // Tradução: o fallback é o modelo barato de classificação (funciona sem
+  // OpenRouter), não o do Copiloto (caro para traduzir uma frase).
+  if (product === "translation") return { model: DEFAULT_MODELS.translation, fallback: DEFAULT_MODELS.classify };
   return { model: DEFAULT_MODELS.telegramCopilot, fallback: copilot };
 }
 
@@ -133,7 +141,7 @@ export async function resolveProductRoutes(
   ctx: RunQueryCtx,
   organizationId: Id<"organizations">,
   providerConfig: OrgProviderConfig | null | undefined,
-  product: "telegramCopilot"
+  product: ModelPinnedProduct
 ): Promise<{ routes: ResolvedRoute[]; canonicalModel: string }> {
   const { model, fallback } = productModel(providerConfig, product);
   const routes = await resolveOrgRoutes(ctx, organizationId, providerConfig, model, product);

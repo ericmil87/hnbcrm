@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslationSettings } from "@/hooks/useTranslationSettings";
+import { useShowOriginalPref } from "@/lib/translationPrefs";
+import { bubbleTranslation, conversationLanguageState, hasFreshUntranslated } from "@/lib/translationRules";
+import { ConversationTranslationBanner } from "@/components/inbox/ConversationTranslationBanner";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
@@ -83,6 +87,30 @@ export function ConversationThread({
   const transcribe = useAction(api.transcription.transcribe);
   const describeImage = useAction(api.vision.describeImage);
   const downloadDeferredMedia = useAction(api.groupChats.downloadDeferredMedia);
+  const translateMessage = useAction(api.translation.translateMessage);
+  const retryOutbound = useMutation(api.translation.retryOutbound);
+  const sendUntranslated = useMutation(api.translation.sendUntranslated);
+  const setConversationLanguage = useMutation(api.translation.setConversationLanguage);
+
+  // Tradução automática (v0.80): estado da conversa + preferência do visualizador.
+  const translationSettings = useTranslationSettings(organizationId);
+  const languageState = conversationLanguageState(conversation, translationSettings);
+  const [showBoth] = useShowOriginalPref();
+  const [translatingIds, setTranslatingIds] = useState<Set<string>>(() => new Set());
+  // Relógio do "Traduzindo…" inferido: só anda enquanto há recebida recente sem estado.
+  const [now, setNow] = useState(() => Date.now());
+  const freshUntranslated =
+    hasFreshUntranslated(messages as InboxMessage[] | undefined, now, languageState.active);
+  useEffect(() => {
+    if (!freshUntranslated) return;
+    const timer = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(timer);
+  }, [freshUntranslated]);
+  // Mensagem nova chegando: o relógio parte do instante atual.
+  const lastMessageAt = (messages as InboxMessage[] | undefined)?.at(-1)?.createdAt;
+  useEffect(() => {
+    if (lastMessageAt) setNow(Date.now());
+  }, [lastMessageAt]);
 
   const [forwardTarget, setForwardTarget] = useState<InboxMessage | null>(null);
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
@@ -143,6 +171,48 @@ export function ConversationThread({
       }
     });
 
+  const handleTranslate = (message: InboxMessage) =>
+    withBusy(setTranslatingIds, message._id, async () => {
+      try {
+        const result = await translateMessage({ messageId: message._id as Id<"messages"> });
+        if (result.status === "failed") toast.error(result.error ?? "Não foi possível traduzir.");
+        else if (result.status === "skipped") toast.info(result.error ?? "Esta mensagem já está no idioma da equipe");
+      } catch (error) {
+        toast.error(mutationErrorMessage(error, "Não foi possível traduzir."));
+      }
+    });
+
+  // F3, idioma incerto: uma escrita para o idioma da conversa, depois a tradução.
+  const handleTranslateAs = (message: InboxMessage, lang: string) =>
+    withBusy(setTranslatingIds, message._id, async () => {
+      try {
+        await setConversationLanguage({ conversationId: message.conversationId as Id<"conversations">, lang, mode: "auto" });
+        const result = await translateMessage({ messageId: message._id as Id<"messages"> });
+        if (result.status === "failed") toast.error(result.error ?? "Não foi possível traduzir.");
+      } catch (error) {
+        toast.error(mutationErrorMessage(error, "Não foi possível traduzir."));
+      }
+    });
+
+  const handleRetryOutbound = (message: InboxMessage) =>
+    withBusy(setTranslatingIds, message._id, async () => {
+      try {
+        await retryOutbound({ messageId: message._id as Id<"messages"> });
+      } catch (error) {
+        toast.error(mutationErrorMessage(error, "Não foi possível tentar de novo."));
+      }
+    });
+
+  const handleSendUntranslated = (message: InboxMessage) =>
+    withBusy(setTranslatingIds, message._id, async () => {
+      try {
+        await sendUntranslated({ messageId: message._id as Id<"messages"> });
+        toast.success("Mensagem enviada sem tradução");
+      } catch (error) {
+        toast.error(mutationErrorMessage(error, "Não foi possível enviar a mensagem."));
+      }
+    });
+
   // Mídia de grupo que a política não baixou (v0.62): o servidor devolve o
   // motivo em PT-BR pronto (vencida, quota…); o sucesso aparece sozinho, pela
   // query reativa trocando o placeholder pelo arquivo.
@@ -167,6 +237,15 @@ export function ConversationThread({
             {contactName || "Contato"} está digitando…
           </span>
         </div>
+      )}
+      {conversation && !isGroupConversation && (
+        <ConversationTranslationBanner
+          organizationId={organizationId}
+          conversation={conversation}
+          settings={translationSettings}
+          state={languageState}
+          canReply={canReply}
+        />
       )}
       <div
         ref={paging.scrollRef}
@@ -264,6 +343,24 @@ export function ConversationThread({
                   ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
                   : {})}
                 onJumpToMessage={paging.jumpToMessage}
+                translation={(() => {
+                  // Módulo desligado: só a enviada retida (pending/failed) mantém as ações.
+                  const decided = bubbleTranslation(message, {
+                    moduleEnabled: translationSettings.moduleEnabled,
+                    isGroup: isGroupConversation,
+                    teamLanguage: translationSettings.teamLanguage,
+                    conversationActive: languageState.active,
+                    now,
+                    conversation,
+                  });
+                  return decided
+                    ? { ...decided, showBoth, busy: translatingIds.has(message._id) }
+                    : undefined;
+                })()}
+                onTranslate={(m) => void handleTranslate(m)}
+                onTranslateAs={canReply ? (m, lang) => void handleTranslateAs(m, lang) : undefined}
+                onRetryOutbound={(m) => void handleRetryOutbound(m)}
+                onSendUntranslated={(m) => void handleSendUntranslated(m)}
               />
             )
           )}

@@ -22,6 +22,7 @@
 import { ENVELOPE_SYSTEM_NOTICE } from "./promptEnvelope";
 import { toWhatsAppText } from "./whatsappText";
 import { detectLeakedModelMarkup } from "./llmOutputGuard";
+import { fixedAgentLanguage } from "./languages";
 
 // ── Constantes de produto ───────────────────────────────────────────────────
 
@@ -268,7 +269,7 @@ export function buildGroupSystemPrompt(ctx: GroupPromptContext): string {
 
   return [
     persona,
-    `Responda sempre em ${ctx.language}.`,
+    `Responda sempre em ${fixedAgentLanguage(ctx.language)}.`,
     `VOCÊ ESTÁ NUM GRUPO de WhatsApp com cerca de ${ctx.participantsCount} pessoas, e foi mencionada nele. Isto NÃO é um atendimento individual: é uma sala pública onde clientes, curiosos e concorrentes leem tudo.`,
     ctx.isEphemeral
       ? "As mensagens deste grupo são temporárias e somem sozinhas — não trate o que foi dito aqui como registro."
@@ -353,7 +354,7 @@ export interface GroupSummaryPromptInput {
 export function buildGroupSummarySystemPrompt(input: GroupSummaryPromptInput): string {
   return [
     `Você resume conversas de grupos de WhatsApp para a equipe da empresa "${input.orgName}".`,
-    `Escreva em ${input.language}.`,
+    `Escreva em ${fixedAgentLanguage(input.language)}.`,
     `TAREFA: ler as últimas ${input.messageCount} mensagens de um grupo (janela de ${input.hours} horas) e devolver um resumo que um gerente leia em 30 segundos, no lugar de 200 mensagens.`,
     "FORMATO (texto puro, sem markdown de título, sem tabela):",
     "- Assuntos: 2 a 5 marcadores curtos com o que foi discutido.",
@@ -370,7 +371,7 @@ export function buildGroupSummarySystemPrompt(input: GroupSummaryPromptInput): s
 export function buildRadarSystemPrompt(orgName: string, language: string): string {
   return [
     `Você é um classificador de oportunidades comerciais para a empresa "${orgName}".`,
-    `Escreva em ${language}.`,
+    `Escreva em ${fixedAgentLanguage(language)}.`,
     "TAREFA: para cada mensagem de um grupo de WhatsApp, dizer se ela demonstra INTENÇÃO COMERCIAL — pedido de orçamento, intenção de compra, pergunta sobre produto/preço/disponibilidade, ou reclamação que precisa de atendimento.",
     'RESPONDA SOMENTE COM JSON, no formato: {"itens":[{"id":"<id da mensagem>","oportunidade":true|false,"tipo":"orcamento"|"compra"|"duvida"|"reclamacao"|"nenhum","resumo":"<até 140 caracteres>"}]}.',
     "REGRAS: conversa social, bom-dia, figurinha, agradecimento e piada NÃO são oportunidade. Na dúvida, oportunidade=false — um alerta falso custa a atenção de uma pessoa. Não copie telefones. Nada além do JSON.",

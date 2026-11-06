@@ -48,6 +48,10 @@ Rules that differ from WhatsApp:
 - **Health:** a daily check validates each connection. When the authorization is invalid, expired, or removed on Facebook the connection needs reconnecting (Settings → Canais → Reconectar): sends stop, a high-severity audit entry is written, admins (settings:manage) get an in-app and e-mail notice, and the webhook \`channel.session_lost\` fires (states \`reauth_required\`, \`revoked\`). Removing the app on Facebook (or a Meta data-deletion request) revokes the stored credential and disables the channels; conversations, contacts and leads are kept because the organization controls that data.
 - **Access level:** until Meta's App Review approves the app (Advanced Access), only people with a role on the Meta app can exchange messages; new connections work normally for them.
 
+## Automatic translation (v0.80, optional per organization)
+
+Optional module (\`translation\`, off by default per organization; enabled in Settings → Tradução automática or via \`settings.modules.translation\`). When on, inbound customer messages in another language get a translation in the team's language, and outbound messages typed in the team's language can leave in the customer's language. The engine is a self-hosted LibreTranslate first, with the organization's LLM route as fallback. \`messages.content\` is ALWAYS the text that travelled the channel (the customer's language); the team-language version lives in \`messages.translatedText\` and the details in \`messages.metadata.translation\`. \`POST /conversations/send\` accepts an optional \`language\` (\`"auto"\` | \`"off"\` | a language code such as \`es\`). Internal notes and group rooms are never translated.
+
 ## Built-in AI (Copilot & Attendant)
 
 HNBCRM also ships two NATIVE AI products, separate from external AI agents connected via API key/MCP. Both are opt-in per organization (disabled by default, LGPD acknowledgment required) and are NOT exposed through the public REST API — they are configured in-app (Settings → IA):
@@ -186,6 +190,7 @@ A person or company associated with leads.
 | customFields | Record<string, any> | User-defined fields |
 | enrichmentMeta | Record<string, {source, updatedAt, confidence}> | Provenance tracking for enriched fields |
 | enrichmentExtra | Record<string, any> | Overflow for AI-discovered data |
+| preferredLanguage | string? | Language the contact writes and reads (v0.80, translation module): a code such as \`pt-BR\`, \`es\`, \`en\`. Set by a human or by auto-detection; absent = unknown |
 
 ### Board (Pipeline)
 A kanban board containing stages.
@@ -222,6 +227,7 @@ A message thread on a lead, scoped by channel.
 | archivedAt | number? | When set, conversation is archived (hidden from the default inbox list) |
 | labelIds | Id<conversationLabels>[]? | Org-scoped labels applied to the conversation |
 | botSuspicion | object? | Anti-bot guardrail (v0.65): \`{ at, source: "heuristic"|"model", reason, score?, signals?, clearedAt?, clearedBy? }\`. Present without \`clearedAt\` = the AI attendant stopped replying because the other side looks like a bot (auto-reply, ticket confirmation, newsletter, another AI assistant); a \`bot_suspect\` handoff is open and the lead carries the bot tag (default \`bot-suspeito\`). Only a human clears it (return the conversation to the AI in the app, or reject that handoff) |
+| translation | object? | Translation module (v0.80): \`{ lang?, source: "auto"|"manual"|"contact", mode: "auto"|"manual"|"off", detectedAt? }\`. \`lang\` = the customer's language for this conversation; \`mode: "off"\` disables translation here; detection is sticky (a manual \`lang\` is never overwritten) |
 
 ### Central de atendimento (v0.63, opcional por organização)
 Quatro módulos opcionais em \`organizations.settings.modules\`: \`units\` (unidades), \`departments\` (setores), \`attribution\` (origem de anúncio, investimento, ROAS/CAC) e \`central\` (painel /app/central). Todos ausentes = DESLIGADOS: a organização vê o comportamento anterior (queries devolvem vazio, mutations recusam com "Módulo não habilitado").
@@ -258,6 +264,8 @@ An individual message in a conversation.
 | isInternal | boolean | Internal note (not visible to contact) |
 | mentionedUserIds | Id<teamMembers>[] | @mentioned team members |
 | transcriptText | string? | Voice-note transcription (self-hosted Whisper), full-text searchable |
+| translatedText | string? | Translation module (v0.80): the message in the TEAM's language. Inbound = translation of \`content\`; outbound = what the human typed (while \`content\` is the translated text that was sent); never replaces \`content\` |
+| metadata.translation | object? | Translation module (v0.80): \`{ status: "pending"|"done"|"failed"|"skipped", role: "inbound"|"outbound"|"display", sourceLang?, targetLang?, confidence?, engine?: "libretranslate"|"llm", model?, edited?, error?, reason?: "low_confidence"|"short"|"same_language"|"ask_mode"|"language_off" (why it was skipped), candidateLang? (probable language when detection was uncertain), at }\`. Contains no message text. Absent when the module is off or the message was not translated |
 
 ### Handoff
 An AI-to-human (or human-to-human) handoff request.
@@ -682,7 +690,7 @@ List contacts for the organization with cursor-based pagination.
 #### POST /api/v1/contacts/create
 Create a new contact.
 
-**Body:** firstName, lastName, email, phone, company, title, whatsappNumber, telegramUsername, tags, photoUrl, bio, linkedinUrl, instagramUrl, facebookUrl, twitterUrl, city, state, country, industry, companySize, cnpj, companyWebsite, preferredContactTime, deviceType, utmSource, acquisitionChannel, instagramFollowers, linkedinConnections, socialInfluenceScore, customFields
+**Body:** preferredLanguage (v0.80, language code such as \`es\`/\`pt-BR\`, validated against the catalog and normalized; invalid → 400), firstName, lastName, email, phone, company, title, whatsappNumber, telegramUsername, tags, photoUrl, bio, linkedinUrl, instagramUrl, facebookUrl, twitterUrl, city, state, country, industry, companySize, cnpj, companyWebsite, preferredContactTime, deviceType, utmSource, acquisitionChannel, instagramFollowers, linkedinConnections, socialInfluenceScore, customFields
 
 **Response:** \`{ success: true, contactId }\`
 
@@ -696,7 +704,7 @@ Get a single contact.
 #### POST /api/v1/contacts/update
 Update contact fields.
 
-**Body:** contactId (required), plus any contact fields to update
+**Body:** contactId (required), plus any contact fields to update. \`preferredLanguage\` (v0.80): language code, \`""\` clears it, invalid → 400
 
 **Response:** \`{ success: true }\`
 
@@ -735,12 +743,16 @@ Get messages for a conversation. Works for a group room's conversation too (its 
 
 **Query params:** conversationId (required)
 
+When the translation module is on, messages may carry \`translatedText\` and \`metadata.translation\` (see "Automatic translation"). \`content\` is always the text that travelled the channel.
+
 **Response:** \`{ messages: [...] }\`
 
 #### POST /api/v1/conversations/send
 Send a message to a conversation. Supports file attachments and replying to (quoting) another message.
 
-**Body:** conversationId (required), content (required unless attachments given), contentType (default: text), isInternal (default: false), mentionedUserIds (optional), attachments (optional file ids), replyToMessageId (optional)
+**Body:** conversationId (required), content (required unless attachments given), contentType (default: text), isInternal (default: false), mentionedUserIds (optional), attachments (optional file ids), replyToMessageId (optional), language (optional, v0.80: \`"auto"\` translates to the conversation's language, \`"off"\` sends as written, or a language code such as \`es\` forces the outgoing language; absent = the conversation's own behaviour; ignored for internal notes and when the translation module is off)
+
+Also optional: \`translation: { authoredText, sourceLang, targetLang, edited? }\` — for clients that translated the text themselves: \`content\` MUST already be the translated text, \`authoredText\` is what the author typed (stored as \`translatedText\`); malformed → 400. A per-message \`language\` code is stored in \`metadata.translationTarget\`. If translating the outgoing text fails, the message is stored with \`deliveryStatus: "failed"\` and \`metadata.deliveryError\` starting with "Tradução falhou: …" and nothing is sent.
 
 **Response:** \`{ success: true, messageId }\`
 
@@ -1471,12 +1483,15 @@ Start a 1:1 WhatsApp conversation (same semantics as \`POST /api/v1/conversation
 Get messages for a conversation. Also works for a WhatsApp group room's conversation (its id is \`group.conversationId\` from \`crm_get_group\`); on a group, \`metadata.mediaDeferred\`/\`metadata.mediaPurged\` mark an attachment the media policy skipped or later purged (v0.62) — \`crm_list_groups\`/\`crm_get_group\` do not expose this, it only shows up here (full message document) or in the app.
 - **conversationId** (string, required): The conversation ID
 
+Messages may include \`translatedText\` (the team-language version) and \`metadata.translation\` (v0.80, translation module). \`content\` is always the text that travelled the channel with the customer, in the customer's language.
+
 #### crm_send_message
 Send a message to a conversation.
 - **conversationId** (string, required): The conversation ID
 - **content** (string, required): Message content
 - **contentType** (string, optional): text, image, file, audio
 - **isInternal** (boolean, optional): Mark as internal note
+- **language** (string, optional): \`"auto"\` | \`"off"\` | language code (e.g. \`es\`) — translation of the outgoing text (v0.80, module \`translation\`); default = conversation behaviour
 
 ### Handoffs
 
@@ -1793,6 +1808,20 @@ Every WhatsApp send claims a slot on two cursors before dispatch:
 - Bridge sends from the AI attendant or the scheduler simulate typing ("composing" presence) proportional to message length before sending. Manual sends are never artificially delayed.
 - Meta throttling errors (131056 pair rate, 130429 throughput, 80007 account rate limit) are retried with the officially documented 4^X-second backoff (max 3 retries). Error 131048 (number restricted after spam reports) is NOT retried: the message fails, the channel queue freezes for 30 minutes, and operators are alerted.
 
+## Automatic translation (v0.80, optional per organization)
+
+Optional module, OFF by default: \`organizations.settings.modules.translation\` (toggled in the app, Settings → Tradução automática). With it off, nothing below applies and no field is written. It is configured in-app only; REST/MCP read the fields and can choose the outgoing language per send.
+
+- **Engine chain:** a self-hosted LibreTranslate (\`LIBRETRANSLATE_URL\`) first, then the organization's LLM route (product \`translation\`) as fallback; \`settings.translation.provider\` can pin \`"libretranslate"\` or \`"llm"\`. With no provider available the translation is stored as \`failed\` and nothing is silently lost.
+- **Source of truth:** \`messages.content\` is ALWAYS the text that travelled the channel. The team-language version is \`messages.translatedText\`; status and provenance are in \`messages.metadata.translation\` (no message text there).
+- **Inbound:** the customer's message keeps its original \`content\`; the translation is written once, asynchronously (\`status\` goes \`pending\` → \`done\` / \`failed\` / \`skipped\`). Same-language messages are \`skipped\`.
+- **Outbound:** a message typed in the team language is translated BEFORE dispatch: \`content\` becomes the translated text that is sent, \`translatedText\` keeps what the human typed. A failed outbound translation is never sent on its own; a human retries or sends it untranslated (audited). A text longer than 4000 characters that would need translation is held the same way (\`status: "failed"\`, \`reason: "long_text"\`).
+- **Language of a conversation:** outbound target resolved in this order: a manual override of the conversation, the conversation's auto-detected \`conversations.translation.lang\`, \`contacts.preferredLanguage\`, then the last detected inbound (the phone dial code is only a hint, never applied on its own). Detection is sticky: one short message does not flip it, and the first language is fixed only with evidence (two consecutive messages in the same language, a strong detection on a long text, or agreement with \`contacts.preferredLanguage\`/the dial code).
+- **Not translated:** internal notes, WhatsApp group rooms, campaign sends.
+- **Built-in attendant:** with \`agentProfile.language: "auto"\` it answers in the lead's language; the team sees a display translation (\`role: "display"\`).
+- **API:** \`POST /conversations/send\` and MCP \`crm_send_message\` accept \`language\` (\`"auto"\` | \`"off"\` | code; anything else → 400). \`"off"\` in a conversation with a foreign language is audited. Webhooks \`message.received\`/\`message.sent\` carry no message text and are unchanged.
+- **Language codes:** BCP-47 short codes: \`pt-BR\`, \`pt-PT\`, \`es\`, \`en\`, \`fr\`, \`it\`, \`de\`, \`nl\`, \`ja\`, \`zh\`, \`ar\`, \`ru\`, \`ko\`, \`tr\`, \`pl\`, \`hi\`. Region is ignored when deciding "same language".
+
 ---
 
 ## Built-in AI (Copilot & Attendant)
@@ -1810,6 +1839,7 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 - Safety: record-scoped tools (only the triggering conversation/lead/contact), static tool registry with denylist, untrusted-data envelope around CRM content, LGPD disclosure on first reply, deterministic pre-LLM handoff keywords ("humano"), reply caps per conversation/hour, monthly conversation budget.
 - Pipeline rules per attendant (\`pipelineConfig\`): initial board/stage for new inbound leads, deterministic stage advance when BANT qualification reaches a threshold, natural-language funnel rules injected into the prompt, and an \`allowMoveStages\` switch enforced server-side.
 - Audited runs in \`agentRuns\` (tokens/cost/tools — no transcripts/PII). Human-initiated runs are flagged \`humanInitiated\`.
+- Translation (v0.80) is a third AI-routed product (\`translation\`) used only as the fallback engine of the optional translation module; still not exposed over REST.
 
 ### Coaching loop (app UI only — no REST/MCP surface)
 - On a pending draft, a human can add a plain-language instruction ("shorter", "warmer", "offer an alternative") and regenerate it. The superseded draft becomes \`revised\` and is chained to the new one; \`revised\` drafts are excluded from the acceptance metrics that gate autopilot.
@@ -1833,6 +1863,18 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 
 ### Conversation Status
 \`new\` | \`active\` | \`waiting\` | \`closed\`
+
+### Translation Status (v0.80)
+\`pending\` | \`done\` | \`failed\` | \`skipped\`
+
+### Translation Role (v0.80)
+\`inbound\` | \`outbound\` | \`display\`
+
+### Translation Mode (conversation, v0.80)
+\`auto\` | \`manual\` | \`off\`
+
+### Language Codes (v0.80)
+\`pt-BR\`, \`pt-PT\`, \`es\`, \`en\`, \`fr\`, \`it\`, \`de\`, \`nl\`, \`ja\`, \`zh\`, \`ar\`, \`ru\`, \`ko\`, \`tr\`, \`pl\`, \`hi\`
 
 ### Conversation Channel
 \`whatsapp\` | \`telegram\` | \`email\` | \`webchat\` | \`internal\`

@@ -1,6 +1,6 @@
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
-import { Reply, Smile, Forward, FileText, ScanText } from "lucide-react";
+import { Reply, Smile, Forward, FileText, ScanText, Languages, Copy, ClipboardCopy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ReactionPicker } from "./ReactionPicker";
 
@@ -22,6 +22,11 @@ interface MessageActionsBarProps {
   onTranscribe?: () => void;
   /** Present only for an image that still needs the AI reading (vision on). */
   onDescribeImage?: () => void;
+  /** Tradução: "Traduzir mesmo assim" (recebida pulada ou nunca processada). */
+  onTranslate?: () => void;
+  /** Tradução feita: copiar cada uma das duas versões. */
+  copyItems?: { label: string; value: string; done: string }[];
+  onCopy?: (item: { label: string; value: string; done: string }) => void;
   /** Which side the bubble sits on — drives picker alignment. */
   align?: "start" | "end";
   /** Emojis oferecidos no picker (Instagram: só o coração); null = todos. */
@@ -40,6 +45,9 @@ export function MessageActionsBar({
   onForward,
   onTranscribe,
   onDescribeImage,
+  onTranslate,
+  copyItems,
+  onCopy,
   align = "start",
   reactionEmojis = null,
   className,
@@ -110,6 +118,23 @@ export function MessageActionsBar({
           </button>
         </Tooltip>
       )}
+
+      {onTranslate && (
+        <Tooltip content="Traduzir mesmo assim">
+          <button type="button" onClick={onTranslate} className={BTN} aria-label="Traduzir mesmo assim">
+            <Languages size={16} />
+          </button>
+        </Tooltip>
+      )}
+
+      {onCopy &&
+        copyItems?.map((item, i) => (
+          <Tooltip key={item.label} content={item.label}>
+            <button type="button" onClick={() => onCopy(item)} className={BTN} aria-label={item.label}>
+              {i === 0 ? <Copy size={16} /> : <ClipboardCopy size={16} />}
+            </button>
+          </Tooltip>
+        ))}
 
       {pickerOpen && (
         <ReactionPicker

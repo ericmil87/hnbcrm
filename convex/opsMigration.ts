@@ -19,6 +19,8 @@ import { decryptSecret } from "./lib/secretCrypto";
 import { BRIDGE_WEBHOOK_EVENTS, buildBridgeHmacConfigRequest } from "./lib/bridgeSession";
 import { computeNextRunAt, scheduleGroupPostTick, wakeAtFor } from "./lib/groupPostOps";
 import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
+import { isStuckOutboundTranslation, markOutboundTranslationFailed, OUTBOUND_TIMEOUT_ERROR } from "./lib/translationOps";
+import { translationOf } from "./lib/translationGate";
 
 const trimBase = (u: string) => u.replace(/\/+$/, "");
 
@@ -211,6 +213,19 @@ export const internalRedispatchStuckOutbound = internalMutation({
     for (const m of recent) {
       if (m.createdAt < from) break;
       if (m.direction !== "outbound" || m.isInternal || m.externalId || m.deliveryStatus) continue;
+      // Tradução automática (F1): saída retida numa tradução `pending`. Velha
+      // demais = `failed` legível (nunca reenvia em pt-BR); recente = aguarda.
+      const translation = translationOf(m);
+      if (translation?.role === "outbound" && translation.status === "pending") {
+        const stuck = isStuckOutboundTranslation(m, Date.now());
+        out.push({
+          messageId: m._id,
+          createdAt: m.createdAt,
+          action: stuck ? (dryRun ? "dryRun_translation_failed" : "translation_failed") : "translation_pending",
+        });
+        if (stuck && !dryRun) await markOutboundTranslationFailed(ctx, m, OUTBOUND_TIMEOUT_ERROR);
+        continue;
+      }
       const conversation = await ctx.db.get(m.conversationId);
       if (!conversation) continue;
       if (conversation.channel !== "whatsapp") {

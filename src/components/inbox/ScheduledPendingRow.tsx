@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Clock, X } from "lucide-react";
+import { Clock, Languages, X } from "lucide-react";
 import { formatDateTimeShort } from "@/lib/format";
 
 /* ------------------------------------------------------------------ */
@@ -9,11 +9,24 @@ import { formatDateTimeShort } from "@/lib/format";
 export function ScheduledPendingRow({
   item,
   onCancel,
+  languageNote,
 }: {
-  item: { _id: string; content: string; scheduledAt: number; createdAt: number };
+  item: {
+    _id: string;
+    content: string;
+    scheduledAt: number;
+    createdAt: number;
+    /** F3: agendada já traduzida — `content` é o que sai, isto é o que a equipe escreveu. */
+    authoredText?: string;
+    targetLang?: string;
+  };
   onCancel: () => void;
+  /** Tradução automática: "será enviada em espanhol". */
+  languageNote?: string | null;
 }) {
   const [tick, setTick] = useState(() => Date.now());
+  const [showAuthored, setShowAuthored] = useState(false);
+  const hasBoth = !!item.authoredText && item.authoredText !== item.content;
   useEffect(() => {
     const interval = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(interval);
@@ -41,7 +54,29 @@ export function ScheduledPendingRow({
         <span className="shrink-0 text-text-secondary tabular-nums">
           {formatDateTimeShort(item.scheduledAt, tick)}
         </span>
-        <span className="flex-1 min-w-0 truncate text-text-muted">{item.content}</span>
+        <span
+          className="flex-1 min-w-0 truncate text-text-muted"
+          lang={hasBoth && !showAuthored ? item.targetLang : undefined}
+          dir="auto"
+        >
+          {hasBoth && showAuthored ? item.authoredText : item.content}
+        </span>
+        {hasBoth && (
+          <button
+            type="button"
+            onClick={() => setShowAuthored((v) => !v)}
+            aria-pressed={showAuthored}
+            className="shrink-0 rounded-full px-1.5 py-0.5 coarse:min-h-11 text-brand-500 hover:underline"
+          >
+            {showAuthored ? "Ver o que será enviado" : "Você escreveu"}
+          </button>
+        )}
+        {languageNote && (
+          <span className="inline-flex shrink-0 items-center gap-1 text-text-secondary">
+            <Languages size={12} aria-hidden />
+            <span className="sr-only sm:not-sr-only">{languageNote}</span>
+          </span>
+        )}
         <span className="shrink-0 text-brand-500 font-medium tabular-nums">{remainingLabel}</span>
         <button
           type="button"

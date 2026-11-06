@@ -34,7 +34,7 @@ export function registerConversationTools(
 
   server.tool(
     "crm_get_messages",
-    "Retrieve all messages in a conversation thread, ordered chronologically. Includes both customer messages and internal notes. Also works for a WhatsApp group room's conversation (its id is group.conversationId from crm_get_group). On a group, metadata.mediaDeferred marks an attachment the media policy chose not to download (v0.62) and metadata.mediaPurged marks one later removed by storage cleanup — crm_list_groups/crm_get_group do not expose these.",
+    "Retrieve all messages in a conversation thread, ordered chronologically. Includes both customer messages and internal notes. Also works for a WhatsApp group room's conversation (its id is group.conversationId from crm_get_group). On a group, metadata.mediaDeferred marks an attachment the media policy chose not to download (v0.62) and metadata.mediaPurged marks one later removed by storage cleanup — crm_list_groups/crm_get_group do not expose these. When the organization has the optional translation module on (v0.80), each message may carry translatedText (the version in the team's language) and metadata.translation ({ status, role, sourceLang, targetLang, engine, ... }); `content` is ALWAYS the text that travelled the channel, in the customer's language, so read translatedText for the team-language view.",
     {
       conversationId: z.string().describe("The conversation ID"),
     },
@@ -50,7 +50,7 @@ export function registerConversationTools(
 
   server.tool(
     "crm_send_message",
-    "Send a message in a conversation. Can be a customer-facing reply or an internal note visible only to team members. Use isInternal=true for notes between team members. On Instagram and Messenger conversations the Meta service window applies: replies are allowed for 24 hours after the contact's last message (7 days when the conversation came from an ad); outside it the message is stored as failed and nothing is sent. Those channels carry plain text only (no markdown) and there are no templates.",
+    "Send a message in a conversation. Can be a customer-facing reply or an internal note visible only to team members. Use isInternal=true for notes between team members. On Instagram and Messenger conversations the Meta service window applies: replies are allowed for 24 hours after the contact's last message (7 days when the conversation came from an ad); outside it the message is stored as failed and nothing is sent. Those channels carry plain text only (no markdown) and there are no templates. With the optional translation module on (v0.80) you can write in the team's language and set `language` to \"auto\" (translate to the conversation's language), \"off\" (send exactly as written) or a language code such as \"es\" to force the outgoing language; omitted = the conversation's own behaviour. Internal notes are never translated.",
     {
       conversationId: z.string().describe("The conversation ID to send to"),
       content: z.string().describe("Message content"),
@@ -62,6 +62,11 @@ export function registerConversationTools(
         .string()
         .optional()
         .describe("Content type (default: text)"),
+      language: z
+        .string()
+        .regex(/^(auto|off|[a-z]{2,3}(-[A-Za-z]{2,4})?)$/, 'Use "auto", "off" or a language code such as es, en, pt-BR')
+        .optional()
+        .describe('Translation of the outgoing text: "auto", "off" or a language code (es, en, pt-BR...). Default: the conversation\'s behaviour'),
     },
     async (args) => {
       const result = await client.post("/api/v1/conversations/send", args);

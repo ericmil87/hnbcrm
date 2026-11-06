@@ -31,6 +31,7 @@ import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { IMPORTED_FROM_HISTORY_KEY, shouldTranscribeAudio } from "./lib/mediaEnrichment";
+import { scheduleMessageTranslation } from "./lib/translationOps";
 
 const ENGINE = "faster-whisper";
 const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000; // don't duplicate an in-flight transcription
@@ -394,6 +395,17 @@ export const internalSetTranscriptionResult = internalMutation({
       // Espelha o texto num campo de topo para o search index (busca do inbox).
       ...(args.status === "done" && args.text ? { transcriptText: args.text } : {}),
     });
+    // Tradução automática (F1): a transcrição de um áudio do CLIENTE é
+    // traduzida para a equipe, com o idioma do Whisper como dica. No-op sem o
+    // módulo (o gate fica na porta).
+    if (args.status === "done" && args.text && message.direction === "inbound") {
+      await scheduleMessageTranslation(ctx, {
+        messageId: args.messageId,
+        role: "inbound",
+        text: args.text,
+        ...(args.language ? { hintLang: args.language } : {}),
+      });
+    }
     return null;
   },
 });
