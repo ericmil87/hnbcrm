@@ -1084,7 +1084,9 @@ export const internalRequireSettingsManage = internalQuery({
   },
 });
 
-const PING_TEXT = "Bom dia, tudo bem? Podemos conversar amanhã às 10h.";
+// Horário e valor de propósito: o servidor próprio devolve "10:00" e
+// "R$ 1,500.00", e o "Testar conexão" precisa exercitar o guard de números.
+const PING_TEXT = "Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.";
 
 export const pingProviders = action({
   args: { organizationId: v.id("organizations") },

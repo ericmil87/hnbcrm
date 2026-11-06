@@ -10,12 +10,14 @@ Itens marcados **a confirmar** ainda não foram verificados. Instalação real f
 |---|---|
 | Host | o VPS do bridge (Ubuntu 24.04, 6 vCPU, 12 GB, Docker 29 + Compose v5, sem swap) |
 | Pasta | `/opt/hnbcrm/libretranslate` (cópia de `infra/libretranslate/`, `.env` = `env.example` sem mudança) |
-| Proxy | Caddy do sistema (`/etc/caddy/Caddyfile`), bloco `handle_path /lt/*` dentro do site do bridge (seção 5) |
-| URL | `https://<dominio-do-bridge>/lt` (variante por caminho: não há DNS curinga em `hnbcrm.com` nem token de DNS no VPS) |
-| Envs | `LIBRETRANSLATE_URL` e `LIBRETRANSLATE_API_KEY` em DEV e PROD, mesma chave (120 req/min) |
+| Proxy | Caddy do sistema (`/etc/caddy/Caddyfile`): site próprio `lt.hnbcrm.com` (seção 5, bloco Caddy por subdomínio); o bloco `handle_path /lt/*` no site do bridge ficou como reserva |
+| DNS | `lt.hnbcrm.com` CNAME para o host do bridge, sem proxy do Cloudflare (resolve direto no IP do VPS); certificado Let's Encrypt emitido pelo Caddy via HTTP-01 em cerca de 2 s |
+| URL | `https://lt.hnbcrm.com` (em uso). Reserva: `https://<dominio-do-bridge>/lt` |
+| Envs | `LIBRETRANSLATE_URL=https://lt.hnbcrm.com` e `LIBRETRANSLATE_API_KEY` em DEV e PROD, mesma chave (120 req/min) |
 | RAM | container em cerca de 530 MB depois de carregar os 6 idiomas com 2 workers; disponível no VPS caiu de 9,3 GB para 8,8 GB |
 | 1ª subida | cerca de 1 minuto: baixou cerca de 1,26 GB de modelos e passou a escutar |
-| Latência | `/translate` 0,6 a 1,0 s, `/detect` 0,5 a 1,0 s (pelo HTTPS público, textos curtos) |
+| Latência | `/translate` 0,6 a 2,5 s, `/detect` 0,5 a 1,0 s (pelo HTTPS público, textos curtos; varia com o worker que atende) |
+| `.env` | `LT_UPDATE_MODELS=false` depois da 1ª subida (vale no próximo `docker compose up -d`) |
 
 O `watchtower` do VPS usa `WATCHTOWER_LABEL_ENABLE=true`; o container `libretranslate` não tem o label, então a tag fixada não é trocada sozinha.
 Backup do Caddyfile anterior: `/etc/caddy/Caddyfile.bak-2026-11-06-libretranslate`.
@@ -81,12 +83,15 @@ Guarde a chave no gerenciador de senhas; ela não vai para o repositório (o `se
 
 Exponha só `/translate`, `/detect` e `/languages`. Tudo o mais (incluindo `/` e `/metrics`) responde 404.
 
-**Caddy** (subdomínio `lt.hnbcrm.com`):
+**Caddy** (subdomínio `lt.hnbcrm.com`, **o que está em produção**; TLS automático, basta o DNS apontar para o VPS e a porta 80 aberta):
 
 ```caddyfile
 lt.hnbcrm.com {
-    @allowed path /translate /detect /languages
-    handle @allowed {
+    request_body {
+        max_size 64KB
+    }
+    @lt_allowed path /translate /detect /languages
+    handle @lt_allowed {
         reverse_proxy 127.0.0.1:5000
     }
     handle {
@@ -114,7 +119,7 @@ server {
 Variante por caminho no domínio do bridge: use `location /lt/translate` com `proxy_pass http://127.0.0.1:5000/translate;` (e equivalentes) e
 `LIBRETRANSLATE_URL=https://<dominio-do-bridge>/lt`. Prefira o subdomínio quando houver DNS: é mais simples de operar e de isolar.
 
-**Caddy, variante por caminho (a que está em produção).** Bloco aditivo no site do bridge, antes do `reverse_proxy` dele. `handle_path`
+**Caddy, variante por caminho (reserva, ainda ativa no VPS).** Bloco aditivo no site do bridge, antes do `reverse_proxy` dele. `handle_path`
 tira o prefixo `/lt`; o resto do site segue intacto (conferido: respostas do bridge e do Whisper iguais antes e depois do `systemctl reload caddy`).
 
 ```caddyfile

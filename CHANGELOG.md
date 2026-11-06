@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
+- Corrigido: a verificação da tradução rejeitava horários e valores reformatados pelo servidor próprio de tradução ("10h" virando "10:00", "R$ 1.500,00" virando "R$ 1,500.00"). Por isso o **Testar conexão** falhava e essas mensagens iam para a IA. Número trocado, sumido ou inventado continua barrado.
 - Corrigido: ao trocar de conversa na Caixa de Entrada, o cabeçalho da conversa anterior ficava empilhado em cima do novo, com nome, botões da IA e barra de etapa repetidos. Agora só aparece o cabeçalho da conversa aberta.
 
 ### Tradução automática
