@@ -341,6 +341,41 @@ describe("outbound com o módulo", () => {
     await cancelPendingJobs(t);
   });
 
+  test("LibreTranslate recebe tokens {n}/XEMOnX, nunca ⟦…⟧ nem emoji, e a saída volta com tudo", async () => {
+    vi.stubEnv("LIBRETRANSLATE_URL", LT_URL);
+    const original = "Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏";
+    // Resposta real do servidor (pt → en, 06/11/2026) para o texto protegido.
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) =>
+      ltResponse("Hello!\nThe house is beautiful XEMO2X and is close to the beach.\nCall me in {1}")
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { module: true, convLang: "en" });
+    const id = await s.asAdmin.mutation(api.conversations.sendMessage, { conversationId: s.conversationId, content: original });
+    await runTranslationJobs(t);
+    const sent = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)).q as string;
+    expect(sent).toBe("Oi!\nA casa é linda XEMO2X e fica perto da praia.\nMe chama no {1}");
+    const m = await getMsg(t, id);
+    expect(m.content).toBe("Hello! 👋\nThe house is beautiful 😍 and is close to the beach.\nCall me in (11) 98765-4321 🙏");
+    expect(m.metadata?.translation).toMatchObject({ status: "done", engine: "libretranslate" });
+    await cancelPendingJobs(t);
+  });
+
+  test("só emoji: o servidor nem é chamado e a mensagem sai igual", async () => {
+    vi.stubEnv("LIBRETRANSLATE_URL", LT_URL);
+    const fetchSpy = vi.fn(async () => ltResponse("x"));
+    vi.stubGlobal("fetch", fetchSpy);
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { module: true, convLang: "en" });
+    const id = await s.asAdmin.mutation(api.conversations.sendMessage, { conversationId: s.conversationId, content: "👍🏽🙏" });
+    await runTranslationJobs(t);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const m = await getMsg(t, id);
+    expect(m.content).toBe("👍🏽🙏");
+    expect(m.metadata?.translation).toMatchObject({ status: "done", engine: "libretranslate" });
+    await cancelPendingJobs(t);
+  });
+
   test("falha do provedor: failed legível, sem despacho; enviar sem tradução despacha e audita", async () => {
     vi.stubEnv("LIBRETRANSLATE_URL", LT_URL);
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "boom" }), { status: 500 })));

@@ -2,9 +2,20 @@
  * Texto da tradução automática (F1). PURO.
  *
  * 1. Placeholders: URLs, e-mails, telefones, @menções e termos do glossário
- *    saem do texto ANTES do provedor (`⟦U1⟧`, `⟦E1⟧`, `⟦P1⟧`, `⟦M1⟧`, `⟦G1⟧`) e
- *    voltam depois. Nenhum provedor consegue "traduzir" um link ou um nome de
- *    empreendimento.
+ *    saem do texto ANTES do provedor e voltam depois. Nenhum provedor consegue
+ *    "traduzir" um link ou um nome de empreendimento. Dois formatos:
+ *    - `llm` (padrão): `⟦U1⟧`, `⟦E1⟧`, `⟦P1⟧`, `⟦M1⟧`, `⟦G1⟧`, citados pelo
+ *      prompt do modelo, que os copia sem problema.
+ *    - `libre`: `{1}`, `{2}`… (um contador só) para links/telefones/menções/
+ *      e-mails/glossário. EMOJI no começo ou no fim de uma linha sai do texto e
+ *      volta colado na mesma linha; emoji no meio da linha vira `XEMO1X`.
+ *      Medido no servidor próprio em 06/11/2026: o modelo pt→en corta o texto
+ *      no primeiro `⟦` ("Me liga no ⟦P1⟧ ou…" → "Call me at ") e no primeiro
+ *      emoji ("Oi 👍🏽 *promoção*…" → "Hi "). `{n}` sobreviveu no lugar em
+ *      en/es/fr/it/de para links e nomes, mas some quando está sozinho no
+ *      começo da frase ou depois de "Oi"; `XEMO1X` (cara de palavra) não some
+ *      nesses lugares. As quebras de linha são preservadas pelo servidor; se a
+ *      contagem de linhas mudar, a restauração falha e vale o próximo provedor.
  * 2. Guard pós-tradução: o conjunto de URLs, os números (normalizados, ver
  *    `numbersOf`: "10h" = "10:00", "1.500,00" = "1,500.00"), os emojis e as
  *    marcas do WhatsApp (`*`, `_`, `~`) precisam sobreviver, e o tamanho tem de
@@ -12,33 +23,58 @@
  * 3. Parser da resposta do LLM `{"lang","text"}`, tolerante a cerca de código.
  */
 
-export type ProtectedText = { text: string; tokens: Array<{ token: string; value: string }> };
+export type ProtectedText = {
+  text: string;
+  tokens: Array<{ token: string; value: string }>;
+  /** Só `libre`: emojis tirados do começo/fim de cada linha (índice = linha). */
+  edges?: Array<{ lead: string; trail: string }>;
+};
+export type TokenShape = "llm" | "libre";
 
 const URL_RE = /\b(?:https?:\/\/|www\.)[^\s<>"']+[^\s<>"'.,;:!?)\]]/gi;
 const EMAIL_RE = /\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/g;
 // Telefone: 8+ dígitos com separadores comuns, opcionalmente com "+".
-const PHONE_RE = /(?<![\w⟦])\+?\d[\d\s().-]{6,}\d(?![\w⟧])/g;
+// O "(" do DDD entra no token: "(⟦P1⟧" solto faz o servidor alucinar.
+const PHONE_RE = /(?<![\w⟦{])(?:\(\+?|\+)?\d[\d\s().-]{6,}\d(?![\w⟧}])/g;
 const MENTION_RE = /(?<![\w@])@[\w.]{2,}/g;
 const TOKEN_RE = /⟦[A-Z]\d+⟧/g;
+const LIBRE_TOKEN_RE = /\{\d+\}|XEMO\d+X/gi;
+// Sequência de emojis (com tom de pele, seletor de variação, ZWJ, bandeira e
+// keycap) vira UM token: "🙏🙏" e "👨‍👩‍👧" voltam exatamente como eram.
+const EMOJI_UNIT =
+  "(?:[#*0-9]\\uFE0F?\\u20E3|\\p{Regional_Indicator}{2}|\\p{Extended_Pictographic}(?:\\uFE0F|\\p{Emoji_Modifier})*(?:\\u200D\\p{Extended_Pictographic}(?:\\uFE0F|\\p{Emoji_Modifier})*)*)";
+const EMOJI_RUN = `${EMOJI_UNIT}(?:\\s*${EMOJI_UNIT})*`;
+const EMOJI_RUN_RE = new RegExp(EMOJI_RUN, "gu");
+const LEAD_EMOJI_RE = new RegExp(`^\\s*${EMOJI_RUN}\\s*`, "u");
+const TRAIL_EMOJI_RE = new RegExp(`\\s*${EMOJI_RUN}\\s*$`, "u");
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Troca o que não pode ser traduzido por tokens estáveis. */
-export function protectText(text: string, glossary: readonly string[] = []): ProtectedText {
+/** Troca o que não pode ser traduzido por tokens estáveis (formato em `TokenShape`). */
+export function protectText(text: string, glossary: readonly string[] = [], shape: TokenShape = "llm"): ProtectedText {
   const tokens: ProtectedText["tokens"] = [];
   const counters: Record<string, number> = {};
+  let libreCounter = 0;
   const replace = (input: string, re: RegExp, prefix: string): string =>
     input.replace(re, (match) => {
-      const existing = tokens.find((t) => t.value === match && t.token.startsWith(`⟦${prefix}`));
+      const existing = tokens.find((t) => t.value === match && (shape === "libre" || t.token.startsWith(`⟦${prefix}`)));
       if (existing) return existing.token;
-      counters[prefix] = (counters[prefix] ?? 0) + 1;
-      const token = `⟦${prefix}${counters[prefix]}⟧`;
+      let token: string;
+      if (shape === "libre") {
+        libreCounter += 1;
+        token = prefix === "J" ? `XEMO${libreCounter}X` : `{${libreCounter}}`;
+      } else {
+        counters[prefix] = (counters[prefix] ?? 0) + 1;
+        token = `⟦${prefix}${counters[prefix]}⟧`;
+      }
       tokens.push({ token, value: match });
       return token;
     });
   let out = String(text ?? "");
+  // "{1}" escrito pelo próprio usuário não pode ser confundido com um token.
+  if (shape === "libre") out = replace(out, /\{\s*\d+\s*\}/g, "L");
   out = replace(out, URL_RE, "U");
   out = replace(out, EMAIL_RE, "E");
   out = replace(out, MENTION_RE, "M");
@@ -49,29 +85,73 @@ export function protectText(text: string, glossary: readonly string[] = []): Pro
     const re = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(term)}(?![\\p{L}\\p{N}])`, "giu");
     out = replace(out, re, "G");
   }
-  return { text: out, tokens };
+  if (shape !== "libre") return { text: out, tokens };
+  // Emoji na borda da linha sai do texto; no meio da linha vira token-palavra.
+  const edges: NonNullable<ProtectedText["edges"]> = [];
+  const lines = out.split("\n").map((line) => {
+    const lead = line.match(LEAD_EMOJI_RE)?.[0] ?? "";
+    let rest = line.slice(lead.length);
+    const trail = rest.match(TRAIL_EMOJI_RE)?.[0] ?? "";
+    rest = rest.slice(0, rest.length - trail.length);
+    edges.push({ lead, trail });
+    return replace(rest, EMOJI_RUN_RE, "J");
+  });
+  return { text: lines.join("\n"), tokens, edges };
 }
 
 /**
- * Devolve os valores originais. `ok:false` quando um token sumiu, apareceu
- * duplicado de forma inventada ou o provedor criou token novo.
+ * Devolve os valores originais em uma passada só (um valor restaurado nunca é
+ * expandido de novo). `ok:false` quando um token sumiu ou o provedor criou
+ * token novo. Aceita espaço dentro do token ("⟦ U1 ⟧", "{ 1 }").
  */
-export function restoreText(translated: string, tokens: ProtectedText["tokens"]): { ok: boolean; text: string } {
+export function restoreText(
+  translated: string,
+  protectedText: ProtectedText | ProtectedText["tokens"],
+  shape: TokenShape = "llm"
+): { ok: boolean; text: string } {
+  const tokens = Array.isArray(protectedText) ? protectedText : protectedText.tokens;
+  const edges = Array.isArray(protectedText) ? undefined : protectedText.edges;
   let out = String(translated ?? "");
-  // Alguns provedores trocam os colchetes matemáticos por espaços em volta.
-  out = out.replace(/⟦\s*([A-Z]\d+)\s*⟧/g, "⟦$1⟧");
   let ok = true;
+  if (shape === "libre") {
+    // Espaço dentro das chaves e caixa do token-palavra ("xemo1x") variam.
+    out = out.replace(/\{\s*(\d+)\s*\}/g, "{$1}").replace(/XEMO(\d+)X/gi, "XEMO$1X");
+  } else {
+    // Alguns provedores trocam os colchetes matemáticos por espaços em volta.
+    out = out.replace(/⟦\s*([A-Z]\d+)\s*⟧/g, "⟦$1⟧");
+  }
   for (const { token } of tokens) {
     if (!out.includes(token)) ok = false;
   }
-  const known = new Set(tokens.map((t) => t.token));
-  for (const found of out.match(TOKEN_RE) ?? []) {
-    if (!known.has(found)) ok = false;
-  }
-  for (const { token, value } of tokens) {
-    out = out.split(token).join(value);
+  const values = new Map(tokens.map((t) => [t.token, t.value]));
+  out = out.replace(shape === "libre" ? LIBRE_TOKEN_RE : TOKEN_RE, (found) => {
+    const value = values.get(found);
+    if (value === undefined) {
+      ok = false;
+      return found;
+    }
+    return value;
+  });
+  if (edges && edges.some((e) => e.lead || e.trail)) {
+    const lines = out.split("\n");
+    if (lines.length !== edges.length) return { ok: false, text: out };
+    out = lines
+      .map((line, i) => {
+        const { lead, trail } = edges[i];
+        let l = line;
+        if (lead) l = lead + l.trimStart();
+        if (trail) l = l.trimEnd() + trail;
+        return l;
+      })
+      .join("\n");
   }
   return { ok, text: out };
+}
+
+/** Sobrou algo para traduzir? (Só emojis/links/números = não.) */
+export function hasTranslatableText(protectedText: ProtectedText): boolean {
+  const bare = protectedText.text.replace(LIBRE_TOKEN_RE, " ").replace(TOKEN_RE, " ");
+  return /\p{L}/u.test(bare);
 }
 
 // ── Guard pós-tradução ──────────────────────────────────────────────────────
@@ -141,6 +221,8 @@ function numbersOf(text: string): NumberRuns {
   let s = text.replace(URL_RE, " ");
   s = s.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (d) => SUPERSCRIPT_DIGITS[d] ?? d);
   s = s.replace(/(\d)[\u00A0\u202F](?=\d{3}(?!\d))/g, "$1");
+  // Espaço comum como milhar só com decimal depois ("R$ 1 500.00", saída fr).
+  s = s.replace(/(?<![\d.,])\d{1,3}(?: \d{3})+(?=[.,]\d{2}(?!\d))/g, (m) => m.replace(/ /g, ""));
   s = s.replace(AMPM_RE, (_m, h: string, mm: string | undefined, ap: string) => {
     let hour = Number(h);
     if (hour > 12) return _m;

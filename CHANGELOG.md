@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
+- Corrigido: na tradução automática para inglês, o servidor próprio cortava a mensagem no primeiro link, telefone ou emoji, e ela acabava traduzida pela IA. Agora links, telefones, menções, e-mails e emojis passam pelo servidor próprio intactos e no lugar, também em espanhol, francês, italiano e alemão. Mensagem só com emoji não é mais enviada para tradução.
 - Corrigido: a verificação da tradução rejeitava horários e valores reformatados pelo servidor próprio de tradução ("10h" virando "10:00", "R$ 1.500,00" virando "R$ 1,500.00"). Por isso o **Testar conexão** falhava e essas mensagens iam para a IA. Número trocado, sumido ou inventado continua barrado.
 - Corrigido: ao trocar de conversa na Caixa de Entrada, o cabeçalho da conversa anterior ficava empilhado em cima do novo, com nome, botões da IA e barra de etapa repetidos. Agora só aparece o cabeçalho da conversa aberta.
 
